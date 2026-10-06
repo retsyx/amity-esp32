@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     fixture = {
+        'remote_unpair_gate': None, 'remote_unpair_async': False,
         'config': {'version': 1, 'activities': [{'name': 'TV', 'display': 'TV', 'source': 'Player'},
                                                {'name': 'Music', 'display': '', 'source': 'Player', 'audio': 'Receiver'}]},
         'config_calls': 0, 'remotes': {'devices': [], 'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'expired': False, 'logins': 0,
@@ -86,9 +87,14 @@ def main():
                     assert fixture['remote_pair_gate'].wait(20)
                 fixture['remotes'] = {'devices': [], 'bonded': False, 'pairing': True, 'scanning': True}
             if self.path == '/api/remotes/unpair':
+                if fixture['remote_unpair_gate']:
+                    assert fixture['remote_unpair_gate'].wait(20)
                 if fixture['fail_unpair']:
                     return self.reply({'error': 'Could not unpair'}, 500)
-                fixture['remotes'] = {'devices': [], 'bonded': False}
+                if fixture['remote_unpair_async']:
+                    fixture['remotes']['unpairing'] = True
+                else:
+                    fixture['remotes'] = {'devices': [], 'bonded': False}
             if self.path == '/api/matter/remove':
                 if fixture['fail_matter_remove']:
                     return self.reply({'error': 'Could not remove connection'}, 500)
@@ -543,6 +549,7 @@ def main():
                 page.once('dialog', lambda dialog: dialog.dismiss())
                 page.locator('#toggleRemote').click()
                 expect(page.locator('#toggleRemote')).to_be_enabled()
+                expect(page.locator('#remoteStatus')).to_have_text('Paired')
                 assert len(fixture['remote_calls']) == before
                 passed('cancelled unpair preserves pairing')
                 fixture['fail_unpair'] = True
@@ -553,9 +560,70 @@ def main():
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 passed('failed unpair preserves paired button state and allows retry')
                 fixture['fail_unpair'] = False
+                fixture['remotes']['connected'] = True
+                fixture['remote_unpair_async'] = True
+                unpair_gate = Event()
+                fixture['remote_unpair_gate'] = unpair_gate
                 page.once('dialog', lambda dialog: dialog.accept())
                 page.locator('#toggleRemote').click()
+
+                def expect_unpairing():
+                    expect(page.locator('#toggleRemote')).to_have_text('Unpairing...')
+                    expect(page.locator('#toggleRemote')).to_be_disabled()
+                    expect(page.locator('#toggleRemote')).to_have_attribute('aria-busy', 'true')
+                    expect(page.locator('#remoteStatus')).to_have_text('Unpairing...')
+
+                expect_unpairing()
+                page.evaluate('''() => {
+                    window.unpairSnapshots = [];
+                    window.unpairObserver = new MutationObserver(() => {
+                        const button = document.querySelector('#toggleRemote');
+                        unpairSnapshots.push({button: button.textContent, disabled: button.disabled,
+                            status: document.querySelector('#remoteStatus').textContent});
+                    });
+                    unpairObserver.observe(document.querySelector('#remotes'), {
+                        subtree: true, childList: true, attributes: true,
+                        attributeFilter: ['disabled', 'aria-busy']
+                    });
+                }''')
+                page.wait_for_function('() => !polling')
+                page.evaluate('() => refresh()')
+                expect_unpairing()
+                passed('pending unpair request keeps status and disabled button at Unpairing through polling')
+                unpair_gate.set()
+                page.wait_for_function('() => !remotePending')
+                expect_unpairing()
+                passed('accepted asynchronous unpair stays busy while the old bond and link remain')
+                before = len(fixture['remote_calls'])
+                page.evaluate('() => document.querySelector("#toggleRemote").click()')
+                assert len(fixture['remote_calls']) == before
+                passed('unpairing blocks duplicate remote operations')
+                for connected in (True, False):
+                    fixture['remotes'] = {'devices': [], 'bonded': False, 'connected': connected,
+                                          'unpairing': True, 'last_error': 13}
+                    page.wait_for_function('() => !polling')
+                    page.evaluate('() => refresh()')
+                    expect_unpairing()
+                passed('bond removal and disconnect cannot replace Unpairing with pairing, idle or error status')
+                snapshots = page.evaluate('''() => {
+                    unpairObserver.disconnect();
+                    return unpairSnapshots;
+                }''')
+                assert snapshots and all(snapshot == {'button': 'Unpairing...', 'disabled': True,
+                                                      'status': 'Unpairing...'} for snapshot in snapshots), snapshots
+                passed('DOM changes never flash an enabled button or incorrect label/status during unpairing')
+                page.reload()
+                expect(page.locator('#admin')).to_be_visible()
+                page.locator('[data-tab=remotes]').click()
+                expect_unpairing()
+                passed('reloading during unpair restores its busy state from the device')
+                fixture['remotes'] = {'devices': [], 'bonded': False, 'unpairing': False}
+                page.wait_for_function('() => !polling')
+                page.evaluate('() => refresh()')
                 expect(page.locator('#toggleRemote')).to_have_text('Pair remote')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                expect(page.locator('#toggleRemote')).to_have_attribute('aria-busy', 'false')
+                expect(page.locator('#remoteStatus')).to_have_text('Not paired')
                 assert not fixture['remotes']['bonded']
                 passed('successful unpair returns the same button to Pair remote')
                 assert 'Hold Power and Volume Up' not in page.locator('#remotes').text_content()

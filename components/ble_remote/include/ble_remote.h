@@ -24,6 +24,7 @@ typedef struct {
     bool ready;
     bool scanning;
     bool pairing;       // Automatic search/bonding operation is in progress.
+    bool unpairing;     // Bond removal or link termination is still in progress.
     bool too_far;       // Weak HID advertisements seen during pairing search.
     bool connecting;
     bool connected;

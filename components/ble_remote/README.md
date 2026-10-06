@@ -42,6 +42,11 @@ automatically. Unpair removes just that peer; Matter fabrics and other bonds
 remain intact. To clear Atomic's own bond, hold Power and Volume Up for six
 seconds, then use Pair Remote from the admin UI.
 
+Unpairing is asynchronous. The status/API `unpairing` flag stays true from
+command acceptance until bond storage cleanup and any active link termination
+finish. Scan and pair requests are rejected during this time. The web button
+stays disabled, and both its label and the status show “Unpairing...”.
+
 The Atomic adapter is separate from the generic decoder and transport. Its
 mapping follows [the official keymap at commit
 11b3704](https://github.com/retsyx/CouchClickerAtomic/blob/11b37040123b897e8d591d63446d87d770a79233/boards/shields/cca/cca.keymap):

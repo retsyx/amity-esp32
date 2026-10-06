@@ -68,6 +68,7 @@ std::vector<uint8_t> read_value;
 ble_addr_t selected{};
 ble_addr_t saved{};
 bool have_selected, have_saved, descriptors_ready, encrypted, forgetting;
+bool unpair_cleanup_pending;
 
 std::atomic<uint16_t> connection_handle{BLE_HS_CONN_HANDLE_NONE};
 int64_t next_reconnect;
@@ -242,6 +243,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         state.connected = state.connecting = false;
         state.battery_percent = -1;
         state.charging = -1;
+        if (!unpair_cleanup_pending) state.unpairing = false;
         next_reconnect = esp_timer_get_time() + 3000000;
         break;
     case BLE_GAP_EVENT_NOTIFY_RX: {
@@ -435,6 +437,7 @@ void open_peer(const ble_addr_t &address) {
     ble_gap_disc_cancel();
     {
         Guard lock;
+        if (state.unpairing) return;
         selected = address;
         have_selected = true;
         state.scanning = false;
@@ -532,6 +535,10 @@ void forget_peer() {
     Guard lock;
     state.last_error = err;
     state.peer = {};
+    // The disconnect callback can arrive before or after storage cleanup.
+    // Keep the operation busy until both have completed.
+    unpair_cleanup_pending = false;
+    if (connection_handle == BLE_HS_CONN_HANDLE_NONE) state.unpairing = false;
 }
 
 void worker(void *) {
@@ -656,7 +663,7 @@ extern "C" esp_err_t ble_remote_scan(uint32_t seconds) {
     if (!commands) return ESP_ERR_INVALID_STATE;
     if (!seconds || seconds > 60) return ESP_ERR_INVALID_ARG;
     Guard lock;
-    if (!state.ready || state.connecting || state.pairing) return ESP_ERR_INVALID_STATE;
+    if (!state.ready || state.connecting || state.pairing || state.unpairing) return ESP_ERR_INVALID_STATE;
     candidates.clear();
     Command command{CommandType::Scan, seconds, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
@@ -669,7 +676,7 @@ extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
     if (!seconds || seconds > 60) return ESP_ERR_INVALID_ARG;
     Guard lock;
     if (!state.ready || state.connected || state.connecting || state.scanning ||
-        state.pairing || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
+        state.pairing || state.unpairing || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
         return ESP_ERR_INVALID_STATE;
     Command command{CommandType::AutoPair, seconds, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
@@ -707,7 +714,7 @@ extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_t
     if (!commands) return ESP_ERR_INVALID_STATE;
     if (!address || address_type > 3) return ESP_ERR_INVALID_ARG;
     Guard lock;
-    if (!state.ready || state.connected || state.connecting || state.pairing || have_saved) return ESP_ERR_INVALID_STATE;
+    if (!state.ready || state.connected || state.connecting || state.pairing || state.unpairing || have_saved) return ESP_ERR_INVALID_STATE;
     const ble_addr_t peer = to_nimble(address, address_type);
     const bool found = std::any_of(candidates.begin(), candidates.end(), [&](const Candidate &candidate) {
         return candidate.hid && same_address(peer, to_nimble(candidate.peer.address, candidate.peer.address_type));
@@ -722,8 +729,10 @@ extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_t
 extern "C" esp_err_t ble_remote_unpair(void) {
     if (!commands) return ESP_ERR_INVALID_STATE;
     Guard lock;
+    if (state.unpairing) return ESP_ERR_INVALID_STATE;
     Command command{CommandType::Unpair, 0, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
+    state.unpairing = unpair_cleanup_pending = true;
     forgetting = true; // Stop input immediately while the worker closes the link.
     return ESP_OK;
 }
