@@ -1,0 +1,12 @@
+menu "Amity factory reset button"
+    config AMITY_FW_RESET_BUTTON
+        bool "Enable the FW_RESET button"
+        default y
+        help
+            Enable the active-low GPIO4 button on the Amity board. Hold it for
+            ten seconds to restore factory settings and restart. A release is
+            required after boot before a press can trigger a reset.
+
+            On current devices without the button, the internal pull-up keeps
+            the unused input inactive. Disable if GPIO4 is used by other hardware.
+endmenu

@@ -1,0 +1,87 @@
+# ESP-IDF and CMake build trees (including nested test projects).
+build*/
+cmake-build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+compile_commands.json
+build.ninja
+.ninja_*
+managed_components/
+sdkconfig
+sdkconfig.old
+sdkconfig.*.old
+# Keep sdkconfig.defaults, dependencies.lock, go.mod and go.sum in source control.
+
+# Compiled firmware, native binaries, libraries and compiler output.
+*.bin
+*.elf
+*.map
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.d
+*.dSYM/
+*.gcda
+*.gcno
+/amity-provision/amity-provision
+*.test
+
+# Generated release packages and device-specific provisioning outputs.
+amity-firmware*.zip
+amity-provision-*.zip
+amity-provisioned/
+amity-pairing.png
+amity-pairing.txt
+amity-admin-password.txt
+# Binary factory/full-flash outputs are covered by *.bin, even with a custom --out.
+
+# Downloaded SDK/test dependencies, caches and local Python environments.
+.cache/
+.matter-python/
+.matter-wheels/
+paa-root-certs/
+*.whl
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test captures, credentials, reports and coverage output.
+/test-results/*
+!/test-results/README.md
+*.log
+.coverage
+.coverage.*
+htmlcov/
+coverage.out
+*.prof
+
+# OS/editor temporary files.
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+*.tmp
+
+# KiCAD
+_autosave-hdmi.kicad_pcb
+hdmi-backups
+*_pcb.lck
+*_pro.lck
+*_sch.lck

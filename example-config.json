@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "activities": [
+    {"name": "Watch Apple TV", "display": "TV", "source": "Apple TV", "audio": "AVR"},
+    {"name": "Play PS5", "display": "TV", "source": "PlayStation5", "audio": "AVR"},
+    {"name": "Play Switch", "display": "TV", "source": "NintendoSwitch", "audio": "AVR", "switch": {"device": "AVR", "input": 4}}
+  ],
+  "quirks": []
+}

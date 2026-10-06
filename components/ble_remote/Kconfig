@@ -1,0 +1,9 @@
+menu "Amity remote pairing"
+config AMITY_REMOTE_PAIRING_MIN_RSSI
+    int "Minimum RSSI for automatic remote pairing (dBm)"
+    range -100 -20
+    default -50
+    help
+        Pair only nearby connectable HID devices with at least this signal
+        strength. Devices rejecting a new bond are skipped during this search.
+endmenu

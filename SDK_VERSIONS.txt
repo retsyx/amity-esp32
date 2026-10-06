@@ -1,0 +1,7 @@
+Validated development SDK commits:
+ESP-IDF 6.1: fff9895c82d744c7237be8847347bdd1b07c6643
+ESP-Matter: 59574f3fb62fddc690b4127fd3a4a43cfce4245e
+ConnectedHomeIP: 539342f32d5f4dc93761c2f9325afe29270068f1
+Espressif HomeKit SDK (vendored subset): 676fabac4a4a05184be020611cb069faa0016411
+Local HomeKit adaptations: third_party/esp-homekit-sdk/UPSTREAM.md
+Managed dependency versions and checksums: dependencies.lock

@@ -1,0 +1,13 @@
+menu "Amity activity control"
+
+config AMITY_ACTIVITY_SETTLE_SECONDS
+    int "Activity/standby settling delay (seconds)"
+    range 0 120
+    default 5
+    help
+        Ignore requests to change activity until setup transmissions and expected
+        replies have finished, followed by this quiet period. Missing replies
+        time out after two seconds. Repair requests bypass the guard and do not
+        start a new settling period. Set to 0 to disable this guard.
+
+endmenu
