@@ -489,6 +489,7 @@ def main():
                 fixture['remotes'] = {'devices': [], 'bonded': False}
                 page.evaluate('() => refresh()')
                 page.locator('[data-tab=remotes]').click()
+                expect(page.locator('#remoteStatus')).to_have_text('Not paired')
                 expect(page.locator('#toggleRemote')).to_have_text('Pair remote')
                 expect(page.locator('#remotes .actions button')).to_have_count(1)
                 pair_gate = Event()
@@ -629,12 +630,15 @@ def main():
                 assert 'Hold Power and Volume Up' not in page.locator('#remotes').text_content()
                 passed('Settings and Remote copy matches the requested wording')
                 page.locator('[data-tab=matter]').click()
+                expect(page.locator('#matterStatus')).to_have_text('Not paired')
                 expect(page.locator('#matter .actions button')).to_have_count(1)
                 page.locator('#toggleMatter').click()
+                expect(page.locator('#matterStatus')).to_have_text('Ready to pair')
                 expect(page.locator('#toggleMatter')).to_have_text('Stop pairing')
                 expect(page.locator('#matterQr svg')).to_be_visible()
                 expect(page.locator('#pairingCode')).to_have_text('Pairing code: 1234-567-8901')
                 page.locator('#toggleMatter').click()
+                expect(page.locator('#matterStatus')).to_have_text('Not paired')
                 expect(page.locator('#toggleMatter')).to_have_text('Start pairing')
                 expect(page.locator('#matterQr')).to_be_hidden()
                 expect(page.locator('#pairingCode')).to_have_text('')
@@ -645,6 +649,7 @@ def main():
                 page.wait_for_function('() => !polling && !activityActionPending')
                 page.evaluate('() => refresh()')
                 expect(page.locator('#matterQr')).to_be_hidden()
+                expect(page.locator('#matterStatus')).to_have_text('Not paired')
                 expect(page.locator('#toggleMatter')).to_have_text('Start pairing')
                 passed('expired Matter pairing hides QR and resets the toggle')
                 fixture['matter'] = {'commissioning': False, 'fabrics': [
@@ -689,13 +694,14 @@ def main():
                 passed('orphan Keychain is hidden while unknown labeled controllers remain visible')
                 fixture['matter']['fabrics'] = [{'index': 3, 'label': '', 'vendor': 0x1384}]
                 page.evaluate('() => refresh()')
-                expect(page.locator('#matterStatus')).to_have_text('Not connected')
+                expect(page.locator('#matterStatus')).to_have_text('Not paired')
                 expect(page.locator('#fabricList button')).to_have_count(0)
                 passed('Keychain alone never displays an association or Connected status')
                 fixture['matter']['fabrics'] = []
                 page.evaluate('() => refresh()')
-                expect(page.locator('#matterStatus')).to_have_text('Not connected')
+                expect(page.locator('#matterStatus')).to_have_text('Not paired')
                 expect(page.locator('#fabricList button')).to_have_count(0)
+                passed('idle Remote and Matter tabs show Not paired before and after pairing operations')
                 fixture['config'] = {'version': 1, 'activities': []}
                 fixture['configured'] = False
                 page.reload()

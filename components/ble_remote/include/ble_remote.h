@@ -31,6 +31,7 @@ typedef struct {
     bool pairing;       // Automatic search/bonding operation is in progress.
     bool unpairing;     // Bond removal or link termination is still in progress.
     bool too_far;       // Weak supported-remote advertisements seen during pairing search.
+    bool waiting;       // Listening in the background for the saved remote to advertise.
     bool connecting;
     bool connected;
     bool bonded;

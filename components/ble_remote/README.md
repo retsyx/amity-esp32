@@ -37,8 +37,14 @@ The worker performs security/discovery outside the host scan callback. The API
 also retains explicit scan/address pairing for diagnostics and radio fixtures.
 Pairing uses Just Works, matching Atomic's available input/output
 capabilities. Devices requiring passkey entry are rejected. The component stores
-one remote peer's identity separately from NimBLE's encryption keys and reconnects
-automatically. Unpair removes just that peer; Matter fabrics and other bonds
+one remote peer's identity separately from NimBLE's encryption keys. With a saved
+peer, it listens asynchronously for that peer's connectable advertisements and
+initiates a connection only when one arrives. An asleep or absent remote does
+not cause repeated connection attempts or discovery timeouts. The status/API
+`waiting` flag identifies this background wait; Advanced → Diagnostics shows
+“Waiting for remote”. `connecting` identifies actual connection, security and
+service discovery, and real errors remain visible. Unpair cancels the wait
+promptly and removes just that peer; Matter fabrics and other bonds
 remain intact. To clear Atomic's own bond, hold Power and Volume Up for six
 seconds, then use Pair Remote from the admin UI.
 
@@ -106,6 +112,9 @@ The tests cover Atomic's complete keyboard mapping, 6KRO and NKRO, consumer
 arrays, bit offsets, duplicate reports, simultaneous report IDs and maps,
 rollover, malformed descriptors, and disconnect releases.
 Siri profile, button, gesture and finite-step policies are also sanitizer-tested.
+Remote Diagnostics and pairing/unpairing UI states can be checked without a
+device using `python3 tests/web_browser.py --remote-fixture` in the project-local
+Playwright environment.
 Radio pairing and bond restoration additionally require a real remote or a BLE HID emulator.
 `tests/ble_hid_emulator.py` supplies an encrypted BlueZ HID keyboard peripheral
 on the Pi using the MIT-licensed `dbus-next==0.2.3` test dependency. Its command

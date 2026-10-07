@@ -22,3 +22,4 @@ mkdir -p "$result_dir"
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -I"$project_dir/main" "$test_dir/swipe_sequence_test.cpp" -o "$result_dir/swipe_sequence_test"
 "$result_dir/swipe_sequence_test"
+sh "$test_dir/ble_transport_test.sh"

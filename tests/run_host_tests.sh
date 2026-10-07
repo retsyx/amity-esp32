@@ -34,6 +34,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/tests/pairing_policy_test.cpp" -o "$out/pairing_policy_test"
 "$out/pairing_policy_test"
+sh "$root/tests/ble_transport_test.sh"
 json="$root/managed_components/espressif__cjson/cJSON"
 test -f "$json/cJSON.c" || json="$root/managed_components/espressif__cjson"
 cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$json/cJSON.c" -o "$out/cjson.o"

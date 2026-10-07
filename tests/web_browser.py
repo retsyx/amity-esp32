@@ -1,24 +1,161 @@
 #!/usr/bin/env python3
-"""Exercise the firmware's admin UI in Chromium; keep credentials out of output."""
+"""Exercise the admin UI in Chromium against a device or local remote fixture."""
 import argparse
 import json
 import http.client
 import ssl
 import time
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from urllib.parse import urlsplit
 from pathlib import Path
 import re
 from playwright.sync_api import sync_playwright, expect
 
 
+def remote_fixture(output):
+    """Exercise remote status transitions using the actual UI and a local API."""
+    assets = Path(__file__).resolve().parents[1] / 'components/web_admin/assets'
+    saved = {'ready': True, 'bonded': True, 'waiting': True, 'connected': False,
+             'connecting': False, 'scanning': False, 'pairing': False,
+             'unpairing': False, 'last_error': 0, 'name': 'Fixture remote',
+             'battery': -1, 'charging': None, 'devices': []}
+    remote = dict(saved)
+    calls, checks, errors = [], [], []
+
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(assets), **kwargs)
+        def log_message(self, *args):
+            pass
+        def reply(self, value):
+            data = json.dumps(value).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        def do_GET(self):
+            values = {'/api/setup': {'required': False},
+                      '/api/config': {'version': 1, 'activities': []},
+                      '/api/status': {'version': 'test', 'ready': True, 'devices': [],
+                                      'wifi_connected': True, 'wifi_rssi': -50,
+                                      'wifi_channel': 6, 'current_activity': -1},
+                      '/api/remotes': remote, '/api/matter': {'fabrics': []},
+                      '/api/homekit': {'available': False}}
+            if self.path in values:
+                return self.reply(values[self.path])
+            super().do_GET()
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
+            if self.path == '/api/login':
+                return self.reply({'token': 'fixture-session'})
+            calls.append((self.path, body))
+            if self.path == '/api/remotes/unpair':
+                remote.update(waiting=False, unpairing=True)
+            return self.reply({'ok': True})
+
+    def passed(name):
+        checks.append(name)
+        print('PASS', name, flush=True)
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.set_default_timeout(10000)
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                page.goto(f'http://127.0.0.1:{server.server_port}/')
+                page.locator('#password').fill('fixture-password')
+                page.locator('#password').press('Enter')
+                expect(page.locator('#admin')).to_be_visible()
+                page.wait_for_function('() => !polling && remoteStatus.textContent === "Paired"')
+                page.locator('[data-tab=advanced]').click()
+
+                def refresh_remote(**changes):
+                    remote.clear()
+                    remote.update(saved)
+                    remote.update(changes)
+                    page.wait_for_function('() => !polling')
+                    page.evaluate('() => refresh()')
+
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Waiting for remote')
+                page.locator('[data-tab=remotes]').click()
+                expect(page.locator('#remoteStatus')).to_have_text('Paired')
+                expect(page.locator('#toggleRemote')).to_have_text('Unpair remote')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('saved absent remote waits quietly and Unpair stays available')
+
+                refresh_remote(waiting=False)
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Waiting for remote')
+                passed('saved peer stays Waiting for remote between listening attempts')
+
+                refresh_remote(waiting=False, connecting=True)
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Connecting')
+                expect(page.locator('#remoteStatus')).to_have_text('Paired')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('actual reconnect shows Connecting only in Diagnostics')
+
+                refresh_remote(last_error=7)
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Connection failed (error 7)')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('real reconnect errors remain visible during background waiting')
+
+                refresh_remote(waiting=False, connected=True, battery=64, charging=True)
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Connected · Fixture remote · 64% battery · Charging')
+                passed('connected remote retains name, battery and charging diagnostics')
+
+                refresh_remote(bonded=False, waiting=False, scanning=True, pairing=True)
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Scanning')
+                expect(page.locator('#remoteStatus')).to_contain_text('Looking for a nearby remote')
+                expect(page.locator('#toggleRemote')).to_be_disabled()
+                refresh_remote(bonded=False, waiting=False, connecting=True, pairing=True)
+                expect(page.locator('#remoteStatus')).to_have_text('Pairing with remote…')
+                expect(page.locator('#toggleRemote')).to_be_disabled()
+                refresh_remote(bonded=False, waiting=False, last_error=13)
+                expect(page.locator('#remoteStatus')).to_have_text('No nearby remote found. Bring it closer and try again.')
+                passed('explicit pairing keeps its search, bonding and timeout messages')
+
+                refresh_remote()
+                page.once('dialog', lambda dialog: dialog.accept())
+                page.locator('#toggleRemote').click()
+                expect(page.locator('#remoteStatus')).to_have_text('Unpairing...')
+                expect(page.locator('#toggleRemote')).to_be_disabled()
+                assert calls == [('/api/remotes/unpair', {})], calls
+                refresh_remote(bonded=False, waiting=False)
+                expect(page.locator('#remoteStatus')).to_have_text('Not paired')
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Disconnected')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('Unpair works while waiting and restores the unpaired UI after cleanup')
+                assert not errors, errors
+                passed('no browser script exceptions')
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({'passed': checks}, indent=2) + '\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--url', required=True)
-    credentials = parser.add_mutually_exclusive_group(required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--url')
+    target.add_argument('--remote-fixture', action='store_true', help='Test remote UI locally without a device')
+    credentials = parser.add_mutually_exclusive_group()
     credentials.add_argument('--boot-log', type=Path, help='Legacy firmware console credential')
     credentials.add_argument('--credentials', type=Path, help='Private JSON with admin_password')
     parser.add_argument('--output', type=Path, default=Path('test-results/web-browser.json'))
     args = parser.parse_args()
+    if args.remote_fixture:
+        remote_fixture(args.output)
+        return
+    if not args.credentials and not args.boot_log:
+        parser.error('--url requires --credentials or --boot-log')
     password = (json.loads(args.credentials.read_text())['admin_password'] if args.credentials else
                 re.search(r'AMITY INITIAL ADMIN PASSWORD: (\S+)', args.boot_log.read_text()).group(1))
     checks = []

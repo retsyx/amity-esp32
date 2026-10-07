@@ -2,7 +2,36 @@
 
 Target: Seeed XIAO ESP32-S3, 8 MB flash and 8 MB octal PSRAM; installed ESP-IDF 6.1 / ESP-Matter commits in [SDK_VERSIONS.txt](SDK_VERSIONS.txt). Hardware fixture: Raspberry Pi `test2`, two isolated Linux CEC GPIO adapters and a BlueZ HID keyboard emulator.
 
-Current build: **0.1.46** with Siri Remote support and button logging, Matter software version 47, 1,863,408-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+Current build: **0.1.47** with Siri Remote support, button logging and an Active activity badge, Matter software version 48, 1,864,112-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+
+## Unpaired status wording in 0.1.47
+
+Remote, Matter and HomeKit display “Not paired” in their idle unpaired state.
+HomeKit's Wi-Fi prerequisite appears separately beneath its status. The 97
+local browser checks, JavaScript syntax check, firmware build and provisioning
+package build passed. HTTPS OTA on `amity-dut` installed version 0.1.47 with a
+new healthy boot and preserved configuration, Matter/HomeKit pairings, remote
+bond, password, hostname, CEC address and TLS identity; the remote reconnected.
+Live Chromium verified the three unpaired states, other pairing messages and
+exact current UI assets without changing saved pairing state.
+Evidence: `test-results/not-paired-build.log`, `not-paired-deployment.json` and
+`not-paired-live.json`, plus `web-homekit-ui.json` and `web-activities-ui.json`.
+
+## Active activity badge
+
+A compact Active badge appears beside the running activity's name and clears
+in standby. It uses the existing saved-activity identity, preserving the correct
+badge through unsaved reordering and live activity changes. All 87 existing
+browser checks and the firmware build passed. User-requested HTTPS OTA on
+2026-10-07 installed the update on `amity-dut`; all fourteen deployment checks
+passed, including exact served JavaScript/CSS, remote reconnection and retained
+configuration, Matter/HomeKit pairings, remote bond, password and TLS identity.
+Live Chromium verified all six saved activity states, standby and unsaved
+reordering using temporary browser state, plus desktop/mobile layout without
+horizontal overflow. Saved device configuration was unchanged by these checks.
+Evidence: `test-results/active-badge-ui.log`, `active-badge-build.log` and
+`active-badge-deployment.json`, plus `active-badge-live.json` and desktop/mobile
+screenshots under `test-results/`.
 
 ## Remote button logging
 

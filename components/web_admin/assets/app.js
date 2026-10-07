@@ -79,6 +79,7 @@ function updateActivityState(){
   start.disabled=activityLocked()||!matchesSaved(a);
   start.title=matchesSaved(a)?'':'Save activity changes before starting.';
   row.classList.toggle('active',activityActive(a));
+  row.querySelector('.activity-badge').hidden=!activityActive(a);
   row.querySelector('[data-drag]').setAttribute('aria-disabled',String(activityLocked()));
  });
  updateActivityEditor();
@@ -200,11 +201,14 @@ function dragHandle(index,a){
 function renderActivities(){
  endActivityDrag(true);const list=$('activityList');list.replaceChildren();config.activities.forEach((a,index)=>{
   const row=document.createElement('article');row.className='activity';
+  const heading=document.createElement('div');heading.className='activity-title';
   const title=document.createElement('span');title.className='activity-name';title.textContent=a.name;
+  const badge=document.createElement('span');badge.className='activity-badge';badge.textContent='Active';badge.hidden=true;
+  heading.append(title,badge);
   const controls=document.createElement('div');controls.className='activity-controls';
   const start=button('Start',()=>startActivity(a));start.dataset.start=index;
   controls.append(button('Edit',()=>openActivityEditor(a)),button('Delete',()=>{if(activityLocked())return;config.activities.splice(index,1);renderActivities();}),start);
-  row.append(dragHandle(index,a),title,controls);list.append(row);
+  row.append(dragHandle(index,a),heading,controls);list.append(row);
  });markDirty();updateActivityState();
 }
 // Match management/activities.py: names and manual switch settings do not affect equivalence.
@@ -252,7 +256,7 @@ function renderFrontPhysicalAddress(address){
  if(document.activeElement!==input&&!input.dataset.edited)input.value=address||'1.0.0.0';
 }
 function renderDiagnostics(){
- const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':'Disconnected';
+ const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
  const detail=r.connected?`${r.name?' · '+r.name:''}${r.battery>=0?' · '+r.battery+'% battery':''}${r.charging===true?' · Charging':''}`:r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'';
  $('diagnostics').textContent=`Firmware ${state.version}\n${state.wifi_connected?'Wi-Fi signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'Wi-Fi disconnected'}\nRemote: ${connection}${detail}`;
 }
@@ -280,8 +284,8 @@ async function removeMatterConnection(connection){
  try{for(const f of connection.fabrics)await request('matter/remove',{index:f.index});}
  finally{matterRemovalPending=false;renderMatter(await request('matter'));}
 }
-function pairingStatus({error,busy,pairing,connected,available=true}){
- return error?'Pairing operation failed. Please try again.':busy?'Updating pairing…':pairing?'Ready to pair':connected?'Connected':available?'Not connected':'Connect Amity to Wi-Fi through Matter before pairing.';
+function pairingStatus({error,busy,pairing,connected}){
+ return error?'Pairing operation failed. Please try again.':busy?'Updating pairing…':pairing?'Ready to pair':connected?'Connected':'Not paired';
 }
 function renderMatter(m){
  matterState=m;
@@ -300,14 +304,16 @@ function renderMatter(m){
 }
 function renderHomekit(s){
  homekitState=s;
- $('homekitStatus').textContent=pairingStatus({error:s.error,busy:s.busy||homekitPending,pairing:s.pairing,connected:s.paired,available:s.available});
+ $('homekitStatus').textContent=pairingStatus({error:s.error,busy:s.busy||homekitPending,pairing:s.pairing,connected:s.paired});
  $('toggleHomekit').textContent=s.pairing?'Stop pairing':'Start pairing';
  $('toggleHomekit').disabled=homekitPending||s.busy||!s.available||s.paired;
  $('toggleHomekit').hidden=!!s.paired;
  $('removeHomekit').hidden=!s.paired;$('removeHomekit').disabled=homekitPending||s.busy;
  $('homekitPairingCode').textContent=s.pairing&&s.manual_code?`Pairing code: ${s.manual_code}`:'';
  const rows=s.pairing?s.qr_modules:null,container=$('homekitQr');container.replaceChildren();container.hidden=!rows?.length;
- $('homekitPairingHint').hidden=!s.pairing;
+ const prerequisite=!s.available&&!s.paired;
+ $('homekitPairingHint').textContent=prerequisite?'Connect Amity to Wi-Fi through Matter before pairing.':'In your home app, scan this QR code or enter the pairing code. Pairing closes after five minutes.';
+ $('homekitPairingHint').hidden=!s.pairing&&!prerequisite;
  if(rows?.length){
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),background=document.createElementNS(ns,'rect'),path=document.createElementNS(ns,'path');
   svg.setAttribute('viewBox',`-4 -4 ${rows.length+8} ${rows.length+8}`);svg.setAttribute('role','img');svg.setAttribute('aria-label','HomeKit pairing QR code');svg.setAttribute('shape-rendering','crispEdges');

@@ -34,7 +34,7 @@ extern "C" {
 namespace {
 constexpr char kTag[] = "ble_remote";
 constexpr size_t kMaxPeers = 16;
-enum class CommandType { Scan, Pair, AutoPair, Unpair };
+enum class CommandType { Scan, Pair, AutoPair, Unpair, Wake };
 struct Command { CommandType type; uint32_t seconds; ble_addr_t address; };
 struct Candidate {
     ble_remote_peer_t peer;
@@ -89,8 +89,13 @@ bool have_selected, have_saved, descriptors_ready, encrypted, forgetting;
 bool unpair_cleanup_pending;
 
 std::atomic<uint16_t> connection_handle{BLE_HS_CONN_HANDLE_NONE};
+bool reconnect_pending;
+bool reconnect_cancel_pending;
+int64_t next_cancel_attempt;
 int64_t next_reconnect;
 int64_t pairing_deadline;
+uint32_t pending_scan_seconds;
+bool pending_scan_clear_error;
 
 
 class Guard {
@@ -235,8 +240,23 @@ int on_gap_event(ble_gap_event *event, void *token) {
             if (!event->connect.status) ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             break;
         }
+        if (forgetting) {
+            if (!event->connect.status) ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            finish_procedure(BLE_HS_EAPP);
+            break;
+        }
         if (!event->connect.status) connection_handle = event->connect.conn_handle;
+        if (reconnect_pending) {
+            state.waiting = false;
+            state.connecting = !event->connect.status;
+        }
         finish_procedure(event->connect.status);
+        if (reconnect_pending) {
+            // Start security/discovery promptly when the remote wakes, without
+            // making the host callback perform any blocking GATT operations.
+            const Command wake{CommandType::Wake, 0, {}};
+            xQueueSend(commands, &wake, 0);
+        }
         break;
     case BLE_GAP_EVENT_ENC_CHANGE: {
         if (event->enc_change.conn_handle != connection_handle) break;
@@ -256,8 +276,14 @@ int on_gap_event(ble_gap_event *event, void *token) {
         if (!have_saved) selected = event->disconnect.conn.peer_id_addr;
         // Preserve a failed pairing's Security Manager error when its cleanup
         // disconnect arrives; it is more useful than "locally terminated".
-        if (!forgetting && (state.connected || !state.last_error))
-            state.last_error = event->disconnect.reason;
+        if (!forgetting && (state.connected || !state.last_error)) {
+            const int reason = event->disconnect.reason;
+            // Sleeping, going out of range, and intentional link closure are
+            // normal for a bonded remote; resume listening without a failure.
+            state.last_error = reason == BLE_HS_HCI_ERR(BLE_ERR_CONN_SPVN_TMO) ||
+                               reason == BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM) ||
+                               reason == BLE_HS_HCI_ERR(BLE_ERR_CONN_TERM_LOCAL) ? 0 : reason;
+        }
         if (procedure_pending) finish_procedure(BLE_HS_ENOTCONN);
         connection_handle = BLE_HS_CONN_HANDLE_NONE;
         encrypted = descriptors_ready = false;
@@ -266,11 +292,11 @@ int on_gap_event(ble_gap_event *event, void *token) {
         siri_connected = false;
         input_reports.clear();
         battery_characteristics.clear();
-        state.connected = state.connecting = false;
+        state.connected = state.connecting = state.waiting = false;
         state.battery_percent = -1;
         state.charging = -1;
-        if (!unpair_cleanup_pending) state.unpairing = false;
-        next_reconnect = esp_timer_get_time() + 3000000;
+        if (!unpair_cleanup_pending && !ble_gap_conn_active()) state.unpairing = false;
+        next_reconnect = esp_timer_get_time() + (state.last_error ? 5000000 : 0);
         break;
     case BLE_GAP_EVENT_NOTIFY_RX: {
         if (event->notify_rx.conn_handle != connection_handle || !encrypted || forgetting) break;
@@ -534,7 +560,22 @@ int on_scan_event(ble_gap_event *event, void *) {
     return 0;
 }
 
-void start_scan(uint32_t seconds, bool clear_error = true) {
+void cancel_reconnect() {
+    Guard lock;
+    if (!reconnect_pending) return;
+    // Cancellation completes asynchronously. Invalidate the callback first so
+    // even a connection established during cancellation cannot revive the peer.
+    reconnect_pending = false;
+    state.waiting = state.connecting = false;
+    ++generation;
+    procedure_pending = false;
+    const int err = ble_gap_conn_cancel();
+    reconnect_cancel_pending = err && ble_gap_conn_active();
+    next_cancel_attempt = esp_timer_get_time() + 5000000;
+    if (reconnect_cancel_pending) ESP_LOGW(kTag, "Cancelling remote wait failed: %d", err);
+}
+
+void launch_scan(uint32_t seconds, bool clear_error) {
     ble_gap_disc_cancel();
     uint8_t public_address[6];
     int err = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, public_address, nullptr);
@@ -551,34 +592,33 @@ void start_scan(uint32_t seconds, bool clear_error = true) {
     if (err) state.pairing = false;
 }
 
-void open_peer(const ble_addr_t &address) {
-    ble_gap_disc_cancel();
-    ble::SiriGeneration advertised = ble::SiriGeneration::None;
+void start_scan(uint32_t seconds, bool clear_error = true) {
+    Guard lock;
+    if (forgetting || state.unpairing) return;
+    cancel_reconnect();
+    if (connection_handle != BLE_HS_CONN_HANDLE_NONE && !descriptors_ready)
+        ble_gap_terminate(connection_handle, BLE_ERR_REM_USER_CONN_TERM);
+    // Wait for the controller's cancellation acknowledgement before scanning.
+    // Otherwise a scan accepted while waiting could immediately fail with BUSY.
+    pending_scan_seconds = seconds;
+    pending_scan_clear_error = clear_error;
+    state.scanning = true;
+    if (clear_error) state.last_error = 0;
+    if (!ble_gap_conn_active()) {
+        pending_scan_seconds = 0;
+        launch_scan(seconds, clear_error);
+    }
+}
+
+void finish_peer(int err, ble::SiriGeneration advertised) {
     {
         Guard lock;
-        if (state.unpairing) return;
-        selected = address;
-        have_selected = true;
-        state.scanning = false;
-        state.connecting = true;
-        forgetting = false;
-        state.last_error = 0;
-        state.peer = {};
-        to_public(state.peer, address);
-        for (const auto &candidate : candidates)
-            if (same_address(address, to_nimble(candidate.peer.address, candidate.peer.address_type)))
-                advertised = candidate.siri;
-    }
-    // Matter regenerates its static random advertising address on startup.
-    // Auto inference prefers that address, which would make a bonded keyboard
-    // see a new central after every reboot. Use the controller's stable public
-    // identity for HID without changing Matter's commissioning advertisement.
-    uint8_t public_address[6];
-    int err = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, public_address, nullptr);
-    if (!err) {
-        void *token = begin_procedure(Procedure::Connect);
-        err = wait_procedure(ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &address, 10000, nullptr,
-                                            on_gap_event, token), 12000);
+        state.waiting = false;
+        if (forgetting || (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE)) {
+            state.connecting = false;
+            return;
+        }
+        state.connecting = !err;
     }
     if (!err) {
         begin_procedure(Procedure::Security);
@@ -626,13 +666,78 @@ void open_peer(const ble_addr_t &address) {
     next_reconnect = esp_timer_get_time() + 5000000;
 }
 
+void open_peer(const ble_addr_t &address) {
+    ble_gap_disc_cancel();
+    ble::SiriGeneration advertised = ble::SiriGeneration::None;
+    {
+        Guard lock;
+        if (state.unpairing) return;
+        pending_scan_seconds = 0;
+        selected = address;
+        have_selected = true;
+        state.scanning = state.waiting = false;
+        state.connecting = true;
+        forgetting = false;
+        state.last_error = 0;
+        state.peer = {};
+        to_public(state.peer, address);
+        for (const auto &candidate : candidates)
+            if (same_address(address, to_nimble(candidate.peer.address, candidate.peer.address_type)))
+                advertised = candidate.siri;
+    }
+    // Use the stable public identity for HID; Matter's commissioning address
+    // changes on boot and would make a bonded remote see a different central.
+    uint8_t public_address[6];
+    int err = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, public_address, nullptr);
+    if (!err) {
+        void *token = begin_procedure(Procedure::Connect);
+        err = wait_procedure(ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &address, 10000, nullptr,
+                                            on_gap_event, token), 12000);
+    }
+    finish_peer(err, advertised);
+}
+
+void start_reconnect() {
+    Guard lock;
+    if (forgetting || state.unpairing || !have_saved || !state.ready || state.scanning ||
+        state.connecting || state.pairing || reconnect_pending || reconnect_cancel_pending ||
+        connection_handle != BLE_HS_CONN_HANDLE_NONE || ble_gap_conn_active()) return;
+    selected = saved;
+    have_selected = true;
+    state.waiting = true;
+    state.last_error = 0;
+    // Listen for 30 ms every 80 ms instead of the default full-duty scan.
+    // The controller initiates the connection when the saved peer advertises;
+    // an absent or sleeping remote never expires this procedure.
+    ble_gap_conn_params params{};
+    params.scan_itvl = 0x80;
+    params.scan_window = 0x30;
+    params.itvl_min = BLE_GAP_INITIAL_CONN_ITVL_MIN;
+    params.itvl_max = BLE_GAP_INITIAL_CONN_ITVL_MAX;
+    params.latency = BLE_GAP_INITIAL_CONN_LATENCY;
+    params.supervision_timeout = BLE_GAP_INITIAL_SUPERVISION_TIMEOUT;
+    params.min_ce_len = BLE_GAP_INITIAL_CONN_MIN_CE_LEN;
+    params.max_ce_len = BLE_GAP_INITIAL_CONN_MAX_CE_LEN;
+    reconnect_pending = true;
+    void *token = begin_procedure(Procedure::Connect);
+    uint8_t public_address[6];
+    int err = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, public_address, nullptr);
+    if (!err) err = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &saved, BLE_HS_FOREVER, &params,
+                                   on_gap_event, token);
+    if (err) finish_procedure(err);
+}
+
 void forget_peer() {
     uint16_t handle;
     ble_addr_t old{};
     bool delete_bond;
+    bool cancelling_background;
     {
         Guard lock;
         forgetting = true;
+        cancelling_background = reconnect_pending || reconnect_cancel_pending;
+        cancel_reconnect();
+        pending_scan_seconds = 0;
         handle = connection_handle;
         old = have_saved ? saved : selected;
         ble_gap_conn_desc desc{};
@@ -641,7 +746,7 @@ void forget_peer() {
         have_saved = have_selected = false;
         state.bonded = false;
         state.battery_percent = state.charging = -1;
-        state.connecting = false;
+        state.connecting = state.waiting = false;
         state.scanning = false;
         state.pairing = false;
         if (disconnect_callback) disconnect_callback(disconnect_context);
@@ -649,7 +754,7 @@ void forget_peer() {
         descriptors_ready = false;
     }
     ble_gap_disc_cancel();
-    ble_gap_conn_cancel();
+    if (!cancelling_background) ble_gap_conn_cancel();
     if (handle != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
     if (delete_bond) {
         const int err = ble_store_util_delete_peer(&old);
@@ -662,7 +767,7 @@ void forget_peer() {
     // The disconnect callback can arrive before or after storage cleanup.
     // Keep the operation busy until both have completed.
     unpair_cleanup_pending = false;
-    if (connection_handle == BLE_HS_CONN_HANDLE_NONE) state.unpairing = false;
+    if (connection_handle == BLE_HS_CONN_HANDLE_NONE && !ble_gap_conn_active()) state.unpairing = false;
 }
 
 void worker(void *) {
@@ -680,6 +785,30 @@ void worker(void *) {
                 break;
             }
             case CommandType::Unpair: forget_peer(); break;
+            case CommandType::Wake: break;
+            }
+        }
+        {
+            Guard lock;
+            state.ready = ble_hs_synced();
+            // A host reset ends the controller procedure. Let Matter resync
+            // its shared host, then start listening again with a fresh token.
+            if (reconnect_pending && !state.ready) cancel_reconnect();
+            if (reconnect_cancel_pending) {
+                if (!ble_gap_conn_active()) reconnect_cancel_pending = false;
+                else if (state.ready && esp_timer_get_time() >= next_cancel_attempt) {
+                    const int err = ble_gap_conn_cancel();
+                    reconnect_cancel_pending = err && ble_gap_conn_active();
+                    next_cancel_attempt = esp_timer_get_time() + 5000000;
+                    if (reconnect_cancel_pending) ESP_LOGW(kTag, "Cancelling remote wait failed: %d", err);
+                }
+            }
+            if (state.unpairing && !unpair_cleanup_pending &&
+                connection_handle == BLE_HS_CONN_HANDLE_NONE && !ble_gap_conn_active()) state.unpairing = false;
+            if (pending_scan_seconds && state.ready && !forgetting && !ble_gap_conn_active()) {
+                const uint32_t seconds = pending_scan_seconds;
+                pending_scan_seconds = 0;
+                launch_scan(seconds, pending_scan_clear_error);
             }
         }
         // Run connection/security/discovery on this worker, never on the host's
@@ -693,6 +822,7 @@ void worker(void *) {
                 const int64_t remaining = pairing_deadline - esp_timer_get_time();
                 if (state.bonded || forgetting || remaining <= 0) {
                     state.pairing = false;
+                    pending_scan_seconds = 0;
                     stop_search = state.scanning;
                     state.scanning = false;
                     if (!state.bonded && !state.last_error) state.last_error = BLE_HS_ETIMEOUT;
@@ -719,18 +849,28 @@ void worker(void *) {
             Guard lock;
             if (state.bonded) state.pairing = false;
         }
-        ble_addr_t reconnect{};
+        int reconnect_result = 0;
+        bool reconnect_complete = false;
+        {
+            Guard lock;
+            if (reconnect_pending && !procedure_pending) {
+                reconnect_pending = false;
+                state.waiting = false;
+                reconnect_result = procedure_status;
+                reconnect_complete = true;
+            }
+        }
+        if (reconnect_complete) finish_peer(reconnect_result, ble::SiriGeneration::None);
         bool reconnect_now = false;
         {
             Guard lock;
-            state.ready = ble_hs_synced();
             if (state.ready && have_saved && connection_handle == BLE_HS_CONN_HANDLE_NONE &&
-                !state.connecting && !state.scanning && !state.pairing && !forgetting && esp_timer_get_time() >= next_reconnect) {
-                reconnect = saved;
+                !reconnect_pending && !ble_gap_conn_active() && !state.connecting && !state.scanning &&
+                !state.pairing && !forgetting && esp_timer_get_time() >= next_reconnect) {
                 reconnect_now = true;
             }
         }
-        if (reconnect_now) open_peer(reconnect);
+        if (reconnect_now) start_reconnect();
         // Read-only characteristics (or failed subscriptions) still get refreshed.
         std::vector<BatteryCharacteristic> battery_reads;
         {

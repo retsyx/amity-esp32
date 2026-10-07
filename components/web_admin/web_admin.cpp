@@ -88,6 +88,7 @@ esp_err_t remotes(httpd_req_t *req) {
     ble_remote_status_t s{};ble_remote_get_status(&s);Json root(cJSON_CreateObject(),cJSON_Delete);
     cJSON_AddBoolToObject(root.get(),"ready",s.ready);cJSON_AddBoolToObject(root.get(),"scanning",s.scanning);cJSON_AddBoolToObject(root.get(),"connected",s.connected);
     cJSON_AddBoolToObject(root.get(),"bonded",s.bonded);cJSON_AddBoolToObject(root.get(),"connecting",s.connecting);
+    cJSON_AddBoolToObject(root.get(),"waiting",s.waiting);
     cJSON_AddBoolToObject(root.get(),"pairing",s.pairing);
     cJSON_AddBoolToObject(root.get(),"unpairing",s.unpairing);
     cJSON_AddBoolToObject(root.get(),"too_far",s.too_far);
