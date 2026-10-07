@@ -4,7 +4,7 @@ observer, peripheral, GATT client, and persistent bonding enabled. It never
 initializes, stops, or releases the shared controller. Three connection slots
 allow commissioning and a remote connection together.
 
-The transport is a generic HID-over-GATT client using ESP-IDF's NimBLE GAP,
+The Atomic transport is a generic HID-over-GATT client using ESP-IDF's NimBLE GAP,
 GATT, Security Manager, and NVS-backed bond store. It discovers HID services,
 Report Maps, Report References, and notification descriptors after establishing
 an encrypted bonded link. Keyboard array reports, NKRO bitmap reports,
@@ -28,16 +28,16 @@ populates HID reports. This project uses the underlying supported IDF NimBLE
 APIs rather than modifying the SDK or copying that implementation.
 
 Pairing starts explicitly from the web UI and automatically selects the first
-connectable HID candidate at or above `CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI`
+connectable HID or Gen 2/3 Siri Remote candidate at or above `CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI`
 (default −50 dBm, matching Python Amity). The 20-second search skips peers that
 reject bonding; advertising alone cannot prove a remote is accepting new bonds.
-Weak HID advertisements trigger a bring-closer prompt during the
+Weak supported-remote advertisements trigger a bring-closer prompt during the
 search; it clears once a qualifying remote is available or pairing starts.
 The worker performs security/discovery outside the host scan callback. The API
 also retains explicit scan/address pairing for diagnostics and radio fixtures.
 Pairing uses Just Works, matching Atomic's available input/output
 capabilities. Devices requiring passkey entry are rejected. The component stores
-one HID peer's identity separately from NimBLE's encryption keys and reconnects
+one remote peer's identity separately from NimBLE's encryption keys and reconnects
 automatically. Unpair removes just that peer; Matter fabrics and other bonds
 remain intact. To clear Atomic's own bond, hold Power and Volume Up for six
 seconds, then use Pair Remote from the admin UI.
@@ -62,6 +62,32 @@ mapping follows [the official keymap at commit
 Equivalent consumer-page controls are accepted. No arrow key selects an
 activity. Other keyboard keys are ignored by the Atomic adapter.
 
+Siri Remote Gen 2 (`0x0314`) and Gen 3 (`0x0315`) use a separate Apple report
+adapter, following Python Amity's `pair_tool.py`, `remote.py`, `remote_adapter.py`
+and `gestures.py`. Manufacturer data detects these models even without a HID
+advertisement. Device Information PNP IDs identify the model again on every
+connection, including reconnects. Gen 1 and Gen 1.5 are excluded even when they
+advertise HID. The firmware revision selects Apple's input/touch handles,
+notification writes, initialization commands and charging codes; revisions
+before and after `0x0083` are supported. The ATT MTU is negotiated to 527.
+
+While in standby, Siri's Select, Up, Right, Down and Left clicks select activities
+0–4 respectively, on release. Holding for at least 500 ms selects activities
+5–9. With an activity active these buttons navigate normally; Power plus one
+of these buttons selects an activity, as in Python Amity. Short Power selects
+activity 0 from standby or enters standby from an active activity; long Power
+repairs the current target. Home, Back, volume, mute, play/pause and Siri map to
+their CEC controls (Siri sends Display Information).
+
+Touch swipes use the Gen 2/3 31 mm, 1370-unit pad, a pressure threshold of 20,
+7 mm step thresholds, primary-axis locking, and release inertia with a
+250 mm/s² deceleration and at most six extra steps. Swipe steps are finite CEC
+press/release pairs, coalesced up to ten per direction, and ignored in standby
+or while buttons are held. Activity changes, link loss and input overflow cancel
+pending navigation and gestures. Atomic's activity shortcuts and arrows remain
+unchanged. Both models use the existing Pair/Unpair Remote workflow and share
+the single saved peer; unpair the current remote before pairing another.
+
 Host tests exercise the descriptor parser independently of IDF:
 
 ```sh
@@ -70,8 +96,9 @@ sh tests/ble_test.sh
 
 The tests cover Atomic's complete keyboard mapping, 6KRO and NKRO, consumer
 arrays, bit offsets, duplicate reports, simultaneous report IDs and maps,
-rollover, malformed descriptors, and disconnect releases. Radio pairing and
-bond restoration additionally require a real remote or a BLE HID emulator.
+rollover, malformed descriptors, and disconnect releases.
+Siri profile, button, gesture and finite-step policies are also sanitizer-tested.
+Radio pairing and bond restoration additionally require a real remote or a BLE HID emulator.
 `tests/ble_hid_emulator.py` supplies an encrypted BlueZ HID keyboard peripheral
 on the Pi using the MIT-licensed `dbus-next==0.2.3` test dependency. Its command
 line can inject keyboard/consumer holds after pairing, independently of the

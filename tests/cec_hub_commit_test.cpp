@@ -125,6 +125,46 @@ int main() {
         assert(down);
         fixture_present = false;
     }
+    { // A held Siri press is also generation-bound: admission during a queued
+      // activity transition cannot begin a held stream on its new source.
+        fixture_present = true;
+        amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
+        assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
+                              {"Second", "TV", "Source", "Source", "", 0}})); run_one_command();
+        assert(hub.select_activity(0)); run_one_command();
+        const auto first = hub.activity_generation();
+        fixture_sent.clear(); fixture_waited.clear();
+        assert(hub.select_activity(1));
+        assert(hub.press_key_for_activity(0x01, first, true));
+        run_one_command(); run_one_command(); run_idle(3);
+        for (const auto &sent : fixture_sent)
+            assert(!(sent.frame.size == 3 && sent.frame.data[1] == 0x44 && sent.frame.data[2] == 0x01));
+        // A current generation retains normal held repeats and reliable release.
+        fixture_sent.clear(); fixture_waited.clear();
+        fixture_wire_complete = [&] { if (fixture_waited.size() == 3) assert(hub.release_key()); };
+        assert(hub.press_key_for_activity(0x02, hub.activity_generation(), true));
+        run_one_command(); run_idle(6);
+        assert(fixture_waited.size() == 3);
+        std::vector<uint8_t> keys;
+        for (const auto &sent : fixture_sent) {
+            const auto &f = sent.frame;
+            if (sent.gpio == 2 && f.data[0] == 0x04 && (f.data[1] == 0x44 || f.data[1] == 0x45)) {
+                keys.push_back(f.data[1]); if (f.data[1] == 0x44) assert(f.data[2] == 0x02);
+            }
+        }
+        assert((keys == std::vector<uint8_t>{0x44, 0x44, 0x44, 0x45}));
+        fixture_wire_complete = {};
+        // Failed admission must not start or retain a held key.
+        fixture_sent.clear(); fixture_waited.clear();
+        for (int i = 0; i < 32; ++i) assert(hub.release_key());
+        assert(!hub.press_key_for_activity(0x03, hub.activity_generation(), true));
+        for (int i = 0; i < 32; ++i) run_one_command();
+        run_idle(3);
+        assert(fixture_waited.empty());
+        for (const auto &sent : fixture_sent)
+            assert(!(sent.frame.size == 3 && sent.frame.data[1] == 0x44 && sent.frame.data[2] == 0x03));
+        fixture_present = false;
+    }
     { // Completion drives repeats without a fixed wait or queued repeat work.
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);

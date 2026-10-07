@@ -12,6 +12,11 @@ extern "C" {
 typedef void (*ble_remote_key_callback_t)(uint16_t usage_page, uint16_t usage,
                                         bool pressed, void *context);
 typedef void (*ble_remote_disconnect_callback_t)(void *context);
+typedef enum { BLE_REMOTE_SIRI_BUTTONS, BLE_REMOTE_SIRI_TOUCH } ble_remote_siri_event_t;
+// Siri reports use Apple's protocol, independently of the Atomic HID decoder.
+// Data is valid only during this callback; copy it before returning.
+typedef void (*ble_remote_siri_callback_t)(ble_remote_siri_event_t event,
+                                         const uint8_t *data, size_t size, void *context);
 typedef struct {
     // Address bytes use the conventional printed order, most significant first.
     uint8_t address[6];
@@ -25,7 +30,7 @@ typedef struct {
     bool scanning;
     bool pairing;       // Automatic search/bonding operation is in progress.
     bool unpairing;     // Bond removal or link termination is still in progress.
-    bool too_far;       // Weak HID advertisements seen during pairing search.
+    bool too_far;       // Weak supported-remote advertisements seen during pairing search.
     bool connecting;
     bool connected;
     bool bonded;
@@ -42,8 +47,9 @@ esp_err_t ble_remote_start(ble_remote_key_callback_t callback, void *context);
 // Register during application startup. Invoked BEFORE synthetic key releases
 // on link loss/unpair, so consumers can cancel pending power/activity gestures.
 void ble_remote_set_disconnect_callback(ble_remote_disconnect_callback_t callback, void *context);
-esp_err_t ble_remote_scan(uint32_t seconds); // 1..60 seconds, HID devices only.
-// Search for the first nearby HID device accepting a bond; skip rejected peers.
+void ble_remote_set_siri_callback(ble_remote_siri_callback_t callback, void *context);
+esp_err_t ble_remote_scan(uint32_t seconds); // 1..60 seconds, supported remotes only.
+// Search for a nearby HID or Gen 2/3 Siri Remote accepting a bond; skip rejected peers.
 esp_err_t ble_remote_start_pairing(uint32_t seconds);
 size_t ble_remote_scan_results(ble_remote_peer_t *peers, size_t capacity);
 esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_type);

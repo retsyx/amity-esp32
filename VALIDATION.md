@@ -2,7 +2,34 @@
 
 Target: Seeed XIAO ESP32-S3, 8 MB flash and 8 MB octal PSRAM; installed ESP-IDF 6.1 / ESP-Matter commits in [SDK_VERSIONS.txt](SDK_VERSIONS.txt). Hardware fixture: Raspberry Pi `test2`, two isolated Linux CEC GPIO adapters and a BlueZ HID keyboard emulator.
 
-Current build: **0.1.46**, Matter software version 47, 1,852,576-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+Current build: **0.1.46** with Siri Remote support, Matter software version 47, 1,862,224-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+
+## Siri Remote Gen 2/3 support
+
+The firmware builds with Apple's firmware-specific setup, Gen 2/3 buttons and
+touch gestures, while retaining the single saved remote and existing Remote tab.
+The 1,862,224-byte application fits the existing OTA slots with 53% free. The
+complete host suite passes with ASan/UBSan; Siri tests additionally verify model
+identification, older-model exclusion, both firmware layouts, all buttons,
+standby activity selection, long presses, power/activity combinations, touch
+pressure and packed coordinates, axis locking, timestamp wrap, release inertia,
+multi-touch cancellation, contact-ID changes after lost releases, and finite
+swipe pacing. Real hub-worker tests verify generation-bound held presses cannot
+cross an activity change. Existing Atomic tests pass and web assets are unchanged.
+
+Evidence: `test-results/siri-build.log`, `test-results/siri-host-tests.log` and
+`test-results/siri-ble-tests.log`.
+HTTPS OTA on 2026-10-07 installed the verified Siri-support image on `amity-dut`.
+The prior firmware connected the Siri Remote through its generic HID adapter.
+The new boot identifies the existing remote as Gen 2 (product `0x0314`, firmware
+`0x0083`), completes Apple's notification setup, reconnects with the saved bond
+and reports 74% battery. All twelve deployment checks passed, retaining saved
+activities, Matter fabrics, HomeKit controllers, hostname, CEC address, password
+and TLS identity, and restoring the original active activity. Fresh pairing,
+Gen 3 hardware and physical button/touch gestures remain unverified.
+Evidence: `test-results/siri-power-build.log`, `siri-power-ble-tests.log`,
+`siri-power-deployment.json` and private `siri-power-post-ota.log` under
+`test-results/`.
 
 ## Matching Matter and HomeKit wording in 0.1.46
 

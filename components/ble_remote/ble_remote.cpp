@@ -2,9 +2,11 @@
 #include "hid_keyboard.hpp"
 #include "battery_status.hpp"
 #include "pairing_policy.hpp"
+#include "siri_remote.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <vector>
@@ -18,6 +20,7 @@
 #include "nvs.h"
 extern "C" {
 #include "host/ble_gap.h"
+#include "host/ble_att.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_adv.h"
 #include "host/ble_sm.h"
@@ -33,7 +36,13 @@ constexpr char kTag[] = "ble_remote";
 constexpr size_t kMaxPeers = 16;
 enum class CommandType { Scan, Pair, AutoPair, Unpair };
 struct Command { CommandType type; uint32_t seconds; ble_addr_t address; };
-struct Candidate { ble_remote_peer_t peer; bool hid, connectable, attempted; };
+struct Candidate {
+    ble_remote_peer_t peer;
+    bool hid, connectable, attempted;
+    ble::SiriGeneration siri = ble::SiriGeneration::None;
+    bool supported() const { return siri != ble::SiriGeneration::Unsupported &&
+        (hid || siri == ble::SiriGeneration::Gen2 || siri == ble::SiriGeneration::Gen3); }
+};
 SemaphoreHandle_t mutex;
 QueueHandle_t commands;
 ble_remote_status_t state{};
@@ -43,12 +52,21 @@ ble_remote_key_callback_t key_callback;
 void *key_context;
 ble_remote_disconnect_callback_t disconnect_callback;
 void *disconnect_context;
+ble_remote_siri_callback_t siri_callback;
+void *siri_context;
+bool siri_connected;
+ble::SiriProfile siri_profile{};
 struct InputReport { uint16_t handle; uint8_t map, id; };
 std::vector<InputReport> input_reports;
 struct BatteryCharacteristic { uint16_t handle, uuid; bool poll; };
 std::vector<BatteryCharacteristic> battery_characteristics;
 int64_t next_battery_read;
 void update_battery(uint16_t uuid, const uint8_t *data, size_t size) {
+    if (siri_connected && uuid == ble::battery_power_state_uuid) {
+        const int charging = ble::siri_charging_state(siri_profile, data, size);
+        if (charging >= 0) state.charging = charging;
+        return;
+    }
     ble::BatteryStatus value{state.battery_percent, state.charging};
     if (ble::parse_battery(uuid, data, size, value)) {
         state.battery_percent = value.percent;
@@ -194,6 +212,11 @@ int on_write(uint16_t handle, const ble_gatt_error *error, ble_gatt_attr *, void
     if (current_procedure(handle, token)) finish_procedure(error->status);
     return 0;
 }
+int on_mtu(uint16_t handle, const ble_gatt_error *error, uint16_t, void *token) {
+    Guard lock;
+    if (current_procedure(handle, token)) finish_procedure(error->status);
+    return 0;
+}
 int read_attribute(uint16_t attribute) {
     void *token = begin_procedure();
     { Guard lock; read_value.clear(); }
@@ -220,6 +243,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         ble_gap_conn_desc desc{};
         const int err = ble_gap_conn_find(connection_handle, &desc);
         encrypted = !err && desc.sec_state.encrypted;
+        if (encrypted && !have_saved) selected = desc.peer_id_addr;
         if (!encrypted && descriptors_ready)
             ble_gap_terminate(connection_handle, BLE_ERR_AUTH_FAIL);
         if (procedure_pending && procedure_kind == Procedure::Security)
@@ -229,6 +253,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
     }
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle != connection_handle) break;
+        if (!have_saved) selected = event->disconnect.conn.peer_id_addr;
         // Preserve a failed pairing's Security Manager error when its cleanup
         // disconnect arrives; it is more useful than "locally terminated".
         if (!forgetting && (state.connected || !state.last_error))
@@ -238,6 +263,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         encrypted = descriptors_ready = false;
         if (disconnect_callback) disconnect_callback(disconnect_context);
         keyboard->clear();
+        siri_connected = false;
         input_reports.clear();
         battery_characteristics.clear();
         state.connected = state.connecting = false;
@@ -256,6 +282,17 @@ int on_gap_event(ble_gap_event *event, void *token) {
                 update_battery(characteristic.uuid, value, length);
         }
         if (!descriptors_ready || length > 512) break;
+        if (siri_connected) {
+            const uint16_t attribute = event->notify_rx.attr_handle;
+            const bool touch = attribute == siri_profile.touch_handle;
+            if (siri_callback && (touch || attribute == siri_profile.input_handle) && length <= 18) {
+                uint8_t data[18];
+                if (!os_mbuf_copydata(event->notify_rx.om, 0, length, data))
+                    siri_callback(touch ? BLE_REMOTE_SIRI_TOUCH : BLE_REMOTE_SIRI_BUTTONS,
+                                  data, length, siri_context);
+            }
+            break; // Never pass Apple's reports to the keyboard/Atomic adapter.
+        }
         for (const auto &report : input_reports) if (report.handle == event->notify_rx.attr_handle) {
             uint8_t data[512];
             if (!os_mbuf_copydata(event->notify_rx.om, 0, length, data))
@@ -269,7 +306,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         // Never silently discard a known remote's identity.
         return BLE_GAP_REPEAT_PAIRING_IGNORE;
     case BLE_GAP_EVENT_PASSKEY_ACTION:
-        // Atomic uses Just Works. Reject devices requiring a passkey rather
+        // Atomic and Siri use Just Works. Reject devices requiring a passkey rather
         // than injecting IDF's example fixed passkey or accepting comparison.
         ble_gap_terminate(event->passkey.conn_handle, BLE_ERR_AUTH_FAIL);
         if (procedure_pending) finish_procedure(BLE_HS_EAUTHEN);
@@ -279,17 +316,14 @@ int on_gap_event(ble_gap_event *event, void *token) {
     return 0;
 }
 
-int discover_hid() {
-    { Guard lock; services.clear(); input_reports.clear(); battery_characteristics.clear(); keyboard->clear(); state.battery_percent = state.charging = -1; }
-    void *token = begin_procedure();
-    int err = wait_procedure(ble_gattc_disc_all_svcs(connection_handle, on_service, token));
-    if (err) return err;
-    // Callback result vectors belong to the worker once the procedure finishes.
-    const auto found_services = services;
+int discover_hid(const std::vector<ble_gatt_svc> &found_services, bool siri) {
+    void *token;
+    int err;
     uint8_t map_index = 0;
     for (const auto &service : found_services) {
         const uint16_t uuid = ble_uuid_u16(&service.uuid.u);
         if (uuid != 0x1812 && uuid != 0x180f && uuid != 0x1800) continue;
+        if (siri && uuid == 0x1812) continue;
         { Guard lock; characteristics.clear(); }
         token = begin_procedure();
         err = wait_procedure(ble_gattc_disc_all_chrs(connection_handle, service.start_handle,
@@ -372,7 +406,84 @@ int discover_hid() {
         if (uuid == 0x1812) ++map_index;
     }
     Guard lock;
-    return !input_reports.empty() ? 0 : BLE_HS_ENOENT;
+    return siri || !input_reports.empty() ? 0 : BLE_HS_ENOENT;
+}
+
+int discover_remote(ble::SiriGeneration advertised) {
+    {
+        Guard lock;
+        services.clear(); input_reports.clear(); battery_characteristics.clear(); keyboard->clear();
+        siri_connected = false;
+        state.battery_percent = state.charging = -1;
+    }
+    void *token = begin_procedure();
+    int err = wait_procedure(ble_gattc_disc_all_svcs(connection_handle, on_service, token));
+    if (err) return err;
+    const auto found_services = services;
+    uint16_t product = 0, firmware = 0;
+    bool have_firmware = false, apple = false;
+    const bool advertised_siri = advertised == ble::SiriGeneration::Gen2 ||
+                                 advertised == ble::SiriGeneration::Gen3;
+    // Probe Device Information on every connection, including saved identities
+    // and HID-only advertisements. Early Siri Remotes must not fall back to HID.
+    for (const auto &service : found_services) {
+        if (ble_uuid_u16(&service.uuid.u) != 0x180a) continue;
+        { Guard lock; characteristics.clear(); }
+        token = begin_procedure();
+        err = wait_procedure(ble_gattc_disc_all_chrs(connection_handle, service.start_handle,
+                                                    service.end_handle, on_characteristic, token));
+        if (err) {
+            if (advertised_siri) return err;
+            continue;
+        }
+        const auto chars = characteristics;
+        for (const auto &chr : chars) {
+            const uint16_t uuid = ble_uuid_u16(&chr.uuid.u);
+            if (uuid != 0x2a50 && uuid != 0x2a26) continue;
+            err = read_attribute(chr.val_handle);
+            if (err) {
+                if (advertised_siri) return err;
+                continue; // Optional information on ordinary HID keyboards.
+            }
+            if (uuid == 0x2a50) apple = ble::siri_parse_pnp(read_value.data(), read_value.size(), product);
+            else have_firmware = ble::siri_parse_firmware(read_value.data(), read_value.size(), firmware);
+        }
+    }
+    if (apple && (product == 0x0266 || product == 0x026d)) return BLE_HS_ENOTSUP;
+    const bool supported_siri = apple && ble::siri_supported_product(product);
+    if (advertised_siri && !supported_siri) return BLE_HS_ENOTSUP;
+    if (supported_siri) {
+        if (!have_firmware) return BLE_HS_EBADDATA;
+        // Python negotiates 527 bytes for these models. This uses the existing
+        // shared host; mbuf chains carry reports larger than an ACL fragment.
+        if ((err = ble_att_set_preferred_mtu(527))) return err;
+        token = begin_procedure();
+        err = wait_procedure(ble_gattc_exchange_mtu(connection_handle, on_mtu, token));
+        if (err && err != BLE_HS_EALREADY) return err;
+        {
+            Guard lock;
+            siri_profile = ble::siri_profile(firmware);
+            siri_connected = true;
+            snprintf(state.peer.name, sizeof(state.peer.name), "Siri Remote, Gen %u", product == 0x0314 ? 2 : 3);
+        }
+        ESP_LOGI(kTag, "Siri Remote product 0x%04x firmware 0x%04x", product, firmware);
+    }
+    // Siri uses dynamically discovered battery and name characteristics, while
+    // its input service requires Apple's firmware-specific setup, below.
+    if ((err = discover_hid(found_services, supported_siri))) return err;
+    if (!supported_siri) return 0;
+    const uint8_t notify[] = {1, 0};
+    for (size_t i = 0; i < siri_profile.notification_count; ++i)
+        if ((err = write_attribute(siri_profile.notification_handles[i], notify, sizeof(notify)))) return err;
+    for (size_t i = 0; i < siri_profile.init_count; ++i)
+        if ((err = write_attribute(siri_profile.init_handle, siri_profile.init_values[i].data(), 2))) return err;
+    // Read telemetry after enabling Apple's reports, matching Python setup.
+    std::vector<BatteryCharacteristic> battery_reads;
+    { Guard lock; battery_reads = battery_characteristics; }
+    for (const auto &entry : battery_reads) if (!read_attribute(entry.handle)) {
+        Guard lock; update_battery(entry.uuid, read_value.data(), read_value.size());
+    }
+    return 0;
 }
 
 int on_scan_event(ble_gap_event *event, void *) {
@@ -388,14 +499,17 @@ int on_scan_event(ble_gap_event *event, void *) {
     bool hid = fields.appearance_is_present && (fields.appearance >> 6) == 15;
     for (size_t i = 0; i < fields.num_uuids16; ++i)
         hid |= ble_uuid_u16(&fields.uuids16[i].u) == 0x1812;
+    const auto siri = ble::siri_classify_manufacturer(fields.mfg_data, fields.mfg_data_len);
+    const bool supported = siri != ble::SiriGeneration::Unsupported &&
+        (hid || siri == ble::SiriGeneration::Gen2 || siri == ble::SiriGeneration::Gen3);
     auto found = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate &candidate) {
         return same_address(to_nimble(candidate.peer.address, candidate.peer.address_type), report.addr);
     });
     if (found == candidates.end()) {
         if (candidates.size() == kMaxPeers) {
             // Do not let unrelated advertisements hide keyboards later in scan.
-            if (!hid) return 0;
-            found = std::find_if(candidates.begin(), candidates.end(), [](const Candidate &c) { return !c.hid; });
+            if (!supported) return 0;
+            found = std::find_if(candidates.begin(), candidates.end(), [](const Candidate &c) { return !c.supported(); });
             if (found == candidates.end()) return 0;
             *found = Candidate{};
         } else {
@@ -405,6 +519,7 @@ int on_scan_event(ble_gap_event *event, void *) {
         to_public(found->peer, report.addr);
     }
     found->hid |= hid;
+    if (siri != ble::SiriGeneration::None) found->siri = siri;
     found->connectable |= report.event_type == BLE_HCI_ADV_RPT_EVTYPE_ADV_IND ||
                           report.event_type == BLE_HCI_ADV_RPT_EVTYPE_DIR_IND;
     found->peer.rssi = report.rssi;
@@ -413,6 +528,9 @@ int on_scan_event(ble_gap_event *event, void *) {
         memcpy(found->peer.name, fields.name, length);
         found->peer.name[length] = 0;
     }
+    if (!found->peer.name[0] && (siri == ble::SiriGeneration::Gen2 || siri == ble::SiriGeneration::Gen3))
+        snprintf(found->peer.name, sizeof(found->peer.name), "Siri Remote, Gen %u",
+                 siri == ble::SiriGeneration::Gen2 ? 2 : 3);
     return 0;
 }
 
@@ -435,6 +553,7 @@ void start_scan(uint32_t seconds, bool clear_error = true) {
 
 void open_peer(const ble_addr_t &address) {
     ble_gap_disc_cancel();
+    ble::SiriGeneration advertised = ble::SiriGeneration::None;
     {
         Guard lock;
         if (state.unpairing) return;
@@ -446,6 +565,9 @@ void open_peer(const ble_addr_t &address) {
         state.last_error = 0;
         state.peer = {};
         to_public(state.peer, address);
+        for (const auto &candidate : candidates)
+            if (same_address(address, to_nimble(candidate.peer.address, candidate.peer.address_type)))
+                advertised = candidate.siri;
     }
     // Matter regenerates its static random advertising address on startup.
     // Auto inference prefers that address, which would make a bonded keyboard
@@ -462,7 +584,8 @@ void open_peer(const ble_addr_t &address) {
         begin_procedure(Procedure::Security);
         err = wait_procedure(ble_gap_security_initiate(connection_handle), 30000);
     }
-    if (!err) err = discover_hid();
+    if (!err) err = advertised == ble::SiriGeneration::Unsupported ? BLE_HS_ENOTSUP
+                                                                 : discover_remote(advertised);
     if (!err) {
         Guard lock;
         ble_gap_conn_desc desc{};
@@ -475,23 +598,23 @@ void open_peer(const ble_addr_t &address) {
             have_saved = state.bonded = true;
             descriptors_ready = state.connected = true;
             to_public(state.peer, saved);
-            ESP_LOGI(kTag, "Encrypted HID ready: %s (%u report characteristics)", state.peer.name,
+            ESP_LOGI(kTag, "Encrypted remote ready: %s (%u HID report characteristics)", state.peer.name,
                      static_cast<unsigned>(input_reports.size()));
         }
     }
     if (err) {
-        ESP_LOGW(kTag, "HID connection/discovery failed: %d", err);
+        ESP_LOGW(kTag, "Remote connection/discovery failed: %d", err);
         ble_gap_conn_cancel();
         uint16_t handle;
         {
             Guard lock;
             state.last_error = err;
             handle = connection_handle;
-            // A device that bonded but failed HID discovery must not consume a
+            // A device that bonded but failed remote setup must not consume a
             // bond slot forever or leave an identity inaccessible to Unpair.
             ble_gap_conn_desc desc{};
-            if (!have_saved && !ble_gap_conn_find(handle, &desc)) {
-                selected = desc.peer_id_addr;
+            if (!have_saved) {
+                if (!ble_gap_conn_find(handle, &desc)) selected = desc.peer_id_addr;
                 ble_store_util_delete_peer(&selected);
             }
         }
@@ -523,13 +646,14 @@ void forget_peer() {
         state.pairing = false;
         if (disconnect_callback) disconnect_callback(disconnect_context);
         keyboard->clear();
+        descriptors_ready = false;
     }
     ble_gap_disc_cancel();
     ble_gap_conn_cancel();
     if (handle != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
     if (delete_bond) {
         const int err = ble_store_util_delete_peer(&old);
-        if (err && err != BLE_HS_ENOENT) ESP_LOGW(kTag, "Removing HID bond: %d", err);
+        if (err && err != BLE_HS_ENOENT) ESP_LOGW(kTag, "Removing remote bond: %d", err);
     }
     const esp_err_t err = persist_peer(nullptr);
     Guard lock;
@@ -574,7 +698,7 @@ void worker(void *) {
                     if (!state.bonded && !state.last_error) state.last_error = BLE_HS_ETIMEOUT;
                 } else if (connection_handle == BLE_HS_CONN_HANDLE_NONE) {
                     auto found = std::find_if(candidates.begin(), candidates.end(), [](const Candidate &c) {
-                        return ble::pairing_candidate(c.hid, c.connectable, c.attempted,
+                        return ble::pairing_candidate(c.supported(), c.connectable, c.attempted,
                             c.peer.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
                     });
                     if (found != candidates.end()) {
@@ -698,12 +822,23 @@ extern "C" void ble_remote_set_disconnect_callback(ble_remote_disconnect_callbac
     }
 }
 
+extern "C" void ble_remote_set_siri_callback(ble_remote_siri_callback_t callback, void *context) {
+    if (mutex) {
+        Guard lock;
+        siri_callback = callback;
+        siri_context = context;
+    } else {
+        siri_callback = callback;
+        siri_context = context;
+    }
+}
+
 extern "C" size_t ble_remote_scan_results(ble_remote_peer_t *peers, size_t capacity) {
     if (!mutex || (!peers && capacity)) return 0;
     Guard lock;
     size_t count = 0;
     for (const auto &candidate : candidates) {
-        if (!candidate.hid) continue;
+        if (!candidate.supported()) continue;
         if (count < capacity) peers[count] = candidate.peer;
         ++count;
     }
@@ -717,7 +852,7 @@ extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_t
     if (!state.ready || state.connected || state.connecting || state.pairing || state.unpairing || have_saved) return ESP_ERR_INVALID_STATE;
     const ble_addr_t peer = to_nimble(address, address_type);
     const bool found = std::any_of(candidates.begin(), candidates.end(), [&](const Candidate &candidate) {
-        return candidate.hid && same_address(peer, to_nimble(candidate.peer.address, candidate.peer.address_type));
+        return candidate.supported() && same_address(peer, to_nimble(candidate.peer.address, candidate.peer.address_type));
     });
     if (!found) return ESP_ERR_NOT_FOUND;
     Command command{CommandType::Pair, 0, peer};
@@ -747,11 +882,11 @@ extern "C" void ble_remote_get_status(ble_remote_status_t *out) {
     // do not cause a proximity prompt.
     out->too_far = state.pairing && state.scanning && !state.connecting &&
         std::any_of(candidates.begin(), candidates.end(), [](const Candidate &c) {
-            return c.hid && !c.attempted &&
+            return c.supported() && !c.attempted &&
                    c.peer.rssi < CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI;
         }) &&
         !std::any_of(candidates.begin(), candidates.end(), [](const Candidate &c) {
-            return ble::pairing_candidate(c.hid, c.connectable, c.attempted,
+            return ble::pairing_candidate(c.supported(), c.connectable, c.attempted,
                 c.peer.rssi, CONFIG_AMITY_REMOTE_PAIRING_MIN_RSSI);
         });
     const auto battery = ble::reported_battery(out->bonded, out->connected, {out->battery_percent, out->charging});

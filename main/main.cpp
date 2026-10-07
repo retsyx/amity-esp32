@@ -3,7 +3,9 @@
 #include "amity_matter.h"
 #include "homekit.hpp"
 #include "atomic_controller.hpp"
+#include "siri_remote.hpp"
 #include "volume_sequence.hpp"
+#include "swipe_sequence.hpp"
 #include <atomic>
 #include "ble_remote.h"
 #include "config_store.hpp"
@@ -21,9 +23,19 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include <cstdio>
+#include <cstring>
 namespace {
 amity::HubService hub;
-struct Input { uint16_t page,usage; bool down; bool reset=false; };
+enum class InputType { Atomic, SiriButtons, SiriTouch, Reset };
+struct Input {
+    InputType type=InputType::Atomic;
+    uint16_t page=0,usage=0;
+    bool down=false;
+    uint8_t size=0,data[18]{};
+    uint64_t timestamp=0;
+    uint32_t activity_generation=0;
+    int activity_target=-1;
+};
 std::atomic_bool input_lost{false};
 QueueHandle_t input_queue;
 void refresh_admin_mdns() {
@@ -51,11 +63,24 @@ void refresh_admin_mdns() {
     if(err!=ESP_OK)ESP_LOGW("amity","Administration mDNS address update: %s",esp_err_to_name(err));
 }
 void remote_key(uint16_t page,uint16_t usage,bool down,void *) {
-    Input input{page,usage,down};
+    Input input{InputType::Atomic,page,usage,down};
     if(xQueueSend(input_queue,&input,0)!=pdTRUE) input_lost.store(true);
 }
+void remote_siri(ble_remote_siri_event_t event,const uint8_t *data,size_t size,void *) {
+    Input input{};
+    if(!data||size>sizeof(input.data)) {input_lost.store(true);return;}
+    if(event==BLE_REMOTE_SIRI_BUTTONS)input.type=InputType::SiriButtons;
+    else if(event==BLE_REMOTE_SIRI_TOUCH)input.type=InputType::SiriTouch;
+    else return;
+    input.timestamp=esp_timer_get_time();
+    input.activity_generation=hub.activity_generation();
+    input.activity_target=hub.activity_target();
+    input.size=static_cast<uint8_t>(size);
+    std::memcpy(input.data,data,size);
+    if(xQueueSend(input_queue,&input,0)!=pdTRUE)input_lost.store(true);
+}
 void remote_disconnect(void *) {
-    Input reset{};reset.reset=true;
+    Input reset{};reset.type=InputType::Reset;
     if(xQueueSend(input_queue,&reset,0)!=pdTRUE)input_lost.store(true);
 }
 esp_err_t power(bool on,void *) {
@@ -95,15 +120,93 @@ void input_task(void *) {
         case ble::AtomicCommandType::PowerLong: hub.request_activity(hub.activity_target());break;
         }
     },nullptr,4);
+    struct SiriContext {
+        amity::SwipeSequence swipes;
+        bool activity_changed=false;
+        bool stale_report=false;
+        uint32_t generation=0;
+        int target=-1;
+    } siri_context;
+    ble::SiriController siri([](ble::SiriCommand command,void *context) {
+        auto &state=*static_cast<SiriContext *>(context);
+        if(state.stale_report)return;
+        if(command.type!=ble::SiriCommandType::Release&&
+           (state.generation!=hub.activity_generation()||state.target!=hub.activity_target())) {
+            state.activity_changed=true;
+            return;
+        }
+        switch(command.type) {
+        case ble::SiriCommandType::Press:
+            state.swipes.cancel();hub.press_key_for_activity(command.value,state.generation,true);break;
+        case ble::SiriCommandType::Release:
+            state.swipes.cancel();hub.release_key();break;
+        case ble::SiriCommandType::Activity:
+            if(hub.request_activity(command.value)==ESP_OK)state.activity_changed=true;
+            break;
+        case ble::SiriCommandType::PowerShort:
+            if(hub.request_activity(-1)==ESP_OK)state.activity_changed=true;
+            break;
+        case ble::SiriCommandType::PowerLong:
+            if(hub.request_activity(state.target)==ESP_OK)state.activity_changed=true;
+            break;
+        case ble::SiriCommandType::Swipe:
+            if(state.target>=0)state.swipes.add(command.value,command.count,state.generation);
+            break;
+        }
+    },&siri_context);
     amity::VolumeSequence volume_sequence;
+    uint32_t remote_generation=hub.activity_generation();
+    int remote_target=hub.activity_target();
+    auto sync_siri_activity=[&] {
+        const auto generation=hub.activity_generation();
+        const int target=hub.activity_target();
+        if(siri_context.activity_changed||generation!=remote_generation||target!=remote_target) {
+            siri_context.activity_changed=false;
+            siri_context.swipes.cancel();
+            siri.activity_changed(target>=0);
+            remote_generation=generation;remote_target=target;
+        }
+    };
     for(;;) {
-        if(input_lost.exchange(false)) {xQueueReset(input_queue);controller.cancel();}
+        if(input_lost.exchange(false)) {
+            xQueueReset(input_queue);controller.cancel();siri.cancel();siri_context.swipes.cancel();
+        }
+        sync_siri_activity();
         Input event{};
         if(xQueueReceive(input_queue,&event,pdMS_TO_TICKS(20))==pdTRUE) {
-            if(event.reset)controller.cancel();
-            else controller.input(event.page,event.usage,event.down,esp_timer_get_time());
+            sync_siri_activity();
+            const auto now=esp_timer_get_time();
+            switch(event.type) {
+            case InputType::Atomic:controller.input(event.page,event.usage,event.down,now);break;
+            case InputType::SiriButtons:
+                siri_context.generation=event.activity_generation;siri_context.target=event.activity_target;
+                siri_context.stale_report=event.activity_generation!=remote_generation||event.activity_target!=remote_target;
+                siri.buttons(event.data,event.size,event.timestamp,remote_target>=0);
+                // Retain the physical state of an old queued report, but mark
+                // its held buttons suppressed so a later report cannot replay
+                // a click that began before an activity change.
+                if(siri_context.stale_report)siri.activity_changed(remote_target>=0);
+                siri_context.stale_report=false;
+                break;
+            case InputType::SiriTouch:
+                siri_context.generation=event.activity_generation;siri_context.target=event.activity_target;
+                siri_context.stale_report=event.activity_generation!=remote_generation||event.activity_target!=remote_target;
+                siri.touches(event.data,event.size,remote_target>=0);
+                // Also quarantine a finger that began in an old queued report.
+                if(siri_context.stale_report)siri.activity_changed(remote_target>=0);
+                siri_context.stale_report=false;
+                break;
+            case InputType::Reset:
+                controller.cancel();siri.cancel();siri_context.swipes.cancel();break;
+            }
         }
+        // A reserved target changes before the hub publishes its snapshot.
+        // Suppress held keys and touches as soon as a remote transition is admitted.
+        sync_siri_activity();
         auto now=esp_timer_get_time();
+        siri_context.swipes.tick(now,hub.activity_generation(),[](uint8_t key,uint32_t generation) {
+            return hub.press_key_for_activity(key,generation);
+        });
         amity::VolumeAdjustment v;
         if(volume_sequence.idle()&&xQueueReceive(volume_queue,&v,0)==pdTRUE)volume_sequence.start(v);
         // A complete CEC press/release needs about 165 ms of clear bus time.
@@ -158,6 +261,7 @@ extern "C" void app_main() {
     refresh_admin_mdns();
     ESP_ERROR_CHECK(web_admin::start(hub,device_settings::hostname(),device_settings::initial_admin_auth()));
     ESP_ERROR_CHECK(xTaskCreate(input_task,"remote_input",8192,nullptr,4,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
+    ble_remote_set_siri_callback(remote_siri,nullptr);
     // esp_matter::start starts NimBLE asynchronously. Attach only once the host syncs.
     esp_err_t ble=ESP_ERR_INVALID_STATE;
     for(unsigned attempt=0;attempt<100&&ble==ESP_ERR_INVALID_STATE;++attempt) {ble=ble_remote_start(remote_key,nullptr);if(ble==ESP_ERR_INVALID_STATE)vTaskDelay(pdMS_TO_TICKS(100));}

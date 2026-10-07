@@ -25,6 +25,13 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -x c++ "$root/components/ble_remote/atomic_remote.c" "$root/tests/ble_controller_test.cpp" -o "$out/ble_controller_test"
 "$out/ble_controller_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+  -I"$root/components/ble_remote/include" "$root/components/ble_remote/siri_remote.cpp" \
+  "$root/tests/siri_remote_test.cpp" -o "$out/siri_remote_test"
+"$out/siri_remote_test"
+c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+  -I"$root/main" "$root/tests/swipe_sequence_test.cpp" -o "$out/swipe_sequence_test"
+"$out/swipe_sequence_test"
+c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/tests/pairing_policy_test.cpp" -o "$out/pairing_policy_test"
 "$out/pairing_policy_test"
 json="$root/managed_components/espressif__cjson/cJSON"

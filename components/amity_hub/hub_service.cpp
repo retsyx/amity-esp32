@@ -398,10 +398,11 @@ bool HubService::press_key(uint8_t key, bool repeat) {
     }
     return impl_->enqueue(command);
 }
-bool HubService::press_key_for_activity(uint8_t key, uint32_t activity_generation) {
-    auto *command = new (std::nothrow) Impl::Command{Impl::Kind::Key, key};
+bool HubService::press_key_for_activity(uint8_t key, uint32_t activity_generation, bool repeat) {
+    auto *command = new (std::nothrow) Impl::Command{Impl::Kind::Key, key, repeat};
     if (command) {
         command->key_generation = impl_->key_generation.load();
+        command->hold_generation = impl_->hold_generation.load();
         command->activity_bound = true;
         command->activity_generation = activity_generation;
     }

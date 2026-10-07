@@ -25,9 +25,10 @@ public:
     // repeat=true holds the key: each completed wire attempt permits the next
     // press, until release or an activity/configuration change cancels it.
     bool press_key(uint8_t key, bool repeat = false);
-    // The worker discards this complete press if the activity/configuration
-    // changed after the originating operation captured its generation.
-    bool press_key_for_activity(uint8_t key, uint32_t activity_generation);
+    // The worker discards this press if the activity/configuration changed
+    // after the originating operation captured its generation. repeat=true
+    // starts a held stream with the same cancellation policy as press_key().
+    bool press_key_for_activity(uint8_t key, uint32_t activity_generation, bool repeat = false);
     uint32_t activity_generation() const;
     bool release_key();
     bool standby();
