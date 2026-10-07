@@ -2,7 +2,23 @@
 
 Target: Seeed XIAO ESP32-S3, 8 MB flash and 8 MB octal PSRAM; installed ESP-IDF 6.1 / ESP-Matter commits in [SDK_VERSIONS.txt](SDK_VERSIONS.txt). Hardware fixture: Raspberry Pi `test2`, two isolated Linux CEC GPIO adapters and a BlueZ HID keyboard emulator.
 
-Current build: **0.1.46** with Siri Remote support, Matter software version 47, 1,862,224-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+Current build: **0.1.46** with Siri Remote support and button logging, Matter software version 47, 1,863,408-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+
+## Remote button logging
+
+The input task records named Siri and Atomic key presses/releases with the
+`remote_input` tag in the existing downloadable device log. Siri button masks
+and Atomic HID usages identify received input before gesture/activity
+suppression; repeated Siri held-state reports are deduplicated. Unknown Siri
+bits, invalid button report sizes, input loss and resets also have log entries.
+BLE descriptor, Atomic controller, Siri controller and swipe pacing sanitizer
+checks passed. The 1,863,408-byte firmware builds successfully and fits the OTA
+slot with 53% free. User-approved HTTPS OTA on 2026-10-07 installed the logging
+build on `amity-dut`. All thirteen deployment checks passed, including the live
+`Key press/release logging enabled` entry, Siri reconnection, saved configuration,
+remote bond, Matter/HomeKit pairings, password and TLS identity preservation.
+Evidence: `test-results/key-logging-build.log`, `key-logging-ble-tests.log`,
+`key-logging-image.json` and `key-logging-deployment.json` under `test-results/`.
 
 ## Siri Remote Gen 2/3 support
 

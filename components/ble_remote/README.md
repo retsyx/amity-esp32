@@ -88,6 +88,14 @@ pending navigation and gestures. Atomic's activity shortcuts and arrows remain
 unchanged. Both models use the existing Pair/Unpair Remote workflow and share
 the single saved peer; unpair the current remote before pairing another.
 
+Received Siri and Atomic button presses/releases are recorded at Info level
+with the `remote_input` tag in the device logs (Advanced → Download logs or
+`/api/logs`). Entries name the button, such as `Siri: Power pressed`, and include
+the Siri button mask or Atomic HID usage. Repeated Siri reports of held buttons
+do not add duplicate entries. Logging runs on the input task before gesture and
+activity suppression, so a received press is visible even when it takes no
+action. Disconnects and input queue overflow reset the logging state.
+
 Host tests exercise the descriptor parser independently of IDF:
 
 ```sh

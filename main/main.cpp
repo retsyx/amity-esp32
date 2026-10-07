@@ -110,6 +110,42 @@ void remote_battery_task(void *) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+void log_siri_buttons(const Input &input,uint16_t &previous) {
+    if(!input.size||input.size>4) {
+        ESP_LOGW("remote_input","Siri button report ignored: %u bytes",static_cast<unsigned>(input.size));
+        return;
+    }
+    const uint16_t buttons=input.data[0]|(input.size>1?static_cast<uint16_t>(input.data[1])<<8:0);
+    const uint16_t changed=buttons^previous;
+    constexpr const char *names[]={"Home","Volume Up","Volume Down","Select","Power","Siri",
+                                  "Back","Mute","Play/Pause","Up","Right","Down","Left"};
+    for(size_t i=0;i<sizeof(names)/sizeof(names[0]);++i) {
+        if(changed&(1u<<i))
+            ESP_LOGI("remote_input","Siri: %s %s (buttons=0x%04x)",names[i],
+                     buttons&(1u<<i)?"pressed":"released",static_cast<unsigned>(buttons));
+    }
+    if(changed&0xe000)
+        ESP_LOGI("remote_input","Siri: unknown button bits changed (buttons=0x%04x)",static_cast<unsigned>(buttons));
+    previous=buttons;
+}
+void log_atomic_key(const Input &input) {
+    atomic_action_t action{};
+    const char *name="Unknown";
+    if(atomic_remote_translate(input.page,input.usage,&action)) {
+        if(action.type==ATOMIC_ACTIVITY) {
+            ESP_LOGI("remote_input","Atomic: F%u %s",static_cast<unsigned>(action.value+1),input.down?"pressed":"released");
+            return;
+        }
+        switch(action.value) {
+        case 0x00:name="Select";break;case 0x01:name="Up";break;case 0x02:name="Down";break;
+        case 0x03:name="Left";break;case 0x04:name="Right";break;case 0x09:name="Home";break;
+        case 0x0d:name="Back";break;case 0x40:name="Power";break;case 0x41:name="Volume Up";break;
+        case 0x42:name="Volume Down";break;case 0x43:name="Mute";break;
+        }
+    }
+    ESP_LOGI("remote_input","Atomic: %s %s (page=0x%04x usage=0x%04x)",name,input.down?"pressed":"released",
+             static_cast<unsigned>(input.page),static_cast<unsigned>(input.usage));
+}
 void input_task(void *) {
     ble::AtomicController controller([](ble::AtomicCommand command,void *) {
         switch(command.type) {
@@ -157,6 +193,8 @@ void input_task(void *) {
     amity::VolumeSequence volume_sequence;
     uint32_t remote_generation=hub.activity_generation();
     int remote_target=hub.activity_target();
+    uint16_t siri_logged_buttons=0;
+    ESP_LOGI("remote_input","Key press/release logging enabled");
     auto sync_siri_activity=[&] {
         const auto generation=hub.activity_generation();
         const int target=hub.activity_target();
@@ -169,6 +207,8 @@ void input_task(void *) {
     };
     for(;;) {
         if(input_lost.exchange(false)) {
+            ESP_LOGW("remote_input","Input lost; pending input cancelled");
+            siri_logged_buttons=0;
             xQueueReset(input_queue);controller.cancel();siri.cancel();siri_context.swipes.cancel();
         }
         sync_siri_activity();
@@ -177,8 +217,12 @@ void input_task(void *) {
             sync_siri_activity();
             const auto now=esp_timer_get_time();
             switch(event.type) {
-            case InputType::Atomic:controller.input(event.page,event.usage,event.down,now);break;
+            case InputType::Atomic:
+                log_atomic_key(event);controller.input(event.page,event.usage,event.down,now);break;
             case InputType::SiriButtons:
+                // Log received physical transitions before activity/gesture suppression.
+                // Repeated full-state reports produce no duplicate entries.
+                log_siri_buttons(event,siri_logged_buttons);
                 siri_context.generation=event.activity_generation;siri_context.target=event.activity_target;
                 siri_context.stale_report=event.activity_generation!=remote_generation||event.activity_target!=remote_target;
                 siri.buttons(event.data,event.size,event.timestamp,remote_target>=0);
@@ -197,6 +241,8 @@ void input_task(void *) {
                 siri_context.stale_report=false;
                 break;
             case InputType::Reset:
+                ESP_LOGI("remote_input","Remote input reset");
+                siri_logged_buttons=0;
                 controller.cancel();siri.cancel();siri_context.swipes.cancel();break;
             }
         }
