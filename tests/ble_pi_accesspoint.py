@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026.
+# This file is part of Amity-esp32.
+# Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+# GNU General Public License as published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+
 """Temporary same-channel Pi AP, with an independent NetworkManager rollback.
 
 Default is read-only networking preflight plus project-local credential/state

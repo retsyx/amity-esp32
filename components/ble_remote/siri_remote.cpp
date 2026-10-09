@@ -1,6 +1,12 @@
+/*
+ * Copyright 2026.
+ * This file is part of Amity-esp32.
+ * Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU General Public License as published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ */
+
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from Python Amity's remote, adapter, gestures and hub implementations.
-// Its Apple report decoding derives from Yanndroid (https://github.com/Yanndroid).
 #include "siri_remote.hpp"
 #include <cmath>
 #include <cstring>

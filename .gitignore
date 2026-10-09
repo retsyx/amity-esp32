@@ -1,3 +1,7 @@
+# Work tools
+.codex
+.vscode
+
 # ESP-IDF and CMake build trees (including nested test projects).
 build*/
 cmake-build*/

@@ -23,7 +23,7 @@ ssh -M -S test-results/pi-serial-control -fnNT \
   -L 127.0.0.1:2222:localhost:22 \
   -o BatchMode=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile=test-results/pi-serial-known-hosts \
-  -o 'ProxyCommand=/Users/yuval/.espressif/python_env/idf6.1_py3.14_env/bin/python /Users/yuval/projects-other/amity-esp32/tests/pi_serial_proxy.py --timeout 1800' \
+  -o 'ProxyCommand=~/.espressif/python_env/idf6.1_py3.14_env/bin/python ~/projects-other/amity-esp32/tests/pi_serial_proxy.py --timeout 1800' \
   pi@pi-serial
 ```
 
