@@ -36,7 +36,7 @@ func TestInitialPassword(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	got := factoryRecord(20202021, 3840, 0xfff1, 0x8000, matterSalt, "living-room", 3, auth)
+	got := factoryRecord(20202021, 3840, 0xfff1, 0x8000, matterSalt, "living-room", auth)
 	if !bytes.Equal(got, want) {
 		t.Fatal("PBKDF2 or v3 record does not match independent Python fixture")
 	}
@@ -134,14 +134,6 @@ func TestInitialPassword(t *testing.T) {
 		}
 		if bytes.Contains(record, []byte(password)) || strings.Contains(out.String(), password+"\n") {
 			t.Fatal("plaintext leaked")
-		}
-	}
-	for _, version := range []int{1, 2} {
-		m, f := fixture()
-		m.Version = version
-		path := writeBundle(t, m, f, true, false)
-		if e := run([]string{"--password", "password", path}, io.Discard); e == nil {
-			t.Fatal("old firmware cannot use initial passwords")
 		}
 	}
 }

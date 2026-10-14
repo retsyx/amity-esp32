@@ -54,18 +54,12 @@ func run(args []string, out io.Writer) error {
 	if !validHostname(*hostname) {
 		return fmt.Errorf("hostname must be 1..32 letters, digits or hyphens, with no leading/trailing hyphen; omit .local")
 	}
-	if b.Version == 1 && *hostname != "amity" {
-		return fmt.Errorf("this firmware package does not support custom hostnames; use firmware 0.1.25 or newer")
-	}
 	passwordProvided := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "password" {
 			passwordProvided = true
 		}
 	})
-	if b.Version < 3 && (passwordProvided || *generatePassword || *prompt) {
-		return fmt.Errorf("initial passwords require firmware 0.1.26 or newer")
-	}
 	adminAuth, generatedPassword, e := preparePassword(*password, passwordProvided, *generatePassword, *prompt, out)
 	if e != nil {
 		return e
@@ -104,7 +98,7 @@ func run(args []string, out io.Writer) error {
 	}
 	var salt [32]byte
 	copy(salt[:], randomness[2:])
-	record := factoryRecord(pin, discriminator, b.Vendor, b.Product, salt, *hostname, b.Version, adminAuth)
+	record := factoryRecord(pin, discriminator, b.Vendor, b.Product, salt, *hostname, adminAuth)
 	factory := bytes.Repeat([]byte{0xff}, factorySize)
 	copy(factory, record)
 	copy(b.image[b.FactoryOffset:], factory)

@@ -17,17 +17,11 @@ esp_err_t read(const char *key, std::string &value) {
     esp_err_t e = nvs_open_from_partition("amity_cfg", "amity", NVS_READONLY, &handle);
     if (e != ESP_OK) return e;
     size_t size = 0;
-    bool legacy_string=false;
     e = nvs_get_blob(handle, key, nullptr, &size);
-    // Blob lookup first searches its blob-index item, so an existing legacy
-    // string can report NOT_FOUND as well as TYPE_MISMATCH.
-    if(e==ESP_ERR_NVS_TYPE_MISMATCH||e==ESP_ERR_NVS_NOT_FOUND) {
-        legacy_string=true;e=nvs_get_str(handle,key,nullptr,&size);
-    }
     if (e == ESP_OK && size <= 65536) {
         std::vector<char> data(size);
-        e = legacy_string?nvs_get_str(handle,key,data.data(),&size):nvs_get_blob(handle,key,data.data(),&size);
-        if(e==ESP_OK) {if(size)value.assign(data.data(),legacy_string?size-1:size);else value.clear();}
+        e = nvs_get_blob(handle, key, data.data(), &size);
+        if(e==ESP_OK) {if(size)value.assign(data.data(),size);else value.clear();}
     } else if (e == ESP_OK) e = ESP_ERR_INVALID_SIZE;
     nvs_close(handle);
     return e;

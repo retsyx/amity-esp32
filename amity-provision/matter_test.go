@@ -11,8 +11,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
-	"os"
 	"strings"
 	"testing"
 )
@@ -58,29 +56,6 @@ func TestPINs(t *testing.T) {
 		t.Fatal("random PINs are not varying")
 	}
 }
-func TestFactoryGolden(t *testing.T) {
-	var salt [32]byte
-	for i := range salt {
-		salt[i] = byte(i)
-	}
-	got := factoryRecord(20202021, 3840, 0xfff1, 0x8000, salt, "amity", 1, "")
-	raw, e := os.ReadFile("testdata/factory-v1.hex")
-	if e != nil {
-		t.Fatal(e)
-	}
-	want, e := hex.DecodeString(strings.TrimSpace(string(raw)))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatal("firmware/tool record format changed")
-	}
-	sum := sha256.Sum256(got[:64])
-	if !bytes.Equal(sum[:], got[64:]) {
-		t.Fatal("bad digest")
-	}
-}
-
 func TestHostnameRecord(t *testing.T) {
 	for _, name := range []string{"amity", "living-room", "a", "1", strings.Repeat("a", 32)} {
 		if !validHostname(name) {
@@ -96,20 +71,12 @@ func TestHostnameRecord(t *testing.T) {
 	for i := range salt {
 		salt[i] = byte(i)
 	}
-	got := factoryRecord(20202021, 3840, 0xfff1, 0x8000, salt, "living-room", 2, "")
-	raw, e := os.ReadFile("testdata/factory-v2.hex")
-	if e != nil {
-		t.Fatal(e)
+	got := factoryRecord(20202021, 3840, 0xfff1, 0x8000, salt, "living-room", "")
+	if len(got) != recordSize || string(bytes.TrimRight(got[64:128], "\x00")) != "living-room" {
+		t.Fatal("hostname not persisted")
 	}
-	want, e := hex.DecodeString(strings.TrimSpace(string(raw)))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatal("v2 record mismatch")
-	}
-	sum := sha256.Sum256(got[:128])
-	if !bytes.Equal(sum[:], got[128:]) {
+	sum := sha256.Sum256(got[:recordSize-32])
+	if !bytes.Equal(sum[:], got[recordSize-32:]) {
 		t.Fatal("hostname is not covered by checksum")
 	}
 }

@@ -83,10 +83,6 @@ OTA updates and Matter factory reset. It sets the DHCP hostname, mDNS alias and
 newly generated TLS certificate's name; existing TLS identities are retained.
 Choose distinct names for devices on the same network.
 
-Custom hostnames require firmware 0.1.25 or newer and the matching version-2
-package. Older version-1 packages can still be provisioned with the default
-`amity` name; a custom name is rejected for those packages.
-
 An initial **admin password** is optional. Choose exactly one method:
 
 ```sh
@@ -106,8 +102,7 @@ Only a salted PBKDF2-HMAC-SHA256 hash is embedded in the firmware image.
 Only auto-generated passwords appear in the setup-card PNG, pairing text and
 `amity-admin-password.txt`. User-supplied and securely prompted passwords are
 never included in these outputs; terminal output does not echo passwords. Auto-generated passwords contain
-192 bits of randomness. Password options require firmware 0.1.26 or newer and a
-version-3 package. With no password option, first access shows password onboarding.
+192 bits of randomness. With no password option, first access shows password onboarding.
 The admin password is separate from the Matter setup PIN.
 
 In **Advanced**, the user can change the hostname or password. Factory reset asks
@@ -154,12 +149,13 @@ idf.py build provisioning-package
 
 This creates `build/amity-firmware.zip`, containing bootloader, partition table,
 initial OTA data, application and a versioned SHA-256 manifest. The provisioner
-validates the target, image bounds, checksums and exact partition layout.
+accepts only version-3 packages and validates the target, image bounds, checksums
+and exact partition layout.
 Checksums detect corruption; obtain both downloads from a trusted release source.
 
 Run `sh tests/provisioning_test.sh` from the repository root for Go tests and the sanitized
-C++ firmware parser tests. Both implementations share independently encoded Python fixtures at
-`testdata/factory-v1.hex`, `testdata/factory-v2.hex` and `testdata/factory-v3.hex`.
+C++ firmware parser tests. Both implementations share an independently encoded Python fixture at
+`testdata/factory-v3.hex`.
 The reset suite simulates interrupted writes throughout the reset procedure.
 
 ## Firmware contract
@@ -187,16 +183,13 @@ is erased (`0xff`):
 | 226 | 30 | Reserved, zero |
 | 256 | 32 | SHA-256 of bytes 0–255 |
 
-The firmware also accepts version 1 (96 bytes, checksum at 64, hostname `amity`)
-and version 2 (160 bytes, checksum at 128, provisioned hostname). Both older
-formats have no initial password. The tool writes the record version required
-by each package and rejects unsupported options for older packages. Password
-hashes match the existing firmware format: PBKDF2-HMAC-SHA256, 10,000 iterations,
-32-byte digest, with the ASCII hex salt as the KDF salt.
+The firmware and tool support only this record format. Password hashes use
+PBKDF2-HMAC-SHA256, 10,000 iterations, a 32-byte digest and the ASCII hex salt
+as the KDF salt.
 
 Firmware validates the complete record before registering its commissionable
 data provider. An invalid record stops Matter startup rather than silently
-changing the code. If the partition is absent or erased, existing installations
-can still use their legacy `amity_matter/commissioning` NVS record. New devices
-require provisioning; the firmware no longer invents a code at first boot.
+changing the code. Devices require valid factory provisioning data; an absent
+or erased partition stops Matter startup. The firmware does not invent a code
+at first boot.
 The factory partition is outside both OTA slots and normal NVS reset storage.

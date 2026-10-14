@@ -15,8 +15,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlsplit
 from pathlib import Path
-import re
 from playwright.sync_api import sync_playwright, expect
+
+from cec_web_activity import read_password
 
 
 def remote_fixture(output):
@@ -152,18 +153,15 @@ def main():
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument('--url')
     target.add_argument('--remote-fixture', action='store_true', help='Test remote UI locally without a device')
-    credentials = parser.add_mutually_exclusive_group()
-    credentials.add_argument('--boot-log', type=Path, help='Legacy firmware console credential')
-    credentials.add_argument('--credentials', type=Path, help='Private JSON with admin_password')
+    parser.add_argument('--credentials', type=Path, help='Private JSON with admin_password')
     parser.add_argument('--output', type=Path, default=Path('test-results/web-browser.json'))
     args = parser.parse_args()
     if args.remote_fixture:
         remote_fixture(args.output)
         return
-    if not args.credentials and not args.boot_log:
-        parser.error('--url requires --credentials or --boot-log')
-    password = (json.loads(args.credentials.read_text())['admin_password'] if args.credentials else
-                re.search(r'AMITY INITIAL ADMIN PASSWORD: (\S+)', args.boot_log.read_text()).group(1))
+    if not args.credentials:
+        parser.error('--url requires --credentials')
+    password = read_password(args.credentials)
     checks = []
 
     def passed(name, condition=True):

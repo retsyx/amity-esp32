@@ -2,7 +2,7 @@
 
 Loads and validates immutable provisioning records, then applies the separately
 stored runtime hostname and front CEC physical address overrides. The host-testable
-record parser accepts versions 1–3; version 3 adds the initial admin password hash. Matter consumes the loaded
+record parser accepts only version 3, including the optional initial admin password hash. Matter consumes the loaded
 commissioning values; the web server seeds its password only if none is saved.
 
 Hostname changes write `amity_cfg/amity/hostname` and apply on reboot. They never
@@ -14,12 +14,11 @@ use four dotted hexadecimal digits and must form a valid CEC topology. This sett
 is excluded from activity backup/restore and returns to its default on factory reset.
 
 Factory reset writes a durable marker in `amity_cfg/amity_reset`, then reboots.
-Before starting network or application tasks, the boot path snapshots any legacy
-Matter commissioning blob into that journal, commits stage 2, erases normal NVS,
-restores the legacy blob, and clears the `amity` application namespace. It removes
-the stage marker last. The legacy snapshot is deliberately retained so power loss
-during cleanup cannot destroy the original pairing code. No mutable task can
-repopulate erased storage during the reset. Repeated stage 2 execution is safe.
+Before starting network or application tasks, the boot path erases normal NVS
+and clears the `amity` application namespace. It removes the pending marker last,
+so power loss safely repeats all erases. No mutable task can repopulate erased
+storage during the reset. Commissioning credentials remain in the untouched
+factory partition, preserving the original setup PIN/QR credentials.
 The immutable factory partition, keys partition and OTA firmware slots are retained.
 
 The optional FW_RESET GPIO adapter starts after settings initialization and before
@@ -47,6 +46,6 @@ Keep it held through restart to verify no second reset occurs. These electrical
 and end-to-end checks have not been performed on the current buttonless devices.
 
 `tests/factory_reset_test.cpp` injects power loss at each persistence operation,
-including partial namespace/partition erases, and verifies recovery for devices
-with and without legacy credentials. The public reset API also requires a logged-in
+including partial namespace/partition erases, and verifies recovery while retaining
+factory data, NVS keys and both firmware slots. The public reset API also requires a logged-in
 session and an explicit boolean confirmation; the UI displays a confirmation prompt.

@@ -90,13 +90,19 @@ func loadBundle(path string) (*bundle, error) {
 	if e = dec.Decode(new(any)); e != io.EOF {
 		return nil, fmt.Errorf("trailing manifest data")
 	}
-	if m.Format != "amity-firmware" || (m.Version < 1 || m.Version > 3) || m.Chip != "esp32s3" || m.FlashSize != 0x800000 || m.FactoryOffset != 0xf000 || m.FactorySize != factorySize || m.FirmwareVersion == "" || m.Vendor == 0 || m.Vendor == 0xffff {
+	if m.Format != "amity-firmware" || m.Version != 3 || m.Chip != "esp32s3" || m.FlashSize != 0x800000 || m.FactoryOffset != 0xf000 || m.FactorySize != factorySize || m.FirmwareVersion == "" || m.Vendor == 0 || m.Vendor == 0xffff {
 		return nil, fmt.Errorf("unsupported firmware package or flash layout")
 	}
 	expected := map[string]int{"bootloader.bin": 0, "partition-table.bin": 0xc000, "ota-data.bin": 0x21000, "amity.bin": 0x40000}
 	limits := map[string]int{"bootloader.bin": 0xc000, "partition-table.bin": 0x1000, "ota-data.bin": 0x2000, "amity.bin": 0x3d0000}
-	if len(m.Images) != len(expected) || len(files) != len(expected)+1 {
+	if len(m.Images) != len(expected) {
 		return nil, fmt.Errorf("unexpected package contents")
+	}
+	notices := map[string]bool{"notices/LICENSE": true, "notices/THIRD_PARTY.md": true, "notices/LICENSES.txt": true}
+	for name := range files {
+		if _, ok := expected[name]; !ok && name != "manifest.json" && !notices[name] {
+			return nil, fmt.Errorf("unexpected package entry: %s", name)
+		}
 	}
 	image := bytes.Repeat([]byte{0xff}, m.FlashSize)
 	seen := map[string]bool{}

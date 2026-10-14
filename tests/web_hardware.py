@@ -9,7 +9,6 @@
 import argparse
 import json
 from pathlib import Path
-import re
 import socket
 import ssl
 import time
@@ -17,17 +16,19 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from cec_web_activity import read_password
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', required=True)
-    parser.add_argument('--boot-log', type=Path, required=True)
+    parser.add_argument('--credentials', type=Path, required=True, help='Private JSON with admin_password')
     parser.add_argument('--firmware', type=Path, help='Also install this image and verify config survives OTA')
     parser.add_argument('--expect-version', help='Expected running application version after OTA')
     parser.add_argument('--timeout', type=float, default=90, help='HTTP timeout; allow more time for a serial test tunnel')
     parser.add_argument('--output', type=Path, default=Path('test-results/web-hardware.json'))
     args = parser.parse_args()
-    password = re.search(r'AMITY INITIAL ADMIN PASSWORD: ([0-9a-f]+)', args.boot_log.read_text()).group(1)
+    password = read_password(args.credentials)
     token = ''
     context = ssl._create_unverified_context()  # Dedicated fixture has a freshly generated self-signed certificate.
     checks = []

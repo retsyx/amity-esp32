@@ -142,15 +142,18 @@ Relative volume adjustments are paced to the CEC bus. Changing activity, enterin
 ## Persistence and upgrades
 
 `partitions.csv` reserves a 4 KB `amity_factory` partition for commissioning
-credentials supplied by the provisioning tool. Existing installations retain
-their legacy NVS credentials when upgraded through the admin UI; the partition
-table does not need to be changed for those devices.
+credentials supplied by the provisioning tool. Firmware requires the current
+version-3 factory record and provisioning package. Before Amity 1.0, backward
+compatibility with earlier Amity releases, storage formats and provisioning
+packages is not maintained. Devices with older factory records or NVS-only
+commissioning credentials must be reprovisioned using the current package.
+Factory reset retains this partition and the original setup PIN/QR credentials.
 
 `partitions.csv` allocates two 3.8125 MiB application slots and a dedicated `amity_cfg` NVS partition. Config, password hash, and TLS identity live there. Wi-Fi credentials, keyboard bonds, and Matter fabric data remain in the normal NVS partition. Initialization never erases a partition automatically to hide an error.
 
 Upload `build/amity.bin` through Advanced → Update Firmware. The uploader validates application identity, chip, size, and the complete ESP image; streams into the inactive slot; and changes the boot selection only after successful validation. Power loss during upload leaves the current application bootable. The bootloader rolls back an unconfirmed image. A new image is confirmed only after configuration, CEC, Matter, BLE, HTTPS, and any saved HomeKit initialization succeed. Never erase the whole flash or change partition offsets for an ordinary upgrade.
 
-The updater shows upload progress, then keeps login hidden while Amity restarts and reconnects. It confirms a new boot with the requested firmware version after startup succeeds, reloads HTML/JavaScript/CSS from the device, and shows “Firmware update complete” with the installed version on the refreshed login page. Reloading during restart resumes the wait; a two-minute timeout offers a reconnection retry, and rollback reports the actual running version. The public `/api/setup` response includes only onboarding state, hostname, firmware version, a per-boot ID and readiness for this check. Older releases without boot-health metadata offer login to verify the version instead of claiming completion. The updated updater is available after installing 0.1.41 and reloading the admin page.
+The updater shows upload progress, then keeps login hidden while Amity restarts and reconnects. It confirms a new boot with the requested firmware version after startup succeeds, reloads HTML/JavaScript/CSS from the device, and shows “Firmware update complete” with the installed version on the refreshed login page. Reloading during restart resumes the wait; a two-minute timeout offers a reconnection retry, and rollback reports the actual running version. The public `/api/setup` response includes only onboarding state, hostname, firmware version, a per-boot ID and readiness for this check. Updates require this boot-health metadata to verify completion.
 
 The browser reads the version embedded in the selected binary before uploading. Older versions require an explicit warning confirmation: downgrades are unsupported and at the user's own risk. Versions use semantic-version ordering (including prereleases; build metadata does not affect order). Unrecognized versions also require risk confirmation. The device independently checks the version before erasing flash; raw API clients must send `X-Amity-Confirm-Version: <currently running version>` to explicitly approve a downgrade or an unrecognized version. The request body remains the original `.bin` file. This confirmation does not override image validation or make older firmware compatible with newer saved data.
 

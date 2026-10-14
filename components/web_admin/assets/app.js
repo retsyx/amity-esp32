@@ -440,6 +440,7 @@ async function firmwareVersion(file){
  return new TextDecoder().decode(field.slice(0,end));
 }
 function saveFirmwareUpdate(){sessionStorage.setItem(firmwareUpdateKey,JSON.stringify(firmwareUpdateRecord));}
+function validFirmwareHealth(health){return !!health&&typeof health.boot_id==='string'&&health.boot_id.length>0&&typeof health.version==='string'&&health.version.length>0&&typeof health.ready==='boolean';}
 function showFirmwareUpdate(record,text){
  firmwareUpdating=true;firmwareUpdateRecord=record;saveFirmwareUpdate();message('');
  $('admin').hidden=true;$('login').hidden=true;$('onboarding').hidden=true;$('logout').hidden=true;$('connection').textContent='';
@@ -462,26 +463,17 @@ async function waitForFirmware(){
    try{
     const response=await fetch('/api/setup',{cache:'no-store',signal:abort.signal});
     if(!response.ok)throw Error('Not ready');
-    const health=await response.json();lastHealth=health;
-    const legacy=health.boot_id===undefined&&health.ready===undefined;
-    const restarted=record.previousBootId?legacy||(health.boot_id&&health.boot_id!==record.previousBootId):
-     record.sawDisconnect||(typeof health.version==='string'&&health.version!==record.originalVersion);
-    if(restarted){
-     if(health.ready===true&&typeof health.version==='string'){
+    const health=await response.json();if(!validFirmwareHealth(health))throw Error('Invalid boot status');lastHealth=health;
+    if(health.boot_id!==record.previousBootId){
+     if(health.ready){
       if(health.version===record.version)return finishFirmwareUpdate(`Firmware update complete. Amity is running version ${health.version}. Please log in.`);
       firmwareWaitMessage(`Update did not complete. Amity is running version ${health.version} instead of ${record.version}.`);
-      $('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;
-     }
-     // Older releases lack boot-health metadata. Do not claim a verified update.
-     if(legacy&&(record.previousBootId||record.sawDisconnect)){
-      firmwareWaitMessage('Amity is back online. Log in to verify the firmware version.');
       $('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;
      }
      firmwareWaitMessage('Amity is starting. Waiting for it to be ready…');
     }
    }catch{
     lastHealth=null;
-    record.sawDisconnect=true;saveFirmwareUpdate();
     firmwareWaitMessage('Waiting for Amity to reconnect… Keep this page open.');
    }finally{clearTimeout(timeout);}
    await new Promise(resolve=>setTimeout(resolve,2000));
@@ -507,7 +499,8 @@ $('firmware').addEventListener('change',run(async e=>{
    `Install firmware ${version} and restart Amity? Current version: ${current}.`;
   if(!confirm(warning))return;
   const health=await request('setup');
-  const record={version,originalVersion:current,previousBootId:health.boot_id||'',startedAt:Date.now(),phase:'uploading'};
+  if(!validFirmwareHealth(health))throw Error('Could not read Amity’s boot status. Reload and try again.');
+  const record={version,previousBootId:health.boot_id,startedAt:Date.now(),phase:'uploading'};
   showFirmwareUpdate(record,'Uploading firmware… Keep Amity powered on.');progress.value=0;
   const result=await new Promise((resolve,reject)=>{
    const xhr=new XMLHttpRequest();xhr.open('POST','/api/firmware');xhr.setRequestHeader('Authorization','Bearer '+token);xhr.setRequestHeader('Content-Type','application/octet-stream');
@@ -553,7 +546,7 @@ window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.return
 setInterval(()=>{if(token)refresh().catch(reportError);},4000);
 async function initialize(){
  let pending;try{pending=JSON.parse(sessionStorage.getItem(firmwareUpdateKey));}catch{sessionStorage.removeItem(firmwareUpdateKey);}
- if(pending&&typeof pending.version==='string'&&Number.isFinite(pending.startedAt)){
+ if(pending&&typeof pending.version==='string'&&typeof pending.previousBootId==='string'&&pending.previousBootId.length>0&&Number.isFinite(pending.startedAt)){
   if(pending.phase==='uploading')pending.uncertain=true;
   showFirmwareUpdate(pending,'Waiting for the firmware update…');await waitForFirmware();return;
  }

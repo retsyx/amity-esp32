@@ -52,42 +52,49 @@ esp_err_t nvs_flash_deinit(){step();if(!initialized)return ESP_ERR_NVS_NOT_INITI
 esp_err_t nvs_flash_erase(){step();for(auto &[key,space]:store)if(key.rfind("nvs/",0)==0)while(!space.empty()){step();space.erase(space.begin());}return ESP_OK;}
 int main(){
     unsigned interruptions=0;
-    for(bool legacy:{false,true}) {
-        store={{"nvs/wifi",{{"ssid",{1,2}},{"password",{3,4}}}},
-               {"nvs/chip-config",{{"fabric",{7}}}},{"nvs/nimble",{{"bond",{8}}}},
-               {"amity_cfg/amity",{{"front_physical",{5}},{"hostname",{1}},{"admin_auth",{2}},{"tls_cert",{3}},{"config",{4}}}},
-               {"amity_factory/raw",{{"provisioning",{4,5,6}}}},
-               {"amity_cfg/amity_reset",{{"legacy",{9,9}}}}};
-        Bytes original(44,0x42);
-        if(legacy)store["nvs/amity_matter"]["commissioning"]=original;
-        // Failed persistence must release the guard and allow another attempt.
-        commit_error=ESP_ERR_INVALID_STATE;check_concurrent_request=true;
-        assert(device_settings::schedule_factory_reset()==ESP_ERR_INVALID_STATE);
-        assert(!device_settings::reset_pending());
-        commit_error=ESP_OK;
-        assert(device_settings::schedule_factory_reset()==ESP_OK);
-        check_concurrent_request=false;
-        assert(device_settings::reset_pending());
-        assert(device_settings::schedule_factory_reset()==ESP_ERR_INVALID_STATE);
-        auto baseline=store;
-        auto verify=[&]{
-            for(const auto &[key,space]:store)if(key.rfind("nvs/",0)==0&&key!="nvs/amity_matter")assert(space.empty());
-            assert(store["amity_cfg/amity"].empty());
-            assert(!store["amity_cfg/amity_reset"].count("stage"));
-            if(legacy)assert(store["nvs/amity_matter"]["commissioning"]==original);
-            else assert(store["nvs/amity_matter"].empty());
-            assert((store["amity_factory/raw"]["provisioning"]==Bytes{4,5,6}));
-        };
-        steps=0;assert(device_settings::finish_factory_reset()==ESP_OK);verify();const int total=steps;
-        assert(!device_settings::reset_pending());
-        for(int i=1;i<=total;++i){
-            store=baseline;handles.clear();initialized=false;steps=0;cut=i;
-            try{device_settings::finish_factory_reset();}catch(const std::runtime_error &){++interruptions;}
-            // Reboot with persisted flash and no open NVS handles or network tasks.
-            handles.clear();initialized=false;cut=0;
-            assert(device_settings::finish_factory_reset()==ESP_OK);verify();
-            assert(device_settings::finish_factory_reset()==ESP_OK);verify();
-        }
+    store={{"nvs/wifi",{{"ssid",{1,2}},{"password",{3,4}}}},
+           {"nvs/chip-config",{{"fabric",{7}}}},{"nvs/nimble",{{"bond",{8}}}},
+           {"nvs/amity_matter",{{"commissioning",Bytes(44,0x42)}}},
+           {"amity_cfg/amity",{{"front_physical",{5}},{"hostname",{1}},{"admin_auth",{2}},{"tls_cert",{3}},{"config",{4}}}},
+           {"amity_factory/raw",{{"provisioning",{4,5,6}}}},
+           {"nvs_keys/raw",{{"key",{10,11}}}},
+           {"ota_0/raw",{{"firmware",{12,13}}}},
+           {"ota_1/raw",{{"firmware",{14,15}}}}};
+    // Normal boots never erase mutable storage without a reset marker.
+    const auto untouched=store;
+    assert(device_settings::finish_factory_reset()==ESP_OK);
+    assert(store==untouched);
+    store["amity_cfg/amity_reset"]["pending"]={2};
+    const auto invalid_marker=store;
+    assert(device_settings::finish_factory_reset()==ESP_ERR_INVALID_STATE);
+    assert(store==invalid_marker);
+    store.erase("amity_cfg/amity_reset");
+    // Failed persistence must release the guard and allow another attempt.
+    commit_error=ESP_ERR_INVALID_STATE;check_concurrent_request=true;
+    assert(device_settings::schedule_factory_reset()==ESP_ERR_INVALID_STATE);
+    assert(!device_settings::reset_pending());
+    commit_error=ESP_OK;
+    assert(device_settings::schedule_factory_reset()==ESP_OK);
+    check_concurrent_request=false;
+    assert(device_settings::reset_pending());
+    assert(device_settings::schedule_factory_reset()==ESP_ERR_INVALID_STATE);
+    auto baseline=store;
+    auto verify=[&]{
+        for(const auto &[key,space]:store)if(key.rfind("nvs/",0)==0)assert(space.empty());
+        assert(store["amity_cfg/amity"].empty());
+        assert(store["amity_cfg/amity_reset"].empty());
+        for(const auto &key:{"amity_factory/raw","nvs_keys/raw","ota_0/raw","ota_1/raw"})
+            assert(store.at(key)==untouched.at(key));
+    };
+    steps=0;assert(device_settings::finish_factory_reset()==ESP_OK);verify();const int total=steps;
+    assert(!device_settings::reset_pending());
+    for(int i=1;i<=total;++i){
+        store=baseline;handles.clear();initialized=false;steps=0;cut=i;
+        try{device_settings::finish_factory_reset();}catch(const std::runtime_error &){++interruptions;}
+        // Reboot with persisted flash and no open NVS handles or network tasks.
+        handles.clear();initialized=false;cut=0;
+        assert(device_settings::finish_factory_reset()==ESP_OK);verify();
+        assert(device_settings::finish_factory_reset()==ESP_OK);verify();
     }
-    std::cout<<"PASS factory reset resumes after "<<interruptions<<" simulated power interruptions; legacy codes and factory data retained\n";
+    std::cout<<"PASS factory reset resumes after "<<interruptions<<" simulated power interruptions; factory data, NVS keys and firmware retained\n";
 }

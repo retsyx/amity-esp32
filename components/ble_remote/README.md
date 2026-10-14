@@ -138,10 +138,10 @@ the radio tests can be run against the authorized fixture:
 
 ```sh
 python3 tests/ble_hardware.py --url https://DEVICE_ADDRESS \
-  --boot-log test-results/boot-config-fix.log --key-tests --reboot
+  --credentials PRIVATE_JSON --key-tests --reboot
 ```
 
-The test reads credentials from the private boot log and records no passwords
+The test reads `admin_password` from the private JSON file and records no passwords
 or session tokens. It checks scan/pair, battery, keyboard and consumer
 subscriptions, all eight activity gestures, power, and bond restoration after
 reboot. CEC bus captures are needed separately to confirm the timing and target

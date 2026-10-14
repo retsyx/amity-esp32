@@ -39,7 +39,7 @@ esp_err_t init() {
         if (err != ESP_OK) return err;
         size_t length = 0;
         if (psa_crypto_init() != PSA_SUCCESS ||
-            psa_hash_compute(PSA_ALG_SHA_256, record, amity::factory_digest_offset(record, sizeof(record)),
+            psa_hash_compute(PSA_ALG_SHA_256, record, amity::factory_record_digest_offset,
                              digest, sizeof(digest), &length) != PSA_SUCCESS || length != sizeof(digest)) return ESP_FAIL;
         auto result = amity::parse_factory_record(record, sizeof(record), digest,
             CONFIG_DEVICE_VENDOR_ID, CONFIG_DEVICE_PRODUCT_ID, provisioned);

@@ -36,7 +36,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     Thread(target=server.serve_forever, daemon=True).start()
     fixture = {'current': '0.1.27', 'boot': 'boot-1', 'uploads': [], 'fail': False,
-               'stage': 'ready', 'auto_restart': True, 'target': None, 'upload_abort': False, 'legacy': False}
+               'stage': 'ready', 'auto_restart': True, 'target': None, 'upload_abort': False, 'missing_health': False}
     checks = []
     try:
         with sync_playwright() as p:
@@ -51,7 +51,7 @@ def main():
                 if path == 'setup':
                     if fixture['stage'] == 'offline':
                         return route.abort('connectionrefused')
-                    if fixture['legacy']:
+                    if fixture['missing_health']:
                         return route.fulfill(json={'required': False, 'hostname': 'amity-dut'})
                     return route.fulfill(json={'required': False, 'hostname': 'amity-dut',
                         'version': fixture['current'], 'boot_id': fixture['boot'],
@@ -208,14 +208,32 @@ def main():
             checks.append('reconnection timeout explains failure and retry can confirm eventual success')
             enter()
             select('0.1.42', True, 'Downgrading is not supported', wait=False)
-            fixture.update(legacy=True, current='0.1.42')
-            expect(page.locator('#firmwareUpdateStatus')).to_have_text('Amity is back online. Log in to verify the firmware version.')
-            expect(page.locator('#uploadProgress')).to_be_hidden()
-            expect(page.locator('#firmwareUpdateLogin')).to_be_visible()
+            fixture.update(missing_health=True, current='0.1.42')
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Waiting for Amity to reconnect')
+            expect(page.locator('#uploadProgress')).to_be_visible()
+            expect(page.locator('#firmwareUpdateLogin')).to_be_hidden()
             expect(page.locator('#login')).to_be_hidden()
-            page.locator('#firmwareUpdateLogin').click()
+            page.evaluate("firmwareUpdateRecord.startedAt = Date.now() - 121000")
+            expect(page.locator('#retryFirmwareWait')).to_be_visible()
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Could not confirm the update')
+            expect(page.locator('#firmwareUpdateLogin')).to_be_hidden()
+            checks.append('responses without boot health metadata cannot confirm restart or offer login')
+            fixture.update(missing_health=False, boot='healthy-after-missing-metadata')
+            page.locator('#retryFirmwareWait').click()
+            expect(page.locator('#message')).to_contain_text('Firmware update complete')
             expect(page.locator('#login')).to_be_visible()
-            checks.append('older firmware without health metadata offers login without a false completion claim')
+
+            enter()
+            fixture['missing_health'] = True
+            before = len(fixture['uploads'])
+            page.once('dialog', lambda d: d.accept())
+            page.locator('#firmware').set_input_files(
+                {'name': 'amity.bin', 'mimeType': 'application/octet-stream', 'buffer': image('0.1.43')})
+            expect(page.locator('#message')).to_have_text('Could not read Amity’s boot status. Reload and try again.')
+            expect(page.locator('#firmware')).to_be_enabled()
+            expect(page.locator('#firmware')).to_have_value('')
+            assert len(fixture['uploads']) == before
+            checks.append('missing initial boot health metadata blocks upload before firmware changes')
             assert not errors, errors
             browser.close()
     finally:

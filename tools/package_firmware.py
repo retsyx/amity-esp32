@@ -38,7 +38,7 @@ def package(build, output):
         data = (build / source).read_bytes()
         images[name] = data
         manifest['images'].append(dict(path=name, offset=offset, sha256=hashlib.sha256(data).hexdigest()))
-    # Ensure this build actually contains the provisioning partition, not an older table.
+    # Ensure this build contains the required provisioning partition.
     table = images['partition-table.bin']
     import struct
     entries = [struct.unpack('<HBBII16sI', table[i:i+32]) for i in range(0, len(table)-31, 32)]

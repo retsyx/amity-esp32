@@ -139,6 +139,9 @@ func TestBundleRejections(t *testing.T) {
 }
 func TestProvision(t *testing.T) {
 	m, f := fixture()
+	for _, name := range []string{"LICENSE", "THIRD_PARTY.md", "LICENSES.txt"} {
+		f["notices/"+name] = []byte("license notice")
+	}
 	path := writeBundle(t, m, f, true, false)
 	dir := filepath.Join(t.TempDir(), "device")
 	if e := run([]string{"--out", dir, "--passcode", "20202021", "--discriminator", "3840", path}, io.Discard); e != nil {
@@ -230,21 +233,19 @@ func TestHostnameCLI(t *testing.T) {
 			t.Fatal("invalid hostname wrote output")
 		}
 	}
-	m, f = fixture()
-	m.Version = 1
-	path = writeBundle(t, m, f, true, false)
-	if e := run([]string{"--out", filepath.Join(t.TempDir(), "old"), "--hostname", "room", path}, io.Discard); e == nil {
-		t.Fatal("custom hostname accepted for old firmware")
-	}
-	dir := filepath.Join(t.TempDir(), "legacy")
-	if e := run([]string{"--out", dir, path}, io.Discard); e != nil {
-		t.Fatal(e)
-	}
-	b, e := os.ReadFile(filepath.Join(dir, "amity-factory.bin"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if binary.LittleEndian.Uint16(b[8:]) != 1 {
-		t.Fatal("old firmware needs v1 record")
+}
+
+func TestUnsupportedPackageVersions(t *testing.T) {
+	for _, version := range []int{0, 1, 2, 4} {
+		m, f := fixture()
+		m.Version = version
+		path := writeBundle(t, m, f, true, false)
+		dir := filepath.Join(t.TempDir(), "unsupported")
+		if e := run([]string{"--out", dir, path}, io.Discard); e == nil {
+			t.Fatal("accepted unsupported firmware package version", version)
+		}
+		if _, e := os.Stat(dir); !os.IsNotExist(e) {
+			t.Fatal("unsupported firmware package wrote output")
+		}
 	}
 }

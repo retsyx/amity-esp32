@@ -9,6 +9,10 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out="$root/test-results/host"
 mkdir -p "$out"
+c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+  -I"$root/tests/config_store_fakes" -I"$root/tests/reset_fakes" -I"$root/components/config_store/include" \
+  "$root/components/config_store/config_store.cpp" "$root/tests/config_store_test.cpp" -o "$out/config_store_test"
+"$out/config_store_test"
 sh "$root/tests/cec_hub_test.sh"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/tests/reset_fakes" -I"$root/components/device_settings/include" \

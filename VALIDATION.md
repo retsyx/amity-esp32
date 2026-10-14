@@ -2,7 +2,56 @@
 
 Target: Seeed XIAO ESP32-S3, 8 MB flash and 8 MB octal PSRAM; installed ESP-IDF 6.1 / ESP-Matter commits in [SDK_VERSIONS.txt](SDK_VERSIONS.txt). Hardware fixture: Raspberry Pi `test2`, two isolated Linux CEC GPIO adapters and a BlueZ HID keyboard emulator.
 
-Current build: **0.1.47** with Siri Remote support, button logging and an Active activity badge, Matter software version 48, 1,864,112-byte application, installed on `amity-dut` through HTTPS OTA. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+Latest hardware-validated build: **0.1.49** with prior-Amity compatibility removed, Matter software version 50, 1,865,152-byte application, installed on both `amity-dut` and `amity-test` through USB. Each OTA slot is 3.8125 MiB. Previous firmware has been installed through the actual HTTPS OTA endpoint, including version upgrades 0.1.3 → 0.1.4 → 0.1.5 → 0.1.6. Version 0.1.7 was installed over USB while preserving NVS; 0.1.8 through 0.1.23 were installed through HTTPS OTA and retain the user-set password and saved device state.
+
+## Removal of pre-1.0 compatibility in 0.1.49
+
+Firmware and provisioning now require version-3 factory records and firmware
+packages. Removed the NVS-only Matter commissioning fallback, factory-reset
+credential snapshot/restore, older factory layouts and package emission, string
+configuration storage fallback, OTA verification without boot-health metadata,
+and test-runner admin-password extraction from obsolete console logs. Current
+factory provisioning, PIN/QR retention through reset, blob storage, and verified
+OTA completion remain supported. The README records that backward compatibility
+with prior Amity releases is not maintained before 1.0. Devices with older
+provisioning records require reprovisioning using the current package.
+
+All sanitized host tests, Go tests/vet and factory parser checks passed. Factory
+reset recovered after 21 simulated power interruptions while retaining factory
+data, NVS keys and both firmware slots; ordinary boots without a reset marker
+left mutable storage untouched. All 16 firmware-update browser scenarios passed,
+including blocked uploads and unconfirmed restarts when boot metadata is missing.
+Changed Python files passed syntax checks, and independent review found no
+remaining prior-Amity fallback. The ESP32-S3 application and provisioning package
+built successfully for version 0.1.49 / Matter software version 50. The
+1,865,152-byte application fits each OTA slot with 53% free. The generated package
+passed image checksum/version checks and produced a valid version-3 factory
+record, complete flash image and pairing PNG through the provisioning tool.
+Evidence: `test-results/remove-legacy-host.log`,
+`remove-legacy-provisioning.log`, `remove-legacy-build.log`,
+`remove-legacy-package.json` and `web-firmware-ui.json`.
+
+User-requested USB reflashing installed 0.1.49 on both connected boards from
+0.1.48. Verified USB serial identities and chip MACs before reading or writing,
+and saved private 8 MB backups with SHA-256 digests for both. Both boards already
+used blob storage for all application settings. `amity-dut`'s version-1 factory
+record was replaced with a validated version-3 record that preserves the exact
+PIN, discriminator, salt, vendor/product IDs, original factory hostname and
+password-onboarding behavior. `amity-test` already had version-3 provisioning,
+which remained unchanged. This was a one-time installation operation; firmware
+does not accept or convert older records.
+
+Flashed only each active application slot plus the DUT's factory sector. Flash
+readback verified the application, protected storage, factory provisioning and
+unchanged inactive firmware. Both devices confirmed new healthy boots on 0.1.49,
+retained configuration, Wi-Fi, Matter fabrics, HomeKit pairings, remote bonds,
+hostnames, CEC addresses, administrator passwords and TLS identities, and served
+the exact current UI assets. Original activities were restored and both remotes
+reconnected. Neither boot capture contained a panic. No factory reset or new
+commissioning was performed. Evidence:
+`test-results/reflash-0.1.49/amity-dut/deployment.json` and
+`test-results/reflash-0.1.49/amity-test/deployment.json`, plus private backups,
+pre/post-update snapshots, flash verification and boot logs in those directories.
 
 ## Unpaired status wording in 0.1.47
 
@@ -507,7 +556,12 @@ Run host checks from the repository root:
 sh tests/run_host_tests.sh
 ```
 
-Hardware runners under `tests/` require the authorized fixture. Older integration runners read a private legacy boot log for credentials. The browser runner also accepts `--credentials` with a private JSON file containing `admin_password`; new firmware never prints an admin password. The onboarding runner requires a device with no password and creates a temporary test credential that the fixture operator must clear afterward:
+Hardware runners under `tests/` require the authorized fixture and accept
+`--credentials` with a private mode-0600 JSON file containing `admin_password`.
+Firmware never prints an admin password. The Matter commissioning runner can
+read its setup QR payload from a private boot log. The onboarding runner requires
+a device with no password and creates a temporary test credential that the fixture
+operator must clear afterward:
 
 | Runner | Purpose |
 |---|---|
@@ -522,7 +576,7 @@ Hardware runners under `tests/` require the authorized fixture. Older integratio
 | `web_onboarding.py` | First-password setup, API guards, stale-tab rejection and reboot persistence |
 | `web_matter_coexistence.py` | Concurrent HTTPS traffic and repeated CASE establishment |
 
-Run all runners from this repository root, or pass explicit output paths beneath `test-results/`. Use `--help` for required URL, private boot log and optional fixture addresses. The CEC web runner saves the original configuration before installing its temporary activities; restore that saved file after combined tests. The HID emulator's dependency is installed under the fixture project, not system Python. The native Pi Matter controller and pinned dependencies are documented in [tests/matter_pi.md](tests/matter_pi.md). The earlier AP-only fallback uses the [USB SSH bridge](tests/pi_serial_proxy.md).
+Run all runners from this repository root, or pass explicit output paths beneath `test-results/`. Use `--help` for required URL, private credentials JSON and optional fixture addresses. The CEC web runner saves the original configuration before installing its temporary activities; restore that saved file after combined tests. The HID emulator's dependency is installed under the fixture project, not system Python. The native Pi Matter controller and pinned dependencies are documented in [tests/matter_pi.md](tests/matter_pi.md). The AP-only fixture uses the [USB SSH bridge](tests/pi_serial_proxy.md).
 
 ## Qualification limits
 

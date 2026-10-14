@@ -8,7 +8,7 @@
 """Validate CEC activities through the integrated firmware's HTTPS API.
 
 Run only against the authorized two-bus fixture after Wi-Fi onboarding.
-Credentials are read from a mode-0600 boot log and never printed or included
+Credentials are read from a mode-0600 JSON file and never printed or included
 in reports. Leaves eight fixture activities configured for BLE tests unless
 --restore is given. Uses the self-signed fixture certificate by default; a
 trusted certificate can be supplied with --cafile. Never opens a serial port.
@@ -16,7 +16,6 @@ trusted certificate can be supplied with --cafile. Never opens a serial port.
 import argparse
 import json
 import os
-import re
 import shlex
 import ssl
 import stat
@@ -30,16 +29,14 @@ from pathlib import Path
 from cec_hardware import Harness, raw_frames
 
 
-def read_password(logs):
-    for path in logs:
-        if not path.exists():
-            continue
-        if stat.S_IMODE(path.stat().st_mode) & 0o077:
-            raise RuntimeError(f"Boot log is not private: {path}; use mode 0600")
-        matches = re.findall(r"AMITY INITIAL ADMIN PASSWORD:\s*([^\s\x1b]+)", path.read_text(errors="replace"))
-        if matches:
-            return matches[-1]
-    raise RuntimeError("No initial admin password in the supplied private boot logs")
+def read_password(path):
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise RuntimeError(f"Credentials file is not private: {path}; use mode 0600")
+    credentials = json.loads(path.read_text())
+    password = credentials.get("admin_password") if isinstance(credentials, dict) else None
+    if not isinstance(password, str) or not password:
+        raise RuntimeError("Credentials JSON must contain a nonempty admin_password string")
+    return password
 
 
 class Admin:
@@ -95,12 +92,11 @@ def main():
     parser.add_argument("--url", required=True, help="DUT HTTPS URL after Wi-Fi onboarding")
     parser.add_argument("--host", default="pi@10.0.1.119")
     parser.add_argument("--ssh-port", type=int, help="forwarded Pi SSH port, e.g. 2222")
-    parser.add_argument("--boot-log", action="append", type=Path, help="private boot log; may be repeated")
+    parser.add_argument("--credentials", type=Path, required=True, help="private JSON with admin_password")
     parser.add_argument("--cafile", type=Path)
     parser.add_argument("--restore", action="store_true", help="restore original activity configuration afterward")
     parser.add_argument("--output", type=Path, default=Path("test-results/cec-web-activity.json"))
     args = parser.parse_args()
-    logs = args.boot_log or [Path("test-results/boot.log"), Path("test-results/boot-interrupt-failure.log")]
     admin = Admin(args.url, args.cafile)
     harness = Harness(args.host, args.ssh_port)
     report = {"passed": False, "http": admin.records, "cec": harness.records, "captures": {}}
@@ -108,7 +104,7 @@ def main():
     original = None
     source_address_changed = False
     try:
-        admin.login(read_password(logs))
+        admin.login(read_password(args.credentials))
         original = admin.request("/api/config")
         backup_path = args.output.with_name(args.output.stem + "-original-config.json")
         # A retry after installing the fixture must not overwrite the original

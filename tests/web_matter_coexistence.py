@@ -20,9 +20,9 @@ from cec_web_activity import Admin, read_password, write_private
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', required=True)
-    parser.add_argument('--boot-log', type=Path, required=True)
+    parser.add_argument('--credentials', type=Path, required=True, help='Private JSON with admin_password')
     parser.add_argument('--host', default='pi@10.0.1.119')
-    parser.add_argument('--version', default='0.1.5')
+    parser.add_argument('--version', required=True, help='Expected firmware version')
     parser.add_argument('--output', type=Path, default=Path('test-results/web-matter-coexistence.json'))
     args = parser.parse_args()
     admin = Admin(args.url)
@@ -40,7 +40,7 @@ def main():
                 ['free_heap', 'free_internal_heap', 'largest_internal_block', 'wifi_rssi']})
 
     try:
-        admin.login(read_password([args.boot_log]))
+        admin.login(read_password(args.credentials))
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             reads = pool.submit(sample)
             try:

@@ -24,9 +24,9 @@ from cec_web_activity import Admin, read_password, write_private
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--url', required=True)
-    p.add_argument('--boot-log', type=Path, required=True)
+    p.add_argument('--credentials', type=Path, required=True, help='Private JSON with admin_password')
     p.add_argument('--host', default='pi@10.0.1.119')
-    p.add_argument('--version', default='0.1.5')
+    p.add_argument('--version', required=True, help='Expected firmware version')
     p.add_argument('--output', type=Path, default=Path('test-results/matter-cec.json'))
     args = p.parse_args()
     admin = Admin(args.url)
@@ -71,7 +71,7 @@ def main():
                 process.communicate(timeout=5)
 
     try:
-        admin.login(read_password([args.boot_log]))
+        admin.login(read_password(args.credentials))
         admin.activity(0)
         state = admin.request('/api/status')
         destination = state['back_address'] << 4 | 4

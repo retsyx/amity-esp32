@@ -28,7 +28,7 @@ from cec_hardware import raw_frames
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True)
-    parser.add_argument("--boot-log", action="append", type=Path, required=True)
+    parser.add_argument("--credentials", type=Path, required=True, help="private JSON with admin_password")
     parser.add_argument("--host", default="pi@10.0.1.119")
     parser.add_argument("--ssh-port", type=int, default=22)
     parser.add_argument("--address", default="2c:cf:67:4d:4f:a9")
@@ -40,7 +40,7 @@ def main():
     admin = Admin(args.url)
     report = {"passed": False, "checks": [], "http": admin.records}
     pairing_disabled = False
-    password = read_password(args.boot_log)
+    password = read_password(args.credentials)
 
     def check(name, condition):
         if not condition:

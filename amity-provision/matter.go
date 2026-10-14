@@ -56,32 +56,21 @@ func validHostname(name string) bool {
 	return true
 }
 
-// Records v2/v3 add a hostname/password hash; old package versions retain their format.
-func factoryRecord(pin uint32, discriminator, vendor, product uint16, salt [32]byte, hostname string, version int, adminAuth string) []byte {
-	size := recordSize
-	if version == 1 {
-		size = 96
-	} else if version == 2 {
-		size = 160
-	}
-	b := make([]byte, size)
+func factoryRecord(pin uint32, discriminator, vendor, product uint16, salt [32]byte, hostname, adminAuth string) []byte {
+	b := make([]byte, recordSize)
 	copy(b, "AMITYPRV")
-	binary.LittleEndian.PutUint16(b[8:], uint16(version))
-	binary.LittleEndian.PutUint16(b[10:], uint16(size))
+	binary.LittleEndian.PutUint16(b[8:], 3)
+	binary.LittleEndian.PutUint16(b[10:], recordSize)
 	binary.LittleEndian.PutUint16(b[12:], vendor)
 	binary.LittleEndian.PutUint16(b[14:], product)
 	binary.LittleEndian.PutUint32(b[16:], pin)
 	binary.LittleEndian.PutUint16(b[20:], discriminator)
 	binary.LittleEndian.PutUint32(b[24:], 1000)
 	copy(b[28:60], salt[:])
-	if version >= 2 {
-		copy(b[64:128], hostname)
-	}
-	if version == 3 {
-		copy(b[128:226], adminAuth)
-	}
-	sum := sha256.Sum256(b[:size-32])
-	copy(b[size-32:], sum[:])
+	copy(b[64:128], hostname)
+	copy(b[128:226], adminAuth)
+	sum := sha256.Sum256(b[:recordSize-32])
+	copy(b[recordSize-32:], sum[:])
 	return b
 }
 
