@@ -13,13 +13,22 @@ from the actual descriptor. A failed or truncated report does not release held
 keys; disconnection releases every key. The application receives press/release
 events and implements its own key-hold behavior.
 
-`AtomicController` supplies the application key-hold policy independently of the
-transport: 500 ms distinguishes short/long gestures at release, and overlapping
-HID aliases do not prematurely release the same CEC key. It emits only changes
-in the held key; the hub repeats each press after the preceding CEC transmission
-attempt finishes, with no repeat timer. The long-activity offset is configurable (default 4). Link loss and event
-queue overflow must call `cancel()` before processing synthetic releases, so a
-lost remote cannot trigger a pending power/activity gesture or repeat forever.
+`AtomicInputAdapter` translates HID usages into common logical button events;
+`SiriInputAdapter` translates Apple's button reports and recognizes touch swipes.
+Both feed one `RemoteInputController` in the application. It owns held-key
+priority, aliases, 500 ms short/long gestures, power and activity shortcuts, and
+cancellation. Siri reports are processed as batches so simultaneous button
+changes preserve Power shortcuts. The binding profiles retain Atomic's dedicated
+activity buttons and Siri's standby selectors and Power chords.
+
+Each queued report captures its timestamp, activity generation and reserved
+target. Activity changes quarantine held buttons in the common controller until
+release; stale queued reports cannot resume a key on the new source. Presses
+also carry their generation to the hub for validation when dequeued. The handler
+emits only changes in the held key; the hub repeats each press after the preceding
+CEC transmission attempt finishes, with no repeat timer. Link loss and queue
+overflow cancel the shared controller before synthetic releases, preventing a
+lost remote from completing a pending power/activity gesture or repeating forever.
 
 The installed IDF 6.1 `esp_hid/src/nimble_hidh.c` cannot be used as the transport:
 its `read_device_services()` nests Report Map processing inside the Device

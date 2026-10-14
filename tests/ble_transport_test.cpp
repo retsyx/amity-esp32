@@ -342,6 +342,31 @@ int main(int argc, char **argv) {
         fake::run_steps(2);
         assert(!fake::scans && !fake::status().scanning && !fake::status().bonded);
         assert(!fake::status().waiting && !fake::status().unpairing);
+    } else if (scenario == "unpair-scan") {
+        fake::run_steps(1);
+        const auto stale = fake::connects.back();
+        assert(ble_remote_unpair() == ESP_OK);
+        assert(ble_remote_scan(5) == ESP_ERR_INVALID_STATE);
+        fake::run_steps(1);
+        fake::complete_connect(BLE_HS_EPREEMPTED);
+        fake::run_steps(1);
+        assert(!fake::status().unpairing && !fake::status().bonded);
+        assert(ble_remote_scan(5) == ESP_OK);
+        fake::run_steps(1);
+        assert(fake::scans == 1 && fake::status().scanning);
+        // Allowing a new scan must not revive the cancelled saved-peer attempt.
+        fake::complete_connect(0, stale, 77);
+        assert(fake::terminations.size() == 1 && fake::terminations.back() == 77);
+        fake::disconnect();
+        fake::run_steps(10);
+        assert(!fake::status().bonded && !fake::status().connected && !fake::status().waiting);
+        assert(!fake::security_calls && !fake::discovery_calls && !fake::persisted);
+        fake::finish_scan();
+        fake::run_steps(1);
+        assert(!fake::status().scanning && fake::connects.size() == 1);
+        assert(ble_remote_start_pairing(20) == ESP_OK);
+        fake::run_steps(1);
+        assert(fake::scans == 2 && fake::status().pairing && fake::status().scanning);
     } else if (scenario == "cancel-error") {
         fake::run_steps(1);
         fake::cancel_error = BLE_HS_EBUSY;

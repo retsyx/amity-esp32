@@ -15,6 +15,7 @@
 #include "homekit.hpp"
 #include "ble_remote.h"
 #include "cJSON.h"
+#include "json_input.hpp"
 #include "qrcodegen.h"
 #include "esp_app_desc.h"
 #include "esp_wifi.h"
@@ -28,17 +29,6 @@ amity::HubService *hub;
 httpd_handle_t server;
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 const char empty_config[]="{\"version\":1,\"activities\":[]}";
-cJSON *parse_json(const std::string &data) {
-    if(data.find('\0')!=std::string::npos)return nullptr;
-    unsigned depth=0;bool quoted=false,escaped=false;
-    for(char ch:data) {
-        if(quoted){if(escaped)escaped=false;else if(ch=='\\')escaped=true;else if(ch=='\"')quoted=false;}
-        else if(ch=='\"')quoted=true;
-        else if(ch=='{'||ch=='['){if(++depth>8)return nullptr;}
-        else if(ch=='}'||ch==']'){if(depth)--depth;}
-    }
-    return cJSON_ParseWithLengthOpts(data.c_str(),data.size()+1,nullptr,true);
-}
 esp_err_t send(httpd_req_t *req,cJSON *root) {
     char *s=cJSON_PrintUnformatted(root);
     if(!s)return web::error(req,"Out of memory","503 Service Unavailable");
@@ -168,7 +158,7 @@ esp_err_t api(httpd_req_t *req) {
                (strcmp(content_type,"application/json") && strncmp(content_type,"application/json;",17)))
                 return web::error(req,"JSON required","415 Unsupported Media Type");
             std::string data;if(!web::body(req,data,512))return ESP_OK;
-            Json root(parse_json(data),cJSON_Delete);auto *password=cJSON_GetObjectItemCaseSensitive(root.get(),"password");
+            Json root(parse_json_input(data),cJSON_Delete);auto *password=cJSON_GetObjectItemCaseSensitive(root.get(),"password");
             if(!cJSON_IsString(password))return web::error(req,"Password required");
             auto e=web::setup_password(password->valuestring);
             if(e==ESP_ERR_INVALID_ARG)return web::error(req,"Enter a password of no more than 128 bytes.");
@@ -178,7 +168,7 @@ esp_err_t api(httpd_req_t *req) {
     }
     if(path=="/api/login" && req->method==HTTP_POST) {
         std::string data;if(!web::body(req,data,512))return ESP_OK;
-        Json root(parse_json(data),cJSON_Delete);auto *password=cJSON_GetObjectItemCaseSensitive(root.get(),"password");std::string token;
+        Json root(parse_json_input(data),cJSON_Delete);auto *password=cJSON_GetObjectItemCaseSensitive(root.get(),"password");std::string token;
         auto retry_after=web::login_retry_after();
         char retry_value[12];
         auto retry_header=[&](unsigned seconds){snprintf(retry_value,sizeof(retry_value),"%u",seconds);httpd_resp_set_hdr(req,"Retry-After",retry_value);};
@@ -214,7 +204,7 @@ esp_err_t api(httpd_req_t *req) {
             std::string error;auto e=apply(data,true,error);
             return e==ESP_OK?web::json(req,"{\"saved\":true}"):web::error(req,error.empty()?esp_err_to_name(e):error.c_str());
         }
-        Json root(parse_json(data.empty()?"{}":data),cJSON_Delete);
+        Json root(parse_json_input(data.empty()?"{}":data),cJSON_Delete);
         if(!root)return web::error(req,"Invalid JSON");
         esp_err_t e=ESP_OK;
         auto int_arg=[&](const char *key,int low,int high,int &out){auto *v=cJSON_GetObjectItemCaseSensitive(root.get(),key);if(!cJSON_IsNumber(v)||v->valuedouble!=v->valueint||v->valueint<low||v->valueint>high)return false;out=v->valueint;return true;};

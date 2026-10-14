@@ -8,6 +8,7 @@
 
 #include "configuration.hpp"
 #include "cJSON.h"
+#include "json_input.hpp"
 #include <cmath>
 #include <cstring>
 #include <set>
@@ -41,15 +42,7 @@ bool unique_keys(cJSON *v) {
 bool parse_configuration(const std::string &json,Configuration &config,std::string &error) {
     config={};
     if(json.size()>32768 || json.find('\0')!=std::string::npos) {error="Configuration is too large or contains NUL";return false;}
-    // Bound parser recursion before cJSON sees input from the network.
-    unsigned depth=0;bool quoted=false,escaped=false;
-    for(char ch:json) {
-        if(quoted) {if(escaped)escaped=false;else if(ch=='\\')escaped=true;else if(ch=='\"')quoted=false;}
-        else if(ch=='\"')quoted=true;
-        else if(ch=='{'||ch=='[') {if(++depth>8){error="Configuration nesting is too deep";return false;}}
-        else if(ch=='}'||ch==']') {if(depth)--depth;}
-    }
-    auto *root=cJSON_ParseWithLengthOpts(json.c_str(),json.size()+1,nullptr,true);
+    auto *root=parse_json_input(json);
     if(!root) {error="Invalid JSON";return false;}
     auto fail=[&](const char *s){error=s;cJSON_Delete(root);return false;};
     if(!cJSON_IsObject(root)||!unique_keys(root)||!integer(cJSON_GetObjectItemCaseSensitive(root,"version"),1,1))return fail("Expected configuration version 1 with unique keys");

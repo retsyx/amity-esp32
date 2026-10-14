@@ -20,13 +20,13 @@ constexpr uint8_t gen15[] = {0x4c, 0x00, 0x8a, 0x07, 0x6d, 0x02};
 template<size_t N> bool prefix(const uint8_t *data, size_t size, const uint8_t (&value)[N]) {
     return size >= N && std::memcmp(data, value, N) == 0;
 }
-// Bit order is the remote's wire format. Play/pause is translated by the hub.
-constexpr uint8_t cec_keys[] = {0x09, 0x41, 0x42, 0x00, 0x40, 0x35, 0x0d,
-                               0x43, 0x61, 0x01, 0x04, 0x02, 0x03};
-constexpr int power_index = 4;
-constexpr int selector(size_t index) {
-    return index == 3 ? 0 : index >= 9 && index <= 12 ? static_cast<int>(index) - 8 : -1;
-}
+// Apple button bit order; no hold, power, or activity policy lives here.
+constexpr RemoteButton logical_buttons[] = {
+    RemoteButton::Home, RemoteButton::VolumeUp, RemoteButton::VolumeDown,
+    RemoteButton::Select, RemoteButton::Power, RemoteButton::Siri, RemoteButton::Back,
+    RemoteButton::Mute, RemoteButton::PlayPause, RemoteButton::Up, RemoteButton::Right,
+    RemoteButton::Down, RemoteButton::Left,
+};
 constexpr double millimeters_per_unit = 31.0 / 1370.0;
 constexpr double swipe_threshold_mm = 7.0;
 constexpr uint8_t pressure_threshold = 20;
@@ -89,107 +89,37 @@ int siri_charging_state(const SiriProfile &profile, const uint8_t *data, size_t 
     return -1;
 }
 
-void SiriController::emit(SiriCommandType type, uint8_t value, uint8_t count) {
-    if (callback_) callback_(SiriCommand{type, value, count}, context_);
-}
-
-void SiriController::reset_touch() {
+void SiriInputAdapter::reset_touch() {
     touch_active_ = false;
     primary_axis_ = -1;
 }
 
-void SiriController::suppress_held() {
-    for (auto &key : held_) if (key.down) key.suppressed = true;
-    macro_selector_ = -1;
+void SiriInputAdapter::activity_changed() {
     if (physical_touches_) touch_blocked_ = true;
     reset_touch();
-    reconcile();
 }
 
-void SiriController::activity_changed(bool activity_active) {
-    active_ = activity_active;
-    suppress_held();
-}
-
-void SiriController::sync_mode(bool activity_active) {
-    if (active_ != activity_active) activity_changed(activity_active);
-}
-
-void SiriController::reconcile() {
-    int latest = -1;
-    if (active_) for (size_t i = 0; i < held_.size(); ++i) {
-        const auto &key = held_[i];
-        if (!key.down || key.suppressed || i == power_index || static_cast<int>(i) == macro_selector_) continue;
-        if (latest < 0 || held_[static_cast<size_t>(latest)].order < key.order) latest = static_cast<int>(i);
-    }
-    const int next = latest >= 0 ? cec_keys[latest] : -1;
-    if (next == current_key_) return;
-    if (current_key_ >= 0) emit(SiriCommandType::Release);
-    current_key_ = next;
-    if (current_key_ >= 0) emit(SiriCommandType::Press, static_cast<uint8_t>(current_key_));
-}
-
-void SiriController::release(size_t index, uint64_t now) {
-    auto &key = held_[index];
-    if (!key.down) return;
-    const bool suppressed = key.suppressed;
-    const uint64_t started = key.started;
-    key.down = false;
-    if (suppressed) return;
-    const bool long_press = now >= started && now - started >= long_press_us;
-    if (macro_selector_ >= 0) {
-        if (static_cast<int>(index) != macro_selector_ && index != power_index) return;
-        const int macro = macro_selector_;
-        const auto &function = held_[static_cast<size_t>(macro)];
-        const uint64_t macro_start = static_cast<int>(index) == macro ? started : function.started;
-        const bool long_macro = now >= macro_start && now - macro_start >= long_press_us;
-        completed_action_ = true;
-        suppress_held();
-        emit(SiriCommandType::Activity, static_cast<uint8_t>(selector(static_cast<size_t>(macro)) + (long_macro ? 5 : 0)));
-    } else if (!active_ && selector(index) >= 0) {
-        completed_action_ = true;
-        suppress_held();
-        emit(SiriCommandType::Activity, static_cast<uint8_t>(selector(index) + (long_press ? 5 : 0)));
-    } else if (index == power_index) {
-        completed_action_ = true;
-        suppress_held();
-        if (!active_ && !long_press) emit(SiriCommandType::Activity, 0);
-        else emit(long_press ? SiriCommandType::PowerLong : SiriCommandType::PowerShort);
-    }
-}
-
-void SiriController::buttons(const uint8_t *data, size_t size, uint64_t now, bool activity_active) {
+void SiriInputAdapter::buttons(const uint8_t *data, size_t size, InputStamp stamp) {
     if (!data || !size || size > 4) return;
     uint16_t next = data[0];
     if (size > 1) next |= static_cast<uint16_t>(data[1]) << 8;
     next &= 0x1fff;
-    sync_mode(activity_active);
-    blocked_ &= next;
-    const uint16_t previous = buttons_;
+    const auto previous = buttons_;
     buttons_ = next;
-    completed_action_ = false;
-    if (next) {
-        if (physical_touches_) touch_blocked_ = true;
-        reset_touch();
-    }
-    // Release activity selectors before power, matching Python's adapter key order.
-    constexpr size_t release_order[] = {0, 1, 2, 7, 3, 6, 8, 9, 10, 11, 12, 4, 5};
-    for (size_t i : release_order) if ((previous & (1u << i)) && !(next & (1u << i))) release(i, now);
-    for (size_t i : release_order) {
-        if (!(next & (1u << i)) || (previous & (1u << i))) continue;
-        held_[i] = Held{true, completed_action_ || (blocked_ & (1u << i)) != 0, now, ++next_order_};
-    }
-    if (active_ && macro_selector_ < 0 && held_[power_index].down && !held_[power_index].suppressed) {
-        constexpr size_t selectors[] = {3, 9, 10, 11, 12};
-        for (size_t i : selectors) if (held_[i].down && !held_[i].suppressed) {
-            macro_selector_ = static_cast<int>(i);
-            break;
-        }
-    }
-    reconcile();
+    if (next) activity_changed();
+    // Selectors release before Power. New presses in an action's report stay
+    // quarantined by the shared controller; reconcile only after the batch.
+    constexpr size_t order[] = {0, 1, 2, 7, 3, 6, 8, 9, 10, 11, 12, 4, 5};
+    ButtonEvent events[26];
+    size_t count = 0;
+    for (size_t i : order) if ((previous & (1u << i)) && !(next & (1u << i)))
+        events[count++] = ButtonEvent{static_cast<uint32_t>(i), logical_buttons[i], false};
+    for (size_t i : order) if ((next & (1u << i)) && !(previous & (1u << i)))
+        events[count++] = ButtonEvent{static_cast<uint32_t>(i), logical_buttons[i], true};
+    controller_.buttons(RemoteProfile::Siri, events, count, stamp);
 }
 
-SiriController::Touch SiriController::decode_touch(const uint8_t *data, uint16_t timestamp) {
+SiriInputAdapter::Touch SiriInputAdapter::decode_touch(const uint8_t *data, uint16_t timestamp) {
     int x = ((data[1] & 0x0f) << 8) | data[0];
     int y = (data[2] << 4) | ((data[1] & 0xf0) >> 4);
     if (x & 0x800) x -= 0x1000;
@@ -197,9 +127,8 @@ SiriController::Touch SiriController::decode_touch(const uint8_t *data, uint16_t
     return {timestamp, x + 360, y + 360, data[5], static_cast<uint8_t>(1 - ((data[6] & 0x08) >> 3))};
 }
 
-void SiriController::touches(const uint8_t *data, size_t size, bool activity_active) {
+void SiriInputAdapter::touches(const uint8_t *data, size_t size, InputStamp stamp) {
     if (!data || (size != 11 && size != 18) || data[0] != 0x32) return;
-    sync_mode(activity_active);
     const uint16_t timestamp = data[1] | (static_cast<uint16_t>(data[2]) << 8);
     const Touch fingers[] = {decode_touch(data + 4, timestamp), size == 18 ? decode_touch(data + 11, timestamp) : Touch{}};
     const size_t count = size == 18 ? 2 : 1;
@@ -208,7 +137,7 @@ void SiriController::touches(const uint8_t *data, size_t size, bool activity_act
         if (fingers[i].pressure >= pressure_threshold) physical_touches_ |= bit;
         else physical_touches_ &= static_cast<uint8_t>(~bit);
     }
-    if (!active_ || buttons_) {
+    if (!controller_.active() || buttons_ || !controller_.accepts(stamp)) {
         touch_blocked_ = physical_touches_ != 0;
         reset_touch();
         return;
@@ -259,20 +188,17 @@ void SiriController::touches(const uint8_t *data, size_t size, bool activity_act
         }
         if (!repeats) continue;
         const uint8_t key = axis == 0 ? (repeats < 0 ? 0x03 : 0x04) : (repeats < 0 ? 0x02 : 0x01);
-        emit(SiriCommandType::Swipe, key, static_cast<uint8_t>(repeats < 0 ? -repeats : repeats));
+        controller_.swipe(static_cast<RemoteButton>(key), static_cast<uint8_t>(repeats < 0 ? -repeats : repeats), stamp);
     }
 }
 
-void SiriController::cancel() {
-    blocked_ |= buttons_;
-    buttons_ = 0;
-    for (auto &key : held_) key = {};
-    macro_selector_ = -1;
+void SiriInputAdapter::cancel() {
+    // Retain the raw mask so an unchanged full-state report cannot replay a
+    // held button. An empty reconnect report clears the physical mask.
     if (physical_touches_) touch_blocked_ = true;
-    // A release may be lost while disconnected or when the queue overflows.
-    // Preserve quarantine, but let subsequent reports establish contact IDs.
+    // A release may be lost offline. Keep quarantine, but let the next reports
+    // establish contact IDs so a missing old contact cannot block forever.
     physical_touches_ = 0;
     reset_touch();
-    reconcile();
 }
 } // namespace ble

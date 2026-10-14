@@ -12,14 +12,23 @@
 #include <utility>
 #include <vector>
 
-using T = ble::AtomicCommandType;
+using T = ble::RemoteCommandType;
 using Event = std::pair<T,uint8_t>;
-static void output(ble::AtomicCommand command, void *context) {
-    static_cast<std::vector<Event> *>(context)->emplace_back(command.type,command.value);
+static bool output(ble::RemoteCommand command, void *context) {
+    static_cast<std::vector<Event> *>(context)->emplace_back(command.type,static_cast<uint8_t>(command.value));
+    return command.type == T::Press || command.type == T::Release;
 }
+// Observe bindings without admitting activity changes into a real hub.
+struct AtomicFixture {
+    ble::RemoteInputController policy;
+    ble::AtomicInputAdapter adapter;
+    explicit AtomicFixture(std::vector<Event> &events) : policy(output,&events), adapter(policy) { policy.synchronize(1,0); }
+    void input(uint16_t page,uint16_t usage,bool down,uint64_t now) { adapter.input(page,usage,down,{now,1,0}); }
+    void cancel() { policy.cancel(); }
+};
 int main() {
     std::vector<Event> events;
-    ble::AtomicController controller(output,&events);
+    AtomicFixture controller(events);
     controller.input(7,0x52,true,100);
     controller.input(7,0x52,true,120100); // Duplicate HID state is not a repeat clock.
     controller.input(7,0x52,true,999999);
@@ -84,10 +93,5 @@ int main() {
     controller.input(7,0x3a,false,13000003);
     assert((events == std::vector<Event>{{T::Press,1},{T::Release,0}}));
 
-    // Application can explicitly select Python's alternative +5 mapping.
-    ble::AtomicController python_mapping(output,&events,5);
-    python_mapping.input(7,0x3d,true,0);
-    python_mapping.input(7,0x3d,false,500000);
-    assert((events.back() == Event{T::Activity,8}));
     puts("Atomic press/release/long-gesture/cancellation tests passed");
 }

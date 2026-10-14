@@ -58,8 +58,6 @@ struct Input {
 };
 std::array<Input,16> inputs;
 bool battery_known=false, charging_known=false, audio_known=false;
-bool requested_playing=false;
-int observed_activity=-1;
 struct HapLock { HapLock(){hap_amity_lock();} ~HapLock(){hap_amity_unlock();} };
 struct StatusLock { StatusLock(){xSemaphoreTake(status_lock,portMAX_DELAY);} ~StatusLock(){xSemaphoreGive(status_lock);} };
 char *text(const char *value){return const_cast<char *>(value);}
@@ -77,7 +75,6 @@ esp_err_t save_input(unsigned index){
 }
 void refresh_values(){
     const auto s=hub->snapshot();
-    if(s.current_activity!=observed_activity){observed_activity=s.current_activity;requested_playing=false;}
     update(active,s.current_activity>=0);update(speaker_active,s.current_activity>=0);
     update(active_input,s.current_activity>=0?s.current_activity+1:0);
     audio_known=s.audio_status_known;
@@ -127,10 +124,8 @@ int write(hap_write_data_t data[],int count,void *,void *){
         else if(d.hc==mute_char)result=callbacks.mute(d.val.b,callbacks.context);
         else if(d.hc==volume_selector&&(d.val.i==0||d.val.i==1))result=callbacks.volume_step(d.val.i==0?1:-1,callbacks.context);
         else if(d.hc==remote_key){
-            if(d.val.i==11){
-                result=callbacks.key(requested_playing?0x46:0x44,callbacks.context);
-                if(result==ESP_OK)requested_playing=!requested_playing;
-            }else for(const auto &key:keys)if(key.first==d.val.i){result=callbacks.key(key.second,callbacks.context);break;}
+            if(d.val.i==11)result=callbacks.key(0x61,callbacks.context);
+            else for(const auto &key:keys)if(key.first==d.val.i){result=callbacks.key(key.second,callbacks.context);break;}
         }
         else if(d.hc==tv_name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63)
             result=config_store::write("hap_name",d.val.s);

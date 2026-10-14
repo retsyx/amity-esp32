@@ -13,6 +13,12 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag; must match the committed firmware version
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -35,6 +41,7 @@ jobs:
       IDF_TOOLS_PATH: ${{ github.workspace }}/.cache/espressif
       GOCACHE: ${{ github.workspace }}/.cache/go-build
       GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      RELEASE_TAG: ${{ inputs.release_tag || '' }}
 
     steps:
       - name: Check out firmware
@@ -52,6 +59,22 @@ jobs:
         with:
           go-version-file: amity-provision/go.mod
           cache-dependency-path: amity-provision/go.sum
+
+      - name: Validate release version
+        if: inputs.release_tag != ''
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ['RELEASE_TAG']
+          version = re.search(r'^set\(PROJECT_VER "([^"]+)"',
+                              Path('CMakeLists.txt').read_text(), re.MULTILINE)
+          if version is None or tag != 'v' + version[1]:
+              raise SystemExit('Release tag must be v followed by PROJECT_VER from CMakeLists.txt')
+          print(f'Releasing Amity {version[1]} from {tag}')
+          PY
 
       - name: Read pinned SDK commits
         id: sdk
@@ -130,16 +153,49 @@ jobs:
       - name: Build provisioner release packages
         run: python3 amity-provision/build_release.py
 
+      - name: Prepare downloadable release assets
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import zipfile
+
+          build = Path('build')
+          with zipfile.ZipFile(build / 'amity-firmware.zip') as package:
+              version = json.loads(package.read('manifest.json'))['firmware_version']
+          tag = os.environ['RELEASE_TAG']
+          if tag and tag != 'v' + version:
+              raise SystemExit('Built firmware version does not match release tag')
+          sources = [build / name for name in
+                     ('amity.bin', 'amity.elf', 'amity.map', 'amity-firmware.zip')]
+          sources.append(Path('README.md'))
+          sources.extend(build / 'amity-provision' / f'amity-provision-{system}-{arch}.zip'
+                         for system in ('darwin', 'windows', 'linux')
+                         for arch in ('amd64', 'arm64'))
+          destination = build / 'release'
+          destination.mkdir(exist_ok=True)
+          checksums = []
+          for source in sorted(sources, key=lambda path: path.name):
+              target = destination / source.name
+              shutil.copyfile(source, target)
+              if tag and source == Path('README.md'):
+                  guide = target.read_bytes()
+                  for kind in ('blob', 'tree'):
+                      guide = guide.replace(
+                          f'https://github.com/retsyx/amity-esp32/{kind}/main/'.encode(),
+                          f'https://github.com/retsyx/amity-esp32/{kind}/{tag}/'.encode())
+                  target.write_bytes(guide)
+              checksums.append(f'{hashlib.sha256(target.read_bytes()).hexdigest()}  {target.name}')
+          (destination / 'SHA256SUMS').write_text('\n'.join(checksums) + '\n')
+          PY
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: amity-esp32-${{ github.sha }}
-          path: |
-            build/amity.bin
-            build/amity.elf
-            build/amity.map
-            build/amity-firmware.zip
-            build/amity-provision/*.zip
-            build/amity-provision/SHA256SUMS
+          path: build/release/*
           if-no-files-found: error
           retention-days: 14

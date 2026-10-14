@@ -15,12 +15,38 @@
 #include <tuple>
 #include <vector>
 
-using T = ble::SiriCommandType;
+using T = ble::RemoteCommandType;
 using Event = std::tuple<T, uint8_t, uint8_t>;
-static void output(ble::SiriCommand command, void *context) {
-    static_cast<std::vector<Event> *>(context)->emplace_back(command.type, command.value, command.count);
+static bool output(ble::RemoteCommand command, void *context) {
+    static_cast<std::vector<Event> *>(context)->emplace_back(command.type, static_cast<uint8_t>(command.value), command.count);
+    return command.type == T::Press || command.type == T::Release || command.type == T::Swipe;
 }
-static void buttons(ble::SiriController &controller, uint16_t state, uint64_t now, bool active) {
+// Compose the physical adapter with the common button policy. Activity output
+// is observed, but not admitted to a real hub in these binding/gesture tests.
+struct SiriFixture {
+    ble::RemoteInputController policy;
+    ble::SiriInputAdapter adapter;
+    uint32_t generation = 1;
+    int target = -1;
+    uint64_t touch_time = 0;
+    explicit SiriFixture(std::vector<Event> &events) : policy(output,&events), adapter(policy) { policy.synchronize(generation,target); }
+    void sync(bool active) {
+        if ((target >= 0) != active) activity_changed(active);
+    }
+    void activity_changed(bool active) {
+        target=active?0:-1;
+        policy.synchronize(++generation,target);
+        adapter.activity_changed();
+    }
+    void buttons(const uint8_t *data,size_t size,uint64_t now,bool active) {
+        sync(active);adapter.buttons(data,size,{now,generation,target});
+    }
+    void touches(const uint8_t *data,size_t size,bool active) {
+        sync(active);adapter.touches(data,size,{++touch_time,generation,target});
+    }
+    void cancel() { policy.cancel();adapter.cancel(); }
+};
+static void buttons(SiriFixture &controller, uint16_t state, uint64_t now, bool active) {
     const uint8_t data[] = {static_cast<uint8_t>(state), static_cast<uint8_t>(state >> 8)};
     controller.buttons(data, sizeof(data), now, active);
 }
@@ -44,7 +70,7 @@ static std::array<uint8_t, 11> touch(uint16_t timestamp, int x, int y, uint8_t p
     finger(data.data() + 4, x, y, pressure, id);
     return data;
 }
-static void sample(ble::SiriController &controller, uint16_t timestamp, int x, int y,
+static void sample(SiriFixture &controller, uint16_t timestamp, int x, int y,
                    uint8_t pressure = 30, bool active = true, uint8_t id = 0) {
     const auto data = touch(timestamp, x, y, pressure, id);
     controller.touches(data.data(), data.size(), active);
@@ -111,7 +137,7 @@ static void protocol_tests() {
 
 static void button_tests() {
     std::vector<Event> events;
-    ble::SiriController controller(output, &events);
+    SiriFixture controller(events);
     constexpr uint16_t selectors[] = {8, 0x200, 0x400, 0x800, 0x1000};
     for (uint8_t i = 0; i < 5; ++i) {
         const uint64_t start = i * 2000000;
@@ -228,7 +254,7 @@ static void button_tests() {
 
 static void swipe_tests() {
     std::vector<Event> events;
-    ble::SiriController controller(output, &events);
+    SiriFixture controller(events);
     sample(controller, 100, 0, 0, 19); // Hover/light contact is ignored.
     sample(controller, 200, 500, 0, 19);
     assert(events.empty());

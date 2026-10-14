@@ -94,6 +94,11 @@ struct Transport : amity::Transport {
         for (const auto &s : sent) if (s.side == side && s.destination == dest && s.bytes == std::vector<uint8_t>(bytes)) return true;
         return false;
     }
+    unsigned count(amity::BusSide side, uint8_t dest, std::initializer_list<uint8_t> bytes) const {
+        unsigned matches = 0;
+        for (const auto &s : sent) if (s.side == side && s.destination == dest && s.bytes == std::vector<uint8_t>(bytes)) ++matches;
+        return matches;
+    }
 };
 static void device(amity::Hub &hub, amity::BusSide side, uint8_t address, uint16_t pa, uint8_t type, const char *name) {
     hub.discovered(side, address);
@@ -214,6 +219,72 @@ static void discovery_tests() {
     assert(h.snapshot().devices.size() == 2);
     h.clear_devices(); assert(h.key_needs_discovery(0));
 }
+static void shared_power_tests() {
+    const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
+    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
+    h.configure({{"Shared", "Front", "Back", "Back", "Back", 0},
+                 {"Other", "", "Other", "Other", "", 0}},
+                {{0x1234, {0x44, 0x40}, {0x44, 0x40}}});
+    device(h, F, 5, 0x1000, 5, "Front"); device(h, B, 5, 0x1000, 5, "Back");
+    device(h, B, 8, 0x2000, 4, "Other");
+    for (const auto header : {0x5f, 0x8f}) h.receive(B, frame({static_cast<uint8_t>(header), 0x87, 0, 0x12, 0x34}));
+    h.receive(F, frame({0x5f, 0x87, 0, 0x12, 0x34}));
+    // Reused source/audio/switch roles send one toggle, while the same logical
+    // address on another bus remains a separate device. Repairs do the same.
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        t.sent.clear(); assert(h.select_activity(0));
+        assert(t.count(F, 5, {0x44, 0x40}) == 1);
+        assert(t.count(B, 5, {0x44, 0x40}) == 1);
+        assert(t.count(B, 8, {0x44, 0x40}) == 0);
+    }
+    t.sent.clear(); h.standby();
+    assert(t.count(F, 5, {0x44, 0x40}) == 1);
+    assert(t.count(B, 5, {0x44, 0x40}) == 1);
+    assert(h.select_activity(0)); t.sent.clear(); assert(h.select_activity(1));
+    assert(t.count(F, 5, {0x36}) == 1);
+    assert(t.count(B, 5, {0x36}) == 1);
+    assert(t.count(B, 8, {0x44, 0x40}) == 1);
+    t.sent.clear(); h.standby(); assert(t.count(B, 8, {0x44, 0x40}) == 1);
+}
+static void playback_tests() {
+    const auto B = amity::BusSide::Back;
+    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
+    h.configure({{"Watch", "", "Source", "", "", 0},
+                 {"Other", "", "Source B", "", "", 0},
+                 {"Same source", "", "Source B", "", "", 0}});
+    device(h, B, 4, 0x1000, 4, "Source"); assert(h.select_activity(0));
+    device(h, B, 8, 0x2000, 4, "Source B");
+    const auto check = [&](std::initializer_list<uint8_t> keys, std::initializer_list<uint8_t> expected) {
+        t.sent.clear();
+        for (const auto key : keys) assert(h.press_key(key));
+        std::vector<uint8_t> emitted;
+        for (const auto &s : t.sent) if (s.side == B && s.destination == 4 && s.bytes.size() == 2 && s.bytes[0] == 0x44)
+            emitted.push_back(s.bytes[1]);
+        assert(emitted == std::vector<uint8_t>(expected));
+    };
+    // Explicit commands from Matter/HomeKit and an emulated remote toggle
+    // share the last accepted playback state.
+    check({0x44, 0x61}, {0x44, 0x46});
+    check({0x61, 0x46, 0x61}, {0x44, 0x46, 0x44});
+    check({0x44, 0x45, 0x61}, {0x44, 0x45, 0x44});
+    // Holding the toggle repeats its initial command without toggling again.
+    assert(h.press_key(0x61, true)); assert(h.press_key(0x61, true)); assert(h.release_key());
+    check({0x61}, {0x44});
+    // Rejected explicit Pause/Stop cannot change a previously accepted Play.
+    for (const auto key : {0x46, 0x45}) {
+        assert(h.press_key(0x44)); t.reject_opcode = 0x44; assert(!h.press_key(key));
+        t.reject_opcode = -1; check({0x61}, {0x46});
+    }
+    // Rejected explicit Play likewise cannot turn a paused state into playing.
+    t.reject_opcode = 0x44; assert(!h.press_key(0x44));
+    t.reject_opcode = -1; check({0x61}, {0x44});
+    // Playback intent belongs to the selected source, so a new source starts
+    // with Play. Activities sharing that source retain the accepted state.
+    assert(h.select_activity(1)); t.sent.clear(); assert(h.press_key(0x61));
+    assert(t.contains(B, 8, {0x44, 0x44}) && !t.contains(B, 8, {0x44, 0x46}));
+    assert(h.select_activity(2)); t.sent.clear(); assert(h.press_key(0x61));
+    assert(t.contains(B, 8, {0x44, 0x46}) && !t.contains(B, 8, {0x44, 0x44}));
+}
 static void backpressure_tests() {
     const auto B = amity::BusSide::Back;
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
@@ -292,6 +363,6 @@ static void volume_sequence_tests() {
     assert(hub.snapshot().activity_generation == hub.activity_generation());
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); backpressure_tests(); volume_sequence_tests();
+    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

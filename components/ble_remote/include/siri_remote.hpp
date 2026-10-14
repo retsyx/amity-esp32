@@ -7,6 +7,7 @@
  */
 
 #pragma once
+#include "remote_input.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -34,51 +35,28 @@ SiriProfile siri_profile(uint16_t firmware);
 // Returns -1 for an unknown status so malformed reports cannot overwrite state.
 int siri_charging_state(const SiriProfile &profile, const uint8_t *data, size_t size);
 
-enum class SiriCommandType { Press, Release, Activity, PowerShort, PowerLong, Swipe };
-struct SiriCommand { SiriCommandType type; uint8_t value = 0; uint8_t count = 0; };
-
-// Portable policy derived from Python Amity's remote, adapter, gestures and hub.
-// Press/Swipe values are CEC keys; Activity values are zero-based activity indices.
-// A single owner calls these methods; now is monotonic microseconds.
-class SiriController {
+// Physical Apple reports and touch recognition only. Buttons become a batch
+// for the same RemoteInputController used by HID remotes.
+class SiriInputAdapter {
 public:
-    using Callback = void (*)(SiriCommand command, void *context);
-    explicit SiriController(Callback callback, void *context = nullptr)
-        : callback_(callback), context_(context) {}
-    void buttons(const uint8_t *data, size_t size, uint64_t now, bool activity_active);
-    void touches(const uint8_t *data, size_t size, bool activity_active);
-    // Suppress held keys whenever an activity changes, even active -> active.
-    void activity_changed(bool activity_active);
-    // Link loss or queue overflow cancels actions, without completing a hold.
+    explicit SiriInputAdapter(RemoteInputController &controller) : controller_(controller) {}
+    void buttons(const uint8_t *data, size_t size, InputStamp stamp);
+    void touches(const uint8_t *data, size_t size, InputStamp stamp);
+    void activity_changed();
     void cancel();
-    static constexpr uint64_t long_press_us = 500000;
 private:
-    struct Held {
-        bool down = false, suppressed = false;
-        uint64_t started = 0, order = 0;
-    };
     struct Touch {
         uint16_t timestamp = 0;
         int x = 0, y = 0;
         uint8_t pressure = 0, id = 0;
     };
-    std::array<Held, 13> held_{};
-    Callback callback_;
-    void *context_;
-    uint16_t buttons_ = 0, blocked_ = 0;
-    uint64_t next_order_ = 0;
-    bool active_ = false, completed_action_ = false;
-    int current_key_ = -1, macro_selector_ = -1;
+    RemoteInputController &controller_;
+    uint16_t buttons_ = 0;
     bool touch_active_ = false, touch_blocked_ = false;
     uint8_t physical_touches_ = 0;
     int primary_axis_ = -1;
     Touch start_touch_{}, last_touch_{};
-    void emit(SiriCommandType type, uint8_t value = 0, uint8_t count = 0);
-    void reconcile();
-    void suppress_held();
     void reset_touch();
-    void sync_mode(bool activity_active);
-    void release(size_t index, uint64_t now);
     static Touch decode_touch(const uint8_t *data, uint16_t timestamp);
 };
 } // namespace ble

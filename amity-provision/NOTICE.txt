@@ -1,7 +1,0 @@
-amity-provision is part of Amity and distributed under the repository's GPLv3 license.
-QR encoding uses github.com/skip2/go-qrcode, commit da1b6568686e (MIT).
-Secure terminal input uses golang.org/x/term v0.28.0 and x/sys v0.29.0 (BSD-3-Clause).
-Password hashing uses golang.org/x/crypto v0.31.0 (BSD-3-Clause).
-Setup-card rendering uses golang.org/x/image v0.23.0 and x/text v0.21.0 (BSD-3-Clause).
-The embedded Go fonts are Copyright (c) 2016 Bigelow & Holmes Inc. (BSD-3-Clause).
-Their licenses, the Go font license and the Go runtime license are included below in release archives.

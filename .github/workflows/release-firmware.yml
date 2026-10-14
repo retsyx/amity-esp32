@@ -23,6 +23,8 @@ jobs:
     name: Build release firmware
     if: github.event.created
     uses: ./.github/workflows/build-firmware.yml
+    with:
+      release_tag: ${{ github.ref_name }}
 
   release:
     name: Publish GitHub release
@@ -45,7 +47,29 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          flags=(--verify-tag --generate-notes --title "$RELEASE_TAG")
+          cat > release-notes.md <<EOF
+          ## Install Amity
+
+          For a fresh installation, download **amity-firmware.zip** and the
+          **amity-provision** ZIP for your computer from the assets below.
+          Extract the provisioner and use it to create your device's firmware
+          image and Matter pairing card before flashing over USB.
+
+          See the [installation guide](https://github.com/$GH_REPO/blob/$RELEASE_TAG/README.md)
+          for hardware requirements, downloads, USB flashing and first setup.
+          The same guide is attached as **README.md** and included in each provisioner ZIP.
+
+          To update an installed Amity, download **amity.bin** and upload it in
+          **Advanced → Update Firmware**. Normal updates preserve settings and pairings.
+          Before version 1.0, backward compatibility with earlier releases is not
+          maintained. Read this version's release notes before updating; a fresh
+          installation and pairing again may be required.
+          A fresh-install image replaces existing configuration and pairings.
+
+          **SHA256SUMS** contains checksums for the downloadable assets.
+          GitHub's automatic source archives are for building from source.
+          EOF
+          flags=(--verify-tag --generate-notes --notes-file release-notes.md --title "$RELEASE_TAG")
           version="${RELEASE_TAG%%+*}"
           if [[ "$version" == *-* ]]; then
             flags+=(--prerelease)
@@ -55,6 +79,7 @@ jobs:
             dist/amity.elf \
             dist/amity.map \
             dist/amity-firmware.zip \
-            dist/amity-provision/*.zip \
-            dist/amity-provision/SHA256SUMS \
+            dist/amity-provision-*.zip \
+            dist/README.md \
+            dist/SHA256SUMS \
             "${flags[@]}"

@@ -13,7 +13,11 @@
 namespace amity {
 namespace {
 std::vector<std::string> names(const Activity &a) {
-    return {a.display, a.source, a.audio, a.switch_device};
+    std::vector<std::string> result;
+    // A device can fill several roles, but each power transition applies once.
+    for (const auto &name : {a.display, a.source, a.audio, a.switch_device})
+        if (!name.empty() && std::find(result.begin(), result.end(), name) == result.end()) result.push_back(name);
+    return result;
 }
 }
 void Hub::configure(std::vector<Activity> activities, std::vector<Quirk> quirks) {
@@ -115,7 +119,8 @@ bool Hub::select_activity(int index) {
     if (index < -1 || index >= static_cast<int>(activities_.size())) return false;
     if (index == selected_) { fix_current_activity(); return true; }
     release_key();
-    const auto before = names(current());
+    const auto before_activity = current();
+    const auto before = names(before_activity);
     const auto after_activity = index < 0 ? Activity{} : activities_[index];
     const auto after = names(after_activity);
     for (const auto &name : before) if (std::find(after.begin(), after.end(), name) == after.end()) {
@@ -129,7 +134,7 @@ bool Hub::select_activity(int index) {
     ++activity_generation_;
     audio_status_known_ = false; volume_ = 127;
     request_audio_status();
-    if (index < 0) playing_ = false;
+    if (index < 0 || before_activity.source != after_activity.source) playing_ = false;
     return true;
 }
 void Hub::fix_current_activity() {
@@ -170,7 +175,10 @@ bool Hub::press_key(uint8_t key, bool repeat) {
     if ((pending_releases_[d->bus == BusSide::Front ? 0 : 1] & (1u << d->address)) &&
         !send(d->bus, d->address, {0x45})) return false;
     if (!send(d->bus, d->address, {0x44, key})) return false;
-    if (raw_key == 0x61 && !(key_held_ && held_raw_key_ == raw_key)) playing_ = !playing_;
+    // Explicit transport commands and emulated toggles share the same last
+    // accepted state. Held toggles keep emitting their original mapped key.
+    if (key == 0x44) playing_ = true;
+    else if (key == 0x46 || key == 0x45) playing_ = false;
     held_bus_ = d->bus; held_address_ = d->address; key_held_ = true;
     held_raw_key_ = raw_key; held_key_ = key;
     held_audio_ = audio_key;

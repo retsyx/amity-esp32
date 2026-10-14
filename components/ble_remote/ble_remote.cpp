@@ -939,6 +939,7 @@ extern "C" esp_err_t ble_remote_scan(uint32_t seconds) {
     candidates.clear();
     Command command{CommandType::Scan, seconds, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
+    forgetting = false; // A new operation may start after Unpair has completed.
     state.scanning = true;
     return ESP_OK;
 }

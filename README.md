@@ -1,192 +1,281 @@
 # Amity for ESP32
 
-An ESP32 C++ port of Amity, Matter over Wi-Fi, an optional HomeKit television, and an HTTPS administration UI. This standalone repository contains the ESP32 firmware, provisioning tool, and tests.
+HDMI-CEC that works!
 
-## Hardware
+Control your home theater with a familiar remote, and integrate it with Matter or HomeKit.
 
-The supported development target is the **Seeed XIAO ESP32-S3 with 8 MB flash and 8 MB octal PSRAM**. The S3 offers two CPU cores, enough RAM for simultaneous Matter/BLE/TLS, native USB for installation and recovery, and space for two complete OTA images. The code uses portable ESP-IDF APIs, but C3/C5/C6 and other modules are not declared supported without a target build, an appropriate flash layout, and timing tests on their hardware. PSRAM and the partition layout must not be copied unchanged to a different board.
+This version runs on the Amity ESP32 board. The [original Amity](https://github.com/retsyx/amity) runs on a Raspberry Pi.
 
-MbedTLS uses the SDK's external PSRAM allocation mode. Its TLS record buffers
-otherwise compete with Matter, WiFi and BLE for internal RAM: on this combined
-firmware, internal-only allocation caused HTTPS setup to fail with
-`PSA_ERROR_INSUFFICIENT_MEMORY` (`-0x008D`). The full TLS record sizes remain
-enabled, including for firmware uploads. The Matter data model also uses
-PSRAM, and allocations larger than 1 KiB prefer PSRAM so internal DMA memory
-remains available when CASE establishment overlaps HTTPS encryption.
+## Prerequisites
 
-Connect the XIAO's external antenna before commissioning. On the supplied
-fixture, attaching it improved home Wi-Fi reception from approximately
-−94 dBm to −47 dBm and allowed normal commissioning without a test access point.
+* An assembled [Amity ESP32 board](https://github.com/retsyx/amity-esp32/tree/main/hw/board) and a USB-C power supply.
+* An extra HDMI cable. Amity uses two cables in place of the one connecting your receiver to your TV.
+* A remote control: [Couch Clicker Atomic](https://github.com/retsyx/CouchClickerAtomic), or a second- or third-generation Siri Remote.
 
-Change the two assignments in [main/board_pins.h](main/board_pins.h) for the final board layout:
+## Caveats
 
-```c
-#define AMITY_CEC_FRONT_GPIO 1  // XIAO D0, TV side
-#define AMITY_CEC_BACK_GPIO 2   // XIAO D1, receiver/source side
-```
+### Amity is an HDMI-CEC Controller (Not a Universal Remote)
 
-The Amity board2 design has an active-low **FW_RESET** button (SW1) on GPIO4
-(XIAO D3, module pad 4), defined by `AMITY_FW_RESET_GPIO` in
-`main/board_pins.h`. Current devices have no
-button circuitry; support defaults to enabled, and the internal pull-up keeps the
-unused input inactive. With a button installed, release it after boot, then hold
-it for ten seconds to factory-reset and restart. Short presses do nothing.
-The input uses a pull-up and 50 ms software debounce; holding it through reboot
-cannot trigger another reset until it has been released.
-Disable `CONFIG_AMITY_FW_RESET_BUTTON` under `idf.py menuconfig` → **Amity factory
-reset button** if GPIO4 is used by other hardware; disabling leaves the pin untouched.
+Amity is designed for a traditional setup centered around an audio/video receiver (AVR). For example, a TV connected to a receiver output, and various playback devices (i.e. media streamers, blu-ray players, and game consoles, etc.) connected to the receiver's inputs. When changing the source, the input is changed on the receiver. The HDMI-CEC protocol only allows the designated TV to select sources or devices to declare themselves as active sources. TVs do not heed arbitrary source selection commands from other devices. As a result, Amity cannot select inputs on a TV, and cannot control sources connected directly to a TV, including built-in smart TV apps. Similarly, Amity does not support HDMI ARC/eARC. If you use smart TV apps or connect devices, other than a receiver, directly to the TV inputs, Amity is not for your system.
 
-FW_RESET performs the same factory reset as Advanced in the administration UI:
-it clears Wi-Fi credentials, Matter fabrics, HomeKit pairings, remote bonds,
-activities, saved device settings, the admin password and TLS identity. It retains
-the provisioned factory credentials and installed firmware. The original
-provisioned admin password, if supplied, is restored on startup.
+Amity can only control devices that support HDMI-CEC! However, devices that don't support HDMI-CEC (old game consoles, for example) can still be facilitated.
 
-Use the Board / Fin electrical interface and CEC pull-ups. Outputs are open-drain, never push-pull. Each bus owns its logical address: a playback address on the front and TV address 0 on the back. The front physical address defaults to `1.0.0.0`. No ARC/eARC or direct-to-TV smart-app routing is added.
 
-Board specifications: [Seeed XIAO ESP32-S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/).
 
-## Build and install
 
-The installed SDKs are expected at `~/.espressif/v6.1/esp-idf` and `~/.espressif/v6.1/esp-matter`. Set `IDF_PATH` and `ESP_MATTER_PATH` before sourcing if installed elsewhere. This port uses the installed IDF 6.1 / Mbed TLS 4 and generated ESP-Matter data model APIs.
+### Development Status
+
+HDMI-CEC implementations vary between manufacturers, and this version of Amity has been tested with a limited range of equipment. It may work well with your system, or particular devices may need workarounds. See the [validation record](https://github.com/retsyx/amity-esp32/blob/main/VALIDATION.md) for the checks performed on this version.
+
+Amity is not a certified Matter accessory. Some home apps may reject it or expose only some of its controls.
+
+Before version 1.0, compatibility with earlier Amity releases is not maintained. Read the release notes before updating. A release may require a fresh installation and pairing again.
+
+## Setup
+
+### HDMI Hardware
+
+The Amity board connects between the TV and the receiver, allowing Amity to control the devices on either side. Attach the external antenna before powering the board.
+
+### Initial Installation
+
+For a new board, use the setup tool to prepare its firmware image and Matter pairing card, then install the image over USB. If your board already has Amity installed, continue with [HDMI Connections](#hdmi-connections). To update an existing installation, see [Firmware Updates](#firmware-updates).
+
+#### Download a Release
+
+1. Choose a version from [GitHub Releases](https://github.com/retsyx/amity-esp32/releases), and read its installation notes.
+2. From the release's **Assets**, download `amity-firmware.zip` and the setup-tool ZIP for your computer:
+
+   | Computer | Setup tool |
+   |---|---|
+   | Apple Silicon Mac | `amity-provision-darwin-arm64.zip` |
+   | Intel Mac | `amity-provision-darwin-amd64.zip` |
+   | Windows, Intel/AMD | `amity-provision-windows-amd64.zip` |
+   | Windows on ARM | `amity-provision-windows-arm64.zip` |
+   | Linux, Intel/AMD | `amity-provision-linux-amd64.zip` |
+   | Linux, ARM64 | `amity-provision-linux-arm64.zip` |
+
+3. Extract the setup-tool ZIP into the same folder as `amity-firmware.zip`. Leave the firmware ZIP intact.
+4. Open a terminal in that folder, and run the command below.
+
+On macOS or Linux:
 
 ```sh
-cd ~/projects-other/amity-esp32
-source tools/env.sh
-idf.py set-target esp32s3
-idf.py build provisioning-package
+./amity-provision --hostname living-room --generate-password --out living-room amity-firmware.zip
 ```
 
-The component manager resolves Espressif dependencies and records them in `dependencies.lock`. Generated artifacts remain beneath this repository. The first build of the Matter SDK takes substantially longer than incremental builds.
+On Windows, use PowerShell:
 
-For a fresh installation, use [amity-provision](amity-provision/README.md) with
-`build/amity-firmware.zip`. It produces a complete flash image and a Matter QR
-code before installation, so no serial console is needed for onboarding. Flash
-the generated image at offset `0x0`, then scan its QR code with your home app.
-Keep the device-specific output directory privately. A plain `idf.py flash` on
-an erased device is insufficient: fresh firmware requires provisioned credentials.
- An initial administration password can be supplied with `amity-provision --password`,
-`--generate-password`, or `--prompt-password`. Without one, open the admin page and create a password before logging in. Until then, only password onboarding is available; all administrative APIs remain locked. Existing passwords survive firmware updates. A self-signed TLS certificate is generated separately for each device and survives reboots. Accept that device's certificate in your browser.
+```powershell
+.\amity-provision.exe --hostname living-room --generate-password --out living-room amity-firmware.zip
+```
 
-As approved for this port, **Matter commissioning supplies Wi-Fi credentials over BLE**; no separate provisioning app is required. Add the setup code to a Matter controller that supports development/test devices and commission onto a 2.4 GHz network. Then open `https://amity.local` (or `https://<hostname>.local` when provisioned
-with `amity-provision --hostname <hostname>`) or the DHCP address printed on the console. The network and commissioning credentials persist across power cycles and firmware updates.
+Replace `living-room` with a memorable name for your Amity. Choose a distinct name and output folder for each board.
 
-Keep `CONFIG_USE_MINIMAL_MDNS=n`: Matter discovery and HTTPS share Espressif's mDNS responder. Matter owns its operational hostname; the provisioned admin hostname (default `amity.local`) is a delegated alias updated from the station's IPv4 and IPv6 addresses. Running CHIP minimal mDNS alongside the HTTPS responder creates competing UDP 5353 listeners and prevents reliable commissioning.
+The tool creates the `living-room` folder, containing:
 
-The firmware uses Espressif's development attestation credentials. Shipping a certified product requires its own vendor/product identity and attestation provisioning. Some consumer ecosystems reject development devices or do not expose all media-player clusters even when commissioning succeeds.
+* `amity-provisioned.bin` — the complete image for USB installation.
+* `amity-pairing.png` — a setup card with the Matter QR code, manual pairing code, browser address, and generated admin password.
+* Text files with the same setup details and password.
 
-## Administration
+Keep this folder private, and save a backup. You will need the original Matter code again after a factory reset. The admin password is separate from the Matter pairing code.
 
-* **Activities:** start or repair activities from the compact list, drag the handles to reorder, and use Edit or Add activity to open the editing dialog. The dialog supports optional receiver input fallback. OK stages edits; Cancel discards the dialog draft. Save activities and Discard changes appear only while the list differs from the saved configuration. Discard changes restores the last loaded or saved activities and their order without writing to the device. Start/Repair always targets the saved activity, even after unsaved reordering. Changed or new settings can be run from the dialog with Save and start/repair, which saves all pending activity changes first. Scan HDMI at the top of this tab to inspect freshly discovered device names with role icons and receive editable recommendations. Add recommendations individually; equivalent display/source/audio combinations are excluded, irrespective of name or manual switch settings. On an unconfigured device, the first scan fills in recommendations for review before saving. Device dropdowns filter HDMI scan results by CEC type: Display offers TVs; Source offers playback, recording and tuner devices; Audio offers audio systems and TVs; Switch offers audio systems, HDMI switches and video processors. Each dropdown also includes names configured in that role across all saved activities when their CEC type is unavailable, including offline devices. A known scanned type takes precedence over the saved role. Duplicate and blank suggestions are omitted; manual entry remains available. Device references use OSD names, as in Python Amity; use unique device names.
-* **Remote:** Pair Remote automatically pairs the first connectable HID remote or Gen 2/3 Siri Remote with signal strength of at least −50 dBm, matching Python Amity. Bring the remote close and put it in pairing mode. Searching and bonding show status text without a progress indicator; a weak remote triggers “Remote detected. Bring it closer to Amity.” After pairing, the status always shows “Paired”, including while reconnecting; connection details appear only in Advanced → Diagnostics. When the paired remote is asleep or absent, Amity listens for its advertisements in the background and Diagnostics shows “Waiting for remote”. Amity initiates a connection when the remote advertises; an absent remote does not cause repeated connection attempts or timeout errors. No device selection is needed. The pairing search lasts 20 seconds and skips remotes that reject bonding. Hold Power + Volume Up on Couch Clicker Atomic for six seconds to clear its old bond. Unpair Remote remains available and responsive while waiting for the paired remote. Only one remote can be paired; unpair it before switching models. Earlier Siri Remotes are unsupported.
-* **HomeKit:** after Matter commissioning, optionally pair Amity with Apple Home as a television. Start pairing to generate a fresh five-minute QR and PIN in this tab; close pairing or remove HomeKit independently of Matter.
-* **Matter:** inspect connected fabrics, toggle a five-minute pairing period with one button, scan the Matter QR shown during pairing, or remove an individual fabric. Fabric removal does not erase activity configuration or the keyboard bond.
-* **Advanced:** change the hostname or front CEC physical address, factory-reset to the originally provisioned settings, download/restore configuration, download a bounded in-memory log, upload firmware, change the administration password, or reboot.
+The setup tool runs without installing development SDKs. For other options, including choosing your own password, see the [setup-tool guide](https://github.com/retsyx/amity-esp32/blob/main/amity-provision/README.md). The release's `SHA256SUMS` file provides checksums for the downloads.
 
-Memory summaries are logged once after startup completes and every ten minutes,
-without a connected computer. Each `memory` entry includes uptime in seconds and
-free bytes, minimum-free bytes since boot, and the largest free block for internal
-RAM and PSRAM separately. Minimum-free values sum per-region low watermarks, so
-they are conservative bounds rather than simultaneous measurements. Entries appear
-on the serial console and in Advanced → Diagnostics → Download logs. The shared
-24 KiB log buffer overwrites old entries when full and clears on reboot.
+Continue with [Install over USB](#install-over-usb).
 
-The front CEC physical address defaults to `1.0.0.0`. In Advanced, enter a dotted
-hexadecimal address (for example, `2.0.0.0`) or leave the field blank to restore
-the default. Saving restarts Amity. This device setting persists across firmware
-updates, is excluded from activity backups, and resets to `1.0.0.0` on factory reset.
+#### Build Locally
 
-The web application is served from firmware and needs no Internet/CDN access. API requests require a short-lived bearer session obtained from `/api/login`; passwords are salted and stretched with PBKDF2-HMAC-SHA256. Uploads and all administrative operations use HTTPS. The public `/api/setup` endpoint reports whether onboarding is needed and accepts a password only once. Passwords are never printed to the console or downloadable logs.
+To build your own firmware, follow the [local build guide](https://github.com/retsyx/amity-esp32/blob/main/BUILDING.md). It covers macOS, Linux, and WSL2 on Windows, including how to generate the installation image and pairing card.
 
-The remote's battery level and charging state are also exposed through Matter as
-"Remote battery" (Power Source endpoint 3). With no remote paired, it reports
-100% and not charging. When a paired remote disconnects, both readings become
-unknown. Charging status requires the remote to provide it through its BLE Battery
-Service; Amity does not infer it from battery level. Advanced → Diagnostics adds
-"Charging" only when charging is reported.
+Once your board's files are prepared, continue below.
 
-## Remote behavior
+#### Install over USB
 
-Only the Atomic key set is mapped. F1–F4 select activities 1–4; holding selects activities 5–8. A short Power press starts activity 1 from standby or ends the current activity. Holding Power refreshes the current activity, or broadcasts standby when already off. Direction keys always navigate; they never select activities. Source keys go to the current source, volume and mute keys to its audio device. Held buttons repeat as soon as each CEC transmission finishes, subject to normal bus timing; releasing stops repetition and sends a key-release command. Keyboard report descriptors are parsed for both array (6KRO) and bitmap (NKRO) reports; only the known usages produce Amity actions.
+1. Connect the Amity board to your computer with a USB data cable.
+2. Install [esptool](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/installation.html).
+3. Find the board's serial port. Typical names are `COM3` on Windows, `/dev/cu.usbmodem…` on macOS, and `/dev/ttyACM0` on Linux.
+4. Run this command, replacing `PORT` with the serial port and `living-room` with your output folder:
 
-BLE and Matter share a single ESP-IDF NimBLE host. The reusable HID component implements HOGP discovery using IDF GATT APIs because the installed `esp_hidh` NimBLE helper skips HID report discovery. It does not patch the SDK. See [BLE component notes](components/ble_remote/README.md).
+```sh
+esptool --chip esp32s3 --port PORT write-flash --flash-mode dio --flash-freq 80m --flash-size 8MB 0x0 living-room/amity-provisioned.bin
+```
 
-Siri Remote Select, Up, Right, Down and Left choose activities 1–5 in standby;
-holding a button for at least half a second chooses activities 6–10. During an
-activity they navigate normally, including touchpad swipes. Swipes do not select
-activities in standby. Power plus a selection button chooses an activity while
-one is active. These mappings follow Python Amity and apply only to Siri Remote;
-Couch Clicker Atomic retains its dedicated activity buttons.
+If the `esptool` command is unavailable, use `python3 -m esptool` on macOS/Linux, or `python -m esptool` on Windows, in its place.
 
-HID connections use the controller's stable public Bluetooth identity. Matter
-keeps its random commissioning advertisement; using that changing address for
-HID would create a new peer identity after every reboot and break saved bonds.
+**Installing this full image replaces all existing settings and pairings.** Use it for initial installation. Later browser updates use a different file, `amity.bin`.
 
-HomeKit services and their pairing lifecycle are documented in [HomeKit component notes](components/amity_homekit/README.md).
+When installation finishes, leave the board powered on, or connect it to its USB-C power supply.
 
-## Matter data model
+### HDMI Connections
 
-| Endpoint | Device type | Controls |
+Amity connects between the TV and the receiver.
+
+1. Disconnect the HDMI cable connecting the TV's input to the receiver's output.
+2. Connect the TV's HDMI input to the Amity HDMI port marked `TV`.
+3. Use a second HDMI cable to connect the receiver's HDMI output to the Amity HDMI port marked `AVR`.
+4. Leave the playback devices connected to the receiver's inputs.
+
+Enable HDMI-CEC on the TV, receiver, and playback devices. Manufacturers use different names for this setting; check your equipment's setup menus.
+
+### Wi-Fi and Browser Access
+
+Matter pairing supplies Amity with its Wi-Fi settings. Complete this step even if you intend to use HomeKit for everyday control.
+
+1. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`. Alternatively, enter the manual pairing code from `amity-pairing.txt`.
+2. Follow the app's prompts to connect Amity to your 2.4 GHz Wi-Fi network. If the initial pairing window expires, restart the unpaired board and try again.
+3. On a phone or computer connected to the same network, open the administration address on the setup card. For the example above, it is `https://living-room.local`. The default hostname gives `https://amity.local`.
+4. The browser will show a certificate warning because Amity creates its own certificate for encryption. Open the warning's details and accept the certificate to continue.
+5. Log in with the generated admin password. If you prepared the image without an initial password, create one when prompted.
+
+If the hostname cannot be found, locate Amity in your router's device list and browse to `https://IP_ADDRESS` instead.
+
+### Pairing a Remote
+
+Charge the remote, and unpair it from any other device before pairing it with Amity.
+
+1. Select the 'Remote' tab, and press 'Pair remote'.
+2. Hold the remote close to the Amity board.
+3. Start pairing on the remote:
+
+   | Remote | Pairing buttons |
+   |---|---|
+   | Couch Clicker Atomic | Hold **Power + Volume Up** for six seconds to clear the previous bond and pair again. [Remote guide](https://github.com/retsyx/CouchClickerAtomic) |
+   | Siri Remote, generation 2 or 3 | Hold **Back + Volume Up** for five seconds. [Apple's pairing instructions](https://support.apple.com/en-us/102569) |
+
+4. Wait for Amity to report that the remote is paired.
+
+Amity selects a nearby supported remote automatically. If pairing times out, move the remote closer and try again. To replace a remote, press 'Unpair remote' before pairing the new one.
+
+A sleeping remote remains paired, and reconnects when it wakes.
+
+### Activity Configuration
+
+An activity describes a use of your home theater, such as 'Watch Apple TV' or 'Play PlayStation'. It specifies a display, a source, and an audio device. Selecting the activity turns on the appropriate equipment and routes the remote's commands to those devices.
+
+Ensure that HDMI-CEC is enabled on all equipment, select the 'Activities' tab, and press 'Scan HDMI'. On a new installation, Amity creates a suggested list of activities from the devices it finds. Review the names and device selections, then press 'Save activities'.
+
+Devices are identified by their HDMI On Screen Display (OSD) names. Each device must have a distinct name. If two devices report the same name, change one in that device's settings before configuring activities.
+
+If a device is missing, check its HDMI-CEC setting and connections, then scan again. Some devices only appear while powered on. A source that does not reliably appear can sometimes be used through [receiver input selection](#non-cec-sources).
+
+#### Editing the List of Activities
+
+Amity supports up to 16 activities. Drag activities to change their order. The position in the list determines which remote shortcut starts the activity; see [Usage](#usage). All configured activities can also be started from the browser.
+
+Use 'Add activity' to create an activity, 'Edit' to change one, and 'Delete' to remove one. Press 'Save activities' when finished. 'Discard changes' returns to the saved configuration.
+
+#### Editing an Activity
+
+The activity fields are:
+
+* `Activity name` — a descriptive name of your choice.
+* `Display` — the screen, typically your TV.
+* `Source` — the playback device, such as a streamer or game console.
+* `Audio` — the device that receives volume and mute commands, typically your receiver.
+* `Switch device` — an optional receiver or switch used for explicit input selection.
+* `Switch input` — the input number, when a switch device is specified. See [Non-CEC Sources](#non-cec-sources).
+
+Press 'OK' to accept the edit, then 'Save activities' to save it. 'OK' alone does not save the configuration.
+
+## Usage
+
+Amity has two basic modes: standby, when no activity is selected, and active, when an activity is running.
+
+Simple button presses are enough for normal use. Long presses and button combinations provide additional shortcuts, but family members do not need to learn them to use Amity.
+
+### Standby
+
+A short press of **Power** starts the first activity. Other activity shortcuts depend on your remote:
+
+| Remote | Short press | Long press |
 |---|---|---|
-| 0 | Root Node | commissioning, fabrics, diagnostics, network |
-| 1 | Basic Video Player | On/Off, activity Media Input list, Media Playback, Keypad Input |
-| 2 | Speaker | On/Off (mute), relative Level Control Step |
-| 3 | Power Source | Remote battery percentage and charge state |
+| Atomic activity buttons 1–4 | Activities 1–4 | Activities 5–8 |
+| Siri Remote Select, Up, Right, Down, Left | Activities 1–5, in that order | Activities 6–10, in that order |
 
-Input indexes match zero-based activity indexes. Media controls enqueue CEC keys. Playback state is the last accepted command; HDMI-CEC cannot supply authoritative play/pause state. Audio reports, when available from the selected audio device, update mute and volume. Unknown absolute volume is null, and unknown mute is reported unavailable. `MoveToLevel` and continuous `Move` are rejected rather than approximated. Explicit mute/unmute use the CEC mute/restore-volume functions, which receivers may not implement. See [Matter component notes](components/amity_matter/README.md).
+These numbers refer to the order in the 'Activities' tab. For example, Siri Remote Select starts the first activity, Up starts the second, and a long press of Select starts the sixth.
 
-Activity changes and standby have a settling guard. New activity changes are ignored until setup transmissions and their expected replies finish, followed by five seconds of quiet; press again afterward. Repair remains available and does not start a new settling period. Missing replies time out after two seconds. Configure `CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS` at build time under `idf.py menuconfig` → **Amity activity control**; the default is `5`, and `0` disables the guard. The same rule applies to the remote, web controls and Matter. Saving/restoring configuration is administrative and clears the old activity guard.
+A long press of **Power** repeats the standby commands. This is useful if a device is still on when it should be off.
 
-Relative volume adjustments are paced to the CEC bus. Changing activity, entering standby, or replacing configuration cancels remaining steps, including queued adjustments from an earlier use of the same activity.
+### Active
 
-## Persistence and upgrades
+During an activity, navigation and playback buttons control the source. Volume and mute control the audio device. For example, in a PlayStation activity, the directional buttons navigate the PlayStation interface, while the volume buttons control the receiver. Siri Remote touchpad swipes also navigate the source's menus.
 
-`partitions.csv` reserves a 4 KB `amity_factory` partition for commissioning
-credentials supplied by the provisioning tool. Firmware requires the current
-version-3 factory record and provisioning package. Before Amity 1.0, backward
-compatibility with earlier Amity releases, storage formats and provisioning
-packages is not maintained. Devices with older factory records or NVS-only
-commissioning credentials must be reprovisioned using the current package.
-Factory reset retains this partition and the original setup PIN/QR credentials.
+A short press of **Power** ends the activity and puts the system in standby. A long press repeats the current activity's setup. Use this if a device failed to turn on or selected the wrong input. The 'Repair' button in the browser performs the same action.
 
-`partitions.csv` allocates two 3.8125 MiB application slots and a dedicated `amity_cfg` NVS partition. Config, password hash, and TLS identity live there. Wi-Fi credentials, keyboard bonds, and Matter fabric data remain in the normal NVS partition. Initialization never erases a partition automatically to hide an error.
+To change activities on Siri Remote, hold **Power** and press an activity-selection button. Atomic uses its dedicated activity buttons. You can also select an activity in the browser.
 
-Upload `build/amity.bin` through Advanced → Update Firmware. The uploader validates application identity, chip, size, and the complete ESP image; streams into the inactive slot; and changes the boot selection only after successful validation. Power loss during upload leaves the current application bootable. The bootloader rolls back an unconfirmed image. A new image is confirmed only after configuration, CEC, Matter, BLE, HTTPS, and any saved HomeKit initialization succeed. Never erase the whole flash or change partition offsets for an ordinary upgrade.
+Give your equipment a few seconds to finish switching before choosing a different activity. If Amity ignores the selection while the system is settling, press again after the transition finishes.
 
-The updater shows upload progress, then keeps login hidden while Amity restarts and reconnects. It confirms a new boot with the requested firmware version after startup succeeds, reloads HTML/JavaScript/CSS from the device, and shows “Firmware update complete” with the installed version on the refreshed login page. Reloading during restart resumes the wait; a two-minute timeout offers a reconnection retry, and rollback reports the actual running version. The public `/api/setup` response includes only onboarding state, hostname, firmware version, a per-boot ID and readiness for this check. Updates require this boot-health metadata to verify completion.
+## Non-CEC Sources
 
-The browser reads the version embedded in the selected binary before uploading. Older versions require an explicit warning confirmation: downgrades are unsupported and at the user's own risk. Versions use semantic-version ordering (including prereleases; build metadata does not affect order). Unrecognized versions also require risk confirmation. The device independently checks the version before erasing flash; raw API clients must send `X-Amity-Confirm-Version: <currently running version>` to explicitly approve a downgrade or an unrecognized version. The request body remains the original `.bin` file. This confirmation does not override image validation or make older firmware compatible with newer saved data.
+A source without HDMI-CEC can still be used if your receiver supports input selection over HDMI-CEC. Amity can turn on the TV and receiver, select the receiver input, and control volume. Use the source's own controls for its power, navigation, and playback.
 
-Increment `PROJECT_VER` and `PROJECT_VER_NUMBER` in `CMakeLists.txt` for every change before building or deploying. Versions can also be set at configure time, for example `idf.py -DPROJECT_VER=0.2.0 -DPROJECT_VER_NUMBER=49 reconfigure build`. OTA images must be built for the same target and partition scheme.
+Create an activity with these settings:
 
-Matter reports manufacturer `Amity` and model `Amity ESP32`, configured in `CHIPProjectConfig.h`.
+1. Select the TV as `Display`.
+2. Select the receiver as `Audio`.
+3. Leave `Source` blank.
+4. Select the receiver as `Switch device`.
+5. Set `Switch input` to the receiver's input number.
+6. Press 'OK', then 'Save activities'.
 
-Configuration backups use versioned JSON and contain user activities and optional vendor quirks, **not** hostnames, front CEC physical addresses, initial passwords, Wi-Fi passwords, administrator credentials, TLS keys, BLE bonds, Matter fabrics, or HomeKit credentials. Restore validates the complete document before committing. See [example-config.json](example-config.json). Python YAML backups are not accepted directly; copy the activity fields into the documented JSON format.
+Input numbers vary by receiver. Consult its documentation or setup menus for the correct value. This option can also help with a source that does not reliably appear in HDMI scans.
 
-## Components and validation
+## Matter
 
-| Component | Responsibility |
-|---|---|
-| `cec` | generic CEC timing, arbitration, ACK, retries, GPIO transport |
-| `amity_hub` | Python-compatible dual-bus identities, discovery, activities, routing, source suppression |
-| `ble_remote` | shared-host remote discovery/bonding, Atomic HID and Gen 2/3 Siri buttons/touch |
-| `amity_matter` | Matter endpoints, delegates, commissioning credentials and fabric management |
-| `amity_homekit` | Optional HomeKit television, speaker, activity inputs, battery and pairing lifecycle |
-| `config_store` | bounded atomic NVS storage |
-| `web` | generic TLS HTTP helpers, authentication, request handling |
-| `web_admin` | administration pages and Amity APIs |
-| `system_services` | bounded log capture and streaming OTA |
-| `device_settings` | immutable provisioning, hostname/CEC address overrides, resumable factory reset |
-| `main` | composition, pins, key hold/repeat behavior |
+The initial Matter pairing connects Amity to Wi-Fi and adds it to your home controller. Once activities are configured, the controller can use Amity for home automation.
 
-Run host tests after SDK dependency configuration:
+The 'Matter' tab lists controller connections. To add another controller, press 'Start pairing' and scan the displayed QR code in that controller's home app. The pairing window lasts five minutes.
 
-```sh
-sh tests/run_host_tests.sh
-```
+Available controls may include power, activity selection, playback, volume, mute, and remote battery status. What appears depends on the home app and your equipment. Removing a Matter connection leaves your activities and remote pairing intact.
 
-Tests compile CEC, hub, HID parsing, and configuration validation with AddressSanitizer and UndefinedBehaviorSanitizer. Hardware procedures and recorded results are in [VALIDATION.md](VALIDATION.md). Unit tests alone do not establish electrical compliance or interoperability with an actual receiver.
+## HomeKit
 
-## Licenses
+Amity can also be added to Apple Home as a television accessory, allowing control through Siri and HomeKit automations.
 
-The Amity port derives its behavior from this repository's GPLv3 Amity implementation and follows the repository license. No claim is made that the Amity application itself is closed-source licensed. Additional runtime dependencies are Espressif/CHIP SDK components (Apache-2.0/BSD-style licenses) cJSON (MIT), Espressif HomeKit components (MIT/Apache-2.0/BSD), libsodium (ISC), and the SDK-bundled Nayuki QR encoder (MIT). The optional Pi keyboard test emulator uses dbus-next (MIT). See [THIRD_PARTY.md](THIRD_PARTY.md).
+Complete Wi-Fi setup and activity configuration first. Select the 'HomeKit' tab, press 'Start pairing', and scan its QR code in Apple Home. The pairing window lasts five minutes.
+
+HomeKit has its own pairing code, separate from Matter. Removing the HomeKit association leaves Matter connections and activities intact.
+
+## Backup & Restore
+
+Select the 'Advanced' tab. In the 'Configuration' section, press 'Download' to save a backup, or use the upload field to restore one.
+
+The backup contains activities and device-specific control settings. It does not contain Wi-Fi settings, admin credentials, pairings, hostname changes, or the HDMI-CEC address. Keep the original installation folder as well; a configuration backup does not replace your pairing card or USB installation image.
+
+## Firmware Updates
+
+Read the new release's notes before updating, especially before version 1.0. Normal updates preserve settings, pairings, passwords, and the original Matter setup code, but a release may require a fresh installation. Downgrades are unsupported.
+
+1. Download `amity.bin` from the [release's Assets](https://github.com/retsyx/amity-esp32/releases), or use `build/amity.bin` from a local build.
+2. Select the 'Advanced' tab, and find 'Update Firmware'.
+3. Select the file and confirm the update.
+4. Keep Amity powered on and the page open until completion is reported, then log in again.
+
+Use `amity.bin` for browser updates. The full `amity-provisioned.bin` image is for USB installation.
+
+## Factory Reset
+
+In the 'Advanced' tab, select 'Factory Reset' and confirm. This clears activities, Wi-Fi settings, Matter and HomeKit pairings, and the remote bond. It also restores the original hostname and initial admin password, if one was supplied.
+
+The installed firmware and original Matter pairing code remain. Add Amity to your home again using the original setup card, then pair the remote and configure activities.
+
+To reset using the board's **FW RESET** button, power on Amity with the button released, then hold it for ten seconds. This performs the same factory reset. FW RESET is separate from the module's restart and boot buttons.
+
+If you cannot access the administration page, you can also reinstall the saved USB image. This replaces settings and pairings with the original installation state.
+
+## Troubleshooting
+
+* **The computer does not see Amity:** use a USB data cable, and check that you selected the board's serial port.
+* **The setup tool does not start:** check that you downloaded the archive for your OS and processor. On macOS/Linux, 'Permission denied' may require `chmod +x amity-provision`. These development executables are unsigned, so your OS may require approval to run them.
+* **Initial Matter pairing fails:** check the antenna connection and the phone's Bluetooth setting. Restart the unpaired board to reopen pairing, and check that the controller accepts development Matter devices.
+* **The browser cannot find Amity:** use the address on the setup card from the same network, or use the IP address shown by your router.
+* **Equipment is missing or on the wrong input:** check HDMI connections and HDMI-CEC settings, scan again, and review the activity's device selections. If the activity is already running, try 'Repair'.
+* **The paired remote does not respond:** wake it, move it closer to Amity, and check 'Advanced' → 'Diagnostics'.
+
+To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'.
+
+## License
+
+Amity source code is licensed under the [GPLv3](https://github.com/retsyx/amity-esp32/blob/main/LICENSE). See the [third-party notices](https://github.com/retsyx/amity-esp32/blob/main/THIRD_PARTY.md) for dependency licenses.

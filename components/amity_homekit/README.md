@@ -36,8 +36,10 @@ activity settling guard applies. Reads and notifications report the observed hub
 state. Unknown mute or battery readings return HomeKit's resource-absent error.
 A paired but disconnected remote reports battery unavailable; an absent remote
 uses 100% and not charging, matching Matter. Absolute volume is omitted because
-CEC cannot reliably set it. Play/pause alternates the last HomeKit transport
-request, resets on activity changes, and does not claim observed playback state.
+CEC cannot reliably set it. Play/pause uses the hub's last accepted Play, Pause
+or Stop command across HomeKit, Matter and remotes, resetting when the source
+changes. This tracks requested playback behavior and does not claim observed
+playback state.
 
 The vendored [Espressif HAP components](../../third_party/esp-homekit-sdk/UPSTREAM.md)
 use the existing Wi-Fi interface and shared mDNS responder. They neither initialize
