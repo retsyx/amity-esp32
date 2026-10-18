@@ -94,7 +94,7 @@ func TestInitialPassword(t *testing.T) {
 				t.Fatal(e)
 			}
 			password = strings.TrimSuffix(string(raw), "\n")
-			if len(password) != 32 {
+			if len(password) != 12 {
 				t.Fatal("generated password length")
 			}
 		} else if _, e := os.Stat(filepath.Join(dir, "amity-admin-password.txt")); !os.IsNotExist(e) {

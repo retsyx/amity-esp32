@@ -101,8 +101,8 @@ interactive terminal, disables echo and restores terminal settings on cancellati
 Only a salted PBKDF2-HMAC-SHA256 hash is embedded in the firmware image.
 Only auto-generated passwords appear in the setup-card PNG, pairing text and
 `amity-admin-password.txt`. User-supplied and securely prompted passwords are
-never included in these outputs; terminal output does not echo passwords. Auto-generated passwords contain
-192 bits of randomness. With no password option, first access shows password onboarding.
+never included in these outputs; terminal output does not echo passwords. Auto-generated passwords are
+12 characters long and contain 72 bits of randomness. With no password option, first access shows password onboarding.
 The admin password is separate from the Matter setup PIN.
 
 In **Advanced**, the user can change the hostname or password. Factory reset asks

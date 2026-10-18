@@ -28,7 +28,7 @@ func run(args []string, out io.Writer) error {
 	dir := fs.String("out", "amity-provisioned", "new output directory (must not already exist)")
 	hostname := fs.String("hostname", "amity", "network hostname, 1..32 letters/digits/hyphens (without .local)")
 	password := fs.String("password", "", "initial admin password (visible in shell history; use --prompt-password to avoid this)")
-	generatePassword := fs.Bool("generate-password", false, "generate an initial admin password and save it in amity-admin-password.txt")
+	generatePassword := fs.Bool("generate-password", false, "generate a 12-character initial admin password and save it in amity-admin-password.txt")
 	prompt := fs.Bool("prompt-password", false, "securely prompt for an initial admin password without echo")
 	pass := fs.String("passcode", "", "optional Matter setup PIN; default: cryptographically random")
 	disc := fs.Int("discriminator", -1, "optional discriminator 0..4095; default: random")

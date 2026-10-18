@@ -90,7 +90,8 @@ func preparePassword(explicit string, provided, generate, prompt bool, out io.Wr
 	}
 	password := explicit
 	if generate {
-		var random [24]byte
+		// Nine random bytes encode to twelve unpadded base64url characters.
+		var random [9]byte
 		if _, err = io.ReadFull(rand.Reader, random[:]); err != nil {
 			return "", "", err
 		}
