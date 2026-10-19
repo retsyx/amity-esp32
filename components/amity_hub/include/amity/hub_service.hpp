@@ -19,6 +19,8 @@ class HubService {
 public:
     HubService();
     ~HubService();
+    // Discover the front physical address on startup; use the supplied default
+    // only if the back scan yields no usable physical-address report.
     esp_err_t start(int front_gpio, int back_gpio, uint16_t front_physical = 0x1000);
     bool configure(std::vector<Activity> activities, std::vector<Quirk> quirks = {});
     // Reserve command capacity before committing external state. The callback

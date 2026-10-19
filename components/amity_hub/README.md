@@ -27,6 +27,26 @@ assume a core assignment.
 Address allocation uses two unanswered polls and retries if a bus is busy.
 The front tries playback 4, 8, 11, then CEC 2.0 backup addresses 12/13. The
 back tries TV 0, then specific-use address 14, matching the Linux allocator.
+At each boot the front physical address starts unknown. The owner claims the
+back logical address and scans that bus first, including its bounded identity
+reply window. It chooses the numerically lowest usable physical address reported
+by a back device, or the configured default (`1.0.0.0` unless changed) if none
+is reported. If the back logical address cannot be claimed, it still polls and
+sends directed Give Physical Address from the unregistered address; those
+replies are broadcasts. Only then does it claim and announce the front playback device and
+scan the front bus. Both discovered and fallback results remain fixed until
+reboot; later scans and unsolicited reports only update device metadata.
+`Snapshot::front_physical_address` is `0xffff` until determination completes.
+
+This inference follows the [CEC physical-address hierarchy](https://docs.kernel.org/userspace-api/media/cec/cec-ioc-adap-g-phys-addr.html):
+an AVR at `2.0.0.0` precedes its children at `2.1.0.0`, `2.2.0.0`, etc.
+Root `0.0.0.0`, invalid `F.F.F.F`, and malformed paths such as `2.0.1.0` are
+excluded. A poll ACK without a valid physical-address report is insufficient.
+Numeric minimum is not generally equivalent to the most trailing zero digits
+across unrelated branches (`1.2.0.0` is less than `2.0.0.0`). This is a
+best-effort estimate, not a replacement for EDID: if an AVR does not report its
+address but a child does, the child's address may be selected instead.
+
 Missing-device automatic rescans are
 limited to once per two minutes; explicit discovery requests can rescan.
 The owner checks the names needed by an activity/key command before applying

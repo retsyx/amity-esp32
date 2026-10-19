@@ -8,10 +8,13 @@ commissioning values; the web server seeds its password only if none is saved.
 Hostname changes write `amity_cfg/amity/hostname` and apply on reboot. They never
 modify the factory record or activity backup document.
 
-Front physical address changes write `amity_cfg/amity/front_physical` and apply
-on reboot. The default is `1.0.0.0`; an empty input restores that default. Addresses
+Default front physical address changes write `amity_cfg/amity/front_physical` and apply
+on reboot. At every startup, the hub first tries the lowest usable physical address
+reported by the back-bus scan. This setting is the fallback if no usable address is
+reported. The default is `1.0.0.0`; an empty input restores that default. Addresses
 use four dotted hexadecimal digits and must form a valid CEC topology. This setting
 is excluded from activity backup/restore and returns to its default on factory reset.
+Advanced → Diagnostics displays the address actually determined for this boot.
 
 Factory reset writes a durable marker in `amity_cfg/amity_reset`, then reboots.
 Before starting network or application tasks, the boot path erases normal NVS

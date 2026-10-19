@@ -12,6 +12,17 @@
 
 namespace amity {
 namespace {
+bool usable_front_physical_address(uint16_t address) {
+    // Zero belongs to the root TV; FFFF is the CEC invalid/unknown sentinel.
+    if (address == 0 || address == 0xffff) return false;
+    bool zero = false;
+    for (int shift = 12; shift >= 0; shift -= 4) {
+        const auto port = (address >> shift) & 15;
+        if (zero && port) return false;
+        if (!port) zero = true;
+    }
+    return true;
+}
 std::vector<std::string> names(const Activity &a) {
     std::vector<std::string> result;
     // A device can fill several roles, but each power transition applies once.
@@ -31,7 +42,7 @@ void Hub::set_addresses(uint8_t front, uint8_t back, uint16_t physical) {
 }
 void Hub::announce(BusSide side) {
     const bool front = side == BusSide::Front;
-    if ((front ? front_ : back_) == 15) return;
+    if ((front ? front_ : back_) == 15 || (front && physical_ == 0xffff)) return;
     const uint16_t pa = front ? physical_ : 0;
     // Linux announces features first for a CEC 2.0 adapter, then its physical
     // address and vendor. Preserve both payloads and ordering.
@@ -43,7 +54,8 @@ Snapshot Hub::snapshot() const {
     Snapshot s;
     s.activities = activities_; s.devices = devices_; s.current_activity = selected_;
     s.activity_generation = activity_generation_;
-    s.front_address = front_; s.back_address = back_; s.ready = front_ < 15 && back_ < 15;
+    s.front_address = front_; s.back_address = back_; s.front_physical_address = physical_;
+    s.ready = front_ < 15 && back_ < 15 && physical_ != 0xffff;
     s.audio_status_known = audio_status_known_; s.muted = muted_; s.volume = volume_;
     return s;
 }
@@ -100,6 +112,7 @@ void Hub::power(const Device &device, bool on, bool quirk) {
     }
 }
 void Hub::active_source() {
+    if (physical_ == 0xffff) return;
     send(BusSide::Front, 15, {0x82, static_cast<uint8_t>(physical_ >> 8), static_cast<uint8_t>(physical_)});
 }
 void Hub::input(const Activity &activity) {
@@ -213,7 +226,13 @@ void Hub::tick(uint64_t now_us) {
     if (audio_query_pending_ && now_us_ >= audio_query_due_ && !held_audio_) request_audio_status();
 }
 void Hub::clear_devices() { devices_.clear(); discovery_.clear(); discovering_ = false; }
-void Hub::begin_discovery() { discovery_.clear(); discovering_ = true; }
+void Hub::begin_discovery() { discovery_.clear(); discovered_physical_ = 0xffff; discovering_ = true; }
+void Hub::determine_front_physical_address(uint16_t fallback) {
+    if (physical_ != 0xffff) return;
+    // A parent precedes its descendants numerically (2.0.0.0 < 2.1.0.0).
+    // Keep the chosen address, including fallback, for the rest of this boot.
+    physical_ = discovered_physical_ != 0xffff ? discovered_physical_ : fallback;
+}
 void Hub::finish_discovery() {
     if (!discovering_) return;
     const auto *before = known(current().source);
@@ -267,7 +286,9 @@ void Hub::identity(BusSide side, const cec::Frame &frame) {
     const uint16_t pa = front ? physical_ : 0;
     if (frame.destination() == 15) return;
     switch (op) {
-    case 0x83: send(side, 15, {0x84, static_cast<uint8_t>(pa >> 8), static_cast<uint8_t>(pa), static_cast<uint8_t>(front ? 4 : 0)}); break;
+    case 0x83:
+        if (pa != 0xffff) send(side, 15, {0x84, static_cast<uint8_t>(pa >> 8), static_cast<uint8_t>(pa), static_cast<uint8_t>(front ? 4 : 0)});
+        break;
     case 0x8c: send(side, 15, {0x87, 0, 0, 0}); break;
     case 0xa5: send(side, 15, {0xa6, 6, static_cast<uint8_t>(front ? 0x10 : 0x80), 0, 0}); break;
     case 0x46: if (src < 15) send(side, src, {0x47, 'a', 'm', 'i', 't', 'y'}); break;
@@ -293,6 +314,12 @@ void Hub::receive(BusSide side, const cec::Frame &frame) {
         discovered(side, frame.source());
         auto *d = discovery_device(side, frame.source());
         d->physical_address = static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]);
+        // Only actual reports from the initial back scan count; a poll ACK or
+        // a synthesized TV record is not physical-address evidence. Collect
+        // before name/address deduplication can remove a responding device.
+        if (discovering_ && physical_ == 0xffff && side == BusSide::Back &&
+            usable_front_physical_address(d->physical_address))
+            discovered_physical_ = std::min(discovered_physical_, d->physical_address);
         d->type = frame.data[4];
         resolve_device(side, frame.source(), true);
     } else if (op == 0x47 && frame.destination() != 15) {

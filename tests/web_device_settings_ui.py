@@ -5,14 +5,14 @@
 # GNU General Public License as published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
 
-"""Check hostname editing, branding, and factory-reset confirmation against a local API fixture."""
+"""Check device settings, address diagnostics, and factory-reset confirmation against a local API fixture."""
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 from playwright.sync_api import sync_playwright, expect
 ROOT=Path(__file__).resolve().parents[1]
-fixture={'address':'1.0.0.0','hostname':'amity-dut','calls':[],'fail':False}
+fixture={'address':'1.0.0.0','determined_address':None,'hostname':'amity-dut','calls':[],'fail':False}
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT/'components/web_admin/assets'),**kwargs)
     def log_message(self,*args):pass
@@ -20,7 +20,7 @@ class Handler(SimpleHTTPRequestHandler):
         data=json.dumps(data).encode();self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def do_GET(self):
         values={'/api/setup':{'required':False,'hostname':fixture['hostname']},'/api/config':{'version':1,'activities':[]},
-                '/api/status':{'front_physical_address':fixture['address'],'hostname':fixture['hostname'],'version':'test','current_activity':-1,'devices':[]},
+                '/api/status':{'front_physical_address':fixture['address'],'determined_front_physical_address':fixture['determined_address'],'hostname':fixture['hostname'],'version':'test','current_activity':-1,'devices':[]},
                 '/api/remotes':{'devices':[]},'/api/matter':{'fabrics':[]}}
         if self.path in values:return self.reply(values[self.path])
         super().do_GET()
@@ -47,8 +47,11 @@ def main():
             fixture['fail']=True;page.locator('#changeHostname button').click();expect(page.locator('#message')).to_have_text('Save failed');expect(page.locator('#admin')).to_be_visible();checks.append('failed hostname save stays editable')
             fixture['fail']=False;page.locator('#changeHostname button').click();expect(page.locator('#hostnameLink')).to_be_visible();expect(page.locator('#hostnameLink')).to_have_attribute('href','https://living-room.local');expect(page.locator('h1')).to_have_text('living-room');expect(page.locator('#admin')).to_be_hidden();checks.append('successful hostname change gives new URL and ends old session')
             enter();expect(page.locator('#frontPhysicalAddress')).to_have_value('1.0.0.0')
+            expect(page.locator('#changeFrontPhysicalAddress label')).to_contain_text('Default front physical address');expect(page.locator('#diagnostics')).to_contain_text('Front physical address: Determining…');checks.append('diagnostics shows pending front physical address independently of configured default')
+            fixture['determined_address']='3.0.0.0';page.wait_for_function('() => !polling');page.evaluate('() => refresh()');expect(page.locator('#diagnostics')).to_contain_text('Front physical address: 3.0.0.0');expect(page.locator('#frontPhysicalAddress')).to_have_value('1.0.0.0');checks.append('determined address appears in diagnostics while fallback remains separately editable')
             page.locator('#frontPhysicalAddress').fill('invalid');page.locator('#changeFrontPhysicalAddress button').click();assert not any(path=='/api/front-physical-address' for path,data in fixture['calls']);checks.append('malformed physical address blocked before request')
-            page.locator('#frontPhysicalAddress').fill('2.0.0.0');fixture['fail']=True;page.locator('#changeFrontPhysicalAddress button').click();expect(page.locator('#message')).to_have_text('Save failed');expect(page.locator('#frontPhysicalAddress')).to_have_value('2.0.0.0');expect(page.locator('#changeFrontPhysicalAddress button')).to_be_enabled();checks.append('failed physical address save preserves edit and controls')
+            page.locator('#frontPhysicalAddress').fill('2.0.0.0');page.wait_for_function('() => !polling');page.evaluate('() => refresh()');expect(page.locator('#frontPhysicalAddress')).to_have_value('2.0.0.0');expect(page.locator('#diagnostics')).to_contain_text('Front physical address: 3.0.0.0');checks.append('editing default leaves determined diagnostics unchanged across polling')
+            fixture['fail']=True;page.locator('#changeFrontPhysicalAddress button').click();expect(page.locator('#message')).to_have_text('Save failed');expect(page.locator('#frontPhysicalAddress')).to_have_value('2.0.0.0');expect(page.locator('#changeFrontPhysicalAddress button')).to_be_enabled();checks.append('failed physical address save preserves edit and controls')
             fixture['fail']=False;page.locator('#changeFrontPhysicalAddress button').click();expect(page.locator('#admin')).to_be_hidden();assert fixture['calls'][-1]==('/api/front-physical-address',{'address':'2.0.0.0'});checks.append('physical address saved and session ends for reboot')
             enter();expect(page.locator('#frontPhysicalAddress')).to_have_value('2.0.0.0');page.locator('#frontPhysicalAddress').fill('');page.locator('#frontPhysicalAddress').blur();page.wait_for_function('() => !polling');page.evaluate('() => refresh()');expect(page.locator('#frontPhysicalAddress')).to_have_value('');checks.append('polling preserves deliberately empty physical address')
             page.locator('#changeFrontPhysicalAddress button').click();expect(page.locator('#admin')).to_be_hidden();assert fixture['calls'][-1]==('/api/front-physical-address',{'address':''});enter();expect(page.locator('#frontPhysicalAddress')).to_have_value('1.0.0.0');checks.append('empty physical address resets to default')

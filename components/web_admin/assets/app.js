@@ -266,7 +266,7 @@ function renderFrontPhysicalAddress(address){
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
  const detail=r.connected?`${r.name?' · '+r.name:''}${r.battery>=0?' · '+r.battery+'% battery':''}${r.charging===true?' · Charging':''}`:r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'';
- $('diagnostics').textContent=`Firmware ${state.version}\n${state.wifi_connected?'Wi-Fi signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'Wi-Fi disconnected'}\nRemote: ${connection}${detail}`;
+ $('diagnostics').textContent=`Firmware ${state.version}\n${state.wifi_connected?'Wi-Fi signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'Wi-Fi disconnected'}\nFront physical address: ${state.determined_front_physical_address??'Determining…'}\nRemote: ${connection}${detail}`;
 }
 function renderRemotes(r){
  remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,busy=!!remotePending||unpairing||(!paired&&(!!r.pairing||!!r.connecting||!!r.scanning));
@@ -522,7 +522,7 @@ $('changeFrontPhysicalAddress').addEventListener('submit',run(async e=>{
  try{
   const r=await request('front-physical-address',{address:$('frontPhysicalAddress').value});
   delete $('frontPhysicalAddress').dataset.edited;renderFrontPhysicalAddress(r.front_physical_address);
-  showLogin();message('Front physical address saved. Restarting Amity.');
+  showLogin();message('Default front physical address saved. Restarting Amity.');
  }finally{submit.disabled=false;}
 }));
 $('hostname').addEventListener('input',()=>{$('hostname').dataset.edited='true';});

@@ -7,7 +7,8 @@ Linux's CEC core. In particular, `main.py` passes the lowercase OSD name
 default. The original port was confined to the old repository’s `esp32/` folder; this repository now contains the standalone project.
 
 For the table below, the front playback address is 4, the back TV address is
-0, and the front physical address is the Python default 1.0.0.0. Headers
+0, and the front physical address is 1.0.0.0 (the Python default and the ESP32
+fallback when no usable back-side address is reported at startup). Headers
 change naturally if address allocation chooses another address.
 
 | Trigger | Front response | Back response |
@@ -41,6 +42,13 @@ Address, and Device Vendor ID. The allocator tries front addresses
 4, 8, 11, 12, 13, and back addresses 0, 14, matching the CEC 2.0 Linux
 candidate order. See
 [Linux 6.12 address allocation and announcements](https://github.com/torvalds/linux/blob/v6.12/drivers/media/cec/core/cec-adap.c#L1316).
+
+The ESP32 now determines its front physical address on every boot: scan the
+back bus, choose its lowest valid non-root reported physical address, or use
+the configured fallback when none is available. The back TV announces first;
+front allocation and announcements wait for this determination. Later rescans
+do not change the result. This topology inference is a heuristic when the
+directly attached device stays silent; see the hub component README.
 
 | Activity/device operation | Expected Python behavior reproduced |
 | --- | --- |
@@ -85,7 +93,17 @@ Validation:
 - `sh tests/cec_hub_test.sh` checks wire ACK/arbitration/timing failures,
   startup message order, activity transitions, identity payloads, ignored
   unsupported/badly addressed messages, quirks, and audio feedback under
-  ASan and UBSan.
+  ASan and UBSan. Front physical-address tests cover multiple response orders,
+  delayed AVR replies, invalid reports, configured fallback, startup ordering,
+  and retaining the result until a fresh boot.
+- `python3 tests/cec_front_physical_hardware.py --url https://amity-dut.local
+  --credentials PRIVATE_CREDENTIALS_JSON --host PI_SSH_HOST` exercises discovery,
+  rescan pinning, reevaluation on reboot, and no-responder fallback against the
+  isolated two-bus fixture. `--firmware build/amity.bin` installs the image by
+  OTA first. The fixture adapters must be front `/dev/cec0`, back `/dev/cec1`
+  (or supplied explicitly); the script leaves the synthetic TV/source at
+  `1.0.0.0` and reboots the DUT to rediscover it. It preserves activities and
+  the configured default. Use `--restore-physical` for another fixture address.
 - All four CEC/hub implementation files compile with the project's ESP-IDF
   6.1 ESP32-S3 command lines. Object inspection confirmed ISR code and its
   literal pools are in IRAM and ISR state is in internal RAM.

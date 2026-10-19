@@ -37,6 +37,7 @@ struct Snapshot {
     uint32_t activity_generation = 0;
     uint32_t discovery_generation = 0;
     uint8_t front_address = 15, back_address = 15;
+    uint16_t front_physical_address = 0xffff; // Unknown until the startup back-bus scan completes.
     bool ready = false;
     bool discovering = false;
     bool activity_settling = false;
@@ -69,6 +70,7 @@ public:
     void discovered(BusSide side, uint8_t address);
     void clear_devices();
     void begin_discovery();
+    void determine_front_physical_address(uint16_t fallback);
     void finish_discovery();
     bool activity_needs_discovery(int index) const;
     bool key_needs_discovery(uint8_t key) const;
@@ -96,7 +98,7 @@ private:
     int selected_ = -1;
     uint32_t activity_generation_ = 0;
     uint8_t front_ = 15, back_ = 15;
-    uint16_t physical_ = 0x1000;
+    uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff;
     bool playing_ = false;
     bool key_held_ = false;
     bool held_audio_ = false;

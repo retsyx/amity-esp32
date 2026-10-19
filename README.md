@@ -276,6 +276,14 @@ If you cannot access the administration page, you can also reinstall the saved U
 
 To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'.
 
+Amity determines its front HDMI-CEC physical address on every startup from the
+lowest valid address reported by back-side devices. If none is reported, it uses
+the 'Default front physical address' setting in 'Advanced' → 'HDMI-CEC'
+(`1.0.0.0` by default). 'Advanced' → 'Diagnostics' shows the result for the current
+boot. This is a best-effort estimate: a silent AVR can leave only a child device's
+address available. A new scan keeps the current address; restarting determines
+it again.
+
 ## License
 
 Amity source code is licensed under the [GPLv3](https://github.com/retsyx/amity-esp32/blob/main/LICENSE). See the [third-party notices](https://github.com/retsyx/amity-esp32/blob/main/THIRD_PARTY.md) for dependency licenses.

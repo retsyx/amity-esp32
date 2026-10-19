@@ -33,11 +33,15 @@ static int64_t fixture_tick = 100000;
 static int idle_passes = -1;
 static std::vector<unsigned> idle_waits;
 static std::function<void()> fixture_wire_complete;
+static std::function<void()> fixture_delay;
 static std::vector<cec::Frame> fixture_waited;
 static bool in_wire_attempt = false;
 struct SentFrame { int gpio; cec::Frame frame; };
 static std::vector<SentFrame> fixture_sent;
+static std::vector<SentFrame> fixture_transmitted;
 static std::deque<SentFrame> fixture_incoming;
+static std::function<bool(int, const cec::Frame &)> fixture_send;
+static std::function<cec::TxResult(int, const cec::Frame &)> fixture_transmit;
 
 QueueHandle_t xQueueCreate(unsigned capacity, size_t item_size) { return new FakeQueue{capacity, item_size, {}}; }
 int xQueueSend(QueueHandle_t q, const void *item, unsigned) {
@@ -67,7 +71,7 @@ int xTaskCreate(TaskFunction_t entry, const char *, unsigned, void *context, uns
     *task = latest_task = new FakeTask{entry, context}; return pdPASS;
 }
 void vTaskDelete(TaskHandle_t task) { if (latest_task == task) latest_task = nullptr; delete task; }
-void vTaskDelay(unsigned ticks) { fixture_time += ticks * 1000; }
+void vTaskDelay(unsigned ticks) { fixture_time += ticks * 1000; if (fixture_delay) fixture_delay(); }
 int64_t esp_timer_get_time() { return fixture_time += fixture_tick; }
 [[maybe_unused]] static void run_one_command() {
     worker_receives = 1;
@@ -87,6 +91,7 @@ esp_err_t Bus::start(int gpio) { impl_->gpio = gpio; return ESP_OK; }
 void Bus::set_address(uint8_t address) { impl_->address = address; }
 bool Bus::send(const Frame &frame, uint32_t) {
     fixture_sent.push_back({impl_->gpio, frame});
+    if (fixture_send) return fixture_send(impl_->gpio, frame);
     const uint8_t peer = impl_->gpio == 1 ? 0 : 4;
     if (!fixture_present || frame.size < 2 || frame.destination() != peer) return true;
     Frame reply;
@@ -110,6 +115,8 @@ bool Bus::send(const Frame &frame, uint32_t) {
     return true;
 }
 TxResult Bus::transmit(const Frame &frame, unsigned) {
+    fixture_transmitted.push_back({impl_->gpio, frame});
+    if (fixture_transmit) return fixture_transmit(impl_->gpio, frame);
     return fixture_present && frame.destination() == (impl_->gpio == 1 ? 0 : 4) ? TxResult::Success : TxResult::Nack;
 }
 bool Bus::receive(Frame &frame, uint32_t) {

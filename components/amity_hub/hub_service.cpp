@@ -51,7 +51,7 @@ struct HubService::Impl : Transport {
     Snapshot cached;
     std::function<void(const Snapshot &)> callback;
     uint8_t front_address = 15, back_address = 15;
-    uint16_t physical = 0x1000;
+    uint16_t fallback_physical = 0x1000;
     bool scan_requested = false;
     bool scan_running = false;
     int64_t last_scan = -120000000;
@@ -180,7 +180,10 @@ struct HubService::Impl : Transport {
     bool send(BusSide side, uint8_t destination, const uint8_t *data, size_t size) override {
         if (size > 15 || !size || destination > 15) return false;
         const uint8_t address = side == BusSide::Front ? front_address : back_address;
-        if (address == 15) return false;
+        // Give Physical Address accepts an unregistered initiator because its
+        // response is broadcast. This still permits startup determination if
+        // all back logical-address candidates are occupied or allocation is busy.
+        if (address == 15 && !(side == BusSide::Back && destination < 15 && size == 1 && data[0] == 0x83)) return false;
         cec::Frame frame; frame.size = static_cast<uint8_t>(size + 1);
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
@@ -245,19 +248,31 @@ struct HubService::Impl : Transport {
     }
     void claim_addresses() {
         last_claim = esp_timer_get_time();
-        const bool claiming_front = front_address == 15, claiming_back = back_address == 15;
-        if (claiming_front) front_address = claim(front, {4, 8, 11, 12, 13});
+        const auto physical = hub.snapshot().front_physical_address;
+        const bool claiming_front = front_address == 15 && physical != 0xffff, claiming_back = back_address == 15;
         if (claiming_back) back_address = claim(back, {0, 14});
+        if (claiming_front) front_address = claim(front, {4, 8, 11, 12, 13});
         hub.set_addresses(front_address, back_address, physical);
-        if (front_address == 15 || back_address == 15) {
+        if (back_address == 15 || (physical != 0xffff && front_address == 15)) {
             ESP_LOGW(TAG, "CEC address allocation pending (front=%u back=%u); check pins and bus roles", front_address, back_address);
-        } else {
+        } else if (physical != 0xffff) {
             ESP_LOGI(TAG, "CEC ready: front playback %u, back TV %u", front_address, back_address);
-            scan_requested = true;
+            if (!scan_running) scan_requested = true;
         }
         if (claiming_front) hub.announce(BusSide::Front);
         if (claiming_back) hub.announce(BusSide::Back);
         publish();
+    }
+    void await_scan_replies() {
+        // Presence polls finish before queued identity requests. Wait for
+        // their replies before choosing a physical address or using names.
+        const auto deadline = esp_timer_get_time() + 5000000;
+        auto quiet_since = esp_timer_get_time();
+        while (esp_timer_get_time() < deadline) {
+            if (receive() || !front.idle() || !back.idle()) quiet_since = esp_timer_get_time();
+            if (esp_timer_get_time() - quiet_since >= 1100000) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
     void scan() {
         scan_requested = false; scan_running = true; last_scan = esp_timer_get_time();
@@ -267,25 +282,30 @@ struct HubService::Impl : Transport {
         for (const auto side : {BusSide::Back, BusSide::Front}) {
             auto &bus = side == BusSide::Front ? front : back;
             const auto own = side == BusSide::Front ? front_address : back_address;
-            if (own == 15) continue;
+            const bool determining = side == BusSide::Back && hub.snapshot().front_physical_address == 0xffff;
+            if (own == 15 && !determining) continue;
             for (uint8_t address = 0; address < 15; ++address) {
                 if (address == own) continue;
                 cec::Frame poll; poll.size = 1; poll.data[0] = (own << 4) | address;
                 if (bus.transmit(poll, 1) == cec::TxResult::Success) hub.discovered(side, address);
                 receive();
             }
+            if (side == BusSide::Back && hub.snapshot().front_physical_address == 0xffff) {
+                await_scan_replies();
+                hub.determine_front_physical_address(fallback_physical);
+                [[maybe_unused]] const auto physical = hub.snapshot().front_physical_address;
+                ESP_LOGI(TAG, "Front physical address determined: %x.%x.%x.%x",
+                         (physical >> 12) & 15, (physical >> 8) & 15, (physical >> 4) & 15, physical & 15);
+                // The front playback device can now claim and advertise its
+                // final address, then participate in the front-bus scan.
+                claim_addresses();
+            }
         }
         // Polling establishes presence before the queued identity requests
         // finish. Let them drain before applying an activity selected while
         // scanning, or a TV can still have its fallback name at selection.
         // Linux's Device() awaits these replies before publishing discovery.
-        const auto deadline = esp_timer_get_time() + 5000000;
-        auto quiet_since = esp_timer_get_time();
-        while (esp_timer_get_time() < deadline) {
-            if (receive() || !front.idle() || !back.idle()) quiet_since = esp_timer_get_time();
-            if (esp_timer_get_time() - quiet_since >= 1100000) break;
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+        await_scan_replies();
         hub.finish_discovery();
         ++discovery_generation;
         scan_running = false;
@@ -361,7 +381,7 @@ esp_err_t HubService::start(int front_gpio, int back_gpio, uint16_t front_physic
     if (!p.lock || !p.configuration_gate) return ESP_ERR_NO_MEM;
     if (p.commands) return ESP_ERR_INVALID_STATE;
     if (front_gpio == back_gpio) return ESP_ERR_INVALID_ARG;
-    p.physical = front_physical;
+    p.fallback_physical = front_physical;
     auto err = p.start_buses(front_gpio, back_gpio); if (err != ESP_OK) return err;
     p.commands = xQueueCreate(32, sizeof(Impl::Command *));
     p.command_slots = xSemaphoreCreateCounting(32, 32);
