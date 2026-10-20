@@ -153,6 +153,13 @@ def main():
                 expect(page.locator('#connection')).to_have_text('')
                 fixture['status']['ready'] = True
                 passed('header is blank on login and while idle or not yet ready')
+                fixture['status']['activity_error'] = 'Some equipment is not responding. Scan HDMI and try again.'
+                page.wait_for_function('() => !polling')
+                page.evaluate('() => refresh()')
+                expect(page.locator('#message')).to_have_text(fixture['status']['activity_error'])
+                passed('asynchronous activity failure is visible after admission')
+                fixture['status']['activity_error'] = ''
+                page.evaluate("() => message('')")
                 save = page.locator('#saveActivities')
                 discard = page.locator('#discardActivities');expect(discard).to_be_hidden()
                 expect(save).to_be_hidden()
@@ -187,10 +194,14 @@ def main():
                     page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click()
                     expect(page.locator('#activityEditor')).to_be_hidden()
                 def drag(source,target):
+                    page.locator('#activityList').scroll_into_view_if_needed()
+                    expected=page.locator('#activityList .activity-name').all_text_contents()
+                    expected.insert(target,expected.pop(source))
                     handle=page.locator('[data-drag]').nth(source).bounding_box()
                     row=page.locator('#activityList article').nth(target).bounding_box()
                     page.mouse.move(handle['x']+handle['width']/2,handle['y']+handle['height']/2)
                     page.mouse.down();page.mouse.move(handle['x']+handle['width']/2,row['y']+row['height']/2,steps=10);page.mouse.up()
+                    expect(page.locator('#activityList .activity-name')).to_have_text(expected)
                 expect(page.locator('#activityList input')).to_have_count(0)
                 expect(page.locator('#activityList article').first.locator('button')).to_have_text(['Edit','Delete','Start'])
                 passed('main list contains only names, reorder handles, and Edit/Delete/Start controls')
@@ -473,7 +484,8 @@ def main():
                             expect(page.locator('#toggleRemote')).to_have_text('Unpair remote')
                             expect(page.locator('#toggleRemote')).to_be_enabled()
                             expect(page.locator('#toggleRemote')).to_have_attribute('aria-busy', 'false')
-                        expect(page.locator('#diagnostics')).to_contain_text('Remote: ' + status)
+                        diagnostic_status = 'Waiting for remote' if bonded and not extra else status
+                        expect(page.locator('#diagnostics')).to_contain_text('Remote: ' + diagnostic_status)
                 fixture['remotes'] = {'devices': [], 'bonded': True, 'connected': True, 'name': 'Atomic', 'battery': 85}
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remoteStatus')).to_have_text('Paired')
@@ -550,7 +562,7 @@ def main():
                 expect(page.locator('#toggleRemote')).to_have_text('Unpair remote')
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 expect(page.locator('#remoteStatus')).to_have_text('Paired')
-                expect(page.locator('#diagnostics')).to_contain_text('Remote: Disconnected')
+                expect(page.locator('#diagnostics')).to_contain_text('Remote: Waiting for remote')
                 passed('paired but disconnected remote still offers Unpair remote')
                 before = len(fixture['remote_calls'])
                 page.once('dialog', lambda dialog: dialog.dismiss())

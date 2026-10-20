@@ -1,0 +1,15 @@
+menu "Amity release verification"
+config AMITY_PRODUCTION_UPDATES
+    bool "Require provisioned production firmware verification"
+    default n
+    help
+        Requires the approved native secure-boot, release-mode flash encryption,
+        NVS encryption and provisioned publisher verification root.
+        This build option never programs eFuses or changes a running profile.
+config AMITY_RELEASE_PUBLIC_KEY_DER_HEX
+    string "Trusted release P-256 SPKI DER (lowercase hexadecimal)"
+    default ""
+    help
+        The SHA-256 of these public bytes is the manifest signing_key_id.
+        Empty means no signed publisher is provisioned. Production fails closed.
+endmenu

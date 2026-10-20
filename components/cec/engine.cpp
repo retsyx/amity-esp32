@@ -9,10 +9,36 @@
 #include "cec/engine.hpp"
 
 namespace cec {
-bool Engine::begin(const Frame &frame, uint64_t now, bool retry) {
-    if (busy() || frame.size == 0 || frame.size > 16) return false;
+bool fence_current(ExecutionFence fence) {
+    return (!fence.generation || fence.generation->load(std::memory_order_acquire) == fence.expected_generation) &&
+        (!fence.secondary_generation ||
+         fence.secondary_generation->load(std::memory_order_acquire) == fence.expected_secondary_generation);
+}
+void Engine::set_address(uint8_t address) {
+    auto replacement = policy_pending_ ? pending_policy_ : policy_;
+    replacement.ack_address = address < 15 ? address : 15;
+    install_receive_policy(replacement);
+}
+
+bool Engine::install_receive_policy(ReceivePolicy policy) {
+    if (policy.ack_address > 15) return false;
+    if (receiving_ || ack_drive_ || transmitting_) {
+        pending_policy_ = policy;
+        policy_pending_ = true;
+    } else {
+        policy_ = policy;
+        policy_pending_ = false;
+    }
+    return true;
+}
+
+bool Engine::begin(const Frame &frame, uint64_t now, bool retry, ExecutionFence fence) {
+    if (busy() || frame.size == 0 || frame.size > 16 || !fence_current(fence) ||
+        (fence.expires_at_us && now >= fence.expires_at_us)) return false;
     tx_ = frame;
+    tx_fence_ = fence;
     pending_ = true;
+    tx_started_ = false;
     requested_ = now;
     free_time_ = retry ? 7200 : 16800;
     result_ = TxResult::Pending;
@@ -38,7 +64,7 @@ void Engine::receive_tick(uint64_t now, bool high) {
                     start_seen_ = false;
                     sampled_ = false;
                     if (rx_bit_ == 9 && rx_.size && !self_rx_ &&
-                        (rx_.data[0] & 15) == address_ && address_ < 15) {
+                        (rx_.data[0] & 15) == policy_.ack_address && policy_.ack_address < 15) {
                         ack_drive_ = true;
                         ack_until_ = now + 1500;
                     }
@@ -77,8 +103,12 @@ void Engine::receive_tick(uint64_t now, bool high) {
     } else if (rx_bit_ == 8) eom_ = high;
     else if (eom_) {
         if (!self_rx_ && rx_.size &&
-            ((rx_.data[0] & 15) == address_ || (rx_.data[0] & 15) == 15)) {
-            received_ = rx_;
+            (policy_.observe_all || (rx_.data[0] & 15) == policy_.ack_address || (rx_.data[0] & 15) == 15)) {
+            received_.frame = rx_;
+            received_.local_rx_sequence = ++rx_sequence_;
+            received_.local_monotonic_us = now;
+            received_.addressed_to_local_identity = policy_.ack_address < 15 &&
+                (rx_.data[0] & 15) == policy_.ack_address;
             rx_ready_ = true;
         }
         receiving_ = false;
@@ -95,11 +125,20 @@ bool Engine::tick(uint64_t now, bool high) {
     }
     last_tick_ = now;
     receive_tick(now, high);
+    if (policy_pending_ && !receiving_ && !ack_drive_ && !transmitting_) {
+        policy_ = pending_policy_;
+        policy_pending_ = false;
+    }
     if (pending_) {
-        if (now - requested_ > 1000000) fail(TxResult::Timeout);
+        // Recheck at the actual first wire edge, after arbitrary bus free-time
+        // waits. In-flight frames finish normally; they cannot be unsent.
+        if (tx_fence_.expires_at_us && now >= tx_fence_.expires_at_us) fail(TxResult::Expired);
+        else if (!fence_current(tx_fence_)) fail(TxResult::Cancelled);
+        else if (now - requested_ > 1000000) fail(TxResult::Timeout);
         else if (high && !receiving_ && now - high_since_ >= free_time_) {
             pending_ = false;
             transmitting_ = true;
+            tx_started_ = true;
             tx_start_ = now;
             tx_slot_ = -1;
             tx_sampled_ = false;
@@ -140,7 +179,13 @@ bool Engine::tick(uint64_t now, bool high) {
 
 bool Engine::take_received(Frame &frame) {
     if (!rx_ready_) return false;
-    frame = received_;
+    frame = received_.frame;
+    rx_ready_ = false;
+    return true;
+}
+bool Engine::take_observation(ReceiveObservation &observation) {
+    if (!rx_ready_) return false;
+    observation = received_;
     rx_ready_ = false;
     return true;
 }

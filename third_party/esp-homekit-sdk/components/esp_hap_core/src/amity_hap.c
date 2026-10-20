@@ -16,25 +16,30 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <string.h>
+#include <stdatomic.h>
+#include "hap_platform_httpd.h"
 static SemaphoreHandle_t lock;
 static char hostname[33];
 static int64_t pairing_deadline;
 static uint32_t pairing_window;
+static atomic_bool service_enabled = true;
 int hap_amity_init(const char *name) {
+    if (!atomic_load(&service_enabled)) return HAP_FAIL;
     if (!name || strlen(name) >= sizeof(hostname)) return HAP_FAIL;
     if (!lock) lock = xSemaphoreCreateRecursiveMutex();
     if (!lock) return HAP_FAIL;
     strcpy(hostname, name);
     return HAP_SUCCESS;
 }
-void hap_amity_lock(void) { xSemaphoreTakeRecursive(lock, portMAX_DELAY); }
-void hap_amity_unlock(void) { xSemaphoreGiveRecursive(lock); }
+void hap_amity_lock(void) { if (lock) xSemaphoreTakeRecursive(lock, portMAX_DELAY); }
+void hap_amity_unlock(void) { if (lock) xSemaphoreGiveRecursive(lock); }
 const char *hap_amity_hostname(void) { return hostname; }
 void hap_amity_set_pairing_deadline(int64_t deadline) {
     if (deadline != pairing_deadline) ++pairing_window;
     pairing_deadline = deadline;
 }
-bool hap_amity_pairing_allowed(void) { return pairing_deadline > esp_timer_get_time(); }
+bool hap_amity_enabled(void) { return atomic_load(&service_enabled); }
+bool hap_amity_pairing_allowed(void) { return hap_amity_enabled() && pairing_deadline > esp_timer_get_time(); }
 uint32_t hap_amity_pairing_window(void) { return pairing_window; }
 int hap_amity_refresh_mdns(void) { return hap_mdns_announce(false); }
 int hap_amity_remove_pairings(void) {
@@ -43,4 +48,24 @@ int hap_amity_remove_pairings(void) {
     memset(hap_priv.controllers, 0, sizeof(hap_priv.controllers));
     pairing_deadline = 0;
     return hap_mdns_deannounce();
+}
+
+int hap_amity_stop(void) {
+    atomic_store(&service_enabled, false);
+    if (!lock) return HAP_SUCCESS;
+    hap_amity_lock();
+    hap_amity_set_pairing_deadline(0);
+    hap_close_all_sessions();
+    int result = hap_mdns_deannounce();
+    if (hap_ip_services_stop() != HAP_SUCCESS) result = HAP_FAIL;
+    hap_amity_unlock();
+    // httpd_stop waits for handler teardown. Never hold the HAP mutex here:
+    // an existing handler can be waiting for it while the server exits.
+    if (hap_priv.server) {
+        if (hap_platform_httpd_stop(&hap_priv.server) != ESP_OK) return HAP_FAIL;
+        hap_priv.server = NULL;
+    }
+    // Keep the SDK event loop inert rather than its asynchronous hap_stop
+    // loop/queue destruction. No pairing/fabric namespace is erased.
+    return result;
 }

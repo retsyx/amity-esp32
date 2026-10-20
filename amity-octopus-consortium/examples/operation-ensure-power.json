@@ -31,6 +31,7 @@
     "operation": "ensure_power",
     "arguments": {
       "on": true
-    }
+    },
+    "command_sequence": "2"
   }
 }

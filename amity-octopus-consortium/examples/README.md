@@ -31,7 +31,7 @@ The fixture assumes a receiver that can show the same selected input on both out
 | [name-reresolution.json](name-reresolution.json) | Same configured Apple TV moves LA4 to LA8 while another appliance occupies LA4; selector/ComponentId/config revision stay fixed, binding revision advances, old work is invalid. |
 | [operation-ensure-power.json](operation-ensure-power.json) | Coordinator requests discrete power-on from the room octopus through a native source binding. |
 | [operation-activate-proxy.json](operation-activate-proxy.json) | The same source is represented by a different, locally owned playback proxy on the TV domain. |
-| [operation-press-key.json](operation-press-key.json) | A navigation input targets the native source binding and carries a 750 ms hold token lease. |
+| [operation-press-key.json](operation-press-key.json) | A navigation down state targets the native source binding with an exact token; `repeat` selects owner-local held repetition or a single press/release. No per-button lease is used. |
 
 The control-operation lease and realtime-input lease IDs differ intentionally. These IDs are illustrative references; the files contain no actual handshake or permission grant. To execute a fixture in a simulator, create matching authenticated state, semantic configuration 7, the referenced domain/binding revisions, synchronized BootIds and a receiver-issued lease of the required class. A real endpoint must reject it otherwise.
 

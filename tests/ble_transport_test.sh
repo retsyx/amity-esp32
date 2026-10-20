@@ -13,7 +13,7 @@ mkdir -p "$out"
   -I"$root/tests/ble_transport_fakes" -I"$root/components/ble_remote/include" \
   "$root/tests/ble_transport_test.cpp" "$root/components/ble_remote/hid_keyboard.cpp" \
   "$root/components/ble_remote/siri_remote.cpp" "$root/components/ble_remote/remote_input.cpp" -o "$out/ble_transport_test"
-for scenario in absence success unpair unpair-before-completion scan scan-unpair unpair-scan \
+for scenario in actuator-startup actuator-input actuator-reconnect actuator-connected actuator-queued-unpair absence success unpair unpair-delete-error unpair-storage-error unpair-before-completion scan scan-unpair unpair-scan \
   cancel-error unpair-cancel-error connect-error async-error discovery-error \
   disconnect-before-setup host-reset pairing; do
   "$out/ble_transport_test" "$scenario"

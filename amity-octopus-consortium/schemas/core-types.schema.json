@@ -122,6 +122,16 @@
       ],
       "additionalProperties": false,
       "description": "Persisted qualified device selector. Discovery resolves its exact OSD name to a separate runtime CEC address; no logical address is stored here."
+    },
+    "Hostname": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+      "not": {
+        "pattern": "[^a-z0-9-]"
+      },
+      "description": "Canonical lowercase DNS hostname label, 1\u201332 ASCII letters/digits/hyphens with alphanumeric ends; no display alias."
     }
   }
 }

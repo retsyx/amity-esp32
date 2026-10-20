@@ -55,7 +55,11 @@ int main(){
     store={{"nvs/wifi",{{"ssid",{1,2}},{"password",{3,4}}}},
            {"nvs/chip-config",{{"fabric",{7}}}},{"nvs/nimble",{{"bond",{8}}}},
            {"nvs/amity_matter",{{"commissioning",Bytes(44,0x42)}}},
-           {"amity_cfg/amity",{{"front_physical",{5}},{"hostname",{1}},{"admin_auth",{2}},{"tls_cert",{3}},{"config",{4}}}},
+           {"amity_cfg/amity",{{"front_physical",{5}},{"front_defaults",{5,4,3,2,1}},{"hostname",{1}},{"admin_auth",{2}},{"tls_cert",{3}},{"config",{4}}}},
+           {"amity_cfg/amity_origin",{{"candidate",{42}},{"committed",{42}}}},
+           {"amity_cfg/amity_system",{{"committed",{1}}}},
+           {"amity_cfg/amity_group",{{"pin",{2}}}},
+           {"amity_cfg/amity_config",{{"draft",{3}}}},
            {"amity_factory/raw",{{"provisioning",{4,5,6}}}},
            {"nvs_keys/raw",{{"key",{10,11}}}},
            {"ota_0/raw",{{"firmware",{12,13}}}},
@@ -81,7 +85,9 @@ int main(){
     auto baseline=store;
     auto verify=[&]{
         for(const auto &[key,space]:store)if(key.rfind("nvs/",0)==0)assert(space.empty());
-        assert(store["amity_cfg/amity"].empty());
+        for (const auto *space : {"amity", "amity_system", "amity_local", "amity_group", "amity_config", "amity_export"})
+            assert(store[std::string("amity_cfg/")+space].empty());
+        assert(store.at("amity_cfg/amity_origin") == untouched.at("amity_cfg/amity_origin"));
         assert(store["amity_cfg/amity_reset"].empty());
         for(const auto &key:{"amity_factory/raw","nvs_keys/raw","ota_0/raw","ota_1/raw"})
             assert(store.at(key)==untouched.at(key));
@@ -96,5 +102,19 @@ int main(){
         assert(device_settings::finish_factory_reset()==ESP_OK);verify();
         assert(device_settings::finish_factory_reset()==ESP_OK);verify();
     }
-    std::cout<<"PASS factory reset resumes after "<<interruptions<<" simulated power interruptions; factory data, NVS keys and firmware retained\n";
+    unsigned marker_interruptions=0;
+    // A remote Remove uses the exact same marker. A cut while scheduling it,
+    // including after it reaches flash but before any result transmission,
+    // either retains the original installation or finishes the complete reset.
+    for(int i=1;i<=3;++i){
+        store=untouched;handles.clear();initialized=false;steps=0;cut=i;
+        try{device_settings::schedule_factory_reset();}catch(const std::runtime_error &){++marker_interruptions;}
+        handles.clear();initialized=false;cut=0;
+        const bool scheduled=store["amity_cfg/amity_reset"].count("pending");
+        assert(device_settings::finish_factory_reset()==ESP_OK);
+        if(scheduled)verify();
+        else for(const auto& [key,space]:untouched)assert(store.at(key)==space);
+        assert(!device_settings::reset_pending());
+    }
+    std::cout<<"PASS factory reset resumes after "<<interruptions<<" erase interruptions and "<<marker_interruptions<<" reset-marker interruptions; legacy and five-slot defaults cleared; factory data, NVS keys and firmware retained\n";
 }

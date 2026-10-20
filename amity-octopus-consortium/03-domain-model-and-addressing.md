@@ -1,5 +1,7 @@
 # 03 — Domain model and addressing
 
+**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+
 **Status:** proposed v0.1. This document owns identifier and topology semantics. [Transport](08-consortium-transport-and-routing.md) owns serialization and messages; [configuration](11-config-storage-and-migration.md) owns durable configuration activation.
 
 ## 1. Extend name-based resolution with attachment scope
@@ -22,7 +24,6 @@ All opaque IDs below are random 128-bit values serialized as exactly 32 lowercas
 | `BindingId` | One explicit control binding or proxy representation of a component. |
 | `ActivityId`, `ZoneId`, `ResourceId`, `RouteId` | Stable desired-state objects and validated paths independent of UI order and labels. |
 | `SessionId`, `PlanId`, `CommandId`, `MessageId`, `ScanId`, `ResolutionId` | One runtime operation/session or binding-resolution exchange; IDs are not reused after a crash. |
-| `RemoteId` | One locally enrolled remote record; movement to a different owner is explicit. |
 
 `TentacleId` is an integer **0–4**, assigned by the hardware profile to a stable connector slot. It does not change when the tentacle is unplugged or renamed. The UI displays HDMI 1–5; firmware and wire contracts use zero-based slot IDs. `side` is the literal string `front` or `back`. `logical_address` is integer 0–14 for a component endpoint. Address 15 is reserved for broadcast/unregistered protocol context and is not an equipment identity.
 
@@ -44,7 +45,7 @@ Every revision or ordered counter whose C++ type is `uint64_t` is serialized to 
 }
 ```
 
-The conceptual spelling is `consortium / octopus / tentacle / side / OSD-name`. The structured object is canonical storage and API syntax; do not parse a human-readable string because an OSD name may contain delimiters. This conceptual spelling does not prescribe a path-like normal UI: [guided setup](20-user-experience-and-guided-setup.md) uses an equipment title with octopus location context and adds connector detail only when necessary. Preserve the exact OSD name under the shared CEC decoder; do not case-fold, trim, or replace it with a user-editable label. A missing or malformed OSD response is unresolved evidence, not permission to use a logical address or a fabricated label as the name. Model-specific decoding/fallback quirks require an explicit, tested policy.
+The conceptual spelling is `consortium / octopus / tentacle / side / OSD-name`. The structured object is canonical storage and API syntax; do not parse a human-readable string because an OSD name may contain delimiters. This conceptual spelling does not prescribe a path-like normal UI: [baseline interface](20-user-interface.md) uses an equipment title with the owning Amity device's canonical hostname and adds connector detail only when necessary. Preserve the exact OSD name under the shared CEC decoder; do not case-fold, trim, or replace it with a user-editable label. A missing or malformed OSD response is unresolved evidence, not permission to use a logical address or a fabricated label as the name. Model-specific decoding/fallback quirks require an explicit, tested policy.
 
 All five fields are mandatory. The same OSD name at a different qualified attachment is a different selector. Several selectors may intentionally identify one physical appliance when verified observations establish aliases. Multiple native appliances matching one selector are ambiguous; require a distinguishing name, attachment or explicitly documented matching constraint. A remembered LA is never a durable disambiguator. See [discovery](05-discovery-and-topology.md) for shared-domain correlation and ambiguity handling.
 
@@ -82,7 +83,7 @@ A `Component` has `component_id`, user label, `qualified_names: QualifiedDeviceN
 
 A component can have several HDMI inputs/outputs and appear on several monitored ports. A qualified OSD name is the configured matching key, but a bare OSD name, vendor ID or type is not a globally unique appliance identifier. A user-facing label can be changed independently of the appliance's reported OSD name. Renaming that label does not rewrite `qualified_names`.
 
-Normal equipment views have one card per ComponentId; verified native aliases are connections inside that card, and proxies are excluded from source selection. Board labels belong to OctopusId and equipment labels to ComponentId. Stable generated defaults and explicit overrides are presentation metadata, separate from hostnames and HTTPS identity. An unconfigured discovery choice uses an opaque reference tied to a current observation snapshot until its scoped identity is validated; it is not keyed by the visible title or LA. Revalidate that choice if new evidence makes it ambiguous. [UI contract](20-user-experience-and-guided-setup.md), [draft persistence](11-config-storage-and-migration.md).
+The baseline activity device lists retain their existing behavior with the owning Amity hostname and HDMI-adapter context. ComponentId and full scoped selectors travel behind the unchanged fields; displayed labels, ordering and current LAs never become identity. Proxy representations cannot be offered as native source choices. [UI contract](20-user-interface.md).
 
 Capabilities are three-valued where necessary: supported, unsupported or unknown. Unknown independent receiver outputs, return audio or exact input selection must not be treated as supported. User-confirmed capabilities are distinct from probe results and should state the model/port to which they apply.
 
@@ -171,7 +172,7 @@ An `Activity` names a zone, source, display, audio target, desired physical rout
 
 Compare these tokens within their exact scope. A higher revision in another consortium is meaningless. IDs and revision matching do not replace cryptographic authentication. An actuator checks the applicable tuple at admission **and immediately before beginning a CEC frame**. A frame already on the wire completes or aborts according to local timing rules; transition barriers wait for that bounded outcome before granting conflicting work.
 
-`config_revision` is the semantic control revision. A pure user-label or UI-order edit increments only `presentation_revision`; both are canonical uint64 strings. Changes to configured qualified names, routes, binding selection/policy, capabilities, actual proxy identity fields, activity membership, integration slots or quirks are semantic. Automatic resolution of an unchanged selector to a new LA is runtime binding state, not a semantic edit. Mixed edits use the semantic activation protocol. Administration compares the expected pair of revisions; storage markers cover both and the complete digest. Presentation-only edits do not invalidate leases, holds or route generations. [Document 11](11-config-storage-and-migration.md) defines revision rebasing for unchanged owners during a semantic change.
+`config_revision` is the semantic control revision. A pure component/activity-label or UI-order edit increments only `presentation_revision`; both are canonical uint64 strings. Changes to configured qualified names, routes, binding selection/policy, capabilities, actual proxy identity fields, activity membership, integration slots or quirks are semantic. Automatic resolution of an unchanged selector to a new LA is runtime binding state, not a semantic edit. Mixed edits use the semantic activation protocol. Administration compares the expected pair of revisions; storage markers cover both and the complete digest. Presentation-only edits do not invalidate leases, holds or route generations. [Document 11](11-config-storage-and-migration.md) defines revision rebasing for unchanged owners during a semantic change.
 
 ## 8. Suggested APIs and ownership
 

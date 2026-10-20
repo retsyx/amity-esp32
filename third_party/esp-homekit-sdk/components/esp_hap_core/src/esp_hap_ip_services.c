@@ -1640,6 +1640,7 @@ int hap_mdns_deannounce(void)
 
 int hap_mdns_announce(bool first)
 {
+    if (!hap_amity_enabled()) return HAP_SUCCESS;
     if (!is_accessory_paired() && !hap_amity_pairing_allowed()) {
         return hap_mdns_deannounce();
     }

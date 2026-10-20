@@ -1,10 +1,14 @@
 # 02 — Consortium architecture
 
+**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+
+**21 October 2026 algorithm-preservation amendment:** ownership and transport layer around the original Amity algorithms; preserve existing behavior unless the user asks to change it. The emitting owner runs the original completion-paced held-key loop, with only button state changes crossing devices. [Normative rule](21-original-controller-policy.md#original-algorithms-and-functionality-amendment--21-october-2026).
+
 **Status:** proposed v0.1. **Read with:** [octopus architecture](01-octopus-architecture.md), [domain model](03-domain-model-and-addressing.md), [transport](08-consortium-transport-and-routing.md).
 
 ## 1. Purpose and scope
 
-A consortium is one user-managed system made of one or more octopuses. It coordinates equipment distributed across a room, rack or building while each octopus executes its local CEC work. [Issue 2](https://github.com/retsyx/amity/issues/2) motivates physically separated displays and receivers; the control network must therefore be independent of which octopus has the user's remote in range.
+A consortium is one user-managed system made of one or more octopuses. It coordinates equipment distributed across a room, rack or building while each octopus executes its local CEC work. [Issue 2](https://github.com/retsyx/amity/issues/2) motivates physically separated displays and receivers; the original controller keeps the user's sole remote while the control network reaches physically separate actuators.
 
 Use the existing home LAN, normally Wi-Fi. A consortium is an application-level mesh of enrolled peers, with a designated coordinator in the first version. It does not establish a new Wi-Fi mesh or carry HDMI video. No cloud account, router port forwarding, central MQTT broker or always-on computer is required for local operation.
 
@@ -17,8 +21,8 @@ The initial validation target is eight octopuses. The supported cap is a measure
 | Coordinator | Desired state, topology, activity plans, resource arbitration, config revision and operational authority. | One designated octopus. |
 | Membership authority | Enrollment approval, member identity roster and revocation. | Co-located with coordinator; logically separate interface. |
 | Local actuator | Owns CEC engines, admitted proxy roles, semantic command execution and local fail-safe behavior. | Every octopus, including coordinator. |
-| Input gateway | Converts local remote/Matter/HomeKit/web input into system intents. | Any authorized member. |
-| Integration gateway | Publishes the system's selected primary zone to Matter/HomeKit. | Initially the first/coordinator octopus; identity does not follow coordinator automatically. |
+| Input gateway | Converts the sole remote/Matter/HomeKit/web input into system intents. | Original first-setup controller only; members cannot receive input authority. |
+| Integration/UI gateway | Hosts browser/admin and publishes the selected primary zone to Matter/HomeKit. | Original controller only; added devices host no UI or integration gateway. |
 | Enrollment relay | Carries bounded opaque enrollment messages between a nearby candidate and authority. | An enrolled member near the candidate, when needed. |
 
 Roles are permissions, not different firmware builds. The application must know which role authorizes a message. A valid member certificate alone does not authorize arbitrary routing, membership changes or CEC transmissions.
@@ -84,25 +88,25 @@ Shared resources are planned across all active sessions. Turning the TV activity
 
 ## 5. Addition and setup experience
 
-The [user-experience specification](20-user-experience-and-guided-setup.md) owns the complete journey, naming presentation and minimum-question rules. The normal user flow is intentionally short:
+The [user-experience specification](20-user-interface.md) owns the baseline tabs, forms, device-list location context and the Amity management tab. The normal user flow is intentionally short:
 
 1. Set up the first octopus using the profile's explicit physical setup action, the Matter-based Wi-Fi induction flow and the administration page. It creates a singleton consortium without asking the user to select a coordinator. First-board physical entry and browser trust require the implementation and product gates in documents 10 and 20.
 2. In that page choose **Add Amity** (Add octopus), scan the new device's Add to Amity QR code, import its image or enter its setup code, and place the new device in its physical enrollment window. A location name is optional and can be entered while enrollment runs.
 3. The coordinator automatically chooses an eligible nearby BLE helper. An authenticated protocol proves possession of the candidate's unique consortium setup secret, binds operational identities, uses available supported LAN credentials when needed, and stages membership. An already suitable candidate network is retained.
 4. The candidate connects to the LAN. Both sides prove their enrolled keys over mutual TLS before membership activation. Power loss can resume the same pending join without creating two members.
-5. Show equipment using its title and the octopus's location as context. Start with the intended screen, suggest physically reachable sources and sound paths, and ask only for missing connections needed by those activities. Save configuration, then offer an explicit **Try activity** with its effects described. Discovery and saving do not start an activity.
+5. Preserve the original activity/device form and controls. Device listings gain friendly Amity location/adapter context; the one added Amity tab manages subordinate devices. Save and Scan are non-actuating; explicit Start uses normal guarded planning.
 
-The setup code is separate from the Matter QR/PIN, HomeKit code and administration password. The user should not need to add every octopus to a Matter home just to give it Wi-Fi. Supporting a consortium-only member with no Matter fabric requires explicit changes to the current Wi-Fi and commissioning ownership. The onboarding workflow also shares NimBLE with Matter and remotes; it is not safe to start another BLE provisioning stack. [Enrollment](09-membership-security-and-enrollment.md), [BLE coexistence](10-ble-and-matter-coexistence.md).
+The setup code is separate from the Matter QR/PIN, HomeKit code and administration password. The user should not need to add every octopus to a Matter home just to give it Wi-Fi. A member uses the shared network driver without a user-facing Matter server. The onboarding workflow also shares NimBLE with Matter and remotes; it is not safe to start another BLE provisioning stack. [Enrollment](09-membership-security-and-enrollment.md), [BLE coexistence](10-ble-and-matter-coexistence.md).
 
 No Web Bluetooth dependency is required. The browser handles QR/manual input and orchestration; the enrolled octopus handles BLE. Camera access may be unavailable in some local HTTPS/browser configurations, so manual entry and code-image import should be provided. A distant candidate can use an already enrolled nearby relay; if no enrolled node can reach it, guide the user to temporarily bring it near one for initial induction.
 
 ## 6. Configuration and everyday management
 
-Present one system page with Activities, Equipment and Settings. Normal equipment choices show a title such as **Apple TV**, with **Projector** as its location subtitle; add **Amity connector 2** only when needed to distinguish choices, keeping board connectors distinct from appliance HDMI inputs. A board label supplies context, not proof of which screen a source can reach. Grouped views omit repeated context. Full selectors, runtime addresses, proxy roles and physical-address evidence belong in advanced connection details and diagnostics. One verified component has one card with its native attachment aliases under Connections; proxies are not additional source choices. [Presentation and guided setup](20-user-experience-and-guided-setup.md).
+Preserve the baseline tab workflows and add exactly one Amity management tab. The approved navigation order is Activities, Remote, Matter, HomeKit, Amity devices, Advanced; Advanced is last. The only change inside device listings is friendly Amity-device/HDMI-adapter location context. Keep activity name/display/source/audio/optional switch/input fields and ordinary Scan/Save/Start controls. Backend identities remain scoped; location text is not evidence of an HDMI route. [Baseline interface](20-user-interface.md).
 
 Scanning supplies observations, not a complete authoritative HDMI wiring map. Persist device selectors as `QualifiedDeviceName`: consortium, octopus, tentacle, side and OSD name. Resolve their current logical addresses automatically, including ordinary LA changes, without asking the user to repair activities. Ask only for ambiguous connections, missing non-CEC devices, receiver output capabilities or uncertain component matches. Store these confirmations and reuse them until wiring evidence changes. Identical OSD names on distinct qualified attachments remain distinct without renaming either appliance; multiple native devices matching the same attachment/name require explicit disambiguation. Shared-domain aliases may be unified only with verified evidence. [Naming and resolution contract](03-domain-model-and-addressing.md).
 
-Configuration revisions are staged across affected owners. Show validated, waiting-for-member, applied and degraded states. Do not claim a save was applied everywhere when a required member is offline. Harmless label edits and route-changing edits have different activation effects; a location rename does not change the browser hostname or certificate. A bounded nonsecret server draft retains completed setup choices across refresh and invalidates only choices affected by changed evidence. Portable exports omit secrets and integration identities. [Storage and migration](11-config-storage-and-migration.md), [administration](12-control-surfaces-and-admin.md).
+Configuration revisions are staged across affected owners. Show validated, waiting-for-member, applied and degraded states. Do not claim a save was applied everywhere when a required member is offline. Component/activity label edits and route-changing edits have different activation effects. An Amity device's visible name is its actual hostname, not an independent location alias; a deliberate hostname change updates its network address while retaining the same hardware identity. Portable exports omit secrets and integration identities. [Storage and migration](11-config-storage-and-migration.md), [administration](12-control-surfaces-and-admin.md).
 
 Current Matter/HomeKit endpoints represent one theater. Initially publish one selected **primary zone** through those existing identities, preserving sixteen stable activity selectors and alias migration. The internal planner and web interface can manage more zones. Additional Matter endpoints/HomeKit accessories are a separate compatibility feature, not automatic replication of the current single-active-state adapter.
 
@@ -112,9 +116,9 @@ Current Matter/HomeKit endpoints represent one theater. Initially publish one se
 
 Replacement uses a fresh octopus identity and fresh keys. Reassign the intended attachment after scanning and confirming cable placement, increment bindings, and preserve logical component/activity IDs where valid. Do not clone operational private keys or BLE remote bonds as part of replacement. [Lifecycle and recovery](13-faults-removal-and-recovery.md).
 
-The first version has no timeout-driven coordinator election. During coordinator loss, local timing, isolation and watchdog release continue, while new group-dependent actions stop. A planned coordinator transfer is journaled and epoch-fenced. An unplanned recovery requires a defined physical/re-enrollment workflow; a stale configuration replica is not authority to become leader.
+The original controller cannot transfer its role to an added device. During its loss, local timing, isolation and watchdog release continue while new user/group-dependent actions stop. Neither planned handover nor timeout election is supported. A stale replica, old handover record or valid member certificate cannot create a successor authority.
 
-The Matter/HomeKit integration gateway has its own identity and pairing state. Moving coordination does not migrate that identity or household automations. Keep a healthy original gateway as an authorized input bridge after a planned transfer; if it is lost, explain the separate re-pairing requirement.
+The original controller retains its Matter/HomeKit identity, sole remote bond and browser endpoint. Added devices never host an input bridge, UI or replacement gateway. If the main fails, the user can Matter-enroll replacement hardware and restore portable configuration through existing Advanced upload/restore. Preserve logical activity/device IDs, names/order, explicitly isolate the old main, re-pair the sole remote/home integrations and reclaim/re-enroll headless members under new trust. This is supported manual recovery, not live promotion or cloned pairing state.
 
 ## 8. Security and failure invariants
 
@@ -127,4 +131,4 @@ The Matter/HomeKit integration gateway has its own identity and pairing state. M
 
 ## 9. Architecture completion criteria
 
-Demonstrate one and two octopus systems before scaling to the qualified cap. Exercise the worked topology with shared receiver resources, a direct-TV source, a CEC-silent second output, duplicate device names and one failed member. Verify enrollment interrupted at each durable transition, held-key release during LAN loss, stale-message rejection after restart, explicit removal, replacement and planned coordinator movement. Evidence must include captures at protected HDMI boundaries and fault-injected network tests, as specified in [validation](15-validation-and-release-gates.md).
+Demonstrate one and two octopus systems before scaling to the qualified cap. Exercise the worked topology with shared receiver resources, a direct-TV source, a CEC-silent second output, duplicate device names and one failed member. Verify enrollment interrupted at each durable transition, held-key release during LAN loss, stale-message rejection after restart, explicit removal, actuator replacement and rejection of controller movement/promotion. Evidence must include captures at protected HDMI boundaries and fault-injected network tests, as specified in [validation](15-validation-and-release-gates.md).

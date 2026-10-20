@@ -25,6 +25,8 @@ bool in_isr = false, allocation_failure = false, handler_failure = false;
 bool existing_service = false, inject_latched_edge = false, retry = false;
 unsigned notifications = 0, schedules = 0, restarts = 0, yields = 0;
 unsigned deleted_tasks = 0, reset_pins = 0, uninstalls = 0;
+unsigned initial_setups=0,consortium_setups=0;
+void setup(bool consortium,void*){assert(!in_isr);if(consortium)++consortium_setups;else ++initial_setups;}
 TaskFunction_t worker = nullptr;
 gpio_isr_t isr = nullptr;
 void *isr_arg = nullptr;
@@ -116,7 +118,14 @@ esp_err_t schedule_factory_reset() {
 int main(int argc, char **argv) {
     assert(argc == 2);
     const std::string scenario = argv[1];
-    if (scenario == "boot-held") level = 0;
+    const bool guided=scenario.rfind("setup-",0)==0;
+    if(guided)device_settings::set_setup_button_handler(setup);
+    if(scenario=="setup-short")edges={{100,0},{500,1}};
+    else if(scenario=="setup-three-seconds")edges={{100,0},{3150,1}};
+    else if(scenario=="setup-before-reset")edges={{100,0},{10149,1}};
+    else if(scenario=="setup-long")edges={{100,0}};
+    else if(scenario=="setup-boot-held"){level=0;edges={{100,1},{200,0},{600,1}};}
+    else if (scenario == "boot-held") level = 0;
     else if (scenario == "hold") edges = {{100, 0}};
     else if (scenario == "short") edges = {{100, 0}, {500, 1}};
     else if (scenario == "cancel") edges = {{100, 0}, {10150, 1}};
@@ -142,9 +151,11 @@ int main(int argc, char **argv) {
         catch (const Stopped &) {}
         catch (const Restarted &) {}
         const bool resets = scenario == "hold" || scenario == "boot-release-hold" ||
-                            scenario == "latched-edge" || scenario == "retry";
+                            scenario == "latched-edge" || scenario == "retry" || scenario=="setup-long";
         assert(restarts == unsigned(resets));
         assert(schedules == (retry ? 2U : unsigned(resets)));
+        assert(initial_setups==unsigned(scenario=="setup-short"||scenario=="setup-boot-held"));
+        assert(consortium_setups==unsigned(scenario=="setup-three-seconds"||scenario=="setup-before-reset"));
         if (scenario == "hold") assert(now == 10150);
         if (scenario == "boot-release-hold") assert(now == 10250);
         if (scenario == "latched-edge") assert(now == 10100);

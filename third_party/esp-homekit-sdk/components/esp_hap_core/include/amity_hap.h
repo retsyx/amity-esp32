@@ -21,6 +21,9 @@ bool hap_amity_pairing_allowed(void);
 uint32_t hap_amity_pairing_window(void);
 int hap_amity_refresh_mdns(void);
 int hap_amity_remove_pairings(void);
+// Monotonic service fence; preserve stored pairings and the shared network.
+bool hap_amity_enabled(void);
+int hap_amity_stop(void);
 #ifdef __cplusplus
 }
 #endif

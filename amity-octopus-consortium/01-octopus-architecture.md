@@ -1,5 +1,9 @@
 # 01 — Octopus architecture
 
+**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+
+**21 October 2026 algorithm-preservation amendment:** preserve original Amity algorithms/functionality unless the user requests a change. The consortium adds ownership and transport around them; it does not authorize changed local behavior. [Normative rule](21-original-controller-policy.md#original-algorithms-and-functionality-amendment--21-october-2026).
+
 **Status:** proposed v0.1. **Read first:** [package guide](README.md). **Contract dependencies:** [domain model](03-domain-model-and-addressing.md), [CEC runtime](04-hardware-and-cec-runtime.md), [CEC policy](06-cec-roles-and-message-policy.md).
 
 ## 1. Purpose

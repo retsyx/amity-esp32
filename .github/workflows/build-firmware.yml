@@ -170,7 +170,9 @@ jobs:
           if tag and tag != 'v' + version:
               raise SystemExit('Built firmware version does not match release tag')
           sources = [build / name for name in
-                     ('amity.bin', 'amity.elf', 'amity.map', 'amity-firmware.zip')]
+                     ('amity.bin', 'amity-update.bin', 'amity.release.json', 'amity.elf', 'amity.map', 'amity-firmware.zip')]
+          if (build / 'amity.release.sig').exists():
+              sources.append(build / 'amity.release.sig')
           sources.append(Path('README.md'))
           sources.extend(build / 'amity-provision' / f'amity-provision-{system}-{arch}.zip'
                          for system in ('darwin', 'windows', 'linux')

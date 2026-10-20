@@ -1,3 +1,5 @@
+> 20 October 2026 scope amendment: the original first-setup Amity alone owns the sole remote, UI/admin and home integrations. Added devices are UI-less actuators, with no member input gateway or coordinator promotion/handover. Preserve the original activity UI with only canonical Amity-hostname context and one Amity management tab. [Normative contract](../../amity-octopus-consortium/21-original-controller-policy.md).
+
 This component exposes endpoint 1 as a Basic Video Player and endpoint 2 as a
 Speaker, using the installed ESP Matter data model and CHIP cluster delegates.
 Endpoint 3 is a Power Source named "Remote battery", with Battery and Rechargeable
@@ -8,6 +10,25 @@ and unknown charging. Missing readings while connected also remain unknown.
 The endpoint does not claim to power the player, speaker, or ESP32. An independent
 application task publishes BLE readings once per second with
 `amity_matter_update_remote()`, outside the BLE host task and its locks.
+
+All endpoints and home-control services belong to the original controller. Call
+`amity_matter_set_controller_enabled(false)` before startup on a stored member;
+the component initializes the shared CHIP Wi-Fi/NimBLE platform and network
+driver without creating application endpoints or starting the Matter server.
+Live disabling immediately rejects callbacks, then closes CASE, secure sessions,
+UDP transports and home discovery under the CHIP lock. It preserves fabrics and
+the shared host. Checked-in linker wrappers suppress both DNS-server startup
+entry points so delayed SDK IP callbacks cannot re-advertise the retired service.
+Disabling is latched for the boot; no external SDK source patch is required.
+
+Fresh devices use that same firmware and initially have neither Wi-Fi nor UI.
+`amity_matter_controller_enrollment_complete()` queues a bounded CHIP-task check
+after successful commissioning or retained legacy reconnect. Fully disarmed
+fail-safe, a committed fabric, connected/provisioned station and a successful
+explicit network-driver commit supply evidence for the composition layer's
+durable original-role compare-and-set. The getter does not grant authority.
+Stored role survives last-fabric removal; a member's delayed Matter event cannot
+turn it into the controller. UI/HomeKit/remote startup also waits for usable IP.
 
 Initialize NVS, supply activities and initial hub state, then call
 `amity_matter_start()`. Matter initializes WiFi and NimBLE. Start the keyboard
@@ -107,3 +128,8 @@ Keep all native controller output private because SDK diagnostics can contain
 onboarding and network credentials.
 The pinned dependency setup and private invocation are documented in
 [`tests/matter_pi.md`](../../tests/matter_pi.md).
+
+`tests/controller_integration_test.py` compiles actual lifecycle bodies against
+an instrumented SDK under ASan/UBSan: checked enrollment, prestart/live revocation,
+startup races, closed transports, retained host/fabrics and delayed DNS guards.
+Pinned-SDK target compilation and physical integration tests are separate evidence.

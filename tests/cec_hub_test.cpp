@@ -147,15 +147,16 @@ static void hub_tests() {
     h.receive(B, frame({0x40, 0x8f})); assert(t.contains(B, 4, {0x90, 1}));
     h.receive(B, frame({0xb0, 0x8f})); assert(t.contains(B, 11, {0x90, 0}));
     t.sent.clear(); h.receive(B, frame({0x4f, 0x82, 0x15, 0}));
-    assert(t.contains(B, 4, {0x36})); assert(t.contains(B, 15, {0x86, 0x14, 0}));
+    assert(t.sent.empty()); // Unselected source activation cannot create a repair/standby grant.
     t.sent.clear(); h.receive(B, frame({0xbf, 0x82, 0x14, 0})); assert(t.sent.empty());
-    h.receive(B, frame({0xbf, 0x84, 0x13, 0, 4})); assert(t.contains(B, 15, {0x86, 0x13, 0}));
+    h.receive(B, frame({0xbf, 0x84, 0x13, 0, 4})); assert(t.sent.empty());
+    h.select_activity(1); assert(t.contains(B, 15, {0x86, 0x13, 0}));
     t.sent.clear(); h.select_activity(2);
     assert(t.contains(B, 5, {0x44, 0x69, 3})); assert(t.contains(F, 15, {0x82, 0x10, 0}));
     h.standby(); assert(h.snapshot().current_activity == -1);
     t.sent.clear(); h.standby(); assert(t.contains(F, 15, {0x36}) && t.contains(B, 15, {0x36}));
     t.sent.clear(); h.receive(B, frame({0x4f, 0x82, 0x15, 0}));
-    assert(t.contains(F, 15, {0x36}) && t.contains(B, 15, {0x36}));
+    assert(t.sent.empty()); // This also holds while the system is in standby.
     assert(!h.press_key(0));
     t.sent.clear(); h.receive(F, frame({0x04, 0x83})); assert(t.contains(F, 15, {0x84, 0x10, 0, 4}));
     h.receive(B, frame({0x40, 0x83})); assert(t.contains(B, 15, {0x84, 0, 0, 0}));
@@ -187,37 +188,83 @@ static void discovery_tests() {
     device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x1000, 4, "Source");
     assert(!h.activity_needs_discovery(0));
     h.select_activity(0); assert(!h.key_needs_discovery(0));
-    // Discovery leaves the working cache and selected-source power response
-    // intact until all metadata has been collected into its replacement.
+    // Working bindings survive a partial scan only until contradicting evidence.
     h.begin_discovery();
     assert(h.snapshot().devices.size() == 2);
     t.sent.clear(); h.receive(B, frame({0x40, 0x8f}));
     assert(t.contains(B, 4, {0x90, 0}));
     device(h, F, 0, 0, 0, "Screen"); device(h, B, 8, 0x2000, 4, "Source");
     t.sent.clear(); h.receive(B, frame({0x40, 0x8f}));
-    assert(t.contains(B, 4, {0x90, 0}));
+    assert(t.sent.empty()); // The old LA is fenced immediately, before publishing the scan.
     assert(!t.contains(B, 15, {0x86, 0x20, 0}));
     h.finish_discovery();
-    assert(t.contains(B, 15, {0x86, 0x20, 0}));
+    assert(!t.contains(B, 15, {0x86, 0x20, 0}));
     assert(h.snapshot().devices.size() == 2);
     t.sent.clear(); h.press_key(0); assert(t.contains(B, 8, {0x44, 0}));
-    // A selected source reconnects at another logical and physical address.
-    // Its late OSD reply must replace the old name and restore the new route.
+    // New same-name replies cannot pick an LA by arrival order. A bounded
+    // discovery establishes that the former LA no longer matches the selector.
     t.sent.clear();
     h.receive(B, frame({0xbf, 0x84, 0x30, 0, 4}));
     assert(!t.contains(B, 15, {0x86, 0x30, 0}));
     h.receive(B, frame({0xb0, 0x47, 'S', 'o', 'u', 'r', 'c', 'e'}));
-    assert(t.contains(B, 15, {0x86, 0x30, 0}));
-    assert(h.snapshot().devices.size() == 2);
-    t.sent.clear(); h.press_key(0); assert(t.contains(B, 11, {0x44, 0}));
+    assert(!t.contains(B, 15, {0x86, 0x30, 0}));
+    assert(h.snapshot().devices.size() == 3);
+    t.sent.clear(); assert(!h.press_key(0)); assert(t.sent.empty());
+    const auto generation = h.snapshot().activity_generation;
+    h.begin_discovery(); device(h, F, 0, 0, 0, "Screen"); device(h, B, 11, 0x3000, 4, "Source");
+    h.finish_discovery();
+    assert(h.snapshot().current_activity == 0 && h.snapshot().activity_generation >= generation);
+    t.sent.clear(); assert(h.press_key(0)); assert(t.contains(B, 11, {0x44, 0}));
     // The opposite metadata reply order must never route to unknown PA ffff.
     h.discovered(B, 4);
     t.sent.clear(); h.receive(B, frame({0x40, 0x47, 'S', 'o', 'u', 'r', 'c', 'e'}));
     assert(!t.contains(B, 15, {0x86, 0xff, 0xff}));
     h.receive(B, frame({0x4f, 0x84, 0x40, 0, 4}));
-    assert(t.contains(B, 15, {0x86, 0x40, 0}));
-    assert(h.snapshot().devices.size() == 2);
+    assert(!t.contains(B, 15, {0x86, 0x40, 0}));
+    assert(h.snapshot().devices.size() == 3);
+    assert(h.key_needs_discovery(0));
+    h.begin_discovery(); device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x4000, 4, "Source"); h.finish_discovery();
+    t.sent.clear(); assert(h.press_key(0)); assert(t.contains(B, 4, {0x44, 0}));
     h.clear_devices(); assert(h.key_needs_discovery(0));
+}
+static void scoped_ambiguity_tests() {
+    const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
+    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
+    h.configure({{"Watch", "Screen", "Source", "", "", 0}});
+    h.begin_discovery(); device(h, F, 0, 0, 0, "Screen");
+    device(h, B, 4, 0x2000, 4, "Source"); device(h, B, 8, 0x2000, 4, "Source"); h.finish_discovery();
+    assert(h.snapshot().devices.size() == 3); // Equal names/PAs never erase one native appliance.
+    t.sent.clear(); assert(!h.select_activity(0)); assert(t.sent.empty());
+    h.begin_discovery(); device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x2000, 4, "Source"); h.finish_discovery();
+    assert(h.select_activity(0)); assert(h.press_key(1, true));
+    const auto before = h.snapshot().activity_generation;
+    t.sent.clear(); h.receive(B, frame({0x40, 0x47, 'O', 't', 'h', 'e', 'r'}));
+    h.tick(999999); assert(t.sent.empty()); assert(!h.release_key() || t.sent.empty());
+    assert(h.snapshot().activity_generation > before && h.snapshot().uncertain_releases == 1);
+    assert(!h.press_key(1)); assert(!t.contains(B, 4, {0x45}));
+    h.begin_discovery(); device(h, F, 0, 0, 0, "Screen"); device(h, F, 8, 0x2000, 4, "Source"); h.finish_discovery();
+    assert(h.key_needs_discovery(1)); // Recabling across attachment scope is not LA churn.
+    h.clear_devices(); h.begin_discovery(); h.discovered(F, 0); h.finish_discovery();
+    assert(h.snapshot().devices[0].name.empty()); // ACK at TV0 is not OSD-name evidence.
+    // More than the scope-table capacity of unrelated native OSD names must
+    // not exhaust memory or prevent a configured selector from resolving.
+    for (unsigned n = 0; n < 96; ++n) {
+        h.begin_discovery(); device(h, B, 4, 0x2000, 4, ("Unrelated" + std::to_string(n)).c_str()); h.finish_discovery();
+    }
+    h.begin_discovery(); device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x2000, 4, "Source"); h.finish_discovery();
+    t.sent.clear(); assert(h.select_activity(0)); assert(h.press_key(1));
+    // A direct caller exceeding the normal sixteen-activity limit also fails
+    // closed once all sixty-four configured selector scopes are occupied.
+    std::vector<amity::Activity> excessive;
+    for (unsigned n = 0; n < 65; ++n) excessive.push_back({"Watch", "", "Name" + std::to_string(n), "", "", 0});
+    h.configure(excessive);
+    for (unsigned n = 0; n < 65; ++n) {
+        h.begin_discovery(); device(h, B, 4, 0x2000, 4, ("Name" + std::to_string(n)).c_str()); h.finish_discovery();
+    }
+    t.sent.clear(); assert(!h.select_activity(64)); assert(t.sent.empty());
+    for (const auto opcode : {0x04, 0x0d, 0x36, 0x80, 0x81, 0x82, 0x86, 0xa0}) {
+        t.sent.clear(); h.receive(B, frame({0x4f, static_cast<uint8_t>(opcode), 0x20, 0})); assert(t.sent.empty());
+    }
 }
 static void shared_power_tests() {
     const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
@@ -290,23 +337,23 @@ static void backpressure_tests() {
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
     h.configure({{"Listen", "", "Source", "Source", "", 0}});
     device(h, B, 4, 0x1000, 4, "Source"); h.select_activity(0);
-    // If an accepted press cannot queue its release, the owner tick retries
-    // it; another press must not overwrite the outstanding release.
+    // The one final-release attempt is consumed when the overflow slot is
+    // unavailable. A later tick or up must never retry that dropped frame.
     t.sent.clear(); t.reject_opcode = 0x45;
     assert(h.press_key(0)); assert(t.contains(B, 4, {0x44, 0}));
     assert(!t.contains(B, 4, {0x45}));
-    assert(!h.press_key(1)); assert(!t.contains(B, 4, {0x44, 1}));
+    assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
     h.tick(10000); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(20000); assert(t.contains(B, 4, {0x45}));
+    t.reject_opcode = -1; h.tick(20000); assert(!t.contains(B, 4, {0x45}));
     assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
     // Failed initial presses must not toggle the emulated playback state.
     t.sent.clear(); t.reject_opcode = 0x44; assert(!h.press_key(0x61));
     t.reject_opcode = -1; assert(h.press_key(0x61));
     assert(t.contains(B, 4, {0x44, 0x44})); assert(!t.contains(B, 4, {0x44, 0x46}));
-    // Power-on and switch-input releases share the same retry guarantee.
+    // Power-on and switch-input final releases are likewise never retained.
     t.sent.clear(); t.reject_opcode = 0x45; h.fix_current_activity();
     assert(t.contains(B, 4, {0x44, 0x6d})); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(30000); assert(t.contains(B, 4, {0x45}));
+    t.reject_opcode = -1; h.tick(30000); assert(!t.contains(B, 4, {0x45}));
     // One long volume adjustment is 100 complete presses, but only one
     // status query after the last press has been quiet for half a second.
     t.sent.clear();
@@ -363,6 +410,6 @@ static void volume_sequence_tests() {
     assert(hub.snapshot().activity_generation == hub.activity_generation());
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();
+    wire_tests(); hub_tests(); discovery_tests(); scoped_ambiguity_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

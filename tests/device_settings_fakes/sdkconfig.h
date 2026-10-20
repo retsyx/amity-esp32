@@ -1,0 +1,3 @@
+#pragma once
+#define CONFIG_DEVICE_VENDOR_ID 0xfff1
+#define CONFIG_DEVICE_PRODUCT_ID 0x8000

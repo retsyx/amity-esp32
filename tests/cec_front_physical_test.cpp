@@ -103,8 +103,8 @@ static void core_selection() {
 
     // Numeric order is deliberately used: 1.2.0.0 is lower than 2.0.0.0,
     // even though the latter has more trailing zero digits. Both devices
-    // reuse an OSD name, so deduplication removes the lower-address record;
-    // its physical-address evidence must still contribute to the decision.
+    // reuse an OSD name. Both native records must survive as ambiguous;
+    // their physical-address evidence still contributes to the legacy hint.
     Capture duplicate_wire; amity::Hub duplicate(duplicate_wire);
     duplicate.set_addresses(4, 0, 0xffff); duplicate.begin_discovery();
     cec::Frame name; name.size = 6; name.data[1] = 0x47;
@@ -116,7 +116,7 @@ static void core_selection() {
     duplicate.determine_front_physical_address(0x5000); duplicate.finish_discovery();
     const auto deduplicated = duplicate.snapshot();
     assert(deduplicated.front_physical_address == 0x1200);
-    assert(deduplicated.devices.size() == 1 && deduplicated.devices[0].physical_address == 0x2000);
+    assert(deduplicated.devices.size() == 2 && !deduplicated.devices[0].resolved && !deduplicated.devices[1].resolved);
 }
 
 static void reset_wire() {

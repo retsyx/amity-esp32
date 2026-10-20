@@ -11,6 +11,8 @@
 #include "factory_credentials.hpp"
 #include "physical_address.hpp"
 #include <string>
+#include <array>
+#include <vector>
 namespace device_settings {
 // Called with amity_cfg initialized, before normal NVS/network initialization.
 esp_err_t finish_factory_reset();
@@ -19,6 +21,10 @@ bool reset_pending();
 // Starts the optional active-low factory reset button after settings init.
 // With CONFIG_AMITY_FW_RESET_BUTTON disabled, does not configure GPIO or tasks.
 esp_err_t start_reset_button(int gpio);
+// Register before starting the button. The handler runs on its worker after
+// release; the existing ten-second durable reset remains owned by this driver.
+using SetupButtonHandler = void (*)(bool consortium_setup, void *context);
+void set_setup_button_handler(SetupButtonHandler, void *context=nullptr);
 // Load immutable factory settings and the separately persisted device overrides.
 esp_err_t init();
 const amity::FactoryCredentials *factory();
@@ -26,6 +32,20 @@ const char *hostname();
 const char *initial_admin_auth();
 uint16_t front_physical_address();
 esp_err_t save_front_physical_address(const std::string &value); // Applies on reboot.
+// Stable hardware slots, never a compact list of attached adapters. The boot
+// copy is immutable; saved preferences become active only after a restart.
+struct AdapterDefaults {
+    uint64_t revision = 1;
+    std::array<uint16_t,5> front_physical{{0x1000,0x1000,0x1000,0x1000,0x1000}};
+};
+struct AdapterDefaultChange { uint8_t tentacle_id; uint16_t front_physical; };
+AdapterDefaults adapter_defaults();
+AdapterDefaults startup_adapter_defaults();
+// One atomic NVS blob for the complete batch. Unchanged slots are retained.
+esp_err_t save_adapter_defaults(uint64_t expected_revision, const std::vector<AdapterDefaultChange>&);
 bool normalize_hostname(std::string &value);
 esp_err_t save_hostname(std::string value); // Applies on reboot.
+// Headless candidate enrollment only. Commit first, then update the in-memory
+// name; the caller applies it to the network interface before connecting.
+esp_err_t apply_enrollment_hostname(std::string value);
 }

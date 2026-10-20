@@ -25,16 +25,24 @@ struct Device {
     uint16_t physical_address = 0xffff;
     uint8_t type = 0xff;
     uint32_t vendor_id = 0;
+    // An actual OSD report and unambiguous current attachment are required.
+    bool resolved = false;
 };
 struct Quirk {
     uint32_t vendor_id = 0;
     std::vector<uint8_t> power_on, power_off;
 };
+// Labels are presentation metadata. Their replacement must not cancel input or
+// run an equipment transition. Order remains semantic in the legacy adapter.
+bool same_executable_configuration(const std::vector<Activity> &, const std::vector<Quirk> &,
+                                   const std::vector<Activity> &, const std::vector<Quirk> &);
 struct Snapshot {
     std::vector<Activity> activities;
     std::vector<Device> devices;
     int current_activity = -1;
     uint32_t activity_generation = 0;
+    uint32_t binding_generation = 0, uncertain_releases = 0;
+    std::string activity_error;
     uint32_t discovery_generation = 0;
     uint8_t front_address = 15, back_address = 15;
     uint16_t front_physical_address = 0xffff; // Unknown until the startup back-bus scan completes.
@@ -51,6 +59,8 @@ public:
     virtual ~Transport() = default;
     virtual bool send(BusSide side, uint8_t destination, const uint8_t *data, size_t size) = 0;
     virtual void request_scan() = 0;
+    // Fence queued wire work before an endpoint can identify another appliance.
+    virtual void invalidate_binding(BusSide, uint8_t) {}
 };
 // Called from one owner task. There are no ESP-IDF dependencies in this class.
 class Hub {
@@ -62,6 +72,9 @@ public:
     bool select_activity(int index);
     bool press_key(uint8_t key, bool repeat = false);
     bool release_key();
+    // End the normalized button state. Dispatch of the stream's operand-free
+    // final release remains independent, and precedes a subsequent press.
+    void end_key_stream();
     void tick(uint64_t now_us);
     void standby();
     void force_standby();
@@ -80,30 +93,32 @@ private:
     Device *find(const std::string &name);
     const Device *known(const std::string &name) const;
     Device *discovery_device(BusSide side, uint8_t address);
-    void resolve_device(BusSide side, uint8_t address, bool restore_route);
+    void resolve_device(BusSide side, uint8_t address);
+    void invalidate_endpoint(BusSide side, uint8_t address);
+    bool configured_name(const std::string &name) const;
     Activity current() const;
     bool send(BusSide side, uint8_t dest, std::initializer_list<uint8_t> data);
     void power(const Device &device, bool on, bool quirk = true);
     void input(const Activity &activity);
     void active_source();
     void identity(BusSide side, const cec::Frame &frame);
-    void source_thief(const cec::Frame &frame);
     void request_audio_status();
     Transport &transport_;
     std::vector<Activity> activities_;
     std::vector<Device> devices_;
     std::vector<Device> discovery_;
+    std::vector<std::pair<std::string, BusSide>> name_scopes_;
     bool discovering_ = false;
     std::vector<Quirk> quirks_;
     int selected_ = -1;
     uint32_t activity_generation_ = 0;
+    uint32_t binding_generation_ = 0, uncertain_releases_ = 0;
     uint8_t front_ = 15, back_ = 15;
     uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff;
     bool playing_ = false;
     bool key_held_ = false;
     bool held_audio_ = false;
     bool release_pending_ = false;
-    uint16_t pending_releases_[2] = {};
     bool audio_query_pending_ = false;
     uint64_t now_us_ = 0, audio_query_due_ = 0;
     bool audio_status_known_ = false, muted_ = false;

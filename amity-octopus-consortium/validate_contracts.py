@@ -6,6 +6,7 @@ The optional --reference-repo path checks pinned Amity citation paths only.
 """
 import argparse
 import copy
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -37,6 +38,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reference-repo', type=Path)
     args = parser.parse_args()
+    manifest = read('MANIFEST.json')
+    manifest_paths = set()
+    for entry in manifest['files']:
+        relative = entry['path']
+        require(relative not in manifest_paths and relative != 'MANIFEST.json', 'Duplicate/recursive manifest entry')
+        manifest_paths.add(relative)
+        data = (ROOT / relative).read_bytes()
+        require(len(data) == entry['size_bytes'] and hashlib.sha256(data).hexdigest() == entry['sha256'],
+                f'Stale manifest entry {relative}')
+    actual_paths = {str(p.relative_to(ROOT)) for p in ROOT.rglob('*')
+                    if p.is_file() and p.suffix in ('.md', '.json', '.py') and p.name != 'MANIFEST.json'}
+    require(manifest_paths == actual_paths, 'Manifest does not match current package files')
     schemas = [json.loads(path.read_text()) for path in sorted((ROOT / 'schemas').glob('*.schema.json'))]
     for schema in schemas:
         Draft202012Validator.check_schema(schema)
@@ -75,7 +88,102 @@ def main():
         require(json.loads(json.dumps(candidate)) == candidate, 'OSD text changed in JSON round trip')
         positives += 1
 
+    # Device metadata carries an actual canonical hostname, never a display alias.
+    device_status = copy.deepcopy(operations[0])
+    device_status['kind'] = 'device_status'
+    for hostname in ('a', '1', 'amity-bedroom', 'a-b', 'a' * 32):
+        device_status['payload'] = {'hostname': hostname}
+        envelope.validate(device_status)
+        positives += 1
+
+    # Per-adapter settings are independent preferences, never topology authority.
+    settings_snapshot = validator('adapter-settings.schema.json')
+    settings_write = Draft202012Validator({'$ref': BASE + 'adapter-settings.schema.json#/$defs/WriteRequest'}, registry=registry)
+    settings_pa = Draft202012Validator({'$ref': BASE + 'adapter-settings.schema.json#/$defs/PhysicalAddress'}, registry=registry)
+    settings = {'boot_id': '3' * 32, 'settings_revision': '1', 'adapters': [
+        {'tentacle_id': i, 'name': f'HDMI adapter {i+1}', 'configured': i in (0,4),
+         'presence': 'present' if i == 0 else 'unknown', 'presence_generation': str(i+1),
+         'default_front_physical_address': f'{i+1}.0.0.0',
+         'observed_front_physical_address': '2.0.0.0' if i == 0 else None,
+         'effective_front_physical_address': '2.0.0.0' if i == 0 else None} for i in range(5)]}
+    write = {'request_id': '4' * 32, 'expected_boot_id': settings['boot_id'],
+             'expected_settings_revision': '1', 'confirm_restart': True,
+             'changes': [{'tentacle_id': 4, 'expected_presence_generation': '5',
+                          'default_front_physical_address': ''}]}
+    for v, value in ((settings_snapshot, settings), (settings_write, write)):
+        v.validate(value); positives += 1
+    for value in ('0.0.0.0','1.0.0.0','A.B.C.0','f.e.d.c'):
+        settings_pa.validate(value); positives += 1
+
     negatives = []
+    settings_packet = copy.deepcopy(operations[0]); settings_packet['kind'] = 'settings_write'
+    settings_packet['payload'] = {'request_id': write['request_id'], 'execution_lease_id': '5' * 32,
+                                  'settings': {k: v for k, v in write.items() if k != 'request_id'}}
+    envelope.validate(settings_packet); positives += 1
+    settings_result = copy.deepcopy(settings_packet); settings_result['kind'] = 'settings_result'
+    settings_result['payload'] = {'request_id': write['request_id'], 'operation': 'write',
+        'stage': 'applied', 'error': '', 'snapshot': settings, 'rebooting': True}
+    envelope.validate(settings_result); positives += 1
+    for field, value in (('rebooting', False), ('error', 'arbitrary text'), ('snapshot', None)):
+        candidate = copy.deepcopy(settings_result); candidate['payload'][field] = value
+        negatives.append((envelope, candidate, f'invalid applied settings result {field}'))
+    candidate = copy.deepcopy(settings_packet); candidate['payload']['settings']['request_id'] = write['request_id']
+    negatives.append((envelope, candidate, 'request ID copied into closed settings write core'))
+    # Removal is explicit boot-bound factory reset; legacy retirement does not
+    # authorize destructive effects and a scheduled result is not a reboot proof.
+    reset_packet = copy.deepcopy(operations[0]); reset_packet['kind'] = 'membership_event'
+    reset_packet['payload'] = {'mutation_id': '6' * 32, 'proposal_digest': '7' * 64,
+        'phase': 'factory_reset', 'membership_revision': '2',
+        'expected_boot_id': reset_packet['destination_boot_id']}
+    envelope.validate(reset_packet); positives += 1
+    candidate = copy.deepcopy(reset_packet); candidate['payload']['membership_revision'] = '0'
+    envelope.validate(candidate); positives += 1 # Shape only: the owner rejects revisions <= its current revision.
+    reset_result = copy.deepcopy(reset_packet); reset_result['kind'] = 'membership_result'
+    for field in ('octopus_id', 'boot_id'):
+        reset_result['origin_' + field] = reset_packet['destination_' + field]
+        reset_result['destination_' + field] = reset_packet['origin_' + field]
+    reset_result['payload']['expected_boot_id'] = reset_packet['destination_boot_id']
+    for outcome in ('reset_scheduled', 'rejected', 'unknown'):
+        reset_result['payload']['result'] = outcome
+        envelope.validate(reset_result); positives += 1
+    for field, value in (('phase', 'retire'), ('phase', 'reset'),
+                         ('membership_revision', '01'),
+                         ('expected_boot_id', '0' * 32), ('mutation_id', '0' * 32),
+                         ('proposal_digest', '7' * 63), ('confirm_reset', True)):
+        candidate = copy.deepcopy(reset_packet); candidate['payload'][field] = value
+        negatives.append((envelope, candidate, f'invalid removal reset {field}'))
+    candidate = copy.deepcopy(reset_packet); candidate['ttl_ms'] = 2001
+    negatives.append((envelope, candidate, 'removal reset exceeds short original deadline'))
+    candidate = copy.deepcopy(reset_packet); del candidate['payload']['expected_boot_id']
+    negatives.append((envelope, candidate, 'removal reset without original target boot'))
+    candidate = copy.deepcopy(reset_result); candidate['payload']['result'] = 'retired'
+    negatives.append((envelope, candidate, 'old retired result cannot claim factory reset'))
+    candidate = copy.deepcopy(reset_packet); candidate['payload']['result'] = 'reset_scheduled'
+    negatives.append((envelope, candidate, 'request cannot claim its own reset result'))
+    for value in ('1.0.2.0','F.F.F.F','1.2.3','10.0.0.0',' 1.0.0.0','0.0.0.1'):
+        negatives.append((settings_pa, value, f'invalid settings PA {value!r}'))
+    for field, value in (('confirm_restart', False), ('expected_boot_id', '0' * 32),
+                         ('expected_settings_revision', '01'), ('expected_settings_revision', '0'),
+                         ('changes', []), ('location', 'Bedroom')):
+        candidate = copy.deepcopy(write); candidate[field] = value
+        negatives.append((settings_write, candidate, f'invalid settings write {field}'))
+    for field, value in (('tentacle_id', 5), ('expected_presence_generation', '0'),
+                         ('default_front_physical_address', '1.0.2.0'), ('physical_presence', True)):
+        candidate = copy.deepcopy(write); candidate['changes'][0][field] = value
+        negatives.append((settings_write, candidate, f'invalid settings change {field}'))
+    candidate = copy.deepcopy(settings); candidate['adapters'][4]['name'] = 'HDMI adapter 1'
+    negatives.append((settings_snapshot, candidate, 'renumbered sparse adapter'))
+    candidate = copy.deepcopy(settings); candidate['adapters'][1]['presence'] = 'present'
+    negatives.append((settings_snapshot, candidate, 'unconfigured adapter claims presence'))
+    for hostname in ('', 'AMITY', '-amity', 'amity-', 'amity room', 'amity.room',
+                     'amity_room', 'café', 'amity\n', 'amity\x00', 'a' * 33, 1, None):
+        candidate = copy.deepcopy(device_status)
+        candidate['payload'] = {'hostname': hostname}
+        negatives.append((envelope, candidate, f'noncanonical device hostname {hostname!r}'))
+    for payload in ({}, {'location': 'Bedroom'}, {'hostname': 'amity', 'location': 'Bedroom'}):
+        candidate = copy.deepcopy(device_status)
+        candidate['payload'] = payload
+        negatives.append((envelope, candidate, 'missing hostname or unsupported display alias'))
     for field, value in [('tentacle_id', 5), ('tentacle_id', -1), ('side', 'source'),
                          ('logical_address', 15), ('logical_address', '4'),
                          ('octopus_id', 'A' * 32), ('octopus_id', '0' * 32)]:
@@ -103,7 +211,18 @@ def main():
         candidate = copy.deepcopy(operations[0])
         candidate[field] = value
         negatives.append((envelope, candidate, f'envelope {field}'))
+    for removed_kind in ('ingress_lease', 'intent', 'remote_management', 'remote_management_result', 'handover'):
+        candidate = copy.deepcopy(operations[0])
+        candidate['kind'] = removed_kind
+        negatives.append((envelope, candidate, f'removed protocol kind {removed_kind}'))
     power = next(op for op in operations if op['payload']['operation'] == 'ensure_power')
+    for sequence in (None, '0'):
+        candidate = copy.deepcopy(power)
+        if sequence is None:
+            del candidate['payload']['command_sequence']
+        else:
+            candidate['payload']['command_sequence'] = sequence
+        negatives.append((envelope, candidate, f'missing/zero command sequence {sequence}'))
     candidate = copy.deepcopy(power)
     candidate['payload']['arguments'] = {'toggle': True}
     negatives.append((envelope, candidate, 'ensure_power toggle substitution'))
@@ -113,7 +232,7 @@ def main():
     key = next(op for op in operations if op['payload']['operation'] == 'key_press')
     candidate = copy.deepcopy(key)
     candidate['payload']['arguments']['hold_lease_ms'] = 2001
-    negatives.append((envelope, candidate, 'excessive hold lease'))
+    negatives.append((envelope, candidate, 'retired per-key lease field'))
     proxy = next(b for b in bindings if b['binding_kind'] == 'proxy_representation')
     candidate = copy.deepcopy(proxy)
     del candidate['proxy_identity_resource_id']
@@ -283,7 +402,8 @@ def main():
     if args.reference_repo:
         for relative in repo_paths:
             require((args.reference_repo / relative).exists(), f'Missing pinned repository path {relative}')
-    result = {'schemas_checked': len(schemas), 'positive_schema_vectors': positives,
+    result = {'manifest_entries_checked': len(manifest_paths),
+              'schemas_checked': len(schemas), 'positive_schema_vectors': positives,
               'negative_schema_vectors': len(negatives), 'binding_relationships_checked': len(bindings),
               'operation_relationships_checked': len(operations), 'fixture_cec_ports': len(expected_ports),
               'configured_qualified_names_checked': len(configured_names),

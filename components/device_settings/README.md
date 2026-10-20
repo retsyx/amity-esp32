@@ -1,20 +1,40 @@
 # Device settings
 
 Loads and validates immutable provisioning records, then applies the separately
-stored runtime hostname and front CEC physical address overrides. The host-testable
+stored runtime hostname and per-adapter front CEC physical-address defaults. The host-testable
 record parser accepts only version 3, including the optional initial admin password hash. Matter consumes the loaded
 commissioning values; the web server seeds its password only if none is saved.
 
 Hostname changes write `amity_cfg/amity/hostname` and apply on reboot. They never
 modify the factory record or activity backup document.
 
-Default front physical address changes write `amity_cfg/amity/front_physical` and apply
-on reboot. At every startup, the hub first tries the lowest usable physical address
-reported by the back-bus scan. This setting is the fallback if no usable address is
-reported. The default is `1.0.0.0`; an empty input restores that default. Addresses
-use four dotted hexadecimal digits and must form a valid CEC topology. This setting
-is excluded from activity backup/restore and returns to its default on factory reset.
-Advanced → Diagnostics displays the address actually determined for this boot.
+Per-device **Amity → Settings** saves a complete five-slot preference record in
+`amity_cfg/amity/front_defaults`, with a durable revision and an atomic batch.
+The old `front_physical` scalar is read only when that record is absent and
+migrates into slot0 alone. Other slots start at `1.0.0.0`. Stable internal slots
+0–4 are displayed as HDMI adapters 1–5 within the hardware profile's capacity;
+absent, unconfigured and unknown-presence slots retain their own settings.
+
+The stored copy and boot-applied copy remain separate until restart. Empty input
+resets that slot to `1.0.0.0`; the existing dotted hexadecimal topology validator
+rejects holes and `F.F.F.F`. Defaults are excluded from activity backup/restore
+and reset with the application namespace. A usable address from applicable
+native evidence takes priority over that same front's default. A default is an
+unconfirmed fallback hint, never an observed address, route confirmation or
+permission to replay an activity. Legacy adapter0 retains its existing startup
+fallback behavior; typed execution still requires qualified topology evidence.
+
+The shared settings service checks the target BootId, durable settings revision,
+original authority deadline and native attachment generation before persistence
+on the owner task. Writes require positive presence: fixed legacy hardware is
+present by construction; detachable hardware needs a separate configured GPIO
+detector, and CEC silence is never a presence detector. The target must be idle
+and quiescent. The durable applied result's transmission is attempted before
+scheduling that target's restart, even if the connection has already closed.
+A lost reply leaves the client uncertain; it does not cancel the explicitly
+requested restart or repeat the write. Other devices are not restarted. The dialog reports saved, observed and
+selected addresses separately and performs no scan on read. Software tests do
+not qualify physical five-adapter wiring or presence sensing.
 
 Factory reset writes a durable marker in `amity_cfg/amity_reset`, then reboots.
 Before starting network or application tasks, the boot path erases normal NVS
@@ -23,6 +43,19 @@ so power loss safely repeats all erases. No mutable task can repopulate erased
 storage during the reset. Commissioning credentials remain in the untouched
 factory partition, preserving the original setup PIN/QR credentials.
 The immutable factory partition, keys partition and OTA firmware slots are retained.
+
+Explicit removal of a responding added device reuses this same journal through
+`system_services/member_removal.cpp`. The authenticated runtime reserves a
+short-lived exact removal permit, retires and drains the native owner, and the
+service rechecks the permit on the internal flash broker immediately before
+committing the marker. No raw NVS operation runs on the external TLS stack.
+Only after the durable result transmission is attempted does the selected
+device schedule restart, including when that reply cannot be delivered. The
+main, generic membership retirement, enrollment abort, lost authority and
+unreachable devices cannot invoke this reset callback. A management-only
+committed member needs its authenticated membership proof, not an executable
+route graph. Offline removal only drops the main's roster entry and reports
+that physical reset is required. No new erasure loop or reset journal is added.
 
 The optional FW_RESET GPIO adapter starts after settings initialization and before
 network services. Both GPIO edges notify a worker for an active-low input with a

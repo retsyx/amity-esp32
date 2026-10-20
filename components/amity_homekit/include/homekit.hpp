@@ -7,7 +7,7 @@
  */
 
 #pragma once
-#include "amity/hub_service.hpp"
+#include "amity/system_control.hpp"
 #include "amity_matter.h"
 namespace amity_homekit {
 struct Status {
@@ -17,7 +17,10 @@ struct Status {
     char manual_code[11]{}, qr_payload[32]{};
 };
 // Matter owns provisioning and Wi-Fi. Start the worker and restore saved HomeKit state.
-esp_err_t start(amity::HubService &hub, const amity_matter_callbacks_t &callbacks);
+esp_err_t start(amity::SystemControl &hub, const amity_matter_callbacks_t &callbacks);
+// Permanently disable this boot, synchronously close sessions/listener and
+// discovery, preserving pairings. Safe before start and from lifecycle worker.
+esp_err_t stop();
 Status status();
 esp_err_t open_pairing();
 esp_err_t close_pairing();

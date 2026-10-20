@@ -13,4 +13,6 @@
 namespace amity_matter {
 // Call after ESP Matter starts, with the CHIP stack lock held.
 esp_err_t start_apple_fabric_cleanup();
+// Call under the CHIP lock before server teardown; preserve the pending marker.
+void stop_apple_fabric_cleanup();
 }

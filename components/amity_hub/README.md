@@ -1,7 +1,15 @@
+> 20 October 2026 scope amendment: the original first-setup Amity alone owns the sole remote, UI/admin and home integrations. Added devices are UI-less actuators, with no member input gateway or coordinator promotion/handover. Preserve the original activity UI with only canonical Amity-hostname context and one Amity management tab. [Normative contract](../../amity-octopus-consortium/21-original-controller-policy.md).
+
+Schema-2 runtime and control-surface evidence is documented in
+[CONTROL_SURFACE_EVIDENCE.md](CONTROL_SURFACE_EVIDENCE.md). `SystemControl`
+uses the scoped planner/agent path for live schema-2 configuration; the legacy
+`Hub` path below is retained for compatibility and bounded migration discovery.
+Controlled consortium startup does not activate its legacy roles automatically.
+
 `amity::Hub` contains the activity/device behavior independently of ESP-IDF.
 It implements the front playback/back TV topology from `hdmi.py`, selective
 power transitions, activity repair, source routing and switch-input fallback,
-vendor power quirks, source-stealing suppression, device metadata discovery,
+vendor power quirks, source isolation, device metadata discovery,
 and per-bus power-status replies. Logical addresses remain scoped to their
 own bus when resolving discovery updates.
 
@@ -53,9 +61,9 @@ The owner checks the names needed by an activity/key command before applying
 it, performs any permitted rescan, then executes that original command.
 Discovery builds a separate replacement list, preserving live power replies
 and routing until metadata collection completes. An OSD name that moves to
-a different logical address replaces its stale record; either metadata reply
-order restores the selected source route once both name and physical address
-are available.
+a different logical address replaces its stale record. Discovery does not
+restore a route or replay an activity; fresh explicit control uses the resolved
+binding after the relevant fences have synchronized.
 `Snapshot::discovering` stays true until polls, queued identity requests, and
 a 1.1-second quiet response window complete (bounded to five additional
 seconds). Queued activity changes run after this window, so metadata names
@@ -74,10 +82,16 @@ its source. `press_key(key, true)` starts a held stream. The owner waits for eac
 queued CEC press to finish, handles pending commands, and immediately submits
 the next press if the button is still held. There is no repeat timer or backlog
 of queued repeats. Each held attempt uses the normal CEC arbitration and idle
-timing; failed attempts can repeat only while still held. Release cancels
-continuation through an atomic generation immediately, even while the owner is
-waiting for transmission or discovery. A frame already in progress finishes,
-then the release is queued; a quick tap still sends its initial press/release.
+timing. The explicit user amendment gives every key-press frame one wire
+attempt. Failed key TX ends that key's pressed state and repetition; a later
+button-up is a no-op, and unchanged down or authority refresh cannot restart it.
+Remote-up updates state and cancels that key's continuation through an atomic
+generation, even while the owner is waiting for transmission or discovery.
+CEC release has no key operand: the executor selects it at the receiving
+device's stream end only when all keys there cease being pressed, including
+last-key failure. An in-progress press finishes before final release; a quick
+tap retains its finite initial press. Other keys for the same recipient suppress
+release, while unrelated recipients and wires continue independently.
 Activity changes, configuration replacement and standby also cancel the held
 stream. One-shot keys (including Matter volume steps) keep their existing
 press/release behavior. Held keys release the device they were sent to. The default
@@ -90,12 +104,18 @@ volume is invented when a device provides none. Explicit mute/restore keys
 audio changes and activity selection.
 Audio-change queries are coalesced until input has been quiet for 500 ms,
 so a long volume adjustment does not overwhelm the low-bandwidth CEC bus.
-The transport waits up to one second for TX capacity. A rejected initial key
-press does not change held-key/playback state; a rejected key release remains
-pending and is retried by the owner tick, including releases from power quirks
-and switch selection. A new key cannot overtake a pending release to its
-recipient. These guarantees concern queue admission; physical transmission
-still uses the CEC driver's bounded retries and error counters.
+A rejected initial key press does not change held-key/playback state. Ended
+streams wait only for admitted presses to finish, then attempt final release.
+The release may occupy the single ninth overflow slot when eight messages are
+admitted. At nine, further releases are dropped and consumed, including power
+quirk and switch-key cleanup; the owner must not retry them when capacity opens.
+A new key cannot overtake an unattempted final release to its recipient. These guarantees concern queue admission; physical transmission
+uses the executor-supplied attempt budgets and CEC error counters. CEC has no
+opcode/button policy; it only sends the supplied messages. Outgoing messages
+are buffered solely in CEC's FIFO with eight normal slots plus one release-only overflow slot per wire, including releases.
+The executor retains button state/completion bookkeeping without a frame queue,
+submits directly, and reports ordinary full-queue admission as busy. End-of-stream state is separate from ended key tokens; a dropped release is
+not retained for another admission attempt.
 If even the hub's command queue is full, `release_key()` accepts an emergency
 release through an atomic generation counter. The owner releases its held key
 and skips older queued key events, including repetitions accumulated during

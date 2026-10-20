@@ -11,12 +11,18 @@
 #include "diagnostics.h"
 #include "apple_fabrics.h"
 #include "device_settings.hpp"
+#include "radio_control.hpp"
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_wifi_default.h"
 
 #include <cstring>
 #include <utility>
+#include <atomic>
+#include <mutex>
+#include <platform/ESP32/ESP32Utils.h>
+#include <platform/ESP32/NetworkCommissioningDriver.h>
+#include <lib/support/CHIPMem.h>
 #include "esp_log.h"
 #include <esp_matter.h>
 #include <app/AttributeAccessInterface.h>
@@ -31,6 +37,8 @@
 #include <app/server/Server.h>
 #include <setup_payload/OnboardingCodesUtil.h>
 
+esp_err_t install_consortium_network_hooks();
+
 namespace {
 using namespace chip::app::Clusters;
 using chip::app::CommandResponseHelper;
@@ -44,7 +52,10 @@ amity_matter_callbacks_t callbacks{};
 amity_matter_state_t state{};
 amity_matter_input_t inputs[AMITY_MATTER_MAX_INPUTS]{};
 size_t input_count = 0;
-bool started = false;
+std::atomic<bool> started{false}, stack_started{false}, controller_enabled{true};
+std::atomic<bool> controller_revoked{false};
+std::atomic<bool> controller_enrollment_complete{false}, enrollment_check_pending{false};
+std::mutex lifecycle_mutex;
 // CEC does not expose reliable transport feedback. This is the last accepted
 // playback command, never a claim that a source acknowledged a playback state.
 MediaPlayback::PlaybackStateEnum requested_playback = MediaPlayback::PlaybackStateEnum::kNotPlaying;
@@ -58,12 +69,12 @@ esp_err_t result(CHIP_ERROR error)
 
 void report(uint16_t endpoint, uint32_t cluster, uint32_t attribute)
 {
-    MatterReportingAttributeChangeCallback(endpoint, cluster, attribute);
+    if (controller_enabled.load() && started.load()) MatterReportingAttributeChangeCallback(endpoint, cluster, attribute);
 }
 
 esp_err_t dispatch_key(uint8_t key)
 {
-    return callbacks.key ? callbacks.key(key, callbacks.context) : ESP_ERR_NOT_SUPPORTED;
+    return controller_enabled.load() && callbacks.key ? callbacks.key(key, callbacks.context) : ESP_ERR_INVALID_STATE;
 }
 
 class Inputs final : public MediaInput::Delegate {
@@ -85,6 +96,7 @@ public:
     uint8_t HandleGetCurrentInput() override { return state.current_input; }
     bool HandleSelectInput(uint8_t index) override
     {
+        if (!controller_enabled.load()) return false;
         for (size_t i = 0; i < input_count; ++i) {
             if (inputs[i].index == index)
                 return callbacks.activity && callbacks.activity(index, callbacks.context) == ESP_OK;
@@ -221,9 +233,9 @@ esp_err_t on_off_command(const chip::app::ConcreteCommandPath &path, chip::TLV::
         return ESP_FAIL;
     }
     esp_err_t err = ESP_ERR_NOT_SUPPORTED;
-    if (valid && (path.mEndpointId == player_endpoint) && callbacks.power)
+    if (controller_enabled.load() && valid && (path.mEndpointId == player_endpoint) && callbacks.power)
         err = callbacks.power(on, callbacks.context);
-    else if (valid && path.mEndpointId == speaker_endpoint && callbacks.mute)
+    else if (controller_enabled.load() && valid && path.mEndpointId == speaker_endpoint && callbacks.mute)
         err = callbacks.mute(!on, callbacks.context);
     handler->AddStatus(path, !valid ? Status::InvalidCommand : err == ESP_OK ? Status::Success : Status::Failure);
     return ESP_FAIL;
@@ -232,6 +244,7 @@ esp_err_t on_off_command(const chip::app::ConcreteCommandPath &path, chip::TLV::
 template <class Command>
 Status step_command(chip::TLV::TLVReader &reader)
 {
+    if (!controller_enabled.load()) return Status::Failure;
     Command command;
     if (chip::app::DataModel::Decode(reader, command) != CHIP_NO_ERROR) return Status::InvalidCommand;
     if (command.stepMode != LevelControl::StepModeEnum::kUp && command.stepMode != LevelControl::StepModeEnum::kDown)
@@ -265,19 +278,48 @@ esp_err_t attribute_changed(esp_matter::attribute::callback_type_t, uint16_t, ui
     return ESP_OK;
 }
 
+void finish_controller_enrollment(intptr_t)
+{
+    enrollment_check_pending.store(false);
+    if (!controller_enabled.load() || !started.load()) return;
+    auto &server = chip::Server::GetInstance();
+    if (!server.GetFailSafeContext().IsFailSafeFullyDisarmed() ||
+        server.GetFabricTable().begin() == server.GetFabricTable().end() ||
+        !chip::DeviceLayer::ConnectivityMgr().IsWiFiStationProvisioned() ||
+        !chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected()) return;
+    // NetworkCommissioningCluster handles the same completion event, but its
+    // commit error is ignored by the SDK. Check it explicitly before role CAS.
+    if (chip::DeviceLayer::NetworkCommissioning::ESPWiFiDriver::GetInstance().CommitConfiguration() != CHIP_NO_ERROR) {
+        ESP_LOGE(tag, "Controller enrollment Wi-Fi commit failed; user interfaces remain closed");
+        return;
+    }
+    controller_enrollment_complete.store(true);
+}
+
 void event_callback(const chip::DeviceLayer::ChipDeviceEvent *event, intptr_t)
 {
     using namespace chip::DeviceLayer;
     switch (event->Type) {
     case DeviceEventType::kCommissioningComplete:
         ESP_LOGI(tag, "Commissioning complete; fabric persisted");
+        // Queue after all current event handlers, including SDK network commit.
+        (void) amity_matter_controller_enrollment_complete();
         break;
     case DeviceEventType::kCommissioningWindowOpened:
         ESP_LOGI(tag, "Commissioning window opened");
         break;
     case DeviceEventType::kCommissioningWindowClosed:
+        amity::radio::matter_closed();
         ESP_LOGI(tag, "Commissioning window closed");
         break;
+    case DeviceEventType::kCHIPoBLEConnectionEstablished:
+        amity::radio::matter_connection(true);break;
+    case DeviceEventType::kCHIPoBLEConnectionClosed:
+        amity::radio::matter_connection(false);break;
+    case DeviceEventType::kCommissioningSessionStarted:
+        amity::radio::matter_connection(true);break;
+    case DeviceEventType::kCommissioningSessionStopped:
+        amity::radio::matter_connection(false);break;
     case DeviceEventType::kFabricRemoved:
         ESP_LOGI(tag, "Matter fabric removed; Amity configuration retained");
         break;
@@ -301,12 +343,48 @@ esp_err_t install_command_handlers(esp_matter::endpoint_t *endpoint, bool speake
     }
     return ESP_OK;
 }
+esp_err_t initialize_station_interface() {
+    // Create the station before Matter starts Wi-Fi so the first DHCP request
+    // already carries the provisioned hostname. Matter reuses this interface.
+    auto err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+    err = esp_netif_init();
+    if (err != ESP_OK) return err;
+    auto *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!netif) netif = esp_netif_create_default_wifi_sta();
+    if (!netif) return ESP_ERR_NO_MEM;
+    err = esp_netif_set_hostname(netif, device_settings::hostname());
+    if (err != ESP_OK) return err;
+    return ESP_OK;
+}
+esp_err_t start_actuator_substrate() {
+    auto err = initialize_station_interface(); if (err != ESP_OK) return err;
+    // Same pinned CHIP platform/ESP Wi-Fi driver as controller startup, but no
+    // Server.Init, root/application endpoints, CASE/UDP or home advertisements.
+    err = chip::DeviceLayer::Internal::ESP32Utils::InitWiFiStack() == CHIP_NO_ERROR ? ESP_OK : ESP_FAIL;
+    if (err != ESP_OK) return err;
+    if (chip::Platform::MemoryInit() != CHIP_NO_ERROR || chip::DeviceLayer::PlatformMgr().InitChipStack() != CHIP_NO_ERROR) return ESP_FAIL;
+    {
+        esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+        if (chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false) != CHIP_NO_ERROR) return ESP_FAIL;
+        if (chip::DeviceLayer::NetworkCommissioning::ESPWiFiDriver::GetInstance().Init(nullptr) != CHIP_NO_ERROR) return ESP_FAIL;
+        if (chip::DeviceLayer::PlatformMgr().AddEventHandler(event_callback, 0) != CHIP_NO_ERROR) return ESP_FAIL;
+    }
+    if (chip::DeviceLayer::PlatformMgr().StartEventLoopTask() != CHIP_NO_ERROR) return ESP_FAIL;
+    stack_started.store(true);
+    err = install_consortium_network_hooks(); if (err != ESP_OK) return err;
+    ESP_LOGI(tag, "Actuator network/BLE host ready; Matter endpoints and services disabled");
+    return ESP_OK;
+}
+
 }
 
 extern "C" esp_err_t amity_matter_start(const amity_matter_callbacks_t *app_callbacks)
 {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);
     if (!app_callbacks) return ESP_ERR_INVALID_ARG;
-    if (started) return ESP_ERR_INVALID_STATE;
+    if (stack_started.load()) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load()) return start_actuator_substrate();
     callbacks = *app_callbacks;
     esp_err_t err = amity_matter_prepare_credentials();
     if (err != ESP_OK) return err;
@@ -357,17 +435,14 @@ extern "C" esp_err_t amity_matter_start(const amity_matter_callbacks_t *app_call
     if (err != ESP_OK) return err;
     err = install_command_handlers(speaker, true);
     if (err != ESP_OK) return err;
-    // Create the station before Matter starts Wi-Fi so the first DHCP request
-    // already carries the provisioned hostname. Matter reuses this interface.
-    err = esp_event_loop_create_default();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
-    err = esp_netif_init();
-    if (err != ESP_OK) return err;
-    auto *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-    if (!netif) netif = esp_netif_create_default_wifi_sta();
-    if (!netif) return ESP_ERR_NO_MEM;
-    err = esp_netif_set_hostname(netif, device_settings::hostname());
-    if (err != ESP_OK) return err;
+    err = initialize_station_interface(); if (err != ESP_OK) return err;
+    // Network access and Matter membership are separate. A fabric-free member
+    // must reconnect using its stored station credentials without silently
+    // opening home-app setup at every restart.
+    static chip::CommonCaseDeviceServerInitParams server_params;
+    server_params.advertiseCommissionableIfNoFabrics=false;
+    err=esp_matter::set_server_init_params(&server_params);
+    if(err!=ESP_OK)return err;
     err = esp_matter::start(event_callback);
     if (err != ESP_OK) return err;
     {
@@ -381,7 +456,9 @@ extern "C" esp_err_t amity_matter_start(const amity_matter_callbacks_t *app_call
         auto &registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
         if (!registry.Register(&observed_onoff) || !registry.Register(&observed_volume)) return ESP_ERR_INVALID_STATE;
     }
-    started = true;
+    started.store(true); stack_started.store(true);
+    err=install_consortium_network_hooks();
+    if(err!=ESP_OK)return err;
     ESP_LOGI(tag, "Matter ready: video player endpoint 1, speaker endpoint 2, remote battery endpoint 3");
     return ESP_OK;
 }
@@ -402,12 +479,26 @@ extern "C" esp_err_t amity_matter_set_inputs(const amity_matter_input_t *new_inp
     };
     if (started) {
         esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+        if (!controller_enabled.load() || !started.load()) return ESP_OK;
         copy();
         report(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);
     } else {
         copy();
     }
     return ESP_OK;
+}
+
+extern "C" bool amity_matter_controller_enrollment_complete(void)
+{
+    if (!controller_enabled.load() || !started.load()) return false;
+    if (controller_enrollment_complete.load()) return true;
+    // Polling also recovers a retained legacy fabric after Wi-Fi reconnects.
+    // Keep at most one verification callback queued on the CHIP task.
+    bool expected = false;
+    if (enrollment_check_pending.compare_exchange_strong(expected, true) &&
+        chip::DeviceLayer::PlatformMgr().ScheduleWork(finish_controller_enrollment, 0) != CHIP_NO_ERROR)
+        enrollment_check_pending.store(false);
+    return false;
 }
 
 extern "C" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)
@@ -418,6 +509,7 @@ extern "C" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)
         return ESP_OK;
     }
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    if (!controller_enabled.load() || !started.load()) return ESP_OK;
     const auto old = state;
     state = *next;
     if (old.power != state.power) {
@@ -435,7 +527,7 @@ extern "C" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)
 extern "C" esp_err_t amity_matter_update_remote(bool paired, bool connected, int percent, int charging)
 {
     if (percent < -1 || percent > 100 || charging < -1 || charging > 1) return ESP_ERR_INVALID_ARG;
-    if (!started) return ESP_ERR_INVALID_STATE;
+    if (!started.load() || !controller_enabled.load()) return ESP_ERR_INVALID_STATE;
     if (!paired) { percent = 100; charging = 0; }
     else if (!connected) { percent = charging = -1; }
     using namespace esp_matter;
@@ -448,6 +540,7 @@ extern "C" esp_err_t amity_matter_update_remote(bool paired, bool connected, int
     const auto level = percent < 0 || percent > 20 ? BatChargeLevelEnum::kOk :
         percent > 10 ? BatChargeLevelEnum::kWarning : BatChargeLevelEnum::kCritical;
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    if (!controller_enabled.load() || !started.load()) return ESP_ERR_INVALID_STATE;
     static bool valid = false;
     static int old_percent, old_charge, old_status;
     if (valid && old_percent == percent && old_charge == static_cast<int>(charge) && old_status == static_cast<int>(status)) return ESP_OK;
@@ -469,9 +562,10 @@ extern "C" esp_err_t amity_matter_get_status(amity_matter_status_t *status)
 {
     if (!status) return ESP_ERR_INVALID_ARG;
     memset(status, 0, sizeof(*status));
-    status->started = started;
-    if (!started) return ESP_OK;
+    status->started = started.load() && controller_enabled.load();
+    if (!status->started) return ESP_OK;
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    if (!controller_enabled.load() || !started.load()) { memset(status, 0, sizeof(*status)); return ESP_OK; }
     auto &server = chip::Server::GetInstance();
     status->commissioning_window = server.GetCommissioningWindowManager().IsCommissioningWindowOpen();
     for (const auto &fabric : server.GetFabricTable()) {
@@ -497,9 +591,10 @@ extern "C" esp_err_t amity_matter_get_status(amity_matter_status_t *status)
 
 extern "C" esp_err_t amity_matter_open_commissioning(uint16_t seconds)
 {
-    if (!started) return ESP_ERR_INVALID_STATE;
+    if (!started.load() || !controller_enabled.load()) return ESP_ERR_INVALID_STATE;
     if (seconds < 180 || seconds > 900) return ESP_ERR_INVALID_ARG;
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    if (!controller_enabled.load() || !started.load()) return ESP_ERR_INVALID_STATE;
     auto &manager = chip::Server::GetInstance().GetCommissioningWindowManager();
     if (manager.IsCommissioningWindowOpen()) return ESP_OK;
     return result(manager.OpenBasicCommissioningWindow(chip::System::Clock::Seconds16(seconds),
@@ -508,18 +603,50 @@ extern "C" esp_err_t amity_matter_open_commissioning(uint16_t seconds)
 
 extern "C" esp_err_t amity_matter_close_commissioning(void)
 {
-    if (!started) return ESP_ERR_INVALID_STATE;
+    if (!started.load() || !controller_enabled.load()) return ESP_ERR_INVALID_STATE;
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    if (!controller_enabled.load() || !started.load()) return ESP_ERR_INVALID_STATE;
     chip::Server::GetInstance().GetCommissioningWindowManager().CloseCommissioningWindow();
     return ESP_OK;
 }
 
 extern "C" esp_err_t amity_matter_remove_fabric(uint8_t index)
 {
-    if (!started) return ESP_ERR_INVALID_STATE;
+    if (!started.load() || !controller_enabled.load()) return ESP_ERR_INVALID_STATE;
     if (!index) return ESP_ERR_INVALID_ARG;
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    if (!controller_enabled.load() || !started.load()) return ESP_ERR_INVALID_STATE;
     auto &table = chip::Server::GetInstance().GetFabricTable();
     if (!table.FindFabricWithIndex(index)) return ESP_ERR_NOT_FOUND;
     return result(table.Delete(index));
+}
+
+extern "C" esp_err_t amity_matter_set_controller_enabled(bool enabled) {
+    if (!enabled) { controller_revoked.store(true); controller_enabled.store(false); } // revoke before waiting
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);
+    if (enabled) {
+        if (controller_revoked.load()) return ESP_ERR_INVALID_STATE;
+        controller_enabled.store(true); return ESP_OK;
+    }
+    if (!stack_started.load() || !started.load()) return ESP_OK;
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    chip::app::DnssdServer::Instance().StopServer();
+    auto& registry = chip::app::AttributeAccessInterfaceRegistry::Instance();
+    registry.Unregister(&observed_onoff); registry.Unregister(&observed_volume);
+    amity_matter::stop_apple_fabric_cleanup();
+    chip::Server::GetInstance().Shutdown();
+    started.store(false);
+    ESP_LOGI(tag, "Matter user services stopped; fabrics and shared network/BLE host retained");
+    return ESP_OK;
+}
+
+// Checked-in link wrappers also fence ESP-Matter's private IP-event callback.
+// The pinned SDK would otherwise restart home discovery after Server shutdown.
+extern "C" void __real__ZN4chip3app11DnssdServer11StartServerEv(void*);
+extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(void* self) {
+    if (controller_enabled.load()) __real__ZN4chip3app11DnssdServer11StartServerEv(self);
+}
+extern "C" void __real__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(void*, chip::Dnssd::CommissioningMode);
+extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(void* self, chip::Dnssd::CommissioningMode mode) {
+    if (controller_enabled.load()) __real__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(self, mode);
 }

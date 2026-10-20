@@ -7,6 +7,9 @@
  */
 
 #include "web_admin.hpp"
+#include "v2_admin.hpp"
+#include "activity_editor.hpp"
+#include "local_remote_approval.hpp"
 #include "web.hpp"
 #include "config_store.hpp"
 #include "device_settings.hpp"
@@ -14,19 +17,28 @@
 #include "amity_matter.h"
 #include "homekit.hpp"
 #include "ble_remote.h"
+#include "amity/consortium/runtime.hpp"
 #include "cJSON.h"
 #include "json_input.hpp"
 #include "qrcodegen.h"
 #include "esp_app_desc.h"
 #include "esp_wifi.h"
 #include "esp_heap_caps.h"
+#include "esp_https_server.h"
+#include <atomic>
+#include <mutex>
+#include "cec/bus.hpp"
 #include <cstdio>
 #include <cstring>
 #include <memory>
 namespace web_admin {
 namespace {
-amity::HubService *hub;
+amity::SystemControl *hub;
+LocalRemoteApprovalBook remote_approvals;
 httpd_handle_t server;
+std::mutex server_mutex;
+std::atomic_bool ui_enabled{false};
+std::atomic_bool ui_revoked{false};
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 const char empty_config[]="{\"version\":1,\"activities\":[]}";
 esp_err_t send(httpd_req_t *req,cJSON *root) {
@@ -68,7 +80,11 @@ esp_err_t status(httpd_req_t *req) {
     cJSON_AddBoolToObject(root.get(),"ready",s.ready);
     cJSON_AddBoolToObject(root.get(),"discovering",s.discovering);
     cJSON_AddBoolToObject(root.get(),"activity_settling",s.activity_settling);
+    cJSON_AddStringToObject(root.get(),"activity_error",s.activity_error.c_str());
     cJSON_AddNumberToObject(root.get(),"discovery_generation",s.discovery_generation);
+    cJSON_AddNumberToObject(root.get(),"activity_generation",s.activity_generation);
+    cJSON_AddNumberToObject(root.get(),"binding_generation",s.binding_generation);
+    cJSON_AddNumberToObject(root.get(),"uncertain_releases",s.uncertain_releases);
     cJSON_AddNumberToObject(root.get(),"current_activity",s.current_activity);
     cJSON_AddNumberToObject(root.get(),"front_address",s.front_address);
     cJSON_AddNumberToObject(root.get(),"back_address",s.back_address);
@@ -86,6 +102,8 @@ esp_err_t status(httpd_req_t *req) {
 }
 esp_err_t remotes(httpd_req_t *req) {
     ble_remote_status_t s{};ble_remote_get_status(&s);Json root(cJSON_CreateObject(),cJSON_Delete);
+    cJSON_AddStringToObject(root.get(),"boot_id",system_services::boot_id());
+    cJSON_AddStringToObject(root.get(),"remote_generation",amity::system::format_uint64(remote_approvals.generation()).c_str());
     cJSON_AddBoolToObject(root.get(),"ready",s.ready);cJSON_AddBoolToObject(root.get(),"scanning",s.scanning);cJSON_AddBoolToObject(root.get(),"connected",s.connected);
     cJSON_AddBoolToObject(root.get(),"bonded",s.bonded);cJSON_AddBoolToObject(root.get(),"connecting",s.connecting);
     cJSON_AddBoolToObject(root.get(),"waiting",s.waiting);
@@ -141,6 +159,7 @@ esp_err_t homekit(httpd_req_t *req) {
     return send(req,root.get());
 }
 esp_err_t api(httpd_req_t *req) {
+    if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
     std::string path=req->uri;
     if(path=="/api/setup") {
         if(req->method==HTTP_GET) {
@@ -148,6 +167,12 @@ esp_err_t api(httpd_req_t *req) {
             cJSON_AddBoolToObject(root.get(),"required",web::setup_required());
             cJSON_AddStringToObject(root.get(),"hostname",device_settings::hostname());
             cJSON_AddStringToObject(root.get(),"version",esp_app_get_description()->version);
+            char image_identity[65]{};
+            const auto *description=esp_app_get_description();
+            for(size_t i=0;i<sizeof(description->app_elf_sha256);++i)
+                snprintf(image_identity+2*i,3,"%02x",description->app_elf_sha256[i]);
+            cJSON_AddStringToObject(root.get(),"image_elf_sha256",image_identity);
+            cJSON_AddBoolToObject(root.get(),"update_manifest_required",true);
             cJSON_AddStringToObject(root.get(),"boot_id",system_services::boot_id());
             cJSON_AddBoolToObject(root.get(),"ready",system_services::firmware_ready());
             return send(req,root.get());
@@ -183,12 +208,19 @@ esp_err_t api(httpd_req_t *req) {
     }
     if(!web::authenticated(req))return web::error(req,"Login required","401 Unauthorized");
     if(device_settings::reset_pending())return web::error(req,"Factory reset is pending. Restarting.","503 Service Unavailable");
+    if(configuration_is_passive()&&req->method==HTTP_POST&&path!="/api/logout"&&path!="/api/password"&&path!="/api/firmware"&&path!="/api/reboot"&&path!="/api/v2/updates/validate")
+        return web::error(req,"Configuration changes are unavailable while Amity is passive or updating.","403 Forbidden");
+    esp_err_t v2_result=ESP_OK;if(activity_editor_request(*hub,req,path,v2_result))return v2_result;
+    if(v2_request(req,path,v2_result))return v2_result;
+    if(!active_v2_json().empty()&&(path=="/api/activity"||path=="/api/key"||path=="/api/discover"))
+        return web::error(req,"Use the current activity controls to select activities or scan equipment.","409 Conflict");
     if(req->method==HTTP_GET) {
         if(path=="/api/status")return status(req);
         if(path=="/api/remotes")return remotes(req);
         if(path=="/api/matter")return matter(req);
         if(path=="/api/homekit")return homekit(req);
         if(path=="/api/config"||path=="/api/backup") {
+            if(!active_v2_json().empty())return web::error(req,"The active document is schema 2. Use /api/v2/config to retain stable identities and scoped equipment selectors.","409 Conflict");
             std::string data;auto e=config_store::read("config",data);if(e==ESP_ERR_NVS_NOT_FOUND)data=empty_config;else if(e!=ESP_OK)return web::error(req,"Cannot read configuration","500 Internal Server Error");
             httpd_resp_set_hdr(req,"X-Amity-Configured",e==ESP_ERR_NVS_NOT_FOUND?"false":"true");
             if(path=="/api/backup")httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity-config.json");
@@ -201,8 +233,10 @@ esp_err_t api(httpd_req_t *req) {
     }
     if(req->method==HTTP_POST) {
         if(path=="/api/firmware")return system_services::upload_firmware(req);
+
         std::string data;if(!web::body(req,data))return ESP_OK;
         if(path=="/api/config"||path=="/api/restore") {
+            if(!active_v2_json().empty())return web::error(req,"Use the schema-2 configuration API. A legacy document cannot overwrite stable equipment and activity identities.","409 Conflict");
             std::string error;auto e=apply(data,true,error);
             return e==ESP_OK?web::json(req,"{\"saved\":true}"):web::error(req,error.empty()?esp_err_to_name(e):error.c_str());
         }
@@ -214,16 +248,15 @@ esp_err_t api(httpd_req_t *req) {
         else if(path=="/api/activity") {int index;if(!int_arg("index",-1,15,index)||index>=static_cast<int>(hub->snapshot().activities.size()))return web::error(req,"Invalid activity index");e=hub->request_activity(index);if(e==ESP_ERR_TIMEOUT)return web::error(req,"System is settling. Try again shortly.","409 Conflict");}
         else if(path=="/api/key") {int key;if(!int_arg("key",0,255,key))return web::error(req,"Invalid key");e=hub->press_key(key)?ESP_OK:ESP_ERR_NO_MEM;}
         else if(path=="/api/remotes/scan")e=ble_remote_scan(20);
-        else if(path=="/api/remotes/unpair")e=ble_remote_unpair();
-        else if(path=="/api/remotes/pair") {
-            auto *address=cJSON_GetObjectItemCaseSensitive(root.get(),"address");int type;
-            if(!address)e=ble_remote_start_pairing(20);
-            else {
-            if(!cJSON_IsString(address)||strlen(address->valuestring)!=17||!int_arg("type",0,3,type))return web::error(req,"Invalid BLE address");
-            unsigned bytes[6];char tail;
-            if(sscanf(address->valuestring,"%2x:%2x:%2x:%2x:%2x:%2x%c",&bytes[0],&bytes[1],&bytes[2],&bytes[3],&bytes[4],&bytes[5],&tail)!=6)return web::error(req,"Invalid BLE address");
-            uint8_t peer[6];for(unsigned i=0;i<6;++i)peer[i]=bytes[i];e=ble_remote_pair(peer,type);
-            }
+        else if(path=="/api/remotes/unpair"||path=="/api/remotes/pair") {
+            LocalRemoteRequest approval;
+            if(!parse_local_remote_request(root.get(),path=="/api/remotes/pair",approval))return web::error(req,"Review the remote's current pairing state before continuing","400 Bad Request");
+            const auto boot=amity::system::BootId::parse(system_services::boot_id()).value_or(amity::system::BootId{});
+            const auto admitted=remote_approvals.execute(boot,approval,[&]{return approval.pair?(approval.targeted?ble_remote_pair(approval.address.data(),approval.address_type):ble_remote_start_pairing(20)):ble_remote_unpair();});
+            if(!admitted.accepted)return web::error(req,"The remote's pairing state changed. Review it before continuing.","409 Conflict");
+            e=admitted.result;
+            if(e!=ESP_OK)return web::error(req,esp_err_to_name(e),"409 Conflict");
+            Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddBoolToObject(response.get(),"saved",true);cJSON_AddBoolToObject(response.get(),"admitted",true);cJSON_AddBoolToObject(response.get(),"duplicate",admitted.duplicate);cJSON_AddStringToObject(response.get(),"remote_generation",amity::system::format_uint64(admitted.generation).c_str());return send(req,response.get());
         }
         else if(path=="/api/matter/open")e=amity_matter_open_commissioning(300);
         else if(path=="/api/matter/close")e=amity_matter_close_commissioning();
@@ -233,16 +266,6 @@ esp_err_t api(httpd_req_t *req) {
         else if(path=="/api/homekit/remove") {
             if(!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root.get(),"confirm")))return web::error(req,"HomeKit removal confirmation required");
             e=amity_homekit::remove_pairings();
-        }
-        else if(path=="/api/front-physical-address") {
-            auto *value=cJSON_GetObjectItemCaseSensitive(root.get(),"address");
-            uint16_t address;
-            if(!cJSON_IsString(value)||!device_settings::parse_front_physical_address(value->valuestring,address))
-                return web::error(req,"Use a valid dotted hexadecimal physical address, such as 2.0.0.0, or leave blank for 1.0.0.0.");
-            e=device_settings::save_front_physical_address(value->valuestring);
-            if(e!=ESP_OK)return web::error(req,"Could not save front physical address.","500 Internal Server Error");
-            auto response=web::json(req,std::string("{\"front_physical_address\":\"")+device_settings::format_physical_address(address)+"\",\"rebooting\":true}");
-            system_services::reboot_later();return response;
         }
         else if(path=="/api/hostname") {
             auto *value=cJSON_GetObjectItemCaseSensitive(root.get(),"hostname");
@@ -275,21 +298,52 @@ extern const uint8_t js_start[] asm("_binary_app_js_start");
 extern const uint8_t js_end[] asm("_binary_app_js_end");
 extern const uint8_t css_start[] asm("_binary_style_css_start");
 extern const uint8_t css_end[] asm("_binary_style_css_end");
+extern const uint8_t system_js_start[] asm("_binary_system_js_start");
+extern const uint8_t system_js_end[] asm("_binary_system_js_end");
 esp_err_t asset(httpd_req_t *req) {
+    if (!ui_enabled.load()) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Administration is available on the original Amity only.");
     const uint8_t *begin=html_start,*end=html_end;const char *mime="text/html; charset=utf-8";
     if(!strcmp(req->uri,"/app.js")){begin=js_start;end=js_end;mime="text/javascript";}
     if(!strcmp(req->uri,"/style.css")){begin=css_start;end=css_end;mime="text/css";}
+    if(!strcmp(req->uri,"/system.js")){begin=system_js_start;end=system_js_end;mime="text/javascript";}
     httpd_resp_set_type(req,mime);httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
     httpd_resp_set_hdr(req,"Cache-Control","no-cache");
     httpd_resp_set_hdr(req,"Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     return httpd_resp_send(req,reinterpret_cast<const char *>(begin),end-begin);
 }
 }
-esp_err_t load(amity::HubService &service) {hub=&service;std::string data,error;auto e=config_store::read("config",data);if(e==ESP_ERR_NVS_NOT_FOUND)data=empty_config;else if(e!=ESP_OK)return e;return apply(data,false,error);}
-esp_err_t start(amity::HubService &service,const char *hostname,const char *initial_auth) {
-    hub=&service;auto e=web::start(server,std::string(hostname)+".local",initial_auth);if(e!=ESP_OK)return e;
-    for(auto *path:{"/","/app.js","/style.css"}) {e=web::route(server,path,HTTP_GET,asset);if(e!=ESP_OK)return e;}
-    e=web::route(server,"/api/*",HTTP_GET,api);if(e!=ESP_OK)return e;
-    return web::route(server,"/api/*",HTTP_POST,api);
+esp_err_t load(amity::SystemControl &service,bool recovery) {
+    hub=&service;if(recovery)return load_v2(service,true);
+    config_store::ConfigurationV2 existing;std::string error;
+    const auto loaded=config_store::load_system_configuration(existing,error);
+    if(loaded!=ESP_ERR_NVS_NOT_FOUND)return load_v2(service);
+    std::string data;auto result=config_store::read("config",data);
+    if(result==ESP_ERR_NVS_NOT_FOUND)return load_v2(service);
+    if(result!=ESP_OK)return result;
+    Configuration legacy;if(!parse_configuration(data,legacy,error))return ESP_ERR_INVALID_ARG;
+    if(legacy.activities.empty())return load_v2(service);
+    result=apply(data,false,error);return result==ESP_OK?load_v2(service):result;
 }
+esp_err_t start(amity::SystemControl &service,const char *hostname,const char *initial_auth) {
+    std::lock_guard<std::mutex> guard(server_mutex);
+    if(ui_revoked.load() || server) return ESP_ERR_INVALID_STATE;
+    const auto role=amity::consortium::runtime_status();
+    if(!role.coordinator || !role.authority_ready || role.member || role.phase=="retired" || role.phase=="recovery_required") return ESP_ERR_INVALID_STATE;
+    hub=&service;auto e=web::start(server,std::string(hostname)+".local",initial_auth);if(e!=ESP_OK)return e;
+    for(auto *path:{"/","/app.js","/system.js","/style.css"}) {e=web::route(server,path,HTTP_GET,asset);if(e!=ESP_OK)return e;}
+    e=web::route(server,"/api/*",HTTP_GET,api);if(e!=ESP_OK)return e;
+    e=web::route(server,"/api/*",HTTP_POST,api);
+    if(e==ESP_OK)ui_enabled.store(true);
+    return e;
+}
+esp_err_t stop() {
+    // Revoke handlers before closing sockets, including already accepted ones.
+    ui_revoked.store(true); ui_enabled.store(false);
+    std::lock_guard<std::mutex> guard(server_mutex);
+    if(!server)return ESP_OK;
+    const auto result=httpd_ssl_stop(server);
+    if(result==ESP_OK)server=nullptr;
+    return result;
+}
+
 }

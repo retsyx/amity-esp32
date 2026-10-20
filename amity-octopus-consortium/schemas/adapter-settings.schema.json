@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amity.invalid/design/v0.1/adapter-settings.schema.json",
+  "title": "Per-device HDMI-adapter settings projection",
+  "$comment": "Closed structural projection; unique slot indices, physical truth, exact current generations/revisions, authority, deadline and safe persistence/restart require semantic checks. Production settings codec additionally owns peer payloads.",
+  "$defs": {
+    "PhysicalAddress": {
+      "type": "string",
+      "pattern": "^(?![Ff]\\.[Ff]\\.[Ff]\\.[Ff]$)(?:0\\.0\\.0\\.0|[1-9A-Fa-f]\\.0\\.0\\.0|[1-9A-Fa-f]\\.[1-9A-Fa-f]\\.0\\.0|[1-9A-Fa-f]\\.[1-9A-Fa-f]\\.[1-9A-Fa-f]\\.0|[1-9A-Fa-f]\\.[1-9A-Fa-f]\\.[1-9A-Fa-f]\\.[1-9A-Fa-f])$"
+    },
+    "Change": {
+      "type": "object",
+      "properties": {
+        "tentacle_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "expected_presence_generation": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
+        },
+        "default_front_physical_address": {
+          "oneOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/PhysicalAddress"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tentacle_id",
+        "expected_presence_generation",
+        "default_front_physical_address"
+      ],
+      "additionalProperties": false
+    },
+    "Adapter": {
+      "type": "object",
+      "properties": {
+        "tentacle_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "name": {
+          "enum": [
+            "HDMI adapter 1",
+            "HDMI adapter 2",
+            "HDMI adapter 3",
+            "HDMI adapter 4",
+            "HDMI adapter 5"
+          ]
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "presence": {
+          "enum": [
+            "present",
+            "absent",
+            "unknown"
+          ]
+        },
+        "presence_generation": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+        },
+        "default_front_physical_address": {
+          "$ref": "#/$defs/PhysicalAddress"
+        },
+        "observed_front_physical_address": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/PhysicalAddress"
+            }
+          ]
+        },
+        "effective_front_physical_address": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/PhysicalAddress"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tentacle_id",
+        "name",
+        "configured",
+        "presence",
+        "presence_generation",
+        "default_front_physical_address",
+        "observed_front_physical_address",
+        "effective_front_physical_address"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tentacle_id": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "HDMI adapter 1"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tentacle_id": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "HDMI adapter 2"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tentacle_id": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "HDMI adapter 3"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tentacle_id": {
+                "const": 3
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "HDMI adapter 4"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tentacle_id": {
+                "const": 4
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "HDMI adapter 5"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "configured": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "presence": {
+                "enum": [
+                  "unknown",
+                  "absent"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "boot_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "settings_revision": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
+        },
+        "adapters": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/Adapter"
+          }
+        }
+      },
+      "required": [
+        "boot_id",
+        "settings_revision",
+        "adapters"
+      ],
+      "additionalProperties": false
+    },
+    "WriteCore": {
+      "type": "object",
+      "properties": {
+        "expected_boot_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "expected_settings_revision": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
+        },
+        "confirm_restart": {
+          "const": true
+        },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/Change"
+          }
+        }
+      },
+      "required": [
+        "expected_boot_id",
+        "expected_settings_revision",
+        "confirm_restart",
+        "changes"
+      ],
+      "additionalProperties": false
+    },
+    "WriteRequest": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "expected_boot_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "expected_settings_revision": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
+        },
+        "confirm_restart": {
+          "const": true
+        },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/Change"
+          }
+        }
+      },
+      "required": [
+        "request_id",
+        "expected_boot_id",
+        "expected_settings_revision",
+        "confirm_restart",
+        "changes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/$defs/Snapshot"
+}

@@ -47,6 +47,7 @@ class Admin:
         self.context = ssl.create_default_context(cafile=str(cafile)) if cafile else ssl._create_unverified_context()
         self.token = None
         self.records = []
+        self.last_status = None
 
     def request(self, path, body=None):
         headers = {"Content-Type": "application/json"}
@@ -68,6 +69,7 @@ class Admin:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             state = self.request("/api/status")
+            self.last_status = state
             if predicate(state):
                 return state
             time.sleep(.2)
@@ -151,13 +153,14 @@ def main():
         assert {"HarnessTV", "HarnessSource"}.issubset({d["name"] for d in scanning["devices"]})
         harness.expect("/dev/cec1", back_address, "--give-device-power-status", bytes([0x90, 0]))
         admin.wait_status(lambda state: not state["discovering"])
-        # A live selected source moving to another physical HDMI input must
-        # restore that route, then restore the fixture address for BLE tests.
+        # Metadata changes do not authorize routing. An explicit same-activity
+        # repair uses the newly resolved physical path, then restores the fixture.
         for physical, label in ((0x2000, "2.0.0.0"), (0x1000, "1.0.0.0")):
             source_address_changed = True
             harness.cec("/dev/cec1", "--phys-addr", label)
             admin.wait_status(lambda state: any(d["name"] == "HarnessSource" and d["physical_address"] == physical
                                                 for d in state["devices"]))
+            admin.activity(0)
         source_address_changed = False
         admin.request("/api/key", {"key": 0})
         admin.request("/api/key", {"key": 0x41})
@@ -166,7 +169,7 @@ def main():
         # standby while switching through the eight BLE activity slots.
         for index in range(1, 8):
             admin.activity(index)
-            time.sleep(.2)
+            admin.wait_status(lambda state: not state['activity_settling'], timeout=20)
         admin.activity(7)  # Reselect repairs power/routing.
         time.sleep(1)
         admin.activity(-1)
@@ -186,19 +189,20 @@ def main():
         back_direct = (back_address << 4) | 4
         assert front.count(bytes([front_direct, 0x04])) >= 2, "Missing display wake or activity repair"
         assert front.count(bytes([front_direct, 0x36])) == 1, "Shared display powered off during an activity switch"
-        assert bytes([front_direct | 15, 0x36]) in front, "Missing forced front standby after source theft"
+        assert bytes([front_direct | 15, 0x36]) not in front, "Unsolicited source activation caused front standby"
         for payload in ([0x44, 0x6d], [0x45], [0x44, 0], [0x44, 0x41], [0x36]):
             assert bytes([back_direct, *payload]) in back, f"Missing back payload {bytes(payload).hex(':')}"
         assert bytes([(back_address << 4) | 15, 0x86, 0x10, 0]) in back, "Missing Set Stream Path"
         assert bytes([(back_address << 4) | 15, 0x86, 0x20, 0]) in back, "Missing routing repair after source address change"
-        assert bytes([(back_address << 4) | 15, 0x36]) in back, "Missing forced back standby after source theft"
+        assert bytes([(back_address << 4) | 15, 0x36]) not in back, "Unsolicited source activation caused back standby"
         report["final_status"] = admin.request("/api/status")
         assert report["final_status"]["current_activity"] == -1
         report["passed"] = True
-        print("PASS: HTTPS configuration, staged discovery, eight activities, route repair, key routing, power feedback, and forced standby")
+        print("PASS: HTTPS configuration, staged discovery, eight activities, explicit repair, key routing, power feedback, and passive source isolation")
         return 0
     except (AssertionError, RuntimeError, ValueError, OSError, urllib.error.URLError, subprocess.SubprocessError) as exc:
         report["error"] = str(exc)
+        report["last_status"] = admin.last_status
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -214,6 +218,7 @@ def main():
                 report["source_address_restore_failed"] = True
         if admin.token:
             try:
+                admin.wait_status(lambda state: not state['activity_settling'], timeout=20)
                 admin.activity(-1)
                 if args.restore and original is not None:
                     admin.request("/api/restore", original)

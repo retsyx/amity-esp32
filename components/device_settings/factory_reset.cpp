@@ -9,7 +9,14 @@
 #include "device_settings.hpp"
 #include "nvs.h"
 #include "nvs_flash.h"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#if CONFIG_AMITY_PRODUCTION_UPDATES
+#include "config_store.hpp"
+#endif
+#endif
 #include <atomic>
+#include <initializer_list>
 namespace device_settings {
 namespace {
 std::atomic<bool> pending{false};
@@ -53,11 +60,17 @@ esp_err_t finish_factory_reset() {
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_INITIALIZED) return err;
     err = nvs_flash_erase();
     if (err != ESP_OK) return err;
+#if defined(ESP_PLATFORM) && CONFIG_AMITY_PRODUCTION_UPDATES
+    err = config_store::init();
+#else
     err = nvs_flash_init();
+#endif
     if (err != ESP_OK) return err;
-    {
+    // Explicit reset ownership. amity_origin is the only retained identity
+    // namespace; it has no operational credentials in this build.
+    for (const char *space : {"amity", "amity_system", "amity_local", "amity_group", "amity_config", "amity_export", "amity_reclaim", "amity_handover"}) {
         Handle application;
-        err = nvs_open_from_partition("amity_cfg", "amity", NVS_READWRITE, &application.value);
+        err = nvs_open_from_partition("amity_cfg", space, NVS_READWRITE, &application.value);
         if (err == ESP_OK) err = nvs_erase_all(application.value);
         if (err == ESP_OK) err = nvs_commit(application.value);
         if (err != ESP_OK) return err;

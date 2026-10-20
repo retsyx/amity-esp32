@@ -65,6 +65,20 @@ struct Fixture {
     }
 };
 
+static void held_state_changes(ble::RemoteProfile profile) {
+    Fixture f(profile);
+    f.key(Key::Volume, true, 100);
+    for (uint64_t now = 100000; now < 5000000; now += 100000)
+        f.key(Key::Volume, true, now);
+    f.expect({{T::Press, 0x41}}); // One down; no ingress renewal or periodic command.
+    f.key(Key::Volume, false, 5000000);
+    f.expect({{T::Press, 0x41}, {T::Release, 0}});
+    f.key(Key::Volume, true, 5100000);
+    f.expect({{T::Press, 0x41}, {T::Release, 0}, {T::Press, 0x41}});
+    f.cancel();
+    f.expect({{T::Press, 0x41}, {T::Release, 0}, {T::Press, 0x41}, {T::Release, 0}});
+}
+
 static void activity_quarantine(ble::RemoteProfile profile) {
     Fixture f(profile);
     f.key(Key::Up, true, 100);
@@ -257,6 +271,7 @@ static void profiles_and_batches() {
 
 int main() {
     for (auto profile : {ble::RemoteProfile::Atomic, ble::RemoteProfile::Siri}) {
+        held_state_changes(profile);
         activity_quarantine(profile);
         queued_reports(profile);
         cancellation(profile);

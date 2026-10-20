@@ -1,5 +1,7 @@
 # Discovery and topology
 
+**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+
 **Status: proposed implementation specification v0.1.** Discovery converts local HDMI-CEC observations and user-confirmed cable information into a versioned system graph. It must neither select an activity nor grant an observed device permission to control another CEC domain. This design uses Amity-esp32 commit `d50af8026938797fc0820d0107f4c4e064c2d2bc`, including its new dynamic front physical-address discovery.
 
 ## 1. Three different graphs
@@ -89,7 +91,7 @@ Correlating identical frames seen at multiple ports is useful positive evidence.
 
 For ports with uncertain relationships, serialize active discovery within the whole uncertain set until domain boundaries are established. Assign a single scanner to each confirmed domain. The coordinator schedules probes and correlates authenticated reports by operation, payload, local sequence and bounded receipt windows; it does not assume synchronized clocks. A scanner may send bounded header-only presence polls and an unregistered `Give Physical Address` (`0x83`) query whose reply is broadcast. These operations do not claim an identity or grant actuation authority.
 
-Represent domain relationships as confirmed, suspected shared, or unresolved evidence. Suspected overlap blocks contradictory role assignments. The setup UI should ask a concrete cable question when evidence is insufficient: for example, “Are these two connections on the receiver's two HDMI outputs?” A user-confirmed attachment is recorded with its provenance, not relabeled automatically detected. [Guided setup](20-user-experience-and-guided-setup.md) owns question order: resolve prerequisites of the user's selected screen/activity, reuse accepted cable answers, and retain unrelated choices when discovery changes. Do not require a complete graph or ask users to name electrical domains.
+Represent domain relationships as confirmed, suspected shared, or unresolved evidence. Suspected overlap blocks contradictory role assignments. Unconfirmed attachment evidence remains unavailable. Any explicit hardware confirmation retains its provenance and is never relabeled automatically detected. The baseline activity form and Amity management tab are the only normal UI; no cable-question wizard or electrical-domain editor is added.
 
 Only a validated domain may receive an active role assignment. Allocate logical addresses with bounded real wire polls; a wire error or arbitration loss is not a vacant address. Preserve the baseline's two unacknowledged allocation polls. The policy authority assigns the domain's one virtual TV where needed and any distinct playback proxies. A real TV already at address 0 must not cause another port to quietly invent a second TV identity at address 14. Address exhaustion is a visible configuration conflict.
 
@@ -113,9 +115,9 @@ Use a staged dependency graph rather than assuming all front identities can anno
 2. Resolve a source tentacle's sink-facing proxy path from evidence applicable to that specific attachment. The source's PA report is a candidate because DDC still reaches the real downstream HDMI hierarchy.
 3. Claim and announce only the resolved proxy's identity and physical address. Discovery announcement must not include `Active Source`, wake equipment, or select an input.
 4. Rescan dependent domains as newly announced proxies become observable. For an AVR output tentacle, prefer evidence from its configured immediate AVR peer over a newly visible child proxy. Do not substitute a child merely because it answered first.
-5. If a dependency remains unresolved, publish the missing evidence and request a confirmed fallback or a guided setup measurement. Terminate the scan rather than cycling indefinitely.
+5. If a dependency remains unresolved, publish the missing evidence and request a confirmed fallback or an explicitly authorized measurement. Terminate the scan rather than cycling indefinitely.
 
-An AVR serving two displays makes attachment scope especially important. Its reported PA may correspond to one selected EDID/display path. That report cannot be copied automatically onto both sink-facing proxies. Resolve the TV attachment and projector attachment separately. A guided “select this HDMI input” step may observe `Routing Change` or `Set Stream Path`; it is evidence where the device emits it, not a universal discovery method. Otherwise ask the user to confirm the input/path mapping. Do not label the legacy default `1.0.0.0` confirmed merely because it exists in configuration.
+An AVR serving two displays makes attachment scope especially important. Its reported PA may correspond to one selected EDID/display path. That report cannot be copied automatically onto both sink-facing proxies. Resolve the TV attachment and projector attachment separately. An explicitly authorized “select this HDMI input” measurement may observe `Routing Change` or `Set Stream Path`; it is evidence where the device emits it, not a universal discovery method. Otherwise ask the user to confirm the input/path mapping. Do not label the legacy default `1.0.0.0` confirmed merely because it exists in configuration.
 
 A `playback_proxy` cannot claim or announce its identity until its applicable PA is resolved or its fallback explicitly confirmed. `tv_controller` uses its assigned root role; monitor-only ports do not need playback readiness. Therefore replace the old global “front allocated AND back allocated AND front PA known” readiness flag with readiness per role and per routable attachment.
 
@@ -139,7 +141,7 @@ Use the existing 1.1-second quiet interval and five-second maximum collection wi
 
 Limit per-job observations, outstanding queries, and retry counts using the configured tested capacity. Completed snapshots are immutable. New replies create a newer snapshot or unsolicited observation; they never mutate a snapshot already given to a consumer. Keep the last accepted binding usable only while its resolution remains valid. Evidence of address reuse, a conflicting name, or ambiguity invalidates the affected execution before another command starts. “Not seen during this scan” means uncertain/stale, not automatic component or selector removal.
 
-Matching key release and the local hold watchdog outrank scans. Every scanner advancement is bounded; no polling loop, reply wait, or snapshot publication may block them. Cancellation frees probe reservations without discarding a pending release.
+Matching key release and the local authority/liveness monitor outrank scans. Every scanner advancement is bounded; no polling loop, reply wait, or snapshot publication may block them. Cancellation frees probe reservations without discarding a pending release.
 
 ## 6. Recabling, revisions, and safe rebinding
 
@@ -179,9 +181,13 @@ Extend the pinned [front PA host tests](https://github.com/retsyx/amity-esp32/bl
 - Initial discovery receives a delayed AVR report, a child-only report, malformed paths, no reports, and ACK-only presence. Each produces the correct provenance and readiness; a child-only heuristic never becomes an unqualified immediate-peer fact.
 - Source proxies start before, after, and concurrently with AVR output proxies. No proxy announces unknown or attachment-inapplicable PA, and bootstrap terminates with a useful unresolved result when evidence is missing.
 - A dual-output AVR with one CEC-capable output supports independent projector-front discovery without inventing a back peer or copying the TV PA.
-- Repeated scans coalesce; unrelated busy domains cannot indefinitely delay completion. A saturated/noisy scanner cannot prevent the hold watchdog or matching release.
+- Repeated scans coalesce; unrelated busy domains cannot indefinitely delay completion. A saturated/noisy scanner cannot prevent the authority/liveness monitor or matching release.
 - A stale snapshot from an old boot, domain revision, or scan generation cannot replace a newer binding. A timeout does not erase a working binding.
 - A cable merge causing competing TV roles enters quarantine. No fallback address silently conceals the collision; no scan emits `Active Source`, power, or routing traffic.
 - An AVR output transition that changes reported PAs invalidates the affected bindings before final activation; the old plan cannot emit a stale path while rediscovery is pending.
 
 The discovery owner supplies fixture evidence and UI conflict examples; the hardware owner confirms electrical domain assumptions. Unresolved topology remains a visible limit on control readiness, not a reason to guess.
+
+## Per-connector default versus detected front address
+
+Report each front's fresh detected address separately from its selected startup address. Selection prefers that connector's current usable immediate-peer report; otherwise use only that connector's saved default as an unresolved hint. Do not use a sibling connector's report/default, a stale scan, a duplicate reporter or portable saved preferences to qualify a route. Explicit absence or failure of an installed presence detector withdraws runtime address evidence and current binding authority. Without a detector, physical presence remains unknown even when native evidence is observed. Opening/refreshing Settings reads these snapshots and never starts discovery, wake, routing or identity claims. See [preference storage](11-config-storage-and-migration.md#per-adapter-default-front-address-preferences).

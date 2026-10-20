@@ -1,5 +1,7 @@
 # Firmware updates and compatibility
 
+**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+
 Status: proposed implementation contract v0.1. Source baseline: `d50af8026938797fc0820d0107f4c4e064c2d2bc`. This document does not authorize flashing devices, changing partition tables, or programming eFuses.
 
 ## Purpose and scope
@@ -41,6 +43,12 @@ The verifier accepts only locally provisioned release-verification keys or a rot
 
 The baseline records exact ESP-IDF, ESP-Matter, ConnectedHomeIP and HomeKit SDK commits. Retain this practice and record the complete build/dependency identity for every release. Do not equate the label “ESP-IDF 6.1” with a reproducible toolchain. [SDK baseline][b-sdks]
 
+### One-file browser artifact
+
+The original browser file picker accepts `amity-update.bin`. Its fixed 32-byte header contains the 16-byte ASCII magic `AMITY-UPDATE-V1\n`, a big-endian uint32 manifest length (1–8192), a big-endian uint32 signature length (0 or 64), and a big-endian uint64 native-image length (at most `0x3d0000`). Exact canonical manifest bytes, the optional raw signature, and the unchanged native image follow. Total file length must equal those bounded lengths; trailing or truncated data fails.
+
+The target validates the exact manifest, publisher signature, hardware/security profile and compatibility before opening the inactive slot. Only native image bytes enter its existing header, SHA-256 and native OTA verification path. The browser reads the image version at the validated container offset; it never invents compatibility metadata. Raw `amity.bin` and the separate manifest/signature remain available for USB/debugging and authenticated explicitly staged uploads. The container is packaging, not an additional signing authority. `tools/update_bundle.py` packages existing release artifacts without generating keys or changing image bytes.
+
 ## Compatibility matrix
 
 Firmware, peer protocol, configuration schema and factory format are separate axes. Peer handshakes advertise implemented capabilities; the coordinator computes a plan valid for every required owner. An octopus that cannot safely execute a required role remains quarantined/passive for that role rather than silently reverting to an older behavior.
@@ -56,6 +64,8 @@ Firmware, peer protocol, configuration schema and factory format are separate ax
 | Membership epoch or identity mismatch | Update compatibility cannot repair authorization; follow recovery/enrollment. |
 
 Capabilities must include behaviorally meaningful features: multi-tentacle runtime, monitor-without-foreign-ACK support, permitted role set, source-isolation policy revision, schema versions and hold-token semantics. A numeric firmware version alone is insufficient. Capability identifiers and negotiation encoding are owned by [transport](08-consortium-transport-and-routing.md).
+
+The state-change-only held-key contract requires `owner_repeated_keys` capability 131072 for positive execution/profile synchronization. A peer supporting only the superseded per-button-renewal semantics remains accessible for compatible authenticated management/update, but cannot receive executable activity work until upgraded. The new owner repeats CEC locally using the original algorithm; wire kind/slot 4 (`hold_renew`) stays retired and the `key_press` arguments no longer contain a per-button lease. Do not activate or roll back across this semantic boundary by relying only on the older token-holds bit.
 
 Do not raise a minimum protocol/capability barrier while required members still run incompatible firmware. First install a mutually compatible cohort, verify it, then activate the new feature/configuration revision. Rollback eligibility must be reconsidered after that barrier; an image that is byte-valid may no longer be a safe operational rollback.
 
@@ -84,10 +94,10 @@ Download/upload, storage validation and installation are separate stages. A UI s
 3. Stage authenticated image transfer to one owner at a time. Verify manifest, length and digest locally on the target, not only at the coordinator. Each target independently enforces its security profile.
 4. Install and reboot an executor that does not currently own essential coordinator/gateway duties. The physical CEC cut remains while it is down; no bypass path is enabled for convenience.
 5. Verify its new BootId, image identity, installed policy/config revision, membership and local health. Revalidate its attachments/domain roles before permitting affected plans.
-6. Continue through the remaining executors. Update the coordinator/gateway last, in an explicit interruption window, without interpreting the planned outage as authorization for another node to take over.
+6. Continue through the remaining executors. Update the original controller/UI/integration gateway last, in an explicit interruption window, without interpreting the planned outage as authorization for another node to take over.
 7. Reconcile the cohort and lift any feature barrier only when required members have passed. Record incomplete, rolled-back and unavailable nodes honestly.
 
-The order may be changed only by an explicit dependency plan. “Coordinator last” does not make downtime disappear; version 1 has a designated coordinator and no timeout-based election. A coordinator update job persists enough information to resume its own report after reboot, and the UI can poll the known gateway setup/health endpoint. It does not require copying coordinator private keys or taking over another node's identity.
+The order may be changed only by an explicit dependency plan. “Coordinator last” does not make downtime disappear; the original controller is immutable and added devices cannot be promoted, with or without a timeout. A coordinator update job persists enough information to resume its own report after reboot, and the UI can poll the known gateway setup/health endpoint. It does not require copying coordinator private keys or taking over another node's identity.
 
 ## Bounded transfer and radio/CEC coexistence
 

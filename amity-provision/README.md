@@ -42,8 +42,10 @@ esptool --chip esp32s3 --port PORT write-flash --flash-mode dio --flash-freq 80m
 ```
 
 The full image replaces **all existing device configuration and pairings**.
-Use it for fresh installation. For subsequent upgrades, extract `amity.bin`
-from the firmware ZIP and upload it through **Advanced → Update Firmware**.
+Use it for fresh installation. For subsequent upgrades, download `amity-update.bin` from the release and select
+that one file in **Advanced → Update Firmware**. It contains the exact application,
+manifest and optional publisher signature. The raw `amity.bin` in the firmware ZIP
+is for USB/debug tooling; do not upload the full fresh-install image as an update.
 Never upload `amity-provisioned.bin` through the admin page.
 
 `amity-pairing.png` is a printable setup card: the Matter QR code, its dashed

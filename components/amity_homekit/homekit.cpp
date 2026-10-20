@@ -31,6 +31,8 @@ esp_err_t amity_homekit_generate_setup(const char *code,hap_setup_info_t *setup)
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <atomic>
+#include <mutex>
 namespace amity_homekit {
 namespace {
 constexpr auto tag="amity_homekit";
@@ -39,7 +41,7 @@ constexpr uint16_t read_write_notify=read_notify|HAP_CHAR_PERM_PW;
 constexpr auto television_category=static_cast<hap_cid_t>(31);
 constexpr int64_t pairing_duration=300LL*1000000;
 enum class Command { Open, Close, Remove };
-amity::HubService *hub;
+amity::SystemControl *hub;
 amity_matter_callbacks_t callbacks{};
 QueueHandle_t commands;
 SemaphoreHandle_t status_lock;
@@ -47,6 +49,8 @@ SemaphoreHandle_t startup_ready;
 esp_err_t startup_result=ESP_OK;
 Status current_status;
 bool initialized=false, running=false;
+std::atomic<bool> disabled{false};
+std::mutex lifecycle_mutex;
 int64_t deadline=0;
 int64_t published_deadline=0;
 hap_char_t *active, *active_input, *tv_name, *remote_key, *speaker_active, *mute_char, *volume_selector;
@@ -73,22 +77,35 @@ esp_err_t save_input(unsigned index){
     std::string record=in.activity;record+='\0';record+=in.hidden?'1':'0';record+=in.alias;
     return config_store::write(input_key(index).c_str(),record);
 }
+void refresh_remote_battery(){
+    ble_remote_status_t remote{};ble_remote_get_status(&remote);
+    battery_known=!remote.bonded||(remote.connected&&remote.battery_percent>=0);
+    charging_known=!remote.bonded||(remote.connected&&remote.charging>=0);
+    if(battery_known){const int percent=remote.bonded?std::clamp(remote.battery_percent,0,100):100;update(battery_level,percent);update(battery_low,percent<=20);}
+    if(charging_known)update(battery_charging,remote.bonded?remote.charging:0);
+}
 void refresh_values(){
     const auto s=hub->snapshot();
     update(active,s.current_activity>=0);update(speaker_active,s.current_activity>=0);
     update(active_input,s.current_activity>=0?s.current_activity+1:0);
     audio_known=s.audio_status_known;
     if(audio_known)update_bool(mute_char,s.muted);
+    const bool schema2=hub->schema2_active();
     for(unsigned i=0;i<inputs.size();++i){
-        auto &in=inputs[i];const bool exists=i<s.activities.size();
-        const std::string name=exists?s.activities[i].name:"Unused "+std::to_string(i+1);
-        if(in.activity!=name){
-            in.activity=name;in.alias.clear();in.hidden=false;
+        const auto activity=schema2?hub->external_activity(i):std::optional<config_store::ConfiguredActivity>{};
+        const auto slot=schema2?hub->external_slot(i):std::optional<config_store::ExternalSlot>{};
+        auto &in=inputs[i];const bool exists=schema2?activity.has_value():i<s.activities.size();
+        const std::string name=exists?(schema2?activity->label:s.activities[i].name):"Unused "+std::to_string(i+1);
+        const std::string identity=schema2?(activity?hub->octopus_id().str()+":"+activity->activity_id.str():"tombstone:"+std::to_string(i)):name;
+        if(in.activity!=identity){
+            in.activity=identity;in.alias=slot?slot->alias:std::string{};in.hidden=slot&&slot->hidden;
             std::string record;
             if(config_store::read(input_key(i).c_str(),record)==ESP_OK){
                 const auto split=record.find('\0');
-                if(split!=std::string::npos&&record.substr(0,split)==name&&record.size()>split+1){
-                    in.hidden=record[split+1]=='1';in.alias=record.substr(split+2);
+                if(split!=std::string::npos&&record.size()>split+1&&(record[split+1]=='0'||record[split+1]=='1')&&record.size()-split-2<=63&&record.find('\0',split+1)==std::string::npos){
+                    const auto guard=record.substr(0,split);
+                    const bool legacy=schema2&&activity&&guard==activity->generated_label&&guard.size()<=63;
+                    if(guard==identity||legacy){in.hidden=record[split+1]=='1';in.alias=record.substr(split+2);if(legacy)save_input(i);}
                 }
             }
         }
@@ -97,13 +114,10 @@ void refresh_values(){
         update(in.configured,exists?1:0);update(in.visible,(!exists||in.hidden)?1:0);
         update(in.target_visible,(!exists||in.hidden)?1:0);
     }
-    ble_remote_status_t remote{};ble_remote_get_status(&remote);
-    battery_known=!remote.bonded||(remote.connected&&remote.battery_percent>=0);
-    charging_known=!remote.bonded||(remote.connected&&remote.charging>=0);
-    if(battery_known){const int percent=remote.bonded?std::clamp(remote.battery_percent,0,100):100;update(battery_level,percent);update(battery_low,percent<=20);}
-    if(charging_known)update(battery_charging,remote.bonded?remote.charging:0);
+    refresh_remote_battery();
 }
 int read(hap_read_data_t data[],int count,void *,void *){
+    if(disabled.load()){for(int i=0;i<count;++i)*data[i].status=HAP_STATUS_COMM_ERR;return HAP_SUCCESS;}
     refresh_values();
     for(int i=0;i<count;++i){
         const auto hc=data[i].hc;
@@ -114,12 +128,14 @@ int read(hap_read_data_t data[],int count,void *,void *){
     return HAP_SUCCESS;
 }
 int write(hap_write_data_t data[],int count,void *,void *){
+    if(disabled.load()){for(int i=0;i<count;++i)*data[i].status=HAP_STATUS_COMM_ERR;return HAP_SUCCESS;}
     static const std::pair<int,uint8_t> keys[]={{0,0x48},{1,0x49},{2,0x4b},{3,0x4c},{4,0x01},{5,0x02},
         {6,0x03},{7,0x04},{8,0x00},{9,0x0d},{10,0x0d},{15,0x35}};
     for(int i=0;i<count;++i){
         auto &d=data[i];esp_err_t result=ESP_ERR_INVALID_ARG;
         if(d.hc==active&&(d.val.i==0||d.val.i==1))result=callbacks.power(d.val.i!=0,callbacks.context);
-        else if(d.hc==active_input&&d.val.i>=1&&d.val.i<=static_cast<int>(hub->snapshot().activities.size()))
+        else if(d.hc==active_input&&d.val.i>=1&&d.val.i<=static_cast<int>(hub->snapshot().activities.size())&&
+                (!hub->schema2_active()||hub->external_activity(d.val.i-1)))
             result=callbacks.activity(d.val.i-1,callbacks.context);
         else if(d.hc==mute_char)result=callbacks.mute(d.val.b,callbacks.context);
         else if(d.hc==volume_selector&&(d.val.i==0||d.val.i==1))result=callbacks.volume_step(d.val.i==0?1:-1,callbacks.context);
@@ -131,6 +147,7 @@ int write(hap_write_data_t data[],int count,void *,void *){
             result=config_store::write("hap_name",d.val.s);
         else for(unsigned n=0;n<inputs.size();++n){
             auto &in=inputs[n];
+            if(hub->schema2_active()&&!hub->external_activity(n))continue;
             if(d.hc==in.name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63){
                 const auto old=in.alias;in.alias=d.val.s;result=save_input(n);if(result!=ESP_OK)in.alias=old;break;
             }
@@ -208,6 +225,7 @@ esp_err_t prepare_setup(char code[11],std::string &record){
     return config_store::write("hap_setup",record);
 }
 esp_err_t initialize(const std::string &record){
+    if(disabled.load())return ESP_ERR_INVALID_STATE;
     if(record.size()!=404)return ESP_ERR_INVALID_SIZE;
     if(!initialized){
         hap_cfg_t config;hap_get_config(&config);config.max_event_notif_chars=128;
@@ -227,10 +245,10 @@ bool network_available(){
     return esp_wifi_sta_get_ap_info(&ap)==ESP_OK;
 }
 void publish_status(bool available,esp_err_t error=ESP_OK){
-    StatusLock lock;current_status.started=running;current_status.available=available;
+    StatusLock lock;current_status.started=running&&!disabled.load();current_status.available=available&&!disabled.load();
     current_status.controllers=initialized?hap_get_paired_controller_count():0;
     current_status.paired=current_status.controllers>0;
-    current_status.pairing=running&&deadline>esp_timer_get_time()&&!current_status.paired;
+    current_status.pairing=running&&!disabled.load()&&deadline>esp_timer_get_time()&&!current_status.paired;
     published_deadline=deadline;
     if(error!=ESP_OK)current_status.error=error;
     if(!current_status.pairing){memset(current_status.manual_code,0,sizeof(current_status.manual_code));memset(current_status.qr_payload,0,sizeof(current_status.qr_payload));}
@@ -246,6 +264,7 @@ void worker(void *){
         const bool available=network_available();esp_err_t error=ESP_OK;
         {
             HapLock lock;
+            if(disabled.load()){publish_status(false);if(requested){StatusLock status;current_status.busy=false;}continue;}
             if(requested){
                 if(command==Command::Open){
                     if(!available)error=ESP_ERR_INVALID_STATE;
@@ -283,6 +302,7 @@ void worker(void *){
     }
 }
 esp_err_t submit(Command command){
+    if(disabled.load()||!status_lock||!commands)return ESP_ERR_INVALID_STATE;
     StatusLock lock;if(current_status.busy)return ESP_ERR_INVALID_STATE;
     if(command==Command::Open&&(!current_status.available||current_status.paired))return ESP_ERR_INVALID_STATE;
     current_status.busy=true;current_status.error=ESP_OK;
@@ -290,7 +310,9 @@ esp_err_t submit(Command command){
     return ESP_OK;
 }
 }
-esp_err_t start(amity::HubService &service,const amity_matter_callbacks_t &handlers){
+esp_err_t start(amity::SystemControl &service,const amity_matter_callbacks_t &handlers){
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);
+    if(disabled.load()||status_lock)return ESP_ERR_INVALID_STATE;
     hub=&service;callbacks=handlers;
     status_lock=xSemaphoreCreateMutex();commands=xQueueCreate(1,sizeof(Command));startup_ready=xSemaphoreCreateBinary();
     if(!status_lock||!commands||!startup_ready||hap_amity_init(device_settings::hostname())!=HAP_SUCCESS)return ESP_ERR_NO_MEM;
@@ -298,7 +320,17 @@ esp_err_t start(amity::HubService &service,const amity_matter_callbacks_t &handl
     if(xSemaphoreTake(startup_ready,pdMS_TO_TICKS(30000))!=pdTRUE)return ESP_ERR_TIMEOUT;
     return startup_result;
 }
+esp_err_t stop(){
+    disabled.store(true); // fence callbacks/queued opens before waiting
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);
+    if(!status_lock)return ESP_OK;
+    const auto result=hap_amity_stop()==HAP_SUCCESS?ESP_OK:ESP_FAIL;
+    {HapLock lock;deadline=0;if(result==ESP_OK)running=false;}
+    {StatusLock lock;current_status.started=current_status.available=current_status.pairing=current_status.busy=false;current_status.error=result;published_deadline=0;memset(current_status.manual_code,0,sizeof(current_status.manual_code));memset(current_status.qr_payload,0,sizeof(current_status.qr_payload));}
+    return result;
+}
 Status status(){
+    if(!status_lock)return {};
     StatusLock lock;auto result=current_status;
     if(result.pairing&&published_deadline<=esp_timer_get_time()){
         result.pairing=false;memset(result.manual_code,0,sizeof(result.manual_code));memset(result.qr_payload,0,sizeof(result.qr_payload));

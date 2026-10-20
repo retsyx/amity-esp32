@@ -6,15 +6,20 @@
  * License, or (at your option) any later version.
  */
 
+
 'use strict';
+// Provisional customer terms; internal identifiers stay in data only.
+window.amityTerms=Object.freeze({device:'Amity device',devices:'Amity devices',adapter:'HDMI adapter',adapters:'HDMI adapters',system:'Amity system',systems:'Amity systems'});
+function customerText(value){return String(value??'').replace(/\boctopuses\b/gi,window.amityTerms.devices).replace(/\boctopus\b/gi,window.amityTerms.device).replace(/\btentacles\b/gi,window.amityTerms.adapters).replace(/\btentacle\b/gi,window.amityTerms.adapter).replace(/\bconsortiums\b/gi,window.amityTerms.systems).replace(/\bconsortium\b/gi,window.amityTerms.system);}
+
 const $=id=>document.getElementById(id);
 let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,editingRecommendation=null,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false;
 let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
 let matterState={fabrics:[]};
 const firmwareUpdateKey='amityFirmwareUpdate',firmwareResultKey='amityFirmwareUpdateResult';
-function message(text,error=false){$('message').textContent=text;$('message').classList.toggle('error',error);}
-function activitySnapshot(activities){return JSON.stringify(activities.map(a=>[a.name??'',a.display??'',a.source??'',a.audio??'',a.switch?.device??'',a.switch?.device?(a.switch.input??0):null]));}
+function message(text,error=false){$('message').textContent=customerText(text);$('message').classList.toggle('error',error);}
+function activitySnapshot(activities){return JSON.stringify(activities.map(a=>[a.name??'',a.display??'',a.source??'',a.audio??'',a.switch?.device??'',a.switch?.device?(a.switch.input??0):null,a.activity_id??'']));}
 function updateActivityButtons(){
  const locked=activityLocked();
  document.querySelectorAll('#activities button, #recommendationEditor button').forEach(b=>{
@@ -24,18 +29,22 @@ function updateActivityButtons(){
 }
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
 function reportError(error){if(!firmwareUpdating&&!error.silent)message(error.message,true);}
-function showLogin(){if(firmwareUpdating)return;homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
+function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
 async function request(path,data,raw=false){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
- const response=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:typeof data==='string'?data:JSON.stringify(data)});
+ const mapped=window.amityInterface?.route(path,data)||{path,data};
+ let response=await fetch('/api/'+mapped.path,{method:mapped.data===undefined?'GET':'POST',headers,body:mapped.data===undefined?undefined:typeof mapped.data==='string'?mapped.data:JSON.stringify(mapped.data)});
+ if(mapped.path!==path&&response.status===404)response=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:typeof data==='string'?data:JSON.stringify(data)});
+ else if(response.ok&&mapped.decode)response=await mapped.decode(response);
+
  if(response.status===401&&path!=='login'){if(!firmwareUpdating){await showWelcome();message('');}throw Object.assign(Error(),{silent:true});}
- if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(e.error);error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
+ if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(customerText(e.error||e.message||'Request failed'));error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
  return raw?response:response.json();
 }
 function run(action){return async event=>{try{await action(event);}catch(e){reportError(e);}};}
 function button(text,handler){const b=document.createElement('button');b.textContent=text;b.addEventListener('click',run(handler));return b;}
-function label(text,value,onChange,list){const l=document.createElement('label');l.textContent=text;const i=document.createElement('input');i.value=value??'';i.maxLength=63;if(list)i.setAttribute('list',list);i.addEventListener('input',()=>onChange(i.value));l.append(i);return l;}
-function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('selected',b.dataset.tab===id));if(id==='homekit')refreshHomekit().catch(reportError);}
+function label(text,value,onChange,list){const l=document.createElement('label');l.textContent=text;const i=document.createElement('input');i.value=value??'';i.maxLength=list?512:63;if(list)i.setAttribute('list',list);i.addEventListener('input',()=>onChange(i.value));l.append(i);return l;}
+function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('selected',b.dataset.tab===id));if(id==='homekit')refreshHomekit().catch(reportError);if(id==='amityDevices')window.amityInterface?.refresh().catch(reportError);}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 function activityFields(a,changed=markDirty){
  const field=(text,value,set,list)=>label(text,value,v=>{set(v);changed();},list);
@@ -95,8 +104,9 @@ function updateActivityState(){
 function validateActivity(a,others){
  if(!a.name)throw Error('Activity name is required.');
  if(others.some(other=>other.name===a.name))throw Error('Activity names must be unique.');
+ if(new TextEncoder().encode(a.name).length>63)throw Error('Activity fields must be at most 63 bytes and contain no control characters.');
  for(const value of [a.name,a.display,a.source,a.audio,a.switch?.device])
-  if(value&&(new TextEncoder().encode(value).length>63||/[\x00-\x1f]/.test(value)))throw Error('Activity fields must be at most 63 bytes and contain no control characters.');
+  if(value&&(!window.amityInterface?.isDeviceChoice(value)&&(new TextEncoder().encode(value).length>63)||/[\x00-\x1f]/.test(value)))throw Error('Activity fields must be at most 63 bytes and contain no control characters.');
  if(a.switch&&(!Number.isInteger(a.switch.input)||a.switch.input<0||a.switch.input>255))throw Error('Switch input must be between 0 and 255.');
 }
 function openActivityEditor(target=null){
@@ -137,13 +147,16 @@ async function persistActivities(editor=null){
  saving=true;updateActivityButtons();
  try{
   const latest=await currentSavedConfiguration(),submitted=JSON.stringify({...latest,activities:references.map(a=>editor&&a===target?editor.activity:a)});
-  await request('config',submitted);const saved=JSON.parse(submitted).activities;
+  const result=await request('config',submitted);const applied=window.amityInterface?.enabled?await request('config'):JSON.parse(submitted),saved=applied.activities;
+  config.expected_config_revision=applied.expected_config_revision;config.expected_presentation_revision=applied.expected_presentation_revision;
   if(editor){
    if(editor.target){Object.keys(target).forEach(key=>delete target[key]);Object.assign(target,structuredClone(editor.activity));}
    else {config.activities.push(target);editor.target=target;}
   }
+  references.forEach((a,index)=>{if(saved[index]?.activity_id)a.activity_id=saved[index].activity_id;});
+  if(editor&&target.activity_id)editor.activity.activity_id=target.activity_id;
   savedActivityEntries=new Map(references.map((a,index)=>[a,{index,snapshot:activitySnapshot([saved[index]])}]));
-  savedActivities=structuredClone(saved);persistedActivities=activitySnapshot(saved);renderDeviceNames();renderActivities();message('Activities saved.');await refresh();
+  savedActivities=structuredClone(saved);persistedActivities=activitySnapshot(saved);renderDeviceNames();renderActivities();message('Activities saved.'+(result.unresolved?.length?' '+result.unresolved.join(' '):''),!!result.unresolved?.length);await refresh();
  }finally{saving=false;updateActivityButtons();}
 }
 async function startActivity(activity,draft=activity){
@@ -235,7 +248,7 @@ function renderRecommendations(){
 }
 function recommendActivities(devices){
  const display=devices.find(d=>d.bus==='front'&&d.address===0),audio=devices.find(d=>d.address===5)||display;
- recommendations=devices.filter(d=>[1,2,3,4,6,7,8,9,10,11].includes(d.address)).map(d=>({name:((/playstation|nintendo/i.test(d.name)?'Play ':'Watch ')+(d.name||'Unknown')).slice(0,63),display:display?.name||'',source:d.name||'',audio:audio?.name||''}));
+ recommendations=devices.filter(d=>[1,2,3,4,6,7,8,9,10,11].includes(d.address)).map(d=>({name:((/playstation|nintendo/i.test(d.title||d.name)?'Play ':'Watch ')+(d.title||d.name||'Unknown')).slice(0,63),display:display?.name||'',source:d.name||'',audio:audio?.name||''}));
  if(autoRecommend&&recommendations.length){autoRecommend=false;for(const a of recommendations.slice(0,16))addRecommendation(a);}
  renderRecommendations();
 }
@@ -259,14 +272,10 @@ function renderHostname(name){
  if(!name)return;$('deviceName').textContent=name;document.title=name;
  if(document.activeElement!==$('hostname')&&!$('hostname').dataset.edited)$('hostname').value=name;
 }
-function renderFrontPhysicalAddress(address){
- const input=$('frontPhysicalAddress');
- if(document.activeElement!==input&&!input.dataset.edited)input.value=address||'1.0.0.0';
-}
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
  const detail=r.connected?`${r.name?' · '+r.name:''}${r.battery>=0?' · '+r.battery+'% battery':''}${r.charging===true?' · Charging':''}`:r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'';
- $('diagnostics').textContent=`Firmware ${state.version}\n${state.wifi_connected?'Wi-Fi signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'Wi-Fi disconnected'}\nFront physical address: ${state.determined_front_physical_address??'Determining…'}\nRemote: ${connection}${detail}`;
+ $('diagnostics').textContent=`Firmware ${state.version}\n${state.wifi_connected?'Wi-Fi signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'Wi-Fi disconnected'}\nRemote: ${connection}${detail}`;
 }
 function renderRemotes(r){
  remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,busy=!!remotePending||unpairing||(!paired&&(!!r.pairing||!!r.connecting||!!r.scanning));
@@ -335,7 +344,7 @@ async function refreshHomekit(){
 }
 async function refresh(){if(!token||polling||firmwareUpdating)return;polling=true;try{
  const latest=await request('status');if(firmwareUpdating)return;
- state=latest;renderHostname(state.hostname);renderFrontPhysicalAddress(state.front_physical_address);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);$('connection').textContent=state.discovering?'Scanning HDMI…':'';
+ state=latest;if(state.activity_error)message(state.activity_error,true);renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);$('connection').textContent=state.discovering?'Scanning HDMI…':'';
  renderDiagnostics();
  renderDeviceNames();
  if(scanAfter!==null){
@@ -343,13 +352,13 @@ async function refresh(){if(!token||polling||firmwareUpdating)return;polling=tru
   $('discoveryStatus').textContent=complete?(state.devices.length?'':'No HDMI devices found.'):'Scanning HDMI…';
   $('deviceHeading').hidden=!complete||!state.devices.length;$('deviceList').replaceChildren();
   if(complete&&scanGeneration!==state.discovery_generation){scanGeneration=state.discovery_generation;recommendActivities(state.devices);}if(!complete)$('recommendations').hidden=true;
-  if(complete)for(const d of [...state.devices].sort((a,b)=>(a.name||'').localeCompare(b.name||''))){const row=document.createElement('div');row.className='device';const name=document.createElement('span');name.textContent=d.name||'Unknown';row.append(deviceIcon(d),name);$('deviceList').append(row);}
+  if(complete)for(const d of [...state.devices].sort((a,b)=>(a.name||'').localeCompare(b.name||''))){const row=document.createElement('div');row.className='device';const name=document.createElement('span');name.textContent=d.title||d.name||'Unknown';row.append(deviceIcon(d),name);if(d.location){const location=document.createElement('span');location.className='device-location';location.textContent=d.location;row.append(location);}$('deviceList').append(row);}
  }
  renderRemotes(await request('remotes'));
  renderMatter(await request('matter'));
  if(!$('homekit').hidden)await refreshHomekit();
  }finally{polling=false;updateActivityButtons();}}
-async function enter(){const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();}
+async function enter(){const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
  if(firmwareUpdating)return;
  const setup=await request('setup');renderHostname(setup.hostname);showLogin();
@@ -404,14 +413,24 @@ $('toggleRemote').addEventListener('click',run(async()=>{
  try{
   const current=await request('remotes');renderRemotes(current);
   if(current.unpairing)return;
-  if(current.bonded||current.connected){if(!confirm('Unpair the remote?'))return;remotePending='unpair';renderRemotes(current);await request('remotes/unpair',{});}
-  else if(!current.scanning&&!current.connecting&&!current.pairing)await request('remotes/pair',{});
+  const approval=current.remote_generation===undefined?{}:{request_id:crypto.randomUUID().replaceAll('-',''),expected_boot_id:current.boot_id,expected_remote_generation:current.remote_generation};
+  if(current.bonded||current.connected){if(!confirm('Unpair the remote?'))return;remotePending='unpair';renderRemotes(current);await request('remotes/unpair',approval);}
+  else if(!current.scanning&&!current.connecting&&!current.pairing)await request('remotes/pair',approval);
   renderRemotes(await request('remotes'));
  }finally{remotePending=false;renderRemotes(remoteState);}
 }));
 async function download(path,name){const r=await request(path,undefined,true),url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('backup').addEventListener('click',run(()=>download('backup','amity-config.json')));$('logs').addEventListener('click',run(()=>download('logs','amity.log')));
-$('restore').addEventListener('change',run(async e=>{const file=e.target.files[0];if(!file)return;if(file.size>32768)throw Error('Backup must be no more than 32 KiB.');if(confirm('Replace activities and quirks with this backup?')){await request('restore',await file.text());await enter();message('Configuration restored.');}e.target.value='';}));
+$('restore').addEventListener('change',run(async e=>{
+ const file=e.target.files[0];if(!file)return;
+ try{
+  if(file.size>32768)throw Error('Backup must be no more than 32 KiB.');
+  const contents=await file.text(),scoped=window.amityInterface?.enabled;
+  if(!confirm(scoped?'Replace saved configuration with this backup? If replacing a failed main Amity, confirm that the old main is powered off and disconnected.':'Replace activities and quirks with this backup?'))return;
+  const data=scoped?{configuration:JSON.parse(contents),expected_boot_id:(await request('status')).boot_id}:contents;
+  const result=await request('restore',data),warning=result.warning||(result.unresolved||[]).join(' ');await enter();message(warning||'Configuration restored.',!!warning);
+ }finally{e.target.value='';}
+}));
 // Match firmware_version.hpp: semantic precedence, ignoring build metadata.
 function compareFirmwareVersions(candidate,running){
  const parse=s=>{
@@ -432,13 +451,23 @@ function compareFirmwareVersions(candidate,running){
  return a.pre.length===b.pre.length?0:a.pre.length<b.pre.length?-1:1;
 }
 async function firmwareVersion(file){
- // ESP image header (24), first segment header (8), then esp_app_desc_t (256).
- const bytes=new Uint8Array(await file.slice(0,288).arrayBuffer()),view=new DataView(bytes.buffer);
+ // A release container keeps the same choose-one-file interface and carries
+ // exact compatibility metadata. USB/debug images retain their native header.
+ let offset=0;
+ const header=new Uint8Array(await file.slice(0,32).arrayBuffer());
+ if(header.length===32&&new TextDecoder().decode(header.slice(0,16))==='AMITY-UPDATE-V1\n'){
+  const view=new DataView(header.buffer),manifest=view.getUint32(16),signature=view.getUint32(20),image=view.getBigUint64(24);
+  if(manifest<1||manifest>8192||![0,64].includes(signature)||image<288n||image>0x3d0000n)throw Error('Invalid Amity update file.');
+  offset=32+manifest+signature;
+  if(BigInt(file.size)!==BigInt(offset)+image)throw Error('Incomplete Amity update file.');
+ }
+ const bytes=new Uint8Array(await file.slice(offset,offset+288).arrayBuffer()),view=new DataView(bytes.buffer);
  if(bytes.length<288||bytes[0]!==0xe9||view.getUint32(32,true)!==0xabcd5432)throw Error('Select an Amity application firmware binary.');
  const field=bytes.slice(48,80),end=field.indexOf(0);
  if(end<0)throw Error('Invalid firmware version field.');
  return new TextDecoder().decode(field.slice(0,end));
 }
+
 function saveFirmwareUpdate(){sessionStorage.setItem(firmwareUpdateKey,JSON.stringify(firmwareUpdateRecord));}
 function validFirmwareHealth(health){return !!health&&typeof health.boot_id==='string'&&health.boot_id.length>0&&typeof health.version==='string'&&health.version.length>0&&typeof health.ready==='boolean';}
 function showFirmwareUpdate(record,text){
@@ -516,15 +545,6 @@ $('firmware').addEventListener('change',run(async e=>{
  }finally{input.disabled=false;input.value='';if(!firmwareUpdating)progress.hidden=true;}
 }));
 $('reboot').addEventListener('click',run(async()=>{if(confirm('Restart Amity?')){await request('reboot',{});showLogin();message('Restarting Amity.');}}));
-$('frontPhysicalAddress').addEventListener('input',()=>{$('frontPhysicalAddress').dataset.edited='true';});
-$('changeFrontPhysicalAddress').addEventListener('submit',run(async e=>{
- e.preventDefault();const submit=e.target.querySelector('button');if(submit.disabled)return;submit.disabled=true;
- try{
-  const r=await request('front-physical-address',{address:$('frontPhysicalAddress').value});
-  delete $('frontPhysicalAddress').dataset.edited;renderFrontPhysicalAddress(r.front_physical_address);
-  showLogin();message('Default front physical address saved. Restarting Amity.');
- }finally{submit.disabled=false;}
-}));
 $('hostname').addEventListener('input',()=>{$('hostname').dataset.edited='true';});
 $('changeHostname').addEventListener('submit',run(async e=>{
  e.preventDefault();const submit=e.target.querySelector('button');if(submit.disabled)return;submit.disabled=true;

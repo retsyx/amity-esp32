@@ -2,128 +2,138 @@
   "package": "Amity Octopus and Consortium",
   "proposal_version": "0.1",
   "prepared_date": "2026-10-20",
-  "amendment_date": "2026-10-20",
-  "amendment": "Qualified OSD names with runtime LA resolution; guided setup with equipment/location presentation, minimal questions, resumable choices, and explicit activity testing.",
+  "amendment_date": "2026-10-21",
+  "amendment": "Preserve original Amity algorithms/functionality at d50af8026938797fc0820d0107f4c4e064c2d2bc unless explicitly changed, including Siri swipes. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight normal slots plus one release-only overflow slot per wire; releases at nine are dropped without executor admission retry. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force.",
   "source_repository": "https://github.com/retsyx/amity-esp32",
   "source_commit": "d50af8026938797fc0820d0107f4c4e064c2d2bc",
-  "status": "Proposed specification; no firmware, hardware or usability implementation claims.",
+  "status": "Current design package; software and physical validation are recorded separately in IMPLEMENTATION_STATUS.json.",
   "hash_algorithm": "SHA-256",
   "note": "Manifest excludes itself to avoid a recursive hash.",
   "files": [
     {
       "path": "01-octopus-architecture.md",
-      "size_bytes": 14408,
-      "sha256": "22f8b5e2163a38680f233a4e94da94de1583284dcf5be12d7833145ec8bb131a"
+      "size_bytes": 15075,
+      "sha256": "c3d9a202c301d640964b2e061615cded28085352a993b933c27cc926d1604b7e"
     },
     {
       "path": "02-consortium-architecture.md",
-      "size_bytes": 16144,
-      "sha256": "e73bcc6664b55607b89f024a716c41f74c3a51ee6063dbf7dfd22e0ec1681a5c"
+      "size_bytes": 16799,
+      "sha256": "b709a377ba8980e5b66690f98de50f828c6795f2df92b95200b2733477192fc9"
     },
     {
       "path": "03-domain-model-and-addressing.md",
-      "size_bytes": 24078,
-      "sha256": "9fa999bc63c5ff32edff9ccce40bf555d1f4e34c0d7916c9ea167a88575db663"
+      "size_bytes": 23976,
+      "sha256": "a22391ee6427dfcfce84044a4dd7eaaef59b15b0bb0d079b0213063b0a7dd847"
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 16067,
-      "sha256": "913f4249dde06cd65991b18a793002ffb0ee4eeb25701b30397cc62954188fec"
+      "size_bytes": 22085,
+      "sha256": "2c07b1207030edb994d0fc1ef7c3cb188cda2cbc9a5be72d64336987223f13a1"
     },
     {
       "path": "05-discovery-and-topology.md",
-      "size_bytes": 25424,
-      "sha256": "933133fbf52834032d88e7616e2ffddc190cc4ecdd45bdef52c6aacb8ebd1832"
+      "size_bytes": 26400,
+      "sha256": "040e49d4a9c4ac163766026749fce81da4d1e9b88584d08aef0c2f4a0d492f0d"
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 20901,
-      "sha256": "bec0878cc557f4f6d904fa8c13c0cde73b498b360c56e6b94e5f0a04088fb1ab"
+      "size_bytes": 22675,
+      "sha256": "6e7fb4883bb8f0242bd1051d04cf69c8fbbcbcd9acc3a26030cedf33b8e88ede"
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 18756,
-      "sha256": "5d999312b8bd9e02ce18a0c16c871567f0c62e39df4ee0419cdc0bfb85c7543f"
+      "size_bytes": 27366,
+      "sha256": "927923c60bc2acb88adba3d9dc6af44459f42a9647c0a570bc9fc75655674496"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 21791,
-      "sha256": "82934f93b3af1648cc90d9fc7c76f292dff5c1e50b429189060a4e268a01f33f"
+      "size_bytes": 27220,
+      "sha256": "286f27f2a521bfe429b252e954bee6d3f86a95bb7714276edf6685c2416b5726"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 23804,
-      "sha256": "9d23dc1e28c1d0e9fbeee3ded6a2a77f86716485ffd2c1b5a121c101408b6d29"
+      "size_bytes": 24735,
+      "sha256": "6c6ebef2d6e0527bb2d83c4e3329b326a259b7c26ab1866fb2c9fa25a7c2113c"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
-      "size_bytes": 20300,
-      "sha256": "de255361e1f3c325ba380298b7ecfb4916affb789336d160a6d484dcb1bf319f"
+      "size_bytes": 22115,
+      "sha256": "fb14e0f9ac07a44cc083c9f8720c14e5dd6a2631c446ed93446ae8a7199a2c7b"
     },
     {
       "path": "11-config-storage-and-migration.md",
-      "size_bytes": 33476,
-      "sha256": "b53e3c20a6de657874c7695c7af2b8e4221df39f57851ed7f23ebafd8271331c"
+      "size_bytes": 33902,
+      "sha256": "38b060bd70b9c1f63e896ea435fb2012e1cefd838ec374f91b08e7f2a27a20b4"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 27498,
-      "sha256": "43ff60ac7638b1e3d314f189b6bf5d8d2f4562084cd14d5ecea4e00a7ce2f043"
+      "size_bytes": 29167,
+      "sha256": "2be14fa914c78d7c4aad51d1a9fce35c044ed98e0c6e9b815b18f1ee782ce1aa"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
-      "size_bytes": 22301,
-      "sha256": "b273ed2e29ab0b9997badccbda72c1d6686de3b5af4657c5d94d1dd63684e78a"
+      "size_bytes": 21495,
+      "sha256": "9b8c1c4e36493631f967648f27181a4cbd2e6392d4d83fadfaaf9e332c3a242f"
     },
     {
       "path": "14-ota-and-compatibility.md",
-      "size_bytes": 17603,
-      "sha256": "527b39ab324a4559f278abcea6fb9bb9b5f954bff6cee85b46f1c18707740a6a"
+      "size_bytes": 19753,
+      "sha256": "42224582ae97aa8b1aa71aaa818a5e7cfa3459a97a43997305c7d3538d88bcda"
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 26469,
-      "sha256": "7c5532bdfd4a22bb34f5b8fc0b8ed4ecb2b81d7ede8a012fd06720cf636b9564"
+      "size_bytes": 33178,
+      "sha256": "61bfb572f2acce9245a68e67e33a5dbc74191ee9b77ba5f6fbb429ff9c3a7a6c"
     },
     {
       "path": "16-agent-work-breakdown.md",
-      "size_bytes": 16196,
-      "sha256": "c500c9509418245d8d81a3e912e12e465dbfe69db9e991c34d91ac597922d0fa"
+      "size_bytes": 16379,
+      "sha256": "3eb899083b23cac7621dac8519152e3a4e384958369ec1794d816363d64b7ab1"
     },
     {
       "path": "17-decisions-and-open-questions.md",
-      "size_bytes": 14342,
-      "sha256": "2fc6a6b3d9b2fcc629293c10bc7d6c68efc1df4b49594d4bbfdc3e1a1ffdfb14"
+      "size_bytes": 17594,
+      "sha256": "170227cdd273335411edbe8ec8bf1fa92c2f4af2d38d2c06c89952c4adfd7d22"
     },
     {
       "path": "18-requirements-and-traceability.md",
-      "size_bytes": 16381,
-      "sha256": "21facc30dd883b341ecbbc503cb134a9bb3e7e62f69a002c7fc3181329ae8a16"
+      "size_bytes": 21183,
+      "sha256": "cd6e6595c00055bd4805e7e6dd6e233090ff0a2b723dbd5a986b602d7ca5a4a0"
     },
     {
       "path": "19-source-baseline.md",
-      "size_bytes": 13214,
-      "sha256": "a7ce7d0792a8b0be252f9d91ce1ed5c2042630fda0f272d0b55318887bafd226"
+      "size_bytes": 15901,
+      "sha256": "5fb7db062e799a6ea59b13b223bf3358900b242ae6d82719ab38e6c6a12d261e"
     },
     {
-      "path": "20-user-experience-and-guided-setup.md",
-      "size_bytes": 52510,
-      "sha256": "a6f58d2adf8a4656531b5c2c6dc515b355039eb66a58f940115ed14f50c22f45"
+      "path": "20-user-interface.md",
+      "size_bytes": 18940,
+      "sha256": "8f76eeae4f5359365b4edf18759090c30df7483c93f8ed1a7047d7681d3bb7d9"
+    },
+    {
+      "path": "21-original-controller-policy.md",
+      "size_bytes": 24470,
+      "sha256": "a638c15288df8c40be82f8d0d6fa1fe2e17c98697a3113cf2954903d3c216159"
     },
     {
       "path": "README.md",
-      "size_bytes": 11933,
-      "sha256": "ec56a378d8051f06a80cc9fe33fbff24ac69f2f13288cf0fa7f311542d5436df"
+      "size_bytes": 16421,
+      "sha256": "78b1224d877ac24e589017f2d462ea9de03c6245c835c9aed02f371fb8129dc1"
+    },
+    {
+      "path": "TODO.md",
+      "size_bytes": 27373,
+      "sha256": "cfcbf8faf5c93d1dd8a6fb0a28be385c5951f0ab315c2f07c6b4127e52efba4e"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 5936,
-      "sha256": "2f6d9404aba80a7e318ddf15fffff650f31e9e9a0b64f76437ba024a77d476fa"
+      "size_bytes": 3855,
+      "sha256": "dcb1160de59a5bd52c0cf0bb3dda7d7f7473fb87c5fb754eea6cb4ef5893a26a"
     },
     {
       "path": "examples/README.md",
-      "size_bytes": 5355,
-      "sha256": "623a043193e8b7a5ebc3d5bcf0f02e21bc2e714c8608890091ce77e20e54bfde"
+      "size_bytes": 5443,
+      "sha256": "eb2bfac19282b22cfb4486e5f1fa56d536e8d4bb11298085ccc41ead20d1d1ff"
     },
     {
       "path": "examples/component-bindings.json",
@@ -132,23 +142,23 @@
     },
     {
       "path": "examples/name-reresolution.json",
-      "size_bytes": 5118,
-      "sha256": "e3866013ffd6ecef3be07a969ad7b0b1b6bfba21ab93cccb5c5e5d909aa2f004"
+      "size_bytes": 5149,
+      "sha256": "c4492616fd5078874f4622fdc977d4f14e877ee3aaca5af89059b919b30dbd10"
     },
     {
       "path": "examples/operation-activate-proxy.json",
-      "size_bytes": 1235,
-      "sha256": "b160a2d30c32afe2597ee7bebb9284a7cd1283907f8a3c386271846ca4f82468"
+      "size_bytes": 1264,
+      "sha256": "278ff6573cbb233d2a0f09f088ea092cbd6a06e7f4474ba60a8c35ac9567cf82"
     },
     {
       "path": "examples/operation-ensure-power.json",
-      "size_bytes": 1246,
-      "sha256": "21808fd520a6cb42577816b7fe0620fb94d8ed5f60f18865fc0c04850716add8"
+      "size_bytes": 1275,
+      "sha256": "7a3f6b9015415df45d67c0944a354ed20cde00acfa6266104ab36e6cf88af104"
     },
     {
       "path": "examples/operation-press-key.json",
-      "size_bytes": 1352,
-      "sha256": "73710959ec458036750ea5fd5fda2d8524b1a803960b103509e11700e40bf637"
+      "size_bytes": 1353,
+      "sha256": "d703c2f6a247b3d226319640e0e3475f17f7bc0c56bac88e1f568a52d62778ad"
     },
     {
       "path": "examples/qualified-addresses.json",
@@ -167,8 +177,13 @@
     },
     {
       "path": "schemas/README.md",
-      "size_bytes": 4347,
-      "sha256": "fd63117ce4529e44b34fab488ab7e5279b97e92e24781909daa46292b6baaa78"
+      "size_bytes": 8229,
+      "sha256": "1d3f2ad66fb4298eab97345f7831ee387b5cd8b44c054d3d7f293b5d6bedd92c"
+    },
+    {
+      "path": "schemas/adapter-settings.schema.json",
+      "size_bytes": 8134,
+      "sha256": "780e0a9ac72a57df980c19d461ef4757ad4560e8bedff8d47a71d00e24ee864d"
     },
     {
       "path": "schemas/cec-address.schema.json",
@@ -182,8 +197,8 @@
     },
     {
       "path": "schemas/core-types.schema.json",
-      "size_bytes": 3813,
-      "sha256": "c63d7dde0173e2b9470bb5c69fbe9abb464594b4d8cba5a218f81bcc63ea929c"
+      "size_bytes": 4166,
+      "sha256": "b27e3bf4f9f98830fc5ad5c44c891e053b692889d46f86bc68e617331bc8b670"
     },
     {
       "path": "schemas/qualified-device-name.schema.json",
@@ -192,13 +207,13 @@
     },
     {
       "path": "schemas/wire-envelope.schema.json",
-      "size_bytes": 7960,
-      "sha256": "159f2fb086e56ac14c59d195fbd3f9bbef29b9c9d0f06d01ca26d67112ae1bdb"
+      "size_bytes": 16460,
+      "sha256": "50101e942ee27c8262bc6e01e0e98e832bc34c14018665163098db891edad988"
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 18108,
-      "sha256": "df833c3da2843b24512aa45c8a4e3a9b3c6fd5df7011243079c6e1188a8fa664"
+      "size_bytes": 26908,
+      "sha256": "6b46f425b4c1a3b93e6f2152c98f0670ded9abeec486d5cf4d92849066568293"
     }
   ]
 }

@@ -8,6 +8,12 @@
 
 #include "device_settings.hpp"
 #include "sdkconfig.h"
+#include "setup_gesture.hpp"
+
+namespace {
+device_settings::SetupButtonHandler setup_handler=nullptr;
+void *setup_context=nullptr;
+}
 
 #if CONFIG_AMITY_FW_RESET_BUTTON
 #include "reset_button.hpp"
@@ -33,9 +39,15 @@ void IRAM_ATTR button_isr(void *arg) {
 
 void button_task(void *) {
     device_settings::ResetButton button;
+    device_settings::SetupGestureButton setup_button;
     while (true) {
         const auto now_ms = esp_timer_get_time() / 1000;
-        if (button.update(gpio_get_level(button_gpio) == 0, now_ms)) {
+        const bool pressed=gpio_get_level(button_gpio)==0;
+        const auto gesture=setup_handler?setup_button.update(pressed,now_ms):device_settings::SetupGesture::none;
+        const bool reset=setup_handler?gesture==device_settings::SetupGesture::factory_reset:button.update(pressed,now_ms);
+        if(gesture==device_settings::SetupGesture::initial_matter||gesture==device_settings::SetupGesture::consortium)
+            setup_handler(gesture==device_settings::SetupGesture::consortium,setup_context);
+        if (reset) {
             auto err = device_settings::schedule_factory_reset();
             if (err == ESP_OK) {
                 ESP_LOGW(tag, "FW_RESET held: factory reset scheduled; restarting");
@@ -45,7 +57,7 @@ void button_task(void *) {
             ESP_LOGE(tag, "Could not schedule factory reset: %s; release and hold to retry",
                      esp_err_to_name(err));
         }
-        const auto wait_ms = button.next_check_ms(now_ms);
+        const auto wait_ms = setup_handler?setup_button.next_check_ms(now_ms):button.next_check_ms(now_ms);
         const auto ticks = wait_ms == device_settings::ResetButton::no_deadline
             ? portMAX_DELAY
             : pdMS_TO_TICKS(wait_ms + portTICK_PERIOD_MS - 1);
@@ -58,6 +70,7 @@ void button_task(void *) {
 #endif
 
 namespace device_settings {
+void set_setup_button_handler(SetupButtonHandler handler,void *context){setup_handler=handler;setup_context=context;}
 esp_err_t start_reset_button(int gpio) {
 #if CONFIG_AMITY_FW_RESET_BUTTON
     if (started) return ESP_ERR_INVALID_STATE;

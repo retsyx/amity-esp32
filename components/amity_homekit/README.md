@@ -1,4 +1,16 @@
+> 20 October 2026 scope amendment: the original first-setup Amity alone owns the sole remote, UI/admin and home integrations. Added devices are UI-less actuators, with no member input gateway or coordinator promotion/handover. Preserve the original activity UI with only canonical Amity-hostname context and one Amity management tab. [Normative contract](../../amity-octopus-consortium/21-original-controller-policy.md).
+
 # Optional HomeKit television
+
+Only the original controller starts this component. `amity_homekit::stop()`
+latches revocation before waiting for startup, rejects queued pairing and
+callbacks, closes HAP sessions, removes advertising, unregisters network events
+and stops the actual HTTP listener. HTTP teardown runs outside the HAP mutex so
+an in-flight handler can finish. A stop failure is returned for retry. Stored
+pairings and the shared Wi-Fi/mDNS host remain; the bounded worker stays inert.
+Calling stop before start prevents later startup in the same boot. Fresh devices
+wait for checked Matter enrollment and durable original-role selection; a member
+never starts HomeKit. The same firmware handles both roles.
 
 Matter commissions first and supplies Wi-Fi credentials. The authenticated
 **HomeKit** web tab enables an optional, separate HomeKit association; Matter
@@ -37,7 +49,7 @@ state. Unknown mute or battery readings return HomeKit's resource-absent error.
 A paired but disconnected remote reports battery unavailable; an absent remote
 uses 100% and not charging, matching Matter. Absolute volume is omitted because
 CEC cannot reliably set it. Play/pause uses the hub's last accepted Play, Pause
-or Stop command across HomeKit, Matter and remotes, resetting when the source
+or Stop command across HomeKit, Matter and the sole BLE remote, resetting when the source
 changes. This tracks requested playback behavior and does not claim observed
 playback state.
 
@@ -56,3 +68,8 @@ a browser fixture. `tests/homekit_hardware.py` uses an isolated `aiohomekit==3.2
 controller to verify SRP, encrypted sessions, service links, writes, notifications,
 controller removal and reboot persistence on the authorized DUT. This protocol
 test does not automate Apple's Home app.
+
+`tests/controller_integration_test.py` executes actual start/stop/helper bodies
+under ASan/UBSan with listener, pairing-store and lock instrumentation, covering
+prestart revocation, partial allocation, failed listener stop and safe retry.
+These checks do not replace physical Apple Home retention qualification.

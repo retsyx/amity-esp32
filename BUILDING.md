@@ -91,8 +91,13 @@ idf.py build provisioning-package
 | Output | Purpose |
 |---|---|
 | `build/amity-firmware.zip` | Input to the setup tool for a fresh installation |
-| `build/amity.bin` | Browser firmware update |
+| `build/amity-update.bin` | One browser update file containing the release manifest, optional publisher signature and exact image |
+| `build/amity.bin` | Raw application image for USB/debugging or an explicitly pre-staged update |
 | `build/amity-provision-native` | Setup tool for the build computer |
+
+The default board profile keeps the existing GPIO1/GPIO2 HDMI adapter mapping and GPIO4 setup/reset button. For a custom development carrier, run `idf.py menuconfig` and select **Amity board profile → Development carrier**. Assign each adapter's two isolated CEC GPIOs together, or leave both unassigned. Adapter numbers stay fixed when connections are unused. Configure the optional active-low setup/reset button GPIO if the carrier needs the physical setup gesture; it defaults to disabled. A separate presence input is optional; without one, physical attachment remains unknown and equipment availability comes from discovery. The CEC wires use external pull-ups with the internal GPIO pulls disabled.
+
+The development profile accepts up to five adapters, including a device with none configured. Invalid mappings or allocation failures leave administration available with HDMI control disabled. Its GPIO mapping is included in the firmware identity, so an update for a different profile or mapping is rejected. Use a separate build directory for each carrier mapping and qualify its electrical behavior and simultaneous CEC timing before use.
 
 To prepare a fresh device:
 
@@ -101,7 +106,7 @@ To prepare a fresh device:
   --out living-room build/amity-firmware.zip
 ```
 
-Continue with [USB installation and onboarding](README.md#install-over-usb). Flash the generated `living-room/amity-provisioned.bin` at address `0x0`; a plain `idf.py flash` does not prepare a fresh device’s pairing credentials. For later updates, upload `build/amity.bin` through **Advanced → Update Firmware**.
+Continue with [USB installation and onboarding](README.md#install-over-usb). Flash the generated `living-room/amity-provisioned.bin` at address `0x0`; a plain `idf.py flash` does not prepare a fresh device’s pairing credentials. For later updates, upload `build/amity-update.bin` through **Advanced → Update Firmware**. Its embedded manifest and signature are verified before image installation; a production release must use the authorized signed container.
 
 In a new Bash session, set `IDF_PATH`, `ESP_MATTER_PATH`, and `IDF_TOOLS_PATH` to the locations used during setup before sourcing `tools/env.sh`. Once an existing build is configured, use `idf.py build provisioning-package` for subsequent builds; `set-target` resets the build configuration.
 
@@ -118,4 +123,10 @@ sh tests/provisioning_test.sh
 
 `python3 amity-provision/build_release.py` builds setup-tool archives for macOS, Windows, and Linux, in both Intel/AMD and ARM64 versions. The GitHub **Build firmware** workflow uses the same SDK pins. A newly pushed `v*` tag triggers **Release firmware**, which verifies that the tag’s version matches `PROJECT_VER` and publishes the firmware, setup-tool archives, installation README, and checksums as GitHub Release assets.
 
-Technical references: [hardware pins](main/board_pins.h), [Matter](components/amity_matter/README.md), [HomeKit](components/amity_homekit/README.md), [remotes](components/ble_remote/README.md), [activity control](components/amity_hub/README.md), [device settings](components/device_settings/README.md), and [validation records](VALIDATION.md).
+Technical references: [hardware pins](main/board_pins.h), [Matter](components/amity_matter/README.md), [HomeKit](components/amity_homekit/README.md), [remotes](components/ble_remote/README.md), [activity control](components/amity_hub/README.md), [device settings](components/device_settings/README.md), and [implementation and validation status](IMPLEMENTATION_STATUS.json).
+
+## Original-controller application profile
+
+One firmware serves both roles. A fresh device has no Wi-Fi credentials and hosts no UI. Completing Matter BLE enrollment establishes the original controller; adding a device over the authenticated Amity BLE channel selects its subordinate role. That durable choice survives removing Matter fabrics. Added devices retain the shared CHIP Wi-Fi/NimBLE substrate and authenticated peer config/OTA/status only; they host no UI or user-control integration and cannot promote themselves after reset or controller loss. No separate actuator-only build is required.
+
+The 20 October 2026 amendment fixes the original device as sole controller/UI/admin/remote/Matter/HomeKit owner. Controller identity migration must be proven, never inferred from ordering; ordinary portable import cannot replace it within a live installation. Supported failed-main recovery instead Matter-enrolls replacement hardware as a new main, restores portable configuration through existing Advanced upload/restore, and explicitly re-pairs integrations/remote and re-enrolls members after old-main isolation. Preserve baseline UI commit `d50af8026938797fc0820d0107f4c4e064c2d2bc` with only canonical Amity-hostname context and one Amity management tab. Historical 0.1.60 hardware evidence predates this change; the current 0.1.62 cleanup software checks and remaining [SC acceptance](amity-octopus-consortium/21-original-controller-policy.md) are recorded separately.

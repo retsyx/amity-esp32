@@ -16,7 +16,7 @@ This version runs on the Amity ESP32 board. The [original Amity](https://github.
 
 ### Amity is an HDMI-CEC Controller (Not a Universal Remote)
 
-Amity is designed for a traditional setup centered around an audio/video receiver (AVR). For example, a TV connected to a receiver output, and various playback devices (i.e. media streamers, blu-ray players, and game consoles, etc.) connected to the receiver's inputs. When changing the source, the input is changed on the receiver. The HDMI-CEC protocol only allows the designated TV to select sources or devices to declare themselves as active sources. TVs do not heed arbitrary source selection commands from other devices. As a result, Amity cannot select inputs on a TV, and cannot control sources connected directly to a TV, including built-in smart TV apps. Similarly, Amity does not support HDMI ARC/eARC. If you use smart TV apps or connect devices, other than a receiver, directly to the TV inputs, Amity is not for your system.
+Amity controls confirmed HDMI paths using the roles supported by the connected equipment. A receiver path needs a known input/output control profile. A source connected directly to a screen can use an isolated source identity at its confirmed screen input; the screen must honor the corresponding CEC source announcement. The activity editor leaves unverified paths disabled. Built-in smart TV apps and ARC/eARC are not automatically inferred as supported routes.
 
 Amity can only control devices that support HDMI-CEC! However, devices that don't support HDMI-CEC (old game consoles, for example) can still be facilitated.
 
@@ -25,7 +25,13 @@ Amity can only control devices that support HDMI-CEC! However, devices that don'
 
 ### Development Status
 
-HDMI-CEC implementations vary between manufacturers, and this version of Amity has been tested with a limited range of equipment. It may work well with your system, or particular devices may need workarounds. See the [validation record](https://github.com/retsyx/amity-esp32/blob/main/VALIDATION.md) for the checks performed on this version.
+The development implementation follows the [multi-device control design](amity-octopus-consortium/README.md): schema-2 configuration and migration, scoped equipment discovery, guarded distributed planning, authenticated enrollment and member transport, scoped configuration and repair, explicit actuator recovery, and manifest-bound updates. The existing board defaults to **one HDMI adapter (two isolated CEC ports)**. A separate development profile supports **up to five optional HDMI adapters per device**, with a software limit of **three active devices per system**. Each device uses one shared CEC timer. Historical bench evidence covers one device and an independent passive peer; group capacity, five-adapter electrical timing, AV equipment, production security provisioning and observed novice usability need their own qualification evidence. See [implementation status](IMPLEMENTATION_STATUS.json) for exact checks and remaining qualification gates.
+
+The original first-setup Amity remains the controller, hosts the only browser UI and Matter/Apple Home integration, and pairs with the sole remote. Other Amity devices are subordinate actuators with no UI. The one remote and browser can select activities for multiple screens. Amity device names equal their actual hostnames. Add requires a valid Name and applies it to the added device; main hostname changes remain in Advanced. Names are not separate cosmetic aliases, while equipment selectors, activity IDs, home-app slots and pairings remain stable. Restarted activities stay paused until explicitly started again.
+
+Configuration saves and discovery no longer power or route equipment. Unsolicited source activation no longer triggers automatic standby or route repair; explicitly select the activity again when needed. Preventing source-to-receiver theft requires isolating each source before its first shared CEC junction. A splice only at the receiver output cannot block traffic already shared between its sources and receiver.
+
+HDMI-CEC implementations vary between manufacturers, and this version of Amity has been tested with a limited range of equipment. It may work well with your system, or particular devices may need workarounds. See the [implementation and validation status](IMPLEMENTATION_STATUS.json) for the recorded checks and remaining qualification gates.
 
 Amity is not a certified Matter accessory. Some home apps may reject it or expose only some of its controls.
 
@@ -103,9 +109,11 @@ esptool --chip esp32s3 --port PORT write-flash --flash-mode dio --flash-freq 80m
 
 If the `esptool` command is unavailable, use `python3 -m esptool` on macOS/Linux, or `python -m esptool` on Windows, in its place.
 
-**Installing this full image replaces all existing settings and pairings.** Use it for initial installation. Later browser updates use a different file, `amity.bin`.
+**Installing this full image replaces all existing settings and pairings.** Use it for initial installation. Later browser updates use a different file, `amity-update.bin`.
 
 When installation finishes, leave the board powered on, or connect it to its USB-C power supply.
+
+For first-board Matter setup on a fresh, unconfigured board, press and release **FW RESET before three seconds**. Setup stays closed after a normal reboot. To add a prepared board to an existing Amity system, use its separate Add to Amity code, hold FW RESET for at least three seconds, and release before ten seconds. Holding for ten seconds performs factory reset.
 
 ### HDMI Connections
 
@@ -118,12 +126,14 @@ Amity connects between the TV and the receiver.
 
 Enable HDMI-CEC on the TV, receiver, and playback devices. Manufacturers use different names for this setting; check your equipment's setup menus.
 
+On hardware with several HDMI adapters, unused connections can stay empty. Adapter numbers stay fixed when another adapter is removed. Saved equipment and activities remain available for repair; reconnecting equipment does not start an activity automatically. Use **Scan HDMI**, then explicitly select or start the activity when ready. Attachment status requires suitable detection hardware; otherwise Amity reports equipment availability from discovery.
+
 ### Wi-Fi and Browser Access
 
 Matter pairing supplies Amity with its Wi-Fi settings. Complete this step even if you intend to use HomeKit for everyday control.
 
-1. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`. Alternatively, enter the manual pairing code from `amity-pairing.txt`.
-2. Follow the app's prompts to connect Amity to your 2.4 GHz Wi-Fi network. If the initial pairing window expires, restart the unpaired board and try again.
+1. On a fresh first board with no home pairing or configured equipment, press **FW RESET** and release before three seconds to open Matter setup. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`, or enter the manual pairing code from `amity-pairing.txt`. An additional board uses the additional **Amity** tab on the original controller instead.
+2. Follow the app's prompts to connect Amity to your 2.4 GHz Wi-Fi network. If its first setup window expires, use the same short press to reopen it while the board remains eligible. Holding FW RESET for ten seconds performs a factory reset.
 3. On a phone or computer connected to the same network, open the administration address on the setup card. For the example above, it is `https://living-room.local`. The default hostname gives `https://amity.local`.
 4. The browser will show a certificate warning because Amity creates its own certificate for encryption. Open the warning's details and accept the certificate to continue.
 5. Log in with the generated admin password. If you prepared the image without an initial password, create one when prompted.
@@ -131,6 +141,8 @@ Matter pairing supplies Amity with its Wi-Fi settings. Complete this step even i
 If the hostname cannot be found, locate Amity in your router's device list and browse to `https://IP_ADDRESS` instead.
 
 ### Pairing a Remote
+
+Pair the sole remote to the original Amity device. Added devices cannot own a remote; choosing another screen does not move pairing ownership.
 
 Charge the remote, and unpair it from any other device before pairing it with Amity.
 
@@ -193,7 +205,7 @@ A short press of **Power** starts the first activity. Other activity shortcuts d
 | Atomic activity buttons 1–4 | Activities 1–4 | Activities 5–8 |
 | Siri Remote Select, Up, Right, Down, Left | Activities 1–5, in that order | Activities 6–10, in that order |
 
-These numbers refer to the order in the 'Activities' tab. For example, Siri Remote Select starts the first activity, Up starts the second, and a long press of Select starts the sixth.
+These are the original stable shortcut slots. Reordering activity cards does not retarget them. The remote remains on the original controller while selecting activities for different screens.
 
 A long press of **Power** repeats the standby commands. This is useful if a device is still on when it should be off.
 
@@ -209,24 +221,13 @@ Give your equipment a few seconds to finish switching before choosing a differen
 
 ## Non-CEC Sources
 
-A source without HDMI-CEC can still be used if your receiver supports input selection over HDMI-CEC. Amity can turn on the TV and receiver, select the receiver input, and control volume. Use the source's own controls for its power, navigation, and playback.
-
-Create an activity with these settings:
-
-1. Select the TV as `Display`.
-2. Select the receiver as `Audio`.
-3. Leave `Source` blank.
-4. Select the receiver as `Switch device`.
-5. Set `Switch input` to the receiver's input number.
-6. Press 'OK', then 'Save activities'.
-
-Input numbers vary by receiver. Consult its documentation or setup menus for the correct value. This option can also help with a source that does not reliably appear in HDMI scans.
+A source without HDMI-CEC needs a receiver with an established CEC input-control profile. The activity editor does not infer this support or guess receiver input numbers. Imported receiver activities remain available for review and stay disabled when their path cannot be validated. Use the source's own controls for its power, navigation and playback.
 
 ## Matter
 
 The initial Matter pairing connects Amity to Wi-Fi and adds it to your home controller. Once activities are configured, the controller can use Amity for home automation.
 
-The 'Matter' tab lists controller connections. To add another controller, press 'Start pairing' and scan the displayed QR code in that controller's home app. The pairing window lasts five minutes.
+**Matter** lists controller connections. To add another controller, press 'Start pairing' and scan the displayed QR code in that controller's home app. The pairing window lasts five minutes.
 
 Available controls may include power, activity selection, playback, volume, mute, and remote battery status. What appears depends on the home app and your equipment. Removing a Matter connection leaves your activities and remote pairing intact.
 
@@ -234,30 +235,42 @@ Available controls may include power, activity selection, playback, volume, mute
 
 Amity can also be added to Apple Home as a television accessory, allowing control through Siri and HomeKit automations.
 
-Complete Wi-Fi setup and activity configuration first. Select the 'HomeKit' tab, press 'Start pairing', and scan its QR code in Apple Home. The pairing window lasts five minutes.
+Complete Wi-Fi setup and activity configuration first. Open **HomeKit**, press 'Start pairing', and scan its QR code in Apple Home. The pairing window lasts five minutes.
 
 HomeKit has its own pairing code, separate from Matter. Removing the HomeKit association leaves Matter connections and activities intact.
 
 ## Backup & Restore
 
-Select the 'Advanced' tab. In the 'Configuration' section, press 'Download' to save a backup, or use the upload field to restore one.
+Open **Advanced**. In the 'Configuration' section, press 'Download' to save a portable backup, or select a backup to preview its import. Different hardware requires equipment confirmation before use. Saving a reviewed import is separate from trying an activity.
 
 The backup contains activities and device-specific control settings. It does not contain Wi-Fi settings, admin credentials, pairings, hostname changes, or the HDMI-CEC address. Keep the original installation folder as well; a configuration backup does not replace your pairing card or USB installation image.
+
+If the main Amity fails, disconnect/isolate it, set up replacement hardware through Matter BLE, and use the existing **Advanced** configuration upload/restore to recover saved activity/device IDs, names and order. Pair the remote and home integrations again, and factory-reset each other Amity device with the existing ten-second button hold, then open its three-to-below-ten-second Add window and re-add it through the replacement main. Its saved Add code/hardware identity survives reset; Wi-Fi and old operational trust are cleared. The backup does not copy keys, pairings or trust in the old main. Restored activities initially remain disabled; use **Scan HDMI**, then the original activity **Edit/Save** controls with fresh equipment to repair supported direct paths. Unsupported receiver/audio/switch paths remain unavailable. Restoration does not start an activity. This is manual recovery, with no automatic failover or live authority transfer.
 
 ## Firmware Updates
 
 Read the new release's notes before updating, especially before version 1.0. Normal updates preserve settings, pairings, passwords, and the original Matter setup code, but a release may require a fresh installation. Downgrades are unsupported.
 
-1. Download `amity.bin` from the [release's Assets](https://github.com/retsyx/amity-esp32/releases), or use `build/amity.bin` from a local build.
-2. Select the 'Advanced' tab, and find 'Update Firmware'.
-3. Select the file and confirm the update.
-4. Keep Amity powered on and the page open until completion is reported, then log in again.
+1. Download `amity-update.bin` from the release. This one file contains the unchanged application image, its exact manifest, and the publisher signature for a signed release. Local development builds produce an unsigned update file.
+2. Open **Advanced → Update Firmware** and select `amity-update.bin`. Review the version and confirm installation.
+3. Keep Amity powered and the page open while it uploads and restarts. The page waits for a new boot and local health. An interrupted upload keeps the current image; reselect the same update file to retry.
 
-Use `amity.bin` for browser updates. The full `amity-provisioned.bin` image is for USB installation.
+The full `amity-provisioned.bin` image is for USB installation. `amity.bin` is the raw application for USB/debug tooling; raw browser uploads require its exact manifest to have been validated separately. The manifest and optional `amity.release.sig` are also published for release inspection. An older development installer that predates update bundles may need a supported bridge release. A separately generated compatibility manifest (`tools/release_manifest.py --compatibility-capabilities 511`) changes no image bytes; signed compatibility manifests must be produced and signed by the publisher.
+
+Production builds require a separate P-256 publisher key, native secure boot, release-mode flash encryption and provisioned encrypted NVS. `tools/production_profile.py` prepares and audits an offline build profile without flashing or programming eFuses. Its `derive-storage-keys` command creates private per-partition NVS key files from provisioned master material; firmware uses the same HKDF scheme. Native signing and publisher signing use separate keys. The baseline fresh-install provisioner rejects the encrypted production layout; production provisioning and physical recovery must be qualified separately on disposable hardware.
 
 ## Factory Reset
 
-In the 'Advanced' tab, select 'Factory Reset' and confirm. This clears activities, Wi-Fi settings, Matter and HomeKit pairings, and the remote bond. It also restores the original hostname and initial admin password, if one was supplied.
+In **Advanced**, select 'Factory Reset' and confirm. This clears activities, Wi-Fi settings, Matter and HomeKit pairings, and the remote bond. It also restores the original hostname and initial admin password, if one was supplied.
+
+To remove an added device, open **Amity devices** and select **Remove** beside
+its name. A responding Amity is factory-reset and restarted after removal. If it
+is not responding, it is dropped from the main's system; hold that device's
+**FW RESET** button for at least ten seconds to reset it physically. If reset
+could not be confirmed, check the result and use the physical button as needed.
+Saved equipment and activities remain unavailable for repair or replacement.
+This action does not reset the main Amity or other devices. Network loss alone
+never factory-resets an Amity.
 
 The installed firmware and original Matter pairing code remain. Add Amity to your home again using the original setup card, then pair the remote and configure activities.
 
@@ -269,21 +282,31 @@ If you cannot access the administration page, you can also reinstall the saved U
 
 * **The computer does not see Amity:** use a USB data cable, and check that you selected the board's serial port.
 * **The setup tool does not start:** check that you downloaded the archive for your OS and processor. On macOS/Linux, 'Permission denied' may require `chmod +x amity-provision`. These development executables are unsigned, so your OS may require approval to run them.
-* **Initial Matter pairing fails:** check the antenna connection and the phone's Bluetooth setting. Restart the unpaired board to reopen pairing, and check that the controller accepts development Matter devices.
+* **Initial Matter pairing fails:** check the antenna connection and the phone's Bluetooth setting. On a fresh, unconfigured board, press and release FW RESET before three seconds to open the bounded first-board Matter setup window, and check that the controller accepts development Matter devices. Reboot alone does not open setup.
 * **The browser cannot find Amity:** use the address on the setup card from the same network, or use the IP address shown by your router.
 * **Equipment is missing or on the wrong input:** check HDMI connections and HDMI-CEC settings, scan again, and review the activity's device selections. If the activity is already running, try 'Repair'.
 * **The paired remote does not respond:** wake it, move it closer to Amity, and check 'Advanced' → 'Diagnostics'.
 
 To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'.
 
-Amity determines its front HDMI-CEC physical address on every startup from the
-lowest valid address reported by back-side devices. If none is reported, it uses
-the 'Default front physical address' setting in 'Advanced' → 'HDMI-CEC'
-(`1.0.0.0` by default). 'Advanced' → 'Diagnostics' shows the result for the current
-boot. This is a best-effort estimate: a silent AVR can leave only a child device's
-address available. A new scan keeps the current address; restarting determines
-it again.
+Open the **Amity devices** tab and select **Settings** beside the named Amity to change
+an HDMI adapter's default front physical address (`1.0.0.0` initially; blank
+restores it). A usable detected address takes priority. The dialog separates the
+saved default, detected address and selected front address; a selected fallback
+does not confirm the HDMI route or start an activity. Stop the selected device's
+activities before saving. Saving restarts only that Amity, and activities remain
+paused afterward. Opening the dialog does not scan or wake equipment.
+
+HDMI adapters retain socket numbers 1–5 within the device's supported capacity.
+Removing adapter 2 does not rename adapter 3 or copy its settings. Missing and
+unconfigured adapters keep their saved defaults. A detachable adapter can be
+edited only when a configured presence detector confirms it is attached; an
+adapter without a detector has unknown presence and is read only. The original
+fixed one-adapter hardware is present by construction. Detachable five-adapter
+hardware and its presence wiring still require physical qualification.
 
 ## License
 
 Amity source code is licensed under the [GPLv3](https://github.com/retsyx/amity-esp32/blob/main/LICENSE). See the [third-party notices](https://github.com/retsyx/amity-esp32/blob/main/THIRD_PARTY.md) for dependency licenses.
+
+The 20 October 2026 UI amendment preserves the original Activities, Remote, Matter, HomeKit and Advanced workflows. Device listings add canonical Amity-hostname/HDMI-adapter context, and one Amity tab manages added devices. No guided activity wizard, new remote owner mapping, primary-zone picker or member-hosted UI is part of this scope.

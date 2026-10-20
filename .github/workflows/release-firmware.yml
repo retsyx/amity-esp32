@@ -59,12 +59,16 @@ jobs:
           for hardware requirements, downloads, USB flashing and first setup.
           The same guide is attached as **README.md** and included in each provisioner ZIP.
 
-          To update an installed Amity, download **amity.bin** and upload it in
+          To update an installed Amity, download **amity-update.bin** and upload that one file in
           **Advanced → Update Firmware**. Normal updates preserve settings and pairings.
           Before version 1.0, backward compatibility with earlier releases is not
           maintained. Read this version's release notes before updating; a fresh
           installation and pairing again may be required.
           A fresh-install image replaces existing configuration and pairings.
+
+          The update file includes its exact release manifest and, for signed
+          releases, publisher signature. **amity.bin** remains the raw application
+          for USB/debug tooling; the full installation image is not an OTA file.
 
           **SHA256SUMS** contains checksums for the downloadable assets.
           GitHub's automatic source archives are for building from source.
@@ -74,12 +78,10 @@ jobs:
           if [[ "$version" == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$RELEASE_TAG" \
-            dist/amity.bin \
-            dist/amity.elf \
-            dist/amity.map \
-            dist/amity-firmware.zip \
-            dist/amity-provision-*.zip \
-            dist/README.md \
-            dist/SHA256SUMS \
-            "${flags[@]}"
+          assets=(dist/amity-update.bin dist/amity.release.json dist/amity.bin
+                  dist/amity.elf dist/amity.map dist/amity-firmware.zip
+                  dist/amity-provision-*.zip dist/README.md dist/SHA256SUMS)
+          if [[ -f dist/amity.release.sig ]]; then
+            assets+=(dist/amity.release.sig)
+          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" "${flags[@]}"

@@ -23,7 +23,8 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/device_settings/include" "$root/components/device_settings/reset_button.cpp" \
   "$root/tests/reset_button_interrupt_test.cpp" -o "$out/reset_button_interrupt_test"
 for scenario in idle boot-held hold short cancel boot-release-hold latched-edge retry \
-  allocation-failure shared-service-failure handler-failure; do
+  allocation-failure shared-service-failure handler-failure setup-short setup-three-seconds \
+  setup-before-reset setup-long setup-boot-held; do
   "$out/reset_button_interrupt_test" "$scenario"
 done
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
@@ -59,6 +60,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   "$root/components/web_admin/configuration.cpp" "$root/tests/configuration_test.cpp" "$out/cjson.o" -o "$out/configuration_test"
 "$out/configuration_test"
 node --check "$root/components/web_admin/assets/app.js"
+node --check "$root/components/web_admin/assets/system.js"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/system_services/include" "$root/tests/firmware_version_test.cpp" -o "$out/firmware_version_test"
 "$out/firmware_version_test" "$root/tests/firmware_versions.tsv"
@@ -66,6 +68,9 @@ node "$root/tests/firmware_version_test.js"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/device_settings/include" "$root/tests/physical_address_test.cpp" -o "$out/physical_address_test"
 "$out/physical_address_test"
+sh "$root/tests/device_settings_test.sh"
+sh "$root/tests/adapter_settings_test.sh"
+sh "$root/tests/member_removal_reset_test.sh"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/tests/battery_status_test.cpp" -o "$out/battery_status_test"
 "$out/battery_status_test"
@@ -75,3 +80,44 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/amity_matter/include" "$root/tests/apple_fabric_cleanup_test.cpp" -o "$out/apple_fabric_cleanup_test"
 "$out/apple_fabric_cleanup_test"
+sh "$root/tests/local_system_test.sh"
+sh "$root/tests/cec_runtime_test.sh"
+sh "$root/tests/amity_system_test.sh"
+sh "$root/tests/system_hold_test.sh"
+sh "$root/tests/consortium_test.sh"
+python3 "$root/tests/consortium_gatt_callback_test.py"
+python3 "$root/tests/consortium_gatt_fragment_test.py"
+python3 "$root/tests/consortium_runtime_admission_test.py"
+python3 "$root/tests/consortium_tls_rejection_test.py"
+python3 "$root/tests/consortium_task_lifetime_test.py"
+python3 "$root/tests/consortium_runtime_status_test.py"
+python3 "$root/tests/original_controller_web_test.py"
+python3 "$root/tests/controller_api_surface_test.py"
+python3 "$root/tests/consortium_original_claim_test.py"
+python3 "$root/tests/consortium_retired_features_test.py"
+python3 "$root/tests/consortium_owner_repeat_test.py"
+python3 "$root/tests/consortium_hostname_test.py"
+python3 "$root/tests/consortium_settings_test.py"
+python3 "$root/tests/consortium_removal_test.py"
+python3 "$root/tests/controller_integration_test.py"
+python3 "$root/tests/controller_startup_test.py"
+python3 "$root/tests/apple_fabric_lifecycle_test.py"
+
+sh "$root/tests/system_configuration_test.sh"
+sh "$root/tests/activity_editor_test.sh"
+sh "$root/tests/live_system_test.sh"
+sh "$root/tests/native_ports_test.sh"
+sh "$root/tests/system_sync_test.sh"
+sh "$root/tests/release_manifest_test.sh"
+python3 "$root/tests/release_hardware_test.py"
+python3 "$root/tests/update_bundle_test.py"
+sh "$root/tests/system_remote_control_test.sh"
+sh "$root/tests/local_remote_approval_test.sh"
+sh "$root/tests/cohort_update_test.sh"
+
+sh "$root/tests/consortium_relay_test.sh"
+sh "$root/tests/configuration_replacement_test.sh"
+python3 "$root/tests/consortium_provision_test.py"
+sh "$root/tests/bootstrap_rotation_test.sh"
+
+python3 "$root/tests/production_profile_test.py"

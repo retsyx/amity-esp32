@@ -36,8 +36,19 @@ public:
         }
         const auto added = table.AddFabricDelegate(this);
         if (added != CHIP_NO_ERROR) return ESP_FAIL;
+        active_ = true;
         if (policy_.pending()) schedule();
         return ESP_OK;
+    }
+
+    void stop()
+    {
+        if (!active_) return;
+        active_ = false;
+        chip::Server::GetInstance().GetFabricTable().RemoveFabricDelegate(this);
+        chip::DeviceLayer::SystemLayer().CancelTimer(retry_callback, this);
+        // Already queued CHIP work still owns a valid static object, but its
+        // active check prevents post-teardown table/network mutations.
     }
 
     void FabricWillBeRemoved(const chip::FabricTable &, chip::FabricIndex index) override
@@ -67,7 +78,7 @@ private:
 
     void schedule()
     {
-        if (scheduled_) return;
+        if (!active_ || scheduled_) return;
         scheduled_ = true;
         const auto err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t context) {
             auto *self = reinterpret_cast<AppleFabrics *>(context);
@@ -83,15 +94,21 @@ private:
 
     void retry()
     {
+        if (!active_) return;
         const CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(1),
-            [](chip::System::Layer *, void *context) { static_cast<AppleFabrics *>(context)->schedule(); }, this);
+            retry_callback, this);
         if (err != CHIP_NO_ERROR)
             ESP_LOGW(tag, "Cannot retry Apple cleanup: %" CHIP_ERROR_FORMAT, err.Format());
     }
 
+    static void retry_callback(chip::System::Layer *, void *context)
+    {
+        static_cast<AppleFabrics *>(context)->schedule();
+    }
+
     void cleanup()
     {
-        if (!policy_.pending()) return;
+        if (!active_ || !policy_.pending()) return;
         auto &server = chip::Server::GetInstance();
         // Wait for in-flight commissioning to commit or roll back. A new Home
         // may have appeared before this work item executes.
@@ -122,8 +139,10 @@ private:
     nvs_handle_t storage_ = 0;
     AppleFabricCleanup policy_;
     bool scheduled_ = false;
+    bool active_ = false;
 } apple_fabrics;
 }
 
 esp_err_t start_apple_fabric_cleanup() { return apple_fabrics.start(); }
+void stop_apple_fabric_cleanup() { apple_fabrics.stop(); }
 }

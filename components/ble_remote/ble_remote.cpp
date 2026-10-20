@@ -43,7 +43,11 @@ namespace {
 constexpr char kTag[] = "ble_remote";
 constexpr size_t kMaxPeers = 16;
 enum class CommandType { Scan, Pair, AutoPair, Unpair, Wake };
-struct Command { CommandType type; uint32_t seconds; ble_addr_t address; };
+struct Command {
+    CommandType type;
+    uint32_t seconds;
+    ble_addr_t address;
+};
 struct Candidate {
     ble_remote_peer_t peer;
     bool hid, connectable, attempted;
@@ -95,6 +99,7 @@ ble_addr_t selected{};
 ble_addr_t saved{};
 bool have_selected, have_saved, descriptors_ready, encrypted, forgetting;
 bool unpair_cleanup_pending;
+bool bond_cleanup_failed;
 
 std::atomic<uint16_t> connection_handle{BLE_HS_CONN_HANDLE_NONE};
 bool reconnect_pending;
@@ -104,6 +109,23 @@ int64_t next_reconnect;
 int64_t pairing_deadline;
 uint32_t pending_scan_seconds;
 bool pending_scan_clear_error;
+std::atomic_bool controller_enabled{true};
+bool controller_cancel_pending=false;
+std::atomic_bool radio_paused{false};
+std::atomic_bool setup_cancelled{false};
+ble_remote_radio_admit_t radio_admit=nullptr;
+ble_remote_radio_done_t radio_done=nullptr;
+void *radio_context=nullptr;
+std::atomic_bool radio_owned{false};
+
+class RadioAdmission {
+public:
+    explicit RadioAdmission(uint32_t seconds) : accepted(!radio_admit||radio_admit(seconds,radio_context)) {}
+    ~RadioAdmission(){if(accepted&&!committed&&radio_done)radio_done(radio_context);}
+    void commit(){committed=true;radio_owned.store(true);}
+    bool accepted;
+private: bool committed=false;
+};
 
 
 class Guard {
@@ -142,7 +164,7 @@ esp_err_t persist_peer(const ble_addr_t *address) {
 }
 
 void on_key(uint16_t page, uint16_t usage, bool pressed, void *) {
-    if (key_callback) key_callback(page, usage, pressed, key_context);
+    if (key_callback && (controller_enabled.load() || !pressed)) key_callback(page, usage, pressed, key_context);
 }
 
 // Each procedure has a generation token. Delayed callbacks after timeout or
@@ -248,7 +270,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
             if (!event->connect.status) ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             break;
         }
-        if (forgetting) {
+        if (!controller_enabled.load() || forgetting || (setup_cancelled.load()&&!have_saved)) {
             if (!event->connect.status) ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             finish_procedure(BLE_HS_EAPP);
             break;
@@ -307,7 +329,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
         next_reconnect = esp_timer_get_time() + (state.last_error ? 5000000 : 0);
         break;
     case BLE_GAP_EVENT_NOTIFY_RX: {
-        if (event->notify_rx.conn_handle != connection_handle || !encrypted || forgetting) break;
+        if (!controller_enabled.load() || event->notify_rx.conn_handle != connection_handle || !encrypted || forgetting) break;
         const size_t length = OS_MBUF_PKTLEN(event->notify_rx.om);
         for (const auto &characteristic : battery_characteristics) {
             if (event->notify_rx.attr_handle != characteristic.handle || length > 7) continue;
@@ -602,7 +624,7 @@ void launch_scan(uint32_t seconds, bool clear_error) {
 
 void start_scan(uint32_t seconds, bool clear_error = true) {
     Guard lock;
-    if (forgetting || state.unpairing) return;
+    if (!controller_enabled.load() || radio_paused.load() || setup_cancelled.load() || forgetting || state.unpairing) return;
     cancel_reconnect();
     if (connection_handle != BLE_HS_CONN_HANDLE_NONE && !descriptors_ready)
         ble_gap_terminate(connection_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -622,7 +644,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
     {
         Guard lock;
         state.waiting = false;
-        if (forgetting || (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE)) {
+        if (!controller_enabled.load() || setup_cancelled.load() || forgetting || (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE)) {
             state.connecting = false;
             return;
         }
@@ -639,7 +661,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         ble_gap_conn_desc desc{};
         err = ble_gap_conn_find(connection_handle, &desc);
         if (!err && (!desc.sec_state.bonded || !desc.sec_state.encrypted)) err = BLE_HS_EAUTHEN;
-        if (!err && forgetting) err = BLE_HS_EAPP;
+        if (!err && (!controller_enabled.load()||setup_cancelled.load()||forgetting)) err = BLE_HS_EAPP;
         if (!err) err = persist_peer(&desc.peer_id_addr);
         if (!err) {
             saved = desc.peer_id_addr;
@@ -675,11 +697,11 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
 }
 
 void open_peer(const ble_addr_t &address) {
-    ble_gap_disc_cancel();
     ble::SiriGeneration advertised = ble::SiriGeneration::None;
     {
         Guard lock;
-        if (state.unpairing) return;
+        if (!controller_enabled.load()||setup_cancelled.load()||radio_paused.load()||state.unpairing) return;
+        ble_gap_disc_cancel();
         pending_scan_seconds = 0;
         selected = address;
         have_selected = true;
@@ -707,7 +729,7 @@ void open_peer(const ble_addr_t &address) {
 
 void start_reconnect() {
     Guard lock;
-    if (forgetting || state.unpairing || !have_saved || !state.ready || state.scanning ||
+    if (!controller_enabled.load() || radio_paused.load() || forgetting || state.unpairing || !have_saved || !state.ready || state.scanning ||
         state.connecting || state.pairing || reconnect_pending || reconnect_cancel_pending ||
         connection_handle != BLE_HS_CONN_HANDLE_NONE || ble_gap_conn_active()) return;
     selected = saved;
@@ -764,13 +786,19 @@ void forget_peer() {
     ble_gap_disc_cancel();
     if (!cancelling_background) ble_gap_conn_cancel();
     if (handle != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
+    int bond_error = 0;
     if (delete_bond) {
-        const int err = ble_store_util_delete_peer(&old);
-        if (err && err != BLE_HS_ENOENT) ESP_LOGW(kTag, "Removing remote bond: %d", err);
+        bond_error = ble_store_util_delete_peer(&old);
+        if (bond_error == BLE_HS_ENOENT) bond_error = 0;
+        if (bond_error) ESP_LOGW(kTag, "Removing remote bond: %d", bond_error);
     }
     const esp_err_t err = persist_peer(nullptr);
     Guard lock;
-    state.last_error = err;
+    state.last_error = bond_error ? bond_error : err;
+    bond_cleanup_failed = bond_error != 0 || err != ESP_OK;
+    // Keep the exact failed cleanup target available for an explicit retry.
+    // Do not admit a new pairing over an unresolved bond-removal failure.
+    if (bond_cleanup_failed && delete_bond) { selected = old; have_selected = true; }
     state.peer = {};
     // The disconnect callback can arrive before or after storage cleanup.
     // Keep the operation busy until both have completed.
@@ -787,18 +815,21 @@ void worker(void *) {
             case CommandType::Pair: open_peer(command.address); break;
             case CommandType::AutoPair: {
                 Guard lock;
-                if (forgetting) { state.pairing = false; break; }
+                if (!controller_enabled.load()||radio_paused.load()||setup_cancelled.load()||forgetting) { state.pairing = false; break; }
                 pairing_deadline = esp_timer_get_time() + command.seconds * 1000000LL;
                 start_scan(command.seconds);
                 break;
             }
-            case CommandType::Unpair: forget_peer(); break;
+            case CommandType::Unpair:
+                if (controller_enabled.load()) forget_peer();
+                break;
             case CommandType::Wake: break;
             }
         }
         {
             Guard lock;
             state.ready = ble_hs_synced();
+            if(radio_paused.load() && reconnect_pending)cancel_reconnect();
             // A host reset ends the controller procedure. Let Matter resync
             // its shared host, then start listening again with a fresh token.
             if (reconnect_pending && !state.ready) cancel_reconnect();
@@ -813,7 +844,7 @@ void worker(void *) {
             }
             if (state.unpairing && !unpair_cleanup_pending &&
                 connection_handle == BLE_HS_CONN_HANDLE_NONE && !ble_gap_conn_active()) state.unpairing = false;
-            if (pending_scan_seconds && state.ready && !forgetting && !ble_gap_conn_active()) {
+            if (controller_enabled.load() && pending_scan_seconds && state.ready && !forgetting && !radio_paused.load() && !ble_gap_conn_active()) {
                 const uint32_t seconds = pending_scan_seconds;
                 pending_scan_seconds = 0;
                 launch_scan(seconds, pending_scan_clear_error);
@@ -826,7 +857,7 @@ void worker(void *) {
         uint32_t remaining_seconds = 0;
         {
             Guard lock;
-            if (state.pairing && !state.connecting) {
+            if (controller_enabled.load() && state.pairing && !state.connecting) {
                 const int64_t remaining = pairing_deadline - esp_timer_get_time();
                 if (state.bonded || forgetting || remaining <= 0) {
                     state.pairing = false;
@@ -872,13 +903,16 @@ void worker(void *) {
         bool reconnect_now = false;
         {
             Guard lock;
-            if (state.ready && have_saved && connection_handle == BLE_HS_CONN_HANDLE_NONE &&
+            if (controller_enabled.load() && state.ready && have_saved && connection_handle == BLE_HS_CONN_HANDLE_NONE &&
                 !reconnect_pending && !ble_gap_conn_active() && !state.connecting && !state.scanning &&
                 !state.pairing && !forgetting && esp_timer_get_time() >= next_reconnect) {
                 reconnect_now = true;
             }
         }
         if (reconnect_now) start_reconnect();
+        bool setup_done=false;
+        {Guard lock;setup_done=!state.scanning&&!state.connecting&&!state.pairing&&!pending_scan_seconds;}
+        if(setup_done&&radio_owned.exchange(false)&&radio_done)radio_done(radio_context);
         // Read-only characteristics (or failed subscriptions) still get refreshed.
         std::vector<BatteryCharacteristic> battery_reads;
         {
@@ -932,24 +966,28 @@ extern "C" esp_err_t ble_remote_start(ble_remote_key_callback_t callback, void *
 }
 
 extern "C" esp_err_t ble_remote_scan(uint32_t seconds) {
-    if (!commands) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || !commands) return ESP_ERR_INVALID_STATE;
     if (!seconds || seconds > 60) return ESP_ERR_INVALID_ARG;
+    RadioAdmission admission(seconds);if(!admission.accepted)return ESP_ERR_INVALID_STATE;
     Guard lock;
-    if (!state.ready || state.connecting || state.pairing || state.unpairing) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || !state.ready || state.connecting || state.pairing || state.unpairing) return ESP_ERR_INVALID_STATE;
     candidates.clear();
     Command command{CommandType::Scan, seconds, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     forgetting = false; // A new operation may start after Unpair has completed.
     state.scanning = true;
+    setup_cancelled.store(false);
+    admission.commit();
     return ESP_OK;
 }
 
 extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
-    if (!commands) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || !commands) return ESP_ERR_INVALID_STATE;
     if (!seconds || seconds > 60) return ESP_ERR_INVALID_ARG;
+    RadioAdmission admission(seconds);if(!admission.accepted)return ESP_ERR_INVALID_STATE;
     Guard lock;
-    if (!state.ready || state.connected || state.connecting || state.scanning ||
-        state.pairing || state.unpairing || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
+    if (!controller_enabled.load() || !state.ready || state.connected || state.connecting || state.scanning ||
+        state.pairing || state.unpairing || bond_cleanup_failed || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
         return ESP_ERR_INVALID_STATE;
     Command command{CommandType::AutoPair, seconds, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
@@ -957,6 +995,8 @@ extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
     forgetting = false;
     state.pairing = state.scanning = true;
     state.last_error = 0;
+    setup_cancelled.store(false);
+    admission.commit();
     return ESP_OK;
 }
 
@@ -995,10 +1035,11 @@ extern "C" size_t ble_remote_scan_results(ble_remote_peer_t *peers, size_t capac
 }
 
 extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_type) {
-    if (!commands) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || !commands) return ESP_ERR_INVALID_STATE;
     if (!address || address_type > 3) return ESP_ERR_INVALID_ARG;
+    RadioAdmission admission(60);if(!admission.accepted)return ESP_ERR_INVALID_STATE;
     Guard lock;
-    if (!state.ready || state.connected || state.connecting || state.pairing || state.unpairing || have_saved) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || !state.ready || state.connected || state.connecting || state.pairing || state.unpairing || bond_cleanup_failed || have_saved) return ESP_ERR_INVALID_STATE;
     const ble_addr_t peer = to_nimble(address, address_type);
     const bool found = std::any_of(candidates.begin(), candidates.end(), [&](const Candidate &candidate) {
         return candidate.supported() && same_address(peer, to_nimble(candidate.peer.address, candidate.peer.address_type));
@@ -1007,17 +1048,20 @@ extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_t
     Command command{CommandType::Pair, 0, peer};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     state.connecting = true;
+    setup_cancelled.store(false);
+    admission.commit();
     return ESP_OK;
 }
 
 extern "C" esp_err_t ble_remote_unpair(void) {
-    if (!commands) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || !commands) return ESP_ERR_INVALID_STATE;
     Guard lock;
-    if (state.unpairing) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load() || state.unpairing) return ESP_ERR_INVALID_STATE;
     Command command{CommandType::Unpair, 0, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     state.unpairing = unpair_cleanup_pending = true;
-    forgetting = true; // Stop input immediately while the worker closes the link.
+    state.last_error = 0;
+    forgetting = true;
     return ESP_OK;
 }
 
@@ -1041,4 +1085,73 @@ extern "C" void ble_remote_get_status(ble_remote_status_t *out) {
     const auto battery = ble::reported_battery(out->bonded, out->connected, {out->battery_percent, out->charging});
     out->battery_percent = battery.percent;
     out->charging = battery.charging;
+}
+
+extern "C" void ble_remote_set_radio_hooks(ble_remote_radio_admit_t admit,ble_remote_radio_done_t done,void *context) {
+    radio_admit=admit;radio_done=done;radio_context=context;
+}
+extern "C" esp_err_t ble_remote_pause_background(bool paused) {
+    if(!mutex){radio_paused.store(paused);return ESP_OK;}
+    Guard lock;
+    if(paused&&(state.scanning||state.pairing||(state.connecting&&!reconnect_pending)))return ESP_ERR_INVALID_STATE;
+    radio_paused.store(paused);
+    if(!paused){setup_cancelled.store(false);return ESP_OK;}
+    cancel_reconnect();
+    return ble_gap_conn_active()?ESP_ERR_TIMEOUT:ESP_OK;
+}
+extern "C" esp_err_t ble_remote_cancel_setup(void) {
+    if(!mutex)return ESP_OK;
+    bool owned=false,waiting=false;
+    {
+        Guard lock;
+        radio_paused.store(true);setup_cancelled.store(true);
+        state.pairing=false;state.scanning=false;pending_scan_seconds=0;
+        ble_gap_disc_cancel();cancel_reconnect();
+        if(!have_saved){
+            if(procedure_pending)finish_procedure(BLE_HS_EAPP);
+            if(ble_gap_conn_active())ble_gap_conn_cancel();
+            const auto handle=connection_handle.load();
+            if(handle!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(handle,BLE_ERR_REM_USER_CONN_TERM);
+            waiting=ble_gap_conn_active()||handle!=BLE_HS_CONN_HANDLE_NONE;
+            if(!waiting)state.connecting=false;
+        }
+        owned=radio_owned.exchange(false);
+    }
+    if(owned&&radio_done)radio_done(radio_context);
+    return waiting?ESP_ERR_TIMEOUT:ESP_OK;
+}
+
+// Revocation is monotonic for this boot. Reclaim/restart must re-evaluate durable
+// membership before enabling a controller; radio release cannot restore input.
+extern "C" esp_err_t ble_remote_set_controller_enabled(bool enabled) {
+    if(enabled)return controller_enabled.load()?ESP_OK:ESP_ERR_INVALID_STATE;
+    controller_enabled.store(false);
+    if(!mutex)return ESP_OK;
+    bool owned=false,waiting=false;
+    {
+        Guard lock;
+        const bool scanning=state.scanning;
+        const bool connecting=state.connecting;
+        controller_cancel_pending=controller_cancel_pending||reconnect_pending||reconnect_cancel_pending||(procedure_pending&&procedure_kind==Procedure::Connect);
+        radio_paused.store(true);setup_cancelled.store(true);
+        pending_scan_seconds=0;state.scanning=state.pairing=false;
+        // Drop queued setup/bond commands, preserving saved identity and bonds.
+        Command discarded{};
+        for(unsigned n=0;n<4;++n)if(xQueueReceive(commands,&discarded,0)!=pdTRUE)break;
+        if(state.unpairing&&unpair_cleanup_pending){state.unpairing=unpair_cleanup_pending=false;forgetting=false;}
+        if(scanning)ble_gap_disc_cancel();
+        cancel_reconnect();
+        if(procedure_pending){finish_procedure(BLE_HS_EAPP);++generation;}
+        if((connecting||controller_cancel_pending)&&ble_gap_conn_active())ble_gap_conn_cancel();
+        if(!ble_gap_conn_active())controller_cancel_pending=false;
+        const auto handle=connection_handle.load();
+        if(handle!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(handle,BLE_ERR_REM_USER_CONN_TERM);
+        if(disconnect_callback)disconnect_callback(disconnect_context);
+        keyboard->clear();
+        waiting=connection_handle!=BLE_HS_CONN_HANDLE_NONE||reconnect_cancel_pending||controller_cancel_pending||(connecting&&ble_gap_conn_active());
+        if(!waiting)state.connected=state.connecting=state.waiting=false;
+        owned=radio_owned.exchange(false);
+    }
+    if(owned&&radio_done)radio_done(radio_context);
+    return waiting?ESP_ERR_TIMEOUT:ESP_OK;
 }

@@ -33,7 +33,8 @@ int64_t now;
 unsigned steps, blocking_waits, cancellations, scans, security_calls, discovery_calls,
     persisted, removed_bonds;
 bool synced = true, storage_peer = true, connecting, scanning, immediate_connect;
-int connect_error, cancel_error, discovery_error;
+int connect_error, cancel_error, discovery_error, bond_delete_error, peer_erase_error;
+unsigned recursive_depth, positive_keys, key_releases;
 uint16_t live_handle = BLE_HS_CONN_HANDLE_NONE;
 ble_gap_conn_desc descriptor{};
 ble_gap_event_fn *scan_callback;
@@ -129,10 +130,10 @@ SemaphoreHandle_t xSemaphoreCreateBinary() {
     return fake::semaphores.back().get();
 }
 BaseType_t xSemaphoreTakeRecursive(SemaphoreHandle_t sem, TickType_t) {
-    assert(sem && sem->recursive); return pdTRUE;
+    assert(sem && sem->recursive); ++fake::recursive_depth; return pdTRUE;
 }
 BaseType_t xSemaphoreGiveRecursive(SemaphoreHandle_t sem) {
-    assert(sem && sem->recursive); return pdTRUE;
+    assert(sem && sem->recursive && fake::recursive_depth); --fake::recursive_depth; return pdTRUE;
 }
 BaseType_t xSemaphoreTake(SemaphoreHandle_t sem, TickType_t ticks) {
     assert(sem && !sem->recursive);
@@ -156,9 +157,9 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t ticks) {
     return pdTRUE;
 }
 BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t ticks) {
-    if (!fake::steps) throw fake::Stopped{};
-    --fake::steps;
-    assert(queue && ticks == 500);
+    assert(queue && (ticks == 500 || ticks == 0));
+    if(ticks){if (!fake::steps) throw fake::Stopped{};--fake::steps;}
+    else if(queue->items.empty())return pdFALSE;
     if (queue->items.empty()) { fake::now += int64_t(ticks) * 1000; return pdFALSE; }
     memcpy(item, queue->items.front().data(), queue->item_size);
     queue->items.pop_front();
@@ -180,7 +181,10 @@ esp_err_t nvs_set_blob(nvs_handle_t, const char *, const void *data, size_t size
     assert(size == sizeof(fake::peer) && !memcmp(data, &fake::peer, size));
     fake::storage_peer = true; ++fake::persisted; return ESP_OK;
 }
-esp_err_t nvs_erase_key(nvs_handle_t, const char *) { fake::storage_peer = false; return ESP_OK; }
+esp_err_t nvs_erase_key(nvs_handle_t, const char *) {
+    if (fake::peer_erase_error) return fake::peer_erase_error;
+    fake::storage_peer = false; return ESP_OK;
+}
 esp_err_t nvs_commit(nvs_handle_t) { return ESP_OK; }
 
 extern "C" {
@@ -239,7 +243,7 @@ int ble_gap_security_initiate(uint16_t handle) {
     fake::connects.back().callback(&event, fake::connects.back().token);
     return 0;
 }
-int ble_store_util_delete_peer(const ble_addr_t *) { ++fake::removed_bonds; return 0; }
+int ble_store_util_delete_peer(const ble_addr_t *) { ++fake::removed_bonds; return fake::bond_delete_error; }
 int ble_att_set_preferred_mtu(uint16_t) { return 0; }
 int ble_gattc_disc_all_svcs(uint16_t handle, ble_gatt_disc_svc_fn *callback, void *token) {
     ++fake::discovery_calls;
@@ -292,9 +296,37 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     const std::string scenario = argv[1];
     if (scenario == "pairing") fake::storage_peer = false;
+    if(scenario=="actuator-startup")assert(ble_remote_set_controller_enabled(false)==ESP_OK);
     assert(ble_remote_start(nullptr, nullptr) == ESP_OK);
 
-    if (scenario == "absence") {
+    if(scenario=="actuator-startup"){
+        fake::run_steps(20);assert(fake::connects.empty()&&!fake::scans&&fake::storage_peer&&fake::status().bonded);
+        assert(ble_remote_scan(5)==ESP_ERR_INVALID_STATE&&ble_remote_start_pairing(5)==ESP_ERR_INVALID_STATE&&ble_remote_unpair()==ESP_ERR_INVALID_STATE);
+        const uint8_t address[6]={6,5,4,3,2,1};assert(ble_remote_pair(address,0)==ESP_ERR_INVALID_STATE);
+        assert(ble_remote_pause_background(false)==ESP_OK);fake::run_steps(10);assert(fake::connects.empty()&&!fake::removed_bonds);
+        assert(ble_remote_set_controller_enabled(true)==ESP_ERR_INVALID_STATE);
+    }else if(scenario=="actuator-input"){
+        key_callback=[](uint16_t,uint16_t,bool pressed,void*){if(pressed)++fake::positive_keys;else++fake::key_releases;};
+        on_key(7,4,true,nullptr);assert(fake::positive_keys==1);
+        assert(ble_remote_set_controller_enabled(false)==ESP_OK);on_key(7,4,true,nullptr);on_key(7,4,false,nullptr);
+        assert(fake::positive_keys==1&&fake::key_releases==1);
+        // Even an already-popped Pair command cannot cancel another GAP owner.
+        const auto cancellations=fake::cancellations;open_peer(fake::peer);assert(fake::cancellations==cancellations&&fake::connects.empty());
+    }else if(scenario=="actuator-reconnect"){
+        fake::run_steps(1);const auto attempt=fake::connects.back();assert(fake::status().waiting);
+        const auto result=ble_remote_set_controller_enabled(false);assert(result==ESP_OK||result==ESP_ERR_TIMEOUT);
+        fake::complete_connect(0,attempt);assert(fake::terminations.size()==1);fake::run_steps(5);
+        assert(!fake::security_calls&&!fake::discovery_calls&&!fake::removed_bonds&&fake::storage_peer&&fake::status().bonded);
+        ble_remote_pause_background(false);fake::run_steps(20);assert(fake::connects.size()==1);
+    }else if(scenario=="actuator-connected"){
+        fake::run_steps(1);fake::complete_connect();fake::run_steps(1);assert(fake::status().connected);
+        assert(ble_remote_set_controller_enabled(false)==ESP_ERR_TIMEOUT);assert(fake::terminations.size()==1);
+        fake::disconnect();assert(ble_remote_set_controller_enabled(false)==ESP_OK);ble_remote_pause_background(false);fake::run_steps(20);
+        assert(fake::connects.size()==1&&!fake::removed_bonds&&fake::storage_peer&&fake::status().bonded&&!fake::status().connected);
+    }else if(scenario=="actuator-queued-unpair"){
+        assert(ble_remote_unpair()==ESP_OK);assert(ble_remote_set_controller_enabled(false)==ESP_OK);fake::run_steps(10);
+        assert(!fake::removed_bonds&&fake::storage_peer&&fake::status().bonded&&fake::connects.empty());
+    }else if (scenario == "absence") {
         fake::run_steps(1);
         const auto status = fake::status();
         assert(status.waiting && status.bonded && !status.connecting && !status.connected && !status.last_error);
@@ -323,6 +355,23 @@ int main(int argc, char **argv) {
         fake::disconnect();
         fake::run_steps(1);
         assert(fake::connects.size() == 2 && fake::status().waiting && !fake::status().last_error);
+    } else if (scenario == "unpair-delete-error") {
+        fake::run_steps(1);fake::bond_delete_error=77;
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::status().last_error==77);
+        fake::complete_connect(BLE_HS_EPREEMPTED);fake::run_steps(1);
+        assert(!fake::status().unpairing&&!fake::status().bonded&&!fake::storage_peer&&fake::status().last_error==77);
+        assert(fake::removed_bonds==1&&ble_remote_start_pairing(20)==ESP_ERR_INVALID_STATE);
+        fake::bond_delete_error=0;assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::removed_bonds==2&&!fake::status().last_error&&!fake::status().unpairing&&!fake::status().bonded);
+    } else if (scenario == "unpair-storage-error") {
+        fake::peer_erase_error=ESP_ERR_TIMEOUT;
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(!fake::status().unpairing&&fake::status().last_error==ESP_ERR_TIMEOUT&&fake::storage_peer);
+        assert(fake::removed_bonds==1&&ble_remote_start_pairing(20)==ESP_ERR_INVALID_STATE);
+        fake::peer_erase_error=0;fake::bond_delete_error=BLE_HS_ENOENT;
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::removed_bonds==2&&!fake::storage_peer&&!fake::status().last_error);
     } else if (scenario == "unpair") {
         fake::run_steps(1);
         const auto stale = fake::connects.back();

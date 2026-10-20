@@ -29,6 +29,7 @@
     },
     "execution_lease_id": "600000000000000000000000000001f4",
     "operation": "announce_active_source",
-    "arguments": {}
+    "arguments": {},
+    "command_sequence": "1"
   }
 }

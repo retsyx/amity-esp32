@@ -1,0 +1,153 @@
+# Development mappings are compiled independently of portable system configuration.
+menu "Amity board profile"
+
+choice AMITY_BOARD_PROFILE
+    prompt "CEC carrier profile"
+    default AMITY_BOARD_LEGACY_1T
+
+config AMITY_BOARD_LEGACY_1T
+    bool "Existing Amity board2 (one HDMI adapter, GPIO1/GPIO2)"
+
+config AMITY_BOARD_DEVELOPMENT_5T
+    bool "Development carrier (up to five optional HDMI adapters)"
+    help
+        Experimental GPIO mapping for a custom isolated-CEC carrier. Every
+        connector retains its index 0..4. Unassigned paired GPIOs disable that
+        connector. No cable or module presence is inferred from CEC silence.
+        This selection does not qualify electrical loading or ten-line timing.
+endchoice
+
+if AMITY_BOARD_DEVELOPMENT_5T
+config AMITY_BOARD_RESET_GPIO
+    int "Optional active-low setup/reset button GPIO (-1 disables)"
+    range -1 48
+    default -1
+
+menu "HDMI adapter 1 (stable connector 0)"
+config AMITY_TENTACLE0_FRONT_GPIO
+    int "Front isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE0_BACK_GPIO
+    int "Back isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE0_PRESENCE_GPIO
+    int "Optional module presence input GPIO (-1 means unknown)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE0_PRESENT_HIGH
+    bool "Presence input is high when the module is attached"
+    default y
+config AMITY_TENTACLE0_PRESENCE_PULLUP
+    bool "Enable presence input pull-up (only if required by wiring)"
+    default n
+config AMITY_TENTACLE0_PRESENCE_PULLDOWN
+    bool "Enable presence input pull-down (only if required by wiring)"
+    depends on !AMITY_TENTACLE0_PRESENCE_PULLUP
+    default n
+endmenu
+
+menu "HDMI adapter 2 (stable connector 1)"
+config AMITY_TENTACLE1_FRONT_GPIO
+    int "Front isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE1_BACK_GPIO
+    int "Back isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE1_PRESENCE_GPIO
+    int "Optional module presence input GPIO (-1 means unknown)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE1_PRESENT_HIGH
+    bool "Presence input is high when the module is attached"
+    default y
+config AMITY_TENTACLE1_PRESENCE_PULLUP
+    bool "Enable presence input pull-up (only if required by wiring)"
+    default n
+config AMITY_TENTACLE1_PRESENCE_PULLDOWN
+    bool "Enable presence input pull-down (only if required by wiring)"
+    depends on !AMITY_TENTACLE1_PRESENCE_PULLUP
+    default n
+endmenu
+
+menu "HDMI adapter 3 (stable connector 2)"
+config AMITY_TENTACLE2_FRONT_GPIO
+    int "Front isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE2_BACK_GPIO
+    int "Back isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE2_PRESENCE_GPIO
+    int "Optional module presence input GPIO (-1 means unknown)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE2_PRESENT_HIGH
+    bool "Presence input is high when the module is attached"
+    default y
+config AMITY_TENTACLE2_PRESENCE_PULLUP
+    bool "Enable presence input pull-up (only if required by wiring)"
+    default n
+config AMITY_TENTACLE2_PRESENCE_PULLDOWN
+    bool "Enable presence input pull-down (only if required by wiring)"
+    depends on !AMITY_TENTACLE2_PRESENCE_PULLUP
+    default n
+endmenu
+
+menu "HDMI adapter 4 (stable connector 3)"
+config AMITY_TENTACLE3_FRONT_GPIO
+    int "Front isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE3_BACK_GPIO
+    int "Back isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE3_PRESENCE_GPIO
+    int "Optional module presence input GPIO (-1 means unknown)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE3_PRESENT_HIGH
+    bool "Presence input is high when the module is attached"
+    default y
+config AMITY_TENTACLE3_PRESENCE_PULLUP
+    bool "Enable presence input pull-up (only if required by wiring)"
+    default n
+config AMITY_TENTACLE3_PRESENCE_PULLDOWN
+    bool "Enable presence input pull-down (only if required by wiring)"
+    depends on !AMITY_TENTACLE3_PRESENCE_PULLUP
+    default n
+endmenu
+
+menu "HDMI adapter 5 (stable connector 4)"
+config AMITY_TENTACLE4_FRONT_GPIO
+    int "Front isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE4_BACK_GPIO
+    int "Back isolated CEC GPIO (-1 disables connector)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE4_PRESENCE_GPIO
+    int "Optional module presence input GPIO (-1 means unknown)"
+    range -1 48
+    default -1
+config AMITY_TENTACLE4_PRESENT_HIGH
+    bool "Presence input is high when the module is attached"
+    default y
+config AMITY_TENTACLE4_PRESENCE_PULLUP
+    bool "Enable presence input pull-up (only if required by wiring)"
+    default n
+config AMITY_TENTACLE4_PRESENCE_PULLDOWN
+    bool "Enable presence input pull-down (only if required by wiring)"
+    depends on !AMITY_TENTACLE4_PRESENCE_PULLUP
+    default n
+endmenu
+
+endif
+endmenu
+

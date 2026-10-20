@@ -1,3 +1,5 @@
+> 20 October 2026 scope amendment: the original first-setup Amity alone owns the sole remote, UI/admin and home integrations. Added devices are UI-less actuators, with no member input gateway or coordinator promotion/handover. Preserve the original activity UI with only canonical Amity-hostname context and one Amity management tab. [Normative contract](../../amity-octopus-consortium/21-original-controller-policy.md).
+
 The BLE remote component shares the NimBLE host initialized by Matter. Start it
 after Matter startup; keep `CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n`, central,
 observer, peripheral, GATT client, and persistent bonding enabled. It never
