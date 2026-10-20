@@ -1,0 +1,39 @@
+{
+  "protocol_version": 1,
+  "consortium_id": "10000000000000000000000000000001",
+  "message_id": "60000000000000000000000000000003",
+  "origin_octopus_id": "20000000000000000000000000000001",
+  "origin_boot_id": "30000000000000000000000000000001",
+  "destination_octopus_id": "20000000000000000000000000000002",
+  "destination_boot_id": "30000000000000000000000000000002",
+  "coordinator_epoch": "1",
+  "config_revision": "7",
+  "kind": "operation",
+  "ttl_ms": 500,
+  "payload": {
+    "command_id": "60000000000000000000000000000067",
+    "plan_id": "6000000000000000000000000000012c",
+    "session_id": "60000000000000000000000000000190",
+    "route_generation": "9",
+    "component_id": "70000000000000000000000000000004",
+    "binding_id": "5000000000000000000000000000000c",
+    "binding_revision": "1",
+    "domain_id": "40000000000000000000000000000005",
+    "domain_revision": "1",
+    "target": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 0,
+      "side": "back",
+      "logical_address": 4
+    },
+    "execution_lease_id": "600000000000000000000000000001f5",
+    "operation": "key_press",
+    "arguments": {
+      "key_code": 1,
+      "hold_token": "60000000000000000000000000000258",
+      "hold_lease_ms": 750,
+      "repeat": false
+    }
+  }
+}

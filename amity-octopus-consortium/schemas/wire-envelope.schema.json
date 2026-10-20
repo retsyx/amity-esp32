@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amity.invalid/design/v0.1/wire-envelope.schema.json",
+  "title": "Proposed consortium protocol v1 envelope",
+  "$comment": "All common fields and the operation payload are closed/validated here. Other kinds require their owner-document payload schemas before implementation. This is not a complete protocol schema.",
+  "type": "object",
+  "properties": {
+    "protocol_version": {
+      "const": 1
+    },
+    "consortium_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "message_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "origin_octopus_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "origin_boot_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "destination_octopus_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "destination_boot_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "coordinator_epoch": {
+      "$ref": "core-types.schema.json#/$defs/UInt64String"
+    },
+    "config_revision": {
+      "$ref": "core-types.schema.json#/$defs/UInt64String"
+    },
+    "kind": {
+      "enum": [
+        "heartbeat",
+        "snapshot_request",
+        "snapshot_chunk",
+        "observation",
+        "binding_update",
+        "binding_result",
+        "ingress_lease",
+        "intent",
+        "plan_prepare",
+        "plan_barrier",
+        "plan_abort",
+        "plan_result",
+        "execution_lease",
+        "operation",
+        "operation_result",
+        "operation_query",
+        "hold_renew",
+        "hold_release",
+        "hold_result",
+        "scan_request",
+        "scan_event",
+        "config_prepare",
+        "config_activate",
+        "config_result",
+        "membership_event",
+        "membership_result",
+        "enrollment_control",
+        "enrollment_relay",
+        "error"
+      ]
+    },
+    "ttl_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "consortium_id",
+    "message_id",
+    "origin_octopus_id",
+    "origin_boot_id",
+    "destination_octopus_id",
+    "destination_boot_id",
+    "coordinator_epoch",
+    "config_revision",
+    "kind",
+    "ttl_ms",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Operation": {
+      "type": "object",
+      "properties": {
+        "command_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "plan_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "session_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "component_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "binding_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "domain_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "execution_lease_id": {
+          "$ref": "core-types.schema.json#/$defs/Id128"
+        },
+        "route_generation": {
+          "$ref": "core-types.schema.json#/$defs/UInt64String"
+        },
+        "binding_revision": {
+          "$ref": "core-types.schema.json#/$defs/UInt64String"
+        },
+        "domain_revision": {
+          "$ref": "core-types.schema.json#/$defs/UInt64String"
+        },
+        "target": {
+          "$ref": "core-types.schema.json#/$defs/FullyQualifiedCecAddress"
+        },
+        "operation": {
+          "enum": [
+            "ensure_power",
+            "select_route",
+            "announce_active_source",
+            "key_press",
+            "query_state"
+          ]
+        },
+        "arguments": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "command_id",
+        "plan_id",
+        "session_id",
+        "component_id",
+        "binding_id",
+        "domain_id",
+        "execution_lease_id",
+        "route_generation",
+        "binding_revision",
+        "domain_revision",
+        "target",
+        "operation",
+        "arguments"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "ensure_power"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "on"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "select_route"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "route_id": {
+                    "$ref": "core-types.schema.json#/$defs/Id128"
+                  }
+                },
+                "required": [
+                  "route_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "announce_active_source"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "key_press"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "key_code": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "hold_token": {
+                    "$ref": "core-types.schema.json#/$defs/Id128"
+                  },
+                  "hold_lease_ms": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "repeat": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "key_code",
+                  "hold_token",
+                  "hold_lease_ms",
+                  "repeat"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "query_state"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "enum": [
+                      "power",
+                      "audio"
+                    ]
+                  }
+                },
+                "required": [
+                  "field"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "operation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/Operation"
+          }
+        }
+      }
+    }
+  ]
+}

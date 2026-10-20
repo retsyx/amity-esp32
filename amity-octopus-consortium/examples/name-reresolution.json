@@ -1,0 +1,148 @@
+{
+  "description": "Synthetic LA-only re-resolution: the same configured Apple TV moves from LA4 to LA8. A different OSD name occupies the former address. This fixture specifies expectations, not a firmware test.",
+  "configured_component": {
+    "component_id": "70000000000000000000000000000001",
+    "label": "Rack streamer",
+    "kind": "source",
+    "qualified_names": [
+      {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "Apple TV"
+      }
+    ]
+  },
+  "activity_component_id": "70000000000000000000000000000001",
+  "before": {
+    "config_revision": "7",
+    "binding": {
+      "binding_id": "50000000000000000000000000000001",
+      "component_id": "70000000000000000000000000000001",
+      "capability": "power",
+      "binding_kind": "native_appliance",
+      "endpoint": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "logical_address": 4
+      },
+      "owner_octopus_id": "20000000000000000000000000000001",
+      "domain_id": "40000000000000000000000000000004",
+      "domain_revision": "1",
+      "binding_revision": "1",
+      "role": "tv_controller",
+      "physical_address_evidence_ref": "b0000000000000000000000000000001",
+      "status": "verified",
+      "device_name": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "Apple TV"
+      }
+    }
+  },
+  "after": {
+    "config_revision": "7",
+    "binding": {
+      "binding_id": "50000000000000000000000000000001",
+      "component_id": "70000000000000000000000000000001",
+      "capability": "power",
+      "binding_kind": "native_appliance",
+      "endpoint": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "logical_address": 8
+      },
+      "owner_octopus_id": "20000000000000000000000000000001",
+      "domain_id": "40000000000000000000000000000004",
+      "domain_revision": "1",
+      "binding_revision": "2",
+      "role": "tv_controller",
+      "physical_address_evidence_ref": "b0000000000000000000000000000001",
+      "status": "verified",
+      "device_name": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "Apple TV"
+      }
+    }
+  },
+  "fresh_observations": [
+    {
+      "endpoint": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "logical_address": 8
+      },
+      "osd_name": "Apple TV",
+      "kind": "native_appliance"
+    },
+    {
+      "endpoint": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "logical_address": 4
+      },
+      "osd_name": "Game Console",
+      "kind": "native_appliance"
+    }
+  ],
+  "expected_policy": {
+    "user_confirmation_required": false,
+    "activity_edit_required": false,
+    "select_or_resume_required_for_la_change_alone": false,
+    "coordinator_actuator_binding_sync_required": true,
+    "all_derived_capability_bindings_updated_together": true,
+    "old_binding_work_rejected": true,
+    "old_held_input_retargeted": false,
+    "discovery_emits_power_or_routing": false
+  },
+  "queued_operation_before_change": {
+    "protocol_version": 1,
+    "consortium_id": "10000000000000000000000000000001",
+    "message_id": "60000000000000000000000000000001",
+    "origin_octopus_id": "20000000000000000000000000000001",
+    "origin_boot_id": "30000000000000000000000000000001",
+    "destination_octopus_id": "20000000000000000000000000000001",
+    "destination_boot_id": "30000000000000000000000000000001",
+    "coordinator_epoch": "1",
+    "config_revision": "7",
+    "kind": "operation",
+    "ttl_ms": 1000,
+    "payload": {
+      "command_id": "60000000000000000000000000000065",
+      "plan_id": "6000000000000000000000000000012c",
+      "session_id": "60000000000000000000000000000190",
+      "route_generation": "9",
+      "component_id": "70000000000000000000000000000001",
+      "binding_id": "50000000000000000000000000000001",
+      "binding_revision": "1",
+      "domain_id": "40000000000000000000000000000004",
+      "domain_revision": "1",
+      "target": {
+        "consortium_id": "10000000000000000000000000000001",
+        "octopus_id": "20000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "logical_address": 4
+      },
+      "execution_lease_id": "600000000000000000000000000001f4",
+      "operation": "ensure_power",
+      "arguments": {
+        "on": true
+      }
+    }
+  }
+}

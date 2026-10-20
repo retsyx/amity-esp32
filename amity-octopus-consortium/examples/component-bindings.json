@@ -1,0 +1,296 @@
+[
+  {
+    "binding_id": "50000000000000000000000000000001",
+    "component_id": "70000000000000000000000000000001",
+    "capability": "power",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 0,
+      "side": "back",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000004",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "tv_controller",
+    "physical_address_evidence_ref": "b0000000000000000000000000000001",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 0,
+      "side": "back",
+      "osd_name": "Apple TV"
+    }
+  },
+  {
+    "binding_id": "50000000000000000000000000000002",
+    "component_id": "70000000000000000000000000000002",
+    "capability": "routing",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 1,
+      "side": "back",
+      "logical_address": 5
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000001",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "tv_controller",
+    "physical_address_evidence_ref": "b0000000000000000000000000000002",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 1,
+      "side": "back",
+      "osd_name": "Receiver"
+    }
+  },
+  {
+    "binding_id": "50000000000000000000000000000003",
+    "component_id": "70000000000000000000000000000003",
+    "capability": "power",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 1,
+      "side": "front",
+      "logical_address": 0
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000002",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b0000000000000000000000000000003",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 1,
+      "side": "front",
+      "osd_name": "TV"
+    }
+  },
+  {
+    "binding_id": "50000000000000000000000000000004",
+    "component_id": "70000000000000000000000000000004",
+    "capability": "power",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 0,
+      "side": "back",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000002",
+    "domain_id": "40000000000000000000000000000005",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "tv_controller",
+    "physical_address_evidence_ref": "b0000000000000000000000000000004",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 0,
+      "side": "back",
+      "osd_name": "PlayStation 5"
+    }
+  },
+  {
+    "binding_id": "50000000000000000000000000000005",
+    "component_id": "70000000000000000000000000000005",
+    "capability": "power",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 2,
+      "side": "front",
+      "logical_address": 0
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000003",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b0000000000000000000000000000005",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 2,
+      "side": "front",
+      "osd_name": "Projector"
+    }
+  },
+  {
+    "binding_id": "50000000000000000000000000000006",
+    "component_id": "70000000000000000000000000000006",
+    "capability": "power",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 1,
+      "side": "back",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000002",
+    "domain_id": "40000000000000000000000000000006",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "tv_controller",
+    "physical_address_evidence_ref": "b0000000000000000000000000000006",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 1,
+      "side": "back",
+      "osd_name": "Apple TV"
+    }
+  },
+  {
+    "binding_id": "50000000000000000000000000000007",
+    "component_id": "70000000000000000000000000000001",
+    "capability": "proxy_activation",
+    "binding_kind": "proxy_representation",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 0,
+      "side": "front",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000001",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b0000000000000000000000000000007",
+    "status": "verified",
+    "proxy_identity_resource_id": "90000000000000000000000000000007"
+  },
+  {
+    "binding_id": "50000000000000000000000000000008",
+    "component_id": "70000000000000000000000000000001",
+    "capability": "proxy_activation",
+    "binding_kind": "proxy_representation",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 1,
+      "side": "front",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000002",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b0000000000000000000000000000008",
+    "status": "verified",
+    "proxy_identity_resource_id": "90000000000000000000000000000008"
+  },
+  {
+    "binding_id": "50000000000000000000000000000009",
+    "component_id": "70000000000000000000000000000001",
+    "capability": "proxy_activation",
+    "binding_kind": "proxy_representation",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000001",
+      "tentacle_id": 2,
+      "side": "front",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000001",
+    "domain_id": "40000000000000000000000000000003",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b0000000000000000000000000000009",
+    "status": "verified",
+    "proxy_identity_resource_id": "90000000000000000000000000000009"
+  },
+  {
+    "binding_id": "5000000000000000000000000000000a",
+    "component_id": "70000000000000000000000000000004",
+    "capability": "proxy_activation",
+    "binding_kind": "proxy_representation",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 0,
+      "side": "front",
+      "logical_address": 8
+    },
+    "owner_octopus_id": "20000000000000000000000000000002",
+    "domain_id": "40000000000000000000000000000002",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b000000000000000000000000000000a",
+    "status": "verified",
+    "proxy_identity_resource_id": "9000000000000000000000000000000a"
+  },
+  {
+    "binding_id": "5000000000000000000000000000000b",
+    "component_id": "70000000000000000000000000000006",
+    "capability": "proxy_activation",
+    "binding_kind": "proxy_representation",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 1,
+      "side": "front",
+      "logical_address": 8
+    },
+    "owner_octopus_id": "20000000000000000000000000000002",
+    "domain_id": "40000000000000000000000000000003",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "playback_proxy",
+    "physical_address_evidence_ref": "b000000000000000000000000000000b",
+    "status": "verified",
+    "proxy_identity_resource_id": "9000000000000000000000000000000b"
+  },
+  {
+    "binding_id": "5000000000000000000000000000000c",
+    "component_id": "70000000000000000000000000000004",
+    "capability": "navigation",
+    "binding_kind": "native_appliance",
+    "endpoint": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 0,
+      "side": "back",
+      "logical_address": 4
+    },
+    "owner_octopus_id": "20000000000000000000000000000002",
+    "domain_id": "40000000000000000000000000000005",
+    "domain_revision": "1",
+    "binding_revision": "1",
+    "role": "tv_controller",
+    "physical_address_evidence_ref": "b000000000000000000000000000000c",
+    "status": "verified",
+    "device_name": {
+      "consortium_id": "10000000000000000000000000000001",
+      "octopus_id": "20000000000000000000000000000002",
+      "tentacle_id": 0,
+      "side": "back",
+      "osd_name": "PlayStation 5"
+    }
+  }
+]

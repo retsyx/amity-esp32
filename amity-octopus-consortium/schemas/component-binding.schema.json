@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amity.invalid/design/v0.1/component-binding.schema.json",
+  "title": "Proposed component control binding",
+  "$comment": "Runtime binding only. Native bindings require a configured device_name and verified name-to-endpoint resolution; proxy bindings forbid device_name. An unresolved selector without any observed endpoint has no runtime binding. Runtime must check ownership, selector membership/scope, actual domain membership, role, evidence, grants and generations.",
+  "type": "object",
+  "properties": {
+    "binding_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "component_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "capability": {
+      "enum": [
+        "power",
+        "navigation",
+        "audio",
+        "routing",
+        "query_state",
+        "proxy_activation"
+      ]
+    },
+    "binding_kind": {
+      "enum": [
+        "native_appliance",
+        "proxy_representation"
+      ]
+    },
+    "endpoint": {
+      "$ref": "core-types.schema.json#/$defs/FullyQualifiedCecAddress"
+    },
+    "owner_octopus_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "domain_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "domain_revision": {
+      "$ref": "core-types.schema.json#/$defs/UInt64String"
+    },
+    "binding_revision": {
+      "$ref": "core-types.schema.json#/$defs/UInt64String"
+    },
+    "role": {
+      "enum": [
+        "playback_proxy",
+        "tv_controller",
+        "monitor",
+        "disabled"
+      ]
+    },
+    "physical_address_evidence_ref": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "status": {
+      "enum": [
+        "unresolved",
+        "tentative",
+        "verified",
+        "quarantined",
+        "retired"
+      ]
+    },
+    "proxy_identity_resource_id": {
+      "$ref": "core-types.schema.json#/$defs/Id128"
+    },
+    "device_name": {
+      "$ref": "core-types.schema.json#/$defs/QualifiedDeviceName"
+    }
+  },
+  "required": [
+    "binding_id",
+    "component_id",
+    "capability",
+    "binding_kind",
+    "endpoint",
+    "owner_octopus_id",
+    "domain_id",
+    "domain_revision",
+    "binding_revision",
+    "role",
+    "physical_address_evidence_ref",
+    "status"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "binding_kind": {
+            "const": "proxy_representation"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "proxy_identity_resource_id"
+        ],
+        "properties": {
+          "role": {
+            "const": "playback_proxy"
+          },
+          "capability": {
+            "const": "proxy_activation"
+          }
+        },
+        "not": {
+          "required": [
+            "device_name"
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "proxy_identity_resource_id"
+          ]
+        },
+        "required": [
+          "device_name"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,204 @@
+{
+  "package": "Amity Octopus and Consortium",
+  "proposal_version": "0.1",
+  "prepared_date": "2026-10-20",
+  "amendment_date": "2026-10-20",
+  "amendment": "Qualified OSD names with runtime LA resolution; guided setup with equipment/location presentation, minimal questions, resumable choices, and explicit activity testing.",
+  "source_repository": "https://github.com/retsyx/amity-esp32",
+  "source_commit": "d50af8026938797fc0820d0107f4c4e064c2d2bc",
+  "status": "Proposed specification; no firmware, hardware or usability implementation claims.",
+  "hash_algorithm": "SHA-256",
+  "note": "Manifest excludes itself to avoid a recursive hash.",
+  "files": [
+    {
+      "path": "01-octopus-architecture.md",
+      "size_bytes": 14408,
+      "sha256": "22f8b5e2163a38680f233a4e94da94de1583284dcf5be12d7833145ec8bb131a"
+    },
+    {
+      "path": "02-consortium-architecture.md",
+      "size_bytes": 16144,
+      "sha256": "e73bcc6664b55607b89f024a716c41f74c3a51ee6063dbf7dfd22e0ec1681a5c"
+    },
+    {
+      "path": "03-domain-model-and-addressing.md",
+      "size_bytes": 24078,
+      "sha256": "9fa999bc63c5ff32edff9ccce40bf555d1f4e34c0d7916c9ea167a88575db663"
+    },
+    {
+      "path": "04-hardware-and-cec-runtime.md",
+      "size_bytes": 16067,
+      "sha256": "913f4249dde06cd65991b18a793002ffb0ee4eeb25701b30397cc62954188fec"
+    },
+    {
+      "path": "05-discovery-and-topology.md",
+      "size_bytes": 25424,
+      "sha256": "933133fbf52834032d88e7616e2ffddc190cc4ecdd45bdef52c6aacb8ebd1832"
+    },
+    {
+      "path": "06-cec-roles-and-message-policy.md",
+      "size_bytes": 20901,
+      "sha256": "bec0878cc557f4f6d904fa8c13c0cde73b498b360c56e6b94e5f0a04088fb1ab"
+    },
+    {
+      "path": "07-activity-planning-and-execution.md",
+      "size_bytes": 18756,
+      "sha256": "5d999312b8bd9e02ce18a0c16c871567f0c62e39df4ee0419cdc0bfb85c7543f"
+    },
+    {
+      "path": "08-consortium-transport-and-routing.md",
+      "size_bytes": 21791,
+      "sha256": "82934f93b3af1648cc90d9fc7c76f292dff5c1e50b429189060a4e268a01f33f"
+    },
+    {
+      "path": "09-membership-security-and-enrollment.md",
+      "size_bytes": 23804,
+      "sha256": "9d23dc1e28c1d0e9fbeee3ded6a2a77f86716485ffd2c1b5a121c101408b6d29"
+    },
+    {
+      "path": "10-ble-and-matter-coexistence.md",
+      "size_bytes": 20300,
+      "sha256": "de255361e1f3c325ba380298b7ecfb4916affb789336d160a6d484dcb1bf319f"
+    },
+    {
+      "path": "11-config-storage-and-migration.md",
+      "size_bytes": 33476,
+      "sha256": "b53e3c20a6de657874c7695c7af2b8e4221df39f57851ed7f23ebafd8271331c"
+    },
+    {
+      "path": "12-control-surfaces-and-admin.md",
+      "size_bytes": 27498,
+      "sha256": "43ff60ac7638b1e3d314f189b6bf5d8d2f4562084cd14d5ecea4e00a7ce2f043"
+    },
+    {
+      "path": "13-faults-removal-and-recovery.md",
+      "size_bytes": 22301,
+      "sha256": "b273ed2e29ab0b9997badccbda72c1d6686de3b5af4657c5d94d1dd63684e78a"
+    },
+    {
+      "path": "14-ota-and-compatibility.md",
+      "size_bytes": 17603,
+      "sha256": "527b39ab324a4559f278abcea6fb9bb9b5f954bff6cee85b46f1c18707740a6a"
+    },
+    {
+      "path": "15-validation-and-release-gates.md",
+      "size_bytes": 26469,
+      "sha256": "7c5532bdfd4a22bb34f5b8fc0b8ed4ecb2b81d7ede8a012fd06720cf636b9564"
+    },
+    {
+      "path": "16-agent-work-breakdown.md",
+      "size_bytes": 16196,
+      "sha256": "c500c9509418245d8d81a3e912e12e465dbfe69db9e991c34d91ac597922d0fa"
+    },
+    {
+      "path": "17-decisions-and-open-questions.md",
+      "size_bytes": 14342,
+      "sha256": "2fc6a6b3d9b2fcc629293c10bc7d6c68efc1df4b49594d4bbfdc3e1a1ffdfb14"
+    },
+    {
+      "path": "18-requirements-and-traceability.md",
+      "size_bytes": 16381,
+      "sha256": "21facc30dd883b341ecbbc503cb134a9bb3e7e62f69a002c7fc3181329ae8a16"
+    },
+    {
+      "path": "19-source-baseline.md",
+      "size_bytes": 13214,
+      "sha256": "a7ce7d0792a8b0be252f9d91ce1ed5c2042630fda0f272d0b55318887bafd226"
+    },
+    {
+      "path": "20-user-experience-and-guided-setup.md",
+      "size_bytes": 52510,
+      "sha256": "a6f58d2adf8a4656531b5c2c6dc515b355039eb66a58f940115ed14f50c22f45"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 11933,
+      "sha256": "ec56a378d8051f06a80cc9fe33fbff24ac69f2f13288cf0fa7f311542d5436df"
+    },
+    {
+      "path": "VALIDATION.md",
+      "size_bytes": 5936,
+      "sha256": "2f6d9404aba80a7e318ddf15fffff650f31e9e9a0b64f76437ba024a77d476fa"
+    },
+    {
+      "path": "examples/README.md",
+      "size_bytes": 5355,
+      "sha256": "623a043193e8b7a5ebc3d5bcf0f02e21bc2e714c8608890091ce77e20e54bfde"
+    },
+    {
+      "path": "examples/component-bindings.json",
+      "size_bytes": 10334,
+      "sha256": "ae47561640b938e2452473f3e838a49453f467301536bd2a3f6ae43552819ecd"
+    },
+    {
+      "path": "examples/name-reresolution.json",
+      "size_bytes": 5118,
+      "sha256": "e3866013ffd6ecef3be07a969ad7b0b1b6bfba21ab93cccb5c5e5d909aa2f004"
+    },
+    {
+      "path": "examples/operation-activate-proxy.json",
+      "size_bytes": 1235,
+      "sha256": "b160a2d30c32afe2597ee7bebb9284a7cd1283907f8a3c386271846ca4f82468"
+    },
+    {
+      "path": "examples/operation-ensure-power.json",
+      "size_bytes": 1246,
+      "sha256": "21808fd520a6cb42577816b7fe0620fb94d8ed5f60f18865fc0c04850716add8"
+    },
+    {
+      "path": "examples/operation-press-key.json",
+      "size_bytes": 1352,
+      "sha256": "73710959ec458036750ea5fd5fda2d8524b1a803960b103509e11700e40bf637"
+    },
+    {
+      "path": "examples/qualified-addresses.json",
+      "size_bytes": 940,
+      "sha256": "f82d736a97a9d8c19e2e4be88dfc25492c80d17d0f600f7d2d0ec89afed4ecf9"
+    },
+    {
+      "path": "examples/qualified-device-names.json",
+      "size_bytes": 1139,
+      "sha256": "c48e7739a3b30dd9c36a5005959204f535c2b0544dc1849969c5fe9f7c34934a"
+    },
+    {
+      "path": "examples/tv-projector-system.json",
+      "size_bytes": 20961,
+      "sha256": "67601306583da337dd8bf788f75b45428d865dd6608c598bb55df694ba148871"
+    },
+    {
+      "path": "schemas/README.md",
+      "size_bytes": 4347,
+      "sha256": "fd63117ce4529e44b34fab488ab7e5279b97e92e24781909daa46292b6baaa78"
+    },
+    {
+      "path": "schemas/cec-address.schema.json",
+      "size_bytes": 381,
+      "sha256": "c24dfd33e1d2353447e4d435d75cc50641aff73fb8a7f08dcf90e80bcb08d7c1"
+    },
+    {
+      "path": "schemas/component-binding.schema.json",
+      "size_bytes": 3080,
+      "sha256": "7342044ff3a029f405f8ee639b2211491729054fe468824dcde5405540be774c"
+    },
+    {
+      "path": "schemas/core-types.schema.json",
+      "size_bytes": 3813,
+      "sha256": "c63d7dde0173e2b9470bb5c69fbe9abb464594b4d8cba5a218f81bcc63ea929c"
+    },
+    {
+      "path": "schemas/qualified-device-name.schema.json",
+      "size_bytes": 274,
+      "sha256": "cc668e4520f5f240848e028720d547f6a69af3f649d95947132fded17f815145"
+    },
+    {
+      "path": "schemas/wire-envelope.schema.json",
+      "size_bytes": 7960,
+      "sha256": "159f2fb086e56ac14c59d195fbd3f9bbef29b9c9d0f06d01ca26d67112ae1bdb"
+    },
+    {
+      "path": "validate_contracts.py",
+      "size_bytes": 18108,
+      "sha256": "df833c3da2843b24512aa45c8a4e3a9b3c6fd5df7011243079c6e1188a8fa664"
+    }
+  ]
+}
