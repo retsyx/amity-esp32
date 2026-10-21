@@ -10,6 +10,7 @@
 #include "amity/activity_settling.hpp"
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"
+#include "esp_heap_caps.h"
 #endif
 #ifndef CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS
 #define CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS 5
@@ -29,6 +30,14 @@
 namespace amity {
 namespace { constexpr const char *TAG = "amity_hub"; }
 struct HubService::Impl : Transport {
+#ifdef ESP_PLATFORM
+    static void *operator new(size_t size) {
+        auto *memory = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!memory) std::abort();
+        return memory;
+    }
+    static void operator delete(void *memory) { heap_caps_free(memory); }
+#endif
     enum class Kind { Configure, Select, Key, Release, Standby, Discover };
     struct Command {
         explicit Command(Kind command_kind, int command_value = 0, bool command_repeat = false)
@@ -42,6 +51,8 @@ struct HubService::Impl : Transport {
         std::vector<Activity> activities;
         std::vector<Quirk> quirks;
     };
+    // Declared before buses so ISR-visible guards outlive admitted wire work.
+    std::atomic<uint32_t> key_generation{0}, hold_generation{0};
     cec::Bus front, back;
     Hub hub{*this};
     QueueHandle_t commands = nullptr;
@@ -57,12 +68,12 @@ struct HubService::Impl : Transport {
     int64_t last_scan = -120000000;
     int64_t last_claim = -5000000;
     uint32_t dropped_tx = 0, discovery_generation = 0;
-    std::atomic<uint32_t> key_generation{0};
     uint32_t applied_key_generation = 0;
-    std::atomic<uint32_t> hold_generation{0};
     uint32_t repeating_generation = 0;
     int repeating_key = -1;
-    bool sending_held_key = false, setting_activity = false;
+    int failed_key = -1;
+    cec::TxResult held_tx_result = cec::TxResult::Pending;
+    bool sending_held_key = false, initial_held_key = false, setting_activity = false;
     ActivitySettling settling{CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS};
 
     Impl() { lock = xSemaphoreCreateMutex(); configuration_gate = xSemaphoreCreateMutex(); }
@@ -135,15 +146,26 @@ struct HubService::Impl : Transport {
         stop_hold();
         applied_key_generation = generation;
     }
-    void stop_hold() { repeating_key = -1; hub.release_key(); }
+    void stop_hold(bool flush = false) {
+        repeating_key = -1; failed_key = -1; hub.end_key_stream();
+        if (flush) hub.release_key(); // Explicit quiescence must drain cleanup before its ACK.
+    }
     void check_hold() {
         if (repeating_key >= 0 && repeating_generation != hold_generation.load()) stop_hold();
     }
-    void send_held_key() {
+    void send_held_key(bool initial = false) {
+        held_tx_result = cec::TxResult::Pending;
         sending_held_key = true;
+        initial_held_key = initial;
         const bool accepted = hub.press_key(static_cast<uint8_t>(repeating_key), true);
         sending_held_key = false;
-        if (!accepted) stop_hold();
+        initial_held_key = false;
+        if (!accepted || held_tx_result != cec::TxResult::Success) {
+            // Failure ends the button state. Its output stream retains safe
+            // final cleanup independently; a later physical up is a no-op.
+            failed_key = repeating_key; repeating_key = -1;
+            hub.end_key_stream();
+        }
     }
     bool update_settling() {
         xSemaphoreTake(lock, portMAX_DELAY);
@@ -187,13 +209,26 @@ struct HubService::Impl : Transport {
         cec::Frame frame; frame.size = static_cast<uint8_t>(size + 1);
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
-        // Bound hub stalls while giving the wire worker time to make room.
-        // Hub retains failed releases and retries them from its owner tick.
+        // Ordinary producer backpressure is bounded. Final release may use
+        // the caller-authorized ninth slot, and is dropped immediately at nine.
         auto &bus = side == BusSide::Front ? front : back;
         // Held presses join the same FIFO as routing, releases and replies.
         // Only one attempt is outstanding; the next is decided after completion.
-        const bool sent = setting_activity ? bus.send_and_wait(frame, 1000, 3) :
-            sending_held_key && data[0] == 0x44 ? bus.send_and_wait(frame, 1000) : bus.send(frame, 1000);
+        cec::ExecutionFence fence{};
+        if (data[0] == 0x44 && !setting_activity) {
+            fence = {&key_generation, applied_key_generation};
+            // Preserve an initial queued down on a short tap. Only later
+            // repeats are canceled by a physical up before their first edge.
+            if (sending_held_key && !initial_held_key) {
+                fence.secondary_generation = &hold_generation;
+                fence.expected_secondary_generation = repeating_generation;
+            }
+        }
+        const unsigned attempts = data[0] == 0x44 ? 1 : 3;
+        const bool allow_overflow = data[0] == 0x45;
+        const bool sent = setting_activity ? bus.send_and_wait_guarded(frame, fence, allow_overflow ? 0 : 1000, attempts, nullptr, allow_overflow) :
+            sending_held_key && data[0] == 0x44 ? bus.send_and_wait_guarded(frame, fence, 1000, attempts, &held_tx_result) :
+            bus.send_guarded(frame, fence, allow_overflow ? 0 : 1000, attempts, allow_overflow);
         if (sent && setting_activity) {
             xSemaphoreTake(lock, portMAX_DELAY); settling.expect(side, destination, data, size); xSemaphoreGive(lock);
         }
@@ -348,11 +383,13 @@ struct HubService::Impl : Transport {
                 case Kind::Key:
                     if (command->key_generation == p.applied_key_generation &&
                         (!command->activity_bound || command->activity_generation == p.hub.activity_generation())) {
+                        if (command->repeat && command->value == p.failed_key) break;
+                        if (command->repeat && command->value == p.repeating_key && command->hold_generation == p.repeating_generation) break;
                         p.stop_hold();
                         if (command->repeat) {
                             p.repeating_key = command->value;
                             p.repeating_generation = command->hold_generation;
-                            p.send_held_key();
+                            p.send_held_key(true);
                         } else p.hub.press_key(static_cast<uint8_t>(command->value));
                     }
                     break;

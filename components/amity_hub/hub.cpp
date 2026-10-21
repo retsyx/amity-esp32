@@ -73,15 +73,7 @@ const Device *Hub::known(const std::string &name) const {
     return nullptr;
 }
 bool Hub::send(BusSide side, uint8_t dest, std::initializer_list<uint8_t> data) {
-    const bool sent = transport_.send(side, dest, data.begin(), data.size());
-    // Power quirks and switch selection also produce press/release pairs.
-    // Preserve a failed release independently of the user-held key state.
-    if (dest < 15 && data.size() && *data.begin() == 0x45) {
-        auto &pending = pending_releases_[side == BusSide::Front ? 0 : 1];
-        if (sent) pending &= ~(1u << dest);
-        else pending |= 1u << dest;
-    }
-    return sent;
+    return transport_.send(side, dest, data.begin(), data.size());
 }
 bool Hub::activity_needs_discovery(int index) const {
     if (index < -1 || index >= static_cast<int>(activities_.size())) return false;
@@ -100,15 +92,14 @@ void Hub::power(const Device &device, bool on, bool quirk) {
         if (q.vendor_id != device.vendor_id) continue;
         const auto &data = on ? q.power_on : q.power_off;
         if (data.empty() || data.size() > 15) continue;
-        transport_.send(device.bus, device.address, data.data(), data.size());
-        if (data[0] == 0x44) send(device.bus, device.address, {0x45});
+        const bool admitted = transport_.send(device.bus, device.address, data.data(), data.size());
+        if (admitted && data[0] == 0x44) send(device.bus, device.address, {0x45});
         return;
     }
     if (!on) send(device.bus, device.address, {0x36});
     else if (device.type == 0) send(device.bus, device.address, {0x04});
     else {
-        send(device.bus, device.address, {0x44, 0x6d});
-        send(device.bus, device.address, {0x45});
+        if (send(device.bus, device.address, {0x44, 0x6d})) send(device.bus, device.address, {0x45});
     }
 }
 void Hub::active_source() {
@@ -123,8 +114,7 @@ void Hub::input(const Activity &activity) {
     if (!activity.switch_device.empty()) {
         auto *d = find(activity.switch_device);
         if (!d) return;
-        send(d->bus, d->address, {0x44, 0x69, activity.switch_input});
-        send(d->bus, d->address, {0x45});
+        if (send(d->bus, d->address, {0x44, 0x69, activity.switch_input})) send(d->bus, d->address, {0x45});
     }
     active_source();
 }
@@ -185,8 +175,6 @@ bool Hub::press_key(uint8_t key, bool repeat) {
     auto *d = find(audio_key ? a.audio : a.source);
     if (!d) return false;
     if (key_held_ && (held_bus_ != d->bus || held_address_ != d->address) && !release_key()) return false;
-    if ((pending_releases_[d->bus == BusSide::Front ? 0 : 1] & (1u << d->address)) &&
-        !send(d->bus, d->address, {0x45})) return false;
     if (!send(d->bus, d->address, {0x44, key})) return false;
     // Explicit transport commands and emulated toggles share the same last
     // accepted state. Held toggles keep emitting their original mapped key.
@@ -201,28 +189,22 @@ bool Hub::press_key(uint8_t key, bool repeat) {
 }
 bool Hub::release_key() {
     if (!key_held_) return true;
-    if (!send(held_bus_, held_address_, {0x45})) { release_pending_ = true; return false; }
+    const bool admitted = send(held_bus_, held_address_, {0x45});
+    // The final-release decision is consumed even when the ninth driver slot
+    // is occupied. No later tick, up or new key retries a dropped release.
     key_held_ = false;
     release_pending_ = false;
-    if (held_audio_) {
+    if (held_audio_ && admitted) {
         audio_query_pending_ = true;
         audio_query_due_ = now_us_ + 500000;
     }
     held_audio_ = false;
-    return true;
+    return admitted;
 }
+void Hub::end_key_stream() { if (key_held_) release_pending_ = true; }
 void Hub::tick(uint64_t now_us) {
     now_us_ = now_us;
     if (release_pending_) release_key();
-    for (const auto side : {BusSide::Front, BusSide::Back}) {
-        const auto pending = pending_releases_[side == BusSide::Front ? 0 : 1];
-        for (uint8_t address = 0; address < 15; ++address) {
-            if (!(pending & (1u << address))) continue;
-            // The held-key path retries and updates its state itself.
-            if (release_pending_ && held_bus_ == side && held_address_ == address) continue;
-            send(side, address, {0x45});
-        }
-    }
     if (audio_query_pending_ && now_us_ >= audio_query_due_ && !held_audio_) request_audio_status();
 }
 void Hub::clear_devices() { devices_.clear(); discovery_.clear(); discovering_ = false; }

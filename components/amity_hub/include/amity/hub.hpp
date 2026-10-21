@@ -62,6 +62,9 @@ public:
     bool select_activity(int index);
     bool press_key(uint8_t key, bool repeat = false);
     bool release_key();
+    // End the normalized button state. Dispatch of the stream's operand-free
+    // final release remains independent, and precedes a subsequent press.
+    void end_key_stream();
     void tick(uint64_t now_us);
     void standby();
     void force_standby();
@@ -103,7 +106,6 @@ private:
     bool key_held_ = false;
     bool held_audio_ = false;
     bool release_pending_ = false;
-    uint16_t pending_releases_[2] = {};
     bool audio_query_pending_ = false;
     uint64_t now_us_ = 0, audio_query_due_ = 0;
     bool audio_status_known_ = false, muted_ = false;

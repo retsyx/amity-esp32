@@ -290,23 +290,24 @@ static void backpressure_tests() {
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
     h.configure({{"Listen", "", "Source", "Source", "", 0}});
     device(h, B, 4, 0x1000, 4, "Source"); h.select_activity(0);
-    // If an accepted press cannot queue its release, the owner tick retries
-    // it; another press must not overwrite the outstanding release.
+    // A final release is attempted once, using the driver's extra slot. If
+    // that slot is full, no future up, tick or new key retries the dropped TX.
     t.sent.clear(); t.reject_opcode = 0x45;
     assert(h.press_key(0)); assert(t.contains(B, 4, {0x44, 0}));
     assert(!t.contains(B, 4, {0x45}));
-    assert(!h.press_key(1)); assert(!t.contains(B, 4, {0x44, 1}));
+    assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
     h.tick(10000); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(20000); assert(t.contains(B, 4, {0x45}));
+    t.reject_opcode = -1; h.tick(20000); assert(!t.contains(B, 4, {0x45}));
     assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
     // Failed initial presses must not toggle the emulated playback state.
     t.sent.clear(); t.reject_opcode = 0x44; assert(!h.press_key(0x61));
     t.reject_opcode = -1; assert(h.press_key(0x61));
     assert(t.contains(B, 4, {0x44, 0x44})); assert(!t.contains(B, 4, {0x44, 0x46}));
-    // Power-on and switch-input releases share the same retry guarantee.
+    // Power-on and switch-input releases are likewise never buffered/retried.
     t.sent.clear(); t.reject_opcode = 0x45; h.fix_current_activity();
     assert(t.contains(B, 4, {0x44, 0x6d})); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(30000); assert(t.contains(B, 4, {0x45}));
+    t.reject_opcode = -1; h.tick(30000); assert(!t.contains(B, 4, {0x45}));
+    t.sent.clear();t.reject_opcode=0x44;h.fix_current_activity();assert(!t.contains(B,4,{0x45}));t.reject_opcode=-1;
     // One long volume adjustment is 100 complete presses, but only one
     // status query after the last press has been quiet for half a second.
     t.sent.clear();
@@ -321,6 +322,23 @@ static void backpressure_tests() {
         if (sent.bytes == std::vector<uint8_t>{0x71}) ++queries;
     }
     assert(presses == 100 && releases == 100 && queries == 1);
+}
+static void stream_end_tests() {
+    const auto F=amity::BusSide::Front,B=amity::BusSide::Back;
+    Transport t;amity::Hub h(t);h.set_addresses(4,0);
+    h.configure({{"Watch","TV","Source","TV","",0}});device(h,F,0,0,0,"TV");device(h,B,4,0x1000,4,"Source");assert(h.select_activity(0));
+    h.tick(1000);t.sent.clear();assert(h.press_key(1,true));t.sent.clear();h.end_key_stream();assert(t.sent.empty());
+    h.tick(2000);assert(t.sent.size()==1&&t.contains(B,4,{0x45}));h.tick(3000);assert(h.release_key());assert(t.sent.size()==1);
+    // A pending end is retained as button state, not a frame backlog. Its
+    // final release precedes the next stream, including another recipient.
+    t.sent.clear();assert(h.press_key(1,true));h.end_key_stream();assert(h.press_key(2,true));h.end_key_stream();assert(h.press_key(0x41,true));
+    assert(t.sent.size()==5);
+    assert(t.sent[0].bytes==std::vector<uint8_t>({0x44,1})&&t.sent[1].bytes==std::vector<uint8_t>({0x45})&&t.sent[2].bytes==std::vector<uint8_t>({0x44,2})&&t.sent[3].bytes==std::vector<uint8_t>({0x45}));
+    assert(t.sent[3].side==B&&t.sent[4].side==F&&t.sent[4].bytes==std::vector<uint8_t>({0x44,0x41}));
+    h.end_key_stream();h.tick(4000);t.sent.clear();h.tick(503999);assert(!t.contains(F,0,{0x71}));h.tick(504000);assert(t.contains(F,0,{0x71}));
+    // Dropped release is consumed and cannot start a new delayed status query.
+    t.sent.clear();assert(h.press_key(0x41,true));t.reject_opcode=0x45;h.end_key_stream();h.tick(600000);t.reject_opcode=-1;t.sent.clear();
+    h.tick(2000000);assert(h.release_key());assert(t.sent.empty());
 }
 static void volume_sequence_tests() {
     amity::VolumeSequence volume;
@@ -363,6 +381,6 @@ static void volume_sequence_tests() {
     assert(hub.snapshot().activity_generation == hub.activity_generation());
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();
+    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); stream_end_tests(); volume_sequence_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

@@ -14,6 +14,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   "$root/components/config_store/config_store.cpp" "$root/tests/config_store_test.cpp" -o "$out/config_store_test"
 "$out/config_store_test"
 sh "$root/tests/cec_hub_test.sh"
+sh "$root/tests/cec_bus_test.sh"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/tests/reset_fakes" -I"$root/components/device_settings/include" \
   "$root/components/device_settings/reset_button.cpp" "$root/tests/reset_button_test.cpp" -o "$out/reset_button_test"

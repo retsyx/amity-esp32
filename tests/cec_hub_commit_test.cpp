@@ -193,6 +193,84 @@ int main() {
         assert((keys == std::vector<uint8_t>{0x44, 0x44, 0x44, 0x44, 0x45}));
         fixture_wire_complete = {}; fixture_present = false;
     }
+    { // Failed held wire outcomes end pressed state; later up is a no-op.
+        fixture_present=true;
+        amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();
+        assert(hub.select_activity(0));run_one_command();
+        auto count=[&](uint8_t opcode){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==opcode;});};
+        for(const auto failure:{cec::TxResult::Nack,cec::TxResult::ArbitrationLost,cec::TxResult::LineError,cec::TxResult::Timeout}){
+            fixture_wait_outcome=[failure](int,const cec::Frame& frame){return frame.size>1&&frame.data[1]==0x44?failure:cec::TxResult::Success;};
+            fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();run_idle(4);
+            assert(count(0x44)==1&&count(0x45)==1);
+            assert(hub.press_key(0x41,true));run_one_command();run_idle(3);assert(count(0x44)==1&&count(0x45)==1);
+            assert(hub.release_key());run_one_command();run_idle(2);assert(count(0x44)==1&&count(0x45)==1);
+        }
+        unsigned attempts=0;fixture_wait_outcome=[&](int,const cec::Frame& frame){return frame.size>1&&frame.data[1]==0x44&&++attempts>1?cec::TxResult::Nack:cec::TxResult::Success;};
+        fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();run_idle(4);assert(count(0x44)==2&&count(0x45)==1);
+        assert(hub.release_key());run_one_command();run_idle(2);assert(count(0x45)==1);
+        fixture_wait_outcome={};fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();
+        assert(hub.press_key(0x41,true));run_one_command();assert(count(0x44)==1&&count(0x45)==0); // Identical state is not a new stream.
+        run_idle(1);assert(count(0x44)==2&&count(0x45)==0);
+        assert(hub.discover());assert(hub.discover());
+        run_one_command();assert(count(0x44)==2);run_one_command();assert(count(0x44)==2); // Both waiting commands win before another repeat.
+        run_idle(1);assert(count(0x44)==3);
+        assert(hub.release_key());run_one_command();run_idle(2);assert(count(0x45)==1);
+        for(const auto& sent:fixture_sent)if(sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x45)){
+            assert(sent.attempts==(sent.frame.data[1]==0x44?1u:3u));
+            assert(sent.allow_overflow==(sent.frame.data[1]==0x45));
+            if(sent.frame.data[1]==0x45)assert(sent.timeout_ms==0);
+        }
+        fixture_present=false;
+    }
+    { // Up cancels a queued repeat before its first edge, preserving the
+      // initial press and exactly one final stream release.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();assert(hub.select_activity(0));run_one_command();
+        fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();
+        bool released=false;fixture_before_start=[&](int,const cec::Frame& frame){if(!released&&frame.size>1&&frame.data[1]==0x44){released=true;assert(hub.release_key());}};
+        run_idle(4);fixture_before_start={};run_idle(2);
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;})==1);
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==2&&sent.frame.data[1]==0x45;})==1);
+        // The same up during the initial queue wait still preserves a short tap.
+        fixture_sent.clear();released=false;fixture_before_start=[&](int,const cec::Frame& frame){if(!released&&frame.size>1&&frame.data[1]==0x44){released=true;assert(hub.release_key());}};
+        assert(hub.press_key(0x42,true));run_one_command();fixture_before_start={};run_one_command();run_idle(2);
+        std::vector<uint8_t> sequence;for(const auto& sent:fixture_sent)if(sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x45))sequence.push_back(sent.frame.data[1]);
+        assert((sequence==std::vector<uint8_t>{0x44,0x45}));fixture_present=false;
+    }
+    { // Every caller supplies one UCP attempt, including power quirks and
+      // switch selection. Releases alone are eligible for the extra slot.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command();
+        fixture_sent.clear();assert(hub.select_activity(0));run_one_command();assert(hub.standby());run_one_command();
+        bool power=false,input=false;
+        for(const auto& sent:fixture_sent)if(sent.frame.size>1){
+            if(sent.frame.data[1]==0x44){assert(sent.attempts==1&&!sent.allow_overflow);power|=sent.frame.data[2]==0x6d;input|=sent.frame.size==4&&sent.frame.data[2]==0x69&&sent.frame.data[3]==2;}
+            if(sent.frame.data[1]==0x45)assert(sent.attempts==3&&sent.allow_overflow&&sent.timeout_ms==0);
+        }
+        assert(power&&input);fixture_present=false;
+    }
+    { // With eight ordinary frames already buffered in the driver, denied
+      // finite UCPs must not use the ninth slot for an unpaired release.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command();
+        unsigned occupied=8,presses=0,releases=0;
+        fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<9;}return true;};
+        assert(hub.select_activity(0));run_one_command();assert(presses>=2&&releases==0&&occupied==8);
+        fixture_admission={};fixture_present=false;
+    }
+    { // A full ninth slot consumes final release; the owner retains no TX
+      // retry and later up cannot regenerate the dropped release.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();assert(hub.select_activity(0));run_one_command();
+        assert(hub.press_key(0x41,true));run_one_command();fixture_sent.clear();
+        fixture_send=[](int,const cec::Frame& frame){return frame.size<2||frame.data[1]!=0x45;};
+        assert(hub.release_key());run_one_command();run_idle(5);
+        auto releases=[&]{return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x45;});};
+        assert(releases()==1);fixture_send={};run_idle(5);assert(releases()==1);
+        assert(hub.release_key());run_one_command();run_idle(2);assert(releases()==1);
+        fixture_present=false;
+    }
     { // A release during the very first attempt preserves a tap, with no repeat.
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);

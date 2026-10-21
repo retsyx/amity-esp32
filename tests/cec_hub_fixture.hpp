@@ -33,14 +33,17 @@ static int64_t fixture_tick = 100000;
 static int idle_passes = -1;
 static std::vector<unsigned> idle_waits;
 static std::function<void()> fixture_wire_complete;
+static std::function<void(int, const cec::Frame&)> fixture_before_start;
 static std::function<void()> fixture_delay;
 static std::vector<cec::Frame> fixture_waited;
 static bool in_wire_attempt = false;
-struct SentFrame { int gpio; cec::Frame frame; };
+struct SentFrame { int gpio; cec::Frame frame; unsigned attempts = 3; bool allow_overflow = false; uint32_t timeout_ms = 0; };
 static std::vector<SentFrame> fixture_sent;
 static std::vector<SentFrame> fixture_transmitted;
 static std::deque<SentFrame> fixture_incoming;
 static std::function<bool(int, const cec::Frame &)> fixture_send;
+static std::function<bool(int, const cec::Frame &)> fixture_admission;
+static std::function<cec::TxResult(int, const cec::Frame &)> fixture_wait_outcome;
 static std::function<cec::TxResult(int, const cec::Frame &)> fixture_transmit;
 
 QueueHandle_t xQueueCreate(unsigned capacity, size_t item_size) { return new FakeQueue{capacity, item_size, {}}; }
@@ -89,8 +92,9 @@ Bus::Bus() : impl_(new Impl) {}
 Bus::~Bus() = default;
 esp_err_t Bus::start(int gpio) { impl_->gpio = gpio; return ESP_OK; }
 void Bus::set_address(uint8_t address) { impl_->address = address; }
-bool Bus::send(const Frame &frame, uint32_t) {
-    fixture_sent.push_back({impl_->gpio, frame});
+bool Bus::send(const Frame &frame, uint32_t timeout) {
+    fixture_sent.push_back({impl_->gpio, frame, 3, false, timeout});
+    if (fixture_admission && !fixture_admission(impl_->gpio,frame)) return false;
     if (fixture_send) return fixture_send(impl_->gpio, frame);
     const uint8_t peer = impl_->gpio == 1 ? 0 : 4;
     if (!fixture_present || frame.size < 2 || frame.destination() != peer) return true;
@@ -129,13 +133,33 @@ bool Bus::receive(Frame &frame, uint32_t) {
 }
 Statistics Bus::statistics() const { return {}; }
 bool Bus::idle() const { return true; }
-bool Bus::send_and_wait(const Frame &frame, uint32_t timeout, unsigned) {
+bool Bus::send_and_wait(const Frame &frame, uint32_t timeout, unsigned attempts) {
     assert(!in_wire_attempt); in_wire_attempt = true;
     fixture_waited.push_back(frame);
-    const bool accepted = send(frame, timeout);
+    const auto index=fixture_sent.size();const bool accepted = send(frame, timeout);
+    fixture_sent[index].attempts=attempts;
     // Input can change while the hub owner waits for the wire to finish.
     if (fixture_wire_complete) fixture_wire_complete();
     in_wire_attempt = false;
     return accepted;
 }
+static bool current_fence(ExecutionFence fence) {
+    return (!fence.generation || fence.generation->load()==fence.expected_generation) &&
+        (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation);
+}
+bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,uint32_t timeout,unsigned attempts,bool allow_overflow) {
+    if(!attempts||!current_fence(fence))return false;
+    const auto index=fixture_sent.size();const bool accepted=send(frame,timeout);
+    fixture_sent[index].attempts=attempts;fixture_sent[index].allow_overflow=allow_overflow;
+    return accepted;
+}
+bool Bus::send_and_wait_guarded(const Frame& frame,ExecutionFence fence,uint32_t timeout,unsigned attempts,TxResult* result,bool allow_overflow) {
+    if(fixture_before_start)fixture_before_start(impl_->gpio,frame);
+    if(!attempts||!current_fence(fence)){if(result)*result=TxResult::Cancelled;return false;}
+    const auto index=fixture_sent.size();const bool accepted=send_and_wait(frame,timeout,attempts);
+    fixture_sent[index].allow_overflow=allow_overflow;
+    if(result)*result=accepted?(fixture_wait_outcome?fixture_wait_outcome(impl_->gpio,frame):TxResult::Success):TxResult::Pending;
+    return accepted;
+}
+TxResult Bus::transmit_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts) { return current_fence(fence)?transmit(frame,attempts):TxResult::Cancelled; }
 }
