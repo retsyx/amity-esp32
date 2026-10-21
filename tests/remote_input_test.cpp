@@ -246,7 +246,14 @@ static void profiles_and_batches() {
     siri.key(Key::Power, true, 1000000);
     siri.raw_siri(0x200, siri.stamp(1100000)); // New Up shares a Power release report.
     siri.raw_siri(0, siri.stamp(1200000));
-    siri.expect({{T::PowerShort, 0}});
+    siri.expect({{T::PowerShort, 0}, {T::Press, 1}, {T::Release, 1}});
+
+    Fixture admitted(ble::RemoteProfile::Siri);
+    admitted.admit_actions = true;
+    admitted.key(Key::Power, true, 1000000);
+    admitted.raw_siri(0x200, admitted.stamp(1100000));
+    admitted.raw_siri(0, admitted.stamp(1200000));
+    admitted.expect({{T::PowerShort, 0}}); // Accepted action quarantines the report's new Up.
 
     Fixture mixed(ble::RemoteProfile::Atomic);
     ble::ButtonEvent event{9, ble::RemoteButton::Up, true};
@@ -416,7 +423,7 @@ static void selection_gate_actions(ble::RemoteProfile profile) {
     f.key(Key::Shortcut, true, second + 3);
     f.key(Key::Shortcut, false, second + 4); // Select the same activity.
     assert(f.policy.waiting_for_release());
-    f.expect({{T::Press, 0x41}, {T::Release, 0x41}, {T::Activity, 0}});
+    f.expect({{T::Press, 0x41}, {T::Activity, 0}, {T::Release, 0x41}});
     if (profile == ble::RemoteProfile::Siri) f.key(Key::Power, false, second + 5);
     f.key(Key::Right, true, second + 6);
     f.key(Key::Volume, false, second + 7);
@@ -449,6 +456,7 @@ static void selection_gate_actions(ble::RemoteProfile profile) {
     rejected.key(Key::Shortcut, true, second + 3);
     rejected.key(Key::Shortcut, false, second + 4);
     assert(!rejected.policy.waiting_for_release()); // Rejected selection cannot arm it.
+    rejected.expect({{T::Press, 0x41}, {T::Activity, 0}}); // Unrelated holds continue.
     if (profile == ble::RemoteProfile::Siri) rejected.key(Key::Power, false, second + 5);
     rejected.key(Key::Right, true, second + 6);
     assert(rejected.events.back().type == T::Press && rejected.events.back().value == 4);
@@ -460,6 +468,112 @@ static void selection_gate_actions(ble::RemoteProfile profile) {
     repair.key(Key::Power, false, second + 500001);
     repair.expect({{T::PowerLong, 0}});
     assert(!repair.policy.waiting_for_release()); // Python's fix_current_activity path.
+}
+
+static void siri_macro_defaults() {
+    constexpr uint16_t selectors[] = {8, 0x200, 0x400, 0x800, 0x1000};
+    constexpr int cec_keys[] = {0, 1, 4, 2, 3};
+    constexpr uint16_t atomic_usages[] = {0x28, 0x52, 0x4f, 0x51, 0x50};
+    for (int choice = 0; choice < 5; ++choice) {
+        for (bool selector_first : {false, true}) {
+            for (bool release_power_first : {false, true}) {
+                for (bool long_press : {false, true}) {
+                    Fixture f(ble::RemoteProfile::Siri);
+                    const uint64_t start = 2000000;
+                    const uint64_t selector_start = start + (selector_first ? 0 : 400000);
+                    f.raw_siri(selector_first ? selectors[choice] : 0x10, f.stamp(start));
+                    f.raw_siri(0x10 | selectors[choice], f.stamp(start + 400000));
+                    if (selector_first) f.expect({{T::Press, cec_keys[choice]}, {T::Release, cec_keys[choice]}});
+                    else f.expect({});
+                    f.events.clear();
+                    // Only the selector's duration matters: Power has been
+                    // held much longer or much shorter in these two orders.
+                    const uint64_t release = selector_start + (long_press ? 500000 : 499999);
+                    f.raw_siri(release_power_first ? selectors[choice] : 0x10, f.stamp(release));
+                    f.raw_siri(0, f.stamp(release + 100));
+                    f.expect({{T::Activity, choice + (long_press ? 5 : 0)}});
+                }
+            }
+        }
+
+        Fixture atomic(ble::RemoteProfile::Atomic);
+        atomic.key(Key::Power, true, 2000000);
+        atomic.atomic.input(7, atomic_usages[choice], true, atomic.stamp(2000100));
+        atomic.key(Key::Power, false, 2000200);
+        atomic.atomic.input(7, atomic_usages[choice], false, atomic.stamp(2000300));
+        atomic.expect({{T::Press, cec_keys[choice]}, {T::PowerShort, 0}, {T::Release, cec_keys[choice]}});
+    }
+}
+
+static void siri_macro_lifecycle() {
+    Fixture pending(ble::RemoteProfile::Siri);
+    pending.key(Key::Volume, true, 2000000);
+    pending.key(Key::Power, true, 2000100);
+    pending.key(Key::Up, true, 2000200);
+    pending.key(Key::Volume, false, 2000300); // An unrelated release cannot execute the macro.
+    pending.expect({{T::Press, 0x41}, {T::Release, 0x41}});
+    pending.key(Key::Up, false, 2000400);
+    pending.key(Key::Power, false, 2000500);
+    pending.expect({{T::Press, 0x41}, {T::Release, 0x41}, {T::Activity, 1}});
+
+    Fixture multiple(ble::RemoteProfile::Siri);
+    multiple.raw_siri(0x210, multiple.stamp(2000000)); // Power+Up chooses Up.
+    multiple.raw_siri(0x218, multiple.stamp(2000100)); // A later Select cannot replace it.
+    multiple.raw_siri(0x210, multiple.stamp(2000200));
+    multiple.expect({{T::Press, 0}, {T::Release, 0}}); // Other selector release is ordinary input.
+    multiple.raw_siri(0x10, multiple.stamp(2000300));
+    multiple.raw_siri(0, multiple.stamp(2000400));
+    multiple.expect({{T::Press, 0}, {T::Release, 0}, {T::Activity, 1}});
+
+    Fixture rejected(ble::RemoteProfile::Siri);
+    rejected.key(Key::Volume, true, 2000000);
+    rejected.key(Key::Power, true, 2000100);
+    rejected.key(Key::Up, true, 2000200);
+    rejected.key(Key::Up, false, 2000300);
+    rejected.key(Key::Power, false, 2000400);
+    rejected.expect({{T::Press, 0x41}, {T::Activity, 1}});
+    assert(!rejected.policy.waiting_for_release());
+    // The macro stays executed until every physical key is up, even when
+    // selection was rejected. A new chord cannot become another macro or a
+    // standalone Power action while Volume remains physically held.
+    rejected.key(Key::Power, true, 2000500);
+    rejected.key(Key::Right, true, 2000600);
+    rejected.key(Key::Right, false, 2000700);
+    rejected.key(Key::Power, false, 2000800);
+    rejected.expect({{T::Press, 0x41}, {T::Activity, 1}, {T::Press, 4}, {T::Release, 4}});
+    rejected.key(Key::Volume, false, 2000900);
+    rejected.key(Key::Power, true, 2001000);
+    rejected.key(Key::Right, true, 2001100);
+    rejected.key(Key::Right, false, 2001200);
+    rejected.key(Key::Power, false, 2001300);
+    rejected.expect({{T::Press, 0x41}, {T::Activity, 1}, {T::Press, 4}, {T::Release, 4},
+                     {T::Release, 0x41}, {T::Activity, 2}});
+
+    Fixture accepted(ble::RemoteProfile::Siri);
+    accepted.admit_actions = true;
+    accepted.key(Key::Volume, true, 2000000);
+    accepted.key(Key::Power, true, 2000100);
+    accepted.key(Key::Shortcut, true, 2000200);
+    accepted.key(Key::Shortcut, false, 2000300); // Same-target selection leaves the activity active.
+    accepted.key(Key::Power, false, 2000400);
+    accepted.expect({{T::Press, 0x41}, {T::Activity, 0}, {T::Release, 0x41}});
+    assert(accepted.policy.waiting_for_release());
+    accepted.policy.tick(3000300);
+    assert(!accepted.policy.waiting_for_release());
+    // The one-second wait fallback does not reset the executed macro latch.
+    accepted.key(Key::Power, true, 3000400);
+    accepted.key(Key::Up, true, 3000500);
+    accepted.key(Key::Up, false, 3000600);
+    accepted.key(Key::Power, false, 3000700);
+    accepted.expect({{T::Press, 0x41}, {T::Activity, 0}, {T::Release, 0x41},
+                     {T::Press, 1}, {T::Release, 1}});
+    accepted.key(Key::Volume, false, 3000800);
+    accepted.key(Key::Power, true, 3000900);
+    accepted.key(Key::Shortcut, true, 3001000);
+    accepted.key(Key::Shortcut, false, 3001100);
+    accepted.key(Key::Power, false, 3001200);
+    accepted.expect({{T::Press, 0x41}, {T::Activity, 0}, {T::Release, 0x41},
+                     {T::Press, 1}, {T::Release, 1}, {T::Activity, 0}});
 }
 
 int main() {
@@ -474,5 +588,7 @@ int main() {
     }
     profiles_and_batches();
     touch_generations();
+    siri_macro_defaults();
+    siri_macro_lifecycle();
     puts("Shared remote policy: activity/stale-report quarantine, cancellation, admission, repairs and profiles passed");
 }

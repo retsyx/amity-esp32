@@ -212,12 +212,13 @@ static void button_tests() {
     buttons(controller, 0x10, 0, true);
     buttons(controller, 0x200, 100000, true); // Newly pressed key shares the power release report.
     buttons(controller, 0, 700000, true);
-    assert((events == std::vector<Event>{{T::PowerShort, 0, 0}}));
+    // This fixture rejects the Power action, so the new Up remains ordinary input.
+    assert((events == std::vector<Event>{{T::PowerShort, 0, 0}, {T::Press, 1, 0}, {T::Release, 1, 0}}));
     events.clear();
     buttons(controller, 8, 0, false);
     buttons(controller, 0x200, 100000, false);
     buttons(controller, 0, 700000, false);
-    assert((events == std::vector<Event>{{T::Activity, 0, 0}}));
+    assert((events == std::vector<Event>{{T::Activity, 0, 0}, {T::Activity, 6, 0}}));
     events.clear();
     // Main consumes an old queued snapshot with callback emission ignored, then
     // suppresses its held physical mask after discovering the activity changed.

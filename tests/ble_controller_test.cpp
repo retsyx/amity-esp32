@@ -80,10 +80,10 @@ int main() {
     controller.input(7,0x52,true,11000000);
     controller.input(7,0x3a,true,11000001);
     controller.input(7,0x3a,false,11000002);
-    assert((events == std::vector<Event>{{T::Press,1},{T::Release,1},{T::Activity,0}}));
-    controller.input(7,0x52,true,12000000); // Held arrow does not leak into the new activity.
+    assert((events == std::vector<Event>{{T::Press,1},{T::Activity,0}}));
+    controller.input(7,0x52,true,12000000); // Rejected selection leaves the arrow held.
     controller.input(7,0x52,false,12000001);
-    assert(events.size() == 3);
+    assert((events == std::vector<Event>{{T::Press,1},{T::Activity,0},{T::Release,1}}));
 
     events.clear();
     controller.input(7,0x52,true,13000000);

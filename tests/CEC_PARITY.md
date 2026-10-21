@@ -134,6 +134,19 @@ Queries after volume/mute input are coalesced with a 500 ms scheduling delay
 and no active audio hold. CEC traffic and queue admission can delay the actual
 request or reply. A rejected initial press does not change play/pause emulation.
 
+Siri's fixed activity macros follow Python's default Power+Select/Up/Right/Down/
+Left combinations, selecting activities 0–4 on a short selector hold and 5–9
+when the selector has been held at least 500 ms. They are enabled only for the
+Siri profile and are not configurable. The complete mapping is recorded in the
+[remote component README](../components/ble_remote/README.md). Either macro
+button may be pressed or released first; the selector's press timestamp
+determines the duration. An unrelated release does not execute the macro.
+Execution consumes the gesture until all physical keys are up, even if activity
+selection is rejected or `wait_for_release` expires. Rejected selection consumes
+only the macro's buttons and preserves unrelated holds; successful selection
+applies activity quarantine and the release gate. Atomic's dedicated activity
+buttons retain their separate policy and Power+direction never forms a macro.
+
 Validation:
 
 - `sh tests/ble_test.sh` checks Python's `wait_for_release` gate at startup and
@@ -160,7 +173,13 @@ Validation:
   capacity reuse, and independent wire completions under ASan/UBSan.
 - `sh tests/ble_test.sh` covers both input profiles, the Volume Up/Right
   overlap sequence, logical aliases, keyed releases, stale reports,
-  activity quarantine, disconnect/input-loss cancellation, and Power chords.
+  activity quarantine, disconnect/input-loss cancellation, and all five fixed
+  Siri macros. Macro coverage includes both press/release orders, selector-based
+  duration at the 500 ms boundary, unrelated releases, rejected selection while
+  volume remains held, all-buttons-up consumption after rejection and timeout,
+  and exclusion of Atomic Power+direction/Select combinations. Rejected actions
+  preserve ordinary input; admitted actions quarantine new presses in the same
+  release-first report batch.
 - `python3 tests/cec_front_physical_hardware.py --url https://amity-dut.local
   --credentials PRIVATE_CREDENTIALS_JSON --host PI_SSH_HOST` exercises discovery,
   rescan pinning, reevaluation on reboot, and no-responder fallback against the

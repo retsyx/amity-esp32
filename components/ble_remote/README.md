@@ -135,11 +135,43 @@ before and after `0x0083` are supported. The ATT MTU is negotiated to 527.
 
 While in standby, Siri's Select, Up, Right, Down and Left clicks select activities
 0–4 respectively, on release. Holding for at least 500 ms selects activities
-5–9. With an activity active these buttons navigate normally; Power plus one
-of these buttons selects an activity, as in Python Amity. Short Power selects
-activity 0 from standby or enters standby from an active activity; long Power
-repairs the current target. Home, Back, volume, mute, play/pause and Siri map to
-their CEC controls (Siri sends Display Information).
+5–9. With an activity active these buttons navigate normally. Siri supports the
+fixed Power-button macros from Python Amity's
+[`hub.macros` defaults and long-press map](https://github.com/retsyx/amity/blob/main/main.py#L61-L90):
+
+| Siri macro | Selector held less than 500 ms | Selector held at least 500 ms |
+| --- | --- | --- |
+| Power + Select | Activity 0 | Activity 5 |
+| Power + Up | Activity 1 | Activity 6 |
+| Power + Right | Activity 2 | Activity 7 |
+| Power + Down | Activity 3 | Activity 8 |
+| Power + Left | Activity 4 | Activity 9 |
+
+These macros are available only on the Siri profile and are not configurable.
+Atomic retains its dedicated F1–F4 activity shortcuts; combining its Power and
+direction/Select buttons does not form an activity macro. Indices in the table
+are zero-based; selecting an unconfigured activity is rejected.
+
+Either macro button may be pressed first. The first release of Power or the
+chosen selector executes the macro once; releasing an unrelated key does not.
+The duration is measured from the selector's original press to that first
+macro-button release, regardless of how long Power has been held. Simultaneous
+Power/selector presses are recognized together, without a navigation press.
+When a selector was already navigating before Power was pressed, its ordinary
+hold ends when the macro is recognized.
+
+After execution, macro recognition and standalone Power actions stay consumed
+until **all physical buttons are released**, including any unrelated buttons
+held alongside the macro. This latch survives rejected activity selection and
+the one-second `wait_for_release` fallback. A rejected macro consumes its Power
+and selector buttons but preserves unrelated holds such as Volume Up. Accepted
+activity selection applies the normal held-button quarantine and
+`wait_for_release` gate. Disconnect, input loss and activity changes cancel a
+pending macro; its remaining held buttons cannot complete another action.
+
+Short Power selects activity 0 from standby or enters standby from an active
+activity; long Power repairs the current target. Home, Back, volume, mute,
+play/pause and Siri map to their CEC controls (Siri sends Display Information).
 
 Touch swipes use the Gen 2/3 31 mm, 1370-unit pad, a pressure threshold of 20,
 7 mm step thresholds, primary-axis locking, and release inertia with a
@@ -170,8 +202,12 @@ rollover, malformed descriptors, and disconnect releases.
 Siri profile, button, gesture and finite-step policies are also sanitizer-tested.
 `tests/remote_input_test.cpp` covers overlapping Volume Up/Right holds, keyed
 releases, simultaneous aliases, cancellation of all holds, stale reports and
-activity quarantine for both profiles. `tests/ble_controller_test.cpp` and
-`tests/siri_remote_test.cpp` retain adapter and Power-shortcut coverage.
+activity quarantine for both profiles. It also checks all five fixed Siri
+macros at the 500 ms boundary with either press/release order, Siri-only
+recognition, unrelated releases, rejected selection with an independent volume
+hold, and the executed-macro latch through all-buttons-up and timeout.
+`tests/ble_controller_test.cpp` and `tests/siri_remote_test.cpp` retain adapter
+and Power-shortcut coverage, including ordinary input after rejected actions.
 Remote Diagnostics and pairing/unpairing UI states can be checked without a
 device using `python3 tests/web_browser.py --remote-fixture` in the project-local
 Playwright environment.

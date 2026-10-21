@@ -34,6 +34,9 @@ bool RemoteInputController::emit(RemoteCommandType type, int value, uint8_t coun
 
 void RemoteInputController::suppress_held() {
     for (auto &key : held_) if (key.down) key.suppressed = true;
+    // A cancelled chord cannot turn into a second chord before all buttons
+    // release, even after wait_for_release's fallback has expired.
+    if (macro_selector_ >= 0) macro_executed_ = true;
     macro_selector_ = macro_power_ = -1;
     reconcile();
 }
@@ -116,11 +119,11 @@ void RemoteInputController::reconcile() {
 }
 
 void RemoteInputController::action(RemoteCommandType type, int value) {
-    report_action_ = true;
-    suppress_held();
     const bool changes_target = type == RemoteCommandType::PowerShort ||
         (type == RemoteCommandType::Activity && value != target_);
     if (emit(type, value)) {
+        report_action_ = true;
+        suppress_held();
         // A successful same-target activity selection needs this gate too.
         // Power-long only repairs the current activity in the Python reference.
         if (type == RemoteCommandType::Activity || type == RemoteCommandType::PowerShort) {
@@ -141,6 +144,7 @@ void RemoteInputController::release(size_t index, bool stale) {
     const bool suppressed = key.suppressed || stale || transition_pending_;
     key.down = false;
     if (suppressed) return;
+    if (macro_executed_) return;
     // Waiting suppresses forwarded presses and macro recognition, but releases
     // still drive Power and standby activity selection, as in Python.
     if (key.wait_blocked && active() && button != RemoteButton::Power) return;
@@ -150,6 +154,13 @@ void RemoteInputController::release(size_t index, bool stale) {
         const auto &function = held_[static_cast<size_t>(macro_selector_)];
         const auto macro_start = static_cast<int>(index) == macro_selector_ ? started : function.stamp.timestamp;
         const bool long_macro = report_stamp_.timestamp >= macro_start && report_stamp_.timestamp - macro_start >= long_press_us;
+        // The two macro buttons are consumed regardless of activity admission.
+        // Other held keys survive a rejected selection. Keep the executed
+        // latch until every physical button is up, as in Python's in_macro.
+        held_[static_cast<size_t>(macro_selector_)].suppressed = true;
+        held_[static_cast<size_t>(macro_power_)].suppressed = true;
+        macro_selector_ = macro_power_ = -1;
+        macro_executed_ = true;
         action(RemoteCommandType::Activity, selector(function.button) + (long_macro ? profile.long_activity_offset : 0));
     } else if (shortcut(button) >= 0) {
         action(RemoteCommandType::Activity, shortcut(button) + (long_press ? profile.long_activity_offset : 0));
@@ -181,7 +192,11 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
                 if (!key->down) {
                     bool down = false;
                     for (const auto &held : held_) down = down || held.down;
-                    if (!down) wait_for_release_ = false;
+                    if (!down) {
+                        wait_for_release_ = false;
+                        macro_executed_ = false;
+                        macro_selector_ = macro_power_ = -1;
+                    }
                 }
             }
         } else if (!key) {
@@ -190,7 +205,7 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
                           event.physical, event.button, stamp};
         }
     }
-    if (macro_selector_ < 0 && active() && bindings(profile).power_chords && !transition_pending_) {
+    if (macro_selector_ < 0 && !macro_executed_ && active() && bindings(profile).power_chords && !transition_pending_) {
         for (size_t i = 0; i < held_.size(); ++i) {
             const auto &power = held_[i];
             if (!power.down || power.suppressed || power.wait_blocked || power.profile != profile || power.button != RemoteButton::Power) continue;
@@ -222,6 +237,7 @@ void RemoteInputController::cancel() {
     // missing queued release must not leave an owner-task hold stuck forever.
     for (auto &key : held_) key = {};
     macro_selector_ = macro_power_ = -1;
+    macro_executed_ = false;
     reconcile();
 }
 } // namespace ble

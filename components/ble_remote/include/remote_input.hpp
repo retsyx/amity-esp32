@@ -76,6 +76,7 @@ private:
     uint8_t atomic_long_activity_offset_;
     uint32_t generation_ = 0;
     int target_ = -1, macro_selector_ = -1, macro_power_ = -1;
+    bool macro_executed_ = false;
     bool initialized_ = false, transition_pending_ = false, report_action_ = false;
     bool wait_for_release_ = true, selection_initialized_ = false, local_selection_pending_ = false;
     uint32_t selection_ = 0;
