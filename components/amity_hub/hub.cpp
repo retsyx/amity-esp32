@@ -136,15 +136,14 @@ void Hub::power(const Device &device, bool on, bool quirk) {
         if (q.vendor_id != device.vendor_id) continue;
         const auto &data = on ? q.power_on : q.power_off;
         if (data.empty() || data.size() > 15) continue;
-        transport_.send(device.bus, device.address, data.data(), data.size());
-        if (data[0] == 0x44) send(device.bus, device.address, {0x45});
+        const bool admitted = transport_.send(device.bus, device.address, data.data(), data.size());
+        if (admitted && data[0] == 0x44) send(device.bus, device.address, {0x45});
         return;
     }
     if (!on) send(device.bus, device.address, {0x36});
     else if (device.type == 0) send(device.bus, device.address, {0x04});
     else {
-        send(device.bus, device.address, {0x44, 0x6d});
-        send(device.bus, device.address, {0x45});
+        if (send(device.bus, device.address, {0x44, 0x6d})) send(device.bus, device.address, {0x45});
     }
 }
 void Hub::active_source() {
@@ -160,8 +159,7 @@ void Hub::input(const Activity &activity) {
     if (!activity.switch_device.empty()) {
         auto *d = find(activity.switch_device);
         if (!d) return;
-        send(d->bus, d->address, {0x44, 0x69, activity.switch_input});
-        send(d->bus, d->address, {0x45});
+        if (send(d->bus, d->address, {0x44, 0x69, activity.switch_input})) send(d->bus, d->address, {0x45});
     }
     active_source();
 }

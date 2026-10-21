@@ -314,5 +314,31 @@ int main() {
         assert(hub.snapshot().current_activity == 0);
         fixture_transmit = {}; fixture_present = false;
     }
+    { // Standalone-policy merge: unchanged down must not restart a live stream.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();assert(hub.select_activity(0));run_one_command();
+        fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();assert(hub.press_key(0x41,true));run_one_command();
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;})==1);
+        assert(hub.release_key());run_one_command();run_idle(2);fixture_present=false;
+    }
+    { // Standalone-policy merge: up cancels a queued repeat, not the initial short tap.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();assert(hub.select_activity(0));run_one_command();
+        fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();
+        bool released=false;fixture_before_start=[&](int,const cec::Frame& frame){if(!released&&frame.size>1&&frame.data[1]==0x44){released=true;assert(hub.release_key());}};
+        run_idle(4);fixture_before_start={};run_idle(2);
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;})==1);
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==2&&sent.frame.data[1]==0x45;})==1);
+        fixture_sent.clear();released=false;fixture_before_start=[&](int,const cec::Frame& frame){if(!released&&frame.size>1&&frame.data[1]==0x44){released=true;assert(hub.release_key());}};
+        assert(hub.press_key(0x42,true));run_one_command();fixture_before_start={};run_one_command();run_idle(2);
+        std::vector<uint8_t> sequence;for(const auto& sent:fixture_sent)if(sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x45))sequence.push_back(sent.frame.data[1]);
+        assert((sequence==std::vector<uint8_t>{0x44,0x45}));fixture_present=false;
+    }
+    { // Standalone-policy merge: a denied finite press cannot emit an unpaired release.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command();
+        unsigned presses=0,releases=0;fixture_send=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45)++releases;return true;};
+        assert(hub.select_activity(0));run_one_command();assert(presses>=2&&releases==0);fixture_send={};fixture_present=false;
+    }
     std::puts("Hub admission, completion-driven held keys, release recovery, and activity-generation tests passed");
 }

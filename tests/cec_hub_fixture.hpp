@@ -41,6 +41,7 @@ static int idle_passes = -1;
 static std::vector<unsigned> idle_waits;
 [[maybe_unused]] static std::vector<unsigned> command_waits;
 static std::function<void()> fixture_wire_complete;
+static std::function<void(int, const cec::Frame&)> fixture_before_start;
 static std::function<void()> fixture_delay;
 static bool fixture_late_reply = false;
 static std::vector<cec::Frame> fixture_waited;
@@ -195,7 +196,8 @@ bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, uint32_t timeou
     return send(frame, timeout);
 }
 bool Bus::send_and_wait_guarded(const Frame &frame, ExecutionFence fence, uint32_t timeout, unsigned attempts, TxResult* outcome, bool allow_overflow) {
-    if (!current_fence(fence)) return false;
+    if (fixture_before_start) fixture_before_start(impl_->gpio, frame);
+    if (!current_fence(fence)) { if (outcome) *outcome = TxResult::Cancelled; return false; }
     fixture_guarded.push_back({impl_->gpio, frame, fence, attempts, allow_overflow});
     const bool admitted=send_and_wait(frame, timeout, attempts);
     const auto result=admitted?(fixture_wait_outcome?fixture_wait_outcome(impl_->gpio,frame):TxResult::Success):TxResult::Pending;

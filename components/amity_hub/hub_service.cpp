@@ -178,7 +178,7 @@ struct HubService::Impl : Transport {
     cec::TxResult held_tx_result = cec::TxResult::Pending;
     uint32_t active_wire_generation = 0, active_key_generation = 0;
     std::string last_activity_error;
-    bool sending_held_key = false, sending_one_key = false, setting_activity = false;
+    bool sending_held_key = false, initial_held_key = false, sending_one_key = false, setting_activity = false;
     ActivitySettling settling{CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS};
 
     Impl() { lock = xSemaphoreCreateMutex(); configuration_gate = xSemaphoreCreateMutex(); }
@@ -578,11 +578,13 @@ struct HubService::Impl : Transport {
     void check_hold() {
         if (repeating_key >= 0 && repeating_generation != hold_generation.load()) stop_hold();
     }
-    void send_held_key() {
+    void send_held_key(bool initial = false) {
         held_tx_result = cec::TxResult::Pending;
         sending_held_key = true;
+        initial_held_key = initial;
         const bool accepted = hub.press_key(static_cast<uint8_t>(repeating_key), true);
         sending_held_key = false;
+        initial_held_key = false;
         if (!accepted || held_tx_result != cec::TxResult::Success) {
             // Failure ends the button state. Its output stream retains safe
             // final cleanup independently; a later physical up is a no-op.
@@ -670,6 +672,12 @@ struct HubService::Impl : Transport {
         if (!setting_activity && (sending_held_key || sending_one_key) && data[0] == 0x44) {
             fence.secondary_generation = &key_generation;
             fence.expected_secondary_generation = active_key_generation;
+            // Up cancels queued repeats; the initial down still survives a short tap.
+            // Every key-generation invalidation also advances hold_generation.
+            if (sending_held_key && !initial_held_key) {
+                fence.secondary_generation = &hold_generation;
+                fence.expected_secondary_generation = repeating_generation;
+            }
         }
         const unsigned attempts = data[0] == 0x44 ? 1 : 3;
         const bool allow_overflow = data[0] == 0x45;
@@ -1002,11 +1010,12 @@ struct HubService::Impl : Transport {
                     if (command->wire_generation == p.wire_generation.load() && command->key_generation == p.applied_key_generation &&
                         (!command->activity_bound || command->activity_generation == p.hub.activity_generation())) {
                         if (command->repeat && command->value == p.failed_key) break;
+                        if (command->repeat && command->value == p.repeating_key && command->hold_generation == p.repeating_generation) break;
                         p.stop_hold();
                         if (command->repeat) {
                             p.repeating_key = command->value;
                             p.repeating_generation = command->hold_generation;
-                            p.send_held_key();
+                            p.send_held_key(true);
                         } else {
                             p.sending_one_key = true;
                             p.hub.press_key(static_cast<uint8_t>(command->value));
