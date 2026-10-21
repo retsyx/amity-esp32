@@ -61,8 +61,9 @@ The following are explicit user changes to the baseline, dated 21 October 2026:
   cause a final release attempt. Retain
   exact safe stream cleanup state separately from the ended key's token.
 - Do not buffer outgoing messages in the executor. The CEC layer contains the
-  only transmit FIFO, with eight normal slots per CEC wire and one extra slot
-  for a release. At nine messages, further release submissions are dropped.
+  only transmit FIFO, with eight slots per CEC wire counting queued and active
+  messages together. Releases have no extra slot: full-FIFO submissions are
+  dropped, and every TX dropped because the FIFO is full must be logged.
   The executor validates/translates and submits directly; admission failure is
   reported without a second frame queue or a hidden repeat backlog.
 - CEC is a mechanical transmitter. It queues and sends exactly the frames and
@@ -77,11 +78,11 @@ state or typed requests; it does not permit an executor backlog of outgoing
 messages, retained ordinary work waiting for CEC capacity, or retry queues.
 Keep the existing input/gesture algorithms and task ownership unless a change is
 needed for an explicitly requested behavior. Preserve causal down/up ordering
-and failed-key no-op handling under IPC pressure. The sole ninth CEC slot is
-explicitly permitted only for an executor-selected release; ordinary messages
-cannot use it. Once all nine slots are occupied, drop further releases without
-retaining or retrying them when capacity opens. Pass generic overflow permission
-to the CEC layer; it must not inspect opcodes to choose admission policy.
+and failed-key no-op handling under IPC pressure. The CEC FIFO has eight slots
+for all messages, including releases. If full, drop the submitted release
+without retaining or retrying it when capacity opens. Log every TX dropped
+because of full-FIFO admission, including every member of a rejected atomic
+batch. CEC must not inspect opcodes to choose admission policy.
 
 This preservation rule explicitly includes Siri remote swipes. Keep the
 original gesture recognition, thresholds, direction and acceleration rules,

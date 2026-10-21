@@ -111,16 +111,24 @@ missing metadata defer until the relevant discovery completes; known-device
 operations continue. Command admission is separate from successful CEC queue
 admission or transmission.
 
-Outgoing frames live solely in CEC's per-wire FIFO: eight normal queued-plus-active
-slots and a ninth overflow slot available only for supplied releases. Every
+Outgoing frames live solely in CEC's per-wire FIFO: eight queued-plus-active
+slots shared by all supplied frames, including releases. Every
 key-press frame gets one wire attempt. A failed admission or TX ends only its
 key's hold and makes one final-cleanup decision; unchanged down reports cannot
 restart it. A later physical up does not duplicate cleanup. Final release and
-ordinary commands use up to three wire attempts. Release admission is immediate:
-slot nine is allowed, but a release submitted at nine is dropped and consumed.
+ordinary commands use up to three wire attempts. A finite key recipe submits
+its press first, then attempts final release immediately only if the press was
+admitted and no other key keeps the recipient stream open. At seven occupied
+slots the press enters slot eight and release drops; at eight the press drops
+and no release is attempted. Its release does not wait for completion or first
+edge. Generic explicitly submitted Bus batches retain all-or-none admission.
+Release admission is immediate:
+a release submitted at eight is dropped, logged and consumed. Every TX dropped
+because the FIFO is full must be logged, including each frame of a rejected
+atomic batch.
 No later tick or capacity change retries that admission, including power-quirk
-and switch-key cleanup. CEC applies supplied attempt budgets and overflow flags
-without interpreting button policy. The
+and switch-key cleanup. CEC applies supplied attempt budgets and the same
+eight-message admission limit without interpreting button policy. The
 [hub component README](../components/amity_hub/README.md) also documents
 per-key and release-all emergency epochs used only when the command queue is
 full, plus activity-generation validation.

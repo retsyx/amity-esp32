@@ -80,8 +80,8 @@ int main() {
             assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==audio_key&&sent.gpio==1&&sent.frame.destination()==0;})==1);
             assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44&&sent.gpio==2;}));
         }
-        { // Actual owner admission and the sole driver FIFO: eight ordinary
-          // messages may be followed by one explicitly eligible final release.
+        { // Actual owner admission and the sole driver FIFO: all messages,
+          // including final release, drop at eight admitted messages.
             const auto saved_tick=fixture_tick;fixture_tick=0;
             const auto policies=original.local_policy_snapshot();
             const auto policy=std::find_if(policies.begin(),policies.end(),[](const auto& p){return std::any_of(p.bindings.begin(),p.bindings.end(),[](const auto& b){return b.binding.capability==Capability::volume||b.binding.capability==Capability::audio;});});assert(policy!=policies.end());
@@ -94,18 +94,23 @@ int main() {
             assert(!original.remote_key_active(down));
             assert(original.execute_authorized(down)==ESP_OK);assert(!original.remote_key_active(down)); // Queued is not yet processed.
             run_one_command();assert(original.remote_key_active(down)==std::optional<bool>{true});
-            fixture_driver_paused=true;fixture_sent.clear();fixture_submitted.clear();
+            fixture_driver_paused=true;fixture_sent.clear();fixture_submitted.clear();fixture_fifo_dropped.clear();
             unsigned queued_queries=0;
             for(unsigned i=0;i<8;++i){auto query=down;query.command_id=input_id<CommandId>(70100+i);query.kind=OperationKind::query_state;query.arguments={};query.arguments.query_opcode=0x71;if(!original.admit_authorized(query))break;++queued_queries;}
             assert(queued_queries>=7); // An already-admitted held repeat may occupy the other normal slot.
             auto full=down;full.command_id=input_id<CommandId>(70200);full.kind=OperationKind::query_state;full.arguments={};full.arguments.query_opcode=0x71;assert(!original.admit_authorized(full));
             auto up=down;up.command_id=input_id<CommandId>(70201);up.kind=OperationKind::release_key;assert(original.admit_authorized(up));
+            assert(fixture_fifo_dropped.back().frame.data[1]==0x45); // Release reaches the full driver's rejection/logging boundary.
+            const auto dropped=fixture_fifo_dropped.size();
+            auto tap=down;tap.command_id=input_id<CommandId>(70204);tap.arguments.repeat=false;
+            assert(!original.admit_authorized(tap));
+            assert(fixture_fifo_dropped.size()==dropped+1&&fixture_fifo_dropped[dropped].frame.data[1]==0x44); // A dropped press never submits its release.
             assert(original.remote_key_active(down,true)==std::optional<bool>{false});assert(!original.remote_key_active(down));
             auto never_processed=down;never_processed.command_id=input_id<CommandId>(70202);assert(!original.remote_key_active(never_processed));
             auto wrong_boot=down;wrong_boot.fence.owner_boot_id=input_id<BootId>(70203);assert(!original.remote_key_active(wrong_boot,true));
             fixture_driver_paused=false;run_idle(20);
             assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x71;})==static_cast<ptrdiff_t>(queued_queries));
-            assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x45&&s.allow_overflow&&s.attempts==3;})==1);
+            assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x45&&s.attempts==3;})==0);
             fixture_sent.clear();run_idle(4);assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& s){return s.frame.size>1&&(s.frame.data[1]==0x45||s.frame.data[1]==0x44);}));
             auto newer=down;newer.command_id=input_id<CommandId>(70300);newer.arguments.hold_token=input_id<HoldToken>(70301);assert(original.admit_authorized(newer));
             for(unsigned i=0;i<32;++i)assert(original.press_key(0xff));assert(!original.press_key(0xff));
@@ -116,7 +121,54 @@ int main() {
             auto newer_up=newer;newer_up.command_id=input_id<CommandId>(70302);newer_up.kind=OperationKind::release_key;assert(original.admit_authorized(newer_up));run_idle(4);
             fixture_tick=saved_tick;
         }
-        // Four atomic tap batches fill the only driver FIFO. A fifth intent
+        { // The actual owner preserves main's press-first admission for finite
+          // audio taps and discrete power-on, including a dropped final release.
+            fixture_time+=600000;run_idle(8); // Drain earlier audio-query deadlines.
+            const auto saved_tick=fixture_tick;fixture_tick=0;
+            const auto policies=original.local_policy_snapshot();
+            std::vector<AuthorizedCecOperation> recipes;
+            for(const auto kind:{OperationKind::press_key,OperationKind::ensure_power}) {
+                bool found=false;
+                for(const auto& policy:policies)for(const auto& permission:policy.bindings) {
+                    if(found)continue;
+                    const auto& binding=permission.binding;
+                    const bool audio=kind==OperationKind::press_key&&(binding.capability==Capability::volume||binding.capability==Capability::audio);
+                    const bool power=kind==OperationKind::ensure_power&&binding.capability==Capability::power&&permission.discrete_power_on&&
+                        !(permission.image_view_on&&policy.role==PortRole::playback_proxy);
+                    if(!audio&&!power)continue;
+                    const auto grant=std::find_if(policy.route_grants.begin(),policy.route_grants.end(),[&](const auto& g){return g.binding_id==binding.binding_id;});
+                    if(grant==policy.route_grants.end())continue;
+                    AuthorizedCecOperation operation{input_id<CommandId>(70400+recipes.size()),kind,binding.component_id,binding.binding_id,binding.endpoint,
+                        {policy.owner_boot_id,policy.coordinator_epoch,policy.config_revision,binding.domain_revision,binding.binding_revision,grant->session_id,grant->route_generation,policy.policy_generation},0,{}};
+                    if(audio){operation.arguments.key=0x41;operation.arguments.hold_token=input_id<HoldToken>(70410);}
+                    recipes.push_back(operation);found=true;
+                }
+                assert(found);
+            }
+            unsigned identity=70500;
+            for(auto recipe:recipes)for(const unsigned occupied:{7u,8u}) {
+                recipe.command_id=input_id<CommandId>(identity++);recipe.execution_expires_at_ms=uint64_t(fixture_time)/1000+500;
+                fixture_driver_paused=true;fixture_sent.clear();fixture_submitted.clear();fixture_fifo_dropped.clear();
+                for(unsigned i=0;i<occupied;++i) {
+                    auto query=recipe;query.command_id=input_id<CommandId>(identity++);query.kind=OperationKind::query_state;query.arguments={};
+                    assert(original.admit_authorized(query));
+                }
+                assert(bool(original.admit_authorized(recipe))==(occupied==7));
+                assert(fixture_fifo_dropped.size()==1);
+                assert(fixture_fifo_dropped[0].frame.data[1]==(occupied==7?0x45:0x44));
+                assert(fixture_fifo_dropped[0].attempts==(occupied==7?3u:1u));
+                fixture_driver_paused=false;run_idle(12);
+                assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x8f;})==occupied);
+                const auto key=recipe.kind==OperationKind::ensure_power?0x6d:0x41;
+                assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[&](const auto& s){return s.frame.size==3&&s.frame.data[1]==0x44&&s.frame.data[2]==key&&s.attempts==1;})==(occupied==7?1:0));
+                assert(std::none_of(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x45;}));
+                fixture_sent.clear();fixture_time+=600000;run_idle(8);
+                assert(fixture_fifo_dropped.size()==1);
+                assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& s){return s.frame.size>1&&(s.frame.data[1]==0x44||s.frame.data[1]==0x45||s.frame.data[1]==0x71);}));
+            }
+            fixture_tick=saved_tick;
+        }
+        // Four finite taps fill the only driver FIFO. A fifth intent
         // returns busy now; the executor retains no frames to retry later.
         fixture_driver_paused=true;fixture_sent.clear();
         for(unsigned tap=0;tap<4;++tap)assert(original.press_remote_key_for_activity(2,audio_generation));
@@ -195,7 +247,7 @@ int main() {
         fixture_submit_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x45){++release_attempts;if(!admit_release)return false;release_admitted_ms=uint64_t(fixture_time)/1000;}return true;};
         fixture_sent.clear();fixture_submitted.clear();assert(original.release_remote_key());run_idle(3);
         fixture_time+=600000;run_idle(3);
-        assert(release_attempts==1&&std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&(sent.frame.data[1]==0x45||sent.frame.data[1]==0x71);})); // A full ninth slot drops final release once, with no delayed query or retry.
+        assert(release_attempts==1&&std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&(sent.frame.data[1]==0x45||sent.frame.data[1]==0x71);})); // A full eight-slot FIFO drops final release once, with no delayed query or retry.
         admit_release=true;run_idle(2);assert(release_attempts==1);
         assert(original.press_remote_key_for_activity(0x41,audio_generation,true));run_idle(2);
         assert(original.release_remote_key());run_idle(2);assert(release_attempts==2&&release_admitted_ms==uint64_t(fixture_time)/1000);

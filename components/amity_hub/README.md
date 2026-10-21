@@ -40,7 +40,7 @@ returns immediately without waiting for an owner reply, CEC capacity or ACK.
 The worker returns the appropriate reservation when the request is ready to
 execute, including after any required metadata discovery. These bounded
 requests communicate between tasks; they are not a second outgoing CEC-frame
-queue. CEC retains its unchanged eight-normal-plus-one-release FIFO per wire. A full queue or a competing
+queue. CEC uses an eight-message FIFO per wire, counting queued and active work together. A full queue or a competing
 configuration call returns before the callback runs. A failed callback returns
 its error, releases the slot, and leaves the live hub untouched. A successful
 callback is followed by a guaranteed nonblocking enqueue. Configuration calls
@@ -134,9 +134,12 @@ emulated once per press and keeps that mapping while held. `USER_CONTROL_RELEASE
 `(physical wire, initiator, destination)` and is submitted only when all keys
 for that recipient have ended, including a last-key failure. This extends Python's global
 all-keys-ended/source-release behavior to release the actual audio or source
-recipient correctly. One-shot keys, including Matter volume steps, send their
-press/release pair unless another held key at that recipient still needs the
-stream open.
+recipient correctly. One-shot keys, including Matter volume steps, submit their press directly, then
+attempt final release immediately if the press was admitted and no other held
+key at that recipient still needs the stream open. The two submissions are
+sequential: at seven occupied slots the press enters slot eight and the release
+is dropped and logged; at eight the press is dropped and logged with no release
+attempt. Neither completion nor the first wire edge gates that release attempt.
 
 For example, hold Volume Up, press Right, then release Right:
 
@@ -148,18 +151,20 @@ For example, hold Volume Up, press Right, then release Right:
   Volume Up remains held. Releasing Volume Up then submits that recipient's
   final `45`.
 
-Outgoing frames are buffered only in CEC's FIFO: eight normal queued-plus-active
-messages and one release-only overflow slot per wire. The executor retains
+Outgoing frames are buffered only in CEC's FIFO: eight queued-plus-active
+messages per wire, including releases. The executor retains
 button state and bounded completion trackers, without a second frame queue.
 Schema-2 ownership transports exact key state and hold tokens; the receiving
 owner performs repetition and aggregates releases on its own wire. Remote
 state admission is distinct from CEC admission and successful transmission.
 Submissions never wait for capacity. Key presses use one wire attempt; final
-releases and other ordinary commands use up to three. A final release may use
-slot nine; at nine it is dropped and its cleanup decision is consumed. No tick,
-later button-up, or newly available capacity retries that admission. This also
-applies to power-quirk and switch-key cleanup. An admitted release follows the
-recipient's already queued presses, and later commands cannot overtake it.
+releases and other ordinary commands use up to three. If the eight-message FIFO
+is full, a final release is dropped, logged and its cleanup decision is consumed.
+No tick, later button-up, or newly available capacity retries that admission.
+This also applies to power-quirk and switch-key cleanup. Every TX dropped because
+the FIFO is full is logged, including each frame in a rejected atomic batch. An
+admitted release follows the recipient's already queued presses, and later
+commands cannot overtake it.
 
 Activity changes, configuration replacement, standby, remote disconnect and
 input loss cancel all held keys and clean up their recipients. If the hub

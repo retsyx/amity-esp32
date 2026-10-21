@@ -3,7 +3,7 @@
   "proposal_version": "0.1",
   "prepared_date": "2026-10-20",
   "amendment_date": "2026-10-21",
-  "amendment": "Preserve current main behavior (98e64a6 at this merge), including independent per-key completions, immediate CEC admission while ACKs are pending, wait_for_release and fixed Siri macros. Distribution only moves messages to their owner and has zero CEC behavioral effect; d50af8026938797fc0820d0107f4c4e064c2d2bc remains historical evidence where unchanged. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight normal slots plus one release-only overflow slot per wire; releases at nine are dropped without executor admission retry. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force.",
+  "amendment": "Preserve current main behavior (98e64a6 at this merge), including independent per-key completions, immediate CEC admission while ACKs are pending, wait_for_release and fixed Siri macros. Distribution only moves messages to their owner and has zero CEC behavioral effect; d50af8026938797fc0820d0107f4c4e064c2d2bc remains historical evidence where unchanged. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight total messages per wire; releases at eight are dropped without executor admission retry, and every TX dropped because the FIFO is full is logged. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force.",
   "source_repository": "https://github.com/retsyx/amity-esp32",
   "source_commit": "d50af8026938797fc0820d0107f4c4e064c2d2bc",
   "status": "Current design package; software and physical validation are recorded separately in IMPLEMENTATION_STATUS.json.",
@@ -12,8 +12,8 @@
   "files": [
     {
       "path": "01-octopus-architecture.md",
-      "size_bytes": 15075,
-      "sha256": "c3d9a202c301d640964b2e061615cded28085352a993b933c27cc926d1604b7e"
+      "size_bytes": 15236,
+      "sha256": "2af97f633eb14261d97e518646833d978f6e6b264d3ff81492ad776d45720c95"
     },
     {
       "path": "02-consortium-architecture.md",
@@ -27,23 +27,23 @@
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 22317,
-      "sha256": "fb440b3d693991a2ba36e5726b7e58429c5e9cae3a4ac465219cf98ff06ec5de"
+      "size_bytes": 23960,
+      "sha256": "0549db888ee1f202dd22c976f2e487d481cb1c15d0222451b4a4d4f39dedc8a3"
     },
     {
       "path": "05-discovery-and-topology.md",
-      "size_bytes": 26400,
-      "sha256": "040e49d4a9c4ac163766026749fce81da4d1e9b88584d08aef0c2f4a0d492f0d"
+      "size_bytes": 26532,
+      "sha256": "b3bd8b0896708ff4e6c86ef677a7bf71965b79ef05de11b5dbf143d1fc27af80"
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 22829,
-      "sha256": "62502d5294f7d1c1e6790a28c27bb1be2949e7a13b40494ca0c699047e66db9b"
+      "size_bytes": 22800,
+      "sha256": "5ca63b8f983914ad4a56a8b7d8b2f1c2b0ba3f43764d2242b29ae66ab4ec627e"
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 27508,
-      "sha256": "71f8a430262b50b864fe18dc7d20777dc6c64902e64a89a125f2816a32edf1d6"
+      "size_bytes": 29644,
+      "sha256": "4dffe3b610867663a60e6a40757f68724ae604245e3c8f77b8226380d040a0aa"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
@@ -62,13 +62,13 @@
     },
     {
       "path": "11-config-storage-and-migration.md",
-      "size_bytes": 33902,
-      "sha256": "38b060bd70b9c1f63e896ea435fb2012e1cefd838ec374f91b08e7f2a27a20b4"
+      "size_bytes": 34039,
+      "sha256": "06a71660b38a4516a340a3961ae8c8854132ff39e4bbe0fd3f11361607f13c9a"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 29167,
-      "sha256": "2be14fa914c78d7c4aad51d1a9fce35c044ed98e0c6e9b815b18f1ee782ce1aa"
+      "size_bytes": 29527,
+      "sha256": "3be539ea0da2f8ccddc2361c0800b28d0c54381a9997f8e1fcd2abae98df209e"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
@@ -82,8 +82,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 33449,
-      "sha256": "b1cf2a6d5388f7f724c2278a881810836bca02abc32a27b9c80841ecb5c3bda4"
+      "size_bytes": 34028,
+      "sha256": "9576f3f676bdae0642324d19c4b409f18bb037d8bf043412a2a160a568b1116e"
     },
     {
       "path": "16-agent-work-breakdown.md",
@@ -92,18 +92,18 @@
     },
     {
       "path": "17-decisions-and-open-questions.md",
-      "size_bytes": 17568,
-      "sha256": "85cfc82369b680b165a905ef249ef038182f10beadcbd06be7f748aaeb96d2d5"
+      "size_bytes": 17534,
+      "sha256": "d8d684bd578156b99ece2f47b1e6f146f1559a4c49915d7638e698cacb3bf2f4"
     },
     {
       "path": "18-requirements-and-traceability.md",
-      "size_bytes": 21183,
-      "sha256": "cd6e6595c00055bd4805e7e6dd6e233090ff0a2b723dbd5a986b602d7ca5a4a0"
+      "size_bytes": 21312,
+      "sha256": "8b31a4a00c546df12c98636511f86297dfdf3a058c01e497cd7dc7aa31b82fc7"
     },
     {
       "path": "19-source-baseline.md",
-      "size_bytes": 16028,
-      "sha256": "c60695012e004c85198b6e0a992c02eda5bf2b8b153dbd64f99b4c99cfa4e427"
+      "size_bytes": 15994,
+      "sha256": "29d2c69be07556ebd2da17bba59c28611be3f91898f57e9361219497881b3c22"
     },
     {
       "path": "20-user-interface.md",
@@ -112,23 +112,23 @@
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 25662,
-      "sha256": "3ab4e31489a38506c2f693a87164ac706a9c74d8ebe62c6c32a282c4595224eb"
+      "size_bytes": 27232,
+      "sha256": "3903f3a731d8d070cb647eaf7c099800bc6d34248c4eb73b86533a2f35ab3f39"
     },
     {
       "path": "README.md",
-      "size_bytes": 16628,
-      "sha256": "bde7cacf57dc5e2a4dfcf7fe7705a38aeff178fa6b3e118ef2695d4a1ec23822"
+      "size_bytes": 16761,
+      "sha256": "642eeb5812febb6b54ef4ae5dc4c4fafaadc4d42b98194bc9ab4ef28639d754e"
     },
     {
       "path": "TODO.md",
-      "size_bytes": 27466,
-      "sha256": "f2cd05943493fcd478de5e561b950fde37f48dad860dabc18b3f19a8dc46b162"
+      "size_bytes": 27712,
+      "sha256": "0c1606170fb3a1e541b98441a4a0a7f486cb04a2697c75b0a3d30abb3312df64"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 3982,
-      "sha256": "3c7dab7e1e4cca3e312a2b7086b394e91dcc6370afc63d8666cd4733bda126df"
+      "size_bytes": 3948,
+      "sha256": "bd2e2308a4a06e45e6b1469adcf2ca289319b4a3fe600c74e84e4ec484c40873"
     },
     {
       "path": "examples/README.md",
@@ -177,8 +177,8 @@
     },
     {
       "path": "schemas/README.md",
-      "size_bytes": 8229,
-      "sha256": "1d3f2ad66fb4298eab97345f7831ee387b5cd8b44c054d3d7f293b5d6bedd92c"
+      "size_bytes": 8655,
+      "sha256": "56b4acdf1720090784f7e558f52d014f888281ca7cbb6023842ff1d9a1dba1d9"
     },
     {
       "path": "schemas/adapter-settings.schema.json",

@@ -335,11 +335,11 @@ void LiveSystem::observe(Port& p, const cec::ReceiveObservation& received, uint6
 }
 bool LiveSystem::submit_wire(Port& p, const WireWork* work, size_t count) {
     if (!p.present || !work || !count || count > p.submitted.size()) return false;
-    std::array<size_t,9> slots{};size_t available=0;
+    std::array<size_t,10> slots{};size_t available=0;
     for(size_t i=0;i<p.submitted.size()&&available<count;++i)
         if(!p.submitted[i].active&&work_generations_[p.slot_index][i].load()!=UINT32_MAX)slots[available++]=i;
     if(available!=count)return false;
-    std::array<cec::Submission,9> batch{};
+    std::array<cec::Submission,10> batch{};
     for(size_t i=0;i<count;++i){
         const auto& item=work[i];
         if(!item.work_id||item.frame.port!=p.key||item.frame.payload.empty()||item.frame.payload.size()>15)return false;
@@ -365,7 +365,7 @@ bool LiveSystem::submit_wire(Port& p, const WireWork* work, size_t count) {
         auto& generation=work_generations_[p.slot_index][slots[i]];
         target.fence.secondary_generation=&generation;target.fence.expected_secondary_generation=++generation;
         target.operation_token=next_token_++;if(!target.operation_token)target.operation_token=next_token_++;
-        target.attempts=item.attempts;target.requires_previous_start=item.requires_previous_start;target.allow_overflow=item.allow_overflow;
+        target.attempts=item.attempts;target.requires_previous_start=item.requires_previous_start;
     }
     if(!p.bus->submit_guarded_batch(batch.data(),count))return false;
     for(size_t i=0;i<count;++i)p.submitted[slots[i]]={work[i].work_id,batch[i].operation_token,true};
@@ -387,7 +387,7 @@ void LiveSystem::service_port(Port& p, uint64_t now) {
     // A completion may immediately admit the next held press. Bound this
     // pass to the driver's capacity so a fast completion producer cannot keep
     // the owner from processing another key or physical wire.
-    for (unsigned i = 0; i < p.submitted.size() && p.bus->take_completion(completion); ++i) {
+    for (unsigned i = 0; i < 8 && p.bus->take_completion(completion); ++i) {
         auto submitted=std::find_if(p.submitted.begin(),p.submitted.end(),[&](const auto& item){return item.active&&item.token==completion.operation_token;});
         if(submitted!=p.submitted.end()){
             const auto id=submitted->work_id;submitted->active=false;

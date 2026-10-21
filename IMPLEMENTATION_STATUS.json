@@ -97,9 +97,10 @@
     },
     {
       "design": "04/06/07/08/13/21 and explicit user amendments",
-      "behavior": "State-change-only input transport; completion-paced owner repetition; executor-owned aggregate implicit release; one attempt per key press; dumb CEC with sole FIFO of eight normal messages plus one release-only overflow message; no executor outgoing-frame queue; stable exact link/token fencing",
+      "behavior": "State-change-only input transport; completion-paced owner repetition; executor-owned aggregate implicit release; one attempt per key press; dumb CEC with sole eight-total-message FIFO per wire with full-FIFO release drops and per-TX full-FIFO logging; no executor outgoing-frame queue; stable exact link/token fencing",
       "evidence": "test-results/owner-repeat-validation-index-0.1.73.json",
-      "scope": "Software implementation and exact main DUT install; physical INPUT-03 and broader original parity remain open"
+      "scope": "Software implementation and exact main DUT install; physical INPUT-03 and broader original parity remain open",
+      "capacity_amendment": "Current eight-message capacity and full-FIFO logging amendment supersedes the linked historical 0.1.73 extra-release-slot evidence; current focused software validation is recorded separately."
     }
   ],
   "availability_limits": [
@@ -1986,7 +1987,7 @@
     },
     "owner_repeat_0_1_73": {
       "contract": "amity-octopus-consortium/21-original-controller-policy.md",
-      "scope": "State-change-only input transport; completion-paced owner repetition; executor-owned aggregate implicit release; one attempt per key press; dumb CEC with sole FIFO of eight normal messages plus one release-only overflow message; no executor outgoing-frame queue; stable exact link/token fencing",
+      "scope": "Historical 0.1.73 evidence: State-change-only input transport; completion-paced owner repetition; executor-owned aggregate implicit release; one attempt per key press; dumb CEC with sole FIFO of eight normal messages plus one release-only overflow message; no executor outgoing-frame queue; stable exact link/token fencing. Its former extra release slot is superseded by the current eight-total-message FIFO amendment; this snapshot does not establish the new capacity/logging behavior.",
       "retention_evidence": "test-results/owner-repeat-dut-retained-0.1.73.json",
       "siri_source_parity": "test-results/owner-repeat-siri-source-parity-0.1.73.json",
       "schema_equivalence": "test-results/state-change-schema-vectors.json",
@@ -1999,6 +2000,28 @@
       "prior_version": "0.1.72",
       "prior_archive_evidence": "test-results/owner-repeat-prior-artifacts-0.1.72.json",
       "result": "PASS previous exact archive preserved and hashes reverified"
+    },
+    "cec_fifo_eight_2026_10_21": {
+      "contract": "amity-octopus-consortium/21-original-controller-policy.md",
+      "change": "One eight-total-message CEC FIFO per wire, including active work and releases; remove extra release slot and overflow flags. Full-FIFO releases are dropped permanently without later admission retry. Log every TX rejected because of FIFO capacity, including every frame in an atomic batch.",
+      "main_host_commands": [
+        "sh tests/cec_bus_test.sh",
+        "sh tests/cec_hub_test.sh"
+      ],
+      "consortium_host_commands": [
+        "sh tests/cec_runtime_test.sh",
+        "sh tests/system_hold_test.sh",
+        "sh tests/amity_system_test.sh",
+        "sh tests/system_remote_control_test.sh",
+        "sh tests/cec_hub_test.sh"
+      ],
+      "result": "PASS focused software fixtures under ASan/UBSan: hard eight with active work, both queue profiles, per-frame full-FIFO logging including maximum-length and explicit atomic-batch frames after locks release, final key-up reaching actual Bus rejection, and no later release retry or audio-query timer after dropped release. Final reruns cover core and real-Bus owner-operation finite audio taps/discrete power at seven/eight occupied slots, original command correlation and attempt budgets, no finite release first-edge dependency, no dropped-release retry/query after 600 ms, and the shared main HubService boundary regression.",
+      "distributed_adaptation": "Completion records follow the driver bound of eight admitted messages per physical wire, rather than the removed global ninth-slot precheck across all wires. Bounded proposed guard storage reaches the actual Bus admission decision and is not additional frame storage.",
+      "limitations": "No new physical CEC/remote qualification or installed firmware claim; historical 0.1.73 validation remains separate.",
+      "main_commit": "b682cea",
+      "main_firmware_build": "PASS complete ESP32-S3 firmware build",
+      "consortium_firmware_build": "PASS complete ESP32-S3 firmware build, firmware layout checks and release packaging; no installation or physical CEC qualification",
+      "finite_key_parity": "Preserve main sequential direct admission: with two available slots press and release may both enter; at seven occupied slots press enters slot eight then release drops with a log; at eight press drops with a log and no release is attempted. Attempt release immediately after admitted press without a completion/first-edge dependency. Generic explicitly submitted Bus batches retain all-or-none admission."
     }
   },
   "qualification_gates": {
@@ -2009,7 +2032,7 @@
     "production": "Development unsigned image only on supplied DUT. Native signed boot, release flash encryption, provisioned encrypted NVS, production recovery and security review require separate disposable-hardware qualification; no eFuses changed.",
     "manual_main_recovery": "Software evidence PASS in the current frozen 0.1.62 host/browser/native snapshot: strict fresh-main restore/codec, storage cuts, exact CAS/isolation, stable logical metadata and unavailable execution until fresh repair. Physical recovery remains pending: replacement Matter setup, old-main isolation, sole remote/home re-pairing, each member factory reset/re-enrollment and returning-old-main rejection. No live transfer or pairing/key cloning.",
     "named_induction": "NAME-01 software evidence PASS in 0.1.64: required names, canonicalization/duplicate/invalid rejection before radio, authenticated profile-2 proposal, persistent settings and actual unchanged-hostname UI/negative admission checks. No live candidate enrolled. Actual profile-2 induction, persistent hostname after candidate reboot, discovery/advertisement of that name and LAN finalization on added hardware remain unqualified.",
-    "remote_input": "INPUT-03 remains open: actual Siri gestures, taps, local/remote audio holds, aggregate end-of-stream release, failed TX and late-up NOP, eight normal slots plus the single ninth release slot and further-drop behavior, full FIFO, link loss and timing under radio/HTTPS/scan load require physical CEC captures. Exact installed Ready and host fixtures do not establish this."
+    "remote_input": "INPUT-03 remains open: actual Siri gestures, taps, local/remote audio holds, aggregate end-of-stream release, failed TX and late-up NOP, eight total queued-plus-active messages, permanently dropped full-FIFO releases and logging of every full-FIFO TX drop, full FIFO, link loss and timing under radio/HTTPS/scan load require physical CEC captures. Exact installed Ready and host fixtures do not establish this."
   },
   "external_fixture_export": {
     "status": "Explicit user approval received; both approved files copied to reserved Pi and hashes verified",
@@ -2065,7 +2088,7 @@
       "implemented_restore_limits": "Cross-main restore discards bindings/resources/routes, remote assignment, PA evidence and old member domains; all activities initially disabled. Fresh Scan and original Edit/Save can repair supported direct routes; ACT-01 receiver/audio/switch behavior still open."
     },
     "algorithm_preservation": "User explicitly requires baseline algorithms/functionality, including Siri swipes, unless explicitly changed; see AGENTS.md.",
-    "executor_cec_boundary": "Executor owns button state and all message choices without outgoing-frame buffers; CEC mechanically sends supplied frames/attempts/guards through its sole FIFO of eight normal messages plus one release-only overflow message per wire; further releases at nine are dropped without executor admission retry.",
+    "executor_cec_boundary": "Executor owns button state and all message choices without outgoing-frame buffers; CEC mechanically sends supplied frames/attempts/guards through its sole eight-total-message FIFO per wire, counting queued and active work. Releases have no extra slot; a full-FIFO release is dropped permanently without executor admission retry. Every TX dropped because the FIFO is full is logged, including each frame of a rejected atomic batch.",
     "keys": "State changes only across devices, successful completion-paced repetition at owner, one attempt per UCP. Failed TX ends that key; late up is a NOP. UCR has no key operand and is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure."
   }
 }

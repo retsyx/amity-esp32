@@ -9,10 +9,21 @@
 #include <functional>
 #include <vector>
 #include <array>
+#include <cstdarg>
+#include <string>
 
 struct Object { virtual ~Object() = default; };
 struct Queue : Object { size_t capacity, item_size; std::deque<std::vector<uint8_t>> items; };
-struct Semaphore : Object { unsigned available = 0; };
+struct Semaphore : Object { unsigned available = 0; bool mutex = false; };
+static std::vector<Semaphore*> semaphores;
+static std::vector<std::string> warning_logs;
+void fixture_log_warning(const char* tag, const char* format, ...) {
+    assert(std::strcmp(tag, "cec") == 0 && critical_depth == 0);
+    for (const auto* semaphore : semaphores) if (semaphore->mutex) assert(semaphore->available);
+    char message[192]; va_list args; va_start(args, format);
+    std::vsnprintf(message, sizeof(message), format, args); va_end(args);
+    warning_logs.emplace_back(message);
+}
 struct Task { void (*code)(void *); void *arg; bool pumping = false; };
 struct FakeTimer { TimerCallback callback = nullptr; void *arg = nullptr; bool running = false; };
 struct EmptyQueue {};
@@ -57,7 +68,7 @@ int xQueueReceive(QueueHandle_t h, void *out, uint32_t timeout) {
 void xQueueReset(QueueHandle_t h) { static_cast<Queue *>(h)->items.clear(); }
 unsigned uxQueueMessagesWaiting(QueueHandle_t h) { return static_cast<Queue *>(h)->items.size(); }
 void vQueueDelete(QueueHandle_t h) { delete static_cast<Object *>(h); }
-SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *) { auto *s = new Semaphore; s->available = true; return s; }
+SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *) { auto *s = new Semaphore; s->available = true; s->mutex = true; semaphores.push_back(s); return s; }
 SemaphoreHandle_t xSemaphoreCreateBinaryStatic(StaticSemaphore_t *) { return new Semaphore; }
 SemaphoreHandle_t xSemaphoreCreateCountingStatic(unsigned, unsigned initial, StaticSemaphore_t *) { auto *s = new Semaphore; s->available = initial; return s; }
 int xSemaphoreTake(SemaphoreHandle_t h, uint32_t timeout) {
@@ -71,7 +82,10 @@ int xSemaphoreTake(SemaphoreHandle_t h, uint32_t timeout) {
     --s.available; return pdTRUE;
 }
 int xSemaphoreGive(SemaphoreHandle_t h) { ++static_cast<Semaphore *>(h)->available; return pdTRUE; }
-void vSemaphoreDelete(SemaphoreHandle_t h) { delete static_cast<Object *>(h); }
+void vSemaphoreDelete(SemaphoreHandle_t h) {
+    auto* s = static_cast<Semaphore*>(h);
+    semaphores.erase(std::remove(semaphores.begin(), semaphores.end(), s), semaphores.end()); delete s;
+}
 int xTaskCreateWithCaps(void (*code)(void *), const char *, unsigned bytes, void *arg, unsigned,
                         TaskHandle_t *out, unsigned caps) {
     assert(bytes == 3072 && (caps & MALLOC_CAP_INTERNAL));
@@ -297,58 +311,71 @@ static void atomic_batch_tests() {
     assert(!timer && tasks.empty() && !output_low);
 }
 
-static void overflow_slot_tests() {
-    const cec::Frame ordinary{{0x4f, 0x44, 1}, 3}, release_shape{{0x4f, 0x45}, 2};
-    // Deliberately not a UCR: permission is supplied by the caller, not inferred.
-    const cec::Frame eligible{{0x4f, 0x99}, 2};
+static void full_fifo_tests() {
+    const cec::Frame ordinary{{0x4f, 0x44, 1}, 3}, release{{0x4f, 0x45}, 2};
     for (auto profile : {cec::Bus::QueueProfile::Legacy, cec::Bus::QueueProfile::Native}) {
-        cec::Bus bus;assert(bus.start(34, profile)==ESP_OK);
-        const auto drain=[&]{for(unsigned pass=0;pass<4000;++pass)pump();};
-        const auto before=bus.statistics().transmitted;
-        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},1));
-        assert(!bus.send(release_shape)); // An opcode cannot obtain the ninth slot.
-        assert(bus.submit_guarded(eligible,{},900,1,true));
-        const auto full_at=now;
-        assert(!bus.submit_guarded(eligible,{},901,1,true)&&!bus.send_guarded(eligible,{},1,true));
-        cec::TxCompletion rejected;rejected.result.store(cec::TxResult::Success);
-        assert(!bus.send_async_guarded(eligible,{},rejected,1,true));
-        assert(rejected.result.load()==cec::TxResult::Success&&now==full_at);
-        assert(!bus.send_guarded(ordinary,{},1));drain();
-        cec::Completion completion;assert(bus.take_completion(completion)&&completion.operation_token==900&&completion.started);
-        assert(!bus.take_completion(completion)&&bus.statistics().transmitted==before+9&&bus.statistics().tx_queue_high_water==9);
-        drain();assert(bus.statistics().transmitted==before+9); // Dropped calls never become a retry/backlog.
-        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},1));
-        const auto full_again_at=now;
-        assert(!bus.send_guarded(ordinary,{},1)&&now==full_again_at);
-        drain(); // Rejection never waits for space or becomes retained work.
-        assert(bus.send_guarded(ordinary,{},1));drain();
+        cec::Bus bus; assert(bus.start(34, profile) == ESP_OK);
+        const auto drain = [&] { for (unsigned pass = 0; pass < 4000; ++pass) pump(); };
+        const auto before = bus.statistics().transmitted;
+        for (unsigned i = 0; i < 8; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        const auto full_at = now; const auto logged = warning_logs.size();
+        assert(!bus.send(release));
+        assert(!bus.submit_guarded(release, {}, 900, 1));
+        assert(!bus.send_guarded(ordinary, {}, 1));
+        cec::TxCompletion rejected; rejected.result.store(cec::TxResult::Success);
+        assert(!bus.send_async_guarded(release, {}, rejected, 1));
+        assert(rejected.result.load() == cec::TxResult::Success && now == full_at);
+        assert(warning_logs.size() == logged + 4);
+        assert(warning_logs[logged] == "TX dropped: FIFO full (GPIO 34, 2 bytes: 4f 45)");
+        assert(warning_logs[logged+2] == "TX dropped: FIFO full (GPIO 34, 3 bytes: 4f 44 01)");
+        drain(); cec::Completion completion;
+        assert(!bus.take_completion(completion) && bus.statistics().transmitted == before + 8);
+        assert(bus.statistics().tx_queue_high_water == 8);
+        drain(); assert(bus.statistics().transmitted == before + 8); // No retry or backlog.
 
-        // Ordered all-or-none admission: ordinary eighth + eligible ninth fits.
-        cec::Submission pair[2]{{ordinary,{},910,1},{eligible,{},911,1,true,true}};
-        for(unsigned i=0;i<7;++i)assert(bus.send_guarded(ordinary,{},1));
-        assert(bus.submit_guarded_batch(pair,2));assert(!bus.send_guarded(eligible,{},1,true));drain();
-        for(unsigned token=910;token<=911;++token)assert(bus.take_completion(completion)&&completion.operation_token==token&&completion.started);
-        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},1));
-        assert(!bus.submit_guarded_batch(pair,2)); // Ordinary UCP may never take the ninth slot.
-        assert(bus.send_guarded(eligible,{},1,true));drain();assert(!bus.take_completion(completion));
+        // The complete press/release pair fits at six, and rejects at seven.
+        cec::Submission pair[2]{{ordinary, {}, 910, 1}, {release, {}, 911, 1, true}};
+        for (unsigned i = 0; i < 6; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        assert(bus.submit_guarded_batch(pair, 2)); assert(!bus.send(release)); drain();
+        for (unsigned token = 910; token <= 911; ++token)
+            assert(bus.take_completion(completion) && completion.operation_token == token && completion.started);
+        for (unsigned i = 0; i < 7; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        const auto batch_logged = warning_logs.size();
+        assert(!bus.submit_guarded_batch(pair, 2));
+        assert(warning_logs.size() == batch_logged + 2); // Log every dropped batch frame.
+        assert(warning_logs[batch_logged+1] == "TX dropped: FIFO full (GPIO 34, 2 bytes: 4f 45)");
+        assert(bus.send(release)); drain(); assert(!bus.take_completion(completion));
 
-        // Nine exact asynchronous completion reservations, no hidden tenth.
-        std::array<cec::Submission,9> all{};
-        for(unsigned i=0;i<all.size();++i)all[i]={ordinary,{},920+i,1,false,i==8};
-        assert(bus.submit_guarded_batch(all.data(),all.size()));assert(!bus.submit_guarded(eligible,{},930,1,true));drain();
-        for(unsigned token=920;token<=928;++token)assert(bus.take_completion(completion)&&completion.operation_token==token&&completion.started);
+        // Eight asynchronous completion reservations, with no hidden ninth.
+        std::array<cec::Submission, 8> all{};
+        for (unsigned i = 0; i < all.size(); ++i) all[i] = {ordinary, {}, 920+i, 1};
+        assert(bus.submit_guarded_batch(all.data(), all.size()));
+        assert(!bus.submit_guarded(release, {}, 930, 1)); drain();
+        for (unsigned token = 920; token <= 927; ++token)
+            assert(bus.take_completion(completion) && completion.operation_token == token && completion.started);
         assert(!bus.take_completion(completion));
+
+        // The full sixteen-byte frame is present in its drop log.
+        cec::Frame longest{}; longest.size = 16;
+        for (unsigned i = 0; i < 16; ++i) longest.data[i] = i;
+        for (unsigned i = 0; i < 8; ++i) assert(bus.send_guarded(ordinary, {}, 1));
+        assert(!bus.send(longest));
+        assert(warning_logs.back() == "TX dropped: FIFO full (GPIO 34, 16 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)");
+        drain();
     }
-    assert(!timer&&tasks.empty()&&!output_low);
-    // Total capacity includes a live/queued first attempt on a stuck wire.
-    cec::Bus active;assert(active.start(35,cec::Bus::QueueProfile::Native)==ESP_OK);
-    external_low|=uint64_t{1}<<35;gpio_set_level(35,1);step();assert(active.send_guarded(ordinary,{},1));pump();
-    for(unsigned i=0;i<7;++i)assert(active.send_guarded(ordinary,{},1));
-    assert(!active.send_guarded(ordinary,{},1)&&active.submit_guarded(eligible,{},940,1,true));
-    assert(!active.submit_guarded(eligible,{},941,1,true));
-    external_low&=~(uint64_t{1}<<35);gpio_set_level(35,1);for(unsigned pass=0;pass<4000;++pass)pump();
-    cec::Completion completion;assert(active.take_completion(completion)&&completion.operation_token==940&&completion.started);
-    assert(active.idle());active.stop();assert(!timer&&tasks.empty()&&!output_low);
+    assert(!timer && tasks.empty() && !output_low);
+    // Total capacity includes a live first attempt on a stuck wire.
+    cec::Bus active; assert(active.start(35, cec::Bus::QueueProfile::Native) == ESP_OK);
+    external_low |= uint64_t{1} << 35; gpio_set_level(35, 1); step();
+    assert(active.send_guarded(ordinary, {}, 1)); pump();
+    for (unsigned i = 0; i < 7; ++i) assert(active.send_guarded(ordinary, {}, 1));
+    const auto full_at = now;
+    assert(!active.send_guarded(ordinary, {}, 1) && !active.submit_guarded(release, {}, 940, 1));
+    assert(now == full_at && warning_logs.back() == "TX dropped: FIFO full (GPIO 35, 2 bytes: 4f 45)");
+    external_low &= ~(uint64_t{1} << 35); gpio_set_level(35, 1);
+    for (unsigned pass = 0; pass < 4000; ++pass) pump();
+    cec::Completion completion; assert(!active.take_completion(completion));
+    assert(active.idle()); active.stop(); assert(!timer && tasks.empty() && !output_low);
 }
 
 int main() {
@@ -469,7 +496,7 @@ int main() {
     caller_attempt_tests();
     async_completion_contract_tests();
     atomic_batch_tests();
-    overflow_slot_tests();
+    full_fifo_tests();
     std::puts("Real Bus shared-timer lifecycle, queued/start-edge cancellation and in-flight completion passed");
-    std::puts("Real Bus sole FIFO nominal8+eligible ninth, later drop, atomic batches, caller budgets and first-edge dependency passed");
+    std::puts("Real Bus sole FIFO8, logged full drops, atomic batches, caller budgets and first-edge dependency passed");
 }

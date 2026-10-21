@@ -85,7 +85,7 @@ private:
         std::shared_ptr<const system::DiscoverySnapshot> verified{};
         size_t slot_index = 0;
         struct Submitted { uint64_t work_id = 0; uint32_t token = 0; bool active = false; };
-        std::array<Submitted, 9> submitted{}; // Eight messages plus caller-authorized final release overflow.
+        std::array<Submitted, 10> submitted{}; // Eight admitted messages plus two candidate batch guards.
     };
     struct BindingGuard { system::BindingId id; uint64_t revision = 0; std::atomic<uint32_t> generation{0}; };
     template<class T> T fresh() { return T::generate(random_).value_or(T{}); }
@@ -109,7 +109,7 @@ private:
     std::vector<Port> ports_;
     // Owned by the containing internal-RAM HubService::Impl, never PSRAM.
     std::atomic<uint32_t> wire_generations_[10]{};
-    std::atomic<uint32_t> work_generations_[10][9]{};
+    std::atomic<uint32_t> work_generations_[10][10]{};
     BindingGuard binding_guards_[128];
     size_t guard_count_ = 0;
     std::vector<system::CecObservation> observations_;

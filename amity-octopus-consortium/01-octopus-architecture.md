@@ -93,7 +93,7 @@ Readiness is per port, domain, binding and capability. “One silent output” m
 
 Hardware profile, portable topology, member-specific execution policy and secrets are separate records. A topology revision is validated and staged before activation. Applying it must not invoke the old `Hub::configure()` standby side effect. An edit to a display name must not power equipment off; a wiring edit must invalidate affected bindings and explicitly reconcile the route. [Configuration migration](11-config-storage-and-migration.md).
 
-On network loss, preserve electrical isolation and safe identity responses, stop new group-dependent actions, expire held keys locally and expose observed state as stale. Do not broadcast standby or repeatedly restore a presumed activity. On overload, reject new ordinary work with a bounded error while retaining cancellation/release capacity. A reboot changes `BootId` and invalidates outstanding execution authority.
+On network loss, preserve electrical isolation and safe identity responses, stop new group-dependent actions, expire held keys locally and expose observed state as stale. Do not broadcast standby or repeatedly restore a presumed activity. On overload, reject new ordinary work with a bounded error while retaining input-state cancellation/release processing. This does not reserve CEC transmit capacity: its eight-message FIFO drops and logs releases submitted while full, without a later admission retry. A reboot changes `BootId` and invalidates outstanding execution authority.
 
 ## 9. Implementation exit criteria
 

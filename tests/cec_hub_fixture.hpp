@@ -46,12 +46,13 @@ static std::function<void(int, const cec::Frame&)> fixture_before_start;
 static bool fixture_late_reply = false;
 static std::function<void()> fixture_delay;
 static std::vector<cec::Frame> fixture_completed;
-struct SentFrame { int gpio; cec::Frame frame; unsigned attempts = 3; bool allow_overflow = false; uint32_t timeout_ms = 0; };
+struct SentFrame { int gpio; cec::Frame frame; unsigned attempts = 3; uint32_t timeout_ms = 0; };
 static std::vector<SentFrame> fixture_sent;
 static std::vector<SentFrame> fixture_transmitted;
-struct SubmittedFrame { int gpio; cec::Frame frame; unsigned attempts; bool allow_overflow = false; };
+struct SubmittedFrame { int gpio; cec::Frame frame; unsigned attempts; };
 [[maybe_unused]] static std::vector<SubmittedFrame> fixture_submitted;
-struct GuardedFrame { int gpio; cec::Frame frame; cec::ExecutionFence fence; unsigned attempts = 0; bool allow_overflow = false; };
+[[maybe_unused]] static std::vector<SubmittedFrame> fixture_fifo_dropped;
+struct GuardedFrame { int gpio; cec::Frame frame; cec::ExecutionFence fence; unsigned attempts = 0; };
 static std::vector<GuardedFrame> fixture_guarded;
 static std::deque<SentFrame> fixture_incoming;
 static std::function<bool(int, const cec::Frame &)> fixture_send;
@@ -171,7 +172,7 @@ void Bus::stop() {
 }
 void Bus::set_address(uint8_t address) { impl_->address = address; }
 bool Bus::send(const Frame &frame) {
-    fixture_sent.push_back({impl_->gpio, frame, 3, false, 0});
+    fixture_sent.push_back({impl_->gpio, frame, 3, 0});
     if (fixture_admission && !fixture_admission(impl_->gpio,frame)) return false;
     if (fixture_send) return fixture_send(impl_->gpio, frame);
     const uint8_t peer = impl_->gpio == 1 ? 0 : 4;
@@ -213,22 +214,21 @@ static bool current_fence(ExecutionFence fence) {
     return (!fence.generation || fence.generation->load()==fence.expected_generation) &&
         (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation);
 }
-bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts,bool allow_overflow) {
+bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts) {
     if(!attempts||!current_fence(fence))return false;
-    fixture_guarded.push_back({impl_->gpio, frame, fence, attempts, allow_overflow});
+    fixture_guarded.push_back({impl_->gpio, frame, fence, attempts});
     const auto index=fixture_sent.size();const bool accepted=send(frame);
-    fixture_sent[index].attempts=attempts;fixture_sent[index].allow_overflow=allow_overflow;
+    fixture_sent[index].attempts=attempts;
     return accepted;
 }
-bool Bus::send_async_guarded(const Frame& frame,ExecutionFence fence,TxCompletion& completion,unsigned attempts,bool allow_overflow) {
+bool Bus::send_async_guarded(const Frame& frame,ExecutionFence fence,TxCompletion& completion,unsigned attempts) {
     if (!frame.size || frame.size > 16 || !attempts || !current_fence(fence)) return false;
-    fixture_guarded.push_back({impl_->gpio, frame, fence, attempts, allow_overflow});
+    fixture_guarded.push_back({impl_->gpio, frame, fence, attempts});
     const auto index = fixture_sent.size();
     const bool accepted = send(frame);
     fixture_sent[index].attempts = attempts;
-    fixture_sent[index].allow_overflow = allow_overflow;
     if (!accepted) return false;
-    if (frame.size == 1) fixture_transmitted.push_back({impl_->gpio, frame, attempts, allow_overflow, 0});
+    if (frame.size == 1) fixture_transmitted.push_back({impl_->gpio, frame, attempts, 0});
     completion.result.store(TxResult::Pending, std::memory_order_relaxed);
     fixture_pending.push_back({this, impl_->gpio, frame, fence, &completion});
     if (fixture_async_autocomplete) fixture_complete_next(TxResult::Pending, impl_->gpio);
@@ -240,26 +240,30 @@ bool Bus::receive_observation(ReceiveObservation& observation, uint32_t timeout)
     if (!receive(observation.frame, timeout)) return false;
     observation.local_monotonic_us = fixture_time; return true;
 }
-bool Bus::submit_guarded(const Frame& frame, ExecutionFence fence, uint32_t token, unsigned attempts, bool allow_overflow) {
-    Submission item{frame,fence,token,attempts};item.allow_overflow=allow_overflow;return submit_guarded_batch(&item,1);
+bool Bus::submit_guarded(const Frame& frame, ExecutionFence fence, uint32_t token, unsigned attempts) {
+    Submission item{frame,fence,token,attempts};return submit_guarded_batch(&item,1);
 }
 static Completion fixture_emit(Bus& bus,int gpio,const FixtureQueued& work){
     auto result=TxResult::Cancelled;bool started=false;
     if(fixture_wire_deadlines&&work.item.fence.expires_at_us&&uint64_t(fixture_time)>=work.item.fence.expires_at_us)result=TxResult::Expired;
     else if(current_fence(work.item.fence)&&(!work.item.requires_previous_start||(work.index&&work.batch->started[work.index-1]))){
-        started=true;fixture_submitted.push_back({gpio,work.item.frame,work.item.attempts,work.item.allow_overflow});
+        started=true;fixture_submitted.push_back({gpio,work.item.frame,work.item.attempts});
         if(work.item.frame.size==1) {
-            fixture_transmitted.push_back({gpio,work.item.frame,work.item.attempts,work.item.allow_overflow,0});
+            fixture_transmitted.push_back({gpio,work.item.frame,work.item.attempts,0});
             result=fixture_transmit?fixture_transmit(gpio,work.item.frame):fixture_present&&work.item.frame.destination()==(gpio==1?0:4)?TxResult::Success:TxResult::Nack;
-        } else result=bus.send_guarded(work.item.frame,work.item.fence,work.item.attempts,work.item.allow_overflow)?
+        } else result=bus.send_guarded(work.item.frame,work.item.fence,work.item.attempts)?
             (fixture_wait_outcome?fixture_wait_outcome(gpio,work.item.frame):TxResult::Success):TxResult::Nack;
     }
     work.batch->started[work.index]=started;
     return {work.item.operation_token,result,started};
 }
 bool Bus::submit_guarded_batch(const Submission* batch,size_t count){
-    if(!batch||!count||count>9)return false;
-    for(size_t i=0;i<count;++i)if((impl_->completed.size()+impl_->queued.size()+i>=8&&(!batch[i].allow_overflow||impl_->completed.size()+impl_->queued.size()+i>=9))||
+    if(!batch||!count||count>8)return false;
+    if(impl_->completed.size()+impl_->queued.size()+count>8){
+        for(size_t i=0;i<count;++i)fixture_fifo_dropped.push_back({impl_->gpio,batch[i].frame,batch[i].attempts});
+        return false;
+    }
+    for(size_t i=0;i<count;++i)if(
         !batch[i].operation_token||!batch[i].attempts||!current_fence(batch[i].fence)||
         (fixture_wire_deadlines&&batch[i].fence.expires_at_us&&uint64_t(fixture_time)>=batch[i].fence.expires_at_us)||(batch[i].requires_previous_start&&!i)||
         (fixture_submit_admission&&!fixture_submit_admission(impl_->gpio,batch[i].frame)))return false;

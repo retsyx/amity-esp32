@@ -124,7 +124,7 @@ struct HubService::Impl : Transport {
         int key = -1;
         uint32_t instance = 0, setup = 0;
     };
-    // At most nine messages per wire are admitted. Extra records allow
+    // At most eight messages per wire are admitted. Extra records allow
     // terminal results to remain available until the next owner iteration.
     std::array<Flight, 32> flights{};
     cec::TxCompletion discovery_completion;
@@ -756,8 +756,7 @@ struct HubService::Impl : Transport {
         cec::Frame frame; frame.size = static_cast<uint8_t>(size + 1);
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
-        // Admission is immediate. Final releases alone may use the ninth
-        // slot and are dropped if it is occupied.
+        // Admission is immediate. All messages drop when the eight-slot FIFO is full.
         auto &bus = side == BusSide::Front ? front : back;
         // Once admitted, work finishes in FIFO order through activity changes.
         // Only a changed physical endpoint can invalidate that recipient. Key
@@ -774,10 +773,9 @@ struct HubService::Impl : Transport {
             fence.expected_secondary_generation = applied_key_generation;
         }
         const unsigned attempts = data[0] == 0x44 ? 1 : 3;
-        const bool allow_overflow = data[0] == 0x45;
         auto *flight = sending_key && data[0] == 0x44 ? sending_key : setting_activity ? reserve_flight() : nullptr;
-        const bool sent = flight ? bus.send_async_guarded(frame, fence, flight->completion, attempts, allow_overflow) :
-            !setting_activity && bus.send_guarded(frame, fence, attempts, allow_overflow);
+        const bool sent = flight ? bus.send_async_guarded(frame, fence, flight->completion, attempts) :
+            !setting_activity && bus.send_guarded(frame, fence, attempts);
         if (flight && !sent) flight->used = false;
         if (sent && data[0] == 0x44 && destination < 15)
             release_binding_generation[port][destination] = binding_wire_generation[port][destination].load();

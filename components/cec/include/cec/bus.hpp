@@ -30,12 +30,11 @@ struct Submission {
     unsigned attempts = 3;
     // A caller-selected batch dependency; no message/opcode interpretation.
     bool requires_previous_start = false;
-    bool allow_overflow = false;
 };
 class Bus {
 public:
     // Source compatibility only: every profile uses identical shared dispatch,
-    // Engine behavior and eight normal slots plus one caller-eligible overflow.
+    // Engine behavior and eight total queued-plus-active slots.
     enum class QueueProfile { Legacy, Native };
     Bus();
     ~Bus();
@@ -48,20 +47,17 @@ public:
     void set_address(uint8_t address);
     bool install_receive_policy(ReceivePolicy policy);
     // Admission never waits for FIFO capacity or wire acknowledgement. One
-    // FIFO per wire holds eight queued+active messages, plus one caller-eligible
-    // overflow message. Rejection drops the submission without retaining it.
+    // FIFO per wire holds eight queued+active messages, including releases.
+    // Rejection drops the submission without retaining it; FIFO-full drops log.
     bool send(const Frame &frame);
-    bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3,
-                      bool allow_overflow = false);
+    bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3);
     // Caller-owned tracking for legacy users of the same sole FIFO. Rejection
     // leaves the tracker unchanged. Admission sets Pending; terminal publication
     // uses release ordering after the FIFO slot is freed. Read with acquire
     // ordering before reusing it, and keep it alive until that publication.
     bool send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion,
-                            unsigned attempts = 1, bool allow_overflow = false);
-    // Completion metadata includes the single caller-eligible overflow slot.
-    bool submit_guarded(const Frame&, ExecutionFence, uint32_t operation_token, unsigned attempts = 3,
-                        bool allow_overflow = false);
+                            unsigned attempts = 1);
+    bool submit_guarded(const Frame&, ExecutionFence, uint32_t operation_token, unsigned attempts = 3);
     // Copy the whole batch into this wire's sole FIFO, or admit none. Generic
     // frame/fence/attempt metadata only; the caller chooses every message.
     bool submit_guarded_batch(const Submission*, size_t count);

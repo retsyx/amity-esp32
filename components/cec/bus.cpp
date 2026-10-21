@@ -6,6 +6,7 @@
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -16,6 +17,7 @@
 #include "soc/gpio_struct.h"
 #include "soc/soc_caps.h"
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 
 static_assert(SOC_GPTIMER_SUPPORTED && TIMER_LL_GPTIMERS_TOTAL >= 1);
@@ -25,7 +27,7 @@ static_assert(TIMER_LL_GPTIMERS_TOTAL == 4, "Review target timer capabilities");
 #endif
 
 namespace cec {
-constexpr unsigned nominal_tx_capacity = 8, maximum_tx_capacity = 9;
+constexpr unsigned tx_capacity = 8;
 struct Bus::Impl {
     struct Runtime;
     static Runtime &runtime();
@@ -40,10 +42,10 @@ struct Bus::Impl {
         ExecutionFence fence{};
         TxCompletion *completion = nullptr;
         uint32_t operation_token = 0;
-        uint8_t batch_slot = maximum_tx_capacity, batch_index = 0;
+        uint8_t batch_slot = tx_capacity, batch_index = 0;
         bool requires_previous_start = false;
     };
-    struct BatchState { bool used = false; uint8_t remaining = 0; bool started[maximum_tx_capacity]{}; };
+    struct BatchState { bool used = false; uint8_t remaining = 0; bool started[tx_capacity]{}; };
     Engine engine;
     gpio_num_t gpio = GPIO_NUM_NC;
     uint64_t pin_mask = 0;
@@ -52,12 +54,12 @@ struct Bus::Impl {
     SemaphoreHandle_t completion_slots = nullptr;
     StaticQueue_t completions_control{};
     StaticSemaphore_t completion_slots_control{};
-    uint8_t completion_storage[maximum_tx_capacity * sizeof(Completion)]{};
+    uint8_t completion_storage[tx_capacity * sizeof(Completion)]{};
     StaticQueue_t rx_control{}, tx_control{}, result_control{};
     StaticSemaphore_t admission_control{};
     SemaphoreHandle_t admission = nullptr;
     unsigned tx_in_use = 0;
-    BatchState batches[maximum_tx_capacity]{}; // Dependency/completion metadata only, never frames.
+    BatchState batches[tx_capacity]{}; // Dependency/completion metadata only, never frames.
     uint8_t* rx_storage = nullptr;
     uint8_t* tx_storage = nullptr;
     uint8_t result_storage[sizeof(TxResult)]{};
@@ -71,8 +73,9 @@ struct Bus::Impl {
     uint64_t attempt_started_us = 0;
     void record_queue_depth();
     void service();
-    bool reserve_slots(size_t count, uint16_t overflow_mask);
-    bool enqueue(const Work&, bool allow_overflow);
+    bool reserve_slots(size_t count);
+    void log_fifo_full(const Frame&) const;
+    bool enqueue(const Work&);
     void free_slots(size_t count);
     bool dependency_ready(const Work& work);
     static void complete_work(Impl& p, const Work& work, TxResult outcome, bool started);
@@ -217,23 +220,26 @@ bool Bus::Impl::Runtime::tick(gptimer_handle_t, const gptimer_alarm_event_data_t
     return wake == pdTRUE;
 }
 Bus::Impl::Runtime &Bus::Impl::runtime() { static Runtime shared; return shared; }
-bool Bus::Impl::reserve_slots(size_t count, uint16_t overflow_mask) {
+bool Bus::Impl::reserve_slots(size_t count) {
     auto& r = runtime();
     portENTER_CRITICAL(&r.lock);
-    auto proposed = tx_in_use;
-    for (size_t i = 0; i < count; ++i) {
-        const auto limit = (overflow_mask & (uint16_t{1} << i)) ? maximum_tx_capacity : nominal_tx_capacity;
-        if (proposed >= limit) { portEXIT_CRITICAL(&r.lock); return false; }
-        ++proposed;
-    }
-    tx_in_use = proposed;
+    if (count > tx_capacity - tx_in_use) { portEXIT_CRITICAL(&r.lock); return false; }
+    tx_in_use += count;
     portEXIT_CRITICAL(&r.lock);
     return true;
 }
-bool Bus::Impl::enqueue(const Work& work, bool allow_overflow) {
+void Bus::Impl::log_fifo_full(const Frame& frame) const {
+    char bytes[16 * 3]{};
+    for (size_t i = 0; i < frame.size; ++i)
+        std::snprintf(bytes + 3 * i, sizeof(bytes) - 3 * i, "%02x%s",
+                      unsigned(frame.data[i]), i + 1 == frame.size ? "" : " ");
+    ESP_LOGW("cec", "TX dropped: FIFO full (GPIO %d, %u bytes: %s)",
+             int(gpio), unsigned(frame.size), bytes);
+}
+bool Bus::Impl::enqueue(const Work& work) {
     if (!started || !work.frame.size || work.frame.size > 16 || !work.attempts) return false;
     if (xSemaphoreTake(admission, 0) != pdTRUE) return false;
-    const bool reserved = reserve_slots(1, allow_overflow ? 1 : 0);
+    const bool reserved = reserve_slots(1);
     // Initialize before the work becomes visible on another core. A rejected
     // tracker is never retained, so its previous terminal value is preserved.
     const auto previous = work.completion ? work.completion->result.load(std::memory_order_relaxed) : TxResult::Pending;
@@ -245,6 +251,7 @@ bool Bus::Impl::enqueue(const Work& work, bool allow_overflow) {
     }
     xSemaphoreGive(admission);
     if (queued) record_queue_depth();
+    else log_fifo_full(work.frame);
     return queued;
 }
 void Bus::Impl::free_slots(size_t count) {
@@ -258,13 +265,13 @@ bool Bus::Impl::dependency_ready(const Work& work) {
     if (!work.requires_previous_start) return true;
     auto& r = runtime();
     portENTER_CRITICAL(&r.lock);
-    const bool ready = work.batch_slot < maximum_tx_capacity && work.batch_index > 0 &&
+    const bool ready = work.batch_slot < tx_capacity && work.batch_index > 0 &&
         batches[work.batch_slot].used && batches[work.batch_slot].started[work.batch_index - 1];
     portEXIT_CRITICAL(&r.lock);
     return ready;
 }
 void Bus::Impl::complete_work(Impl& p, const Work& work, TxResult outcome, bool started) {
-    if (work.batch_slot < maximum_tx_capacity) {
+    if (work.batch_slot < tx_capacity) {
         auto& r = runtime();
         portENTER_CRITICAL(&r.lock);
         auto& batch = p.batches[work.batch_slot];
@@ -292,7 +299,7 @@ Bus::Impl::~Impl() {
 void Bus::Impl::service() {
     // Finishing an operation immediately advances this wire's FIFO. The loop
     // never waits for a wire edge or an ACK, so other ports remain independent.
-    for (unsigned completed=0;completed<maximum_tx_capacity;++completed) {
+    for (unsigned completed=0;completed<tx_capacity;++completed) {
         if (!active) {
             if (xQueueReceive(tx, &work, 0) != pdTRUE) return;
             active = true; attempt_pending = false; attempt = 0; work_started = false;
@@ -362,7 +369,7 @@ esp_err_t Bus::start(int gpio, QueueProfile) {
     p.gpio = static_cast<gpio_num_t>(gpio);
     p.pin_mask = uint64_t{1} << gpio;
     gpio_set_level(p.gpio, 1);
-    const unsigned rx_depth = 32, tx_depth = maximum_tx_capacity;
+    const unsigned rx_depth = 32, tx_depth = tx_capacity;
     p.rx_storage = static_cast<uint8_t*>(heap_caps_malloc(rx_depth * sizeof(ReceiveObservation), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     p.tx_storage = static_cast<uint8_t*>(heap_caps_malloc(tx_depth * sizeof(Impl::Work), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (!p.rx_storage || !p.tx_storage) { xSemaphoreGive(r.lifecycle); return ESP_ERR_NO_MEM; }
@@ -370,8 +377,8 @@ esp_err_t Bus::start(int gpio, QueueProfile) {
     p.tx = xQueueCreateStatic(tx_depth, sizeof(Impl::Work), p.tx_storage, &p.tx_control);
     p.result = xQueueCreateStatic(1, sizeof(TxResult), p.result_storage, &p.result_control);
     p.admission = xSemaphoreCreateMutexStatic(&p.admission_control);
-    p.completions = xQueueCreateStatic(maximum_tx_capacity, sizeof(Completion), p.completion_storage, &p.completions_control);
-    p.completion_slots = xSemaphoreCreateCountingStatic(maximum_tx_capacity, maximum_tx_capacity, &p.completion_slots_control);
+    p.completions = xQueueCreateStatic(tx_capacity, sizeof(Completion), p.completion_storage, &p.completions_control);
+    p.completion_slots = xSemaphoreCreateCountingStatic(tx_capacity, tx_capacity, &p.completion_slots_control);
     if (!p.rx || !p.tx || !p.result || !p.admission || !p.completions || !p.completion_slots) {
         xSemaphoreGive(r.lifecycle); return ESP_ERR_NO_MEM;
     }
@@ -413,20 +420,20 @@ static bool valid_fence_storage(ExecutionFence fence) {
     };
     return valid(fence.generation) && valid(fence.secondary_generation);
 }
-bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts, bool allow_overflow) {
+bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts) {
     if (!impl_ || !valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;
-    return impl_->enqueue({frame, attempts, fence}, allow_overflow);
+    return impl_->enqueue({frame, attempts, fence});
 }
-bool Bus::send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion, unsigned attempts, bool allow_overflow) {
+bool Bus::send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion, unsigned attempts) {
     if (!impl_ || !valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;
-    return impl_->enqueue({frame, attempts, fence, &completion}, allow_overflow);
+    return impl_->enqueue({frame, attempts, fence, &completion});
 }
-bool Bus::submit_guarded(const Frame &frame, ExecutionFence fence, uint32_t token, unsigned attempts, bool allow_overflow) {
-    const Submission submission{frame, fence, token, attempts, false, allow_overflow};
+bool Bus::submit_guarded(const Frame &frame, ExecutionFence fence, uint32_t token, unsigned attempts) {
+    const Submission submission{frame, fence, token, attempts};
     return submit_guarded_batch(&submission, 1);
 }
 bool Bus::submit_guarded_batch(const Submission* batch, size_t count) {
-    if (!impl_ || !impl_->started || !batch || !count || count > maximum_tx_capacity) return false;
+    if (!impl_ || !impl_->started || !batch || !count || count > tx_capacity) return false;
     for (size_t i = 0; i < count; ++i) {
         const auto& item = batch[i];
         if (!i && item.requires_previous_start) return false;
@@ -435,9 +442,11 @@ bool Bus::submit_guarded_batch(const Submission* batch, size_t count) {
             (item.fence.expires_at_us && uint64_t(esp_timer_get_time()) >= item.fence.expires_at_us)) return false;
     }
     if (xSemaphoreTake(impl_->admission, 0) != pdTRUE) return false;
-    uint16_t overflow_mask = 0;
-    for (size_t i = 0; i < count; ++i) if (batch[i].allow_overflow) overflow_mask |= uint16_t{1} << i;
-    if (!impl_->reserve_slots(count, overflow_mask)) { xSemaphoreGive(impl_->admission); return false; }
+    if (!impl_->reserve_slots(count)) {
+        xSemaphoreGive(impl_->admission);
+        for (size_t i = 0; i < count; ++i) impl_->log_fifo_full(batch[i].frame);
+        return false;
+    }
     size_t reserved = 0;
     while (reserved < count && xSemaphoreTake(impl_->completion_slots, 0) == pdTRUE) ++reserved;
     if (reserved != count) {
@@ -445,18 +454,18 @@ bool Bus::submit_guarded_batch(const Submission* batch, size_t count) {
         impl_->free_slots(count);
         xSemaphoreGive(impl_->admission); return false;
     }
-    uint8_t batch_slot = maximum_tx_capacity;
+    uint8_t batch_slot = tx_capacity;
     bool dependent = false;
     for (size_t i = 1; i < count; ++i) dependent = dependent || batch[i].requires_previous_start;
     if (dependent) {
         auto& r = Impl::runtime();
         portENTER_CRITICAL(&r.lock);
-        for (uint8_t i = 0; i < maximum_tx_capacity; ++i) if (!impl_->batches[i].used) {
+        for (uint8_t i = 0; i < tx_capacity; ++i) if (!impl_->batches[i].used) {
             batch_slot = i; impl_->batches[i] = {}; impl_->batches[i].used = true;
             impl_->batches[i].remaining = static_cast<uint8_t>(count); break;
         }
         portEXIT_CRITICAL(&r.lock);
-        if (batch_slot == maximum_tx_capacity) {
+        if (batch_slot == tx_capacity) {
             for (size_t i = 0; i < count; ++i) xSemaphoreGive(impl_->completion_slots);
             impl_->free_slots(count);
             xSemaphoreGive(impl_->admission); return false;

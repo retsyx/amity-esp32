@@ -26,8 +26,9 @@ use one bounded nonblocking dispatcher with independent queues and in-flight
 state. `QueueProfile::Legacy` and `QueueProfile::Native` are compatibility
 aliases and select identical CEC execution, capacity and receive behavior. `submit_guarded()` and `submit_guarded_batch()` admit work
 immediately; `take_completion()` reports each operation token's terminal result
-and whether a frame started. A finite batch is admitted entirely or returns
-busy without enqueuing a prefix. All receive queues have 32 entries.
+and whether a frame started. An explicitly submitted batch is admitted entirely
+or returns busy without enqueuing a prefix. This generic batch facility does not
+change the executor's sequential finite-key press/release admission. All receive queues have 32 entries.
 
 `send_async_guarded()` supplies the same submission/completion split with
 caller-owned result storage. It attempts admission immediately and returns without
@@ -43,14 +44,15 @@ Runtime commands, held keys, activity setup, discovery and address allocation
 submit without blocking the owner on CEC capacity or ACKs. Frames that do not
 need completion tracking also use immediate admission. A one-byte poll can use
 one attempt for logical-address allocation/discovery. Every profile has one TX
-FIFO per wire, with eight normal slots plus one release-only overflow slot.
+FIFO per wire, with eight slots counting queued and active messages together.
 This is the only outgoing-frame buffer; the executor submits directly without
 another frame queue.
 
-Ordinary submissions reject at eight queued-plus-active messages. An explicit
-caller overflow flag permits one message in slot nine; the executor supplies it
-only for release. At nine, further releases are dropped without an executor
-admission retry. CEC applies the flag mechanically without inspecting opcodes.
+All submissions reject at eight queued-plus-active messages, including releases.
+There is no release reserve or overflow permission. A rejected release is dropped
+without an executor admission retry. Every TX dropped because the FIFO is full is
+logged, including each frame of a rejected atomic batch. CEC applies admission
+mechanically without inspecting opcodes.
 
 CEC has no button state, key retry policy, repeat loop or release authority.
 It sends the exact supplied frames with supplied attempt budgets and generic

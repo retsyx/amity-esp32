@@ -304,20 +304,32 @@ AdmissionResult LocalCecAgent::execute(const AuthorizedCecOperation& o, uint64_t
         holds_.push_back(std::move(h));
         frames.resize(1); // A finite tap joins the existing aggregate; it cannot release other pressed keys.
     }
+    // The original finite key path admits its press, then immediately tries
+    // release. Acceptance follows the press even if that fills the FIFO and
+    // release drops. Keep the same command correlation for both admitted TXs.
+    if (isolated_finite) {
+        if (!submit_frames(o, {frames.front()}, now, false, false, stream_id)) {
+            discard_stream(stream_id);
+            return reject(AdmissionCode::overloaded, "CEC driver did not admit the operation");
+        }
+        for (auto& value : streams_) if (value.stream_id == stream_id) value.ended = true;
+        if (!submit_frames(o, {frames.back()}, now, false, false, stream_id)) {
+            ++uncertain_releases_;
+            discard_stream(stream_id); // Consume this release decision, including on FIFO-full rejection.
+        }
+        return ok();
+    }
     if (!submit_frames(o, frames, now, false, false, stream_id)) {
-        if (!isolated_finite) holds_.pop_back();
+        holds_.pop_back();
         if (created) discard_stream(stream_id);
         return reject(AdmissionCode::overloaded, "CEC driver did not admit the operation");
     }
-    if (isolated_finite) {
-        auto found = std::find_if(streams_.begin(), streams_.end(), [&](const auto& value) { return value.stream_id == stream_id; });
-        if (found != streams_.end()) found->ended = true;
-    } else observe_stream_end(stream_id);
+    observe_stream_end(stream_id);
     return ok();
 }
 bool LocalCecAgent::submit_frames(const AuthorizedCecOperation& o, const std::vector<CecFrame>& frames, uint64_t now,
                                  bool identity, bool internal, uint64_t stream_id) {
-    if (!submit_ || !cancel_ || frames.empty() || frames.size() > 2 || transmissions_.size() + frames.size() > 9 ||
+    if (!submit_ || !cancel_ || frames.empty() || frames.size() > 2 ||
         next_work_id_ > UINT64_MAX - frames.size()) return false;
     std::vector<WireWork> work; work.reserve(frames.size());
     std::vector<Transmission> records; records.reserve(frames.size());
@@ -327,12 +339,14 @@ bool LocalCecAgent::submit_frames(const AuthorizedCecOperation& o, const std::ve
         const auto* installed = policy(frames[i].port);
         const auto expiry = release ? 0 : identity && installed ? installed->authority_expires_at_ms : o.execution_expires_at_ms;
         work.push_back({o.command_id, frames[i], release, o.binding_id, o.fence.binding_revision, expiry,
-            !frames[i].payload.empty() && frames[i].payload.front() == 0x44 ? 1u : 3u, id, release && i != 0, release});
+            !frames[i].payload.empty() && frames[i].payload.front() == 0x44 ? 1u : 3u, id, release && i != 0});
         records.push_back({id, o, frames[i].port, identity, release, installed ? installed->policy_generation : 0, internal, stream_id});
     }
     // This callback copies the stack-owned frames into the only transmit FIFO.
     // It returns actual all-or-none driver admission and never completes inline.
-    transmissions_.reserve(9); // Completion registration cannot allocate after driver admission.
+    // Let each wire decide capacity and log its rejected frames. A shared
+    // completion-record cap would hide full-FIFO drops and couple separate wires.
+    transmissions_.reserve(transmissions_.size() + frames.size()); // Completion registration cannot allocate after driver admission.
     if (!submit_(work.data(), work.size())) return false;
     for (const auto& record : records) transmissions_.push_back(record);
     if (stream_id) {
@@ -386,7 +400,7 @@ bool LocalCecAgent::flush_stream(uint64_t id, uint64_t now) {
     const CecFrame frame{release.target.port, stream.initiator, release.target.logical_address, {0x45}};
     if (!submit_frames(release, {frame}, now, false, true, id)) {
         ++uncertain_releases_;
-        discard_stream(id); // The final-release decision is consumed even when the driver's extra slot is full.
+        discard_stream(id); // The final-release decision is consumed even when the driver FIFO is full.
         return true;
     }
     if (stream.audio_context) schedule_audio_query(*stream.audio_context, now <= UINT64_MAX - 500 ? now + 500 : UINT64_MAX, id);

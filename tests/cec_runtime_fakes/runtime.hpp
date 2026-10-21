@@ -17,10 +17,11 @@ constexpr uint32_t portMAX_DELAY = UINT32_MAX;
 #define pdMS_TO_TICKS(ms) (ms)
 using portMUX_TYPE = int;
 #define portMUX_INITIALIZER_UNLOCKED 0
-#define portENTER_CRITICAL(p) ((void)(p))
-#define portEXIT_CRITICAL(p) ((void)(p))
-#define portENTER_CRITICAL_ISR(p) ((void)(p))
-#define portEXIT_CRITICAL_ISR(p) ((void)(p))
+inline unsigned critical_depth = 0;
+#define portENTER_CRITICAL(p) ((void)(p), ++critical_depth)
+#define portEXIT_CRITICAL(p) ((void)(p), --critical_depth)
+#define portENTER_CRITICAL_ISR(p) ((void)(p), ++critical_depth)
+#define portEXIT_CRITICAL_ISR(p) ((void)(p), --critical_depth)
 using QueueHandle_t = void *;
 using SemaphoreHandle_t = void *;
 using TaskHandle_t = void *;

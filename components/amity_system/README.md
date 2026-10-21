@@ -35,10 +35,14 @@ Semantic actions require a verified binding, local owner/boot, exact epoch,
 configuration/domain/binding/policy revisions and current route authority. Every
 message decision is validated before direct submission to the CEC layer. The
 executor does not buffer outgoing frames; CEC owns the only TX FIFO per wire,
-with eight normal messages plus one release-only overflow message. Ordinary
-full admission returns busy rather
-than creating an executor backlog. Multi-frame finite recipes require atomic
-all-or-busy admission to that FIFO. The adapter supplies frame-start guards and
+with eight total queued-plus-active messages, including releases. Full
+admission returns busy rather than creating an executor backlog. Every TX
+dropped because of full-FIFO admission is logged, including each frame of a
+rejected explicitly submitted atomic batch. Finite key recipes preserve main:
+submit the press directly, then attempt final release immediately only if the
+press was admitted and no other key keeps that recipient's stream open. At seven
+occupied slots the press enters slot eight and the release drops with a log; at
+eight the press drops with a log and no release is attempted. The adapter supplies frame-start guards and
 invalidates them when policy or bindings are fenced. Native appliance targets never
 supply the initiator identity. Incoming source traffic cannot be forwarded or
 authorize power/routing. Identity replies stay local; automatic Active Source
@@ -53,9 +57,10 @@ is a no-op, and unchanged down/authority renewal cannot restart it. Release is
 implicit at the receiving device's stream end, including last-key failure, only
 when all keys for that physical wire/initiator/destination are no longer pressed.
 Remote-up updates key state rather than directly selecting a release frame.
-End-of-stream cleanup is separate from ended key tokens until its presses finish.
-Its release may occupy the ninth overflow slot; at nine, drop the release and
-consume the decision without a later capacity retry or unsent frame queue. Audio query
+End-of-stream cleanup is separate from ended key tokens until its release
+can be ordered behind admitted presses.
+If the eight-message FIFO is full, drop and log the release and consume the
+decision without a later capacity retry or unsent frame queue. Audio query
 due state retains the original release-admission +500 ms timing. Address reuse
 withdraws unsafe old output permission and records uncertainty. Current
 authority/binding/route fences remain mandatory.

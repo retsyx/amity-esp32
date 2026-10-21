@@ -141,7 +141,7 @@ Use the existing 1.1-second quiet interval and five-second maximum collection wi
 
 Limit per-job observations, outstanding queries, and retry counts using the configured tested capacity. Completed snapshots are immutable. New replies create a newer snapshot or unsolicited observation; they never mutate a snapshot already given to a consumer. Keep the last accepted binding usable only while its resolution remains valid. Evidence of address reuse, a conflicting name, or ambiguity invalidates the affected execution before another command starts. “Not seen during this scan” means uncertain/stale, not automatic component or selector removal.
 
-Matching key release and the local authority/liveness monitor outrank scans. Every scanner advancement is bounded; no polling loop, reply wait, or snapshot publication may block them. Cancellation frees probe reservations without discarding a pending release.
+Matching key release and the local authority/liveness monitor outrank scans. Every scanner advancement is bounded; no polling loop, reply wait, or snapshot publication may block them. Cancellation frees probe reservations without discarding pending button-up processing. CEC release admission still uses the shared eight-message FIFO; a full-FIFO release is dropped and logged without retry.
 
 ## 6. Recabling, revisions, and safe rebinding
 

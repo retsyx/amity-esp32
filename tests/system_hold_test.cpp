@@ -44,19 +44,27 @@ void driver_fifo_only(){
     assert(!owner.execute(query,10)&&owner.pending_work()==0);TestWire driver;driver.bind(owner);
     for(unsigned n=0;n<8;++n){query.command_id=hold_id<CommandId>(200+n);assert(owner.execute(query,10));}
     assert(driver.fifo.size()==8&&owner.pending_work()==8);query.command_id=hold_id<CommandId>(208);assert(!owner.execute(query,10));
-    assert(!owner.execute(f.press(19,false,10000),10)&&driver.fifo.size()==8); // Atomic batch cannot put its ordinary press into slot nine.
+    const auto dropped=driver.dropped.size();
+    assert(!owner.execute(f.press(19,false,10000),10)&&driver.fifo.size()==8);
+    assert(driver.dropped.size()==dropped+1&&driver.dropped.back().frame.payload[0]==0x44); // No release after a rejected press.
     for(unsigned n=0;n<8;++n){auto work=driver.take(20+n);assert(work&&work->command_id==hold_id<CommandId>(200+n));driver.complete(true,20+n);}
     owner.tick(100);assert(driver.fifo.empty()&&owner.pending_work()==0); // Rejected ordinary work is never buffered/retried.
     for(unsigned n=0;n<7;++n){query.command_id=hold_id<CommandId>(300+n);assert(owner.execute(query,110));}
-    auto tap=f.press(20,false,10000);assert(owner.execute(tap,110)&&driver.fifo.size()==9); // Eighth ordinary UCP plus the one extra release slot, atomically.
+    auto tap=f.press(20,false,10000);assert(owner.execute(tap,110)&&driver.fifo.size()==8); // Press fills slot eight; its release drops.
+    assert(driver.dropped.back().emergency_release&&owner.uncertain_releases()==1&&owner.command_pending(tap.command_id));
     auto extra=f.press(22,false,10000);assert(!owner.execute(extra,112));
     for(unsigned n=0;n<7;++n){assert(driver.take(120+n)->frame.payload[0]==0x8f);driver.complete(true,120+n);}
     auto press=driver.take(130);assert(press&&press->frame.payload[0]==0x44&&press->attempts==1);driver.complete(WireOutcome::nack,131);
-    auto release=driver.take(132);assert(release&&release->emergency_release&&release->attempts==3&&release->requires_previous_start);driver.complete(true,133);
-    assert(owner.held_keys()==0);
+    assert(!owner.command_pending(tap.command_id)&&owner.held_keys()==0);owner.tick(700);assert(driver.fifo.empty());
+    // With room, finite press and release remain FIFO ordered and share the command.
+    tap=f.press(23,false,10000);assert(owner.execute(tap,710)&&driver.fifo.size()==2);
+    assert(driver.take(711)->command_id==tap.command_id);driver.complete(true,712);assert(owner.command_pending(tap.command_id));
+    auto release=driver.take(713);assert(release&&release->command_id==tap.command_id&&release->emergency_release&&release->attempts==3&&!release->requires_previous_start);
+    driver.complete(true,714);assert(!owner.command_pending(tap.command_id));
     LocalCecAgent expired;TestWire late;late.bind(expired);assert(expired.install_policy(f.policy,0));tap=f.press(21,false,100);
     assert(expired.execute(tap,10)&&late.fifo.size()==2);expired.tick(600);assert(late.fifo.size()==2);
-    assert(!late.take(700)&&late.emitted.empty()&&expired.pending_work()==0); // Timer cannot admit a query while asynchronous prestart cancellation has not yet reached the owner.
+    auto late_release=late.take(700);assert(late_release&&late_release->emergency_release&&late.emitted.size()==1);late.complete(true,701);
+    assert(expired.pending_work()==0); // An admitted release has no first-edge dependency on its expired press.
     LocalCecAgent delayed;TestWire delayed_wire;delayed_wire.bind(delayed);assert(delayed.install_policy(f.policy,0));
     assert(delayed.execute(tap,10));assert(delayed_wire.take(11)->frame.payload[0]==0x44);
     delayed.tick(600);assert(delayed_wire.fifo.size()==1);delayed_wire.complete(true,650);delayed.tick(650);
@@ -66,6 +74,15 @@ void driver_fifo_only(){
     LocalCecAgent power;TestWire power_driver;power_driver.bind(power);assert(power.install_policy(power_policy,0));auto op=f.press();op.kind=OperationKind::ensure_power;op.arguments={};
     assert(power.execute(op,10)&&power_driver.fifo.size()==2);assert(power_driver.take(11)->attempts==1);power_driver.complete(true,12);
     assert(power_driver.take(13)->attempts==3);power_driver.complete(true,14);
+    for(unsigned occupied:{7u,8u}){
+        LocalCecAgent saturated;TestWire wire;wire.bind(saturated);assert(saturated.install_policy(power_policy,0));
+        for(unsigned n=0;n<occupied;++n){query.command_id=hold_id<CommandId>(400+n);assert(saturated.execute(query,20));}
+        assert(bool(saturated.execute(op,21))==(occupied==7));assert(wire.fifo.size()==8&&wire.dropped.size()==1);
+        assert(wire.dropped.front().frame.payload[0]==(occupied==7?0x45:0x44));
+        assert(saturated.uncertain_releases()==(occupied==7?1u:0u));
+        for(unsigned n=0;n<8;++n){assert(wire.take(30+n));wire.complete(true,30+n);}saturated.tick(700);
+        assert(wire.fifo.empty()&&wire.dropped.size()==1); // No retained power release or query.
+    }
 }
 void successful_hold_and_exact_up(){
     HoldFixture f;LocalCecAgent owner;TestWire driver;driver.bind(owner);assert(owner.install_policy(f.policy,0));auto down=f.press();down.arguments.key=1;
@@ -128,24 +145,24 @@ void repeat_busy_and_already_received_up(){
     assert(driver.fifo.size()==1);assert(driver.take(214)->emergency_release);driver.complete(true,215);assert(owner.held_keys()==0);
 }
 
-void full_driver_release_slot_and_drop(){
+void full_driver_release_drop(){
     HoldFixture f;LocalCecAgent owner;TestWire driver;driver.bind(owner);assert(owner.install_policy(f.policy,0));auto down=f.press();down.arguments.key=1;
     assert(owner.execute(down,10));assert(driver.take(11));driver.complete(true,12);
     auto query=down;query.kind=OperationKind::query_state;query.execution_expires_at_ms=10000;
-    for(unsigned n=0;n<8;++n){query.command_id=hold_id<CommandId>(200+n);assert(owner.execute(query,20));}
-    assert(owner.release_hold(*down.arguments.hold_token,21));assert(driver.fifo.size()==9);owner.tick(22);
-    assert(driver.fifo.size()==9&&driver.fifo.back().emergency_release&&driver.fifo.back().allow_overflow);
-    auto next=f.press(20,true,1000);next.arguments.key=1;assert(!owner.execute(next,23)); // Ordinary work cannot use the ninth release slot.
+    for(unsigned n=0;n<7;++n){query.command_id=hold_id<CommandId>(200+n);assert(owner.execute(query,20));}
+    assert(owner.release_hold(*down.arguments.hold_token,21));assert(driver.fifo.size()==8);owner.tick(22);
+    assert(driver.fifo.size()==8&&driver.fifo.back().emergency_release);
+    auto next=f.press(20,true,1000);next.arguments.key=1;assert(!owner.execute(next,23)); // All work rejects when the eight-slot FIFO is full.
     for(unsigned n=0;n<2;++n){assert(driver.take(30+n)->command_id==hold_id<CommandId>(200+n));driver.complete(true,30+n);}
     assert(owner.execute(next,32)); // Old admitted UCR stays before the new positive in the single FIFO.
-    for(unsigned n=2;n<8;++n){assert(driver.take(40+n)->command_id==hold_id<CommandId>(200+n));driver.complete(true,40+n);}
+    for(unsigned n=2;n<7;++n){assert(driver.take(40+n)->command_id==hold_id<CommandId>(200+n));driver.complete(true,40+n);}
     assert(driver.take(50)->emergency_release);driver.complete(true,51);assert(driver.take(52)->frame.payload[0]==0x44);driver.complete(true,53);
     assert(owner.held_keys()==1);assert(owner.release_hold(*next.arguments.hold_token,54));owner.tick(54);assert(driver.take(55)->emergency_release);driver.complete(true,56);
-    // Another driver producer can occupy the extra slot. Dropped final release is counted, consumed, and never retried.
+    // Another producer fills all eight slots. Dropped final release is counted, consumed, and never retried.
     auto again=f.press(30,true,1000);again.arguments.key=1;assert(owner.execute(again,60));assert(driver.take(61));driver.complete(true,62);
     auto external=driver.emitted.back();external.command_id={};external.work_id=100000;external.expires_at_ms=0;
-    for(unsigned n=0;n<8;++n){++external.work_id;assert(driver.submit(&external,1));}external.allow_overflow=true;assert(driver.submit(&external,1));
-    assert(owner.release_hold(*again.arguments.hold_token,63));owner.tick(64);assert(owner.pending_work()==0&&owner.uncertain_releases()==1&&driver.fifo.size()==9);
+    for(unsigned n=0;n<8;++n){++external.work_id;assert(driver.submit(&external,1));}assert(!driver.submit(&external,1));
+    assert(owner.release_hold(*again.arguments.hold_token,63));owner.tick(64);assert(owner.pending_work()==0&&owner.uncertain_releases()==1&&driver.fifo.size()==8);
     driver.fifo.clear();owner.tick(65);assert(driver.fifo.empty()&&!owner.release_hold(*again.arguments.hold_token,66));
     // An observed end behind a still-running initial press cannot be erased by a newer down.
     assert(owner.execute(next,70));assert(driver.take(71));assert(owner.release_hold(*next.arguments.hold_token,72));
@@ -364,4 +381,4 @@ void remote_outcome_keeps_release(){
     }
 }
 
-int main(){driver_fifo_only();successful_hold_and_exact_up();failed_hold_ends_stream();repeat_busy_and_already_received_up();full_driver_release_slot_and_drop();aggregate_keys_and_taps();aggregate_failure_and_independent_targets();audio_due_and_fences();policy_updates_do_not_dispatch();all_lane_policy_preflight();input_during_setup_ack();actual_coordinator();remote_outcome_keeps_release();std::cout<<"PASS direct executor: sole driver FIFO8 plus one release slot, immediate busy/no hidden retry, atomic taps/power, held completion pacing, aggregate target streams, last-key failure ends stream, stale-up NOP, exact cancellation/drain, full-driver release drop/end boundary, audio admission+500ms, actual local/remote coordinator\n";}
+int main(){driver_fifo_only();successful_hold_and_exact_up();failed_hold_ends_stream();repeat_busy_and_already_received_up();full_driver_release_drop();aggregate_keys_and_taps();aggregate_failure_and_independent_targets();audio_due_and_fences();policy_updates_do_not_dispatch();all_lane_policy_preflight();input_during_setup_ack();actual_coordinator();remote_outcome_keeps_release();std::cout<<"PASS direct executor: sole driver FIFO8, immediate busy/no hidden retry, press-first finite taps/power, held completion pacing, aggregate target streams, last-key failure ends stream, stale-up NOP, exact cancellation/drain, full-driver release drop/end boundary, audio admission+500ms, actual local/remote coordinator\n";}

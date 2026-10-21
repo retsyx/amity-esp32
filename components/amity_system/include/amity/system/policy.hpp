@@ -69,7 +69,6 @@ struct WireWork {
     unsigned attempts = 3;
     uint64_t work_id = 0;
     bool requires_previous_start = false;
-    bool allow_overflow = false;
 };
 using WireSubmit = std::function<bool(const WireWork*, size_t)>;
 using WireCancel = std::function<void(uint64_t)>;
