@@ -11,6 +11,7 @@
 #include "amity/live_system.hpp"
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"
+#include "esp_heap_caps.h"
 #endif
 #ifndef CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS
 #define CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS 5
@@ -23,6 +24,8 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <new>
+#include <array>
+#include <deque>
 #include <atomic>
 #include <cstdlib>
 #include <utility>
@@ -64,13 +67,14 @@ struct HubService::Impl : Transport {
         Kind kind;
         int value = 0;
         bool repeat = false;
-        uint32_t key_generation = 0, hold_generation = 0;
+        bool cleanup_reservation = false;
+        uint32_t key_generation = 0, release_generation = 0;
         bool activity_bound = false;
         bool presentation_only = false;
         bool route_transition = false;
         uint32_t activity_generation = 0;
-        uint32_t wire_generation = 0;
         uint32_t intent_generation = 0;
+        uint32_t discovery_generation = 0;
         std::vector<Activity> activities;
         std::vector<Quirk> quirks;
         std::shared_ptr<system::LocalConfiguration> system_config;
@@ -98,11 +102,32 @@ struct HubService::Impl : Transport {
         std::vector<std::pair<uint8_t, uint64_t>> settings_presence;
         uint64_t settings_deadline = 0;
     };
-    // Declared before buses: both counters outlive every admitted wire work
-    // item. Impl and these 32-bit counters reside in internal RAM on target.
-    std::atomic<uint32_t> wire_generation{0}, key_generation{0}, intent_generation{0};
+    // ISR-visible endpoint guards outlive every admitted wire work item.
+    // Impl and these 32-bit counters reside in internal RAM on target.
+    std::atomic<uint32_t> intent_generation{0};
     std::atomic<uint32_t> binding_wire_generation[2][15]{};
     uint32_t release_binding_generation[2][15]{};
+    // Emergency release epochs are only a queue-overflow fallback. Normal
+    // button-up removes that button's state on the owner, as in the reference.
+    // Completion storage and ISR-visible guards must outlive the buses.
+    std::atomic<uint32_t> key_generation{0};
+    std::atomic<uint32_t> activity_selection{0};
+    std::array<std::atomic<uint32_t>, 256> release_generations{};
+    struct HeldKey {
+        bool active = false, failed = false, waiting = false;
+        uint32_t instance = 0, release_generation = 0;
+    };
+    std::array<HeldKey, 256> keys{};
+    struct Flight {
+        cec::TxCompletion completion;
+        bool used = false;
+        int key = -1;
+        uint32_t instance = 0, setup = 0;
+    };
+    // At most nine messages per wire are admitted. Extra records allow
+    // terminal results to remain available until the next owner iteration.
+    std::array<Flight, 32> flights{};
+    cec::TxCompletion discovery_completion;
     cec::Bus front, back;
     struct NativePort { uint8_t tentacle; system::Side side; cec::Bus* bus; int gpio; };
     std::array<std::unique_ptr<cec::Bus>, 8> extra_buses;
@@ -156,8 +181,9 @@ struct HubService::Impl : Transport {
     Hub hub{*this};
     QueueHandle_t commands = nullptr;
     SemaphoreHandle_t lock = nullptr;
-    SemaphoreHandle_t command_slots = nullptr, configuration_gate = nullptr;
+    SemaphoreHandle_t command_slots = nullptr, cleanup_slots = nullptr, configuration_gate = nullptr;
     TaskHandle_t task = nullptr;
+    std::deque<std::unique_ptr<Command>> deferred;
     Snapshot cached;
     // Updated only under configuration_gate, in durable commit/enqueue order.
     std::vector<Activity> submitted_activities;
@@ -165,20 +191,25 @@ struct HubService::Impl : Transport {
     std::function<void(const Snapshot &)> callback;
     uint8_t front_address = 15, back_address = 15;
     uint16_t fallback_physical = 0x1000;
-    bool scan_requested = false;
+    bool scan_requested = true;
     bool scan_running = false;
     int64_t last_scan = -120000000;
     int64_t last_claim = -5000000;
     uint32_t dropped_tx = 0, discovery_generation = 0;
     uint32_t applied_key_generation = 0;
-    std::atomic<uint32_t> hold_generation{0};
-    uint32_t repeating_generation = 0;
-    int repeating_key = -1;
-    int failed_key = -1;
-    cec::TxResult held_tx_result = cec::TxResult::Pending;
-    uint32_t active_wire_generation = 0, active_key_generation = 0;
+    Flight *sending_key = nullptr;
+    bool setting_activity = false;
+    uint32_t setup_generation = 0;
+    unsigned setup_outstanding = 0;
+    bool setup_pending = false;
+    enum class DiscoveryPhase { Idle, ClaimBack, ScanBack, BackReplies, ClaimFront, ScanFront, FinalReplies };
+    struct DiscoveryState {
+        DiscoveryPhase phase = DiscoveryPhase::Idle;
+        bool waiting = false, claim_only = false, claimed = false;
+        uint8_t candidate = 0, nacks = 0, address = 0;
+        int64_t deadline = 0, quiet_since = 0;
+    } discovery;
     std::string last_activity_error;
-    bool sending_held_key = false, initial_held_key = false, sending_one_key = false, setting_activity = false;
     ActivitySettling settling{CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS};
 
     Impl() { lock = xSemaphoreCreateMutex(); configuration_gate = xSemaphoreCreateMutex(); }
@@ -262,9 +293,12 @@ struct HubService::Impl : Transport {
     }
     esp_err_t start_owner() {
         auto err = start_buses(); if (err != ESP_OK) { reset_startup(); return err; }
-        commands = xQueueCreate(32, sizeof(Impl::Command *));
+        // The same IPC FIFO preserves down/up order. Cleanup has its own
+        // reservations so ordinary input pressure cannot lose a physical up.
+        commands = xQueueCreate(96, sizeof(Impl::Command *));
         command_slots = xSemaphoreCreateCounting(32, 32);
-        if (!commands || !command_slots || xTaskCreate(Impl::run, "amity_hub", 6144, this, 5, &task) != pdPASS) {
+        cleanup_slots = xSemaphoreCreateCounting(64, 64);
+        if (!commands || !command_slots || !cleanup_slots || xTaskCreate(Impl::run, "amity_hub", 6144, this, 5, &task) != pdPASS) {
             reset_startup(); return ESP_ERR_NO_MEM;
         }
         return ESP_OK;
@@ -273,6 +307,7 @@ struct HubService::Impl : Transport {
         for (size_t i = 0; i < native_port_count; ++i) native_ports[i].bus->stop();
         if (commands) { vQueueDelete(commands); commands = nullptr; }
         if (command_slots) { vSemaphoreDelete(command_slots); command_slots = nullptr; }
+        if (cleanup_slots) { vSemaphoreDelete(cleanup_slots); cleanup_slots = nullptr; }
         for (auto& bus : extra_buses) bus.reset();
         native_port_count = 0; hardware_profile.reset(); presence.fill({});
         presence_generations.fill(1);
@@ -289,12 +324,16 @@ struct HubService::Impl : Transport {
         }
         if (lock) vSemaphoreDelete(lock);
         if (command_slots) vSemaphoreDelete(command_slots);
+        if (cleanup_slots) vSemaphoreDelete(cleanup_slots);
         if (configuration_gate) vSemaphoreDelete(configuration_gate);
     }
     static bool cleanup(const Command& command) {
         return command.kind == Kind::Release || command.kind == Kind::RemoteQuiescent || command.kind == Kind::RemoteFence || command.kind == Kind::RemoteAbort ||
             (command.kind == Kind::Authorized && command.authorized.kind == system::OperationKind::release_key) ||
             (command.kind == Kind::InputIntent && command.input.action == system::InputAction::hold_release);
+    }
+    void free_reservation(const Command &command) {
+        xSemaphoreGive(command.cleanup_reservation ? cleanup_slots : command_slots);
     }
     esp_err_t submit(Command *command, const std::function<esp_err_t()> &commit = {}) {
         std::unique_ptr<Command> owned(command);
@@ -310,7 +349,8 @@ struct HubService::Impl : Transport {
         // same order. Contention is rejected without blocking or persistence.
         if (configuration && xSemaphoreTake(configuration_gate, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
         const auto unlock = [&] { if (configuration) xSemaphoreGive(configuration_gate); };
-        if (xSemaphoreTake(command_slots, 0) != pdTRUE) { unlock(); return ESP_ERR_NO_MEM; }
+        command->cleanup_reservation = command->kind == Kind::InputIntent && command->input.action == system::InputAction::hold_release;
+        if (xSemaphoreTake(command->cleanup_reservation ? cleanup_slots : command_slots, 0) != pdTRUE) { unlock(); return ESP_ERR_NO_MEM; }
         if (command->kind == Kind::ConfigureV2) command->presentation_only = command->system_config &&
             !submitted_v2_hash.empty() && command->system_config->executable_hash == submitted_v2_hash &&
             command->system_config->coordinator_id == submitted_member_coordinator && command->system_config->coordinator_epoch == submitted_member_epoch;
@@ -321,23 +361,15 @@ struct HubService::Impl : Transport {
         auto next_activities = configuration ? command->activities : std::vector<Activity>{};
         auto next_quirks = configuration ? command->quirks : std::vector<Quirk>{};
         const auto error = commit ? commit() : ESP_OK;
-        if (error != ESP_OK) { xSemaphoreGive(command_slots); unlock(); return error; }
-        // All producers reserve a slot, so queued + reserved <= capacity.
-        // The worker frees reservations immediately on dequeue. Queue send
-        // therefore cannot fail after a successful external commit.
-        // Cancel continuation immediately, even if the owner is waiting for
-        // a wire attempt or finishing discovery. A short tap still keeps its
-        // initial queued press and subsequent release.
-        if ((configuration && !command->presentation_only) || command->kind == Kind::Select || command->kind == Kind::Standby) hold_generation.fetch_add(1);
+        if (error != ESP_OK) { free_reservation(*command); unlock(); return error; }
+        // Reservations include deferred discovery requests. No CEC capacity
+        // or completion wait may delay admission of another command.
         if ((configuration && !command->presentation_only) || command->route_transition) {
-            // An activity is still a semantic request until the owner compiles
-            // it against the latest binding. New intents supersede it; binding
-            // changes fence old wire work without discarding explicit intent.
+            // Until compiled by the owner, a newer activity intent supersedes
+            // this request. Already admitted frames retain their FIFO order.
             command->intent_generation = intent_generation.fetch_add(1) + 1;
-            command->wire_generation = wire_generation.fetch_add(1) + 1;
         } else {
             command->intent_generation = intent_generation.load();
-            command->wire_generation = wire_generation.load();
         }
         if (configuration) {
             submitted_activities = std::move(next_activities);
@@ -347,6 +379,7 @@ struct HubService::Impl : Transport {
                 submitted_member_coordinator = command->system_config->coordinator_id; submitted_member_epoch = command->system_config->coordinator_epoch;
             }
         }
+        if (configuration && !command->presentation_only) activity_selection.fetch_add(1);
         command = owned.release();
         if (xQueueSend(commands, &command, 0) != pdTRUE) std::abort();
         unlock();
@@ -387,7 +420,7 @@ struct HubService::Impl : Transport {
                 grants = grants || (policy.authority_expires_at_ms > now && !policy.route_grants.empty());
             if (maintenance_started || maintenance.load() || retiring.load() || authority_transition.load() ||
                 pending_v2 || prepared_member || !state.sessions.empty() || state.executing_plan || grants ||
-                (live && !live->quiescent()) || (!live && (hub.snapshot().current_activity >= 0 || repeating_key >= 0))) {
+                (live && !live->quiescent()) || (!live && (hub.snapshot().current_activity >= 0 || any_keys_active()))) {
                 command.reply->settings_result = ESP_ERR_INVALID_STATE;
                 settings_gate.store(false);
                 finish(command.reply, {system::AdmissionCode::overloaded, "Amity is busy; stop its activity before changing settings"});
@@ -396,14 +429,14 @@ struct HubService::Impl : Transport {
             pending_settings = command.reply; settings_boot = command.settings_boot;
             settings_presence = std::move(command.settings_presence); settings_deadline = command.settings_deadline;
             settings_persist = std::move(command.persist); settings_paused = true; maintenance_started = true;
-            wire_generation.fetch_add(1); key_generation.fetch_add(1); hold_generation.fetch_add(1);
-            if (live) live->maintenance(true); else stop_hold(true);
+            key_generation.fetch_add(1);
+            if (live) live->maintenance(true); else stop_holds();
             scan_requested = false;
             return true;
         }
         case Kind::AuthorityTransition:
-            local_coordinator.store(false); wire_generation.fetch_add(1); key_generation.fetch_add(1); hold_generation.fetch_add(1);
-            if (live) live->maintenance(true); else stop_hold(true);
+            local_coordinator.store(false); key_generation.fetch_add(1);
+            if (live) live->maintenance(true); else stop_holds();
             finish(pending_v2_reply, {system::AdmissionCode::unauthorized, "authority changed before configuration activation"});
             pending_v2.reset(); pending_v2_reply.reset(); pending_v2_persist = {};
             prepared_member.reset(); prepared_member_hash.clear(); prepared_member_persist = {};
@@ -411,8 +444,8 @@ struct HubService::Impl : Transport {
             pending_authority = command.reply; pending_local_authority = command.repeat; pending_authority_epoch = command.route_generation;
             return true;
         case Kind::MaintenanceBegin:
-            maintenance_started = true; maintenance_applied.store(false); wire_generation.fetch_add(1); key_generation.fetch_add(1); hold_generation.fetch_add(1);
-            if (live) live->maintenance(true); else stop_hold(true);
+            maintenance_started = true; maintenance_applied.store(false); key_generation.fetch_add(1);
+            if (live) live->maintenance(true); else stop_holds();
             finish(pending_maintenance, {system::AdmissionCode::stale, "maintenance retry superseded response"}); pending_maintenance = command.reply;
             return true;
         case Kind::MaintenanceEnd:
@@ -420,8 +453,8 @@ struct HubService::Impl : Transport {
             maintenance_started = false; maintenance_applied.store(false); maintenance.store(false);
             result = {system::AdmissionCode::accepted, {}}; break;
         case Kind::Retire:
-            local_coordinator.store(false); wire_generation.fetch_add(1); key_generation.fetch_add(1); hold_generation.fetch_add(1);
-            if (live) live->maintenance(true); else stop_hold(true);
+            local_coordinator.store(false); key_generation.fetch_add(1);
+            if (live) live->maintenance(true); else stop_holds();
             finish(pending_retirement, {system::AdmissionCode::stale, "retirement retry superseded response"}); pending_retirement = command.reply;
             return true;
         case Kind::InputIntent:
@@ -429,7 +462,11 @@ struct HubService::Impl : Transport {
                 if (command.input.action != system::InputAction::hold_release &&
                     (command.input.input_session_id != cached_input_context.input_session_id || command.input.expected_state_revision != cached_input_context.state_revision))
                     result = {system::AdmissionCode::stale, "input session changed before owner admission"};
-                else result = live->input(command.input, now);
+                else {
+                    result = live->input(command.input, now);
+                    if (result && (command.input.action == system::InputAction::select_activity || command.input.action == system::InputAction::select_remote_activity || command.input.action == system::InputAction::stop_zone))
+                        activity_selection.fetch_add(1);
+                }
             }
             break;
         case Kind::RemoteHooks:
@@ -560,37 +597,105 @@ struct HubService::Impl : Transport {
     bool enqueue(Command *command) { return submit(command) == ESP_OK; }
     void invalidate_binding(BusSide side, uint8_t address) override {
         if (address < 15) binding_wire_generation[side == BusSide::Front ? 0 : 1][address].fetch_add(1);
-        wire_generation.fetch_add(1);
-        hold_generation.fetch_add(1);
+
         applied_key_generation = key_generation.fetch_add(1) + 1;
-        repeating_key = -1;
+        stop_holds();
     }
     void apply_emergency_release() {
         const auto generation = key_generation.load();
-        if (generation == applied_key_generation) return;
-        stop_hold();
-        applied_key_generation = generation;
-    }
-    void stop_hold(bool flush = false) {
-        repeating_key = -1; failed_key = -1; hub.end_key_stream();
-        if (flush) hub.release_key(); // Explicit quiescence must drain cleanup before its ACK.
-    }
-    void check_hold() {
-        if (repeating_key >= 0 && repeating_generation != hold_generation.load()) stop_hold();
-    }
-    void send_held_key(bool initial = false) {
-        held_tx_result = cec::TxResult::Pending;
-        sending_held_key = true;
-        initial_held_key = initial;
-        const bool accepted = hub.press_key(static_cast<uint8_t>(repeating_key), true);
-        sending_held_key = false;
-        initial_held_key = false;
-        if (!accepted || held_tx_result != cec::TxResult::Success) {
-            // Failure ends the button state. Its output stream retains safe
-            // final cleanup independently; a later physical up is a no-op.
-            failed_key = repeating_key; repeating_key = -1;
-            hub.end_key_stream();
+        if (generation != applied_key_generation) {
+            stop_holds();
+            applied_key_generation = generation;
         }
+        for (size_t key = 0; key < keys.size(); ++key) {
+            const auto released = release_generations[key].load();
+            if (released == keys[key].release_generation) continue;
+            stop_key(static_cast<uint8_t>(key));
+            keys[key].release_generation = released;
+        }
+        // Cancelled lookups must return their command reservations immediately,
+        // rather than filling the queue until an unrelated scan completes.
+        for (auto i = deferred.begin(); i != deferred.end();) {
+            if ((*i)->kind != Kind::Key || !stale_key(**i)) { ++i; continue; }
+            i = deferred.erase(i); xSemaphoreGive(command_slots);
+        }
+    }
+    bool any_keys_active() const {
+        return std::any_of(keys.begin(), keys.end(), [](const HeldKey &key) { return key.active; });
+    }
+    void stop_key(uint8_t key) {
+        auto &state = keys[key];
+        state.active = state.failed = false;
+        state.waiting = false;
+        ++state.instance;
+        hub.release_key(key);
+    }
+    void stop_holds() {
+        for (auto &state : keys) {
+            state.active = state.failed = false;
+            state.waiting = false;
+            ++state.instance;
+        }
+        hub.release_key();
+    }
+    Flight *reserve_flight() {
+        for (auto &flight : flights) if (!flight.used) {
+            flight.used = true;
+            flight.key = -1; flight.instance = flight.setup = 0;
+            return &flight;
+        }
+        return nullptr;
+    }
+    void send_held_key(uint8_t key) {
+        auto &state = keys[key];
+        auto *flight = reserve_flight();
+        if (!flight) { state.active = false; state.failed = true; hub.release_key(key); return; }
+        flight->key = key; flight->instance = state.instance;
+        sending_key = flight;
+        const bool accepted = hub.press_key(key, true);
+        sending_key = nullptr;
+        if (accepted) state.waiting = true;
+        else {
+            flight->used = false;
+            state.active = false; state.failed = true;
+            hub.release_key(key);
+        }
+    }
+    bool complete_transmissions() {
+        bool changed = false;
+        for (auto &flight : flights) {
+            if (!flight.used) continue;
+            const auto result = flight.completion.result.load(std::memory_order_acquire);
+            if (result == cec::TxResult::Pending) continue;
+            flight.used = false;
+            if (flight.key >= 0) {
+                auto &state = keys[static_cast<size_t>(flight.key)];
+                if (state.instance == flight.instance) {
+                    state.waiting = false;
+                    if (result != cec::TxResult::Success) {
+                        state.active = false; state.failed = true;
+                        hub.release_key(static_cast<uint8_t>(flight.key));
+                    }
+                }
+            }
+            if (flight.setup && flight.setup == setup_generation) --setup_outstanding;
+            changed = true;
+        }
+        if (setup_pending && !setting_activity && !setup_outstanding) {
+            xSemaphoreTake(lock, portMAX_DELAY);
+            settling.finish(esp_timer_get_time());
+            xSemaphoreGive(lock);
+            setup_pending = false;
+        }
+        return changed;
+    }
+    bool transmissions_pending() const {
+        for (const auto &flight : flights) if (flight.used) return true;
+        return false;
+    }
+    void continue_keys() {
+        for (size_t key = 0; key < keys.size(); ++key)
+            if (keys[key].active && !keys[key].waiting) send_held_key(static_cast<uint8_t>(key));
     }
     bool update_settling() {
         xSemaphoreTake(lock, portMAX_DELAY);
@@ -603,14 +708,8 @@ struct HubService::Impl : Transport {
         if (settling.target() == index) settling.cancel();
         xSemaphoreGive(lock);
     }
-    bool compile_activity_intent(const Command &command) {
-        if (command.intent_generation != intent_generation.load()) return false;
-        const auto fresh_wire_generation = wire_generation.load();
-        // Intent invalidation precedes wire invalidation at admission. The
-        // second check prevents an old intent from adopting a newer wire fence.
-        if (command.intent_generation != intent_generation.load()) return false;
-        active_wire_generation = fresh_wire_generation;
-        return true;
+    bool compile_activity_intent(const Command &command) const {
+        return command.intent_generation == intent_generation.load();
     }
     void apply_activity(int index) {
         const auto before = hub.snapshot();
@@ -632,7 +731,8 @@ struct HubService::Impl : Transport {
                 if (std::find(names.begin(), names.end(), d.name) != names.end()) peers.push_back({d.bus, d.address, d.physical_address});
             xSemaphoreTake(lock, portMAX_DELAY); settling.start(index, std::move(peers)); xSemaphoreGive(lock);
         }
-        stop_hold();
+        stop_holds();
+        if (change) { ++setup_generation; setup_outstanding = 0; setup_pending = true; }
         setting_activity = change && CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS != 0;
         const bool applied = index < 0 ? (hub.standby(), true) : hub.select_activity(index);
         setting_activity = false;
@@ -641,7 +741,10 @@ struct HubService::Impl : Transport {
             return;
         }
         last_activity_error.clear();
-        if (change) { xSemaphoreTake(lock, portMAX_DELAY); settling.finish(esp_timer_get_time()); xSemaphoreGive(lock); }
+        if (change && !setup_outstanding) {
+            xSemaphoreTake(lock, portMAX_DELAY); settling.finish(esp_timer_get_time()); xSemaphoreGive(lock);
+            setup_pending = false;
+        }
     }
     bool send(BusSide side, uint8_t destination, const uint8_t *data, size_t size) override {
         if (size > 15 || !size || destination > 15) return false;
@@ -653,40 +756,34 @@ struct HubService::Impl : Transport {
         cec::Frame frame; frame.size = static_cast<uint8_t>(size + 1);
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
-        // Bound ordinary admission waits. Final releases use only their
-        // explicitly allowed ninth slot and are dropped if it is occupied.
+        // Admission is immediate. Final releases alone may use the ninth
+        // slot and are dropped if it is occupied.
         auto &bus = side == BusSide::Front ? front : back;
-        // Held presses join the same FIFO as routing, releases and replies.
-        // Only one attempt is outstanding; the next is decided after completion.
-        // Discovery and identity service do not require a route. Unknown and
-        // vendor recipes default to guarded work, including repair recipes.
-        const bool passive = data[0] == 0x00 || data[0] == 0x46 || data[0] == 0x47 || data[0] == 0x71 ||
-            data[0] == 0x83 || data[0] == 0x84 || data[0] == 0x87 || data[0] == 0x8c || data[0] == 0x8f ||
-            data[0] == 0x90 || data[0] == 0x9e || data[0] == 0x9f || data[0] == 0xa5 || data[0] == 0xa6;
-        cec::ExecutionFence fence{&wire_generation, active_wire_generation};
+        // Once admitted, work finishes in FIFO order through activity changes.
+        // Only a changed physical endpoint can invalidate that recipient. Key
+        // input-loss fallback additionally fences presses by its own epoch.
         const unsigned port = side == BusSide::Front ? 0 : 1;
-        // Matching cleanup survives a route/config/key change. It must still
-        // die if the old logical address is replaced by another appliance.
-        if (data[0] == 0x45 && destination < 15)
-            fence = {&binding_wire_generation[port][destination], release_binding_generation[port][destination]};
-        if (!setting_activity && (sending_held_key || sending_one_key) && data[0] == 0x44) {
+        cec::ExecutionFence fence{};
+        if (destination < 15) {
+            const auto generation = data[0] == 0x45 ? release_binding_generation[port][destination] :
+                binding_wire_generation[port][destination].load();
+            fence = {&binding_wire_generation[port][destination], generation};
+        }
+        if (data[0] == 0x44 && !setting_activity) {
             fence.secondary_generation = &key_generation;
-            fence.expected_secondary_generation = active_key_generation;
-            // Up cancels queued repeats; the initial down still survives a short tap.
-            // Every key-generation invalidation also advances hold_generation.
-            if (sending_held_key && !initial_held_key) {
-                fence.secondary_generation = &hold_generation;
-                fence.expected_secondary_generation = repeating_generation;
-            }
+            fence.expected_secondary_generation = applied_key_generation;
         }
         const unsigned attempts = data[0] == 0x44 ? 1 : 3;
         const bool allow_overflow = data[0] == 0x45;
-        const bool sent = passive ? bus.send(frame, 1000) :
-            setting_activity ? bus.send_and_wait_guarded(frame, fence, allow_overflow ? 0 : 1000, attempts, nullptr, allow_overflow) :
-            sending_held_key && data[0] == 0x44 ? bus.send_and_wait_guarded(frame, fence, 1000, attempts, &held_tx_result) : bus.send_guarded(frame, fence, allow_overflow ? 0 : 1000, attempts, allow_overflow);
+        auto *flight = sending_key && data[0] == 0x44 ? sending_key : setting_activity ? reserve_flight() : nullptr;
+        const bool sent = flight ? bus.send_async_guarded(frame, fence, flight->completion, attempts, allow_overflow) :
+            !setting_activity && bus.send_guarded(frame, fence, attempts, allow_overflow);
+        if (flight && !sent) flight->used = false;
         if (sent && data[0] == 0x44 && destination < 15)
             release_binding_generation[port][destination] = binding_wire_generation[port][destination].load();
         if (sent && setting_activity) {
+            flight->setup = setup_generation;
+            ++setup_outstanding;
             xSemaphoreTake(lock, portMAX_DELAY); settling.expect(side, destination, data, size); xSemaphoreGive(lock);
         }
         if (!sent) ++dropped_tx;
@@ -808,6 +905,12 @@ struct HubService::Impl : Transport {
         const auto now = uint64_t(esp_timer_get_time()) / 1000;
         poll_presence(now);
         if (key_generation.load() != applied_key_generation) { live->release(now); applied_key_generation = key_generation.load(); }
+        for (size_t key = 0; key < keys.size(); ++key) {
+            const auto released = release_generations[key].load();
+            if (released == keys[key].release_generation) continue;
+            live->release_key(static_cast<uint8_t>(key), now);
+            keys[key].release_generation = released;
+        }
         Command* command = nullptr;
         // Completed local holds repeat without a cadence timer. While their
         // asynchronous frame is in flight, yield for one scheduler tick; the
@@ -816,26 +919,36 @@ struct HubService::Impl : Transport {
         const TickType_t wait = live->local_repeat_ready(now) ? 0 : live->local_repeat_in_flight() ? 1 : pdMS_TO_TICKS(10);
         const bool received_command = xQueueReceive(commands, &command, wait) == pdTRUE;
         if (received_command) {
-            xSemaphoreGive(command_slots);
+            free_reservation(*command);
             if (!remote_command(*command, now)) switch (command->kind) {
             case Kind::ConfigureV2: queue_v2(*command); break;
             case Kind::Select: case Kind::Standby: live->select_slot(command->kind == Kind::Standby ? -1 : command->value, now, last_activity_error); break;
-            case Kind::SelectV2: live->select(command->zone, command->activity, command->request, command->expected_state, now, last_activity_error); break;
-            case Kind::StopV2: live->stop(command->zone, now); break;
+            case Kind::SelectV2:
+                if (live->select(command->zone, command->activity, command->request, command->expected_state, now, last_activity_error) && !command->repeat)
+                    activity_selection.fetch_add(1);
+                break;
+            case Kind::StopV2:
+                if (live->stop(command->zone, now)) activity_selection.fetch_add(1);
+                break;
             case Kind::Key:
-                if (command->key_generation == key_generation.load() && (!command->activity_bound || command->activity_generation == cached.activity_generation))
+                if (command->key_generation == key_generation.load() &&
+                    command->release_generation == release_generations[static_cast<uint8_t>(command->value)].load() &&
+                    (!command->activity_bound || command->activity_generation == cached.activity_generation))
                     live->key(static_cast<uint8_t>(command->value), command->repeat, now);
                 break;
-            case Kind::Release: live->release(now); break;
+            case Kind::Release:
+                if (command->value < 0) live->release(now);
+                else live->release_key(static_cast<uint8_t>(command->value), now);
+                break;
             case Kind::Discover: live->discover(now); break;
             case Kind::Authorized: case Kind::RemotePrepare: case Kind::RemoteFence: case Kind::RemoteQuiescent: case Kind::RemoteActivate: case Kind::RemoteAbort: case Kind::MemberPrepare: case Kind::MemberActivate: case Kind::MemberAbort: case Kind::RemoteHooks: case Kind::RemoteOwner: case Kind::RemotePlanResult: case Kind::RemoteOperationResult: case Kind::InputIntent: case Kind::RemoteRenew: case Kind::DiscoveryLease: case Kind::AuthorityTransition: case Kind::Retire: case Kind::MaintenanceBegin: case Kind::MaintenanceEnd: case Kind::SettingsCommit: break;
             case Kind::Configure: last_activity_error = "Legacy configuration cannot replace an active schema2 system"; break;
             }
             delete command;
         }
-        // Match the original owner loop: queued commands, especially release,
-        // win before an otherwise idle completion-paced held-key repeat.
-        live->tick(now, !received_command);
+        // Completion processing and independent keys advance even while more
+        // input arrives. The distributed layer only transports these intents.
+        live->tick(now);
         install_v2(now);
         complete_authority_transition();
         complete_retirement();
@@ -843,94 +956,232 @@ struct HubService::Impl : Transport {
         if (pending_settings) complete_settings(uint64_t(esp_timer_get_time()) / 1000);
         publish();
     }
-    uint8_t claim(cec::Bus &bus, std::initializer_list<uint8_t> candidates) {
-        for (auto address : candidates) {
-            cec::Frame poll; poll.size = 1; poll.data[0] = (address << 4) | address;
-            // CEC allocates an address only after two unacknowledged polls;
-            // a wire error or arbitration loss is never evidence of vacancy.
-            if (bus.transmit(poll, 1) != cec::TxResult::Nack) continue;
-            if (bus.transmit(poll, 1) != cec::TxResult::Nack) continue;
-            bus.set_address(address);
-            return address;
-        }
-        return 15;
+    bool discovery_pending() const {
+        return scan_requested || discovery.phase != DiscoveryPhase::Idle;
     }
-    void claim_addresses() {
-        last_claim = esp_timer_get_time();
-        const auto physical = hub.snapshot().front_physical_address;
-        const bool claiming_front = front_address == 15 && physical != 0xffff, claiming_back = back_address == 15;
-        if (claiming_back) back_address = claim(back, {0, 14});
-        if (claiming_front) front_address = claim(front, {4, 8, 11, 12, 13});
-        hub.set_addresses(front_address, back_address, physical);
-        if (back_address == 15 || (physical != 0xffff && front_address == 15)) {
-            ESP_LOGW(TAG, "CEC address allocation pending (front=%u back=%u); check pins and bus roles", front_address, back_address);
-        } else if (physical != 0xffff) {
-            ESP_LOGI(TAG, "CEC ready: front playback %u, back TV %u", front_address, back_address);
-            if (!scan_running) scan_requested = true;
-        }
-        if (claiming_front) hub.announce(BusSide::Front);
-        if (claiming_back) hub.announce(BusSide::Back);
-        publish();
+    void begin_claim(BusSide side) {
+        discovery.phase = side == BusSide::Back ? DiscoveryPhase::ClaimBack : DiscoveryPhase::ClaimFront;
+        discovery.candidate = 0;
+        discovery.nacks = 0;
     }
-    void await_scan_replies() {
-        // Presence polls finish before queued identity requests. Wait for
-        // their replies before choosing a physical address or using names.
-        const auto deadline = esp_timer_get_time() + 5000000;
-        auto quiet_since = esp_timer_get_time();
-        while (esp_timer_get_time() < deadline) {
-            if (receive() || !wires_idle()) quiet_since = esp_timer_get_time();
-            if (esp_timer_get_time() - quiet_since >= 1100000) break;
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
-    void scan() {
-        scan_requested = false; scan_running = true; last_scan = esp_timer_get_time();
+    void start_discovery() {
+        if (discovery.phase != DiscoveryPhase::Idle) { scan_requested = true; return; }
+        scan_requested = false;
+        scan_running = true;
+        last_scan = last_claim = esp_timer_get_time();
+        discovery.claim_only = false;
+        discovery.claimed = false;
+        hub.begin_discovery(); // The existing cache remains usable until finish.
+        begin_claim(BusSide::Back);
         ESP_LOGI(TAG, "Discovering devices on both HDMI-CEC buses");
-        hub.begin_discovery();
         publish();
-        for (const auto side : {BusSide::Back, BusSide::Front}) {
-            auto &bus = side == BusSide::Front ? front : back;
-            const auto own = side == BusSide::Front ? front_address : back_address;
-            const bool determining = side == BusSide::Back && hub.snapshot().front_physical_address == 0xffff;
-            if (own == 15 && !determining) continue;
-            for (uint8_t address = 0; address < 15; ++address) {
-                if (address == own) continue;
-                cec::Frame poll; poll.size = 1; poll.data[0] = (own << 4) | address;
-                // A single lost poll under radio/flash load must not remove a
-                // responding native appliance. Retry once, retaining a fixed
-                // scan bound and requiring an actual ACK for presence.
-                for (unsigned attempt = 0; attempt < 2; ++attempt) {
-                    const auto status = bus.transmit(poll, 1);
-                    receive();
-                    if (status == cec::TxResult::Success) { hub.discovered(side, address); break; }
-                }
+    }
+    void finish_claim(BusSide side) {
+        if (side == BusSide::Back) {
+            if (discovery.claim_only) begin_claim(BusSide::Front);
+            else { discovery.phase = DiscoveryPhase::ScanBack; discovery.address = 0; }
+        } else if (discovery.claim_only) {
+            discovery.phase = DiscoveryPhase::Idle;
+            if (discovery.claimed) scan_requested = true;
+        } else {
+            discovery.phase = DiscoveryPhase::ScanFront;
+            discovery.address = 0;
+        }
+    }
+    void claim_tick(BusSide side) {
+        static constexpr uint8_t back_candidates[] = {0, 14};
+        static constexpr uint8_t front_candidates[] = {4, 8, 11, 12, 13};
+        const auto *candidates = side == BusSide::Back ? back_candidates : front_candidates;
+        const unsigned count = side == BusSide::Back ? sizeof(back_candidates) : sizeof(front_candidates);
+        auto &address = side == BusSide::Back ? back_address : front_address;
+        auto &bus = side == BusSide::Back ? back : front;
+        const auto physical = hub.snapshot().front_physical_address;
+        if (address != 15 || (side == BusSide::Front && physical == 0xffff)) {
+            finish_claim(side); return;
+        }
+        if (discovery.waiting) {
+            const auto result = discovery_completion.result.load(std::memory_order_acquire);
+            if (result == cec::TxResult::Pending) return;
+            discovery.waiting = false;
+            // Only two unacknowledged polls of this candidate prove vacancy.
+            // Arbitration loss and wire errors advance to another candidate.
+            if (result == cec::TxResult::Nack && ++discovery.nacks == 2) {
+                address = candidates[discovery.candidate];
+                bus.set_address(address);
+                hub.set_addresses(front_address, back_address, physical);
+                hub.announce(side);
+                discovery.claimed = true;
+                finish_claim(side);
+                publish();
+                return;
             }
-            if (side == BusSide::Back && hub.snapshot().front_physical_address == 0xffff) {
-                await_scan_replies();
-                hub.determine_front_physical_address(fallback_physical);
-                [[maybe_unused]] const auto physical = hub.snapshot().front_physical_address;
-                ESP_LOGI(TAG, "Front physical address determined: %x.%x.%x.%x",
-                         (physical >> 12) & 15, (physical >> 8) & 15, (physical >> 4) & 15, physical & 15);
-                // The front playback device can now claim and advertise its
-                // final address, then participate in the front-bus scan.
-                claim_addresses();
+            if (result != cec::TxResult::Nack) {
+                ++discovery.candidate;
+                discovery.nacks = 0;
             }
         }
-        // Polling establishes presence before the queued identity requests
-        // finish. Let them drain before applying an activity selected while
-        // scanning, or a TV can still have its fallback name at selection.
-        // Linux's Device() awaits these replies before publishing discovery.
-        await_scan_replies();
-        hub.finish_discovery();
-        ++discovery_generation;
-        scan_running = false;
-        publish();
+        if (discovery.candidate == count) { finish_claim(side); return; }
+        const auto candidate = candidates[discovery.candidate];
+        cec::Frame poll; poll.size = 1; poll.data[0] = (candidate << 4) | candidate;
+        discovery.waiting = bus.send_async_guarded(poll, {}, discovery_completion, 1);
+    }
+    void begin_reply_window(bool back_side, int64_t now) {
+        discovery.phase = back_side ? DiscoveryPhase::BackReplies : DiscoveryPhase::FinalReplies;
+        discovery.deadline = now + 5000000;
+        discovery.quiet_since = now;
+    }
+    void scan_tick(BusSide side, int64_t now) {
+        auto &bus = side == BusSide::Back ? back : front;
+        const auto own = side == BusSide::Back ? back_address : front_address;
+        const bool determining = side == BusSide::Back && hub.snapshot().front_physical_address == 0xffff;
+        if (own == 15 && !determining) { begin_reply_window(side == BusSide::Back, now); return; }
+        if (discovery.waiting) {
+            const auto result = discovery_completion.result.load(std::memory_order_acquire);
+            if (result == cec::TxResult::Pending) return;
+            discovery.waiting = false;
+            if (result == cec::TxResult::Success) hub.discovered(side, discovery.address);
+            ++discovery.address;
+        }
+        if (discovery.address == own) ++discovery.address;
+        if (discovery.address >= 15) { begin_reply_window(side == BusSide::Back, now); return; }
+        cec::Frame poll; poll.size = 1; poll.data[0] = (own << 4) | discovery.address;
+        // Full FIFOs postpone this probe; they never delay command handling.
+        discovery.waiting = bus.send_async_guarded(poll, {}, discovery_completion, 1);
+    }
+    void discovery_tick(bool received) {
+        const auto now = esp_timer_get_time();
+        if (discovery.phase == DiscoveryPhase::Idle) {
+            if (scan_requested) start_discovery();
+            else if ((front_address == 15 || back_address == 15) && now - last_claim >= 5000000) {
+                last_claim = now;
+                discovery.claim_only = true;
+                discovery.claimed = false;
+                begin_claim(BusSide::Back);
+            } else return;
+        }
+        switch (discovery.phase) {
+        case DiscoveryPhase::ClaimBack: claim_tick(BusSide::Back); break;
+        case DiscoveryPhase::ClaimFront: claim_tick(BusSide::Front); break;
+        case DiscoveryPhase::ScanBack: scan_tick(BusSide::Back, now); break;
+        case DiscoveryPhase::ScanFront: scan_tick(BusSide::Front, now); break;
+        case DiscoveryPhase::BackReplies:
+        case DiscoveryPhase::FinalReplies:
+            // Metadata requests and replies drain between owner iterations.
+            // Keep the response window bounded even during other CEC traffic.
+            if (received || !front.idle() || !back.idle()) discovery.quiet_since = now;
+            if (now < discovery.deadline && now - discovery.quiet_since < 1100000) break;
+            if (discovery.phase == DiscoveryPhase::BackReplies) {
+                hub.determine_front_physical_address(fallback_physical);
+                hub.set_addresses(front_address, back_address, hub.snapshot().front_physical_address);
+                begin_claim(BusSide::Front);
+            } else {
+                hub.finish_discovery();
+                ++discovery_generation;
+                scan_running = false;
+                discovery.phase = DiscoveryPhase::Idle;
+                publish();
+            }
+            break;
+        case DiscoveryPhase::Idle: break;
+        }
+    }
+    bool needs_discovery(const Command &command) const {
+        switch (command.kind) {
+        case Kind::Select: return hub.activity_needs_discovery(command.value);
+        case Kind::Key: return hub.key_needs_discovery(static_cast<uint8_t>(command.value));
+        case Kind::Configure:
+        case Kind::Standby: return hub.activity_needs_discovery(-1);
+        default: return false;
+        }
+    }
+    bool stale_key(const Command &command) const {
+        return command.key_generation != applied_key_generation ||
+            command.release_generation != keys[static_cast<uint8_t>(command.value)].release_generation ||
+            (command.activity_bound && command.activity_generation != hub.activity_generation());
+    }
+    void execute(Command &command) {
+        if (remote_command(command, uint64_t(esp_timer_get_time()) / 1000)) return;
+        switch (command.kind) {
+        case Kind::ConfigureV2: stop_holds(); queue_v2(command); scan_requested = false; break;
+        case Kind::SelectV2: case Kind::StopV2: last_activity_error = "Schema2 configuration is not active"; break;
+        case Kind::Configure:
+            if (!command.presentation_only) stop_holds();
+            hub.configure(std::move(command.activities), std::move(command.quirks));
+            if (!command.presentation_only) {
+                ++setup_generation; setup_outstanding = 0; setup_pending = false;
+                xSemaphoreTake(lock, portMAX_DELAY); settling.cancel(); xSemaphoreGive(lock);
+            }
+            break;
+        case Kind::Select:
+            if (compile_activity_intent(command)) apply_activity(command.value);
+            else fail_activity(command.value, "Activity request was superseded by a newer change.");
+            break;
+        case Kind::Key:
+            if (stale_key(command)) break;
+            if (command.value == 0x40) { apply_activity(-1); break; }
+            if (command.repeat) {
+                auto &state = keys[static_cast<uint8_t>(command.value)];
+                if (state.active || state.failed) break;
+                state.active = true; ++state.instance;
+                // Initial submission never waits for another key's completion.
+                send_held_key(static_cast<uint8_t>(command.value));
+            } else hub.press_key(static_cast<uint8_t>(command.value));
+            break;
+        case Kind::Release:
+            if (command.value < 0) {
+                stop_holds();
+                // Disconnect/input loss also cancels key operations still
+                // awaiting device lookup, before they can reach the wire.
+                for (auto i = deferred.begin(); i != deferred.end();) {
+                    if ((*i)->kind != Kind::Key) { ++i; continue; }
+                    i = deferred.erase(i); xSemaphoreGive(command_slots);
+                }
+            } else {
+                stop_key(static_cast<uint8_t>(command.value));
+                // A short tap whose recipient is still being discovered is
+                // finite: lookup may finish later, but cannot resurrect a hold.
+                for (auto &pending : deferred)
+                    if (pending->kind == Kind::Key && pending->value == command.value) pending->repeat = false;
+            }
+            break;
+        case Kind::Standby:
+            if (compile_activity_intent(command)) apply_activity(-1);
+            else fail_activity(-1, "Activity request was superseded by a newer change.");
+            break;
+        case Kind::Discover: scan_requested = true; break;
+        default: break; // Handled by remote_command above.
+        }
+    }
+    void accept(Command *raw) {
+        std::unique_ptr<Command> command(raw);
+        if (needs_discovery(*command)) {
+            request_scan();
+            if (scan_running || scan_requested) {
+                command->discovery_generation = discovery_generation;
+                deferred.push_back(std::move(command));
+                return;
+            }
+        }
+        free_reservation(*command);
+        execute(*command);
+    }
+    bool resume_discovered() {
+        bool changed = false;
+        for (auto i = deferred.begin(); i != deferred.end();) {
+            if (scan_running || (*i)->discovery_generation == discovery_generation) { ++i; continue; }
+            auto command = std::move(*i);
+            i = deferred.erase(i);
+            free_reservation(*command);
+            execute(*command);
+            changed = true;
+        }
+        return changed;
     }
     static void run(void *arg) {
         auto &p = *static_cast<Impl *>(arg);
         if (!p.owner_started) {
             p.owner_started = true;
-            if (p.local_coordinator.load() && (!p.consortium || !p.octopus)) { p.legacy_enabled = true; p.claim_addresses(); p.scan_requested = true; }
+            if (p.local_coordinator.load() && (!p.consortium || !p.octopus)) { p.legacy_enabled = true; p.scan_requested = true; }
             else { p.passive_ports(); p.publish(); }
         }
         for (;;) {
@@ -950,13 +1201,13 @@ struct HubService::Impl : Transport {
                     for (unsigned n = 0; n < 32 && p.native_ports[i].bus->receive(observation); ++n) {}
                 Command* command = nullptr;
                 if (xQueueReceive(p.commands, &command, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    xSemaphoreGive(p.command_slots);
+                    p.free_reservation(*command);
                     if (command->kind == Kind::ConfigureV2) p.queue_v2(*command);
                     else if (command->kind == Kind::Configure && p.local_coordinator.load() && !p.maintenance_started) {
                         // Legacy ownership is an explicit migration action.
                         // Typed startup starts monitor-only and never briefly
                         // acknowledges or responds using stale legacy roles.
-                        p.legacy_enabled = true; p.claim_addresses();
+                        p.legacy_enabled = true;
                         p.hub.configure(std::move(command->activities), std::move(command->quirks));
                         p.scan_requested = true;
                     }
@@ -965,81 +1216,24 @@ struct HubService::Impl : Transport {
                 }
                 continue;
             }
-            p.active_wire_generation = p.wire_generation.load();
-            p.active_key_generation = p.key_generation.load();
             p.apply_emergency_release();
-            p.check_hold();
             p.hub.tick(esp_timer_get_time());
             bool changed = p.receive();
-            changed = p.update_settling() || changed;
+            // Discovery and logical address allocation advance through short
+            // steps. They never hold this task waiting for a CEC result.
+            p.discovery_tick(changed);
+            changed = p.resume_discovered() || changed;
             Command *command = nullptr;
-            if (xQueueReceive(p.commands, &command, p.repeating_key >= 0 ? 0 : pdMS_TO_TICKS(10)) == pdTRUE) {
-                xSemaphoreGive(p.command_slots);
-                // Python get_device waits for discovery and retries the name
-                // lookup before continuing its original operation. Do that
-                // before any power transition mutates the current activity.
-                bool missing = false;
-                switch (command->kind) {
-                case Kind::Select: missing = p.hub.activity_needs_discovery(command->value); break;
-                case Kind::Key: missing = p.hub.key_needs_discovery(static_cast<uint8_t>(command->value)); break;
-                case Kind::Standby: missing = p.hub.activity_needs_discovery(-1); break;
-                default: break;
-                }
-                if (missing) p.scan_requested = true;
-                if (p.scan_requested) p.scan();
-                p.apply_emergency_release();
-                p.hub.tick(esp_timer_get_time());
-                p.active_wire_generation = command->wire_generation;
-                p.active_key_generation = command->key_generation;
-                switch (command->kind) {
-                case Kind::ConfigureV2: p.stop_hold(true); p.queue_v2(*command); p.scan_requested = false; break;
-                case Kind::SelectV2: case Kind::StopV2: p.last_activity_error = "Schema2 configuration is not active"; break;
-                case Kind::Authorized: case Kind::RemotePrepare: case Kind::RemoteFence: case Kind::RemoteQuiescent: case Kind::RemoteActivate: case Kind::RemoteAbort: case Kind::MemberPrepare: case Kind::MemberActivate: case Kind::MemberAbort: case Kind::RemoteHooks: case Kind::RemoteOwner: case Kind::RemotePlanResult: case Kind::RemoteOperationResult: case Kind::InputIntent: case Kind::RemoteRenew: case Kind::DiscoveryLease: case Kind::AuthorityTransition: case Kind::Retire: case Kind::MaintenanceBegin: case Kind::MaintenanceEnd: case Kind::SettingsCommit: p.remote_command(*command, uint64_t(esp_timer_get_time()) / 1000); break;
-                case Kind::Configure:
-                    if (!command->presentation_only) p.stop_hold();
-                    p.hub.configure(std::move(command->activities), std::move(command->quirks));
-                    if (!command->presentation_only) {
-                        xSemaphoreTake(p.lock, portMAX_DELAY); p.settling.cancel(); xSemaphoreGive(p.lock);
-                    }
-                    break;
-                case Kind::Select:
-                    if (p.compile_activity_intent(*command)) p.apply_activity(command->value);
-                    else p.fail_activity(command->value, "Activity request was superseded by a newer change.");
-                    break;
-                case Kind::Key:
-                    if (command->wire_generation == p.wire_generation.load() && command->key_generation == p.applied_key_generation &&
-                        (!command->activity_bound || command->activity_generation == p.hub.activity_generation())) {
-                        if (command->repeat && command->value == p.failed_key) break;
-                        if (command->repeat && command->value == p.repeating_key && command->hold_generation == p.repeating_generation) break;
-                        p.stop_hold();
-                        if (command->repeat) {
-                            p.repeating_key = command->value;
-                            p.repeating_generation = command->hold_generation;
-                            p.send_held_key(true);
-                        } else {
-                            p.sending_one_key = true;
-                            p.hub.press_key(static_cast<uint8_t>(command->value));
-                            p.sending_one_key = false;
-                        }
-                    }
-                    break;
-                case Kind::Release: p.stop_hold(); break;
-                case Kind::Standby:
-                    if (p.compile_activity_intent(*command)) p.apply_activity(-1);
-                    else p.fail_activity(-1, "Activity request was superseded by a newer change.");
-                    break;
-                case Kind::Discover: p.scan_requested = true; break;
-                }
-                delete command; changed = true;
-            } else {
-                // No timer and no queued repeats: completion of the preceding
-                // attempt is what allows this next press. Commands win first.
-                p.check_hold();
-                if (p.repeating_key >= 0) p.send_held_key();
+            const TickType_t wait = p.transmissions_pending() || p.discovery_pending() ? 1 : pdMS_TO_TICKS(10);
+            if (xQueueReceive(p.commands, &command, wait) == pdTRUE) {
+                p.accept(command);
+                changed = true;
             }
-            if (p.scan_requested) p.scan();
-            if ((p.front_address == 15 || p.back_address == 15) && esp_timer_get_time() - p.last_claim >= 5000000)
-                p.claim_addresses();
+            // A completion belongs to one operation. Processing it cannot
+            // stall command admission or another key's continuation.
+            changed = p.complete_transmissions() || changed;
+            p.continue_keys();
+            changed = p.update_settling() || changed;
             if (changed) p.publish();
         }
     }
@@ -1173,7 +1367,10 @@ esp_err_t HubService::configure_with_commit(std::vector<Activity> activities, st
     c->activities = std::move(activities); c->quirks = std::move(quirks);
     return impl_->submit(c, commit);
 }
-esp_err_t HubService::request_activity(int index) {
+esp_err_t HubService::request_activity(int index) { return request_activity(index, true); }
+esp_err_t HubService::repair_activity() { return request_activity(activity_target(), false); }
+uint32_t HubService::activity_selection() const { return impl_->activity_selection.load(); }
+esp_err_t HubService::request_activity(int index, bool notify_selection) {
     auto &p = *impl_; if (!p.lock) return ESP_ERR_INVALID_STATE;
     if (!p.local_coordinator.load()) return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(p.lock, portMAX_DELAY);
@@ -1183,14 +1380,19 @@ esp_err_t HubService::request_activity(int index) {
         if (p.cached.activity_settling && index != p.cached.current_activity) { xSemaphoreGive(p.lock); return ESP_ERR_TIMEOUT; }
         auto* command = new (std::nothrow) Impl::Command{index < 0 ? Impl::Kind::Standby : Impl::Kind::Select, index};
         if (command) command->route_transition = index != p.cached.current_activity;
-        const auto result = p.submit(command); xSemaphoreGive(p.lock); return result;
+        const auto result = p.submit(command, [&] { if (notify_selection) p.activity_selection.fetch_add(1); return ESP_OK; });
+        xSemaphoreGive(p.lock); return result;
     }
     const bool active = p.settling.active(esp_timer_get_time());
     const int target = active ? p.settling.target() : p.cached.current_activity;
     if (active && index != target) { xSemaphoreGive(p.lock); return ESP_ERR_TIMEOUT; }
     auto *command = new (std::nothrow) Impl::Command{index < 0 ? Impl::Kind::Standby : Impl::Kind::Select, index};
     if (command) command->route_transition = index != target;
-    const auto error = p.submit(command, [&] { if (index != target) p.settling.reserve(index); return ESP_OK; });
+    const auto error = p.submit(command, [&] {
+        if (index != target) p.settling.reserve(index);
+        if (notify_selection) p.activity_selection.fetch_add(1);
+        return ESP_OK;
+    });
     xSemaphoreGive(p.lock); return error;
 }
 int HubService::activity_target() const {
@@ -1206,7 +1408,7 @@ bool HubService::press_key(uint8_t key, bool repeat) {
     auto *command = new (std::nothrow) Impl::Command{Impl::Kind::Key, key, repeat};
     if (command) {
         command->key_generation = impl_->key_generation.load();
-        command->hold_generation = impl_->hold_generation.load();
+        command->release_generation = impl_->release_generations[key].load();
     }
     return impl_->enqueue(command);
 }
@@ -1215,7 +1417,7 @@ bool HubService::press_key_for_activity(uint8_t key, uint32_t activity_generatio
     auto *command = new (std::nothrow) Impl::Command{Impl::Kind::Key, key, repeat};
     if (command) {
         command->key_generation = impl_->key_generation.load();
-        command->hold_generation = impl_->hold_generation.load();
+        command->release_generation = impl_->release_generations[key].load();
         command->activity_bound = true;
         command->activity_generation = activity_generation;
     }
@@ -1226,12 +1428,17 @@ uint32_t HubService::activity_generation() const {
     xSemaphoreTake(p.lock, portMAX_DELAY); const auto generation = p.cached.activity_generation;
     xSemaphoreGive(p.lock); return generation;
 }
-bool HubService::release_key() {
-    impl_->hold_generation.fetch_add(1);
-    if (impl_->enqueue(new (std::nothrow) Impl::Command{Impl::Kind::Release})) return true;
+bool HubService::release_key(uint8_t key) {
+    if (impl_->enqueue(new (std::nothrow) Impl::Command{Impl::Kind::Release, key})) return true;
     if (!impl_->task) return false;
-    // Releasing must survive an overloaded command queue. The generation
-    // cancels older queued presses while allowing later keys to proceed.
+    // Queue saturation still ends only this button. New presses retain the
+    // new per-key epoch; unrelated buttons and commands are unaffected.
+    impl_->release_generations[key].fetch_add(1);
+    return true;
+}
+bool HubService::release_key() {
+    if (impl_->enqueue(new (std::nothrow) Impl::Command{Impl::Kind::Release, -1})) return true;
+    if (!impl_->task) return false;
     impl_->key_generation.fetch_add(1);
     return true;
 }
@@ -1386,7 +1593,15 @@ system::InputContext HubService::input_context() const {
 system::AdmissionResult HubService::submit_input_intent(system::InputIntent input) {
     if (!input.admissible_until_ms && input.action != system::InputAction::hold_release)
         input.admissible_until_ms = uint64_t(esp_timer_get_time()) / 1000 + 1000;
+    const bool release = input.action == system::InputAction::hold_release;
     auto* command = new (std::nothrow) Impl::Command{Impl::Kind::InputIntent}; if (command) command->input = std::move(input);
+    if (release) {
+        // Exact-token cleanup is idempotent. Its accepted IPC handoff is the
+        // result; waiting for an owner reply adds no useful key-up guarantee.
+        const auto result = impl_->submit(command);
+        return {result == ESP_OK ? system::AdmissionCode::accepted : system::AdmissionCode::overloaded,
+                result == ESP_OK ? "" : "cleanup queue admission failed"};
+    }
     return impl_->request(command);
 }
 esp_err_t HubService::retire_membership() {

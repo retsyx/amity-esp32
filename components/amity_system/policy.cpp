@@ -328,10 +328,7 @@ bool LocalCecAgent::submit_frames(const AuthorizedCecOperation& o, const std::ve
         const auto expiry = release ? 0 : identity && installed ? installed->authority_expires_at_ms : o.execution_expires_at_ms;
         work.push_back({o.command_id, frames[i], release, o.binding_id, o.fence.binding_revision, expiry,
             !frames[i].payload.empty() && frames[i].payload.front() == 0x44 ? 1u : 3u, id, release && i != 0, release});
-        bool initial = false;
-        if (!release && stream_id)
-            for (const auto& h : holds_) if (h.stream_id == stream_id && h.operation.command_id == o.command_id) initial = h.initial_press_pending;
-        records.push_back({id, o, frames[i].port, identity, release, installed ? installed->policy_generation : 0, internal, initial, stream_id});
+        records.push_back({id, o, frames[i].port, identity, release, installed ? installed->policy_generation : 0, internal, stream_id});
     }
     // This callback copies the stack-owned frames into the only transmit FIFO.
     // It returns actual all-or-none driver admission and never completes inline.
@@ -341,7 +338,10 @@ bool LocalCecAgent::submit_frames(const AuthorizedCecOperation& o, const std::ve
     if (stream_id) {
         for (auto& h : holds_) if (h.stream_id == stream_id && h.operation.command_id == o.command_id) { h.started = true; h.press_work_id = work.front().work_id; }
         for (auto& stream : streams_) if (stream.stream_id == stream_id)
-            for (const auto& frame : work) if (frame.emergency_release) stream.release_work_id = frame.work_id;
+            for (const auto& frame : work) {
+                if (frame.emergency_release) stream.release_work_id = frame.work_id;
+                else stream.admitted = true;
+            }
     }
     if (std::any_of(work.begin(), work.end(), [](const auto& w) { return w.emergency_release; }) && audio_key(o.arguments.key))
         schedule_audio_query(o, now <= UINT64_MAX - 500 ? now + 500 : UINT64_MAX, stream_id);
@@ -364,11 +364,10 @@ void LocalCecAgent::release_at(size_t index, bool safe, bool dispatch) {
         for (auto& stream : streams_) if (stream.stream_id == id) { stream.safe = false; stream.ended = true; if (stream.started) ++uncertain_releases_; }
         h.up_requested = true;
         cancel_transmissions([&](const auto& work) { return work.stream_id == id; });
-    } else {
-        h.up_requested = true;
-        if (h.press_work_id && !h.initial_press_pending && cancel_) cancel_(h.press_work_id);
     }
-    if (!h.press_work_id) holds_.erase(holds_.begin() + static_cast<std::ptrdiff_t>(index));
+    // Button-up ends only this logical key. Every admitted press stays in the
+    // sole FIFO, including a repeat that has not reached its first wire edge.
+    holds_.erase(holds_.begin() + static_cast<std::ptrdiff_t>(index));
     observe_stream_end(id);
     if (dispatch) flush_stream(id, now_ms_);
 }
@@ -376,8 +375,13 @@ bool LocalCecAgent::flush_stream(uint64_t id, uint64_t now) {
     const auto found = std::find_if(streams_.begin(), streams_.end(), [&](const auto& stream) { return stream.stream_id == id; });
     if (found == streams_.end() || found->release_work_id) return true;
     if (!found->ended) return false;
-    if (std::any_of(transmissions_.begin(), transmissions_.end(), [&](const auto& work) { return work.stream_id == id; })) return false;
-    if (!found->safe || !found->started) { discard_stream(id); return true; }
+    if (!found->safe) {
+        // Unsafe attachment cleanup retains only completion metadata until the
+        // canceled driver work drains. It never submits to the replaced peer.
+        if (std::none_of(transmissions_.begin(), transmissions_.end(), [&](const auto& work) { return work.stream_id == id; })) discard_stream(id);
+        return true;
+    }
+    if (!found->admitted) { discard_stream(id); return true; }
     const auto stream = *found; auto release = stream.cleanup; release.kind = OperationKind::release_key; release.command_id = {};
     const CecFrame frame{release.target.port, stream.initiator, release.target.logical_address, {0x45}};
     if (!submit_frames(release, {frame}, now, false, true, id)) {
@@ -392,7 +396,7 @@ bool LocalCecAgent::flush_stream(uint64_t id, uint64_t now) {
 bool LocalCecAgent::release_hold(HoldToken token, uint64_t now) {
     if (now) now_ms_ = now;
     for (size_t i = 0; i < holds_.size(); ++i) if (!holds_[i].finite && !holds_[i].up_requested && holds_[i].token == token) {
-        release_at(i, true, false); return true; // Only state changes here; the stream dispatcher chooses UCR.
+        release_at(i, true); return true; // Final aggregate up queues UCR immediately behind admitted presses.
     }
     return false;
 }
@@ -434,7 +438,7 @@ void LocalCecAgent::maintain(uint64_t now) {
         }
     }
 }
-void LocalCecAgent::tick(uint64_t now, bool allow_repeat) {
+void LocalCecAgent::tick(uint64_t now) {
     maintain(now);
     std::vector<uint64_t> ending; for (const auto& stream : streams_) if (stream.ended && !stream.release_work_id) ending.push_back(stream.stream_id);
     for (const auto id : ending) flush_stream(id, now);
@@ -450,19 +454,21 @@ void LocalCecAgent::tick(uint64_t now, bool allow_repeat) {
         if (!submit_frames(query.operation, *frames, now, false, true)) { query.due_ms = now <= UINT64_MAX - 500 ? now + 500 : UINT64_MAX; continue; }
         audio_queries_.erase(audio_queries_.begin() + static_cast<std::ptrdiff_t>(i - 1));
     }
-    if (!allow_repeat || holds_.empty()) return;
-    for (size_t n = 0; n < holds_.size(); ++n) {
-        const size_t index = (next_hold_ + n) % holds_.size(); auto& held = holds_[index];
-        if (held.finite || !held.active || held.up_requested || held.press_work_id) continue;
+    // Each ready held key owns one independent completion-paced attempt.
+    // Another key's ACK, command admission or hold state cannot gate it.
+    for (size_t index=0;index<holds_.size();) {
+        auto& held=holds_[index];
+        if (held.finite || !held.active || held.up_requested || held.press_work_id) { ++index; continue; }
         const auto stream = std::find_if(streams_.begin(), streams_.end(), [&](const auto& value) { return value.stream_id == held.stream_id; });
-        if (stream == streams_.end() || !stream->safe || stream->ended || stream->release_work_id) continue;
-        const auto operation = held_authority(held, now); if (!operation) continue;
+        if (stream == streams_.end() || !stream->safe || stream->ended || stream->release_work_id) { ++index; continue; }
+        const auto operation = held_authority(held, now); if (!operation) { ++index; continue; }
         const auto* p = policy(operation->target.port); const auto frames = compile(*operation, *p, *permission(*p, operation->binding_id));
         if (!submit_frames(*operation, *frames, now, false, false, held.stream_id)) {
-            const auto id = held.stream_id; holds_.erase(holds_.begin() + static_cast<std::ptrdiff_t>(index)); observe_stream_end(id);
-        }
-        if (!holds_.empty()) next_hold_ = (index + 1) % holds_.size();
-        break;
+            const auto id=held.stream_id;
+            holds_.erase(holds_.begin()+static_cast<std::ptrdiff_t>(index));
+            observe_stream_end(id);flush_stream(id,now);
+            index=0; // Consumed cleanup may also erase finite metadata before this key.
+        } else ++index;
     }
 }
 void LocalCecAgent::fence_binding(BindingId binding, uint64_t revision, bool safe) {
@@ -483,7 +489,10 @@ void LocalCecAgent::fence_binding(BindingId binding, uint64_t revision, bool saf
             }), audio_queries_.end());
         }
     }
-    for (size_t i = holds_.size(); i > 0; --i) if (holds_[i - 1].operation.binding_id == binding && holds_[i - 1].operation.fence.binding_revision <= revision) release_at(i - 1, safe);
+    for (size_t i=holds_.size();i>0;) {
+        i=std::min(i,holds_.size());if(!i)break;--i;
+        if(holds_[i].operation.binding_id==binding&&holds_[i].operation.fence.binding_revision<=revision)release_at(i,safe);
+    }
 }
 void LocalCecAgent::close_route(SessionId session, uint64_t generation) {
     close_route_impl(session, generation, true);
@@ -493,7 +502,10 @@ void LocalCecAgent::close_route_impl(SessionId session, uint64_t generation, boo
     if (prior != closed_routes_.end()) prior->second = std::max(prior->second, generation);
     else if (closed_routes_.size() < 640) closed_routes_.push_back({session, generation}); else fail_closed_ = true;
     cancel_transmissions([&](const auto& work) { return !work.emergency_release && work.operation.fence.session_id == session && work.operation.fence.route_generation <= generation; });
-    for (size_t i = holds_.size(); i > 0; --i) if (holds_[i - 1].operation.fence.session_id == session && holds_[i - 1].operation.fence.route_generation <= generation) release_at(i - 1, true, dispatch);
+    for(size_t i=holds_.size();i>0;) {
+        i=std::min(i,holds_.size());if(!i)break;--i;
+        if(holds_[i].operation.fence.session_id==session&&holds_[i].operation.fence.route_generation<=generation)release_at(i,true,dispatch);
+    }
 }
 bool LocalCecAgent::quiescent(SessionId session, uint64_t generation) const {
     return std::none_of(transmissions_.begin(), transmissions_.end(), [&](const auto& w) { return w.operation.fence.session_id == session && w.operation.fence.route_generation <= generation; }) &&
@@ -538,18 +550,19 @@ std::optional<CommandId> LocalCecAgent::complete_frame(uint64_t id, WireOutcome 
             for (auto& query : audio_queries_) if (query.stream_id == work.stream_id) query.press_started = true;
         }
         for (size_t i = 0; i < holds_.size(); ++i) if (holds_[i].press_work_id == id && holds_[i].stream_id == work.stream_id) {
-            auto& h = holds_[i]; h.press_work_id = 0; h.initial_press_pending = false;
+            auto& h = holds_[i]; h.press_work_id = 0;
             if (h.finite || h.up_requested || outcome != WireOutcome::success) holds_.erase(holds_.begin() + static_cast<std::ptrdiff_t>(i));
             else if (outcome == WireOutcome::success && !h.up_requested) h.active = true;
             break;
         }
         observe_stream_end(work.stream_id);
+        flush_stream(work.stream_id,now);
     }
     prune_fences(); return work.operation.command_id;
 }
 size_t LocalCecAgent::pending_work() const {
     return transmissions_.size() + std::count_if(streams_.begin(), streams_.end(), [](const auto& stream) {
-        return stream.ended && !stream.release_work_id && stream.safe && stream.started;
+        return stream.ended && !stream.release_work_id && stream.safe && stream.admitted;
     });
 }
 bool LocalCecAgent::command_pending(CommandId id) const {
@@ -558,7 +571,7 @@ bool LocalCecAgent::command_pending(CommandId id) const {
 void LocalCecAgent::quiesce() {
     audio_queries_.clear();
     cancel_transmissions([](const auto& work) { return !work.emergency_release; });
-    for (size_t i = holds_.size(); i > 0; --i) release_at(i - 1, true);
+    while(!holds_.empty())release_at(holds_.size()-1,true);
     audio_queries_.clear();
 }
 void LocalCecAgent::prune_fences() {

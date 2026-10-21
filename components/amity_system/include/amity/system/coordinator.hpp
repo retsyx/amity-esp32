@@ -31,6 +31,9 @@ struct ExecutionSnapshot {
     std::string applied_policy_hash;
     uint64_t state_revision = 0;
     std::vector<Session> sessions;
+    // Input routing may advance after route authority installs, before setup
+    // finishes. Committed session/status reporting remains in sessions.
+    std::vector<Session> input_sessions;
     std::optional<PlanId> executing_plan;
     std::vector<StepResult> steps;
     std::string error;
@@ -41,7 +44,7 @@ struct ExecutionSnapshot {
 };
 enum class RemotePlanPhase { prepare, fence, activate };
 struct InputContext { InputSessionId input_session_id; uint64_t state_revision = 0; };
-enum class InputAction { select_activity, stop_zone, key_press, hold_release };
+enum class InputAction { select_activity, stop_zone, key_press, hold_release, select_remote_activity };
 struct InputIntent {
     InputAction action = InputAction::select_activity;
     MessageId request_id;
@@ -78,6 +81,7 @@ public:
     bool stop(ZoneId, uint64_t now_ms);
     AdmissionResult key(ZoneId, ComponentId, uint8_t, bool held, HoldToken, uint64_t now_ms, uint64_t admissible_until_ms = 0);
     bool release(HoldToken, uint64_t now_ms = 0);
+    std::optional<Session> input_session(ZoneId) const;
     AdmissionResult execute_authorized(const AuthorizedCecOperation&, uint64_t now_ms);
     AdmissionResult prepare_remote_plan(const Plan&, const std::vector<PortPolicySnapshot>&, uint64_t now_ms);
     AdmissionResult fence_remote_route(SessionId, uint64_t generation);
@@ -91,7 +95,7 @@ public:
     bool remote_operation_result(OctopusId, CommandId, StepResult, const std::string& error, uint64_t now_ms);
     AdmissionResult renew_discovery_authority(uint32_t ttl_ms, uint64_t now_ms);
     void observe(const CecFrame&, uint64_t now_ms);
-    void tick(uint64_t now_ms, bool allow_repeat = true);
+    void tick(uint64_t now_ms);
     void set_wire_adapter(const CecPortRef&, WireSubmit, WireCancel);
     bool local_repeat_ready(uint64_t now_ms) const;
     bool local_repeat_in_flight() const;

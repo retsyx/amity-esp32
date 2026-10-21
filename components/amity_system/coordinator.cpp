@@ -153,7 +153,7 @@ PlanningResult Coordinator::select(const SelectRequest& request, uint64_t now) {
             if (!remote_hooks_.prepare(owner, *plan_)) { fail("remote preparation queue rejected plan"); return {PlanningStatus::overloaded, {}, {}, error_}; }
         }
     }
-    tick(now, false); return result;
+    tick(now); return result;
 }
 AdmissionResult Coordinator::check_policies(const std::vector<PortPolicySnapshot>& candidate, uint64_t now) const {
     for (const auto& p : candidate) {
@@ -207,13 +207,19 @@ void Coordinator::fail(const std::string& reason) {
     if (plan_) {
         if (remote_hooks_.abort) for (const auto& remote : remote_progress_) remote_hooks_.abort(remote.owner, *plan_);
         for (auto& l : lanes_) l.agent.close_route(plan_->proposed_session.session_id, plan_->proposed_session.route_generation);
+        // Abort/fence owns cleanup for this failed route. Its remote input
+        // records cannot be renewed or reused as live holds after that fence.
+        held_.erase(std::remove_if(held_.begin(),held_.end(),[&](const auto& held){
+            return held.operation.fence.session_id==plan_->proposed_session.session_id&&
+                held.operation.fence.route_generation==plan_->proposed_session.route_generation;
+        }),held_.end());
         const bool uncertain_effects = execution_ && std::any_of(execution_->step_results().begin(), execution_->step_results().end(), [](auto r) { return r != StepResult::not_sent; });
         if (uncertain_effects) planner_->commit_plan(plan_->plan_id, false); else planner_->abort_plan(plan_->plan_id);
     }
     plan_.reset(); execution_.reset(); commands_.clear(); remote_progress_.clear(); plan_deadline_ = 0;
 }
-void Coordinator::tick(uint64_t now, bool allow_repeat) {
-    for (auto& l : lanes_) l.agent.tick(now, allow_repeat);
+void Coordinator::tick(uint64_t now) {
+    for (auto& l : lanes_) l.agent.tick(now);
     std::vector<OctopusId> expired;
     for (const auto& p : remote_owner_policies_) if (p.authority_expires_at_ms <= now &&
         std::find(expired.begin(), expired.end(), p.port.octopus_id) == expired.end() &&
@@ -317,21 +323,35 @@ void Coordinator::complete_frame(const CecPortRef& port, uint64_t work_id, WireO
         if (!applied) { execution_->record(step->step, StepResult::unknown); fail("wire operation failed or has uncertain outcome"); }
         else if (!l->agent.command_pending(command)) execution_->record(step->step, StepResult::applied);
     }
-    tick(now, false);
+    tick(now);
+}
+std::optional<Session> Coordinator::input_session(ZoneId zone) const {
+    if (plan_ && plan_->proposed_session.zone_id == zone) {
+        // A CEC setup ACK is not an input barrier. The route fence and grant
+        // install are the only local authority prerequisites for the new route.
+        if (!local_grants_installed_) return {};
+        auto proposed=plan_->proposed_session;proposed.status=SessionStatus::executing;
+        return proposed;
+    }
+    if (planner_) for (const auto& session:planner_->sessions())
+        if (session.zone_id==zone&&session.status!=SessionStatus::suspended_after_restart) return session;
+    return {};
 }
 AdmissionResult Coordinator::key(ZoneId zone, ComponentId component, uint8_t key, bool held, HoldToken token, uint64_t now, uint64_t deadline) {
     if (deadline && now >= deadline) return {AdmissionCode::expired, "original input authority expired"};
-    if (!planner_ || plan_ || !token) return {AdmissionCode::stale, "no stable route for input"};
-    auto session = std::find_if(planner_->sessions().begin(), planner_->sessions().end(), [&](const auto& s) { return s.zone_id == zone && s.status != SessionStatus::suspended_after_restart; });
-    if (session == planner_->sessions().end()) return {AdmissionCode::unauthorized, "zone has no applied session"};
+    if (!planner_ || !token) return {AdmissionCode::stale, "input configuration is unavailable"};
+    const auto session=input_session(zone);
+    if (!session) return {AdmissionCode::unauthorized, "zone route authority is not installed"};
     const bool volume = (key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66;
     auto b = std::find_if(topology_.bindings.begin(), topology_.bindings.end(), [&](const auto& b) { return b.component_id == component && b.status == BindingStatus::verified &&
         (volume ? b.capability == Capability::volume || b.capability == Capability::audio : b.capability == Capability::navigation); });
     if (b == topology_.bindings.end()) return {AdmissionCode::unsupported, "input capability unresolved"};
+    if(plan_&&session->session_id==plan_->proposed_session.session_id&&b->owner_octopus_id!=local_&&
+        std::none_of(remote_progress_.begin(),remote_progress_.end(),[&](const auto& progress){return progress.owner==b->owner_octopus_id&&progress.activated;}))
+        return {AdmissionCode::unauthorized,"key owner route authority is not installed"};
     if (held_.size() >= 64) return {AdmissionCode::overloaded, "held input capacity exhausted"};
     OperationArguments args; args.key = key; args.hold_token = token; args.repeat = held;
     auto op = operation(*b, *session, OperationKind::press_key, args, now);
-    if (deadline) op.execution_expires_at_ms = std::min(op.execution_expires_at_ms, deadline);
     auto* local = lane(b->endpoint.port);
     auto result = local ? local->agent.execute(op, now) : AdmissionResult{
         op.execution_expires_at_ms > now && remote_hooks_.send && remote_hooks_.send(b->owner_octopus_id, session->plan_id, op) ? AdmissionCode::accepted : AdmissionCode::expired, "remote input authority unavailable"};
@@ -341,7 +361,10 @@ AdmissionResult Coordinator::key(ZoneId zone, ComponentId component, uint8_t key
 bool Coordinator::release(HoldToken token, uint64_t now) {
     for (const auto& held : held_) if (held.token == token && held.operation.target.port.octopus_id != local_) {
         auto release = held.operation; release.command_id = fresh<CommandId>(); release.kind = OperationKind::release_key;
-        PlanId plan; if (planner_) for (const auto& session : planner_->sessions()) if (session.session_id == release.fence.session_id) plan = session.plan_id;
+        PlanId plan;
+        if(plan_&&plan_->proposed_session.session_id==release.fence.session_id&&
+            plan_->proposed_session.route_generation==release.fence.route_generation)plan=plan_->plan_id;
+        if (!plan && planner_) for (const auto& session : planner_->sessions()) if (session.session_id == release.fence.session_id) plan = session.plan_id;
         const bool sent = plan && remote_hooks_.send && remote_hooks_.send(release.target.port.octopus_id, plan, release);
         held_.erase(std::remove_if(held_.begin(), held_.end(), [&](const auto& h) { return h.token == token; }), held_.end()); return sent;
     }
@@ -528,7 +551,7 @@ bool Coordinator::remote_plan_result(OctopusId owner, PlanId id, RemotePlanPhase
         if (std::all_of(remote_progress_.begin(), remote_progress_.end(), [](const auto& state) { return state.fenced; })) {
             planner_->stop_session(remote_plan_->proposed_session.session_id); remote_plan_.reset(); remote_progress_.clear(); error_.clear();
         }
-        tick(now, false); return true;
+        tick(now); return true;
     }
     if (!plan_ || plan_->plan_id != id) return false;
     auto remote = std::find_if(remote_progress_.begin(), remote_progress_.end(), [&](const auto& state) { return state.owner == owner; });
@@ -548,7 +571,7 @@ bool Coordinator::remote_plan_result(OctopusId owner, PlanId id, RemotePlanPhase
             execution_->barrier_complete(owner);
         }
     }
-    tick(now, false); return true;
+    tick(now); return true;
 }
 bool Coordinator::remote_operation_result(OctopusId owner, CommandId command, StepResult result, const std::string& error, uint64_t now) {
     auto hold = std::find_if(held_.begin(), held_.end(), [&](const auto& h) { return h.operation.command_id == command && h.operation.target.port.octopus_id == owner; });
@@ -566,7 +589,7 @@ bool Coordinator::remote_operation_result(OctopusId owner, CommandId command, St
     if (result != StepResult::admitted && result != StepResult::applied && result != StepResult::observed) return false;
     if (!execution_->record(pending->step, result)) return false;
     if (result == StepResult::observed) observed_evidence_ = true;
-    tick(now, false); return true;
+    tick(now); return true;
 }
 bool Coordinator::stop(ZoneId zone, uint64_t now) {
     if (!planner_ || plan_) return false;
@@ -589,9 +612,9 @@ bool Coordinator::stop(ZoneId zone, uint64_t now) {
                 remote_progress_.push_back({owner, true});
                 if (!remote_hooks_.fence || !remote_hooks_.fence(owner, *remote_plan_, s)) error_ = "remote stop barrier unavailable; resources remain reserved";
             }
-            tick(now, false); return true;
+            tick(now); return true;
         }
-        planner_->stop_session(id); tick(now, false); return true;
+        planner_->stop_session(id); tick(now); return true;
     }
     return true;
 }
@@ -620,7 +643,7 @@ void Coordinator::observe(const CecFrame& frame, uint64_t now) {
         const bool audio = step.operation == OperationKind::query_state && step.arguments.query_opcode == 0x71 && frame.payload[0] == 0x7a;
         if ((power || audio) && execution_->record(command.step, StepResult::observed)) observed_evidence_ = true;
     }
-    tick(now, false);
+    tick(now);
 }
 bool Coordinator::quiescent() const { for (const auto& l : lanes_) if (l.agent.pending_work() || l.agent.held_keys()) return false; return true; }
 void Coordinator::quiesce() {
@@ -636,6 +659,9 @@ void Coordinator::quiesce() {
 }
 ExecutionSnapshot Coordinator::snapshot() const {
     ExecutionSnapshot s; if (planner_) { s.state_revision = planner_->state_revision(); s.sessions = planner_->sessions(); }
+    for(const auto& session:s.sessions) if(session.status!=SessionStatus::suspended_after_restart&&
+        (!plan_||plan_->proposed_session.zone_id!=session.zone_id)) s.input_sessions.push_back(session);
+    if(plan_) if(auto proposed=input_session(plan_->proposed_session.zone_id)) s.input_sessions.push_back(*proposed);
     if (plan_) { s.executing_plan = plan_->plan_id; s.steps = execution_->step_results(); }
     else if (remote_plan_ && !remote_progress_.empty()) s.executing_plan = remote_plan_->plan_id;
     for (const auto& record : authorized_) s.command_outcomes.push_back(record.outcome);

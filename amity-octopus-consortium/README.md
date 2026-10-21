@@ -6,7 +6,9 @@
 
 **Implementation follow-up:** [Remaining implementation work](TODO.md) tracks the software and release-process gaps found in the 0.1.60 audit. See the [implementation status](../IMPLEMENTATION_STATUS.json) for the current profile, evidence and physical qualification limits.
 
-**Reference implementation:** [`retsyx/amity-esp32` at `d50af8026938797fc0820d0107f4c4e064c2d2bc`](https://github.com/retsyx/amity-esp32/tree/d50af8026938797fc0820d0107f4c4e064c2d2bc). Requirements originate in [The Octopus, issue 1](https://github.com/retsyx/amity/issues/1), [The Consortium, issue 2](https://github.com/retsyx/amity/issues/2), and the requested TV/projector/shared-receiver scenario. See [source baseline](19-source-baseline.md) for the evidence and SDK pins.
+**Current behavior source:** `main` (`98e64a6` for this merge); distribution only transports messages and has zero CEC behavioral effect. [Normative amendment](21-original-controller-policy.md).
+
+**Historical reference implementation:** [`retsyx/amity-esp32` at `d50af8026938797fc0820d0107f4c4e064c2d2bc`](https://github.com/retsyx/amity-esp32/tree/d50af8026938797fc0820d0107f4c4e064c2d2bc). Requirements originate in [The Octopus, issue 1](https://github.com/retsyx/amity/issues/1), [The Consortium, issue 2](https://github.com/retsyx/amity/issues/2), and the requested TV/projector/shared-receiver scenario. See [source baseline](19-source-baseline.md) for the evidence and SDK pins.
 
 **Algorithm-preservation amendment, 21 October 2026:** original Amity algorithms and functionality are authoritative unless the user explicitly requests a change. The consortium adds an ownership and transport layer around them and preserves behavior for local and remote equipment. This requirement supersedes conflicting older proposals, including per-button hold leases/renewals: communicate button state changes and run the original completion-paced CEC repeat loop at the emitting owner. See the [normative rule](21-original-controller-policy.md#original-algorithms-and-functionality-amendment--21-october-2026) and repository-wide [AGENTS.md](../AGENTS.md).
 

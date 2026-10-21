@@ -29,7 +29,7 @@ struct SiriFixture {
     uint32_t generation = 1;
     int target = -1;
     uint64_t touch_time = 0;
-    explicit SiriFixture(std::vector<Event> &events) : policy(output,&events), adapter(policy) { policy.synchronize(generation,target); }
+    explicit SiriFixture(std::vector<Event> &events) : policy(output,&events), adapter(policy) { policy.synchronize(generation,target); policy.tick(ble::RemoteInputController::wait_for_release_us); }
     void sync(bool active) {
         if ((target >= 0) != active) activity_changed(active);
     }
@@ -158,15 +158,15 @@ static void button_tests() {
         buttons(controller, wire[i], 22000000, true);
         buttons(controller, 0, 22500000, true);
         assert((events[events.size() - 2] == Event{T::Press, cec[i], 0}));
-        assert((events.back() == Event{T::Release, 0, 0}));
+        assert((events.back() == Event{T::Release, cec[i], 0}));
     }
     events.clear();
     buttons(controller, 0x200, 0, true);
     buttons(controller, 0x202, 1, true);
     buttons(controller, 0x200, 2, true);
     buttons(controller, 0, 3, true);
-    assert((events == std::vector<Event>{{T::Press, 1, 0}, {T::Release, 0, 0}, {T::Press, 0x41, 0},
-                                        {T::Release, 0, 0}, {T::Press, 1, 0}, {T::Release, 0, 0}}));
+    assert((events == std::vector<Event>{{T::Press, 1, 0}, {T::Press, 0x41, 0},
+                                        {T::Release, 0x41, 0}, {T::Release, 1, 0}}));
     events.clear();
     buttons(controller, 0x10, 0, true);
     buttons(controller, 0, 499999, true);
@@ -201,7 +201,7 @@ static void button_tests() {
     controller.activity_changed(true); // Switching two active activities.
     buttons(controller, 0x200, 600000, true);
     buttons(controller, 0, 700000, true);
-    assert((events == std::vector<Event>{{T::Press, 1, 0}, {T::Release, 0, 0}}));
+    assert((events == std::vector<Event>{{T::Press, 1, 0}, {T::Release, 1, 0}}));
     events.clear();
     buttons(controller, 8, 0, false);
     controller.activity_changed(true);
@@ -212,12 +212,13 @@ static void button_tests() {
     buttons(controller, 0x10, 0, true);
     buttons(controller, 0x200, 100000, true); // Newly pressed key shares the power release report.
     buttons(controller, 0, 700000, true);
-    assert((events == std::vector<Event>{{T::PowerShort, 0, 0}}));
+    // This fixture rejects the Power action, so the new Up remains ordinary input.
+    assert((events == std::vector<Event>{{T::PowerShort, 0, 0}, {T::Press, 1, 0}, {T::Release, 1, 0}}));
     events.clear();
     buttons(controller, 8, 0, false);
     buttons(controller, 0x200, 100000, false);
     buttons(controller, 0, 700000, false);
-    assert((events == std::vector<Event>{{T::Activity, 0, 0}}));
+    assert((events == std::vector<Event>{{T::Activity, 0, 0}, {T::Activity, 6, 0}}));
     events.clear();
     // Main consumes an old queued snapshot with callback emission ignored, then
     // suppresses its held physical mask after discovering the activity changed.
@@ -242,7 +243,7 @@ static void button_tests() {
     controller.cancel();
     buttons(controller, 0x200, 600000, true);
     buttons(controller, 0, 700000, true);
-    assert((events == std::vector<Event>{{T::Press, 1, 0}, {T::Release, 0, 0}}));
+    assert((events == std::vector<Event>{{T::Press, 1, 0}, {T::Release, 1, 0}}));
     events.clear();
     const uint8_t oversized[] = {8, 0, 0, 0, 0};
     controller.buttons(nullptr, 2, 0, false);

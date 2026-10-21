@@ -164,13 +164,13 @@ void policy() {
     assert(expiration.execute(query,10));assert(!late.take(9000)&&late.rejected_before_start==1&&expiration.pending_work()==0);
     LocalCecAgent barrier;TestWire busy;busy.bind(barrier);assert(barrier.install_policy(p,0));assert(barrier.execute(operation,10));assert(busy.take(11));
     barrier.close_route(id<SessionId>(10),9);assert(!barrier.quiescent(id<SessionId>(10),9));busy.complete(true,12);
-    assert(!barrier.quiescent(id<SessionId>(10),9));barrier.tick(13,false);assert(busy.take(13)->emergency_release);busy.complete(true,14);assert(barrier.quiescent(id<SessionId>(10),9));
+    assert(!barrier.quiescent(id<SessionId>(10),9));barrier.tick(13);assert(busy.take(13)->emergency_release);busy.complete(true,14);assert(barrier.quiescent(id<SessionId>(10),9));
     LocalCecAgent reuse;TestWire reused;reused.bind(reuse);assert(reuse.install_policy(p,0));assert(reuse.execute(operation,10));assert(reused.take(11));reused.complete(true,12);
     reuse.fence_binding(operation.binding_id,1,false);assert(!reused.take(13)&&reuse.uncertain_releases()==1);
     LocalCecAgent rebased;TestWire rebased_driver;rebased_driver.bind(rebased);assert(rebased.install_policy(p,0));assert(rebased.execute(operation,10));assert(rebased_driver.take(11));rebased_driver.complete(true,12);
     query=operation;query.command_id=id<CommandId>(192);query.kind=OperationKind::query_state;assert(rebased.execute(query,20));
     assert(rebased.rebase_revision(7,8));assert(!rebased_driver.take(21));rebased.tick(22);assert(rebased_driver.take(22)->frame.payload[0]==0x44);rebased_driver.complete(true,23);
-    auto release=operation;release.kind=OperationKind::release_key;assert(rebased.execute(release,24));assert(rebased_driver.fifo.empty());rebased.tick(24,false);assert(rebased_driver.take(24)->emergency_release);rebased_driver.complete(true,25);
+    auto release=operation;release.kind=OperationKind::release_key;assert(rebased.execute(release,24));assert(rebased_driver.fifo.size()==1);rebased.tick(24);assert(rebased_driver.take(24)->emergency_release);rebased_driver.complete(true,25);
     auto oversized=p;oversized.components.resize(65);LocalCecAgent bounded;assert(!bounded.install_policy(oversized,0));
     auto proxy=p;proxy.port=port(1,Side::front);proxy.role=PortRole::playback_proxy;proxy.owned_logical_address=8;proxy.physical_address=pa(proxy.port);
     auto representation=p.bindings[0];representation.binding.kind=BindingKind::proxy_representation;representation.binding.device_name.reset();

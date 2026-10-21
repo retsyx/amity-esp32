@@ -106,6 +106,11 @@ esp_err_t gptimer_start(gptimer_handle_t h) { h->running = true; return ESP_OK; 
 esp_err_t gptimer_stop(gptimer_handle_t h) { h->running = false; return ESP_OK; }
 esp_err_t gptimer_del_timer(gptimer_handle_t h) { assert(h == timer); delete timer; timer = nullptr; return ESP_OK; }
 
+static void finish(cec::TxCompletion& completion) {
+    for (unsigned pass=0;pass<4000&&completion.result.load(std::memory_order_acquire)==cec::TxResult::Pending;++pass) pump();
+    assert(completion.result.load(std::memory_order_acquire)!=cec::TxResult::Pending);
+}
+
 static void caller_attempt_tests() {
     const cec::Frame press{{0x40, 0x44, 0x41}, 3}, power{{0x40, 0x44, 0x6d}, 3};
     const cec::Frame release{{0x40, 0x45}, 2}, query{{0x40, 0x8f}, 2}, poll{{0x44}, 1};
@@ -114,35 +119,37 @@ static void caller_attempt_tests() {
         cec::Bus bus;assert(bus.start(30)==ESP_OK);
         auto expect_attempts=[&](unsigned attempts,auto action){
             const auto before=bus.statistics();const auto edges=pin_edges[30];
-            action();pump();
+            action();for(unsigned pass=0;pass<4000;++pass)pump();
             const auto after=bus.statistics();
             assert(after.retries-before.retries==attempts-1&&pin_edges[30]>edges);
         };
         // No receiver ACKs this line. The real worker/Engine must stop after
         // exactly the caller-provided budget; no opcode policy belongs here.
         expect_attempts(3,[&]{assert(bus.send(press));});
-        expect_attempts(3,[&]{assert(bus.send_guarded(press,fence,0,3));});
-        expect_attempts(3,[&]{assert(bus.send_and_wait(press,0,3));});
-        expect_attempts(3,[&]{assert(bus.send_and_wait_guarded(press,fence,0,3));});
-        cec::TxResult outcome = cec::TxResult::Pending;
-        expect_attempts(1,[&]{assert(bus.send_and_wait_guarded(press,fence,0,1,&outcome));});
-        assert(outcome == cec::TxResult::Nack); // Admission and actual result are distinct.
-        expect_attempts(3,[&]{assert(bus.transmit(press,3)==cec::TxResult::Nack);});
-        expect_attempts(3,[&]{assert(bus.transmit_guarded(press,fence,3)==cec::TxResult::Nack);});
+        expect_attempts(3,[&]{assert(bus.send_guarded(press,fence,3));});
+        cec::TxCompletion outcome;
+        expect_attempts(1,[&]{
+            const auto admitted_at=now;
+            assert(bus.send_async_guarded(press,fence,outcome,1));
+            assert(now==admitted_at&&outcome.result.load()==cec::TxResult::Pending);
+        });
+        assert(outcome.result.load(std::memory_order_acquire)==cec::TxResult::Nack);
+        expect_attempts(3,[&]{assert(bus.send_async_guarded(press,fence,outcome,3));});
+        assert(outcome.result.load(std::memory_order_acquire)==cec::TxResult::Nack);
         expect_attempts(3,[&]{assert(bus.submit_guarded(press,fence,1,3));});
         cec::Completion completed;assert(bus.take_completion(completed)&&completed.operation_token==1&&completed.result==cec::TxResult::Nack);
-        expect_attempts(8,[&]{assert(bus.send_guarded(power,fence,0,8));});
+        expect_attempts(8,[&]{assert(bus.send_guarded(power,fence,8));});
         expect_attempts(3,[&]{assert(bus.send(release));});
-        expect_attempts(3,[&]{assert(bus.send_guarded(query,fence,0,3));});
-        expect_attempts(3,[&]{assert(bus.transmit(poll,3)==cec::TxResult::Nack);}); // Header0x44 alone is a poll, not an opcode.
+        expect_attempts(3,[&]{assert(bus.send_guarded(query,fence,3));});
+        expect_attempts(3,[&]{assert(bus.send_guarded(poll,{},3));}); // Header0x44 alone is a poll, not an opcode.
         const auto edges=pin_edges[30];
-        assert(!bus.send_guarded(press,fence,0,0)&&!bus.send_and_wait(press,0,0)&&!bus.send_and_wait_guarded(press,fence,0,0));
-        assert(!bus.submit_guarded(press,fence,2,0)&&bus.transmit(press,0)==cec::TxResult::LineError&&bus.transmit_guarded(press,fence,0)==cec::TxResult::LineError);
+        assert(!bus.send_guarded(press,fence,0)&&!bus.send_async_guarded(press,fence,outcome,0));
+        assert(!bus.submit_guarded(press,fence,2,0));
         pump();assert(pin_edges[30]==edges); // Invalid zero budget never becomes a send.
         const auto errors=bus.statistics().tx_errors;
         for(unsigned queued=0;queued<8;++queued)assert(bus.send(press));
         assert(!bus.send(press)); // Legacy and native TX FIFOs share the explicit eight-message bound.
-        pump();assert(bus.statistics().tx_errors==errors+8&&bus.statistics().tx_queue_high_water==8);
+        for(unsigned pass=0;pass<4000;++pass)pump();assert(bus.statistics().tx_errors==errors+8&&bus.statistics().tx_queue_high_water==8);
     }
     {
         cec::Bus bus;assert(bus.start(31,cec::Bus::QueueProfile::Native)==ESP_OK);
@@ -152,7 +159,7 @@ static void caller_attempt_tests() {
             assert(bus.statistics().retries-before.retries==attempts-1&&pin_edges[31]>edges);
         };
         expect_attempts(3,[&]{assert(bus.send(press));});
-        expect_attempts(3,[&]{assert(bus.send_guarded(power,fence,0,3));});
+        expect_attempts(3,[&]{assert(bus.send_guarded(power,fence,3));});
         expect_attempts(3,[&]{assert(bus.submit_guarded(press,fence,3,3));});
         cec::Completion completed;assert(bus.take_completion(completed)&&completed.operation_token==3&&completed.result==cec::TxResult::Nack);
         expect_attempts(3,[&]{assert(bus.submit_guarded(release,fence,4,3));});
@@ -161,6 +168,50 @@ static void caller_attempt_tests() {
         assert(bus.take_completion(completed)&&completed.operation_token==5&&completed.result==cec::TxResult::Nack);
         expect_attempts(3,[&]{assert(bus.submit_guarded(poll,fence,6,3));});
         assert(bus.take_completion(completed)&&completed.operation_token==6&&completed.result==cec::TxResult::Nack);
+    }
+    assert(!timer&&tasks.empty()&&!output_low);
+}
+
+static void async_completion_contract_tests() {
+    const cec::Frame broadcast{{0x4f,0x99},2}, press{{0x40,0x44,0x41},3};
+    for(auto profile:{cec::Bus::QueueProfile::Legacy,cec::Bus::QueueProfile::Native}) {
+        cec::Bus bus;assert(bus.start(28,profile)==ESP_OK);
+        std::array<cec::TxCompletion,8> complete;
+        const auto admitted_at=now;
+        for(auto& tracked:complete) {
+            tracked.result.store(cec::TxResult::Success);
+            assert(bus.send_async_guarded(broadcast,{},tracked));
+            assert(tracked.result.load()==cec::TxResult::Pending);
+        }
+        assert(now==admitted_at&&!bus.idle());
+        cec::TxCompletion rejected;rejected.result.store(cec::TxResult::Nack);
+        assert(!bus.send_async_guarded(broadcast,{},rejected));
+        assert(rejected.result.load()==cec::TxResult::Nack&&now==admitted_at);
+        bool refilled=false;
+        before_tick=[&] {
+            if(refilled||complete[0].result.load(std::memory_order_acquire)==cec::TxResult::Pending)return;
+            refilled=true;
+            assert(complete[0].result.load()==cec::TxResult::Success);
+            assert(complete[1].result.load()==cec::TxResult::Pending);
+            const auto refilled_at=now;
+            // Publication guarantees capacity has already returned, even when
+            // another frame is on the wire and still waiting for completion.
+            assert(bus.send_async_guarded(broadcast,{},rejected));
+            assert(rejected.result.load()==cec::TxResult::Pending&&now==refilled_at);
+        };
+        for(unsigned pass=0;pass<4000;++pass)pump();before_tick={};
+        assert(refilled&&bus.idle()&&bus.statistics().transmitted==9);
+        for(auto& tracked:complete)assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Success);
+        assert(rejected.result.load(std::memory_order_acquire)==cec::TxResult::Success);
+        assert(!bus.send_async_guarded({}, {}, rejected)&&!bus.send_async_guarded(press,{},rejected,0));
+        assert(rejected.result.load()==cec::TxResult::Success);
+        assert(bus.send_async_guarded(press,{},rejected));finish(rejected);
+        assert(rejected.result.load(std::memory_order_acquire)==cec::TxResult::Nack);
+        std::atomic<uint32_t> counter{1};
+        cec::ExecutionFence stale{&counter,2};
+        cec::ExecutionFence unaligned{reinterpret_cast<const std::atomic<uint32_t>*>(reinterpret_cast<uintptr_t>(&counter)+1),1};
+        assert(!bus.send_async_guarded(press,stale,rejected)&&!bus.send_async_guarded(press,unaligned,rejected));
+        assert(rejected.result.load()==cec::TxResult::Nack);
     }
     assert(!timer&&tasks.empty()&&!output_low);
 }
@@ -223,8 +274,13 @@ static void atomic_batch_tests() {
         }
         const auto sent_before = bus.statistics().transmitted;
         assert(bus.send(second));
-        assert(bus.transmit(first, 1) == cec::TxResult::Nack);
-        assert(bus.statistics().transmitted == sent_before + 1); // Synchronous calls do not bypass the FIFO.
+        cec::TxCompletion tracked;
+        const auto admitted_at=now;
+        assert(bus.send_async_guarded(first,{},tracked,1));
+        assert(now==admitted_at&&tracked.result.load()==cec::TxResult::Pending);
+        drain();
+        assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Nack);
+        assert(bus.statistics().transmitted == sent_before + 1); // Tracked work shares the sole FIFO.
     }
     assert(!timer && tasks.empty() && !output_low);
 
@@ -249,29 +305,32 @@ static void overflow_slot_tests() {
         cec::Bus bus;assert(bus.start(34, profile)==ESP_OK);
         const auto drain=[&]{for(unsigned pass=0;pass<4000;++pass)pump();};
         const auto before=bus.statistics().transmitted;
-        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},0,1));
+        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},1));
         assert(!bus.send(release_shape)); // An opcode cannot obtain the ninth slot.
         assert(bus.submit_guarded(eligible,{},900,1,true));
         const auto full_at=now;
-        assert(!bus.submit_guarded(eligible,{},901,1,true)&&!bus.send_guarded(eligible,{},1000,1,true));
-        cec::TxResult rejected=cec::TxResult::Success;
-        assert(!bus.send_and_wait_guarded(eligible,{},1000,1,&rejected,true)&&rejected==cec::TxResult::Pending&&now==full_at);
-        assert(!bus.send_guarded(ordinary,{},0,1));drain();
+        assert(!bus.submit_guarded(eligible,{},901,1,true)&&!bus.send_guarded(eligible,{},1,true));
+        cec::TxCompletion rejected;rejected.result.store(cec::TxResult::Success);
+        assert(!bus.send_async_guarded(eligible,{},rejected,1,true));
+        assert(rejected.result.load()==cec::TxResult::Success&&now==full_at);
+        assert(!bus.send_guarded(ordinary,{},1));drain();
         cec::Completion completion;assert(bus.take_completion(completion)&&completion.operation_token==900&&completion.started);
         assert(!bus.take_completion(completion)&&bus.statistics().transmitted==before+9&&bus.statistics().tx_queue_high_water==9);
         drain();assert(bus.statistics().transmitted==before+9); // Dropped calls never become a retry/backlog.
-        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},0,1));
-        const auto wait_began=now;assert(bus.send_guarded(ordinary,{},1000,1));
-        assert(now>wait_began);drain(); // Explicit ordinary producer backpressure remains available.
+        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},1));
+        const auto full_again_at=now;
+        assert(!bus.send_guarded(ordinary,{},1)&&now==full_again_at);
+        drain(); // Rejection never waits for space or becomes retained work.
+        assert(bus.send_guarded(ordinary,{},1));drain();
 
         // Ordered all-or-none admission: ordinary eighth + eligible ninth fits.
         cec::Submission pair[2]{{ordinary,{},910,1},{eligible,{},911,1,true,true}};
-        for(unsigned i=0;i<7;++i)assert(bus.send_guarded(ordinary,{},0,1));
-        assert(bus.submit_guarded_batch(pair,2));assert(!bus.send_guarded(eligible,{},0,1,true));drain();
+        for(unsigned i=0;i<7;++i)assert(bus.send_guarded(ordinary,{},1));
+        assert(bus.submit_guarded_batch(pair,2));assert(!bus.send_guarded(eligible,{},1,true));drain();
         for(unsigned token=910;token<=911;++token)assert(bus.take_completion(completion)&&completion.operation_token==token&&completion.started);
-        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},0,1));
+        for(unsigned i=0;i<8;++i)assert(bus.send_guarded(ordinary,{},1));
         assert(!bus.submit_guarded_batch(pair,2)); // Ordinary UCP may never take the ninth slot.
-        assert(bus.send_guarded(eligible,{},0,1,true));drain();assert(!bus.take_completion(completion));
+        assert(bus.send_guarded(eligible,{},1,true));drain();assert(!bus.take_completion(completion));
 
         // Nine exact asynchronous completion reservations, no hidden tenth.
         std::array<cec::Submission,9> all{};
@@ -283,9 +342,9 @@ static void overflow_slot_tests() {
     assert(!timer&&tasks.empty()&&!output_low);
     // Total capacity includes a live/queued first attempt on a stuck wire.
     cec::Bus active;assert(active.start(35,cec::Bus::QueueProfile::Native)==ESP_OK);
-    external_low|=uint64_t{1}<<35;gpio_set_level(35,1);step();assert(active.send_guarded(ordinary,{},0,1));pump();
-    for(unsigned i=0;i<7;++i)assert(active.send_guarded(ordinary,{},0,1));
-    assert(!active.send_guarded(ordinary,{},0,1)&&active.submit_guarded(eligible,{},940,1,true));
+    external_low|=uint64_t{1}<<35;gpio_set_level(35,1);step();assert(active.send_guarded(ordinary,{},1));pump();
+    for(unsigned i=0;i<7;++i)assert(active.send_guarded(ordinary,{},1));
+    assert(!active.send_guarded(ordinary,{},1)&&active.submit_guarded(eligible,{},940,1,true));
     assert(!active.submit_guarded(eligible,{},941,1,true));
     external_low&=~(uint64_t{1}<<35);gpio_set_level(35,1);for(unsigned pass=0;pass<4000;++pass)pump();
     cec::Completion completion;assert(active.take_completion(completion)&&completion.operation_token==940&&completion.started);
@@ -300,7 +359,7 @@ int main() {
     {
         cec::Bus a, b;
         assert(a.start(1) == ESP_OK && b.start(2) == ESP_OK);
-        assert(timers_created == 1 && cec::Bus::runtime_statistics().active_ports == 2);
+        assert(timers_created == 1 && cec::Bus::runtime_statistics().active_ports == 2 && tasks.size()==1);
         assert(cec::Bus::runtime_statistics().timer_instances == 1);
         { // Reject a duplicate pin without changing the active line's latch.
             gpio_set_level(1, 0);
@@ -323,32 +382,39 @@ int main() {
         key_fence.expected_secondary_generation = 4;
         const auto key_cancel_at = now + 5000;
         before_tick = [&] { if (now >= key_cancel_at) key_generation.store(5); };
-        assert(!a.send_and_wait_guarded(f, key_fence));
+        cec::TxCompletion tracked;
+        const auto key_admitted_at=now;
+        assert(a.send_async_guarded(f,key_fence,tracked));
+        assert(now==key_admitted_at&&tracked.result.load()==cec::TxResult::Pending);
+        finish(tracked);assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Cancelled);
         before_tick = {};
         assert(low_edges == 0 && a.statistics().cancelled == 4);
         // Cancel after Engine::begin, during the mandatory free-time wait.
         fence.expected_generation = 8;
         const auto cancel_at = now + 5000;
         before_tick = [&] { if (now >= cancel_at) generation.store(9); };
-        assert(!a.send_and_wait_guarded(f, fence));
+        assert(a.send_async_guarded(f,fence,tracked));finish(tracked);
+        assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Cancelled);
         before_tick = {};
         assert(low_edges == 0 && a.statistics().cancelled == 5 && a.statistics().tx_errors == 0);
         // Current generations still transmit normally through the real ISR.
         fence.expected_generation = 9;
-        assert(a.send_and_wait_guarded(f, fence));
+        assert(a.send_async_guarded(f,fence,tracked));finish(tracked);
+        assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Success);
         assert(low_edges > 0 && a.statistics().transmitted == 1);
         // Invalidation after the first edge preserves that frame's waveform.
         const auto edges_before = low_edges;
         const auto inflight_cancel_at = now + 22000;
         before_tick = [&] { if (now >= inflight_cancel_at) generation.store(10); };
-        assert(a.send_and_wait_guarded(f, fence));
+        assert(a.send_async_guarded(f,fence,tracked));finish(tracked);
+        assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Success);
         before_tick = {};
         assert(low_edges > edges_before && a.statistics().transmitted == 2);
     }
     assert(!timer && !output_low && tasks.empty());
     assert(cec::Bus::runtime_statistics().active_ports == 0 && cec::Bus::runtime_statistics().timer_instances == 0);
     {
-        // Ten actual Bus instances share one native dispatcher. A stuck line
+        // Ten actual Bus instances share one dispatcher. A stuck line
         // remains pending while the other nine complete, without a task wait.
         std::array<cec::Bus, 10> lines;
         std::array<std::atomic<uint32_t>, 10> counters;
@@ -401,6 +467,7 @@ int main() {
     fail_task_creation = false;
     assert(!timer && tasks.empty() && cec::Bus::runtime_statistics().active_ports == 0);
     caller_attempt_tests();
+    async_completion_contract_tests();
     atomic_batch_tests();
     overflow_slot_tests();
     std::puts("Real Bus shared-timer lifecycle, queued/start-edge cancellation and in-flight completion passed");

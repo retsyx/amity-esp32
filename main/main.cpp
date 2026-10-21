@@ -207,7 +207,7 @@ void input_task(void *) {
         auto &pending_swipes=*static_cast<amity::SwipeSequence *>(context);
         if(command.type==ble::RemoteCommandType::Release) {
             pending_swipes.cancel();
-            return hub.release_remote_key();
+            return hub.release_remote_key(static_cast<uint8_t>(command.value));
         }
         // Check the reservation as well as the published generation. The hub
         // checks generation again on dequeue for a transition racing this call.
@@ -221,20 +221,23 @@ void input_task(void *) {
         case ble::RemoteCommandType::PowerShort:
             pending_swipes.cancel();return (command.stamp.target<0?hub.request_remote_activity(0,command.stamp.generation):hub.stop_remote_zone(command.stamp.generation))==ESP_OK;
         case ble::RemoteCommandType::PowerLong:
-            pending_swipes.cancel();return command.stamp.target>=0&&hub.request_remote_activity(command.stamp.target,command.stamp.generation)==ESP_OK;
+            pending_swipes.cancel();return hub.repair_remote_activity(command.stamp.generation)==ESP_OK;
         case ble::RemoteCommandType::Swipe:
             pending_swipes.add(static_cast<uint8_t>(command.value),command.count,command.stamp.generation);return true;
         case ble::RemoteCommandType::Release:break;
         }
         return false;
     },&swipes);
+    controller.set_wait_for_release(esp_timer_get_time());
+    controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
     ble::AtomicInputAdapter atomic(controller);
     ble::SiriInputAdapter siri(controller);
     amity::VolumeSequence volume_sequence;
     uint16_t siri_logged_buttons=0;
     ESP_LOGI("remote_input","Key press/release logging enabled");
     auto sync_activity=[&] {
-        if(controller.synchronize(hub.remote_activity_generation(),hub.remote_activity_target())) {
+        const bool selected=controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
+        if(controller.synchronize(hub.remote_activity_generation(),hub.remote_activity_target())||selected) {
             swipes.cancel();siri.activity_changed();
         }
     };

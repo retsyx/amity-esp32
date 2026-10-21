@@ -22,7 +22,7 @@ static bool output(ble::RemoteCommand command, void *context) {
 struct AtomicFixture {
     ble::RemoteInputController policy;
     ble::AtomicInputAdapter adapter;
-    explicit AtomicFixture(std::vector<Event> &events) : policy(output,&events), adapter(policy) { policy.synchronize(1,0); }
+    explicit AtomicFixture(std::vector<Event> &events) : policy(output,&events), adapter(policy) { policy.synchronize(1,0); policy.tick(ble::RemoteInputController::wait_for_release_us); }
     void input(uint16_t page,uint16_t usage,bool down,uint64_t now) { adapter.input(page,usage,down,{now,1,0}); }
     void cancel() { policy.cancel(); }
 };
@@ -34,7 +34,7 @@ int main() {
     controller.input(7,0x52,true,999999);
     assert((events == std::vector<Event>{{T::Press,1}}));
     controller.input(7,0x52,false,1000000);
-    assert((events == std::vector<Event>{{T::Press,1},{T::Release,0}}));
+    assert((events == std::vector<Event>{{T::Press,1},{T::Release,1}}));
 
     events.clear();
     controller.input(7,0x3a,true,2000000);
@@ -66,24 +66,24 @@ int main() {
     controller.input(7,0x80,false,9000002);
     assert((events == std::vector<Event>{{T::Press,0x41}}));
     controller.input(0xc,0xe9,false,9000003);
-    assert(events.back().first == T::Release && events.size() == 2);
+    assert((events.back() == Event{T::Release,0x41}) && events.size() == 2);
 
     events.clear();
-    controller.input(7,0x52,true,10000000); // Up, then volume interrupts, then Up resumes.
+    controller.input(7,0x52,true,10000000); // Up and volume remain held independently.
     controller.input(7,0x80,true,10000001);
     controller.input(7,0x80,false,10000002);
     controller.input(7,0x52,false,10000003);
-    assert((events == std::vector<Event>{{T::Press,1},{T::Release,0},{T::Press,0x41},
-                                        {T::Release,0},{T::Press,1},{T::Release,0}}));
+    assert((events == std::vector<Event>{{T::Press,1},{T::Press,0x41},
+                                        {T::Release,0x41},{T::Release,1}}));
 
     events.clear();
     controller.input(7,0x52,true,11000000);
     controller.input(7,0x3a,true,11000001);
     controller.input(7,0x3a,false,11000002);
-    assert((events == std::vector<Event>{{T::Press,1},{T::Release,0},{T::Activity,0}}));
-    controller.input(7,0x52,true,12000000); // Held arrow does not leak into the new activity.
+    assert((events == std::vector<Event>{{T::Press,1},{T::Activity,0}}));
+    controller.input(7,0x52,true,12000000); // Rejected selection leaves the arrow held.
     controller.input(7,0x52,false,12000001);
-    assert(events.size() == 3);
+    assert((events == std::vector<Event>{{T::Press,1},{T::Activity,0},{T::Release,1}}));
 
     events.clear();
     controller.input(7,0x52,true,13000000);
@@ -91,7 +91,7 @@ int main() {
     controller.cancel(); // Queue loss cancels held arrow and pending activity.
     controller.input(7,0x52,false,13000002);
     controller.input(7,0x3a,false,13000003);
-    assert((events == std::vector<Event>{{T::Press,1},{T::Release,0}}));
+    assert((events == std::vector<Event>{{T::Press,1},{T::Release,1}}));
 
     puts("Atomic press/release/long-gesture/cancellation tests passed");
 }

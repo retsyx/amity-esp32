@@ -3,7 +3,7 @@
   "proposal_version": "0.1",
   "prepared_date": "2026-10-20",
   "amendment_date": "2026-10-21",
-  "amendment": "Preserve original Amity algorithms/functionality at d50af8026938797fc0820d0107f4c4e064c2d2bc unless explicitly changed, including Siri swipes. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight normal slots plus one release-only overflow slot per wire; releases at nine are dropped without executor admission retry. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force.",
+  "amendment": "Preserve current main behavior (98e64a6 at this merge), including independent per-key completions, immediate CEC admission while ACKs are pending, wait_for_release and fixed Siri macros. Distribution only moves messages to their owner and has zero CEC behavioral effect; d50af8026938797fc0820d0107f4c4e064c2d2bc remains historical evidence where unchanged. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight normal slots plus one release-only overflow slot per wire; releases at nine are dropped without executor admission retry. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force.",
   "source_repository": "https://github.com/retsyx/amity-esp32",
   "source_commit": "d50af8026938797fc0820d0107f4c4e064c2d2bc",
   "status": "Current design package; software and physical validation are recorded separately in IMPLEMENTATION_STATUS.json.",
@@ -27,8 +27,8 @@
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 22085,
-      "sha256": "2c07b1207030edb994d0fc1ef7c3cb188cda2cbc9a5be72d64336987223f13a1"
+      "size_bytes": 22317,
+      "sha256": "fb440b3d693991a2ba36e5726b7e58429c5e9cae3a4ac465219cf98ff06ec5de"
     },
     {
       "path": "05-discovery-and-topology.md",
@@ -37,13 +37,13 @@
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 22675,
-      "sha256": "6e7fb4883bb8f0242bd1051d04cf69c8fbbcbcd9acc3a26030cedf33b8e88ede"
+      "size_bytes": 22829,
+      "sha256": "62502d5294f7d1c1e6790a28c27bb1be2949e7a13b40494ca0c699047e66db9b"
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 27366,
-      "sha256": "927923c60bc2acb88adba3d9dc6af44459f42a9647c0a570bc9fc75655674496"
+      "size_bytes": 27508,
+      "sha256": "71f8a430262b50b864fe18dc7d20777dc6c64902e64a89a125f2816a32edf1d6"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
@@ -82,18 +82,18 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 33178,
-      "sha256": "61bfb572f2acce9245a68e67e33a5dbc74191ee9b77ba5f6fbb429ff9c3a7a6c"
+      "size_bytes": 33449,
+      "sha256": "b1cf2a6d5388f7f724c2278a881810836bca02abc32a27b9c80841ecb5c3bda4"
     },
     {
       "path": "16-agent-work-breakdown.md",
-      "size_bytes": 16379,
-      "sha256": "3eb899083b23cac7621dac8519152e3a4e384958369ec1794d816363d64b7ab1"
+      "size_bytes": 16403,
+      "sha256": "752077cdb82ae6027ed4fce1e735a04d170531bd1ab6ea3764078d2f485c7ba2"
     },
     {
       "path": "17-decisions-and-open-questions.md",
-      "size_bytes": 17594,
-      "sha256": "170227cdd273335411edbe8ec8bf1fa92c2f4af2d38d2c06c89952c4adfd7d22"
+      "size_bytes": 17568,
+      "sha256": "85cfc82369b680b165a905ef249ef038182f10beadcbd06be7f748aaeb96d2d5"
     },
     {
       "path": "18-requirements-and-traceability.md",
@@ -102,8 +102,8 @@
     },
     {
       "path": "19-source-baseline.md",
-      "size_bytes": 15901,
-      "sha256": "5fb7db062e799a6ea59b13b223bf3358900b242ae6d82719ab38e6c6a12d261e"
+      "size_bytes": 16028,
+      "sha256": "c60695012e004c85198b6e0a992c02eda5bf2b8b153dbd64f99b4c99cfa4e427"
     },
     {
       "path": "20-user-interface.md",
@@ -112,23 +112,23 @@
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 24470,
-      "sha256": "a638c15288df8c40be82f8d0d6fa1fe2e17c98697a3113cf2954903d3c216159"
+      "size_bytes": 25662,
+      "sha256": "3ab4e31489a38506c2f693a87164ac706a9c74d8ebe62c6c32a282c4595224eb"
     },
     {
       "path": "README.md",
-      "size_bytes": 16421,
-      "sha256": "78b1224d877ac24e589017f2d462ea9de03c6245c835c9aed02f371fb8129dc1"
+      "size_bytes": 16628,
+      "sha256": "bde7cacf57dc5e2a4dfcf7fe7705a38aeff178fa6b3e118ef2695d4a1ec23822"
     },
     {
       "path": "TODO.md",
-      "size_bytes": 27373,
-      "sha256": "cfcbf8faf5c93d1dd8a6fb0a28be385c5951f0ab315c2f07c6b4127e52efba4e"
+      "size_bytes": 27466,
+      "sha256": "f2cd05943493fcd478de5e561b950fde37f48dad860dabc18b3f19a8dc46b162"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 3855,
-      "sha256": "dcb1160de59a5bd52c0cf0bb3dda7d7f7473fb87c5fb754eea6cb4ef5893a26a"
+      "size_bytes": 3982,
+      "sha256": "3c7dab7e1e4cca3e312a2b7086b394e91dcc6370afc63d8666cd4733bda126df"
     },
     {
       "path": "examples/README.md",

@@ -387,7 +387,9 @@ int main() {
     fixture_sent.clear(); assert(migration.input(causal, 80000));
     fixture_time=80060000;fixture_driver_paused=false;migration.tick(80060);
     fixture_wire_deadlines=false;fixture_time=saved_fixture_time;
-    for (const auto& sent : fixture_sent) assert(sent.frame.size < 2 || sent.frame.data[1] != 0x44);
+    assert(std::any_of(fixture_sent.begin(), fixture_sent.end(), [](const auto& sent) { return sent.frame.size == 3 && sent.frame.data[1] == 0x44; }));
+    causal.action = InputAction::hold_release; assert(migration.input(causal,80061)); migration.tick(80062);
+    causal.action = InputAction::key_press;
     causal.hold_token = live_id<HoldToken>(9701); causal.admissible_until_ms = 80150;
     assert(migration.input(causal, 80100)); migration.tick(80101); migration.tick(80102);
     fixture_sent.clear(); migration.tick(80151); migration.tick(80152);
@@ -402,10 +404,16 @@ int main() {
     assert(std::any_of(fixture_sent.begin(), fixture_sent.end(), [](const auto& sent) { return sent.frame.size == 2 && sent.frame.data[1] == 0x45; }));
     causal.action = InputAction::select_activity; causal.activity_id = live_id<ActivityId>(70); causal.request_id = live_id<MessageId>(9703);
     causal.admissible_until_ms = 80350;fixture_driver_paused=true;fixture_wire_deadlines=true;fixture_time=80300000;
-    fixture_sent.clear(); assert(migration.input(causal, 80300));fixture_time=80360000;fixture_driver_paused=false;migration.tick(80360);
+    fixture_sent.clear(); assert(migration.input(causal, 80300));
+    // IPC freshness applies before admission. Slow CEC completion cannot
+    // expire a selector that the owner already accepted.
+    fixture_time=80360000;fixture_driver_paused=false;
+    for(uint64_t now=80360;now<80400;++now)migration.tick(now);
     fixture_wire_deadlines=false;fixture_time=saved_fixture_time;
-    assert(!migration.execution_snapshot().executing_plan && !migration.execution_snapshot().error.empty());
-    for (const auto& sent : fixture_sent) assert(sent.frame.size < 2 || (sent.frame.data[1] != 0x44 && sent.frame.data[1] != 0x04 && sent.frame.data[1] != 0x82 && sent.frame.data[1] != 0x86));
+    assert(!migration.execution_snapshot().executing_plan && migration.execution_snapshot().error.empty());
+    assert(std::any_of(fixture_sent.begin(), fixture_sent.end(), [](const auto& sent) {
+        return sent.frame.size >= 2 && (sent.frame.data[1] == 0x04 || sent.frame.data[1] == 0x82 || sent.frame.data[1] == 0x86);
+    }));
 
     cec::Bus passive_front,passive_back;assert(passive_front.start(1)==ESP_OK&&passive_back.start(2)==ESP_OK);
     amity::LiveSystem returning_member(live_id<ConsortiumId>(1),leader_id,live_id<BootId>(9800),[](uint8_t* data,size_t size){static uint8_t counter=100;std::fill(data,data+size,counter++);return true;});
@@ -417,10 +425,29 @@ int main() {
     for(auto& policy:returning_policies){++policy.policy_generation;policy.authority_expires_at_ms=36100;for(const auto& permission:policy.bindings){RouteGrant grant{permission.binding.binding_id,returning_plan.proposed_session.session_id,1,36100,{}};for(const auto& step:returning_plan.steps)if(step.binding_id==grant.binding_id&&step.operation==OperationKind::select_path)grant.permitted_paths.push_back(step.arguments.physical_path);policy.route_grants.push_back(std::move(grant));}}
     assert(returning_member.prepare_remote_plan(returning_plan,returning_policies,31100));fixture_sent.clear();
     fixture_transmit=[](int gpio,const cec::Frame& frame){return gpio==1&&frame.destination()==4?cec::TxResult::Success:cec::TxResult::Nack;};
-    assert(!returning_member.activate_remote_plan(returning_plan.plan_id,1000,31101));
+    const auto blocked_identity = returning_member.activate_remote_plan(returning_plan.plan_id,1000,31101);
+    assert(!blocked_identity && blocked_identity.code == AdmissionCode::overloaded);
+    assert(fixture_sent.empty()); // Admission never waits for even the first poll.
+    returning_member.tick(31102); returning_member.tick(31103);
     for(const auto& policy:returning_member.local_policy_snapshot())assert(policy.route_grants.empty());
-    assert(fixture_sent.empty());fixture_transmit={};
-    assert(returning_member.activate_remote_plan(returning_plan.plan_id,1000,31102));assert(fixture_sent.empty());
+    for(const auto& sent:fixture_sent)assert(sent.frame.size==1); // Rejected activation was not retained.
+    fixture_transmit={}; fixture_sent.clear();
+    assert(!returning_member.activate_remote_plan(returning_plan.plan_id,1000,31104));
+    for(uint64_t now=31105;now<31110;++now)returning_member.tick(now);
+    for(const auto& policy:returning_member.local_policy_snapshot())assert(policy.route_grants.empty());
+    for(const auto& sent:fixture_sent)assert(sent.frame.size==1);
+    fixture_sent.clear();
+    assert(returning_member.activate_remote_plan(returning_plan.plan_id,1000,31110));
+    assert(fixture_sent.empty()); // Only a fresh request installs authority.
+    returning_member.tick(32111); fixture_sent.clear();
+    const auto renewal_pending = returning_member.renew_remote_authority(returning_plan.plan_id,returning_plan.proposed_session.session_id,1,1000,32112);
+    assert(!renewal_pending && renewal_pending.code == AdmissionCode::overloaded && fixture_sent.empty());
+    for(uint64_t now=32113;now<32119;++now)returning_member.tick(now);
+    for(const auto& policy:returning_member.local_policy_snapshot())assert(policy.authority_expires_at_ms<=32112);
+    for(const auto& sent:fixture_sent)assert(sent.frame.size==1);
+    fixture_sent.clear();
+    assert(returning_member.renew_remote_authority(returning_plan.plan_id,returning_plan.proposed_session.session_id,1,1000,32119));
+    assert(fixture_sent.empty());
 
     // The manual-clock LiveSystem cases above intentionally do not run the
     // original service task. Use a fresh, continuously serviced owner here.

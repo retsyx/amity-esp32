@@ -92,7 +92,7 @@ public:
     std::optional<CommandId> complete_frame(uint64_t work_id, WireOutcome, uint64_t now_ms, bool started = true);
     bool command_pending(CommandId) const;
     void quiesce();
-    void tick(uint64_t now_ms, bool allow_repeat = true);
+    void tick(uint64_t now_ms);
     bool release_hold(HoldToken, uint64_t now_ms = 0);
     void fence_binding(BindingId, uint64_t old_revision, bool old_peer_still_identified = false);
     void close_route(SessionId, uint64_t old_generation);
@@ -112,7 +112,6 @@ private:
         bool automatic_identity = false, emergency_release = false;
         uint64_t identity_policy_generation = 0;
         bool automatic_route_reply = false;
-        bool initial_key_press = false;
         uint64_t stream_id = 0;
     };
     struct HeldKey {
@@ -124,7 +123,6 @@ private:
         uint64_t rebased_revision = 0, rebased_policy_generation = 0;
         bool up_requested = false;
         uint64_t press_work_id = 0;
-        bool initial_press_pending = true;
         uint64_t stream_id = 0;
         bool finite = false;
     };
@@ -135,6 +133,7 @@ private:
         bool started = false, ended = false, safe = true;
         uint64_t release_work_id = 0;
         std::optional<AuthorizedCecOperation> audio_context;
+        bool admitted = false;
     };
     const PortPolicySnapshot* policy(const CecPortRef&) const;
     const BindingPermission* permission(const PortPolicySnapshot&, BindingId) const;
@@ -171,7 +170,6 @@ private:
     uint64_t now_ms_ = 0;
     std::vector<std::pair<BindingId, uint64_t>> fenced_bindings_;
     std::vector<std::pair<SessionId, uint64_t>> closed_routes_;
-    size_t next_hold_ = 0;
     bool fail_closed_ = false;
 };
 

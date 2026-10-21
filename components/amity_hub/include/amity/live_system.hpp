@@ -46,10 +46,11 @@ public:
     std::vector<system::AuthorizedCecOperation> active_key_contexts() const { return coordinator_.active_key_contexts(); }
     bool key(uint8_t, bool repeat, uint64_t now_ms);
     bool release(uint64_t now_ms = 0);
+    bool release_key(uint8_t key, uint64_t now_ms = 0);
     system::AdmissionResult input(const system::InputIntent&, uint64_t now_ms);
     void discover(uint64_t now_ms);
     system::AdmissionResult discover_authorized(uint32_t ttl_ms, uint64_t now_ms);
-    void tick(uint64_t now_ms, bool allow_repeat = true);
+    void tick(uint64_t now_ms);
     bool local_repeat_ready(uint64_t now_ms) const { return coordinator_.local_repeat_ready(now_ms); }
     bool local_repeat_in_flight() const { return coordinator_.local_repeat_in_flight(); }
     Snapshot snapshot(const Snapshot& legacy) const;
@@ -76,6 +77,8 @@ private:
         uint32_t token = 0;
         uint64_t sequence = 0;
         bool authority_expired = false;
+        bool reclaim_requested = false, reclaim_poll = false, reclaim_ready = false;
+        uint8_t reclaim_vacant_polls = 0;
         bool present = true, claiming = false, allocation_probe = false, scan_driver = false;
         uint8_t claim_index = 0, vacant_polls = 0, claim_address = 15;
         uint64_t next_claim_ms = 0;
@@ -89,6 +92,8 @@ private:
     Port* port(const system::CecPortRef&);
     void observe(Port&, const cec::ReceiveObservation&, uint64_t);
     bool resolve(uint64_t, bool initial, std::string&);
+    bool identity_available(Port&);
+    system::AdmissionResult advance_remote_selection(uint64_t now_ms);
     void service_port(Port&, uint64_t);
     bool submit_wire(Port&, const system::WireWork*, size_t);
     void cancel_wire(Port&, uint64_t work_id);
@@ -109,8 +114,14 @@ private:
     size_t guard_count_ = 0;
     std::vector<system::CecObservation> observations_;
     std::vector<system::ComponentBinding> bindings_;
-    std::optional<system::HoldToken> held_;
-    uint8_t held_key_ = 0xff;
+    std::array<std::optional<system::HoldToken>, 256> held_{};
+    struct RemoteSelection {
+        system::InputIntent intent;
+        std::vector<system::Session> original_sessions;
+        std::vector<system::ZoneId> stopping;
+        uint64_t config_revision = 0, presentation_revision = 0;
+    };
+    std::optional<RemoteSelection> remote_selection_;
     int selected_slot_ = -1;
     uint32_t next_token_ = 1, activity_generation_ = 1, discovery_generation_ = 0;
     bool configured_ = false, installed_ = false, resolving_ = false, preflight_ = false, paused_ = false;

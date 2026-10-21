@@ -83,13 +83,15 @@ public:
         return accepts_local_input() && local_.press_key_for_activity(key, generation, repeat);
     }
     uint32_t activity_generation() const { return local_.activity_generation(); }
-    bool release_key();
+    uint32_t activity_selection() const { return local_.activity_selection(); }
+    bool release_key(uint8_t key = 0xff);
     bool standby() { return request_activity(-1) == ESP_OK; }
     esp_err_t request_remote_activity(unsigned button);
     esp_err_t request_remote_activity(unsigned button, uint32_t expected_generation);
     bool press_remote_key(uint8_t key, bool repeat = false);
     bool press_remote_key_for_activity(uint8_t key, uint32_t expected_generation, bool repeat = false);
-    bool release_remote_key();
+    bool release_remote_key(uint8_t key = 0xff);
+    esp_err_t repair_remote_activity(uint32_t expected_generation);
     esp_err_t stop_remote_zone();
     esp_err_t stop_remote_zone(uint32_t expected_generation);
     uint32_t remote_activity_generation() const;
@@ -161,8 +163,8 @@ private:
     std::shared_ptr<const PreparedMember> prepared_member_;
     std::atomic<bool> local_coordinator_{true};
     std::atomic<bool> maintenance_{false};
-    struct RemoteHold { system::HoldToken token; uint8_t key; system::ZoneId zone; system::InputContext context; };
-    std::shared_ptr<const RemoteHold> remote_hold_;
+    struct RemoteHold { system::HoldToken token; system::ZoneId zone; system::InputContext context; };
+    std::array<std::shared_ptr<const RemoteHold>, 256> remote_holds_{};
     mutable std::shared_ptr<const RemoteStamp> remote_stamp_;
 };
 }

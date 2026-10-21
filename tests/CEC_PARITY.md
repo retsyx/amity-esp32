@@ -4,7 +4,12 @@ The golden behavior is the running Python application, not just the mocked
 `test/test_hdmi.py` adapters. It combines `main.py`, `hdmi.py`, `cec.py`, and
 Linux's CEC core. In particular, `main.py` passes the lowercase OSD name
 `amity`; the Python test fixture's uppercase `Amity` is not the application
-default. The original port was confined to the old repository’s `esp32/` folder; this repository now contains the standalone project.
+default. Button handling follows
+[the independent key state in `main.py`](https://github.com/retsyx/amity/blob/main/main.py#L144-L208),
+[its per-key transmit coroutine](https://github.com/retsyx/amity/blob/main/main.py#L286-L320),
+and [individual asynchronous CEC completions](https://github.com/retsyx/amity/blob/main/cec.py#L669-L683).
+The original port was confined to the old repository's `esp32/` folder; this
+repository now contains the standalone project.
 
 For the table below, the front playback address is 4, the back TV address is
 0, and the front physical address is 1.0.0.0 (the Python default and the ESP32
@@ -69,26 +74,88 @@ directly attached device stays silent; see the hub component README.
 | A missing activity device is found by rescan | Execute the original power/key operation after the rescan |
 | Power query during rediscovery | Retain the previous live device mapping until the new scan is complete |
 | Volume up/down/toggle mute | Target the activity's audio device |
-| Ordinary key | Target its source; append Released for a complete press |
+| Ordinary key | Target its source; append Released for a complete press unless another held key keeps that recipient's stream open |
 | Play/pause toggle | Default Python emulation alternates Play/Pause; repeats keep the same mapped key |
+| Hold a key | Submit its first press immediately; only that key's successful completion permits its next press |
+| Press another key while the first awaits ACK | Submit the new key independently without waiting for the first key's completion |
+| Release one of several held keys | End only that key's hold; already admitted presses finish and the other keys continue |
 
-Two deliberate implementation details support the ESP32 architecture:
-discovery is asynchronous behind the thread-safe service, and received
-device addresses are scoped to their bus. This avoids confusing a front
-device with an unrelated device having the same logical/physical address
-on the back. The held-key release tracks its actual recipient, including
-audio, instead of unconditionally releasing the source.
+Each key has independent pressed state and completion bookkeeping, with at
+most one outstanding attempt per active hold. There is no repeat timer or
+backlog of generated repeats. A pending ACK never blocks another key, a
+one-shot command, received-frame handling, activity setup, or discovery.
+Normal key-up removes only its own hold and does not advance a global
+cancellation counter. Already admitted frames remain in CEC's FIFO and finish,
+matching Python's submission/completion behavior. Physical transmission is
+still serial on each CEC wire; the two wires progress independently.
+
+The ESP32 scopes received device addresses and held-key recipients to their
+bus, avoiding confusion between unrelated devices with the same logical or
+physical address. CEC Released (`45`) has no key operand. The ESP32 therefore
+releases a receiving `(bus, logical address)` only after every held key there
+ends. This extends Python's global all-keys-ended check and source-only release
+to clean up the actual recipient, including audio.
+
+For Volume Up down, Right down, Right up, Volume Up remains pressed and
+continues repeating. If source and audio are different recipients, Right-up
+submits `45` to the source while audio continues. If they share a recipient,
+Right-up sends no `45`; Volume Up's later release closes that recipient's
+stream. Physical aliases share one logical hold until their last usage
+releases. Activity/configuration changes, standby, disconnect and input loss
+cancel all held keys and pending input gestures.
+
+The thread-safe service dispatches new commands using zero-wait CEC admission.
+Discovery, logical-address claims and activity setup track completions through
+short owner-task steps rather than waiting for ACKs. Only commands needing
+missing metadata defer until the relevant discovery completes; known-device
+operations continue. Command admission is separate from successful CEC queue
+admission or transmission.
+
+Outgoing frames live solely in CEC's per-wire FIFO: eight normal queued-plus-active
+slots and a ninth overflow slot available only for supplied releases. Every
+key-press frame gets one wire attempt. A failed admission or TX ends only its
+key's hold and makes one final-cleanup decision; unchanged down reports cannot
+restart it. A later physical up does not duplicate cleanup. Final release and
+ordinary commands use up to three wire attempts. Release admission is immediate:
+slot nine is allowed, but a release submitted at nine is dropped and consumed.
+No later tick or capacity change retries that admission, including power-quirk
+and switch-key cleanup. CEC applies supplied attempt budgets and overflow flags
+without interpreting button policy. The
+[hub component README](../components/amity_hub/README.md) also documents
+per-key and release-all emergency epochs used only when the command queue is
+full, plus activity-generation validation.
 
 Matter Speaker support adds Give Audio Status (`71`) and handles Report
 Audio Status (`7a`) from the current audio device. Absolute volume/mute are
 unknown until reported; volume 127 stays unknown. Explicit mute and restore
 keys (`65`/`66`) go to audio. These extra status queries are required for
 truthful Matter state and do not change the activity power/routing rules.
-Queries after volume/mute input wait for 500 ms of quiet, coalescing repeated
-adjustments. TX capacity waits are bounded; failed key releases are retained
-for retry, and failed initial presses do not change play/pause emulation.
+Queries after volume/mute input are coalesced with a 500 ms scheduling delay
+and no active audio hold. CEC traffic and queue admission can delay the actual
+request or reply. A rejected initial press does not change play/pause emulation.
+
+Siri's fixed activity macros follow Python's default Power+Select/Up/Right/Down/
+Left combinations, selecting activities 0–4 on a short selector hold and 5–9
+when the selector has been held at least 500 ms. They are enabled only for the
+Siri profile and are not configurable. The complete mapping is recorded in the
+[remote component README](../components/ble_remote/README.md). Either macro
+button may be pressed or released first; the selector's press timestamp
+determines the duration. An unrelated release does not execute the macro.
+Execution consumes the gesture until all physical keys are up, even if activity
+selection is rejected or `wait_for_release` expires. Rejected selection consumes
+only the macro's buttons and preserves unrelated holds; successful selection
+applies activity quarantine and the release gate. Atomic's dedicated activity
+buttons retain their separate policy and Power+direction never forms a macro.
 
 Validation:
+
+- `sh tests/ble_test.sh` checks Python's `wait_for_release` gate at startup and
+  activity selection: fresh overlapping keys, all physical aliases released,
+  final-release/report ordering, one-second fallback without replay, swallowed
+  swipes, standby/Power release handling, same-target selection, rejected
+  selection, long-Power repair, and no duplicate gate after a local selection.
+  Hub tests also check that successful same-target selections notify input
+  while repairs and rejected requests do not.
 
 - `sh tests/cec_hub_test.sh` checks wire ACK/arbitration/timing failures,
   startup message order, activity transitions, identity payloads, ignored
@@ -96,6 +163,23 @@ Validation:
   ASan and UBSan. Front physical-address tests cover multiple response orders,
   delayed AVR replies, invalid reports, configured fallback, startup ordering,
   and retaining the result until a fresh boot.
+- `tests/cec_hub_commit_test.cpp` holds completions pending while admitting
+  Volume Up and Right, releases Right independently, and verifies volume
+  continues. It also covers per-key failures, consumed final-release cleanup,
+  one-shot admission, configuration and activity generation. Activity-settling
+  tests verify asynchronous setup completions without blocking command handling.
+- `sh tests/cec_bus_test.sh` covers zero-wait admission during an outstanding
+  ACK, per-operation terminal results and attempt budgets, FIFO bounds and
+  capacity reuse, and independent wire completions under ASan/UBSan.
+- `sh tests/ble_test.sh` covers both input profiles, the Volume Up/Right
+  overlap sequence, logical aliases, keyed releases, stale reports,
+  activity quarantine, disconnect/input-loss cancellation, and all five fixed
+  Siri macros. Macro coverage includes both press/release orders, selector-based
+  duration at the 500 ms boundary, unrelated releases, rejected selection while
+  volume remains held, all-buttons-up consumption after rejection and timeout,
+  and exclusion of Atomic Power+direction/Select combinations. Rejected actions
+  preserve ordinary input; admitted actions quarantine new presses in the same
+  release-first report batch.
 - `python3 tests/cec_front_physical_hardware.py --url https://amity-dut.local
   --credentials PRIVATE_CREDENTIALS_JSON --host PI_SSH_HOST` exercises discovery,
   rescan pinning, reevaluation on reboot, and no-responder fallback against the

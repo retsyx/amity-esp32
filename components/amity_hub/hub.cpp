@@ -213,59 +213,82 @@ void Hub::force_standby() {
 bool Hub::press_key(uint8_t key, bool repeat) {
     const auto a = current();
     if (key == 0x40) { standby(); return true; }
-    if (release_pending_ && !release_key()) return false;
     const uint8_t raw_key = key;
+    const auto held = std::find_if(held_keys_.begin(), held_keys_.end(),
+                                   [raw_key](const HeldKey &h) { return h.raw_key == raw_key; });
     // Default Python hub behavior emulates the play/pause toggle.
     if (key == 0x61) {
-        if (key_held_ && held_raw_key_ == raw_key) key = held_key_;
+        if (held != held_keys_.end()) key = held->key;
         else key = playing_ ? 0x46 : 0x44;
     }
     const bool audio_key = (key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66;
-    auto *d = find(audio_key ? a.audio : a.source);
-    if (!d) return false;
-    if (key_held_ && (held_bus_ != d->bus || held_address_ != d->address) && !release_key()) return false;
-    if (!send(d->bus, d->address, {0x44, key})) return false;
+    // A held key keeps its accepted recipient even if discovery changes the
+    // device cache before a repeat or release arrives.
+    const auto *d = held == held_keys_.end() ? find(audio_key ? a.audio : a.source) : nullptr;
+    if (held == held_keys_.end() && !d) return false;
+    const BusSide bus = held != held_keys_.end() ? held->bus : d->bus;
+    const uint8_t address = held != held_keys_.end() ? held->address : d->address;
+    if (!send(bus, address, {0x44, key})) return false;
     // Explicit transport commands and emulated toggles share the same last
     // accepted state. Held toggles keep emitting their original mapped key.
     if (key == 0x44) playing_ = true;
     else if (key == 0x46 || key == 0x45) playing_ = false;
-    held_bus_ = d->bus; held_address_ = d->address; key_held_ = true;
-    held_raw_key_ = raw_key; held_key_ = key;
-    held_audio_ = audio_key;
     if (audio_key) audio_status_known_ = false;
-    if (!repeat) release_key();
+    if (repeat) {
+        if (held == held_keys_.end()) held_keys_.push_back({raw_key, key, bus, address, audio_key});
+    } else {
+        // A one-shot command cannot terminate any independently held key at
+        // this recipient: User Control Released has no key operand.
+        const bool recipient_held = std::any_of(held_keys_.begin(), held_keys_.end(),
+            [bus, address](const HeldKey &h) { return h.bus == bus && h.address == address; });
+        const bool admitted = recipient_held || send(bus, address, {0x45});
+        if (audio_key && admitted) {
+            audio_query_pending_ = true;
+            audio_query_due_ = now_us_ + 500000;
+        }
+    }
     return true;
 }
-bool Hub::release_key() {
-    if (!key_held_) return true;
-    const bool admitted = send(held_bus_, held_address_, {0x45});
+bool Hub::release_key(uint8_t key) {
+    const auto held = std::find_if(held_keys_.begin(), held_keys_.end(),
+                                   [key](const HeldKey &h) { return h.raw_key == key; });
+    if (held == held_keys_.end()) return true;
+    const HeldKey ended = *held;
+    held_keys_.erase(held);
+    const bool recipient_held = std::any_of(held_keys_.begin(), held_keys_.end(),
+        [&ended](const HeldKey &h) { return h.bus == ended.bus && h.address == ended.address; });
+    const bool admitted = recipient_held || send(ended.bus, ended.address, {0x45});
     // The final-release decision is consumed even when the ninth driver slot
     // is occupied. No later tick, up or new key retries a dropped release.
-    key_held_ = false;
-    release_pending_ = false;
-    if (held_audio_ && admitted) {
+    if (ended.audio && admitted) {
         audio_query_pending_ = true;
         audio_query_due_ = now_us_ + 500000;
     }
-    held_audio_ = false;
     if (!admitted) ++uncertain_releases_;
     return admitted;
 }
-void Hub::end_key_stream() { if (key_held_) release_pending_ = true; }
+bool Hub::release_key() {
+    bool admitted = true;
+    while (!held_keys_.empty()) {
+        if (!release_key(held_keys_.front().raw_key)) admitted = false;
+    }
+    return admitted;
+}
+bool Hub::audio_key_held() const {
+    return std::any_of(held_keys_.begin(), held_keys_.end(), [](const HeldKey &h) { return h.audio; });
+}
 void Hub::tick(uint64_t now_us) {
     now_us_ = now_us;
-    if (release_pending_) release_key();
-    if (audio_query_pending_ && now_us_ >= audio_query_due_ && !held_audio_) request_audio_status();
+    if (audio_query_pending_ && now_us_ >= audio_query_due_ && !audio_key_held()) request_audio_status();
 }
 void Hub::invalidate_endpoint(BusSide side, uint8_t address) {
     transport_.invalidate_binding(side, address);
     ++binding_generation_;
     ++activity_generation_; // Fence old normalized input while keeping intent selected.
-    if (key_held_ && held_bus_ == side && held_address_ == address) {
-        // We cannot safely release through an address whose appliance may have
-        // changed. Never retarget the old hold to a newly discovered endpoint.
-        ++uncertain_releases_;
-        key_held_ = false; release_pending_ = false; held_audio_ = false;
+    // Never send cleanup to an address whose appliance may have changed.
+    for (auto it = held_keys_.begin(); it != held_keys_.end();) {
+        if (it->bus == side && it->address == address) { ++uncertain_releases_; it = held_keys_.erase(it); }
+        else ++it;
     }
     audio_query_pending_ = false;
     audio_status_known_ = false;
@@ -318,7 +341,9 @@ void Hub::resolve_device(BusSide side, uint8_t address) {
     bool ambiguous = false;
     for (auto &other : devices_) {
         if (other.name != device.name || (other.bus == side && other.address == address)) continue;
-        if (other.resolved) invalidate_endpoint(other.bus, other.address);
+        // A name collision changes lookup confidence, not the identity of
+        // the existing address. Already accepted holds retain their recipient.
+        other.resolved = false;
         ambiguous = true;
     }
     const auto matches = std::count_if(devices.begin(), devices.end(), [&](const Device& other) { return other.name == device.name; });

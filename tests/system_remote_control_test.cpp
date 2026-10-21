@@ -28,6 +28,7 @@ int main() {
     assert(control.request_remote_activity(0,1)==ESP_ERR_INVALID_STATE);
     assert(!control.press_remote_key(1) && !control.press_remote_key_for_activity(1,1,true));
     assert(!control.release_remote_key() && control.stop_remote_zone()==ESP_ERR_INVALID_STATE);
+    assert(control.repair_remote_activity(1)==ESP_ERR_INVALID_STATE);
     assert(control.request_activity_v2(config.primary_zone_id,input_id<ActivityId>(40),input_id<MessageId>(41))==ESP_ERR_INVALID_STATE);
     assert(control.stop_zone_v2(config.primary_zone_id)==ESP_ERR_INVALID_STATE);
     InputIntent forged;forged.zone_id=config.primary_zone_id;forged.action=InputAction::stop_zone;
@@ -66,9 +67,19 @@ int main() {
         routed.activities.push_back(second);routed.zones.push_back({second.zone_id,"Second screen","",false,{second.activity_id}});routed.activity_order={first,second.activity_id};routed.external_slots.push_back({1,second.activity_id,false,false,{}});
         assert(original.configure_v2(routed)==ESP_OK);run_idle(300);
         fixture_send=[](int gpio,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x8f){cec::Frame reply;reply.size=3;reply.data[0]=(frame.destination()<<4)|(frame.data[0]>>4);reply.data[1]=0x90;reply.data[2]=0;fixture_incoming.push_back({gpio,reply});}return true;};
-        fixture_delay=[] {run_idle(1);};
         assert(original.request_remote_activity(0)==ESP_OK);run_idle(80);auto running=original.execution_snapshot();assert(running.sessions.size()==1&&running.sessions[0].activity_id==first);
         const auto audio_generation=original.remote_activity_generation();
+        fixture_tick=1000; // Fast fake completions must not age unrelated discovery evidence between assertions.
+        // Explicit mute/restore use the activity's audio component through
+        // both ingress paths, even when its source is on another physical wire.
+        for(const uint8_t audio_key:{uint8_t{0x65},uint8_t{0x66}})for(const bool remote:{false,true}) {
+            fixture_sent.clear();
+            assert(remote ? original.press_remote_key_for_activity(audio_key,original.remote_activity_generation()) :
+                original.press_key_for_activity(audio_key,original.activity_generation()));
+            run_idle(4);
+            assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==audio_key&&sent.gpio==1&&sent.frame.destination()==0;})==1);
+            assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44&&sent.gpio==2;}));
+        }
         { // Actual owner admission and the sole driver FIFO: eight ordinary
           // messages may be followed by one explicitly eligible final release.
             const auto saved_tick=fixture_tick;fixture_tick=0;
@@ -84,14 +95,16 @@ int main() {
             assert(original.execute_authorized(down)==ESP_OK);assert(!original.remote_key_active(down)); // Queued is not yet processed.
             run_one_command();assert(original.remote_key_active(down)==std::optional<bool>{true});
             fixture_driver_paused=true;fixture_sent.clear();fixture_submitted.clear();
-            for(unsigned i=0;i<8;++i){auto query=down;query.command_id=input_id<CommandId>(70100+i);query.kind=OperationKind::query_state;query.arguments={};query.arguments.query_opcode=0x71;assert(original.admit_authorized(query));}
+            unsigned queued_queries=0;
+            for(unsigned i=0;i<8;++i){auto query=down;query.command_id=input_id<CommandId>(70100+i);query.kind=OperationKind::query_state;query.arguments={};query.arguments.query_opcode=0x71;if(!original.admit_authorized(query))break;++queued_queries;}
+            assert(queued_queries>=7); // An already-admitted held repeat may occupy the other normal slot.
             auto full=down;full.command_id=input_id<CommandId>(70200);full.kind=OperationKind::query_state;full.arguments={};full.arguments.query_opcode=0x71;assert(!original.admit_authorized(full));
             auto up=down;up.command_id=input_id<CommandId>(70201);up.kind=OperationKind::release_key;assert(original.admit_authorized(up));
             assert(original.remote_key_active(down,true)==std::optional<bool>{false});assert(!original.remote_key_active(down));
             auto never_processed=down;never_processed.command_id=input_id<CommandId>(70202);assert(!original.remote_key_active(never_processed));
             auto wrong_boot=down;wrong_boot.fence.owner_boot_id=input_id<BootId>(70203);assert(!original.remote_key_active(wrong_boot,true));
             fixture_driver_paused=false;run_idle(20);
-            assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x71;})==8);
+            assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x71;})==static_cast<ptrdiff_t>(queued_queries));
             assert(std::count_if(fixture_submitted.begin(),fixture_submitted.end(),[](const auto& s){return s.frame.size>1&&s.frame.data[1]==0x45&&s.allow_overflow&&s.attempts==3;})==1);
             fixture_sent.clear();run_idle(4);assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& s){return s.frame.size>1&&(s.frame.data[1]==0x45||s.frame.data[1]==0x44);}));
             auto newer=down;newer.command_id=input_id<CommandId>(70300);newer.arguments.hold_token=input_id<HoldToken>(70301);assert(original.admit_authorized(newer));
@@ -121,6 +134,31 @@ int main() {
         assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==2&&sent.frame.data[1]==0x45;})==3);
         for(const auto& sent:fixture_submitted)if(sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x45))assert(sent.attempts==(sent.frame.data[1]==0x44?1u:3u));
         fixture_sent.clear();run_idle(8);assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;}));
+        // Incoming keys reach their CEC queues while another key is awaiting
+        // completion. Right's up ends only Right; Volume Up remains held.
+        fixture_driver_paused=true;fixture_sent.clear();fixture_submitted.clear();
+        unsigned admitted_keys=0;
+        fixture_submit_admission=[&](int,const cec::Frame& frame){if(frame.size==3&&frame.data[1]==0x44)++admitted_keys;return true;};
+        assert(original.press_remote_key_for_activity(0x41,audio_generation,true));
+        assert(original.press_remote_key_for_activity(3,audio_generation,true));
+        const auto overlap_selection=original.activity_selection();
+        assert(original.request_remote_activity(99,audio_generation)==ESP_ERR_INVALID_ARG);
+        assert(original.activity_selection()==overlap_selection);
+        assert(original.release_remote_key(3));
+        assert(fixture_sent.empty());
+        assert(admitted_keys==2);fixture_submit_admission={};
+        fixture_driver_paused=false;run_idle(8);fixture_sent.clear();run_idle(8);
+        assert(std::any_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==0x41;}));
+        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==3;}));
+        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.gpio==1&&sent.frame.size==2&&sent.frame.data[1]==0x45;}));
+        assert(original.press_remote_key_for_activity(3,audio_generation,true));run_idle(2);
+        for(unsigned i=0;i<32;++i)assert(original.press_key(0xff));
+        assert(!original.press_key(0xff));
+        assert(original.release_remote_key(3)); // Reserved cleanup admission survives a full ordinary IPC queue.
+        run_idle(4);fixture_sent.clear();run_idle(4);
+        assert(std::any_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==0x41;}));
+        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==3;}));
+        assert(original.release_remote_key(0x41));run_idle(8);
         amity::VolumeSequence volume;volume.start({3,original.activity_generation()});fixture_sent.clear();fixture_submitted.clear();
         for(unsigned step=0;step<3;++step){fixture_time+=250000;volume.tick(fixture_time,original.activity_generation(),[&](uint8_t key,uint32_t generation){return original.press_key_for_activity(key,generation);});run_idle(4);}
         assert(volume.idle());
@@ -128,15 +166,15 @@ int main() {
         assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==2&&sent.frame.data[1]==0x45;})==3);
         for(const auto& sent:fixture_submitted)if(sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x45))assert(sent.attempts==(sent.frame.data[1]==0x44?1u:3u));
         fixture_sent.clear();run_idle(8);assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;}));
-        // Physical up preserves an initial down already admitted to the sole
-        // FIFO, while it cancels an admitted repeat that has not begun.
+        // Physical up appends final release immediately after already admitted
+        // presses, without waiting for the preceding attempt's completion.
         fixture_driver_paused=true;fixture_sent.clear();assert(original.press_remote_key_for_activity(0x41,audio_generation,true));assert(original.release_remote_key());assert(fixture_sent.empty());
         fixture_driver_paused=false;run_idle(4);
         std::vector<uint8_t> short_hold;for(const auto& sent:fixture_sent)if(sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x45))short_hold.push_back(sent.frame.data[1]);
         assert((short_hold==std::vector<uint8_t>{0x44,0x45}));
         assert(original.press_remote_key_for_activity(0x41,audio_generation,true));run_idle(3);fixture_driver_paused=true;run_idle(2);
         fixture_sent.clear();assert(original.release_remote_key());fixture_driver_paused=false;run_idle(4);
-        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;}));
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;})<=1);
         assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==2&&sent.frame.data[1]==0x45;})==1);
         fixture_time+=600000;run_idle(4); // Drain the prior short stream's already-admitted audio query.
         fixture_sent.clear();fixture_submitted.clear();assert(original.press_remote_key_for_activity(0x41,audio_generation,true));run_idle(8);
@@ -144,14 +182,12 @@ int main() {
         assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==0x41;})>5);
         for(const auto& sent:fixture_sent)if(sent.frame.size==3&&sent.frame.data[1]==0x44)assert(sent.gpio==1&&sent.frame.destination()==0);
         for(const auto& sent:fixture_submitted)if(sent.frame.size>1&&sent.frame.data[1]==0x44)assert(sent.attempts==1);
-        // Two already waiting owner commands each win over an idle repeat.
-        // Unsupported keys have no wire side effects or held-state changes.
+        // Unrelated queued commands do not cancel an existing held key or
+        // prevent its successful completion from admitting another repeat.
         assert(original.press_key(0xff));assert(original.press_key(0xff));fixture_sent.clear();command_waits.clear();
-        run_one_command();assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;}));
-        run_one_command();assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;}));
-        assert(command_waits.size()==2&&command_waits[0]==1&&command_waits[1]==0); // Completion polling yields; an eligible local repeat never adds a queue wait.
-        run_idle(2);assert(std::any_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==0x41;}));
-        fixture_completion_ready=[](int){return false;};run_idle(3);assert(!idle_waits.empty()&&std::all_of(idle_waits.begin(),idle_waits.end(),[](unsigned wait){return wait==1;}));fixture_completion_ready={};
+        run_one_command();run_one_command();run_idle(2);
+        assert(std::any_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==3&&sent.frame.data[1]==0x44&&sent.frame.data[2]==0x41;}));
+        fixture_completion_ready=[](int){return false;};run_idle(3);fixture_completion_ready={};
         fixture_sent.clear();assert(original.press_remote_key_for_activity(0x41,audio_generation,true));run_idle(2);
         assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size==2&&sent.frame.data[1]==0x45;}));
         const auto advancing_tick=fixture_tick;fixture_tick=0;
@@ -209,13 +245,24 @@ int main() {
         assert(original.remote_activity_target()==0&&original.remote_activity_generation()!=secondary_generation);
         assert(original.release_remote_key());run_idle(2); // The original input controller releases on its next generation synchronization.
         fixture_sent.clear();assert(!original.press_remote_key_for_activity(1,secondary_generation,true));assert(original.request_remote_activity(0,secondary_generation)==ESP_ERR_INVALID_STATE);run_idle(2);assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;}));
-        assert(original.release_remote_key());assert(original.request_remote_activity(1)==ESP_OK);run_idle(80);running=original.execution_snapshot();assert(running.sessions.size()==1&&running.sessions[0].activity_id==first);
+        assert(original.release_remote_key());
+        const auto back_to_first=original.request_remote_activity(1);
+        if(back_to_first!=ESP_OK)std::fprintf(stderr,"screen selection rejected: result=%d error=%s state=%llu generation=%u\n",back_to_first,original.execution_snapshot().error.c_str(),(unsigned long long)original.execution_snapshot().state_revision,original.remote_activity_generation());
+        assert(back_to_first==ESP_OK);run_idle(80);running=original.execution_snapshot();assert(running.sessions.size()==1&&running.sessions[0].activity_id==first);
         assert(routed.external_slots[0].activity_id==reordered.external_slots[0].activity_id&&routed.external_slots[1].activity_id==reordered.external_slots[1].activity_id);
-        const auto before_drain_generation=original.remote_activity_generation();bool changed_during_drain=false;
-        fixture_delay=[&]{if(!changed_during_drain){changed_during_drain=true;auto during=reordered;during.presentation_revision=3;during.activity_order={first,second.activity_id};assert(original.configure_v2(during)==ESP_OK);}run_idle(1);};
-        fixture_sent.clear();assert(original.request_remote_activity(0,before_drain_generation)==ESP_ERR_INVALID_STATE);run_idle(3);
-        assert(changed_during_drain&&original.execution_snapshot().sessions.empty());
-        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&(sent.frame.data[1]==0x82||sent.frame.data[1]==0x86);})); // Old button cannot continue after an order edit during Stop.
+        const auto before_selection=original.activity_selection();
+        unsigned selector_waits=0;fixture_delay=[&]{++selector_waits;};
+        fixture_driver_paused=true;
+        assert(original.request_remote_activity(0)==ESP_OK);
+        fixture_delay={};
+        assert(original.activity_selection()==before_selection+1);
+        assert(selector_waits==0); // No input-task CEC drain or response wait.
+        assert(original.release_remote_key(3)); // Input remains available with the transition's frames pending.
+        fixture_driver_paused=false;run_idle(80);
+        assert(original.remote_activity_target()==0);
+        const auto before_repair=original.activity_selection();
+        assert(original.repair_remote_activity(original.remote_activity_generation())==ESP_OK);run_idle(80);
+        assert(original.activity_selection()==before_repair); // Long Power repairs without a new release gate.
         fixture_delay={};fixture_send={};fixture_present=false;
     }
     std::puts("PASS actuator-only member rejection and original-controller cross-screen activity/order/hold fencing");

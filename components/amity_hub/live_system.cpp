@@ -75,7 +75,7 @@ void LiveSystem::set_tentacle_present(uint8_t id, bool present, uint64_t now) {
     if (!present) for (const auto& session : coordinator_.snapshot().sessions)
         if (std::any_of(affected.begin(), affected.end(), [&](const auto& route) { return route.first == session.session_id; })) {
             coordinator_.stop(session.zone_id, now);
-            if (session.zone_id == config_.primary_zone_id) { selected_slot_ = -1; held_.reset(); ++activity_generation_; }
+            if (session.zone_id == config_.primary_zone_id) { selected_slot_ = -1; held_.fill({}); ++activity_generation_; }
         }
     next_discovery_ms_ = now;
 }
@@ -89,6 +89,8 @@ bool LiveSystem::revision_rebase_ready(const LocalConfiguration& config) const {
 }
 void LiveSystem::fence_revision_work() { for (auto& p : ports_) ++*p.wire_generation; }
 bool LiveSystem::configure(LocalConfiguration config, uint64_t now, std::string& error) {
+    // A physical selector never survives an intervening configuration edit.
+    remote_selection_.reset();
     if (preserves_configuration(config)) {
         if (config.topology.config_revision != config_.topology.config_revision) {
             if (!coordinator_.rebase_revision(config.topology.config_revision)) { error = "in-progress plan must finish before exact-policy revision rebase"; return false; }
@@ -157,7 +159,7 @@ bool LiveSystem::configure(LocalConfiguration config, uint64_t now, std::string&
         auto policy = std::find_if(coordinator_.policies().begin(), coordinator_.policies().end(), [&](const auto& q) { return q.port == p.key; });
         p.bus->install_receive_policy({true, policy != coordinator_.policies().end() && policy->owned_logical_address ? *policy->owned_logical_address : uint8_t{15}});
     }
-    configured_ = true; installed_ = true; selected_slot_ = -1; held_.reset(); ++activity_generation_;
+    configured_ = true; installed_ = true; selected_slot_ = -1; held_.fill({}); ++activity_generation_;
     if (!preflight_) error_.clear();
     discover(now); return true;
 }
@@ -288,11 +290,9 @@ void LiveSystem::discover(uint64_t now) {
 AdmissionResult LiveSystem::discover_authorized(uint32_t ttl, uint64_t now) {
     if (!configured_ || !config_.member || paused_ || !ttl || ttl > 5000)
         return {AdmissionCode::unauthorized, "current authenticated member discovery authority required"};
-    for (auto& p : ports_) if (p.authority_expired && p.identity < 15) {
-        const cec::Frame poll{{static_cast<uint8_t>((p.identity << 4) | p.identity)}, 1};
-        if (p.bus->transmit(poll, 1) != cec::TxResult::Nack || p.bus->transmit(poll, 1) != cec::TxResult::Nack)
-            return {AdmissionCode::unauthorized, "expired identity is occupied"};
-    }
+    bool identities_ready = true;
+    for (auto& p : ports_) identities_ready = identity_available(p) && identities_ready;
+    if (!identities_ready) return {AdmissionCode::overloaded, "expired CEC identity validation is pending"};
     auto result = coordinator_.renew_discovery_authority(ttl, now); if (!result) return result;
     for (auto& p : ports_) { p.authority_expired = false; p.bus->install_receive_policy({true, p.identity}); }
     discover(now); return {AdmissionCode::accepted, {}};
@@ -375,11 +375,19 @@ void LiveSystem::cancel_wire(Port& p,uint64_t id){
     for(size_t i=0;i<p.submitted.size();++i)if(p.submitted[i].active&&p.submitted[i].work_id==id)
         ++work_generations_[p.slot_index][i];
 }
+bool LiveSystem::identity_available(Port& p) {
+    if (!p.authority_expired || p.identity >= 15 || p.reclaim_ready) return true;
+    p.reclaim_requested = true;
+    return false;
+}
 void LiveSystem::service_port(Port& p, uint64_t now) {
     cec::ReceiveObservation received;
     for (unsigned i = 0; i < 32 && p.bus->receive_observation(received); ++i) if (!paused_ && p.present) observe(p, received, now);
     cec::Completion completion;
-    while (p.bus->take_completion(completion)) {
+    // A completion may immediately admit the next held press. Bound this
+    // pass to the driver's capacity so a fast completion producer cannot keep
+    // the owner from processing another key or physical wire.
+    for (unsigned i = 0; i < p.submitted.size() && p.bus->take_completion(completion); ++i) {
         auto submitted=std::find_if(p.submitted.begin(),p.submitted.end(),[&](const auto& item){return item.active&&item.token==completion.operation_token;});
         if(submitted!=p.submitted.end()){
             const auto id=submitted->work_id;submitted->active=false;
@@ -390,7 +398,12 @@ void LiveSystem::service_port(Port& p, uint64_t now) {
         }
         if(completion.operation_token!=p.token)continue;
         p.wire = false;
-        if (p.allocation_probe) {
+        if (p.reclaim_poll) {
+            p.reclaim_poll = false;
+            if (completion.result == cec::TxResult::Nack) {
+                if (++p.reclaim_vacant_polls == 2) { p.reclaim_ready = true; p.reclaim_requested = false; }
+            } else { p.reclaim_vacant_polls = 0; p.reclaim_requested = false; }
+        } else if (p.allocation_probe) {
             p.allocation_probe = false;
             if (p.claiming && p.present) {
                 if (completion.result == cec::TxResult::Nack) {
@@ -411,6 +424,14 @@ void LiveSystem::service_port(Port& p, uint64_t now) {
     }
     if (p.wire) return;
     if (!p.present) return;
+    if (p.reclaim_requested && !paused_) {
+        const cec::Frame poll{{static_cast<uint8_t>((p.identity << 4) | p.identity)}, 1};
+        p.token = next_token_++; if (!p.token) p.token = next_token_++;
+        p.reclaim_poll = p.bus->submit_guarded(poll, {p.wire_generation, p.wire_generation->load(), nullptr, 0, (now + 1500) * 1000}, p.token, 1);
+        p.wire = p.reclaim_poll;
+        if (!p.wire) { p.reclaim_requested = false; p.reclaim_vacant_polls = 0; }
+        return;
+    }
     if (p.claiming && !paused_ && now >= p.next_claim_ms) {
         const auto desired = std::find_if(config_.port_templates.begin(), config_.port_templates.end(), [&](const auto& policy) { return policy.port == p.key; });
         if (desired != config_.port_templates.end()) {
@@ -455,7 +476,7 @@ void LiveSystem::service_port(Port& p, uint64_t now) {
         }
     }
 }
-void LiveSystem::tick(uint64_t now, bool allow_repeat) {
+void LiveSystem::tick(uint64_t now) {
     if (!configured_) return;
     const auto previous_tick = last_tick_ms_;
     last_tick_ms_ = now;
@@ -471,7 +492,10 @@ void LiveSystem::tick(uint64_t now, bool allow_repeat) {
     if (config_.member) for (auto& p : ports_) {
         auto policy = std::find_if(coordinator_.policies().begin(), coordinator_.policies().end(), [&](const auto& q) { return q.port == p.key; });
         if (policy != coordinator_.policies().end() && policy->authority_expires_at_ms <= now) {
-            if (!p.authority_expired) { ++*p.wire_generation; p.bus->install_receive_policy({true, 15}); p.authority_expired = true; }
+            if (!p.authority_expired) {
+                ++*p.wire_generation; p.bus->install_receive_policy({true, 15}); p.authority_expired = true;
+                p.reclaim_requested = p.reclaim_poll = p.reclaim_ready = false; p.reclaim_vacant_polls = 0;
+            }
             if (p.scan) discovery_.cancel_scan(p.scan);
         }
     }
@@ -482,7 +506,8 @@ void LiveSystem::tick(uint64_t now, bool allow_repeat) {
     if (!paused_ && now >= next_discovery_ms_) discover(now);
     for (auto& p : ports_) service_port(p, now);
     if (resolving_) { resolving_ = !resolve(now, false, error_); if (resolving_) error_ = "binding synchronization failed: " + error_; }
-    coordinator_.tick(now,allow_repeat);
+    coordinator_.tick(now);
+    if (remote_selection_) advance_remote_selection(now);
     const auto state = coordinator_.snapshot();
     for (auto& outcome : activity_outcomes_) if (outcome.stage == "admitted" && outcome.plan_id && (!state.executing_plan || *state.executing_plan != *outcome.plan_id)) {
         const auto applied = std::find_if(state.sessions.begin(), state.sessions.end(), [&](const auto& s) { return s.plan_id == *outcome.plan_id; });
@@ -491,6 +516,7 @@ void LiveSystem::tick(uint64_t now, bool allow_repeat) {
     }
 }
 bool LiveSystem::select(ZoneId zone, ActivityId activity, MessageId request, std::optional<uint64_t> expected, uint64_t now, std::string& error, uint64_t deadline) {
+    remote_selection_.reset();
     if (!configured_) { error = "schema2 configuration is unavailable"; return false; }
     auto prior = std::find_if(requests_.begin(), requests_.end(), [&](const auto& r) { return r.request_id == request; });
     SelectRequest intent;
@@ -527,7 +553,7 @@ bool LiveSystem::select(ZoneId zone, ActivityId activity, MessageId request, std
     suspended_requests_.erase(std::remove_if(suspended_requests_.begin(), suspended_requests_.end(), [&](const auto& request) { return request.zone_id == zone; }), suspended_requests_.end());
     if (zone == config_.primary_zone_id) {
         selected_slot_ = -1; for (const auto& slot : config_.external_slots) if (!slot.tombstone && slot.activity_id == activity) selected_slot_ = slot.slot;
-        ++activity_generation_; held_.reset();
+        ++activity_generation_; held_.fill({});
     }
     error_.clear(); return true;
 }
@@ -551,49 +577,101 @@ bool LiveSystem::stop(ZoneId zone, uint64_t now) {
 bool LiveSystem::key(uint8_t key, bool repeat, uint64_t now) {
     if (!configured_) return false;
     if (key == 0x40) return stop(config_.primary_zone_id, now);
-    if (repeat && held_ && held_key_ == key) return true;
-    release(now);
-    auto state = coordinator_.snapshot();
-    auto session = std::find_if(state.sessions.begin(), state.sessions.end(), [&](const auto& s) { return s.zone_id == config_.primary_zone_id; });
-    if (session == state.sessions.end()) return false;
+    if (repeat && held_[key]) return true;
+    const auto session = coordinator_.input_session(config_.primary_zone_id);
+    if (!session) return false;
     auto activity = std::find_if(config_.activities.begin(), config_.activities.end(), [&](const auto& a) { return a.activity_id == session->activity_id; });
     if (activity == config_.activities.end()) return false;
-    auto target = key >= 0x41 && key <= 0x43 ? activity->audio : activity->source;
+    auto target = ((key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66) ? activity->audio : activity->source;
     if (!target) return false;
     auto token = fresh<HoldToken>(); auto result = coordinator_.key(activity->zone_id, *target, key, repeat, token, now);
-    if (result && repeat) { held_ = token; held_key_ = key; }
+    if (result && repeat) held_[key] = token;
     return bool(result);
 }
-bool LiveSystem::release(uint64_t now) { if (!held_) return true; const auto token = *held_; held_.reset(); return coordinator_.release(token, now ? now : last_tick_ms_); }
+bool LiveSystem::release_key(uint8_t key, uint64_t now) {
+    if (!held_[key]) return true;
+    const auto token = *held_[key]; held_[key].reset();
+    return coordinator_.release(token, now ? now : last_tick_ms_);
+}
+bool LiveSystem::release(uint64_t now) {
+    bool accepted = true;
+    for (size_t key = 0; key < held_.size(); ++key)
+        accepted = release_key(static_cast<uint8_t>(key), now) && accepted;
+    return accepted;
+}
+AdmissionResult LiveSystem::advance_remote_selection(uint64_t now) {
+    if (!remote_selection_) return {AdmissionCode::stale, "selector is no longer pending"};
+    auto reject = [&](const char* reason) {
+        remote_selection_.reset(); error_ = reason;
+        return AdmissionResult{AdmissionCode::stale, reason};
+    };
+    auto& pending = *remote_selection_;
+    if (pending.config_revision != config_.topology.config_revision || pending.presentation_revision != config_.presentation_revision)
+        return reject("activity selection context changed before admission");
+    auto state = coordinator_.snapshot();
+    for (const auto& current : state.sessions)
+        if (std::none_of(pending.original_sessions.begin(),pending.original_sessions.end(),[&](const auto& prior) {
+            return prior.session_id == current.session_id && prior.route_generation == current.route_generation &&
+                prior.activity_id == current.activity_id && prior.zone_id == current.zone_id;
+        })) return reject("activity selection was superseded");
+    // Route fences are asynchronous state transitions, not a queue of CEC
+    // frames. Leave the owner free to admit all unrelated input and wire work.
+    if (state.executing_plan) return {AdmissionCode::accepted, {}};
+    for (const auto& session : state.sessions) if (session.zone_id != pending.intent.zone_id) {
+        if (std::find(pending.stopping.begin(), pending.stopping.end(), session.zone_id) == pending.stopping.end()) {
+            if (!stop(session.zone_id, now)) return reject("previous screen could not stop");
+            pending.stopping.push_back(session.zone_id);
+        }
+    }
+    state = coordinator_.snapshot();
+    if (state.executing_plan || std::any_of(state.sessions.begin(), state.sessions.end(), [&](const auto& session) { return session.zone_id != pending.intent.zone_id; }))
+        return {AdmissionCode::accepted, {}};
+    const auto intent = pending.intent;
+    remote_selection_.reset();
+    std::string error;
+    const bool accepted = select(intent.zone_id, intent.activity_id, intent.request_id, state.state_revision, now, error, intent.admissible_until_ms);
+    return {accepted ? AdmissionCode::accepted : AdmissionCode::stale, error};
+}
 AdmissionResult LiveSystem::input(const InputIntent& intent, uint64_t now) {
     if (!configured_ || config_.member) return {AdmissionCode::unauthorized, "input needs local coordinator authority"};
     if (intent.action == InputAction::hold_release) return {coordinator_.release(intent.hold_token, now) ? AdmissionCode::accepted : AdmissionCode::stale, "hold is no longer active"};
     if (intent.admissible_until_ms && now >= intent.admissible_until_ms) return {AdmissionCode::expired, "original input authority expired before owner admission"};
     const auto state = coordinator_.snapshot();
     if (intent.expected_state_revision != state.state_revision) return {AdmissionCode::stale, "input context changed"};
+    if (intent.action == InputAction::select_remote_activity) {
+        if (remote_selection_ || state.executing_plan) return {AdmissionCode::overloaded, "an activity transition is already pending"};
+        if (std::none_of(config_.activities.begin(),config_.activities.end(),[&](const auto& activity) { return activity.activity_id == intent.activity_id && activity.zone_id == intent.zone_id; }))
+            return {AdmissionCode::invalid, "selected activity is unavailable"};
+        auto admitted = intent;
+        // IPC freshness applies before owner admission. Accepted selection
+        // inherits the normal planner/authority fences, without a new CEC cap.
+        admitted.admissible_until_ms = 0;
+        remote_selection_ = RemoteSelection{admitted, state.sessions, {}, config_.topology.config_revision, config_.presentation_revision};
+        return advance_remote_selection(now);
+    }
     if (intent.action == InputAction::select_activity) {
-        std::string error; const bool accepted = select(intent.zone_id, intent.activity_id, intent.request_id, intent.expected_state_revision, now, error, intent.admissible_until_ms);
+        std::string error; const bool accepted = select(intent.zone_id, intent.activity_id, intent.request_id, intent.expected_state_revision, now, error);
         return {accepted ? AdmissionCode::accepted : AdmissionCode::stale, error};
     }
-    if (intent.action == InputAction::stop_zone) return {stop(intent.zone_id, now) ? AdmissionCode::accepted : AdmissionCode::stale, "zone transition unavailable"};
-    auto session = std::find_if(state.sessions.begin(), state.sessions.end(), [&](const auto& s) { return s.zone_id == intent.zone_id; });
-    if (session == state.sessions.end()) return {AdmissionCode::stale, "zone has no applied session"};
+    if (intent.action == InputAction::stop_zone) {
+        remote_selection_.reset();
+        return {stop(intent.zone_id, now) ? AdmissionCode::accepted : AdmissionCode::stale, "zone transition unavailable"};
+    }
+    const auto session = coordinator_.input_session(intent.zone_id);
+    if (!session) return {AdmissionCode::stale, "zone has no active input route"};
     auto activity = std::find_if(config_.activities.begin(), config_.activities.end(), [&](const auto& a) { return a.activity_id == session->activity_id; });
     if (activity == config_.activities.end()) return {AdmissionCode::stale, "activity was removed"};
-    const auto target = intent.key >= 0x41 && intent.key <= 0x43 ? activity->audio : activity->source;
+    const auto target = ((intent.key >= 0x41 && intent.key <= 0x43) || intent.key == 0x65 || intent.key == 0x66) ? activity->audio : activity->source;
     if (!target || (intent.component_id && *intent.component_id != *target)) return {AdmissionCode::unauthorized, "key component is outside the current route"};
     return coordinator_.key(intent.zone_id, *target, intent.key, intent.repeat, intent.hold_token, now, intent.admissible_until_ms);
 }
-void LiveSystem::quiesce() { release(); for (auto& counter : wire_generations_) ++counter; coordinator_.quiesce(); }
+void LiveSystem::quiesce() { remote_selection_.reset(); release(); for (auto& counter : wire_generations_) ++counter; coordinator_.quiesce(); }
 void LiveSystem::fault(const std::string& error) { quiesce(); for (auto& p : ports_) p.bus->install_receive_policy({true, 15}); configured_ = false; error_ = error; }
 AdmissionResult LiveSystem::execute_authorized(const AuthorizedCecOperation& operation, uint64_t now) {
     if (!configured_) return {AdmissionCode::unauthorized, "schema2 configuration is unavailable"};
     auto* physical = port(operation.target.port);
-    if (config_.member && physical && physical->authority_expired && operation.kind != OperationKind::release_key) {
-        const cec::Frame poll{{static_cast<uint8_t>((physical->identity << 4) | physical->identity)}, 1};
-        if (physical->identity < 15 && (physical->bus->transmit(poll, 1) != cec::TxResult::Nack || physical->bus->transmit(poll, 1) != cec::TxResult::Nack))
-            return {AdmissionCode::unauthorized, "expired CEC identity was claimed by another peer"};
-    }
+    if (config_.member && physical && operation.kind != OperationKind::release_key && !identity_available(*physical))
+        return {AdmissionCode::overloaded, "expired CEC identity validation is pending"};
     auto result = coordinator_.execute_authorized(operation, now);
     if (result && config_.member && physical && operation.kind != OperationKind::release_key) {
         physical->authority_expired = false; physical->bus->install_receive_policy({true, physical->identity});
@@ -617,11 +695,9 @@ AdmissionResult LiveSystem::fence_remote_route(SessionId session, uint64_t gener
 bool LiveSystem::remote_route_quiescent(SessionId session, uint64_t generation) const { return coordinator_.remote_route_quiescent(session, generation); }
 AdmissionResult LiveSystem::activate_remote_plan(PlanId id, uint32_t ttl, uint64_t now) {
     if (!configured_ || !config_.member) return {AdmissionCode::unauthorized, "remote activation requires a member slice"};
-    for (auto& p : ports_) if (p.authority_expired && p.identity < 15) {
-        const cec::Frame poll{{static_cast<uint8_t>((p.identity << 4) | p.identity)}, 1};
-        if (p.bus->transmit(poll, 1) != cec::TxResult::Nack || p.bus->transmit(poll, 1) != cec::TxResult::Nack)
-            return {AdmissionCode::unauthorized, "expired CEC identity was claimed by another peer"};
-    }
+    bool identities_ready = true;
+    for (auto& p : ports_) identities_ready = identity_available(p) && identities_ready;
+    if (!identities_ready) return {AdmissionCode::overloaded, "expired CEC identity validation is pending"};
     auto result = coordinator_.activate_remote_plan(id, ttl, now);
     if (result) for (auto& p : ports_) for (const auto& policy : coordinator_.policies()) if (policy.port == p.key) {
         p.authority_expired = false; p.bus->install_receive_policy({true, policy.owned_logical_address.value_or(15)});
@@ -630,11 +706,9 @@ AdmissionResult LiveSystem::activate_remote_plan(PlanId id, uint32_t ttl, uint64
 }
 AdmissionResult LiveSystem::renew_remote_authority(PlanId id, SessionId session, uint64_t generation, uint32_t ttl, uint64_t now) {
     if (!configured_ || !config_.member) return {AdmissionCode::unauthorized, "authority renewal requires a member slice"};
-    for (auto& p : ports_) if (p.authority_expired && p.identity < 15) {
-        const cec::Frame poll{{static_cast<uint8_t>((p.identity << 4) | p.identity)}, 1};
-        if (p.bus->transmit(poll, 1) != cec::TxResult::Nack || p.bus->transmit(poll, 1) != cec::TxResult::Nack)
-            return {AdmissionCode::unauthorized, "expired CEC identity was claimed by another peer"};
-    }
+    bool identities_ready = true;
+    for (auto& p : ports_) identities_ready = identity_available(p) && identities_ready;
+    if (!identities_ready) return {AdmissionCode::overloaded, "expired CEC identity validation is pending"};
     auto result = coordinator_.renew_remote_authority(id, session, generation, ttl, now);
     if (result) for (auto& p : ports_) for (const auto& policy : coordinator_.policies()) if (policy.port == p.key && policy.authority_expires_at_ms > now) {
         p.authority_expired = false; p.bus->install_receive_policy({true, policy.owned_logical_address.value_or(15)});

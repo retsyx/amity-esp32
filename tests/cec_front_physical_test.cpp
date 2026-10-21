@@ -138,6 +138,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
         return present ? cec::TxResult::Success : cec::TxResult::Nack;
     };
     fixture_send = [&](int gpio, const cec::Frame &frame) {
+        if (frame.size == 1) return true;
         if (gpio == 2 && frame.destination() == 4 && frame.data[1] == 0x83) {
             back_report_requested = true;
             if (!ack_only && reported) fixture_incoming.push_back({2, physical_report(4, delayed_avr ? 0x2300 : reported)});
@@ -152,6 +153,11 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     };
     fixture_delay = [&] {
         if (!delayed_queued) return;
+        const bool back_polling_finished = std::any_of(fixture_transmitted.begin(), fixture_transmitted.end(),
+            [](const auto &sent) {
+                return sent.gpio == 2 && sent.frame.source() != sent.frame.destination() && sent.frame.destination() == 14;
+            });
+        if (!back_polling_finished) return;
         assert(!saw_front_announcement);
         for (const auto &poll : fixture_transmitted) assert(poll.gpio != 1);
         // The AVR reply arrives after all back polling, during the response
@@ -162,7 +168,15 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     amity::HubService service;
     assert(service.start(1, 2, 0x5000) == ESP_OK);
     assert(service.snapshot().front_physical_address == 0xffff);
+    // A pending allocation probe must leave the owner free to apply incoming
+    // commands. Discovery continues only after its own completion arrives.
+    fixture_async_autocomplete = false;
     assert(service.configure({{"Watch", "", "", "", "", 0}})); run_one_command();
+    assert(service.snapshot().activities.size() == 1 && !fixture_pending.empty());
+    assert(service.snapshot().front_physical_address == 0xffff);
+    fixture_async_autocomplete = true;
+    fixture_complete_all();
+    fixture_finish_discovery(service);
     const auto expected = ack_only || !reported ? 0x5000 : reported;
     const auto state = service.snapshot();
     assert(state.ready && !state.discovering && state.front_physical_address == expected);
@@ -178,7 +192,9 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
         active |= carries_physical(sent.frame, 0x82, expected);
     }
     assert(identity && active && service.snapshot().front_physical_address == expected);
+    const auto generation = service.snapshot().discovery_generation;
     assert(service.discover()); run_one_command();
+    fixture_finish_discovery(service, generation);
     assert(service.snapshot().front_physical_address == expected);
     fixture_send = {}; fixture_transmit = {}; fixture_delay = {};
 }
@@ -200,6 +216,7 @@ static void service_without_back_logical_address() {
                cec::TxResult::Success : cec::TxResult::Nack;
     };
     fixture_send = [&](int gpio, const cec::Frame &frame) {
+        if (frame.size == 1) return true;
         if (gpio == 2) {
             // Physical-address replies are broadcast, so this query remains
             // valid from logical address 15. Directed-reply metadata queries
@@ -216,10 +233,36 @@ static void service_without_back_logical_address() {
     };
     amity::HubService service; assert(service.start(1, 2, 0x1000) == ESP_OK);
     assert(service.configure({})); run_one_command();
+    fixture_finish_discovery(service);
     const auto state = service.snapshot();
     assert(state.front_physical_address == 0x6000 && state.front_address < 15 && state.back_address == 15);
     assert(!state.ready && !state.discovering && requested && announced);
     fixture_send = {}; fixture_transmit = {};
+}
+
+static void service_claim_requires_two_nacks() {
+    reset_wire();
+    unsigned back_zero = 0, back_fourteen = 0, front_four = 0, front_eight = 0;
+    fixture_transmit = [&](int gpio, const cec::Frame &frame) {
+        if (frame.source() != frame.destination()) return cec::TxResult::Nack;
+        if (gpio == 2 && frame.destination() == 0) {
+            ++back_zero; return cec::TxResult::LineError;
+        }
+        if (gpio == 2 && frame.destination() == 14) {
+            ++back_fourteen; return cec::TxResult::Nack;
+        }
+        if (gpio == 1 && frame.destination() == 4) {
+            return ++front_four == 1 ? cec::TxResult::Nack : cec::TxResult::ArbitrationLost;
+        }
+        assert(gpio == 1 && frame.destination() == 8);
+        ++front_eight; return cec::TxResult::Nack;
+    };
+    amity::HubService service; assert(service.start(1, 2) == ESP_OK);
+    assert(service.configure({})); run_one_command(); fixture_finish_discovery(service);
+    const auto state = service.snapshot();
+    assert(state.ready && state.back_address == 14 && state.front_address == 8);
+    assert(back_zero == 1 && back_fourteen == 2 && front_four == 2 && front_eight == 2);
+    fixture_transmit = {};
 }
 
 int main() {
@@ -231,5 +274,6 @@ int main() {
     service_boot(0); // No physical-address replies.
     service_boot(0x2000, true); // Present device ACKs but supplies no metadata.
     service_without_back_logical_address();
+    service_claim_requires_two_nacks();
     std::puts("Front physical-address selection, boot ordering, fallback, identity, and pinning tests passed");
 }

@@ -71,10 +71,11 @@ public:
     void announce(BusSide side);
     bool select_activity(int index);
     bool press_key(uint8_t key, bool repeat = false);
+    // Admit the operand-free final release when this recipient's last held
+    // key ends. Releasing one raw key never changes another key's state.
+    bool release_key(uint8_t key);
+    // Activity changes and explicit global cancellation release every key.
     bool release_key();
-    // End the normalized button state. Dispatch of the stream's operand-free
-    // final release remains independent, and precedes a subsequent press.
-    void end_key_stream();
     void tick(uint64_t now_us);
     void standby();
     void force_standby();
@@ -103,6 +104,7 @@ private:
     void active_source();
     void identity(BusSide side, const cec::Frame &frame);
     void request_audio_status();
+    bool audio_key_held() const;
     Transport &transport_;
     std::vector<Activity> activities_;
     std::vector<Device> devices_;
@@ -116,15 +118,16 @@ private:
     uint8_t front_ = 15, back_ = 15;
     uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff;
     bool playing_ = false;
-    bool key_held_ = false;
-    bool held_audio_ = false;
-    bool release_pending_ = false;
+    struct HeldKey {
+        uint8_t raw_key, key;
+        BusSide bus;
+        uint8_t address;
+        bool audio;
+    };
+    std::vector<HeldKey> held_keys_;
     bool audio_query_pending_ = false;
     uint64_t now_us_ = 0, audio_query_due_ = 0;
     bool audio_status_known_ = false, muted_ = false;
     uint8_t volume_ = 127;
-    BusSide held_bus_ = BusSide::Back;
-    uint8_t held_address_ = 15;
-    uint8_t held_raw_key_ = 0xff, held_key_ = 0xff;
 };
 }
