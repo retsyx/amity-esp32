@@ -164,7 +164,7 @@ void input_task(void *) {
         auto &pending_swipes=*static_cast<amity::SwipeSequence *>(context);
         if(command.type==ble::RemoteCommandType::Release) {
             pending_swipes.cancel();
-            return hub.release_key();
+            return hub.release_key(static_cast<uint8_t>(command.value));
         }
         // Check the reservation as well as the published generation. The hub
         // checks generation again on dequeue for a transition racing this call.
@@ -178,20 +178,23 @@ void input_task(void *) {
         case ble::RemoteCommandType::PowerShort:
             pending_swipes.cancel();return hub.request_activity(command.stamp.target<0?0:-1)==ESP_OK;
         case ble::RemoteCommandType::PowerLong:
-            pending_swipes.cancel();return hub.request_activity(command.stamp.target)==ESP_OK;
+            pending_swipes.cancel();return hub.repair_activity()==ESP_OK;
         case ble::RemoteCommandType::Swipe:
             pending_swipes.add(static_cast<uint8_t>(command.value),command.count,command.stamp.generation);return true;
         case ble::RemoteCommandType::Release:break;
         }
         return false;
     },&swipes);
+    controller.set_wait_for_release(esp_timer_get_time());
+    controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
     ble::AtomicInputAdapter atomic(controller);
     ble::SiriInputAdapter siri(controller);
     amity::VolumeSequence volume_sequence;
     uint16_t siri_logged_buttons=0;
     ESP_LOGI("remote_input","Key press/release logging enabled");
     auto sync_activity=[&] {
-        if(controller.synchronize(hub.activity_generation(),hub.activity_target())) {
+        const bool selected=controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
+        if(controller.synchronize(hub.activity_generation(),hub.activity_target())||selected) {
             swipes.cancel();siri.activity_changed();
         }
     };

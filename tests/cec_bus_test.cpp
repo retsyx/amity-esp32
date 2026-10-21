@@ -123,23 +123,22 @@ static void capacity_and_overflow() {
     for (unsigned i = 0; i < 8; ++i) assert(bus.send(broadcast));
     assert(!bus.idle() && !bus.send(broadcast));
     assert(!bus.send(release)); // Opcode alone never grants overflow admission.
-    assert(bus.send_guarded(broadcast, {}, 1000, 1, true)); // Flag is opcode agnostic.
+    assert(bus.send_guarded(broadcast, {}, 1, true)); // Flag is opcode agnostic.
     const auto denied_at = now;
-    cec::TxResult result = cec::TxResult::Success;
-    assert(!bus.send_guarded(release, {}, 1000, 3, true));
-    assert(!bus.send_and_wait_guarded(release, {}, 1000, 3, &result, true));
-    assert(result == cec::TxResult::Pending && now == denied_at); // Full ninth drops, never waits.
+    cec::TxCompletion completion; completion.result.store(cec::TxResult::Success);
+    assert(!bus.send_guarded(release, {}, 3, true));
+    assert(!bus.send_async_guarded(release, {}, completion, 3, true));
+    assert(completion.result.load() == cec::TxResult::Success && now == denied_at); // Full ninth drops, never waits.
     assert(!bus.send(broadcast));
-    step();
-    assert(bus.transmit_guarded(broadcast, {nullptr, 0, nullptr, 0, now}) == cec::TxResult::Expired);
     pump();
     assert(bus.idle() && bus.statistics().transmitted == 9 && starts[1] == 9);
     pump(); assert(starts[1] == 9); // A dropped release has no hidden retry/backlog.
-    // An explicit ordinary CEC admission wait retains the consort API policy.
     for (unsigned i = 0; i < 8; ++i) assert(bus.send(broadcast));
-    assert(bus.send(broadcast, 1000)); pump();
-    assert(bus.statistics().transmitted == 18 && bus.idle());
-    std::puts("PASS FIFO eight normal / ninth flagged / later immediate drop / explicit bounded wait");
+    const auto full_at = now;
+    assert(!bus.send(broadcast) && !bus.send_guarded(broadcast, {}));
+    assert(now == full_at); // No public admission path waits for capacity.
+    pump(); assert(bus.statistics().transmitted == 17 && bus.idle());
+    std::puts("PASS FIFO eight normal / ninth flagged / every full admission rejects immediately");
 }
 static void active_slot_is_reserved() {
     cec::Bus bus; assert(bus.start(2) == ESP_OK);
@@ -150,8 +149,8 @@ static void active_slot_is_reserved() {
         inspected = true; assert(!bus.idle());
         for (unsigned i = 0; i < 7; ++i) assert(bus.send(broadcast));
         assert(!bus.send(broadcast));
-        assert(bus.send_guarded(broadcast, {}, 0, 1, true));
-        assert(!bus.send_guarded(release, {}, 1000, 3, true));
+        assert(bus.send_guarded(broadcast, {}, 1, true));
+        assert(!bus.send_guarded(release, {}, 3, true));
     };
     pump(); before_tick = {};
     assert(inspected && bus.idle() && bus.statistics().transmitted == 9);
@@ -163,85 +162,171 @@ static void all_public_paths_and_attempts() {
         const auto prior = starts[3]; action(); pump(); assert(starts[3] - prior == expected);
     };
     attempts(3, [&] { assert(bus.send(press)); });
-    attempts(1, [&] { assert(bus.send_guarded(press, {}, 0, 1)); });
-    attempts(3, [&] { assert(bus.send_guarded(press, {}, 0, 3)); }); // No opcode attempt policy.
+    attempts(1, [&] { assert(bus.send_guarded(press, {}, 1)); });
+    attempts(3, [&] { assert(bus.send_guarded(press, {}, 3)); }); // No opcode attempt policy.
     attempts(3, [&] { assert(bus.send(release)); });
-    attempts(1, [&] { assert(bus.send_and_wait(press)); });
-    cec::TxResult result = cec::TxResult::Pending;
-    attempts(1, [&] { assert(bus.send_and_wait_guarded(press, {}, 0, 1, &result)); });
-    assert(result == cec::TxResult::Nack); // Legacy bool means admitted/completed, not ACK.
-    attempts(1, [&] { assert(bus.send_and_wait_guarded(broadcast, {}, 0, 1, &result)); });
-    assert(result == cec::TxResult::Success);
-    attempts(3, [&] { assert(bus.transmit(press, 3) == cec::TxResult::Nack); });
-    attempts(2, [&] { assert(bus.transmit_guarded(press, {}, 2) == cec::TxResult::Nack); });
+    cec::TxCompletion completion;
+    attempts(1, [&] { assert(bus.send_async_guarded(press, {}, completion)); });
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
+    attempts(1, [&] { assert(bus.send_async_guarded(broadcast, {}, completion)); });
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Success);
+    attempts(3, [&] { assert(bus.send_async_guarded(press, {}, completion, 3)); });
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
+    attempts(2, [&] { assert(bus.send_async_guarded(press, {}, completion, 2)); });
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
     const auto transmitted = bus.statistics().transmitted;
     assert(bus.send(broadcast));
-    assert(bus.transmit(press, 1) == cec::TxResult::Nack);
-    assert(bus.statistics().transmitted == transmitted + 1); // transmit waited behind the FIFO head.
+    assert(bus.send_async_guarded(press, {}, completion)); pump();
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
+    assert(bus.statistics().transmitted == transmitted + 1); // Completion follows the FIFO head.
     const auto prior = starts[3];
-    assert(!bus.send_guarded(press, {}, 0, 0) && !bus.send_and_wait(press, 0, 0));
-    assert(bus.transmit(press, 0) == cec::TxResult::LineError);
+    assert(!bus.send_guarded(press, {}, 0) && !bus.send_async_guarded(press, {}, completion, 0));
     const cec::Frame empty{};
-    assert(!bus.send(empty) && !bus.send_and_wait(empty) && bus.transmit(empty) == cec::TxResult::LineError);
+    assert(!bus.send(empty) && !bus.send_async_guarded(empty, {}, completion));
+    assert(completion.result.load() == cec::TxResult::Nack);
     pump(); assert(starts[3] == prior);
-    std::puts("PASS all public send paths FIFO / caller attempt budgets / terminal result / invalid admission");
+    std::puts("PASS all public admission paths FIFO / caller attempt budgets / terminal result / invalid admission");
 }
 static void guard_boundaries() {
     cec::Bus bus; assert(bus.start(4) == ESP_OK);
     std::atomic<uint32_t> generation{1}, secondary{1};
     cec::ExecutionFence fence{&generation, 1, &secondary, 1};
-    assert(bus.send_guarded(press, fence, 0, 1));
+    cec::TxCompletion completion;
+    assert(bus.send_async_guarded(press, fence, completion));
     generation = 2; pump(); assert(starts[4] == 0 && bus.idle());
-    assert(!bus.send_guarded(press, fence) && !bus.send_and_wait_guarded(press, fence));
-    assert(bus.transmit_guarded(press, fence) == cec::TxResult::Cancelled);
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Cancelled);
+    assert(!bus.send_guarded(press, fence) && !bus.send_async_guarded(press, fence, completion));
+    assert(completion.result.load() == cec::TxResult::Cancelled);
     generation = 1;
     external_pointer = &generation;
-    assert(!bus.send_guarded(press, fence));
-    assert(bus.transmit_guarded(press, fence) == cec::TxResult::LineError);
+    assert(!bus.send_guarded(press, fence) && !bus.send_async_guarded(press, fence, completion));
     external_pointer = nullptr;
     cec::ExecutionFence misaligned{reinterpret_cast<const std::atomic<uint32_t>*>(reinterpret_cast<uintptr_t>(&generation) + 1), 1};
-    assert(!bus.send_guarded(press, misaligned));
-    // A queued guard expires without generating an edge, including transmit().
+    assert(!bus.send_guarded(press, misaligned) && !bus.send_async_guarded(press, misaligned, completion));
+    // A queued guard expires without generating an edge.
     fence.expires_at_us = now + 1;
-    assert(bus.send_guarded(press, fence)); step(); pump(); assert(starts[4] == 0);
-    assert(bus.transmit_guarded(press, fence) == cec::TxResult::Expired);
+    assert(bus.send_async_guarded(press, fence, completion)); step(); pump();
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Expired && starts[4] == 0);
     fence.expires_at_us = 0;
     external_low = uint64_t{1} << 4;
     unsigned ticks = 0;
     before_tick = [&] { if (++ticks == 5) secondary = 2; };
-    cec::TxResult result = cec::TxResult::Pending;
-    assert(!bus.send_and_wait_guarded(press, fence, 0, 3, &result));
+    assert(bus.send_async_guarded(press, fence, completion, 3)); pump();
     before_tick = {}; external_low = 0;
-    assert(result == cec::TxResult::Cancelled && starts[4] == 0);
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Cancelled && starts[4] == 0);
     secondary = 1;
     // After the actual first edge a frame is allowed to finish; revoked authority
     // prevents a later attempt instead of truncating the electrical waveform.
     const auto prior = starts[4];
     before_tick = [&] { if (starts[4] > prior) generation = 2; };
-    assert(!bus.send_and_wait_guarded(press, fence, 0, 3, &result));
+    assert(bus.send_async_guarded(press, fence, completion, 3)); pump();
     before_tick = {};
-    assert(result == cec::TxResult::Cancelled && starts[4] == prior + 1);
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Cancelled && starts[4] == prior + 1);
     generation = 1;
     const auto success_prior = starts[4];
     before_tick = [&] { if (starts[4] > success_prior) generation = 2; };
-    assert(bus.send_and_wait_guarded(broadcast, fence, 0, 3, &result));
+    assert(bus.send_async_guarded(broadcast, fence, completion, 3)); pump();
     before_tick = {};
-    assert(result == cec::TxResult::Success && starts[4] == success_prior + 1);
+    assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Success && starts[4] == success_prior + 1);
     std::puts("PASS queued/first-edge/retry guard and expiry / internal aligned counters / in-flight waveform finishes");
 }
 static void independent_buses() {
     cec::Bus a, b; assert(a.start(5) == ESP_OK && b.start(6) == ESP_OK);
     for (unsigned i = 0; i < 8; ++i) { assert(a.send(broadcast)); assert(b.send(broadcast)); }
     assert(!a.send(broadcast) && !b.send(broadcast));
-    assert(a.send_guarded(release, {}, 0, 1, true));
-    assert(b.send_guarded(release, {}, 0, 1, true));
+    assert(a.send_guarded(release, {}, 1, true));
+    assert(b.send_guarded(release, {}, 1, true));
     pump(); assert(a.idle() && b.idle());
     assert(a.statistics().transmitted == 8 && b.statistics().transmitted == 8);
     std::puts("PASS each wire owns its FIFO and completion accounting");
 }
+static void asynchronous_capacity_and_completion() {
+    cec::Bus bus; assert(bus.start(7) == ESP_OK);
+    std::array<cec::TxCompletion, 8> completed;
+    const auto admitted_at = now;
+    const auto prior_starts = starts[7];
+    for (auto &completion : completed) {
+        completion.result.store(cec::TxResult::Success);
+        assert(bus.send_async_guarded(broadcast, {}, completion));
+        assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Pending);
+    }
+    assert(now == admitted_at && starts[7] == prior_starts && !bus.idle());
+    cec::TxCompletion rejected;
+    rejected.result.store(cec::TxResult::Nack);
+    assert(!bus.send_async_guarded(broadcast, {}, rejected));
+    assert(rejected.result.load() == cec::TxResult::Nack && now == admitted_at);
+    bool refilled = false;
+    before_tick = [&] {
+        if (refilled || completed[0].result.load(std::memory_order_acquire) == cec::TxResult::Pending) return;
+        refilled = true;
+        assert(completed[0].result.load() == cec::TxResult::Success);
+        assert(completed[1].result.load() == cec::TxResult::Pending);
+        // Seeing completion guarantees that the first operation's capacity has
+        // already been returned, even while the following frame is on the wire.
+        const auto queued_at = now;
+        assert(bus.send_async_guarded(broadcast, {}, rejected));
+        assert(rejected.result.load() == cec::TxResult::Pending && now == queued_at);
+    };
+    pump(); before_tick = {};
+    assert(refilled && bus.idle() && starts[7] == prior_starts + 9);
+    for (auto &completion : completed) assert(completion.result.load(std::memory_order_acquire) == cec::TxResult::Success);
+    assert(rejected.result.load(std::memory_order_acquire) == cec::TxResult::Success);
+    // A completed tracker is reusable, and failed admission does not reset it.
+    assert(!bus.send_async_guarded({}, {}, rejected));
+    assert(!bus.send_async_guarded(press, {}, rejected, 0));
+    assert(rejected.result.load() == cec::TxResult::Success);
+    assert(bus.send_async_guarded(press, {}, rejected)); pump();
+    assert(rejected.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
+    std::puts("PASS async zero-wait admission / individual completion / capacity released before publication / tracker reuse");
+}
+static void asynchronous_terminal_outcomes() {
+    cec::Bus bus; assert(bus.start(8) == ESP_OK);
+    cec::TxCompletion acknowledged, failed, cancelled, expired;
+    std::atomic<uint32_t> generation{1};
+    assert(bus.send_async_guarded(broadcast, {}, acknowledged));
+    assert(bus.send_async_guarded(press, {}, failed, 2));
+    assert(bus.send_async_guarded(press, {&generation, 1}, cancelled));
+    assert(bus.send_async_guarded(press, {nullptr, 0, nullptr, 0, now + 1}, expired));
+    generation = 2; step(); pump();
+    assert(acknowledged.result.load(std::memory_order_acquire) == cec::TxResult::Success);
+    assert(failed.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
+    assert(cancelled.result.load(std::memory_order_acquire) == cec::TxResult::Cancelled);
+    assert(expired.result.load(std::memory_order_acquire) == cec::TxResult::Expired);
+    assert(starts[8] == 3 && bus.idle());
+    assert(bus.statistics().transmitted == 1 && bus.statistics().tx_errors == 1);
+    const auto rejected_at = now;
+    assert(!bus.send_async_guarded(press, {&generation, 1}, acknowledged));
+    assert(acknowledged.result.load() == cec::TxResult::Success && now == rejected_at);
+    std::puts("PASS async success/failure/cancellation/expiry remain independent / caller attempt budget");
+}
+static void asynchronous_admission_during_transmission() {
+    cec::Bus a, b; assert(a.start(9) == ESP_OK && b.start(10) == ESP_OK);
+    cec::TxCompletion active, same_wire, other_wire;
+    assert(a.send_async_guarded(press, {}, active));
+    bool admitted = false;
+    before_tick = [&] {
+        if (admitted || !starts[9]) return;
+        admitted = true;
+        assert(active.result.load(std::memory_order_acquire) == cec::TxResult::Pending);
+        const auto queued_at = now;
+        assert(a.send_async_guarded(broadcast, {}, same_wire));
+        assert(b.send_async_guarded(broadcast, {}, other_wire));
+        assert(now == queued_at);
+        assert(same_wire.result.load() == cec::TxResult::Pending);
+        assert(other_wire.result.load() == cec::TxResult::Pending);
+    };
+    pump(); before_tick = {};
+    assert(admitted && a.idle() && b.idle());
+    assert(active.result.load(std::memory_order_acquire) == cec::TxResult::Nack);
+    assert(same_wire.result.load(std::memory_order_acquire) == cec::TxResult::Success);
+    assert(other_wire.result.load(std::memory_order_acquire) == cec::TxResult::Success);
+    assert(starts[9] == 2 && starts[10] == 1);
+    std::puts("PASS async admission during outstanding ACK / same-wire FIFO / independent bus completions");
+}
 int main() {
     capacity_and_overflow(); active_slot_is_reserved(); all_public_paths_and_attempts();
-    guard_boundaries(); independent_buses();
+    guard_boundaries(); independent_buses(); asynchronous_capacity_and_completion();
+    asynchronous_terminal_outcomes(); asynchronous_admission_during_transmission();
     assert(tasks.empty() && timers.empty() && output_low == 0);
     std::puts("CEC actual Bus/Engine driver tests PASS (ASan/UBSan)");
 }

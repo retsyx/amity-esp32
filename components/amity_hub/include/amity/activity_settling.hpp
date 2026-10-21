@@ -65,7 +65,10 @@ public:
         }
     }
     void received(BusSide side, const cec::Frame &frame, uint8_t own, uint64_t now) {
-        if (!active(now) || preparing_ || frame.size < 2 || frame.size > 16 || frame.source() >= 15) return;
+        // Replies can arrive while other setup messages are still awaiting TX.
+        // Collect them immediately; finish() starts quiet time after the final
+        // admitted setup message completes.
+        if (!active(now) || frame.size < 2 || frame.size > 16 || frame.source() >= 15) return;
         const auto old_size = replies_.size();
         replies_.erase(std::remove_if(replies_.begin(), replies_.end(), [&](const Reply &r) {
             if (r.peer.side != side || r.peer.address != frame.source()) return false;

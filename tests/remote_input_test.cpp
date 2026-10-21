@@ -14,7 +14,7 @@
 
 using T = ble::RemoteCommandType;
 using Pair = std::pair<T, int>;
-enum class Key { Up, Down, Volume, Power, Shortcut };
+enum class Key { Up, Down, Volume, Power, Shortcut, Right };
 struct Fixture {
     ble::RemoteProfile profile;
     std::vector<ble::RemoteCommand> events;
@@ -25,8 +25,11 @@ struct Fixture {
     ble::RemoteInputController policy;
     ble::AtomicInputAdapter atomic;
     ble::SiriInputAdapter siri;
-    explicit Fixture(ble::RemoteProfile p, uint8_t offset = 4)
-        : profile(p), policy(output, this, offset), atomic(policy), siri(policy) { policy.synchronize(generation, target); }
+    explicit Fixture(ble::RemoteProfile p, uint8_t offset = 4, bool startup_complete = true)
+        : profile(p), policy(output, this, offset), atomic(policy), siri(policy) {
+        policy.synchronize(generation, target);
+        if (startup_complete) policy.tick(ble::RemoteInputController::wait_for_release_us);
+    }
     static bool output(ble::RemoteCommand command, void *context) {
         auto &self = *static_cast<Fixture *>(context);
         self.events.push_back(command);
@@ -43,8 +46,8 @@ struct Fixture {
         siri.buttons(data, sizeof(data), at);
     }
     void key_at(Key key, bool down, ble::InputStamp at) {
-        constexpr uint16_t usages[] = {0x52, 0x51, 0x80, 0x66, 0x3a};
-        constexpr uint16_t bits[] = {0x200, 0x800, 2, 0x10, 8};
+        constexpr uint16_t usages[] = {0x52, 0x51, 0x80, 0x66, 0x3a, 0x4f};
+        constexpr uint16_t bits[] = {0x200, 0x800, 2, 0x10, 8, 0x400};
         const auto i = static_cast<size_t>(key);
         if (profile == ble::RemoteProfile::Atomic) atomic.input(7, usages[i], down, at);
         else raw_siri(down ? mask | bits[i] : mask & ~bits[i], at);
@@ -116,7 +119,7 @@ static void queued_reports(ble::RemoteProfile profile) {
     f.expect({});
     f.key(Key::Volume, true, 600);
     f.key(Key::Volume, false, 700);
-    f.expect({{T::Release, 0}, {T::Press, 0x41}, {T::Release, 0}, {T::Press, 1}});
+    f.expect({{T::Press, 0x41}, {T::Release, 0x41}});
     f.key(Key::Up, false, 800);
     f.events.clear();
     f.sync(2, 2); // Reserved target advances before the published generation.
@@ -139,7 +142,7 @@ static void cancellation(ble::RemoteProfile profile) {
     f.events.clear();
     f.key(Key::Up, true, 500); // First genuine new press recovers after a dropped up.
     f.key(Key::Up, false, 600);
-    f.expect({{T::Press, 1}, {T::Release, 0}});
+    f.expect({{T::Press, 1}, {T::Release, 1}});
     f.events.clear();
     f.key(Key::Power, false, 1000000);
     f.expect({}); // No pending power action survived cancellation.
@@ -173,7 +176,7 @@ static void admissions_and_repairs(ble::RemoteProfile profile) {
     f.events.clear();
     f.key(Key::Down, true, 700);
     f.key(Key::Down, false, 800);
-    f.expect({{T::Press, 2}, {T::Release, 0}});
+    f.expect({{T::Press, 2}, {T::Release, 2}});
     f.events.clear();
     // Same-target repairs do not necessarily publish a new generation.
     if (profile == ble::RemoteProfile::Siri) f.key(Key::Power, true, 1000);
@@ -184,7 +187,7 @@ static void admissions_and_repairs(ble::RemoteProfile profile) {
     f.events.clear();
     f.key(Key::Down, true, 1400);
     f.key(Key::Down, false, 1500);
-    f.expect({{T::Press, 2}, {T::Release, 0}});
+    f.expect({{T::Press, 2}, {T::Release, 2}});
     f.events.clear();
     f.key(Key::Power, true, 2000);
     f.key(Key::Power, false, 502000);
@@ -192,7 +195,7 @@ static void admissions_and_repairs(ble::RemoteProfile profile) {
     f.events.clear();
     f.key(Key::Up, true, 503000);
     f.key(Key::Up, false, 504000);
-    f.expect({{T::Press, 1}, {T::Release, 0}});
+    f.expect({{T::Press, 1}, {T::Release, 1}});
 }
 
 static void touch_report(Fixture &f, uint16_t remote_time, int x, uint8_t pressure, ble::InputStamp stamp) {
@@ -252,7 +255,211 @@ static void profiles_and_batches() {
     mixed.policy.buttons(ble::RemoteProfile::Siri, &event, 1, mixed.stamp(2));
     event.down = false;
     mixed.policy.buttons(ble::RemoteProfile::Siri, &event, 1, mixed.stamp(3));
-    mixed.expect({{T::Press, 1}, {T::Release, 0}, {T::Press, 0x41}, {T::Release, 0}, {T::Press, 1}});
+    mixed.expect({{T::Press, 1}, {T::Press, 0x41}, {T::Release, 0x41}});
+}
+
+static void independent_holds(ble::RemoteProfile profile) {
+    Fixture f(profile);
+    f.key(Key::Volume, true, 100);
+    f.key(Key::Right, true, 200);
+    f.key(Key::Right, false, 300);
+    f.key(Key::Volume, true, 400); // Repeated state cannot restart the existing hold.
+    f.expect({{T::Press, 0x41}, {T::Press, 4}, {T::Release, 4}});
+    f.key(Key::Volume, false, 500);
+    f.expect({{T::Press, 0x41}, {T::Press, 4}, {T::Release, 4}, {T::Release, 0x41}});
+
+    f.events.clear();
+    f.key(Key::Volume, true, 600);
+    f.key(Key::Right, true, 700);
+    f.cancel(); // Link/queue loss releases every independently active key.
+    f.expect({{T::Press, 0x41}, {T::Press, 4}, {T::Release, 4}, {T::Release, 0x41}});
+
+    if (profile == ble::RemoteProfile::Siri) f.raw_siri(0, f.stamp(800));
+    f.key(Key::Volume, true, 900);
+    f.key(Key::Right, true, 1000);
+    f.events.clear();
+    f.sync(2, 1); // Activity transitions release all old keys and quarantine them.
+    f.expect({{T::Release, 4}, {T::Release, 0x41}});
+    f.events.clear();
+    f.key(Key::Right, false, 1100);
+    f.key(Key::Volume, false, 1200);
+    f.expect({});
+
+    Fixture aliases(profile);
+    const ble::ButtonEvent simultaneous[] = {
+        {20, ble::RemoteButton::VolumeUp, true},
+        {21, ble::RemoteButton::VolumeUp, true},
+        {22, ble::RemoteButton::Right, true},
+    };
+    aliases.policy.buttons(profile, simultaneous, 3, aliases.stamp(100));
+    ble::ButtonEvent release{20, ble::RemoteButton::VolumeUp, false};
+    aliases.policy.buttons(profile, &release, 1, aliases.stamp(200));
+    aliases.expect({{T::Press, 0x41}, {T::Press, 4}}); // One alias still holds volume.
+    release = {22, ble::RemoteButton::Right, false};
+    aliases.policy.buttons(profile, &release, 1, aliases.stamp(300));
+    aliases.expect({{T::Press, 0x41}, {T::Press, 4}, {T::Release, 4}});
+    release = {21, ble::RemoteButton::VolumeUp, false};
+    aliases.policy.buttons(profile, &release, 1, aliases.stamp(400));
+    aliases.expect({{T::Press, 0x41}, {T::Press, 4}, {T::Release, 4}, {T::Release, 0x41}});
+}
+
+static void wait_for_release(ble::RemoteProfile profile) {
+    constexpr uint64_t second = ble::RemoteInputController::wait_for_release_us;
+    Fixture startup(profile, 4, false);
+    assert(startup.policy.waiting_for_release());
+    startup.key(Key::Volume, true, 100);
+    startup.key(Key::Right, true, 200);
+    startup.key(Key::Volume, false, 300);
+    assert(startup.policy.waiting_for_release()); // Right is still physically down.
+    startup.key(Key::Up, true, 400); // Fresh keys are blocked too, not just old holds.
+    startup.key(Key::Right, false, 500);
+    assert(startup.policy.waiting_for_release());
+    startup.key(Key::Up, false, 600);
+    assert(!startup.policy.waiting_for_release());
+    startup.expect({});
+    startup.key(Key::Volume, true, 700);
+    startup.key(Key::Volume, false, 800);
+    startup.expect({{T::Press, 0x41}, {T::Release, 0x41}});
+
+    Fixture timeout(profile, 4, false);
+    timeout.key(Key::Volume, true, 100);
+    timeout.policy.tick(second - 1);
+    assert(timeout.policy.waiting_for_release());
+    timeout.policy.tick(second); // No further report is needed to expire the gate.
+    assert(!timeout.policy.waiting_for_release());
+    timeout.key(Key::Volume, true, second + 1); // The swallowed hold cannot replay.
+    timeout.key(Key::Right, true, second + 2);
+    timeout.key(Key::Right, false, second + 3);
+    timeout.key(Key::Volume, false, second + 4);
+    timeout.expect({{T::Press, 4}, {T::Release, 4}});
+    timeout.key(Key::Volume, true, second + 5);
+    timeout.key(Key::Volume, false, second + 6);
+    timeout.expect({{T::Press, 4}, {T::Release, 4}, {T::Press, 0x41}, {T::Release, 0x41}});
+
+    Fixture external(profile);
+    external.policy.activity_selected(0, second);
+    external.key(Key::Volume, true, second + 1);
+    assert(external.policy.activity_selected(1, second + 2));
+    external.sync(2, 1);
+    external.key(Key::Right, true, second + 3);
+    external.key(Key::Volume, false, second + 4);
+    assert(external.policy.waiting_for_release());
+    external.key(Key::Up, true, second + 5);
+    external.key(Key::Right, false, second + 6);
+    external.key(Key::Up, false, second + 7);
+    assert(!external.policy.waiting_for_release());
+    external.expect({{T::Press, 0x41}, {T::Release, 0x41}});
+    external.key(Key::Right, true, second + 8);
+    external.key(Key::Right, false, second + 9);
+    external.expect({{T::Press, 0x41}, {T::Release, 0x41}, {T::Press, 4}, {T::Release, 4}});
+
+    // A same-target activity selection is a new selection even though its
+    // activity generation and target stay unchanged.
+    assert(external.policy.activity_selected(2, second + 10));
+    external.policy.swipe(ble::RemoteButton::Right, 3, external.stamp(second + 11));
+    external.key(Key::Right, true, second + 12);
+    external.key(Key::Right, false, second + 13);
+    assert(!external.policy.waiting_for_release());
+    external.expect({{T::Press, 0x41}, {T::Release, 0x41}, {T::Press, 4}, {T::Release, 4}});
+    external.policy.swipe(ble::RemoteButton::Right, 1, external.stamp(second + 14));
+    assert(external.events.back().type == T::Swipe && external.events.back().count == 1);
+
+    // Releases still choose activities from standby during the startup guard.
+    Fixture standby(profile, 4, false);
+    standby.sync(1, -1);
+    standby.key(Key::Shortcut, true, 100);
+    standby.key(Key::Shortcut, false, 200);
+    standby.expect({{T::Activity, 0}});
+    assert(!standby.policy.waiting_for_release());
+
+    // Releases are applied before new presses in a report: the final old
+    // release can clear the gate before a genuinely fresh button goes down.
+    Fixture batch(profile, 4, false);
+    ble::ButtonEvent old_down{40, ble::RemoteButton::VolumeUp, true};
+    batch.policy.buttons(profile, &old_down, 1, batch.stamp(100));
+    const ble::ButtonEvent changed[] = {
+        {40, ble::RemoteButton::VolumeUp, false},
+        {41, ble::RemoteButton::Right, true},
+    };
+    batch.policy.buttons(profile, changed, 2, batch.stamp(200));
+    batch.expect({{T::Press, 4}});
+    assert(!batch.policy.waiting_for_release());
+
+    Fixture aliases(profile, 4, false);
+    const ble::ButtonEvent alias_down[] = {
+        {50, ble::RemoteButton::VolumeUp, true},
+        {51, ble::RemoteButton::VolumeUp, true},
+    };
+    aliases.policy.buttons(profile, alias_down, 2, aliases.stamp(100));
+    ble::ButtonEvent alias_up{50, ble::RemoteButton::VolumeUp, false};
+    aliases.policy.buttons(profile, &alias_up, 1, aliases.stamp(200));
+    assert(aliases.policy.waiting_for_release());
+    alias_up.physical = 51;
+    aliases.policy.buttons(profile, &alias_up, 1, aliases.stamp(300));
+    assert(!aliases.policy.waiting_for_release());
+    aliases.expect({});
+
+    // As in Python, Power release is processed even if its down was swallowed.
+    Fixture power(profile, 4, false);
+    power.key(Key::Power, true, 100);
+    power.key(Key::Power, false, 200);
+    power.expect({{T::PowerShort, 0}});
+}
+
+static void selection_gate_actions(ble::RemoteProfile profile) {
+    constexpr uint64_t second = ble::RemoteInputController::wait_for_release_us;
+    Fixture f(profile);
+    f.admit_actions = true;
+    f.policy.activity_selected(0, second);
+    f.key(Key::Volume, true, second + 1);
+    if (profile == ble::RemoteProfile::Siri) f.key(Key::Power, true, second + 2);
+    f.key(Key::Shortcut, true, second + 3);
+    f.key(Key::Shortcut, false, second + 4); // Select the same activity.
+    assert(f.policy.waiting_for_release());
+    f.expect({{T::Press, 0x41}, {T::Release, 0x41}, {T::Activity, 0}});
+    if (profile == ble::RemoteProfile::Siri) f.key(Key::Power, false, second + 5);
+    f.key(Key::Right, true, second + 6);
+    f.key(Key::Volume, false, second + 7);
+    assert(f.policy.waiting_for_release());
+    f.key(Key::Right, false, second + 8);
+    assert(!f.policy.waiting_for_release());
+    // Observing our own accepted request must not re-arm an already cleared gate.
+    assert(!f.policy.activity_selected(1, second + 9));
+    assert(!f.policy.waiting_for_release());
+    f.key(Key::Right, true, second + 10);
+    f.key(Key::Right, false, second + 11);
+    assert(f.events.back().type == T::Release && f.events.back().value == 4);
+
+    // If another client also selected an activity before we observe the
+    // notification, only our own selection is acknowledged; the external
+    // selection still arms its gate.
+    Fixture coalesced(profile);
+    coalesced.admit_actions = true;
+    coalesced.policy.activity_selected(0, second);
+    coalesced.key(Key::Power, true, second + 1);
+    coalesced.key(Key::Power, false, second + 2);
+    assert(!coalesced.policy.waiting_for_release());
+    assert(coalesced.policy.activity_selected(2, second + 3));
+    assert(coalesced.policy.waiting_for_release());
+
+    Fixture rejected(profile);
+    rejected.policy.activity_selected(0, second);
+    rejected.key(Key::Volume, true, second + 1);
+    if (profile == ble::RemoteProfile::Siri) rejected.key(Key::Power, true, second + 2);
+    rejected.key(Key::Shortcut, true, second + 3);
+    rejected.key(Key::Shortcut, false, second + 4);
+    assert(!rejected.policy.waiting_for_release()); // Rejected selection cannot arm it.
+    if (profile == ble::RemoteProfile::Siri) rejected.key(Key::Power, false, second + 5);
+    rejected.key(Key::Right, true, second + 6);
+    assert(rejected.events.back().type == T::Press && rejected.events.back().value == 4);
+
+    Fixture repair(profile);
+    repair.admit_actions = true;
+    repair.policy.activity_selected(0, second);
+    repair.key(Key::Power, true, second + 1);
+    repair.key(Key::Power, false, second + 500001);
+    repair.expect({{T::PowerLong, 0}});
+    assert(!repair.policy.waiting_for_release()); // Python's fix_current_activity path.
 }
 
 int main() {
@@ -261,6 +468,9 @@ int main() {
         queued_reports(profile);
         cancellation(profile);
         admissions_and_repairs(profile);
+        independent_holds(profile);
+        wait_for_release(profile);
+        selection_gate_actions(profile);
     }
     profiles_and_batches();
     touch_generations();

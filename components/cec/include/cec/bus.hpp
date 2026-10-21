@@ -13,6 +13,7 @@
 
 namespace cec {
 struct Statistics { uint32_t transmitted = 0, received = 0, tx_errors = 0, rx_dropped = 0; };
+struct TxCompletion { std::atomic<TxResult> result{TxResult::Pending}; };
 class Bus {
 public:
     Bus();
@@ -20,18 +21,18 @@ public:
     esp_err_t start(int gpio);
     void set_address(uint8_t address);
     // One FIFO per wire: eight queued+active messages and one caller-eligible
-    // overflow slot. Eligible work never waits for capacity and drops at nine.
-    // Ordinary callers may request bounded admission backpressure explicitly.
-    bool send(const Frame &frame, uint32_t timeout_ms = 0);
-    bool send_guarded(const Frame &frame, ExecutionFence fence, uint32_t timeout_ms = 0, unsigned attempts = 3,
-                      bool allow_overflow = false);
-    // Queue in FIFO order and wait for the requested wire attempts to finish. True means
-    // admitted/completed, not acknowledged; failures are counted in statistics.
-    bool send_and_wait(const Frame &frame, uint32_t timeout_ms = 0, unsigned attempts = 1);
-    bool send_and_wait_guarded(const Frame &frame, ExecutionFence fence, uint32_t timeout_ms = 0, unsigned attempts = 1,
-                              TxResult* result = nullptr, bool allow_overflow = false);
-    TxResult transmit(const Frame &frame, unsigned attempts = 3);
-    TxResult transmit_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3);
+    // overflow slot. Admission always returns immediately: ordinary work drops
+    // at eight queued+active messages, caller-eligible overflow work at nine.
+    bool send(const Frame &frame);
+    bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3, bool allow_overflow = false);
+    // Admit immediately without waiting for a wire attempt or acknowledgement.
+    // Rejection leaves completion unchanged. Admission sets it to Pending; the
+    // worker publishes a terminal result with release ordering after freeing its
+    // FIFO slot. Read result with acquire ordering before reusing the tracker.
+    // Caller owns completion until terminal publication, and must not submit it
+    // again, destroy it, or destroy this Bus while that work is outstanding.
+    bool send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion,
+                            unsigned attempts = 1, bool allow_overflow = false);
     bool receive(Frame &frame, uint32_t timeout_ms = 0);
     Statistics statistics() const;
     bool idle() const;
