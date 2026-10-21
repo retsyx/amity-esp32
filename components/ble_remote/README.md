@@ -15,20 +15,67 @@ events and implements its own key-hold behavior.
 
 `AtomicInputAdapter` translates HID usages into common logical button events;
 `SiriInputAdapter` translates Apple's button reports and recognizes touch swipes.
-Both feed one `RemoteInputController` in the application. It owns held-key
-priority, aliases, 500 ms short/long gestures, power and activity shortcuts, and
-cancellation. Siri reports are processed as batches so simultaneous button
+Both feed one `RemoteInputController` in the application. It owns independent
+logical-button holds, aliases, 500 ms short/long gestures, power and activity
+shortcuts, and cancellation. Siri reports are processed as batches so simultaneous button
 changes preserve Power shortcuts. The binding profiles retain Atomic's dedicated
 activity buttons and Siri's standby selectors and Power chords.
 
 Each queued report captures its timestamp, activity generation and reserved
 target. Activity changes quarantine held buttons in the common controller until
 release; stale queued reports cannot resume a key on the new source. Presses
-also carry their generation to the hub for validation when dequeued. The handler
-emits only changes in the held key; the hub repeats each press after the preceding
-CEC transmission attempt finishes, with no repeat timer. Link loss and queue
-overflow cancel the shared controller before synthetic releases, preventing a
-lost remote from completing a pending power/activity gesture or repeating forever.
+also carry their generation to the hub for validation when dequeued. Each
+`RemoteCommand::Press` and `Release` identifies its logical CEC key. Physical
+aliases, such as keyboard and consumer Volume Up usages, share one logical
+press until the last alias releases. Duplicate reports do not create presses.
+Ordinary keys remain held independently: Volume Up down, Right down, Right up
+emits `Press(41)`, `Press(04)`, `Release(04)`; Volume Up continues until its own
+release. No release/repress of Volume Up occurs around the Right interaction.
+
+This matches Python Amity's
+[per-key input state](https://github.com/retsyx/amity/blob/main/main.py#L144-L208)
+and [independent press coroutines](https://github.com/retsyx/amity/blob/main/main.py#L286-L320).
+The hub submits each new key without waiting for another key's CEC ACK.
+Completion permits only that key's next press, with at most one outstanding
+attempt per held key and no repeat timer or queued repeat backlog. Key-up
+removes only its own hold; already admitted CEC frames finish. The hub sends
+operandless CEC release only when all held keys at that receiving device end.
+The complete routing, failure, release-capacity and overload contract is in
+[`amity_hub/README.md`](../amity_hub/README.md).
+
+Activity changes suppress every old held button until physical release.
+Python's [`wait_for_release`](https://github.com/retsyx/amity/blob/main/main.py#L128-L168)
+also gates **new** presses while the selection gesture is being released.
+The input policy starts with this gate armed. Successful activity selections,
+including same-target selections and standby requests from the remote or an
+external controller, arm it again. Configuration replacement does too. A
+rejected request does not arm it. Long Power's `fix_current_activity` repair
+follows Python's separate path and does not arm the selection gate.
+
+While waiting, physical button state and releases are still consumed, but new
+forwarded CEC presses, activity-macro recognition and finite swipe commands are
+discarded. Releases still handle Power and standby activity selection, as in
+Python. The gate clears when the last physical button/alias is released, or
+after a one-second fallback updated by the input task without blocking. A
+swallowed hold stays suppressed until its own release even after the timeout;
+it cannot replay into the selected activity. New presses after expiry work
+normally. A report processes releases before fresh presses, so its final old
+release can clear the gate before a new button goes down. Action-report
+suppression still prevents a new press from leaking out of the same report
+that selected an activity.
+
+`HubService::activity_selection()` reports accepted selections separately from
+`activity_generation`, because same-target selection need not change the latter.
+The input task observes it through `RemoteInputController::activity_selected()`.
+The originating remote action already arms its gate; observing that same
+selection does not re-arm a gate cleared by its final release. This gate only
+filters input admission. It never waits for CEC ACKs or stalls other hub work.
+
+Link loss and queue overflow cancel all logical holds and pending gestures
+before synthetic releases, preventing a lost remote from completing a pending
+power/activity gesture or repeating forever. Siri Power chords retain batch
+suppression so a simultaneous selector does not generate a stray navigation
+press.
 
 The installed IDF 6.1 `esp_hid/src/nimble_hidh.c` cannot be used as the transport:
 its `read_device_services()` nests Report Map processing inside the Device
@@ -88,11 +135,43 @@ before and after `0x0083` are supported. The ATT MTU is negotiated to 527.
 
 While in standby, Siri's Select, Up, Right, Down and Left clicks select activities
 0–4 respectively, on release. Holding for at least 500 ms selects activities
-5–9. With an activity active these buttons navigate normally; Power plus one
-of these buttons selects an activity, as in Python Amity. Short Power selects
-activity 0 from standby or enters standby from an active activity; long Power
-repairs the current target. Home, Back, volume, mute, play/pause and Siri map to
-their CEC controls (Siri sends Display Information).
+5–9. With an activity active these buttons navigate normally. Siri supports the
+fixed Power-button macros from Python Amity's
+[`hub.macros` defaults and long-press map](https://github.com/retsyx/amity/blob/main/main.py#L61-L90):
+
+| Siri macro | Selector held less than 500 ms | Selector held at least 500 ms |
+| --- | --- | --- |
+| Power + Select | Activity 0 | Activity 5 |
+| Power + Up | Activity 1 | Activity 6 |
+| Power + Right | Activity 2 | Activity 7 |
+| Power + Down | Activity 3 | Activity 8 |
+| Power + Left | Activity 4 | Activity 9 |
+
+These macros are available only on the Siri profile and are not configurable.
+Atomic retains its dedicated F1–F4 activity shortcuts; combining its Power and
+direction/Select buttons does not form an activity macro. Indices in the table
+are zero-based; selecting an unconfigured activity is rejected.
+
+Either macro button may be pressed first. The first release of Power or the
+chosen selector executes the macro once; releasing an unrelated key does not.
+The duration is measured from the selector's original press to that first
+macro-button release, regardless of how long Power has been held. Simultaneous
+Power/selector presses are recognized together, without a navigation press.
+When a selector was already navigating before Power was pressed, its ordinary
+hold ends when the macro is recognized.
+
+After execution, macro recognition and standalone Power actions stay consumed
+until **all physical buttons are released**, including any unrelated buttons
+held alongside the macro. This latch survives rejected activity selection and
+the one-second `wait_for_release` fallback. A rejected macro consumes its Power
+and selector buttons but preserves unrelated holds such as Volume Up. Accepted
+activity selection applies the normal held-button quarantine and
+`wait_for_release` gate. Disconnect, input loss and activity changes cancel a
+pending macro; its remaining held buttons cannot complete another action.
+
+Short Power selects activity 0 from standby or enters standby from an active
+activity; long Power repairs the current target. Home, Back, volume, mute,
+play/pause and Siri map to their CEC controls (Siri sends Display Information).
 
 Touch swipes use the Gen 2/3 31 mm, 1370-unit pad, a pressure threshold of 20,
 7 mm step thresholds, primary-axis locking, and release inertia with a
@@ -121,6 +200,14 @@ The tests cover Atomic's complete keyboard mapping, 6KRO and NKRO, consumer
 arrays, bit offsets, duplicate reports, simultaneous report IDs and maps,
 rollover, malformed descriptors, and disconnect releases.
 Siri profile, button, gesture and finite-step policies are also sanitizer-tested.
+`tests/remote_input_test.cpp` covers overlapping Volume Up/Right holds, keyed
+releases, simultaneous aliases, cancellation of all holds, stale reports and
+activity quarantine for both profiles. It also checks all five fixed Siri
+macros at the 500 ms boundary with either press/release order, Siri-only
+recognition, unrelated releases, rejected selection with an independent volume
+hold, and the executed-macro latch through all-buttons-up and timeout.
+`tests/ble_controller_test.cpp` and `tests/siri_remote_test.cpp` retain adapter
+and Power-shortcut coverage, including ordinary input after rejected actions.
 Remote Diagnostics and pairing/unpairing UI states can be checked without a
 device using `python3 tests/web_browser.py --remote-fixture` in the project-local
 Playwright environment.

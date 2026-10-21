@@ -30,22 +30,30 @@ public:
                                     std::function<esp_err_t()> commit);
     // ESP_ERR_TIMEOUT means ignored during settling; same-target repair bypasses it.
     esp_err_t request_activity(int index);
+    // Power-long repair does not enter Python's activity-selection input gate.
+    esp_err_t repair_activity();
+    // Advances on accepted selections/configuration, including same-target
+    // selections, so input can observe them before queued execution completes.
+    uint32_t activity_selection() const;
     int activity_target() const;
     bool select_activity(int index);
-    // repeat=true holds the key: each completed wire attempt permits the next
-    // press, until release or an activity/configuration change cancels it.
+    // Each held key has its own completion-paced continuation. Submission of
+    // other keys and commands never waits for a wire attempt or acknowledgement.
     bool press_key(uint8_t key, bool repeat = false);
     // The worker discards this press if the activity/configuration changed
     // after the originating operation captured its generation. repeat=true
     // starts a held stream with the same cancellation policy as press_key().
     bool press_key_for_activity(uint8_t key, uint32_t activity_generation, bool repeat = false);
     uint32_t activity_generation() const;
+    bool release_key(uint8_t key);
+    // Release every held key (disconnect, input loss, or legacy callers).
     bool release_key();
     bool standby();
     bool discover();
     Snapshot snapshot() const;
     void on_change(std::function<void(const Snapshot &)> callback);
 private:
+    esp_err_t request_activity(int index, bool notify_selection);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

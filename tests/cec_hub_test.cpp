@@ -290,23 +290,24 @@ static void backpressure_tests() {
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
     h.configure({{"Listen", "", "Source", "Source", "", 0}});
     device(h, B, 4, 0x1000, 4, "Source"); h.select_activity(0);
-    // If an accepted press cannot queue its release, the owner tick retries
-    // it; another press must not overwrite the outstanding release.
+    // A final release is attempted once, using the driver's extra slot. If
+    // that slot is full, no future up, tick or new key retries the dropped TX.
     t.sent.clear(); t.reject_opcode = 0x45;
     assert(h.press_key(0)); assert(t.contains(B, 4, {0x44, 0}));
     assert(!t.contains(B, 4, {0x45}));
-    assert(!h.press_key(1)); assert(!t.contains(B, 4, {0x44, 1}));
+    assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
     h.tick(10000); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(20000); assert(t.contains(B, 4, {0x45}));
+    t.reject_opcode = -1; h.tick(20000); assert(!t.contains(B, 4, {0x45}));
     assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
     // Failed initial presses must not toggle the emulated playback state.
     t.sent.clear(); t.reject_opcode = 0x44; assert(!h.press_key(0x61));
     t.reject_opcode = -1; assert(h.press_key(0x61));
     assert(t.contains(B, 4, {0x44, 0x44})); assert(!t.contains(B, 4, {0x44, 0x46}));
-    // Power-on and switch-input releases share the same retry guarantee.
+    // Power-on and switch-input releases are likewise never buffered/retried.
     t.sent.clear(); t.reject_opcode = 0x45; h.fix_current_activity();
     assert(t.contains(B, 4, {0x44, 0x6d})); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(30000); assert(t.contains(B, 4, {0x45}));
+    t.reject_opcode = -1; h.tick(30000); assert(!t.contains(B, 4, {0x45}));
+    t.sent.clear();t.reject_opcode=0x44;h.fix_current_activity();assert(!t.contains(B,4,{0x45}));t.reject_opcode=-1;
     // One long volume adjustment is 100 complete presses, but only one
     // status query after the last press has been quiet for half a second.
     t.sent.clear();
@@ -321,6 +322,93 @@ static void backpressure_tests() {
         if (sent.bytes == std::vector<uint8_t>{0x71}) ++queries;
     }
     assert(presses == 100 && releases == 100 && queries == 1);
+}
+static void independent_key_tests() {
+    const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
+    constexpr uint8_t right = 0x04, volume_up = 0x41, volume_down = 0x42;
+    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
+    h.configure({{"Separate", "", "Source", "Audio", "", 0},
+                 {"Shared", "", "Source", "Source", "", 0}});
+    // The same logical address on different buses is still two recipients.
+    device(h, B, 5, 0x1000, 4, "Source");
+    device(h, F, 5, 0x1000, 5, "Audio");
+    assert(h.select_activity(0)); h.tick(1000); t.sent.clear();
+    assert(h.press_key(volume_up, true));
+    assert(h.press_key(right, true));
+    assert(t.sent.size() == 2);
+    assert(t.count(F, 5, {0x44, volume_up}) == 1);
+    assert(t.count(B, 5, {0x44, right}) == 1);
+    assert(!t.contains(F, 5, {0x45}) && !t.contains(B, 5, {0x45}));
+    assert(h.release_key(right));
+    assert(t.count(B, 5, {0x45}) == 1 && !t.contains(F, 5, {0x45}));
+    assert(h.press_key(volume_up, true));
+    h.tick(600000);
+    assert(t.count(F, 5, {0x44, volume_up}) == 2 && !t.contains(F, 5, {0x71}));
+    assert(h.release_key(volume_up)); // Release is admitted immediately.
+    assert(t.count(F, 5, {0x45}) == 1);
+    h.tick(1099999); assert(!t.contains(F, 5, {0x71}));
+    h.tick(1100000); assert(t.count(F, 5, {0x71}) == 1);
+    assert(h.release_key(right) && h.release_key(volume_up));
+    assert(t.count(B, 5, {0x45}) == 1 && t.count(F, 5, {0x45}) == 1);
+
+    // CEC releases carry no key operand. Ending either key at a shared
+    // recipient must leave the other held, until the final key ends.
+    assert(h.select_activity(1)); h.tick(2000000); t.sent.clear();
+    assert(h.press_key(volume_up, true) && h.press_key(right, true));
+    assert(h.release_key(right)); assert(!t.contains(B, 5, {0x45}));
+    assert(h.press_key(volume_up, true)); assert(h.release_key(volume_up));
+    assert(t.count(B, 5, {0x45}) == 1);
+    t.sent.clear();
+    assert(h.press_key(right, true) && h.press_key(volume_up, true));
+    assert(h.release_key(volume_up)); assert(!t.contains(B, 5, {0x45}));
+    h.tick(2499999); assert(!t.contains(B, 5, {0x71}));
+    // Audio status can refresh after the audio key ends while Right remains
+    // held, even when both keys share their recipient.
+    h.tick(2500000); assert(t.count(B, 5, {0x71}) == 1);
+    assert(h.press_key(right, true) && h.release_key(right));
+    assert(t.count(B, 5, {0x45}) == 1);
+
+    // One-shot commands cannot release another held key. Multiple audio
+    // holds gate the coalesced query until the last audio key has ended.
+    h.tick(3000000); t.sent.clear();
+    assert(h.press_key(right, true)); assert(h.press_key(volume_up));
+    assert(!t.contains(B, 5, {0x45}));
+    assert(h.press_key(volume_up, true) && h.press_key(volume_down, true));
+    assert(h.release_key(volume_up)); h.tick(4000000);
+    assert(!t.contains(B, 5, {0x71}) && !t.contains(B, 5, {0x45}));
+    assert(h.release_key(volume_down));
+    h.tick(4499999); assert(!t.contains(B, 5, {0x71}));
+    h.tick(4500000); assert(t.count(B, 5, {0x71}) == 1);
+    assert(h.release_key()); assert(t.count(B, 5, {0x45}) == 1);
+
+    // A rejected initial press creates no key state that could suppress a
+    // later key's release or change a held toggle's original mapping.
+    t.sent.clear(); t.reject_opcode = 0x44;
+    assert(!h.press_key(volume_up, true)); t.reject_opcode = -1;
+    assert(h.press_key(right, true) && h.release_key(right));
+    assert(t.count(B, 5, {0x45}) == 1);
+    t.sent.clear();
+    assert(h.press_key(0x61, true)); assert(h.press_key(right, true));
+    assert(h.press_key(0x61, true)); assert(h.release_key(right));
+    assert(t.count(B, 5, {0x44, 0x44}) == 2 && !t.contains(B, 5, {0x44, 0x46}));
+    assert(!t.contains(B, 5, {0x45})); assert(h.release_key(0x61));
+    assert(t.count(B, 5, {0x45}) == 1);
+
+    // Re-resolving a held key's device cannot move its repeat or final release.
+    t.sent.clear(); assert(h.press_key(right, true));
+    device(h, B, 8, 0x2000, 4, "Source"); t.sent.clear();
+    assert(h.press_key(right, true) && h.release_key(right));
+    assert(t.count(B, 5, {0x44, right}) == 1 && t.count(B, 5, {0x45}) == 1);
+    assert(!t.contains(B, 8, {0x44, right}) && !t.contains(B, 8, {0x45}));
+    t.sent.clear(); assert(h.press_key(right));
+    assert(t.count(B, 8, {0x44, right}) == 1 && t.count(B, 8, {0x45}) == 1);
+
+    // Activity changes still terminate every independent hold once per recipient.
+    assert(h.select_activity(0)); t.sent.clear();
+    assert(h.press_key(volume_up, true) && h.press_key(right, true));
+    assert(h.select_activity(-1));
+    assert(t.count(F, 5, {0x45}) == 1 && t.count(B, 8, {0x45}) == 1);
+    t.sent.clear(); assert(h.release_key()); assert(t.sent.empty());
 }
 static void volume_sequence_tests() {
     amity::VolumeSequence volume;
@@ -363,6 +451,6 @@ static void volume_sequence_tests() {
     assert(hub.snapshot().activity_generation == hub.activity_generation());
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();
+    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); independent_key_tests(); volume_sequence_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

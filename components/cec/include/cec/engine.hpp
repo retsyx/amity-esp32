@@ -7,6 +7,7 @@
  */
 
 #pragma once
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #ifdef ESP_PLATFORM
@@ -23,7 +24,23 @@ struct Frame {
     uint8_t source() const { return data[0] >> 4; }
     uint8_t destination() const { return data[0] & 15; }
 };
-enum class TxResult : uint8_t { Pending, Success, Nack, ArbitrationLost, LineError, Timeout };
+enum class TxResult : uint8_t { Pending, Success, Nack, ArbitrationLost, LineError, Timeout, Cancelled, Expired };
+
+// Local task/ISR fencing only. The stable generation must outlive every queued
+// and in-flight operation. Firmware requires it to reside in internal RAM.
+struct ExecutionFence {
+    const std::atomic<uint32_t> *generation = nullptr;
+    uint32_t expected_generation = 0;
+    const std::atomic<uint32_t> *secondary_generation = nullptr;
+    uint32_t expected_secondary_generation = 0;
+    uint64_t expires_at_us = 0; // Receiver clock; zero is reserved for matching cleanup/legacy.
+};
+// Xtensa does not report all atomic read/modify/write operations lock-free,
+// but an aligned 32-bit acquire load is inline. Audit the target load's IRAM
+// relocations; never substitute a wider atomic here.
+static_assert(sizeof(std::atomic<uint32_t>) == sizeof(uint32_t));
+static_assert(alignof(std::atomic<uint32_t>) >= alignof(uint32_t));
+bool CEC_IRAM fence_current(ExecutionFence fence);
 
 // Allocation-free wire state machine. Call tick at <= 50 us intervals. All
 // timestamps are monotonic microseconds. The returned value means pull LOW;
@@ -31,7 +48,7 @@ enum class TxResult : uint8_t { Pending, Success, Nack, ArbitrationLost, LineErr
 class Engine {
 public:
     void set_address(uint8_t address) { address_ = address < 15 ? address : 15; }
-    bool begin(const Frame &frame, uint64_t now, bool retry = false);
+    bool begin(const Frame &frame, uint64_t now, bool retry = false, ExecutionFence fence = {});
     bool CEC_IRAM tick(uint64_t now, bool line_high);
     bool CEC_IRAM take_received(Frame &frame);
     TxResult CEC_IRAM take_result();
@@ -48,6 +65,7 @@ private:
     uint64_t ack_until_ = 0;
     Frame rx_{}, received_{};
     Frame tx_{};
+    ExecutionFence tx_fence_{};
     bool pending_ = false, transmitting_ = false, tx_sampled_ = false;
     uint64_t requested_ = 0, tx_start_ = 0;
     uint32_t free_time_ = 12000;

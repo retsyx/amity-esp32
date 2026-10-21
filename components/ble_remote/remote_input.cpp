@@ -34,6 +34,9 @@ bool RemoteInputController::emit(RemoteCommandType type, int value, uint8_t coun
 
 void RemoteInputController::suppress_held() {
     for (auto &key : held_) if (key.down) key.suppressed = true;
+    // A cancelled chord cannot turn into a second chord before all buttons
+    // release, even after wait_for_release's fallback has expired.
+    if (macro_selector_ >= 0) macro_executed_ = true;
     macro_selector_ = macro_power_ = -1;
     reconcile();
 }
@@ -50,38 +53,85 @@ bool RemoteInputController::synchronize(uint32_t generation, int target) {
     return changed;
 }
 
+void RemoteInputController::tick(uint64_t now) {
+    if (now > now_) now_ = now;
+    if (wait_for_release_ && now_ >= wait_until_) wait_for_release_ = false;
+}
+
+void RemoteInputController::set_wait_for_release(uint64_t now) {
+    tick(now);
+    wait_for_release_ = true;
+    wait_until_ = now_ + wait_for_release_us;
+}
+
+bool RemoteInputController::activity_selected(uint32_t selection, uint64_t now) {
+    tick(now);
+    if (!selection_initialized_) {
+        selection_initialized_ = true;
+        selection_ = selection;
+        local_selection_pending_ = false;
+        return false;
+    }
+    if (selection == selection_) return false;
+    const bool own_selection = local_selection_pending_ && selection == selection_ + uint32_t{1};
+    selection_ = selection;
+    local_selection_pending_ = false;
+    if (own_selection) {
+        // The originating release report already armed the gate and may have
+        // cleared it by releasing the last button. Do not arm it a second time.
+        return false;
+    }
+    set_wait_for_release(now);
+    suppress_held();
+    return true;
+}
+
 bool RemoteInputController::accepts(InputStamp stamp) const {
-    return initialized_ && !transition_pending_ && stamp.generation == generation_ && stamp.target == target_;
+    return initialized_ && !transition_pending_ && !wait_for_release_ &&
+        stamp.generation == generation_ && stamp.target == target_;
 }
 
 void RemoteInputController::reconcile() {
-    int latest = -1;
+    std::array<int8_t, 256> sources;
+    sources.fill(-1);
     if (active() && !transition_pending_) for (size_t i = 0; i < held_.size(); ++i) {
         const auto &key = held_[i];
-        if (!key.down || key.suppressed || key.button == RemoteButton::Power ||
+        if (!key.down || key.suppressed || key.wait_blocked || key.button == RemoteButton::Power ||
             shortcut(key.button) >= 0 || static_cast<int>(i) == macro_selector_) continue;
-        if (latest < 0 || held_[static_cast<size_t>(latest)].order < key.order) latest = static_cast<int>(i);
+        const auto button = static_cast<size_t>(key.button);
+        if (button < sources.size() && sources[button] < 0) sources[button] = static_cast<int8_t>(i);
     }
-    const int next = latest < 0 ? -1 : static_cast<int>(held_[static_cast<size_t>(latest)].button);
-    if (next == current_key_) return; // Aliases retain one hold until the last usage releases.
-    if (current_key_ >= 0) emit(RemoteCommandType::Release);
-    current_key_ = next;
-    if (next >= 0) {
+    // Each logical key owns its hold. Releasing one button cannot cancel or
+    // restart another, including when the buttons route to different devices.
+    for (size_t button = 0; button < current_keys_.size(); ++button) {
+        if (!current_keys_[button] || sources[button] >= 0) continue;
+        emit(RemoteCommandType::Release, static_cast<int>(button));
+        current_keys_[button] = false;
+    }
+    for (size_t i = 0; i < held_.size(); ++i) {
+        const auto button = static_cast<size_t>(held_[i].button);
+        if (button >= sources.size() || sources[button] != static_cast<int8_t>(i) || current_keys_[button]) continue;
         const auto saved_stamp = report_stamp_;
-        report_stamp_ = held_[static_cast<size_t>(latest)].stamp;
-        if (!emit(RemoteCommandType::Press, next)) current_key_ = -1;
+        report_stamp_ = held_[i].stamp;
+        current_keys_[button] = emit(RemoteCommandType::Press, static_cast<int>(button));
         report_stamp_ = saved_stamp;
     }
 }
 
 void RemoteInputController::action(RemoteCommandType type, int value) {
-    report_action_ = true;
-    suppress_held();
     const bool changes_target = type == RemoteCommandType::PowerShort ||
         (type == RemoteCommandType::Activity && value != target_);
-    // Same-target repairs may never advance the generation. Only an actual
-    // transition needs to block fresh reports until its reservation is visible.
-    if (emit(type, value) && changes_target) transition_pending_ = true;
+    if (emit(type, value)) {
+        report_action_ = true;
+        suppress_held();
+        // A successful same-target activity selection needs this gate too.
+        // Power-long only repairs the current activity in the Python reference.
+        if (type == RemoteCommandType::Activity || type == RemoteCommandType::PowerShort) {
+            set_wait_for_release(now_);
+            local_selection_pending_ = true;
+        }
+        if (changes_target) transition_pending_ = true;
+    }
 }
 
 void RemoteInputController::release(size_t index, bool stale) {
@@ -94,12 +144,23 @@ void RemoteInputController::release(size_t index, bool stale) {
     const bool suppressed = key.suppressed || stale || transition_pending_;
     key.down = false;
     if (suppressed) return;
+    if (macro_executed_) return;
+    // Waiting suppresses forwarded presses and macro recognition, but releases
+    // still drive Power and standby activity selection, as in Python.
+    if (key.wait_blocked && active() && button != RemoteButton::Power) return;
     const bool long_press = report_stamp_.timestamp >= started && report_stamp_.timestamp - started >= long_press_us;
     if (macro_selector_ >= 0) {
         if (static_cast<int>(index) != macro_selector_ && static_cast<int>(index) != macro_power_) return;
         const auto &function = held_[static_cast<size_t>(macro_selector_)];
         const auto macro_start = static_cast<int>(index) == macro_selector_ ? started : function.stamp.timestamp;
         const bool long_macro = report_stamp_.timestamp >= macro_start && report_stamp_.timestamp - macro_start >= long_press_us;
+        // The two macro buttons are consumed regardless of activity admission.
+        // Other held keys survive a rejected selection. Keep the executed
+        // latch until every physical button is up, as in Python's in_macro.
+        held_[static_cast<size_t>(macro_selector_)].suppressed = true;
+        held_[static_cast<size_t>(macro_power_)].suppressed = true;
+        macro_selector_ = macro_power_ = -1;
+        macro_executed_ = true;
         action(RemoteCommandType::Activity, selector(function.button) + (long_macro ? profile.long_activity_offset : 0));
     } else if (shortcut(button) >= 0) {
         action(RemoteCommandType::Activity, shortcut(button) + (long_press ? profile.long_activity_offset : 0));
@@ -114,6 +175,7 @@ void RemoteInputController::release(size_t index, bool stale) {
 void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *events, size_t count, InputStamp stamp) {
     if (!events && count) return;
     if (!initialized_) synchronize(stamp.generation, stamp.target);
+    tick(stamp.timestamp);
     report_stamp_ = stamp;
     report_action_ = false;
     const bool stale = stamp.generation != generation_ || stamp.target != target_;
@@ -125,21 +187,32 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
             if (!entry.down && !empty) empty = &entry;
         }
         if (!event.down) {
-            if (key) release(static_cast<size_t>(key - held_.data()), stale);
+            if (key) {
+                release(static_cast<size_t>(key - held_.data()), stale);
+                if (!key->down) {
+                    bool down = false;
+                    for (const auto &held : held_) down = down || held.down;
+                    if (!down) {
+                        wait_for_release_ = false;
+                        macro_executed_ = false;
+                        macro_selector_ = macro_power_ = -1;
+                    }
+                }
+            }
         } else if (!key) {
             if (!empty) { cancel(); return; }
-            *empty = Held{true, stale || transition_pending_ || report_action_, profile,
-                          event.physical, event.button, stamp, ++order_};
+            *empty = Held{true, stale || transition_pending_ || report_action_, wait_for_release_, profile,
+                          event.physical, event.button, stamp};
         }
     }
-    if (macro_selector_ < 0 && active() && bindings(profile).power_chords && !transition_pending_) {
+    if (macro_selector_ < 0 && !macro_executed_ && active() && bindings(profile).power_chords && !transition_pending_) {
         for (size_t i = 0; i < held_.size(); ++i) {
             const auto &power = held_[i];
-            if (!power.down || power.suppressed || power.profile != profile || power.button != RemoteButton::Power) continue;
+            if (!power.down || power.suppressed || power.wait_blocked || power.profile != profile || power.button != RemoteButton::Power) continue;
             for (int choice = 0; choice < 5 && macro_selector_ < 0; ++choice)
                 for (size_t j = 0; j < held_.size(); ++j) {
                     const auto &key = held_[j];
-                    if (key.down && !key.suppressed && key.profile == profile && selector(key.button) == choice) {
+                    if (key.down && !key.suppressed && !key.wait_blocked && key.profile == profile && selector(key.button) == choice) {
                         macro_selector_ = static_cast<int>(j);
                         macro_power_ = static_cast<int>(i);
                         break;
@@ -152,6 +225,7 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
 }
 
 void RemoteInputController::swipe(RemoteButton direction, uint8_t count, InputStamp stamp) {
+    tick(stamp.timestamp);
     if (!count || direction < RemoteButton::Up || direction > RemoteButton::Right || !active() || !accepts(stamp)) return;
     for (const auto &key : held_) if (key.down) return;
     report_stamp_ = stamp;
@@ -163,6 +237,7 @@ void RemoteInputController::cancel() {
     // missing queued release must not leave an owner-task hold stuck forever.
     for (auto &key : held_) key = {};
     macro_selector_ = macro_power_ = -1;
+    macro_executed_ = false;
     reconcile();
 }
 } // namespace ble

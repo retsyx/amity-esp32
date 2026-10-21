@@ -30,6 +30,8 @@ struct ButtonEvent {
 enum class RemoteCommandType { Press, Release, Activity, PowerShort, PowerLong, Swipe };
 struct RemoteCommand {
     RemoteCommandType type;
+    // Press and Release identify the logical CEC key. Aliased physical usages
+    // share one press until their last usage releases.
     int value = 0;
     uint8_t count = 0;
     InputStamp stamp{};
@@ -44,6 +46,12 @@ public:
         : callback_(callback), context_(context), atomic_long_activity_offset_(atomic_long_activity_offset) {}
     // Includes reserved-target changes before publication, and active -> active.
     bool synchronize(uint32_t generation, int target);
+    // Successful activity selections (including same-target selections) gate
+    // fresh input until every button is up, with Python's one-second fallback.
+    bool activity_selected(uint32_t selection, uint64_t now);
+    void set_wait_for_release(uint64_t now);
+    void tick(uint64_t now);
+    bool waiting_for_release() const { return wait_for_release_; }
     void buttons(RemoteProfile profile, const ButtonEvent *events, size_t count, InputStamp stamp);
     void swipe(RemoteButton direction, uint8_t count, InputStamp stamp);
     // Cancel actions after link/queue loss; adapters retain physical state so
@@ -52,23 +60,27 @@ public:
     bool accepts(InputStamp stamp) const;
     bool active() const { return target_ >= 0; }
     static constexpr uint64_t long_press_us = 500000;
+    static constexpr uint64_t wait_for_release_us = 1000000;
 private:
     struct Held {
-        bool down = false, suppressed = false;
+        bool down = false, suppressed = false, wait_blocked = false;
         RemoteProfile profile = RemoteProfile::Atomic;
         uint32_t physical = 0;
         RemoteButton button = RemoteButton::Select;
         InputStamp stamp{};
-        uint64_t order = 0;
     };
     std::array<Held, 32> held_{};
+    std::array<bool, 256> current_keys_{};
     Callback callback_;
     void *context_;
     uint8_t atomic_long_activity_offset_;
-    uint64_t order_ = 0;
     uint32_t generation_ = 0;
-    int target_ = -1, current_key_ = -1, macro_selector_ = -1, macro_power_ = -1;
+    int target_ = -1, macro_selector_ = -1, macro_power_ = -1;
+    bool macro_executed_ = false;
     bool initialized_ = false, transition_pending_ = false, report_action_ = false;
+    bool wait_for_release_ = true, selection_initialized_ = false, local_selection_pending_ = false;
+    uint32_t selection_ = 0;
+    uint64_t now_ = 0, wait_until_ = wait_for_release_us;
     InputStamp report_stamp_{};
     bool emit(RemoteCommandType type, int value = 0, uint8_t count = 0);
     void suppress_held();

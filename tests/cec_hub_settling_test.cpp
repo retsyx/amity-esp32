@@ -12,7 +12,7 @@ int main() {
     fixture_present = true;
     amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
     assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
-                          {"Second", "TV", "Source", "Source", "", 0}})); run_one_command();
+                          {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
     // Reserve before the owner runs; a competing change cannot queue behind it.
     assert(hub.request_activity(0) == ESP_OK);
     assert(hub.activity_target() == 0);
@@ -20,15 +20,22 @@ int main() {
     assert(hub.request_activity(-1) == ESP_ERR_TIMEOUT);
     assert(!hub.press_key(0x40)); // Raw CEC power cannot bypass the guard.
     assert(hub.request_activity(0) == ESP_OK); // Repair can queue behind initial setup.
-    fixture_waited.clear(); run_one_command();
+    fixture_completed.clear(); fixture_async_autocomplete = false; run_one_command();
     assert(hub.snapshot().current_activity == 0 && hub.snapshot().activity_settling);
-    assert(!fixture_waited.empty()); // Setup waits for real completion, not queue admission.
-    fixture_tick = 0; // Control the quiet-period boundaries precisely after setup.
+    assert(fixture_completed.empty() && !fixture_pending.empty());
+    fixture_tick = 0;
+    fixture_time += 10000000;
+    assert(hub.snapshot().activity_settling && hub.request_activity(1) == ESP_ERR_TIMEOUT);
+    // Elapsed quiet time cannot finish setup while its admitted CEC frames
+    // still await completion. The owner remains available for the repair.
+    fixture_complete_all(); fixture_async_autocomplete = true; run_one_command();
+    assert(!fixture_completed.empty() && fixture_pending.empty());
+    assert(hub.snapshot().activity_settling);
     cec::Frame source; source.size = 4; source.data[0] = 0x4f; source.data[1] = 0x82; source.data[2] = 0x10;
     cec::Frame audio; audio.size = 3; audio.data[0] = 0x40; audio.data[1] = 0x7a; audio.data[2] = 30;
     fixture_incoming.push_back({2, source}); fixture_incoming.push_back({2, audio});
     const auto reserved = fixture_time;
-    run_one_command();
+    run_idle(1);
     assert(hub.request_activity(1) == ESP_ERR_TIMEOUT);
     assert(hub.request_activity(-1) == ESP_ERR_TIMEOUT);
     fixture_time += 4000000;
@@ -55,7 +62,7 @@ int main() {
     fixture_tick = 100000; run_one_command(); fixture_tick = 0;
     assert(hub.snapshot().current_activity == 0);
     // Configuration replacement is administrative and clears stale reservations.
-    assert(hub.configure({{"Replacement", "TV", "Source", "Source", "", 0}})); run_one_command();
+    assert(hub.configure({{"Replacement", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
     assert(hub.request_activity(0) == ESP_OK);
     fixture_tick = 100000; run_one_command(); fixture_tick = 0;
     assert(hub.snapshot().current_activity == 0);

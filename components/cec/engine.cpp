@@ -9,9 +9,16 @@
 #include "cec/engine.hpp"
 
 namespace cec {
-bool Engine::begin(const Frame &frame, uint64_t now, bool retry) {
-    if (busy() || frame.size == 0 || frame.size > 16) return false;
+bool fence_current(ExecutionFence fence) {
+    return (!fence.generation || fence.generation->load(std::memory_order_acquire) == fence.expected_generation) &&
+        (!fence.secondary_generation ||
+         fence.secondary_generation->load(std::memory_order_acquire) == fence.expected_secondary_generation);
+}
+bool Engine::begin(const Frame &frame, uint64_t now, bool retry, ExecutionFence fence) {
+    if (busy() || frame.size == 0 || frame.size > 16 || !fence_current(fence) ||
+        (fence.expires_at_us && now >= fence.expires_at_us)) return false;
     tx_ = frame;
+    tx_fence_ = fence;
     pending_ = true;
     requested_ = now;
     free_time_ = retry ? 7200 : 16800;
@@ -96,7 +103,11 @@ bool Engine::tick(uint64_t now, bool high) {
     last_tick_ = now;
     receive_tick(now, high);
     if (pending_) {
-        if (now - requested_ > 1000000) fail(TxResult::Timeout);
+        // Recheck at the actual first wire edge, after arbitrary bus free-time
+        // waits. In-flight frames finish normally; they cannot be unsent.
+        if (tx_fence_.expires_at_us && now >= tx_fence_.expires_at_us) fail(TxResult::Expired);
+        else if (!fence_current(tx_fence_)) fail(TxResult::Cancelled);
+        else if (now - requested_ > 1000000) fail(TxResult::Timeout);
         else if (high && !receiving_ && now - high_since_ >= free_time_) {
             pending_ = false;
             transmitting_ = true;
