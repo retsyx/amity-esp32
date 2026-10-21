@@ -20,11 +20,10 @@ public:
     ~Bus();
     esp_err_t start(int gpio);
     void set_address(uint8_t address);
-    // One FIFO per wire: eight queued+active messages and one caller-eligible
-    // overflow slot. Admission always returns immediately: ordinary work drops
-    // at eight queued+active messages, caller-eligible overflow work at nine.
+    // One FIFO per wire: eight queued+active messages, including releases.
+    // Admission always returns immediately; full-FIFO drops are logged.
     bool send(const Frame &frame);
-    bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3, bool allow_overflow = false);
+    bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3);
     // Admit immediately without waiting for a wire attempt or acknowledgement.
     // Rejection leaves completion unchanged. Admission sets it to Pending; the
     // worker publishes a terminal result with release ordering after freeing its
@@ -32,7 +31,7 @@ public:
     // Caller owns completion until terminal publication, and must not submit it
     // again, destroy it, or destroy this Bus while that work is outstanding.
     bool send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion,
-                            unsigned attempts = 1, bool allow_overflow = false);
+                            unsigned attempts = 1);
     bool receive(Frame &frame, uint32_t timeout_ms = 0);
     Statistics statistics() const;
     bool idle() const;

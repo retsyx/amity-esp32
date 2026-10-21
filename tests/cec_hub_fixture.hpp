@@ -36,7 +36,7 @@ static int idle_passes = -1;
 static std::vector<unsigned> idle_waits;
 static std::function<void()> fixture_delay;
 static std::vector<cec::Frame> fixture_completed;
-struct SentFrame { int gpio; cec::Frame frame; unsigned attempts = 3; bool allow_overflow = false; uint32_t timeout_ms = 0; };
+struct SentFrame { int gpio; cec::Frame frame; unsigned attempts = 3; uint32_t timeout_ms = 0; };
 static std::vector<SentFrame> fixture_sent;
 static std::vector<SentFrame> fixture_transmitted;
 static std::deque<SentFrame> fixture_incoming;
@@ -116,7 +116,7 @@ Bus::~Bus() {
 esp_err_t Bus::start(int gpio) { impl_->gpio = gpio; return ESP_OK; }
 void Bus::set_address(uint8_t address) { impl_->address = address; }
 bool Bus::send(const Frame &frame) {
-    fixture_sent.push_back({impl_->gpio, frame, 3, false, 0});
+    fixture_sent.push_back({impl_->gpio, frame, 3, 0});
     if (fixture_admission && !fixture_admission(impl_->gpio,frame)) return false;
     if (fixture_send) return fixture_send(impl_->gpio, frame);
     const uint8_t peer = impl_->gpio == 1 ? 0 : 4;
@@ -158,20 +158,19 @@ static bool current_fence(ExecutionFence fence) {
     return (!fence.generation || fence.generation->load()==fence.expected_generation) &&
         (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation);
 }
-bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts,bool allow_overflow) {
+bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts) {
     if(!attempts||!current_fence(fence))return false;
     const auto index=fixture_sent.size();const bool accepted=send(frame);
-    fixture_sent[index].attempts=attempts;fixture_sent[index].allow_overflow=allow_overflow;
+    fixture_sent[index].attempts=attempts;
     return accepted;
 }
-bool Bus::send_async_guarded(const Frame& frame,ExecutionFence fence,TxCompletion& completion,unsigned attempts,bool allow_overflow) {
+bool Bus::send_async_guarded(const Frame& frame,ExecutionFence fence,TxCompletion& completion,unsigned attempts) {
     if (!frame.size || frame.size > 16 || !attempts || !current_fence(fence)) return false;
     const auto index = fixture_sent.size();
     const bool accepted = send(frame);
     fixture_sent[index].attempts = attempts;
-    fixture_sent[index].allow_overflow = allow_overflow;
     if (!accepted) return false;
-    if (frame.size == 1) fixture_transmitted.push_back({impl_->gpio, frame, attempts, allow_overflow, 0});
+    if (frame.size == 1) fixture_transmitted.push_back({impl_->gpio, frame, attempts, 0});
     completion.result.store(TxResult::Pending, std::memory_order_relaxed);
     fixture_pending.push_back({this, impl_->gpio, frame, fence, &completion});
     if (fixture_async_autocomplete) fixture_complete_next(TxResult::Pending, impl_->gpio);

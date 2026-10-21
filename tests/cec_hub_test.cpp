@@ -290,7 +290,7 @@ static void backpressure_tests() {
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
     h.configure({{"Listen", "", "Source", "Source", "", 0}});
     device(h, B, 4, 0x1000, 4, "Source"); h.select_activity(0);
-    // A final release is attempted once, using the driver's extra slot. If
+    // A final release is attempted once, using the shared driver FIFO. If
     // that slot is full, no future up, tick or new key retries the dropped TX.
     t.sent.clear(); t.reject_opcode = 0x45;
     assert(h.press_key(0)); assert(t.contains(B, 4, {0x44, 0}));

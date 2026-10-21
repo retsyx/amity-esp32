@@ -209,8 +209,8 @@ bool Hub::release_key(uint8_t key) {
     const bool recipient_held = std::any_of(held_keys_.begin(), held_keys_.end(),
         [&ended](const HeldKey &h) { return h.bus == ended.bus && h.address == ended.address; });
     const bool admitted = recipient_held || send(ended.bus, ended.address, {0x45});
-    // The final-release decision is consumed even when the ninth driver slot
-    // is occupied. No later tick, up or new key retries a dropped release.
+    // The final-release decision is consumed even when the driver FIFO is full.
+    // No later tick, up or new key retries a dropped release.
     if (ended.audio && admitted) {
         audio_query_pending_ = true;
         audio_query_due_ = now_us_ + 500000;

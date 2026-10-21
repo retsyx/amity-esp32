@@ -28,13 +28,13 @@ The hub's runtime commands, held keys, activity setup, discovery and
 address-allocation paths all use nonblocking submissions. Frames that do not
 need completion tracking also use immediate admission. A one-byte
 poll can use one attempt for logical-address allocation/discovery. Every
-profile has one TX FIFO per wire, with eight normal
-slots plus one release-only overflow slot. This is the only outgoing-frame
+profile has one TX FIFO per wire, with eight queued-plus-active
+slots shared by all frames, including releases. This is the only outgoing-frame
 buffer; the executor submits directly without another queue.
-Ordinary submissions reject at eight queued-plus-active messages. An explicit
-caller overflow flag permits one message in slot nine; the executor supplies it
-only for release. At nine, further releases are dropped without an executor
-admission retry. CEC applies the flag mechanically without inspecting opcodes.
+All submissions reject when eight messages are already queued or active.
+Every frame dropped because the FIFO is full is logged at warning level with
+the wire's GPIO and complete frame bytes. A dropped release is consumed without
+an executor admission retry. There is no reserved release capacity.
 
 CEC has no button state, key retry policy, repeat loop or release authority.
 It sends the exact supplied frames with supplied attempt budgets and generic

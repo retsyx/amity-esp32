@@ -111,15 +111,16 @@ missing metadata defer until the relevant discovery completes; known-device
 operations continue. Command admission is separate from successful CEC queue
 admission or transmission.
 
-Outgoing frames live solely in CEC's per-wire FIFO: eight normal queued-plus-active
-slots and a ninth overflow slot available only for supplied releases. Every
+Outgoing frames live solely in CEC's per-wire FIFO: eight queued-plus-active
+slots shared by all frames, including releases. Every
 key-press frame gets one wire attempt. A failed admission or TX ends only its
 key's hold and makes one final-cleanup decision; unchanged down reports cannot
 restart it. A later physical up does not duplicate cleanup. Final release and
 ordinary commands use up to three wire attempts. Release admission is immediate:
-slot nine is allowed, but a release submitted at nine is dropped and consumed.
+at eight queued-plus-active messages, a release is dropped and consumed.
+Each TX dropped because the FIFO is full is logged with its GPIO and full frame bytes.
 No later tick or capacity change retries that admission, including power-quirk
-and switch-key cleanup. CEC applies supplied attempt budgets and overflow flags
+and switch-key cleanup. CEC applies supplied attempt budgets
 without interpreting button policy. The
 [hub component README](../components/amity_hub/README.md) also documents
 per-key and release-all emergency epochs used only when the command queue is

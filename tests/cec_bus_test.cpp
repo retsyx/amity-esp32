@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <string>
 #include <vector>
 
 // The production Bus worker and ISR run against a deterministic 50-us clock.
@@ -25,6 +27,15 @@ static std::array<unsigned, 64> starts{}, low_edges{};
 static std::vector<Task *> tasks;
 static std::vector<FakeTimer *> timers;
 static std::function<void()> before_tick;
+static std::vector<std::string> drop_logs;
+void test_cec_log(const char *tag, const char *format, ...) {
+    assert(std::strcmp(tag, "cec") == 0);
+    char message[256];
+    va_list args; va_start(args, format);
+    std::vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    drop_logs.emplace_back(message);
+}
 static void step() {
     now += 50;
     if (before_tick) before_tick();
@@ -118,27 +129,41 @@ static const cec::Frame broadcast{{0x4f, 0x85}, 2};
 static const cec::Frame press{{0x40, 0x44, 0x41}, 3};
 static const cec::Frame release{{0x40, 0x45}, 2};
 
-static void capacity_and_overflow() {
+static void capacity_and_drop_logging() {
     cec::Bus bus; assert(bus.start(1) == ESP_OK && bus.idle());
+    const auto prior_logs = drop_logs.size();
     for (unsigned i = 0; i < 8; ++i) assert(bus.send(broadcast));
+    assert(drop_logs.size() == prior_logs);
     assert(!bus.idle() && !bus.send(broadcast));
-    assert(!bus.send(release)); // Opcode alone never grants overflow admission.
-    assert(bus.send_guarded(broadcast, {}, 1, true)); // Flag is opcode agnostic.
+    assert(drop_logs.back() == "TX dropped: FIFO full (GPIO 1, 2 bytes: 4f 85)");
+    assert(!bus.send(release));
+    assert(drop_logs.back() == "TX dropped: FIFO full (GPIO 1, 2 bytes: 40 45)");
     const auto denied_at = now;
     cec::TxCompletion completion; completion.result.store(cec::TxResult::Success);
-    assert(!bus.send_guarded(release, {}, 3, true));
-    assert(!bus.send_async_guarded(release, {}, completion, 3, true));
-    assert(completion.result.load() == cec::TxResult::Success && now == denied_at); // Full ninth drops, never waits.
-    assert(!bus.send(broadcast));
+    assert(!bus.send_guarded(release, {}, 3));
+    assert(!bus.send_async_guarded(release, {}, completion, 3));
+    assert(completion.result.load() == cec::TxResult::Success && now == denied_at);
+    assert(!bus.send_guarded(press, {}, 1));
+    assert(drop_logs.back() == "TX dropped: FIFO full (GPIO 1, 3 bytes: 40 44 41)");
+    cec::Frame longest; longest.size = 16;
+    for (unsigned i = 0; i < longest.size; ++i) longest.data[i] = i;
+    assert(!bus.send(longest));
+    assert(drop_logs.back() == "TX dropped: FIFO full (GPIO 1, 16 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)");
+    const cec::Frame poll{{0x44}, 1};
+    assert(!bus.send(poll));
+    assert(drop_logs.back() == "TX dropped: FIFO full (GPIO 1, 1 bytes: 44)");
+    assert(drop_logs.size() == prior_logs + 7 && now == denied_at);
     pump();
-    assert(bus.idle() && bus.statistics().transmitted == 9 && starts[1] == 9);
-    pump(); assert(starts[1] == 9); // A dropped release has no hidden retry/backlog.
+    assert(bus.idle() && bus.statistics().transmitted == 8 && starts[1] == 8);
+    pump(); assert(starts[1] == 8); // A dropped release has no hidden retry/backlog.
     for (unsigned i = 0; i < 8; ++i) assert(bus.send(broadcast));
     const auto full_at = now;
     assert(!bus.send(broadcast) && !bus.send_guarded(broadcast, {}));
     assert(now == full_at); // No public admission path waits for capacity.
-    pump(); assert(bus.statistics().transmitted == 17 && bus.idle());
-    std::puts("PASS FIFO eight normal / ninth flagged / every full admission rejects immediately");
+    assert(drop_logs.size() == prior_logs + 9);
+    pump(); assert(bus.statistics().transmitted == 16 && bus.idle());
+    assert(drop_logs.size() == prior_logs + 9);
+    std::puts("PASS FIFO eight including releases / every full admission drops immediately and logs its wire/frame");
 }
 static void active_slot_is_reserved() {
     cec::Bus bus; assert(bus.start(2) == ESP_OK);
@@ -149,12 +174,11 @@ static void active_slot_is_reserved() {
         inspected = true; assert(!bus.idle());
         for (unsigned i = 0; i < 7; ++i) assert(bus.send(broadcast));
         assert(!bus.send(broadcast));
-        assert(bus.send_guarded(broadcast, {}, 1, true));
-        assert(!bus.send_guarded(release, {}, 3, true));
+        assert(!bus.send_guarded(release, {}, 3));
     };
     pump(); before_tick = {};
-    assert(inspected && bus.idle() && bus.statistics().transmitted == 9);
-    std::puts("PASS queued+active shared capacity / no popped-work idle or overflow bypass");
+    assert(inspected && bus.idle() && bus.statistics().transmitted == 8);
+    std::puts("PASS queued+active shared capacity / no popped-work idle or release bypass");
 }
 static void all_public_paths_and_attempts() {
     cec::Bus bus; assert(bus.start(3) == ESP_OK);
@@ -234,8 +258,12 @@ static void independent_buses() {
     cec::Bus a, b; assert(a.start(5) == ESP_OK && b.start(6) == ESP_OK);
     for (unsigned i = 0; i < 8; ++i) { assert(a.send(broadcast)); assert(b.send(broadcast)); }
     assert(!a.send(broadcast) && !b.send(broadcast));
-    assert(a.send_guarded(release, {}, 1, true));
-    assert(b.send_guarded(release, {}, 1, true));
+    const auto prior_logs = drop_logs.size();
+    assert(!a.send_guarded(release, {}, 1));
+    assert(!b.send_guarded(release, {}, 1));
+    assert(drop_logs.size() == prior_logs + 2);
+    assert(drop_logs[prior_logs] == "TX dropped: FIFO full (GPIO 5, 2 bytes: 40 45)");
+    assert(drop_logs[prior_logs + 1] == "TX dropped: FIFO full (GPIO 6, 2 bytes: 40 45)");
     pump(); assert(a.idle() && b.idle());
     assert(a.statistics().transmitted == 8 && b.statistics().transmitted == 8);
     std::puts("PASS each wire owns its FIFO and completion accounting");
@@ -324,7 +352,7 @@ static void asynchronous_admission_during_transmission() {
     std::puts("PASS async admission during outstanding ACK / same-wire FIFO / independent bus completions");
 }
 int main() {
-    capacity_and_overflow(); active_slot_is_reserved(); all_public_paths_and_attempts();
+    capacity_and_drop_logging(); active_slot_is_reserved(); all_public_paths_and_attempts();
     guard_boundaries(); independent_buses(); asynchronous_capacity_and_completion();
     asynchronous_terminal_outcomes(); asynchronous_admission_during_transmission();
     assert(tasks.empty() && timers.empty() && output_low == 0);

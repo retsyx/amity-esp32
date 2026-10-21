@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_memory_utils.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -19,9 +20,10 @@
 #include "hal/gpio_ll.h"
 #include "soc/gpio_struct.h"
 #include <cstdlib>
+#include <cstdio>
 
 namespace cec {
-constexpr unsigned nominal_tx_capacity = 8, maximum_tx_capacity = 9;
+constexpr unsigned tx_capacity = 8;
 struct Bus::Impl {
     static void *operator new(size_t size) {
         void *memory = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -46,10 +48,9 @@ struct Bus::Impl {
     bool enabled = false, started = false;
     unsigned tx_in_use = 0; // Includes the worker's current message, not just queued work.
 
-    bool reserve_slot(bool allow_overflow) {
+    bool reserve_slot() {
         portENTER_CRITICAL(&lock);
-        const auto limit = allow_overflow ? maximum_tx_capacity : nominal_tx_capacity;
-        if (tx_in_use >= limit) { portEXIT_CRITICAL(&lock); return false; }
+        if (tx_in_use >= tx_capacity) { portEXIT_CRITICAL(&lock); return false; }
         ++tx_in_use;
         portEXIT_CRITICAL(&lock);
         return true;
@@ -60,10 +61,18 @@ struct Bus::Impl {
         --tx_in_use;
         portEXIT_CRITICAL(&lock);
     }
-    bool enqueue(const Work& work, bool allow_overflow) {
+    void log_fifo_full(const Frame& frame) const {
+        char bytes[16 * 3]{};
+        for (size_t i = 0; i < frame.size; ++i)
+            std::snprintf(bytes + 3 * i, sizeof(bytes) - 3 * i, "%02x%s",
+                          unsigned(frame.data[i]), i + 1 == frame.size ? "" : " ");
+        ESP_LOGW("cec", "TX dropped: FIFO full (GPIO %d, %u bytes: %s)",
+                 int(gpio), unsigned(frame.size), bytes);
+    }
+    bool enqueue(const Work& work) {
         if (!started || !work.frame.size || work.frame.size > 16 || !work.attempts) return false;
         if (xSemaphoreTake(admission, 0) != pdTRUE) return false;
-        const bool reserved = reserve_slot(allow_overflow);
+        const bool reserved = reserve_slot();
         // Initialize before the queue is visible to the worker, which may finish
         // before xQueueSend returns on another core. A rejected tracker is never
         // retained by the worker and keeps its previous value.
@@ -75,6 +84,7 @@ struct Bus::Impl {
             free_slot();
         }
         xSemaphoreGive(admission);
+        if (!queued) log_fifo_full(work.frame);
         return queued;
     }
 
@@ -148,7 +158,7 @@ esp_err_t Bus::start(int gpio) {
     if (p.timer) return ESP_ERR_INVALID_STATE;
     if (!GPIO_IS_VALID_OUTPUT_GPIO(gpio)) return ESP_ERR_INVALID_ARG;
     p.gpio = static_cast<gpio_num_t>(gpio);
-    p.rx = xQueueCreate(32, sizeof(Frame)); p.tx = xQueueCreate(maximum_tx_capacity, sizeof(Impl::Work));
+    p.rx = xQueueCreate(32, sizeof(Frame)); p.tx = xQueueCreate(tx_capacity, sizeof(Impl::Work));
     p.result = xQueueCreate(1, sizeof(TxResult));
     p.admission = xSemaphoreCreateMutex();
     if (!p.rx || !p.tx || !p.result || !p.admission) return ESP_ERR_NO_MEM;
@@ -195,13 +205,13 @@ static bool valid_fence_storage(ExecutionFence fence) {
     };
     return valid(fence.generation) && valid(fence.secondary_generation);
 }
-bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts, bool allow_overflow) {
+bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts) {
     if (!valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;
-    return impl_->enqueue({frame, attempts, fence}, allow_overflow);
+    return impl_->enqueue({frame, attempts, fence});
 }
-bool Bus::send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion, unsigned attempts, bool allow_overflow) {
+bool Bus::send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion, unsigned attempts) {
     if (!valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;
-    return impl_->enqueue({frame, attempts, fence, &completion}, allow_overflow);
+    return impl_->enqueue({frame, attempts, fence, &completion});
 }
 bool Bus::receive(Frame &frame, uint32_t timeout_ms) {
     return impl_->started && xQueueReceive(impl_->rx, &frame, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;

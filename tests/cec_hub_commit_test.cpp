@@ -237,7 +237,6 @@ int main() {
         assert(count(0x45) == 1);
         for (const auto &sent : fixture_sent) if (sent.frame.size > 1 && (sent.frame.data[1] == 0x44 || sent.frame.data[1] == 0x45)) {
             assert(sent.attempts == (sent.frame.data[1] == 0x44 ? 1u : 3u));
-            assert(sent.allow_overflow == (sent.frame.data[1] == 0x45));
             assert(sent.timeout_ms == 0);
         }
         fixture_async_autocomplete = true; fixture_complete_all(); fixture_finish_discovery(hub, before_scan); fixture_present = false;
@@ -269,27 +268,45 @@ int main() {
         fixture_async_autocomplete = true; fixture_present = false;
     }
     { // Every caller supplies one UCP attempt, including power quirks and
-      // switch selection. Releases alone are eligible for the extra slot.
+      // switch selection. Releases share ordinary FIFO admission.
         fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
         assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command(); fixture_finish_discovery(hub);
         fixture_sent.clear();assert(hub.select_activity(0));run_one_command();assert(hub.standby());run_one_command();
         bool power=false,input=false;
         for(const auto& sent:fixture_sent)if(sent.frame.size>1){
-            if(sent.frame.data[1]==0x44){assert(sent.attempts==1&&!sent.allow_overflow);power|=sent.frame.data[2]==0x6d;input|=sent.frame.size==4&&sent.frame.data[2]==0x69&&sent.frame.data[3]==2;}
-            if(sent.frame.data[1]==0x45)assert(sent.attempts==3&&sent.allow_overflow&&sent.timeout_ms==0);
+            if(sent.frame.data[1]==0x44){assert(sent.attempts==1);power|=sent.frame.data[2]==0x6d;input|=sent.frame.size==4&&sent.frame.data[2]==0x69&&sent.frame.data[3]==2;}
+            if(sent.frame.data[1]==0x45)assert(sent.attempts==3&&sent.timeout_ms==0);
         }
         assert(power&&input);fixture_present=false;
     }
     { // With eight ordinary frames already buffered in the driver, denied
-      // finite UCPs must not use the ninth slot for an unpaired release.
+      // finite UCPs and releases must both be dropped.
         fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
         assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command(); fixture_finish_discovery(hub);
         unsigned occupied=8,presses=0,releases=0;
-        fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<9;}return true;};
+        fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<8;}return true;};
         assert(hub.select_activity(0));run_one_command();assert(presses>=2&&releases==0&&occupied==8);
         fixture_admission={};fixture_present=false;
     }
-    { // A full ninth slot consumes final release; the owner retains no TX
+    { // A finite key uses the last free slot for its press; a full-FIFO
+      // release is dropped rather than rejecting or replaying the press.
+        fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();
+        fixture_sent.clear();
+        unsigned occupied=7,presses=0,releases=0;
+        fixture_admission=[&](int,const cec::Frame& frame){
+            if(frame.size>1&&frame.data[1]==0x44){++presses;if(occupied==8)return false;++occupied;}
+            if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied<8;}
+            return true;
+        };
+        assert(hub.press_key(0x41));run_one_command();assert(presses==1&&releases==1&&occupied==8);
+        assert(hub.press_key(0x41));run_one_command();assert(presses==2&&releases==1);
+        fixture_admission={};run_idle(5);assert(presses==2&&releases==1);
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x44;})==2);
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x45;})==1);
+        fixture_present=false;
+    }
+    { // A full eight-message FIFO consumes final release; the owner retains no TX
       // retry and later up cannot regenerate the dropped release.
         fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
         assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command(); fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();

@@ -124,12 +124,13 @@ For example, hold Volume Up, press Right, then release Right:
   Volume Up remains held. Releasing Volume Up then submits that recipient's
   final `45`.
 
-Outgoing frames are buffered only in CEC's FIFO: eight normal queued-plus-active
-messages and one release-only overflow slot per wire. The executor retains
+Outgoing frames are buffered only in CEC's FIFO: eight queued-plus-active
+messages per wire, shared by ordinary frames and releases. The executor retains
 button state and bounded completion trackers, without a second frame queue.
 Submissions never wait for capacity. Key presses use one wire attempt; final
-releases and other ordinary commands use up to three. A final release may use
-slot nine; at nine it is dropped and its cleanup decision is consumed. No tick,
+releases and other ordinary commands use up to three. A final release is dropped
+when all eight FIFO slots are occupied, and its cleanup decision is consumed.
+Every TX dropped because the FIFO is full is logged with its wire and frame. No tick,
 later button-up, or newly available capacity retries that admission. This also
 applies to power-quirk and switch-key cleanup. An admitted release follows the
 recipient's already queued presses, and later commands cannot overtake it.

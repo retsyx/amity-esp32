@@ -307,17 +307,15 @@ struct HubService::Impl : Transport {
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
         // Every command is admitted without a wire/completion/capacity wait.
-        // Final release alone is eligible for the ninth FIFO slot.
         auto &bus = side == BusSide::Front ? front : back;
         cec::ExecutionFence fence{};
         if (data[0] == 0x44 && !setting_activity) {
             fence = {&key_generation, applied_key_generation};
         }
         const unsigned attempts = data[0] == 0x44 ? 1 : 3;
-        const bool allow_overflow = data[0] == 0x45;
         auto *flight = sending_key && data[0] == 0x44 ? sending_key : setting_activity ? reserve_flight() : nullptr;
-        const bool sent = flight ? bus.send_async_guarded(frame, fence, flight->completion, attempts, allow_overflow) :
-            !setting_activity && bus.send_guarded(frame, fence, attempts, allow_overflow);
+        const bool sent = flight ? bus.send_async_guarded(frame, fence, flight->completion, attempts) :
+            !setting_activity && bus.send_guarded(frame, fence, attempts);
         if (flight && !sent) flight->used = false;
         if (sent && setting_activity) {
             flight->setup = setup_generation;
