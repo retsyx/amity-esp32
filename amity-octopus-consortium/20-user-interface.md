@@ -8,6 +8,8 @@ Normative interface contract dated **20 October 2026**, against baseline commit 
 
 Activity and recommendation edit dialogs use a 480-pixel desktop width for expected activity names and device inputs. Retain the 90vw maximum width and scrollable height for smaller screens.
 
+Tab panels have a default maximum width of 768 pixels. Header, main and footer use an 816-pixel outer width, allowing the existing 24-pixel padding on either side of the main content. Retain the existing 16-pixel header/main padding at mobile widths. Local browser checks cover all six tabs at 1280, 816, 768, 650, 390 and 320 pixels, confirming the cap, outer alignment and no horizontal overflow.
+
 Validation for this amendment: the existing `tests/web_activities_ui.py` and `tests/web_system_ui.py` browser fixtures pass. A focused browser check at 1280- and 430-pixel widths confirms field order and vertical alignment, immediate Input visibility when setting/clearing Switch Device, and the existing switch-input value when opening an activity. Follow-up width checks cover both dialogs at 1280, 390 and 320 pixels, including long names, aligned fields and no horizontal dialog overflow. This is local browser evidence; no physical CEC or device deployment is involved.
 
 ## Exact baseline and only permitted changes
