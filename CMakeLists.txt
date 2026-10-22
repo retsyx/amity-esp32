@@ -5,8 +5,8 @@
 # License, or (at your option) any later version.
 
 cmake_minimum_required(VERSION 3.22)
-set(PROJECT_VER "0.1.50" CACHE STRING "Firmware version")
-set(PROJECT_VER_NUMBER 51 CACHE STRING "Matter firmware version number")
+set(PROJECT_VER "0.1.51" CACHE STRING "Firmware version")
+set(PROJECT_VER_NUMBER 52 CACHE STRING "Matter firmware version number")
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Source tools/env.sh before building")
 endif()

@@ -39,9 +39,9 @@ function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.i
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 function activityFields(a,changed=markDirty){
  const field=(text,value,set,list)=>label(text,value,v=>{set(v);changed();},list);
- const fields=document.createElement('div');fields.className='fields';fields.append(field('Activity name',a.name,v=>a.name=v),...['display','source','audio'].map(k=>field(k[0].toUpperCase()+k.slice(1),a[k],v=>a[k]=v,k+'DeviceNames')));
- fields.append(field('Switch device (optional)',a.switch?.device,v=>{if(v)a.switch={device:v,input:a.switch?.input||0};else delete a.switch;const control=input.querySelector('input');control.disabled=!a.switch;control.value=a.switch?.input??'';},'switchDeviceNames'));
- const input=field('Switch input',a.switch?.input??'',v=>{if(a.switch)a.switch.input=Number(v);});input.querySelector('input').type='number';input.querySelector('input').min=0;input.querySelector('input').max=255;input.querySelector('input').dataset.switchInput='';input.querySelector('input').disabled=!a.switch;fields.append(input);
+ const fields=document.createElement('div');fields.className='fields';fields.append(field('Name',a.name,v=>a.name=v),...['display','source','audio'].map(k=>field(k[0].toUpperCase()+k.slice(1),a[k],v=>a[k]=v,k+'DeviceNames')));
+ fields.append(field('Switch Device',a.switch?.device,v=>{if(v)a.switch={device:v,input:a.switch?.input||0};else delete a.switch;input.hidden=!a.switch?.device;const control=input.querySelector('input');control.disabled=!a.switch;control.value=a.switch?.input??'';},'switchDeviceNames'));
+ const input=field('Input',a.switch?.input??'',v=>{if(a.switch)a.switch.input=Number(v);});input.hidden=!a.switch?.device;input.querySelector('input').type='number';input.querySelector('input').min=0;input.querySelector('input').max=255;input.querySelector('input').dataset.switchInput='';input.querySelector('input').disabled=!a.switch;fields.append(input);
  return fields;
 }
 function savedEntry(activity){return savedActivityEntries.get(activity);}

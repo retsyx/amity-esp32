@@ -167,14 +167,14 @@ Use 'Add activity' to create an activity, 'Edit' to change one, and 'Delete' to 
 
 #### Editing an Activity
 
-The activity fields are:
+The activity fields appear in one column, in this order:
 
-* `Activity name` — a descriptive name of your choice.
+* `Name` — a descriptive name of your choice.
 * `Display` — the screen, typically your TV.
 * `Source` — the playback device, such as a streamer or game console.
 * `Audio` — the device that receives volume and mute commands, typically your receiver.
-* `Switch device` — an optional receiver or switch used for explicit input selection.
-* `Switch input` — the input number, when a switch device is specified. See [Non-CEC Sources](#non-cec-sources).
+* `Switch Device` — an optional receiver or switch used for explicit input selection.
+* `Input` — the input number, shown only when `Switch Device` is filled in. See [Non-CEC Sources](#non-cec-sources).
 
 Press 'OK' to accept the edit, then 'Save activities' to save it. 'OK' alone does not save the configuration.
 
@@ -216,8 +216,8 @@ Create an activity with these settings:
 1. Select the TV as `Display`.
 2. Select the receiver as `Audio`.
 3. Leave `Source` blank.
-4. Select the receiver as `Switch device`.
-5. Set `Switch input` to the receiver's input number.
+4. Select the receiver as `Switch Device`.
+5. Set `Input` to the receiver's input number.
 6. Press 'OK', then 'Save activities'.
 
 Input numbers vary by receiver. Consult its documentation or setup menus for the correct value. This option can also help with a source that does not reliably appear in HDMI scans.
