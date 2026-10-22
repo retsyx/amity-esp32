@@ -4,6 +4,10 @@ Normative interface contract dated **20 October 2026**, against baseline commit 
 
 **21 October 2026 navigation amendment:** The approved tab order is **Activities, Remote, Matter, HomeKit, Amity devices, Advanced**. Advanced is always last, immediately after Amity devices. This narrow ordering change supersedes the earlier no-reorganization wording; existing tab contents and workflows remain unchanged except for the separately approved per-adapter settings move.
 
+**21 October 2026 activity editor amendment:** Show activity fields in one column, ordered **Name**, **Display**, **Source**, **Audio**, **Switch Device**, **Input**. Hide **Input** while **Switch Device** is empty, and show it when a switch device is entered. This requested layout and label change applies to the original and distributed interfaces, retaining the existing activity and switch behavior.
+
+Validation for this amendment: the existing `tests/web_activities_ui.py` and `tests/web_system_ui.py` browser fixtures pass. A focused browser check at 1280- and 430-pixel widths confirms field order and vertical alignment, immediate Input visibility when setting/clearing Switch Device, and the existing switch-input value when opening an activity. This is local browser evidence; no physical CEC or device deployment is involved.
+
 ## Exact baseline and only permitted changes
 
 Before role enrollment, the single firmware image has no saved Wi-Fi network and hosts no UI. Complete Matter BLE enrollment to establish the original controller and its normal browser interface, or authenticated Amity BLE enrollment to add a permanently headless actuator. Reboot and removing Matter fabrics retain that chosen role. This startup eligibility overrides any earlier browser-first setup assumption; it does not add a new browser setup flow or firmware variant.
@@ -18,7 +22,7 @@ Keep the original tab contents and use this exact navigation order: **Activities
 
 ## Activities and device choices
 
-Retain Scan HDMI, the original discovered-device/recommendation area, activity list and reorder behavior, Add activity, Save activities and Discard changes. Preserve the existing activity dialog fields: **Activity name**, **Display**, **Source**, **Audio**, **Switch device (optional)** and **Switch input** 0–255, with the original Start/OK/Cancel controls. Keep the receiver/audio and switch behavior represented by those fields. The backend adapter translates the unchanged visible workflow into scoped schema2 records and guarded planner operations; it must not remove AVR/switch support merely because the direct-route wizard was removed.
+Retain Scan HDMI, the original discovered-device/recommendation area, activity list and reorder behavior, Add activity, Save activities and Discard changes. Show the activity dialog fields in one column: **Name**, **Display**, **Source**, **Audio**, **Switch Device**, and **Input** 0–255, with **Input** visible only when **Switch Device** is nonempty and the original Start/OK/Cancel controls. Keep the receiver/audio and switch behavior represented by those fields. The backend adapter translates the existing workflow into scoped schema2 records and guarded planner operations; it must not remove AVR/switch support merely because the direct-route wizard was removed.
 
 Device entries use the owning Amity's actual canonical hostname as location context, followed by the stable adapter number where needed. UI ordering, duplicate names and current logical addresses cannot silently select a different attachment. Save stable ComponentId/ActivityId/scoped selectors internally. Rename/reorder and ordinary unique OSD-name LA churn retain identity; same-scope ambiguity remains unavailable. Hardware roles/physical paths must still be validated through existing saved configuration or explicit management/connection evidence. Matching an old form does not authorize guessed topology, raw CEC forwarding or an automatic wake.
 

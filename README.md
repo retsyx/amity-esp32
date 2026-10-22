@@ -179,14 +179,14 @@ Use 'Add activity' to create an activity, 'Edit' to change one, and 'Delete' to 
 
 #### Editing an Activity
 
-The activity fields are:
+The activity fields appear in one column:
 
-* `Activity name` — a descriptive name of your choice.
+* `Name` — a descriptive name of your choice.
 * `Display` — the screen, typically your TV.
 * `Source` — the playback device, such as a streamer or game console.
 * `Audio` — the device that receives volume and mute commands, typically your receiver.
-* `Switch device` — an optional receiver or switch used for explicit input selection.
-* `Switch input` — the input number, when a switch device is specified. See [Non-CEC Sources](#non-cec-sources).
+* `Switch Device` — an optional receiver or switch used for explicit input selection.
+* `Input` — the input number, shown only when a switch device is specified. See [Non-CEC Sources](#non-cec-sources).
 
 Press 'OK' to accept the edit, then 'Save activities' to save it. 'OK' alone does not save the configuration.
 

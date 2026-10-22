@@ -194,7 +194,7 @@ def main():
             passed('duplicate equipment names carry canonical owning hostnames and stable adapter numbers')
             page.locator('#activityList article').first.get_by_role('button', name='Edit', exact=True).click()
             labels = page.locator('#activityFields label').all_text_contents()
-            assert [x.split('\n')[0] for x in labels] == ['Activity name', 'Display', 'Source', 'Audio', 'Switch device (optional)', 'Switch input']
+            assert [x.split('\n')[0] for x in labels] == ['Name', 'Display', 'Source', 'Audio', 'Switch Device', 'Input']
             source = page.locator('#activityFields input').nth(2)
             source.fill('Apple TV · amity-bedroom · HDMI adapter 5')
             page.locator('#activityForm button[type=submit]').click()
