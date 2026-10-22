@@ -6,7 +6,9 @@ Normative interface contract dated **20 October 2026**, against baseline commit 
 
 **21 October 2026 activity editor amendment:** Show activity fields in one column, ordered **Name**, **Display**, **Source**, **Audio**, **Switch Device**, **Input**. Hide **Input** while **Switch Device** is empty, and show it when a switch device is entered. This requested layout and label change applies to the original and distributed interfaces, retaining the existing activity and switch behavior.
 
-Validation for this amendment: the existing `tests/web_activities_ui.py` and `tests/web_system_ui.py` browser fixtures pass. A focused browser check at 1280- and 430-pixel widths confirms field order and vertical alignment, immediate Input visibility when setting/clearing Switch Device, and the existing switch-input value when opening an activity. This is local browser evidence; no physical CEC or device deployment is involved.
+Activity and recommendation edit dialogs use a 480-pixel desktop width for expected activity names and device inputs. Retain the 90vw maximum width and scrollable height for smaller screens.
+
+Validation for this amendment: the existing `tests/web_activities_ui.py` and `tests/web_system_ui.py` browser fixtures pass. A focused browser check at 1280- and 430-pixel widths confirms field order and vertical alignment, immediate Input visibility when setting/clearing Switch Device, and the existing switch-input value when opening an activity. Follow-up width checks cover both dialogs at 1280, 390 and 320 pixels, including long names, aligned fields and no horizontal dialog overflow. This is local browser evidence; no physical CEC or device deployment is involved.
 
 ## Exact baseline and only permitted changes
 
