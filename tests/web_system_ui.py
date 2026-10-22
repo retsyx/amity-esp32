@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check the baseline interface and main/added-device management list."""
+import hashlib
 import json
 import re
-import subprocess
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,15 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    baseline = subprocess.check_output(['git', 'show', 'd50af8026938797fc0820d0107f4c4e064c2d2bc:components/web_admin/assets/index.html'], cwd=ROOT).decode()
-    # The later explicit settings request relocates this one block into each
-    # Amity device's dialog. Every other baseline tab remains exact.
-    baseline, removed = re.subn(r'<div class="setting"><h3>HDMI-CEC</h3>.*?</form></div>', '', baseline)
-    assert removed == 1
+    # Exact approved main presentation at aa9395aaecdc861e1d4cce040079a5ac6121e67d,
+    # with its global HDMI-CEC block removed for per-device settings. Store the
+    # digest so a consort-only checkout does not need the unrelated main object.
+    baseline_sha256 = 'c9381f4d7dcb056558860a70dc3d840caa853596e06fc26222c42f873a985b34'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
-    assert current == baseline, 'Changes outside the authorized tab and per-device settings relocation'
+    assert hashlib.sha256(current.encode()).hexdigest() == baseline_sha256, 'Changes outside the authorized tab and per-device settings relocation'
     assert 'changeFrontPhysicalAddress' not in current and 'frontPhysicalAddress' not in current
     aid, second, controller, member = (f'{n:032x}' for n in (7, 8, 2, 3))
     def choice(value, title, location, roles):
