@@ -35,7 +35,7 @@ async function request(path,data,raw=false){
 function run(action){return async event=>{try{await action(event);}catch(e){reportError(e);}};}
 function button(text,handler){const b=document.createElement('button');b.textContent=text;b.addEventListener('click',run(handler));return b;}
 function label(text,value,onChange,list){const l=document.createElement('label');l.textContent=text;const i=document.createElement('input');i.value=value??'';i.maxLength=63;if(list)i.setAttribute('list',list);i.addEventListener('input',()=>onChange(i.value));l.append(i);return l;}
-function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('selected',b.dataset.tab===id));if(id==='homekit')refreshHomekit().catch(reportError);}
+function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===id;b.classList.toggle('selected',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(id==='homekit')refreshHomekit().catch(reportError);}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 function activityFields(a,changed=markDirty){
  const field=(text,value,set,list)=>label(text,value,v=>{set(v);changed();},list);
@@ -214,8 +214,10 @@ function renderActivities(){
   const badge=document.createElement('span');badge.className='activity-badge';badge.textContent='Active';badge.hidden=true;
   heading.append(title,badge);
   const controls=document.createElement('div');controls.className='activity-controls';
-  const start=button('Start',()=>startActivity(a));start.dataset.start=index;
-  controls.append(button('Edit',()=>openActivityEditor(a)),button('Delete',()=>{if(activityLocked())return;config.activities.splice(index,1);renderActivities();}),start);
+  const edit=button('Edit',()=>openActivityEditor(a));edit.className='quiet';
+  const remove=button('Delete',()=>{if(activityLocked())return;config.activities.splice(index,1);renderActivities();});remove.className='danger quiet';
+  const start=button('Start',()=>startActivity(a));start.dataset.start=index;start.className='primary';
+  controls.append(edit,remove,start);
   row.append(dragHandle(index,a),heading,controls);list.append(row);
  });markDirty();updateActivityState();
 }
@@ -266,7 +268,9 @@ function renderFrontPhysicalAddress(address){
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
  const detail=r.connected?`${r.name?' · '+r.name:''}${r.battery>=0?' · '+r.battery+'% battery':''}${r.charging===true?' · Charging':''}`:r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'';
- $('diagnostics').textContent=`Firmware ${state.version}\n${state.wifi_connected?'Wi-Fi signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'Wi-Fi disconnected'}\nFront physical address: ${state.determined_front_physical_address??'Determining…'}\nRemote: ${connection}${detail}`;
+ const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?'signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'disconnected'],['Front physical address: ',state.determined_front_physical_address??'Determining…'],['Remote: ',connection+detail]],diagnostics=$('diagnostics');
+ if(!diagnostics.children.length)for(const [label] of rows){const term=document.createElement('dt'),value=document.createElement('dd');term.textContent=label;diagnostics.append(term,value);}
+ rows.forEach(([,value],index)=>{const entry=diagnostics.children[index*2+1];if(entry.textContent!==value)entry.textContent=value;});
 }
 function renderRemotes(r){
  remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,busy=!!remotePending||unpairing||(!paired&&(!!r.pairing||!!r.connecting||!!r.scanning));
