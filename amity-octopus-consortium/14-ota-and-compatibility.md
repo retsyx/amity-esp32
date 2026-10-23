@@ -109,6 +109,25 @@ Flash erase/write and concurrent TLS can contend with the ten-line CEC runtime a
 
 The current global socket ceiling is 16; HTTPS and HomeKit each allow four open sockets, and the consortium adds persistent links. A fleet transfer must fit the approved socket/internal-RAM profile. Increasing a constant without stress and leak measurements is not an accepted fix. [Network limits][b-limits]
 
+### HTTP request hardening port, 22 October 2026
+
+The security fixes from main `f0efe2d` and probe correction `71baf15` retain this branch's signed release admission,
+image digest and identity verification, maintenance hooks, and cohort reporting.
+The HTTPS body reader now interrupts blocked TLS reads at an absolute deadline:
+30 seconds for the existing metadata phase and 120 seconds for the complete local
+upload. Rejected or incomplete requests close without draining the advertised
+body. These limits cover management uploads; CEC input and execution algorithms
+are unchanged.
+
+HomeKit reads capped request bodies before taking its shared state mutex. Its
+existing service-stop fence is checked before the read and again before dispatch,
+so buffered work cannot run after ownership revocation. The ordinary HTTPS body
+reader and HomeKit regressions run under ASan/UBSan; `tests/update_bundle_test.py`
+executes the signed upload path with fragmented metadata and image input, deadline
+and timer-creation failures, admission-before-erase checks, and retained active-slot
+checks. Production signature, native secure-boot, and storage-profile requirements
+remain independent release gates.
+
 ## Boot confirmation and rollback
 
 Define two health levels:

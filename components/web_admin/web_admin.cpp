@@ -160,6 +160,7 @@ esp_err_t homekit(httpd_req_t *req) {
 }
 esp_err_t api(httpd_req_t *req) {
     if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
+    if(req->method==HTTP_GET&&req->content_len)return web::error(req,"GET requests cannot have a body");
     std::string path=req->uri;
     if(path=="/api/setup") {
         if(req->method==HTTP_GET) {
@@ -184,7 +185,7 @@ esp_err_t api(httpd_req_t *req) {
             if(httpd_req_get_hdr_value_str(req,"Content-Type",content_type,sizeof(content_type))!=ESP_OK ||
                (strcmp(content_type,"application/json") && strncmp(content_type,"application/json;",17)))
                 return web::error(req,"JSON required","415 Unsupported Media Type");
-            std::string data;if(!web::body(req,data,512))return ESP_OK;
+            std::string data;if(!web::body(req,data,512))return ESP_FAIL;
             Json root(parse_json_input(data),cJSON_Delete);auto *password=cJSON_GetObjectItemCaseSensitive(root.get(),"password");
             if(!cJSON_IsString(password))return web::error(req,"Password required");
             auto e=web::setup_password(password->valuestring);
@@ -194,7 +195,7 @@ esp_err_t api(httpd_req_t *req) {
         }
     }
     if(path=="/api/login" && req->method==HTTP_POST) {
-        std::string data;if(!web::body(req,data,512))return ESP_OK;
+        std::string data;if(!web::body(req,data,512))return ESP_FAIL;
         Json root(parse_json_input(data),cJSON_Delete);auto *password=cJSON_GetObjectItemCaseSensitive(root.get(),"password");std::string token;
         auto retry_after=web::login_retry_after();
         char retry_value[12];
@@ -234,7 +235,7 @@ esp_err_t api(httpd_req_t *req) {
     if(req->method==HTTP_POST) {
         if(path=="/api/firmware")return system_services::upload_firmware(req);
 
-        std::string data;if(!web::body(req,data))return ESP_OK;
+        std::string data;if(!web::body(req,data))return ESP_FAIL;
         if(path=="/api/config"||path=="/api/restore") {
             if(!active_v2_json().empty())return web::error(req,"Use the schema-2 configuration API. A legacy document cannot overwrite stable equipment and activity identities.","409 Conflict");
             std::string error;auto e=apply(data,true,error);
@@ -301,7 +302,8 @@ extern const uint8_t css_end[] asm("_binary_style_css_end");
 extern const uint8_t system_js_start[] asm("_binary_system_js_start");
 extern const uint8_t system_js_end[] asm("_binary_system_js_end");
 esp_err_t asset(httpd_req_t *req) {
-    if (!ui_enabled.load()) return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Administration is available on the original Amity only.");
+    if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
+    if(req->content_len)return web::error(req,"GET requests cannot have a body");
     const uint8_t *begin=html_start,*end=html_end;const char *mime="text/html; charset=utf-8";
     if(!strcmp(req->uri,"/app.js")){begin=js_start;end=js_end;mime="text/javascript";}
     if(!strcmp(req->uri,"/style.css")){begin=css_start;end=css_end;mime="text/css";}

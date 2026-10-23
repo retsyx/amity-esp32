@@ -50,7 +50,12 @@ esp_err_t error(httpd_req_t* req,const char* code,const std::string& text,const 
     Json out(cJSON_CreateObject(),cJSON_Delete);
     cJSON_AddStringToObject(out.get(),"code",code);cJSON_AddStringToObject(out.get(),"message",text.c_str());
     cJSON_AddStringToObject(out.get(),"error",text.c_str());cJSON_AddBoolToObject(out.get(),"retryable",retry);
-    cJSON_AddArrayToObject(out.get(),"affected_ids");return web::json(req,json(out.get()),status);
+    cJSON_AddArrayToObject(out.get(),"affected_ids");
+    httpd_resp_set_hdr(req,"Connection","close");
+    web::json(req,json(out.get()),status);
+    // Router admission failures may precede body reads. Preserve the structured
+    // response while preventing HTTPD from draining an untrusted Content-Length.
+    return ESP_FAIL;
 }
 bool unique_keys(const cJSON* value,unsigned depth=0){
     if(depth>16)return false;
@@ -386,7 +391,7 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         result=error(req,"coordinator_required","This Amity is passive. Open the system coordinator for equipment and activity changes.","403 Forbidden");return true;
     }
     const auto fields=request_fields(path);if(!fields){result=error(req,"not_found","Unknown operation.","404 Not Found");return true;}
-    std::string data;if(!web::body(req,data)){result=ESP_OK;return true;}
+    std::string data;if(!web::body(req,data)){result=ESP_FAIL;return true;}
     Json root(parse_json_input(data),cJSON_Delete);
     SensitiveRequest sensitive{data,root.get(),path=="/api/v2/membership/add"};
     if(!root||!cJSON_IsObject(root.get())||!unique_keys(root.get())){result=error(req,"invalid_json","Expected an object with unique, supported fields.");return true;}

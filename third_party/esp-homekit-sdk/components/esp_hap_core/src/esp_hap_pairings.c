@@ -78,13 +78,20 @@ void hap_remove_all_controllers()
 		}
 	}
 }
+
+static int hap_pairings_get_identifier(uint8_t *buf, int inlen, char id[HAP_CTRL_ID_LEN])
+{
+    int len = get_value_from_tlv(buf, inlen, kTLVType_Identifier, id, HAP_CTRL_ID_LEN - 1);
+    if (len <= 0 || memchr(id, '\0', len)) return HAP_FAIL;
+    id[len] = '\0';
+    return HAP_SUCCESS;
+}
+
 static int hap_process_pair_remove(uint8_t *buf, int inlen, int bufsize, int *outlen)
 {
     bool acc_unpaired = false;
 	char ctrl_id[HAP_CTRL_ID_LEN];
-	memset(ctrl_id, 0, HAP_CTRL_ID_LEN);
-	if (get_value_from_tlv(buf, inlen, kTLVType_Identifier,
-					ctrl_id, sizeof(ctrl_id)) < 0) {
+	if (hap_pairings_get_identifier(buf, inlen, ctrl_id) != HAP_SUCCESS) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Identifier not found");
 		hap_prepare_error_tlv(STATE_M2, kTLVError_Unknown, buf, bufsize, outlen);
 		return HAP_FAIL;
@@ -126,15 +133,13 @@ static int hap_process_pair_add(uint8_t *buf, int inlen, int bufsize, int *outle
 	char ctrl_id[HAP_CTRL_ID_LEN];
 	uint8_t ltpkc[ED_KEY_LEN];
 	uint8_t perms;
-	memset(ctrl_id, 0, HAP_CTRL_ID_LEN);
-	if ((get_value_from_tlv(buf, inlen, kTLVType_Identifier,
-						ctrl_id, sizeof(ctrl_id)) < 0) ||
+	if ((hap_pairings_get_identifier(buf, inlen, ctrl_id) != HAP_SUCCESS) ||
 		(get_value_from_tlv(buf, inlen, kTLVType_PublicKey,
-				    ltpkc, sizeof(ltpkc)) < 0) ||
+				    ltpkc, sizeof(ltpkc)) != sizeof(ltpkc)) ||
 		 (get_value_from_tlv(buf, inlen, kTLVType_Permissions,
-				     &perms, sizeof(perms)) < 0)) {
+				     &perms, sizeof(perms)) != sizeof(perms)) || perms > 1) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Invalid TLVs received");
-		hap_prepare_error_tlv(STATE_M4, kTLVError_Unknown, buf, bufsize, outlen);
+		hap_prepare_error_tlv(STATE_M2, kTLVError_Unknown, buf, bufsize, outlen);
 		return HAP_FAIL;
 	}
 
@@ -157,7 +162,7 @@ static int hap_process_pair_add(uint8_t *buf, int inlen, int bufsize, int *outle
 			hap_prepare_error_tlv(STATE_M2, kTLVError_MaxPeers, buf, bufsize, outlen);
 			return HAP_FAIL;
 		}
-		strcpy(ctrl->info.id, ctrl_id);
+		memcpy(ctrl->info.id, ctrl_id, strlen(ctrl_id) + 1);
 		memcpy(ctrl->info.ltpk, ltpkc, ED_KEY_LEN);
 		ctrl->info.perms = perms;
 		hap_controller_save(ctrl);
@@ -235,9 +240,9 @@ int hap_pairings_process(void *ctx, uint8_t *buf, int inlen, int bufsize, int *o
 		return HAP_FAIL;
 	}
 	uint8_t state, method;
-	if ((get_value_from_tlv(buf, inlen, kTLVType_State, &state, sizeof(state)) < 0) ||
+	if ((get_value_from_tlv(buf, inlen, kTLVType_State, &state, sizeof(state)) != sizeof(state)) ||
 			(get_value_from_tlv(buf, inlen, kTLVType_Method,
-					    &method, sizeof(method)) < 0) ||
+					    &method, sizeof(method)) != sizeof(method)) ||
 			(state != STATE_M1)) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Invalid TLVs received");
 		hap_prepare_error_tlv(STATE_M2, kTLVError_Unknown, buf, bufsize, outlen);

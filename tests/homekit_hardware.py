@@ -22,9 +22,61 @@ from zeroconf.asyncio import AsyncZeroconf, AsyncServiceInfo
 from aiohomekit.characteristic_cache import CharacteristicCacheMemory
 from aiohomekit.controller.ip.controller import IpController
 from aiohomekit.controller.ip.discovery import IpDiscovery
+from aiohomekit.protocol.tlv import TLV
 from aiohomekit.zeroconf import HomeKitService
-from aiohomekit.exceptions import UnavailableError, AuthenticationError
+from aiohomekit.exceptions import UnavailableError, AuthenticationError, HttpErrorResponse
 from cec_web_activity import Admin, write_private
+
+async def security_regressions(pairing,admin,readable_iid):
+    boot_id=admin.request('/api/setup')['boot_id']
+    async def healthy(protocol):
+        result=await pairing.get_characteristics([(1,readable_iid)])
+        assert 'value' in result[(1,readable_iid)],result
+        assert pairing.connection.protocol is protocol,'Malformed request interrupted the encrypted connection'
+        assert admin.request('/api/setup')['boot_id']==boot_id,'Malformed request restarted the DUT'
+    for invalid_id in ['', '1', '1.', '.1', 'nonnumeric', 'one.two', '1.two', '0.1', '1.0',
+                       '2147483648.1', '1.2147483648', '1.2,', '1.2,,3.4', '1.2,3', '1.2.3']:
+        await pairing._ensure_connected()
+        protocol=pairing.connection.protocol
+        assert pairing.connection.is_secure,'Regression request must use an encrypted session'
+        try:
+            response=await asyncio.wait_for(pairing.connection.get('/characteristics?id='+invalid_id),10)
+        except HttpErrorResponse as error:
+            response=error.response
+        assert response.code==400,('Malformed characteristic ID accepted',invalid_id,response.code)
+        assert json.loads(response.body)=={'status':-70409},(invalid_id,response.body)
+        await healthy(protocol)
+
+    peers=await pairing.list_pairings()
+    assert len(peers)==1 and peers[0]['pairingId']==pairing._pairing_data['iOSPairingId'],peers
+    key=b'\x42'*32
+    # Encode directly: aiohomekit's TLV encoder omits empty fields, which would
+    # skip the zero-length-field cases that previously used uninitialized data.
+    def encode(fields):
+        return b''.join(bytes((kind,len(value)))+value for kind,value in fields)
+    cases=[('64-byte identifier',b'a'*64,key,b'\x00',TLV.AddPairing),
+           ('empty identifier',b'',key,b'\x00',TLV.AddPairing),
+           ('embedded NUL identifier',b'regression\0peer',key,b'\x00',TLV.AddPairing),
+           ('31-byte public key',b'regression-peer',key[:-1],b'\x00',TLV.AddPairing),
+           ('empty public key',b'regression-peer',b'',b'\x00',TLV.AddPairing),
+           ('empty permissions',b'regression-peer',key,b'',TLV.AddPairing),
+           ('oversized permissions',b'regression-peer',key,b'\x00\x01',TLV.AddPairing),
+           ('invalid permissions',b'regression-peer',key,b'\x02',TLV.AddPairing),
+           ('64-byte removal identifier',b'a'*64,key,b'\x00',TLV.RemovePairing),
+           ('empty removal identifier',b'',key,b'\x00',TLV.RemovePairing)]
+    for name,identifier,public_key,permissions,method in cases:
+        fields=[(TLV.kTLVType_State,TLV.M1),(TLV.kTLVType_Method,method),
+                (TLV.kTLVType_Identifier,identifier)]
+        if method==TLV.AddPairing:
+            fields.extend([(TLV.kTLVType_PublicKey,public_key),(TLV.kTLVType_Permissions,permissions)])
+        protocol=pairing.connection.protocol
+        response=await asyncio.wait_for(pairing.connection.post('/pairings',encode(fields)),10)
+        assert response.code==200,(name,response.code)
+        result=dict(TLV.decode_bytes(response.body))
+        assert result.get(TLV.kTLVType_State)==TLV.M2,(name,result)
+        assert result.get(TLV.kTLVType_Error)==TLV.kTLVError_Unknown,(name,result)
+        assert await pairing.list_pairings()==peers,('Malformed pairing request changed controller list',name)
+        await healthy(protocol)
 
 async def run(args):
     admin=Admin(args.url); password=json.loads(args.credentials.read_text())['admin_password']
@@ -132,6 +184,9 @@ async def run(args):
             if exists: assert ch['E3']['value']==original['config']['activities'][index]['name']
             else: assert ch['135']['value']==1
         passed('Television, linked speaker, saved activity inputs, hidden spare slots and battery services are complete')
+        await security_regressions(pairing,admin,tc['E3']['iid'])
+        passed('malformed encrypted characteristic IDs return HTTP 400 while valid reads and boot remain stable')
+        passed('malformed authenticated pairing TLVs are rejected without changing controllers or interrupting HomeKit')
         for uuid in ['68','79','8F']:
             result=await get(bc[uuid]['iid'])
             remote=admin.request('/api/remotes')

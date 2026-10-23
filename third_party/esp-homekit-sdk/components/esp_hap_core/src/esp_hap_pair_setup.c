@@ -477,7 +477,11 @@ static pair_setup_ctx_t *hap_pair_setup_ctx_action(int action)
                 active_setup->process = PROCESS_PAIR_SETUP;
                 active_setup->timer = xTimerCreate("hap_setup_timer", HAP_SETUP_TIMEOUT_IN_TICKS,
                             pdFALSE, (void *) active_setup, hap_pair_setup_timeout);
-                xTimerStart(active_setup->timer, 0);
+                if (!active_setup->timer || xTimerStart(active_setup->timer, 0) != pdPASS) {
+                    if (active_setup->timer) xTimerDelete(active_setup->timer, 0);
+                    hap_platform_memory_free(active_setup);
+                    active_setup = NULL;
+                }
             }
         }
 	} else if (action == PS_CTX_DEINIT) {
@@ -549,6 +553,9 @@ int hap_pair_setup_process(void **ctx, uint8_t *buf, int inlen, int bufsize, int
             hap_prepare_error_tlv(recv_state + 1, kTLVError_Unknown, buf, bufsize, outlen);
             return HAP_FAIL;
         }
+        /* A failed reallocation must not return the freed context to the HTTP
+         * handler, which owns the session's cleanup pointer. */
+        *ctx = NULL;
 		int ret = hap_pair_setup_context_init(sock_fd, ctx, buf, bufsize, outlen);
 		if (ret != HAP_SUCCESS)
 			return ret;

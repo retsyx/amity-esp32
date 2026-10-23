@@ -14,6 +14,9 @@ Local adaptations:
   reopening invalidates in-flight sessions from previous windows.
 - Recursive mutex serializes worker, event loop, HTTP, notification, timer and
   secure-session cleanup access. Setup timeout validates the live context.
+- Request bodies are capped and read with an absolute deadline before taking
+  the HAP mutex. Pairing restarts publish replacement session contexts; pairing
+  TLVs and characteristic identifiers are validated before use.
 - HAP allocations use PSRAM; task stacks stay internal.
 - Removing HomeKit pairings targets only hap_ctrl; whole-partition erase disabled.
 

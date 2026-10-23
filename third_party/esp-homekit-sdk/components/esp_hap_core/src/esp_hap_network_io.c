@@ -22,6 +22,7 @@
  *
  */
 #include <stdint.h>
+#include "amity_hap.h"
 #include <string.h>
 #include <sys/socket.h>
 
@@ -99,10 +100,12 @@ int hap_encrypt_data(hap_encrypt_frame_t *frame, hap_secure_session_t *session,
 static int hap_session_error(hap_secure_session_t *session)
 {
 	ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Decryption error/Connection lost. Marking session as invalid");
+    hap_amity_lock();
 	if (session) {
 		session->state = STATE_INVALID;
         hap_close_session(session);
 	}
+    hap_amity_unlock();
 	return HAP_FAIL;
 }
 

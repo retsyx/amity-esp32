@@ -79,24 +79,4 @@ esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Han
     httpd_uri_t uri{};uri.uri=path;uri.method=method;uri.handler=handler;uri.user_ctx=context;
     return httpd_register_uri_handler(handle,&uri);
 }
-bool body(httpd_req_t *request,std::string &out,size_t limit) {
-    if(request->content_len>limit) {error(request,"Request is too large","413 Content Too Large");return false;}
-    out.resize(request->content_len);size_t offset=0;
-    while(offset<out.size()) {
-        int n=httpd_req_recv(request,out.data()+offset,out.size()-offset);
-        if(n<=0) {error(request,"Incomplete request");return false;}
-        offset+=n;
-    }
-    return true;
-}
-esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) {
-    httpd_resp_set_status(req,status);httpd_resp_set_type(req,"application/json");
-    httpd_resp_set_hdr(req,"Cache-Control","no-store");
-    httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
-    return httpd_resp_send(req,data.data(),data.size());
-}
-esp_err_t error(httpd_req_t *req,const char *message,const char *status) {
-    // Callers supply static messages or ESP-IDF error names, never unescaped user data.
-    return json(req,std::string("{\"error\":\"")+message+"\"}",status);
-}
 }

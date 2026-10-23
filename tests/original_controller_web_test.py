@@ -11,12 +11,13 @@ ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
 #include <atomic>
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <string>
 using esp_err_t=int;using httpd_handle_t=void*;
-constexpr int ESP_OK=0,ESP_ERR_INVALID_STATE=1,HTTP_GET=0,HTTP_POST=1,HTTPD_403_FORBIDDEN=403;
-struct httpd_req_t{};
+constexpr int ESP_OK=0,ESP_FAIL=-1,ESP_ERR_INVALID_STATE=1,HTTP_GET=0,HTTP_POST=1;
+struct httpd_req_t{int status=0;};
 namespace amity{struct SystemControl{};namespace consortium{
 struct RuntimeStatus{bool member=false,coordinator=true,authority_ready=true;std::string phase;};RuntimeStatus role;
 RuntimeStatus runtime_status(){return role;}
@@ -27,7 +28,7 @@ amity::SystemControl*hub=nullptr;httpd_handle_t server=nullptr;
 namespace web{
 int start(httpd_handle_t&out,const std::string&,const char*){++starts;out=reinterpret_cast<void*>(1);return ESP_OK;}
 int route(httpd_handle_t,const char*,int,int(*)(httpd_req_t*)){++routes;return ESP_OK;}
-int error(httpd_req_t*,const char*,const char*){return 403;}
+int error(httpd_req_t*req,const char*,const char*status){req->status=std::atoi(status);return ESP_FAIL;}
 }
 int httpd_resp_send_err(httpd_req_t*,int status,const char*){return status;}
 int httpd_ssl_stop(httpd_handle_t){++stops;assert(ui_revoked&&!ui_enabled);return stop_error;}
@@ -40,7 +41,7 @@ int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];ami
  else if(mode=="unclaimed"){amity::consortium::role.coordinator=false;amity::consortium::role.authority_ready=false;}
  if(mode=="member"||mode=="prepared"||mode=="retired"||mode=="recovery_required"||mode=="unclaimed"||mode=="awaiting_setup"){
   assert(start(control,"test","private")==ESP_ERR_INVALID_STATE&&starts==0&&!server&&!ui_enabled);
-  assert(api(&request)==403&&asset(&request)==403&&effects==0);
+  assert(api(&request)==ESP_FAIL&&request.status==403&&asset(&request)==ESP_FAIL&&request.status==403&&effects==0);
  }else if(mode=="stop-before-start"){
   assert(stop()==ESP_OK&&starts==0);assert(start(control,"test","private")==ESP_ERR_INVALID_STATE&&starts==0);
  }else{
@@ -48,7 +49,7 @@ int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];ami
   assert(api(&request)==ESP_OK&&asset(&request)==ESP_OK&&effects==2);
   if(mode=="stop-error")stop_error=77;
   assert(stop()==stop_error&&!ui_enabled&&ui_revoked);
-  assert(api(&request)==403&&asset(&request)==403&&effects==2); // Already accepted handlers must reject too.
+  assert(api(&request)==ESP_FAIL&&request.status==403&&asset(&request)==ESP_FAIL&&request.status==403&&effects==2); // Already accepted handlers must reject too.
   assert(start(control,"test","private")==ESP_ERR_INVALID_STATE&&starts==1);
   stop_error=0;assert(stop()==ESP_OK&&!server);assert(stop()==ESP_OK);
  }
