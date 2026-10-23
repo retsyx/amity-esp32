@@ -131,14 +131,16 @@ def run(args, evidence):
     passed('DUT reports firmware readiness before probes')
 
     for name, method, path, length, expected in [
-        ('unauthorized POST closes without draining a large unread body', 'POST', '/api/status', 1048576, 401),
-        ('oversized login closes without draining its unread body', 'POST', '/api/login', 513, 413),
-        ('GET with an unread body is rejected and closed', 'GET', '/api/setup', 512, 400),
-        ('asset GET with an unread body is rejected and closed', 'GET', '/', 512, 400),
+        ('unauthorized POST closes without draining a large unread remainder', 'POST', '/api/status', 1048576, 401),
+        ('oversized login closes without draining its unread remainder', 'POST', '/api/login', 513, 413),
+        ('GET with an unread body remainder is rejected and closed', 'GET', '/api/setup', 512, 400),
+        ('asset GET with an unread body remainder is rejected and closed', 'GET', '/', 512, 400),
     ]:
         with connect() as connection:
             started = time.monotonic()
-            connection.sendall(request_header(method, path, address.netloc, length))
+            # ESP-IDF dispatches a request with Content-Length after seeing its
+            # first body byte. Leave the remaining declared body unread.
+            connection.sendall(request_header(method, path, address.netloc, length) + b' ')
             status, headers, body, closed = read_response(connection, args.response_timeout, True)
             elapsed = time.monotonic() - started
         assert status == expected, f'{name}: expected HTTP {expected}, got {status}'
@@ -200,14 +202,14 @@ def run(args, evidence):
     else:
         with connection:
             started = time.monotonic()
-            connection.sendall(request_header('POST', '/pair-setup', hap_host, 512, 'application/pairing+tlv8'))
+            connection.sendall(request_header('POST', '/pair-setup', hap_host, 512, 'application/pairing+tlv8') + b' ')
             status, headers, body, closed = read_response(connection, args.response_timeout, True)
             elapsed = time.monotonic() - started
         assert status == 200, f'Closed HomeKit pairing returned HTTP {status}'
         fields = decode_tlv(body)
         assert fields.get(6) == b'\x02' and fields.get(7) == b'\x06', 'HomeKit pairing must be closed before this test (expected M2/Unavailable)'
         assert closed and headers.get('connection', '').lower() == 'close', 'HomeKit drained an unread forbidden pairing body'
-        passed('closed HomeKit pairing rejects an unread body immediately with Unavailable', elapsed)
+        passed('closed HomeKit pairing rejects an unread remainder immediately with Unavailable', elapsed)
 
     final = health()
     assert final['boot_id'] == initial['boot_id'], 'DUT rebooted during HTTP probes'
