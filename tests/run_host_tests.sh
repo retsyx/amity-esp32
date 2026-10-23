@@ -9,6 +9,10 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out="$root/test-results/host"
 mkdir -p "$out"
+sh "$root/tests/homekit_input_test.sh"
+sh "$root/tests/hap_http_test.sh"
+python3 "$root/tests/homekit_http_test.py"
+sh "$root/tests/web_request_test.sh"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/tests/config_store_fakes" -I"$root/tests/reset_fakes" -I"$root/components/config_store/include" \
   "$root/components/config_store/config_store.cpp" "$root/tests/config_store_test.cpp" -o "$out/config_store_test"

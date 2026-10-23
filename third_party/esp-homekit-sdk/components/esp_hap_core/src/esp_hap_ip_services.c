@@ -48,6 +48,8 @@
 #include <hap_platform_httpd.h>
 #include <hap_platform_os.h>
 #include <esp_hap_ip_services.h>
+#include "amity_hap_input.h"
+#include "amity_hap_http.h"
 
 #ifdef ESP_MFI_DEBUG_ENABLE
 #define ESP_MFI_DEBUG_PLAIN(fmt, ...)   \
@@ -59,6 +61,14 @@
 #endif /* ESP_MFI_DEBUG_ENABLE */
 
 static bool http_debug;
+
+/* The HTTP worker reads the bounded body before taking the HAP lock. Handlers
+ * consume this request-local copy, never a socket while holding that lock. */
+typedef struct {
+    const char *data;
+    size_t size;
+    size_t offset;
+} hap_request_body_t;
 
 int hap_http_session_not_authorized(httpd_req_t *req)
 {
@@ -73,15 +83,11 @@ int hap_http_session_not_authorized(httpd_req_t *req)
 
 int hap_httpd_get_data(httpd_req_t *req, char *buffer, int len)
 {
-    int read_len = 0;
-    while (read_len < len) {
-        int tmp_len = httpd_req_recv(req, buffer + read_len, len - read_len);
-        if (tmp_len <= 0) {
-            return read_len;
-        }
-        read_len += tmp_len;
-    }
-    return read_len;
+    hap_request_body_t *body = req->user_ctx;
+    if (!body || len < 0 || body->offset > body->size || (size_t)len > body->size - body->offset) return -1;
+    if (len) memcpy(buffer, body->data + body->offset, len);
+    body->offset += len;
+    return len;
 }
 
 static int hap_http_pair_setup_handler(httpd_req_t *req)
@@ -134,7 +140,11 @@ static int hap_http_pair_setup_handler(httpd_req_t *req)
             hap_platform_httpd_set_sess_ctx(req, ctx, hap_free_session, true);
             httpd_sess_set_send_override(hap_priv.server, fd, hap_httpd_send);
             httpd_sess_set_recv_override(hap_priv.server, fd, hap_httpd_recv);
-		}
+			} else if (ctx) {
+            /* Restarting M1 can replace the allocation. Always publish the
+             * replacement, even while the session is still unverified. */
+            hap_platform_httpd_set_sess_ctx(req, ctx, hap_pair_setup_ctx_clean, true);
+        }
     }
 	/* Context will be NULL, either if there was an error and a cleanup was required,
 	 * or if the pair_setup_process cleared it after successful pairing.
@@ -993,7 +1003,7 @@ static int hap_http_put_characteristics(httpd_req_t *req)
      * control all/many accessories at once.
      */
     int content_len = hap_platform_httpd_get_content_len(req);
-    if (content_len > sizeof(stack_inbuf)) {
+    if (content_len >= sizeof(stack_inbuf)) {
         heap_inbuf = hap_platform_memory_calloc(content_len + 1, 1); /* Allocating an extra byte for NULL termination */
         if (!heap_inbuf) {
             ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to read HTTPD Data");
@@ -1122,17 +1132,16 @@ static int hap_http_get_characteristics(httpd_req_t *req)
 	/* Get the total count of characteristics in the request. This will be
 	 * required to decide the size of the characteristic pointers' array
 	 */
-	int char_cnt = 0;
-	char *val_ptr = val;
-	/* We do not do any error checking here and just assume that the id
-	 * tag has a characteristic list which is a comma separated list
-	 * of <aid>.<iid> elements
-	 */
-	char *p = strsep(&val_ptr, ",");
-	while (p) {
-		char_cnt++;
-		p = strsep(&val_ptr, ",");
-	}
+    int char_cnt = 0, aid, iid, id_result;
+    const char *val_ptr = val;
+    while ((id_result = hap_parse_characteristic_id(&val_ptr, &aid, &iid)) > 0) ++char_cnt;
+    if (id_result < 0 || !char_cnt) {
+        httpd_resp_set_status(req, HTTPD_400);
+        httpd_resp_set_type(req, "application/hap+json");
+        snprintf(outbuf, sizeof(outbuf), "{\"status\":-70409}");
+        httpd_resp_send(req, outbuf, strlen(outbuf));
+        goto get_char_return;
+    }
 
 	/* Normally, it would have been fine to just go on parsing the
 	 * characteristics in the URL, fetch their values and prepare
@@ -1168,22 +1177,12 @@ static int hap_http_get_characteristics(httpd_req_t *req)
 	json_gen_str_t jstr;
 	json_gen_str_start(&jstr, outbuf, sizeof(outbuf), hap_http_json_flush_chunk, req);
 
-	/* Get the ids once again. Not checking for success since that
-	 * would be redundant
-	 */
-	httpd_query_key_value(url_query_str, "id", val, strlen(uri) + 1);
     char_cnt = 0;
-	int aid, iid;
 	val_ptr = val;
 	/* Parse the AIDs and IIDs in the "id" field and fetch the
 	 * characteristic pointer for each
 	 */
-	p = strsep(&val_ptr, ".");
-	while (p) {
-		aid = atoi(p);
-		p = strsep(&val_ptr, ",");
-		iid = atoi(p);
-		p = strsep(&val_ptr, ".");
+    while (hap_parse_characteristic_id(&val_ptr, &aid, &iid) > 0) {
 		hap_char_t *hc = hap_acc_get_char_by_iid(hap_acc_get_by_aid(aid), iid);
 		if (!hc) {
 			hap_set_char_report_status(&include_status, &jstr,
@@ -1334,7 +1333,7 @@ static int hap_http_pairings_handler(httpd_req_t *req)
 	uint8_t buf[2048]; /* Large buffer to accommodate 16 pairings list */
 	void *ctx = hap_platform_httpd_get_sess_ctx(req);
     ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
-	int data_len = httpd_req_recv(req, (char *)buf, sizeof(buf));
+	int data_len = hap_httpd_get_data(req, (char *)buf, req->content_len);
 	int outlen;
     hap_secure_session_t *session = (hap_secure_session_t *)ctx;
     if (!hap_is_req_secure(session)) {
@@ -1380,14 +1379,14 @@ static struct httpd_uri hap_identify = {
 
 static int hap_http_put_prepare(httpd_req_t *req)
 {
-    char buf[512] = {0};
+    char buf[513] = {0};
 
     ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
     hap_secure_session_t *session = (hap_secure_session_t *)hap_platform_httpd_get_sess_ctx(req);
     if (!hap_is_req_secure(session)) {
         return hap_http_session_not_authorized(req);
     }
-	int data_len = httpd_req_recv(req, (char *)buf, sizeof(buf));
+	int data_len = hap_httpd_get_data(req, (char *)buf, req->content_len);
 	if (data_len < 0) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to read HTTPD Data");
 		httpd_resp_set_status(req, HTTPD_500);
@@ -1548,9 +1547,69 @@ void hap_http_send_notif()
 static esp_err_t hap_locked_request(httpd_req_t *req)
 {
     const httpd_uri_t *original = req->user_ctx;
+    size_t limit = 0;
+    if (original == &hap_pair_setup) limit = 1200;
+    else if (original == &hap_pair_verify || original == &hap_prepare) limit = 512;
+    else if (original == &hap_pairings) limit = 2048;
+    else if (original == &hap_characteristics_put) limit = 32768;
+    if (req->content_len > limit) {
+        httpd_resp_set_status(req, "413 Content Too Large");
+        httpd_resp_set_hdr(req, "Connection", "close");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_FAIL; /* Do not let HTTPD drain an attacker-controlled body. */
+    }
+
+    /* Rejections happen before allocating or reading any request body. */
     hap_amity_lock();
+    bool allowed = true;
+    if (original == &hap_pair_setup) allowed = hap_amity_pairing_allowed();
+    else if (original == &hap_pairings || original == &hap_accessories ||
+             original == &hap_characteristics_get || original == &hap_characteristics_put ||
+             original == &hap_prepare) allowed = hap_is_req_secure(req->sess_ctx);
+    if (!allowed) {
+        if (original == &hap_pair_setup) {
+            uint8_t error[6]; int outlen = 0;
+            hap_prepare_error_tlv(STATE_M2, kTLVError_Unavailable, error, sizeof(error), &outlen);
+            httpd_resp_set_type(req, "application/pairing+tlv8");
+            httpd_resp_set_hdr(req, "Connection", "close");
+            httpd_resp_send(req, (char *)error, outlen);
+        } else {
+            httpd_resp_set_hdr(req, "Connection", "close");
+            hap_http_session_not_authorized(req);
+        }
+        hap_amity_unlock();
+        return ESP_FAIL;
+    }
+    hap_amity_unlock();
+
+    char *data = NULL;
+    if (req->content_len) {
+        data = hap_platform_memory_malloc(req->content_len);
+        if (!data) return ESP_FAIL;
+        if (hap_http_read_body(req, data, req->content_len) != ESP_OK) {
+            hap_platform_memory_free(data);
+            return ESP_FAIL;
+        }
+    }
+    hap_request_body_t body = {.data = data, .size = req->content_len};
+    req->user_ctx = &body;
+    hap_amity_lock();
+    /* A controller may have been removed while the body was arriving. */
+    const bool was_secure = original == &hap_pairings || original == &hap_accessories ||
+        original == &hap_characteristics_get || original == &hap_characteristics_put || original == &hap_prepare;
+    if (was_secure && (!hap_is_req_secure(req->sess_ctx) ||
+                      !((hap_secure_session_t *)req->sess_ctx)->ctrl ||
+                      !((hap_secure_session_t *)req->sess_ctx)->ctrl->valid)) {
+        hap_http_session_not_authorized(req);
+        hap_amity_unlock();
+        req->user_ctx = (void *)original;
+        hap_platform_memory_free(data);
+        return ESP_FAIL;
+    }
     const esp_err_t result = original->handler(req);
     hap_amity_unlock();
+    req->user_ctx = (void *)original;
+    hap_platform_memory_free(data);
     return result;
 }
 static esp_err_t hap_register_locked_handler(httpd_handle_t server, httpd_uri_t *original)

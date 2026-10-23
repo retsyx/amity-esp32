@@ -10,7 +10,7 @@ message(STATUS ${MFI_VER})
 
 
 # CORE
-set(srcs src/amity_hap.c src/byte_convert.c
+set(srcs src/amity_hap.c src/amity_hap_http.c src/byte_convert.c
         src/esp_hap_acc.c
         src/esp_hap_bct.c
         src/esp_hap_char.c

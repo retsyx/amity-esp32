@@ -4,4 +4,4 @@
 # GNU General Public License as published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
 
-idf_component_register(SRCS "web.cpp" "credentials.cpp" INCLUDE_DIRS "include" REQUIRES esp_https_server mbedtls config_store esp_timer esp_system)
+idf_component_register(SRCS "web.cpp" "credentials.cpp" "request.cpp" INCLUDE_DIRS "include" REQUIRES esp_https_server mbedtls config_store esp_timer esp_system lwip)

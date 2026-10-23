@@ -7,6 +7,7 @@
  */
 
 #include "system_services.hpp"
+#include "web.hpp"
 #include "firmware_version.hpp"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -107,13 +108,15 @@ esp_err_t upload_firmware(httpd_req_t *req) {
     const auto *target=esp_ota_get_next_update_partition(nullptr);
     constexpr size_t header_size=sizeof(esp_image_header_t)+sizeof(esp_image_segment_header_t)+sizeof(esp_app_desc_t);
     if (!target || req->content_len<header_size || req->content_len>target->size)
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid firmware size");
+        return web::error(req,"Invalid firmware size");
+    web::BodyReader reader(req,120ULL*1000000);
+    if(!reader.valid())return web::error(req,"Cannot receive firmware","503 Service Unavailable");
     // Validate the complete application header before erasing the inactive slot.
     std::array<uint8_t,2048> buf{};
     size_t read=0;
     while(read<header_size) {
-        int n=httpd_req_recv(req,reinterpret_cast<char *>(buf.data()+read),header_size-read);
-        if(n<=0) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Incomplete firmware header");
+        int n=reader.receive(reinterpret_cast<char *>(buf.data()+read),header_size-read);
+        if(n<=0) return web::error(req,"Incomplete firmware header","408 Request Timeout");
         read+=n;
     }
     esp_image_header_t image{};
@@ -123,36 +126,34 @@ esp_err_t upload_firmware(httpd_req_t *req) {
     const esp_app_desc_t *running=esp_app_get_description();
     if(image.magic!=ESP_IMAGE_HEADER_MAGIC || image.chip_id!=CONFIG_IDF_FIRMWARE_CHIP_ID ||
        app.magic_word!=ESP_APP_DESC_MAGIC_WORD || memcmp(app.project_name,running->project_name,sizeof(app.project_name))!=0)
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Firmware is not for this Amity target");
+        return web::error(req,"Firmware is not for this Amity target");
     if(!memchr(app.version,'\0',sizeof(app.version)))
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid firmware version field");
+        return web::error(req,"Invalid firmware version field");
     const auto comparison=compare_firmware_versions(app.version,running->version);
     if(!comparison||*comparison<0) {
         // Bind approval to the running version, so a stale browser cannot silently approve a downgrade.
         char confirmed[sizeof(running->version)]{};
         if(httpd_req_get_hdr_value_str(req,"X-Amity-Confirm-Version",confirmed,sizeof(confirmed))!=ESP_OK||
            strcmp(confirmed,running->version)!=0) {
-            httpd_resp_set_status(req,"409 Conflict");
-            httpd_resp_set_type(req,"application/json");
-            return httpd_resp_sendstr(req,comparison?
-                "{\"error\":\"Firmware downgrade requires explicit confirmation. Reload the page and select the file again.\"}":
-                "{\"error\":\"Firmware versions cannot be compared. Reload the page and select the file again to confirm.\"}");
+            return web::error(req,comparison?
+                "Firmware downgrade requires explicit confirmation. Reload the page and select the file again.":
+                "Firmware versions cannot be compared. Reload the page and select the file again to confirm.","409 Conflict");
         }
     }
     esp_ota_handle_t handle;
     esp_err_t e=esp_ota_begin(target,req->content_len,&handle);
-    if(e!=ESP_OK) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,esp_err_to_name(e));
+    if(e!=ESP_OK) return web::error(req,esp_err_to_name(e),"500 Internal Server Error");
     e=esp_ota_write(handle,buf.data(),read);
     while(e==ESP_OK && read<req->content_len) {
-        int n=httpd_req_recv(req,reinterpret_cast<char *>(buf.data()),std::min(buf.size(),req->content_len-read));
+        int n=reader.receive(reinterpret_cast<char *>(buf.data()),std::min(buf.size(),req->content_len-read));
         if(n<=0) { e=ESP_ERR_TIMEOUT; break; }
         e=esp_ota_write(handle,buf.data(),n);
         read+=n;
     }
-    if(e!=ESP_OK) { esp_ota_abort(handle); return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Firmware upload failed; current firmware retained"); }
+    if(e!=ESP_OK) { esp_ota_abort(handle); return web::error(req,"Firmware upload failed; current firmware retained"); }
     e=esp_ota_end(handle);
     if(e==ESP_OK) e=esp_ota_set_boot_partition(target);
-    if(e!=ESP_OK) return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Firmware validation failed");
+    if(e!=ESP_OK) return web::error(req,"Firmware validation failed");
     httpd_resp_set_type(req,"application/json");
     e=httpd_resp_sendstr(req,"{\"rebooting\":true}");
     reboot_later();
