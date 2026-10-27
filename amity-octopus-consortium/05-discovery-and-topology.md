@@ -20,7 +20,7 @@ Do not treat all AVR outputs as equivalent. For example, Denon documents no HDMI
 
 ## 2. Persistent names and runtime resolution
 
-The persistent fully qualified device name is `QualifiedDeviceName`, containing `consortium_id`, `octopus_id`, `tentacle_id`, `side`, and **`osd_name`**. The last field is the equipment's OSD name, never its logical address. `TentacleId` remains the immutable connector index `0..4`; side is `front` or `back`. Apply the canonical name rules in [the domain model](03-domain-model-and-addressing.md); display labels and fuzzy text matches must not change selector equality.
+The persistent fully qualified device name is `QualifiedDeviceName`, containing `consortium_id`, `octopus_id`, `tentacle_id`, `side`, and **`osd_name`**. The last field is the equipment's OSD name, never its logical address. `TentacleId` remains the immutable connector index `0..3`; side is `front` or `back`. Apply the canonical name rules in [the domain model](03-domain-model-and-addressing.md); display labels and fuzzy text matches must not change selector equality.
 
 `FullyQualifiedCecAddress` contains the same four attachment fields with `logical_address` instead of `osd_name` and is strictly a **runtime endpoint**. Discovery resolves a persistent qualified name to that endpoint. Logical address 15 is only an unregistered/broadcast context and never a resolved equipment endpoint. Frames from unregistered initiators remain port-level diagnostic events.
 
@@ -123,7 +123,7 @@ A `playback_proxy` cannot claim or announce its identity until its applicable PA
 
 ## 5. Asynchronous bounded scans
 
-The baseline waits for both buses to become quiet for 1.1 seconds, with a five-second reply-window deadline, within the Hub owner task. Scaling that loop to ten lines would let unrelated traffic delay discovery and input handling. Retain its delayed-reply correctness while moving scanning into nonblocking jobs.
+The baseline waits for both buses to become quiet for 1.1 seconds, with a five-second reply-window deadline, within the Hub owner task. Scaling that loop to eight lines would let unrelated traffic delay discovery and input handling. Retain its delayed-reply correctness while moving scanning into nonblocking jobs.
 
 ```cpp
 ScanTicket request_scan(const ScanRequest&);

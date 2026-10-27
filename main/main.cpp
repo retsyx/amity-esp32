@@ -396,7 +396,7 @@ extern "C" void app_main() {
         [](int gpio) { return GPIO_IS_VALID_GPIO(gpio); });
     if (profile_error != cec::ProfileError::None) {
         ESP_LOGE("amity", "Unsupported or unsafe board profile (%u); CEC outputs remain passive", unsigned(profile_error));
-        if(startup_profile.id!=cec::BoardProfileId::Development5Tentacle)return;
+        if(startup_profile.id!=cec::BoardProfileId::Development4Tentacle)return;
         hub.set_hardware_error("HDMI control could not start. Check the device wiring or install firmware intended for this hardware. Administration remains available.");
         passive_profile();
     }
@@ -427,7 +427,7 @@ extern "C" void app_main() {
     if(!boot)return;
     hub.set_boot_identity(*boot);
     auto cec_start=hub.start(startup_profile,device_settings::startup_adapter_defaults().front_physical);
-    if(cec_start!=ESP_OK&&startup_profile.id==cec::BoardProfileId::Development5Tentacle){
+    if(cec_start!=ESP_OK&&startup_profile.id==cec::BoardProfileId::Development4Tentacle){
         ESP_LOGE("amity","HDMI adapter startup failed (%s); retaining administration with all CEC outputs disabled",esp_err_to_name(cec_start));
         hub.set_hardware_error("HDMI control could not start. Check the device wiring or install firmware intended for this hardware. Administration remains available.");
         passive_profile();cec_start=hub.start(startup_profile,device_settings::startup_adapter_defaults().front_physical);

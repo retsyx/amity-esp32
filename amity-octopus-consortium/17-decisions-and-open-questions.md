@@ -8,8 +8,8 @@
 
 | ID | Decision | Reason and consequence | Owner |
 |---|---|---|---|
-| A01 | One octopus contains 1–5 tentacles, each with two isolated CEC ports. | Preserves physical source isolation; maximum is ten engines, not five. | [01](01-octopus-architecture.md), [04](04-hardware-and-cec-runtime.md) |
-| A02 | One shared CEC timer is the preferred runtime candidate. | Per-line GPTimers cannot reach ten on ESP32-S3; actual capacity still needs measurement. | [04](04-hardware-and-cec-runtime.md) |
+| A01 | One octopus contains 1–4 tentacles, each with two isolated CEC ports. | Preserves physical source isolation; maximum is eight engines, not four. | [01](01-octopus-architecture.md), [04](04-hardware-and-cec-runtime.md) |
+| A02 | One shared CEC timer is the preferred runtime candidate. | Per-line GPTimers cannot reach eight on ESP32-S3; actual capacity still needs measurement. | [04](04-hardware-and-cec-runtime.md) |
 | A03 | Electrical domains are explicit and independent of tentacles. | Ports can share a receiver/display bus; identity allocation must not collide. | [03](03-domain-model-and-addressing.md), [05](05-discovery-and-topology.md) |
 | A04 | Persist qualified OSD names; resolve them to versioned runtime CEC addresses. ComponentId is the internal record reference. | Preserves Amity's automatic name-to-LA behavior with consortium/octopus/tentacle/side scope. LA changes update bindings, not configured names or activities; ambiguous substitution and stale commands are rejected. | [03](03-domain-model-and-addressing.md), [05](05-discovery-and-topology.md) |
 | A05 | Source-edge semantic policy, no generic raw CEC bridge. | Prevents unwanted source activation before switch/display reaction. | [06](06-cec-roles-and-message-policy.md) |
@@ -40,8 +40,8 @@ These decisions include derived recommendations and explicit user amendments; th
 
 | Gate | Question to resolve | Owner / minimum evidence | Safe behavior while unresolved |
 |---|---|---|---|
-| G01 | Can one shared 50 μs interrupt service all ten lines under full radio/TLS/flash load? | Driver/hardware team: external waveforms, ISR duration/gap distribution, IRAM/link-map audit, stuck-line isolation. | Advertise only measured port capacity; preserve one-tentacle support. |
-| G02 | Which ten GPIOs and electrical interface are safe on the chosen board? | Hardware team: schematic, boot/strap/USB/flash/PSRAM review, voltage/pull-up and unpowered behavior measurements. | No speculative five-tentacle pin profile; outputs remain released on invalid profile. |
+| G01 | Can one shared 50 μs interrupt service all eight lines under full radio/TLS/flash load? | Driver/hardware team: external waveforms, ISR duration/gap distribution, IRAM/link-map audit, stuck-line isolation. | Advertise only measured port capacity; preserve one-tentacle support. |
+| G02 | Which eight GPIOs and electrical interface are safe on the chosen board? | Hardware team: schematic, boot/strap/USB/flash/PSRAM review, voltage/pull-up and unpowered behavior measurements. | No speculative four-tentacle pin profile; outputs remain released on invalid profile. |
 | G03 | How many playback proxies do supported sinks accept on a shared domain? | CEC interoperability team: logical-address/version behavior for each qualified display/receiver. | Reject identity exhaustion; never reuse LA or masquerade as another type. |
 | G04 | How is each sink-facing PA established, especially across dual AVR outputs? | Discovery team: staged source/output bootstrap, report provenance, confirmed fallback and recabling fixtures. | Required proxy remains unready; no guessed cross-domain PA announcement. |
 | G05 | Which reviewed embedded Security2 client and exact transcript vectors will be used? | Security team: pinned protocol interoperability, proof/padding checks, malformed/timeout tests. | Consortium enrollment stays unavailable; no HomeKit proof substitution or plaintext fallback. |
@@ -57,7 +57,7 @@ These decisions include derived recommendations and explicit user amendments; th
 | G15 | What supported first-browser entry and trust path makes local setup usable? | Web/security/product team: exact URL/identity lifecycle and first-access procedure tested on supported phone/desktop browsers, including camera-unavailable code entry. | Document the actual local trust step; do not claim that QR/mDNS solves browser trust or silently replace peer enrollment trust with browser acceptance. |
 | G16 | Can users complete the unchanged baseline workflows and added-device management? | UI/integration team: UX-01 through UX-16 evidence, real-hardware completion, wrong-choice/help records, interruption recovery and narrow-screen accessibility. | Compare actual fields/navigation to the baseline and record user/accessibility evidence without replacing the workflow. |
 
-The eight-octopus target must be evaluated jointly with tentacle count and active integrations. Passing eight nodes with one quiet port does not establish eight nodes each running five busy tentacles and maximum web/TLS load.
+The eight-octopus target must be evaluated jointly with tentacle count and active integrations. Passing eight nodes with one quiet port does not establish eight nodes each running four busy tentacles and maximum web/TLS load.
 
 ## 3. Out-of-scope and separately deferred capabilities
 
@@ -83,6 +83,6 @@ The consortium uses IP reachability. If a deployment requires a radio mesh or an
 
 ## 4. How to close a gate
 
-Add the exact test/build/hardware versions, reproducible procedure, observed result, capacity/margin and decision to the validation record. Update the owning document, capability advertisement and user guidance. Failed evidence can close a gate by reducing scope: for example a three-tentacle supported profile is a valid outcome when five cannot meet timing/electrical limits.
+Add the exact test/build/hardware versions, reproducible procedure, observed result, capacity/margin and decision to the validation record. Update the owning document, capability advertisement and user guidance. Failed evidence can close a gate by reducing scope: for example a three-tentacle supported profile is a valid outcome when four cannot meet timing/electrical limits.
 
 Do not write “tested” for a simulated behavior that depends on real hardware. Do not infer source-theft prevention from a post-theft correction test. Keep explicit distinctions between design assertions, host tests, simulated network behavior, electrical captures and end-to-end equipment observations.

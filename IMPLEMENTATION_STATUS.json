@@ -27,14 +27,14 @@
     "hardware_profile": "esp32s3-legacy-1t-v1",
     "security_profile": "development",
     "development_carrier": {
-      "hardware_profile": "esp32s3-development-5t-v1",
-      "supported_tentacles": 5,
-      "maximum_cec_ports": 10,
-      "default_gpio_mapping": "All five connector pairs unassigned; zero or sparse mappings supported",
-      "connector_ids": "Stable 0..4; physical removal does not renumber or delete saved equipment",
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "supported_tentacles": 4,
+      "maximum_cec_ports": 8,
+      "default_gpio_mapping": "Four default front/back GPIO pairs: 1/2, 5/6, 7/8 and 9/44; menuconfig overrides and zero/sparse mappings supported",
+      "connector_ids": "Stable 0..3; physical removal does not renumber or delete saved equipment",
       "presence": "Optional separate defined-level GPIO; otherwise unknown, never inferred from silence; CEC internal pulls disabled",
       "hardware_identity": "SHA256 of compiled GPIO, presence and setup-button mapping required by development update manifest",
-      "physical_qualification": "Pending five-adapter carrier and simultaneous ten-wire tests"
+      "physical_qualification": "Pending four-adapter carrier and simultaneous eight-wire tests"
     },
     "controller_policy": "One firmware; fresh no Wi-Fi/UI; original role selected by checked Matter BLE enrollment, member by authenticated Amity BLE; durable role independent of fabric count; sole immutable controller, one local bonded remote, original-only UI/home integrations. No public remote-owner mapping or delegated-input protocol."
   },
@@ -73,7 +73,7 @@
     },
     {
       "design": "04/07/11/12/14/20 and user hardware requirements",
-      "behavior": "Opt-in native five-adapter profile, stable zero/sparse mapping, compact shared CEC dispatcher with independent line state, asynchronous identity probes, scoped detach fences and evidence expiry, passive allocation-error recovery, explicit discovery-only adapter connection confirmation, negotiated peer hardware capacity and exact GPIO-map update identity; customer UI uses provisional Amity device / HDMI adapter / Amity system terms"
+      "behavior": "Opt-in native four-adapter profile, stable zero/sparse mapping, compact shared CEC dispatcher with independent line state, asynchronous identity probes, scoped detach fences and evidence expiry, passive allocation-error recovery, explicit discovery-only adapter connection confirmation, negotiated peer hardware capacity and exact GPIO-map update identity; customer UI uses provisional Amity device / HDMI adapter / Amity system terms"
     },
     {
       "design": "21/12/20",
@@ -87,7 +87,7 @@
     },
     {
       "design": "04/05/11/20 and user per-device settings requirement",
-      "behavior": "Per-device Settings exposes five stable HDMI-adapter slots within the actual hardware capacity, separate saved/observed/selected front physical addresses, positive-presence-only writes, boot/settings/presence-generation CAS and original receiver authority deadlines. One atomic durable batch restarts only the selected quiescent device after its durable applied result transmission is attempted, including a lost reply; legacy scalar migrates only slot0, absent slots retain defaults, and defaults never authorize routes or activity replay.",
+      "behavior": "Per-device Settings exposes up to four stable HDMI-adapter slots within the actual hardware capacity, separate saved/observed/selected front physical addresses, positive-presence-only writes, boot/settings/presence-generation CAS and original receiver authority deadlines. One atomic durable batch restarts only the selected quiescent device after its durable applied result transmission is attempted, including a lost reply; legacy scalar migrates only slot0, absent slots retain defaults, and defaults never authorize routes or activity replay.",
       "scope": "PASS 0.1.65 frozen host/ASan/UBSan, 21 browser settings checks, 360 peer schema/codec vectors, fresh native with 47 consistent public layouts, exact OTA Ready and live same-value save/restart/UI/retention. Physical detachable/multiple-owner settings qualification remains open."
     },
     {
@@ -2026,7 +2026,7 @@
   },
   "qualification_gates": {
     "physical_multi_board": "Independent passive Pi peer BLE Security2, exact-leaf mTLS/session faults and retirement passed. Native ESP32-to-ESP32 candidate/coordinator radio, opaque relay, network power cuts, peer OTA across multiple physical boards remain unqualified.",
-    "capacity_and_timing": "Physical topology remains one device/two CEC wires. Three-active-device combined load, five-adapter/ten-wire electronics, stack watermark/socket margins and worst-case jitter require the new breadboards. Actual provided test window observed max tick gap876us/max ISR26us; host/static checks do not establish full electrical or timing qualification.",
+    "capacity_and_timing": "Physical topology remains one device/two CEC wires. Three-active-device combined load, four-adapter/eight-wire electronics, stack watermark/socket margins and worst-case jitter require the new breadboards. Actual provided test window observed max tick gap876us/max ISR26us; host/static checks do not establish full electrical or timing qualification.",
     "av_behavior": "CEC acknowledgement and wire captures do not prove picture/audio or source-theft prevention for real receivers/displays. Full named-equipment and video/HPD matrix remains required.",
     "ecosystems_and_users": "Matter/HomeKit retention across the complete multi-device lifecycle, actual bonded-remote identity retention, assistive technology/browser trust and observed UX-01 through UX-16 novice sessions remain required. Historical DUT baseline was unbonded. Current cleanup-source software evidence and all physical qualification are tracked separately.",
     "production": "Development unsigned image only on supplied DUT. Native signed boot, release flash encryption, provisioned encrypted NVS, production recovery and security review require separate disposable-hardware qualification; no eFuses changed.",

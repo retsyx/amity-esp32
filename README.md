@@ -25,7 +25,7 @@ Amity can only control devices that support HDMI-CEC! However, devices that don'
 
 ### Development Status
 
-The development implementation follows the [multi-device control design](amity-octopus-consortium/README.md): schema-2 configuration and migration, scoped equipment discovery, guarded distributed planning, authenticated enrollment and member transport, scoped configuration and repair, explicit actuator recovery, and manifest-bound updates. The existing board defaults to **one HDMI adapter (two isolated CEC ports)**. A separate development profile supports **up to five optional HDMI adapters per device**, with a software limit of **three active devices per system**. Each device uses one shared CEC timer. Historical bench evidence covers one device and an independent passive peer; group capacity, five-adapter electrical timing, AV equipment, production security provisioning and observed novice usability need their own qualification evidence. See [implementation status](IMPLEMENTATION_STATUS.json) for exact checks and remaining qualification gates.
+The development implementation follows the [multi-device control design](amity-octopus-consortium/README.md): schema-2 configuration and migration, scoped equipment discovery, guarded distributed planning, authenticated enrollment and member transport, scoped configuration and repair, explicit actuator recovery, and manifest-bound updates. The existing board defaults to **one HDMI adapter (two isolated CEC ports)**. A separate development profile supports **up to four optional HDMI adapters per device**, with a software limit of **three active devices per system**. Each device uses one shared CEC timer. Historical bench evidence covers one device and an independent passive peer; group capacity, four-adapter electrical timing, AV equipment, production security provisioning and observed novice usability need their own qualification evidence. See [implementation status](IMPLEMENTATION_STATUS.json) for exact checks and remaining qualification gates.
 
 The original first-setup Amity remains the controller, hosts the only browser UI and Matter/Apple Home integration, and pairs with the sole remote. Other Amity devices are subordinate actuators with no UI. The one remote and browser can select activities for multiple screens. Amity device names equal their actual hostnames. Add requires a valid Name and applies it to the added device; main hostname changes remain in Advanced. Names are not separate cosmetic aliases, while equipment selectors, activity IDs, home-app slots and pairings remain stable. Restarted activities stay paused until explicitly started again.
 
@@ -297,12 +297,12 @@ does not confirm the HDMI route or start an activity. Stop the selected device's
 activities before saving. Saving restarts only that Amity, and activities remain
 paused afterward. Opening the dialog does not scan or wake equipment.
 
-HDMI adapters retain socket numbers 1–5 within the device's supported capacity.
+HDMI adapters retain socket numbers 1–4 within the device's supported capacity.
 Removing adapter 2 does not rename adapter 3 or copy its settings. Missing and
 unconfigured adapters keep their saved defaults. A detachable adapter can be
 edited only when a configured presence detector confirms it is attached; an
 adapter without a detector has unknown presence and is read only. The original
-fixed one-adapter hardware is present by construction. Detachable five-adapter
+fixed one-adapter hardware is present by construction. Detachable four-adapter
 hardware and its presence wiring still require physical qualification.
 
 ## License

@@ -638,7 +638,7 @@ esp_err_t runtime_read_startup(model::OctopusId local,RuntimeStartup &out){
     return ESP_OK;
 }
 esp_err_t runtime_set_hardware_profile(uint8_t count,uint8_t mask){
-    if(!count||count>5||mask>=(1u<<count))return ESP_ERR_INVALID_ARG;
+    if(!count||count>amity::max_tentacles||mask>=(1u<<count))return ESP_ERR_INVALID_ARG;
     std::lock_guard<std::mutex> guard(lock);if(initialized.load())return ESP_ERR_INVALID_STATE;
     hardware_tentacles=count;hardware_tentacles_mask=mask;return ESP_OK;
 }

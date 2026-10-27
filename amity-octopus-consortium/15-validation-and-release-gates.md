@@ -29,7 +29,7 @@ The existing host runners use AddressSanitizer and UndefinedBehaviorSanitizer. K
 
 ## Refactor the deterministic fixture first
 
-`tests/cec_hub_fixture.hpp` runs real admission/worker code, but has a singleton `latest_task`, one global synthetic clock, and GPIO-based assumptions about two peers. Creating five `HubService` instances against this fixture would not prove an octopus works. [Fixture][b-fixture]
+`tests/cec_hub_fixture.hpp` runs real admission/worker code, but has a singleton `latest_task`, one global synthetic clock, and GPIO-based assumptions about two peers. Creating four `HubService` instances against this fixture would not prove an octopus works. [Fixture][b-fixture]
 
 Introduce a reusable fixture with these explicit entities:
 
@@ -104,7 +104,7 @@ The baseline hardware activity test specifically checks forced back-side standby
 | Profile | Required arrangement and result |
 |---|---|
 | T-01 | One octopus/one tentacle in the original TV–AVR arrangement; preserve supported legacy behavior and migration. |
-| T-02 | One octopus with each supported tentacle count 1 through 5; every enabled front/back line independent and correctly addressed. |
+| T-02 | One octopus with each supported tentacle count 1 through 4; every enabled front/back line independent and correctly addressed. |
 | T-03 | TV and projector, source attachments on direct display inputs and AVR inputs, with explicitly modeled AVR outputs/capabilities; select each feasible route and reject infeasible ones. |
 | T-04 | Two tentacles whose sink-facing ports share a CEC domain; one domain authority, legal distinct identities, no message amplification. |
 | T-05 | Two octopuses in separate rooms on LAN with shared control resources where physically connected; reject video routes that no HDMI path supports. |
@@ -116,7 +116,7 @@ T-03 must not assume all receivers expose CEC on only one output. Record actual 
 
 ## Timing, memory and coexistence gates
 
-Measure the proposed shared timer at the advertised engine capacity while Wi-Fi carries peer control, BLE maintains its remote link, enrollment is attempted, web clients poll, HomeKit/Matter traffic runs, logs are downloaded and an OTA image is written. Qualifying a five-tentacle profile requires ten engines; a reduced supported profile must state its lower measured capacity. Include flash erase periods, not only quiet steady-state traffic.
+Measure the proposed shared timer at the advertised engine capacity while Wi-Fi carries peer control, BLE maintains its remote link, enrollment is attempted, web clients poll, HomeKit/Matter traffic runs, logs are downloaded and an OTA image is written. Qualifying a four-tentacle profile requires eight engines; a reduced supported profile must state its lower measured capacity. Include flash erase periods, not only quiet steady-state traffic.
 
 The runtime owner must publish the approved sample period, maximum ISR execution time, worst sampling gap/jitter, task priorities, queue bounds and minimum internal-memory margin from [runtime](04-hardware-and-cec-runtime.md). The release gate cannot pass with these thresholds unset. Measurements must distinguish average, percentile and worst observed values; an average below the budget does not excuse a protocol deadline miss.
 
@@ -185,6 +185,6 @@ Run SC-01–SC-08 from [document 21](21-original-controller-policy.md), includin
 
 ## Per-device adapter preference acceptance
 
-Run the [document 20 settings matrix](20-user-interface.md#per-device-hdmi-adapter-settings-amendment--20-october-2026): zero-to-five and sparse stable slots, legacy fixed presence, unknown/no detector, explicit removal/reinsert ABA, independent defaults/detected/selected values, stale boot/settings/generation/deadline, busy held activity, failed/late storage and lost applied response. Opening or refreshing Settings must generate no CEC traffic. Only exact durable application may restart the selected device, after response transmission attempt; an unknown client outcome never auto-replays. Preserve original activity forms and all Advanced workflows except the expressly moved global PA form.
+Run the [document 20 settings matrix](20-user-interface.md#per-device-hdmi-adapter-settings-amendment--20-october-2026): zero-to-four and sparse stable slots, legacy fixed presence, unknown/no detector, explicit removal/reinsert ABA, independent defaults/detected/selected values, stale boot/settings/generation/deadline, busy held activity, failed/late storage and lost applied response. Opening or refreshing Settings must generate no CEC traffic. Only exact durable application may restart the selected device, after response transmission attempt; an unknown client outcome never auto-replays. Preserve original activity forms and all Advanced workflows except the expressly moved global PA form.
 
 Source/host evidence includes [actual native owner tests](../tests/native_ports_test.cpp), [typed runtime tests](../tests/live_system_test.cpp), [atomic settings/service tests](../tests/adapter_settings_test.cpp), [browser settings tests](../tests/web_device_settings_ui.py) and the deployed strict peer settings codec. Host/browser passes establish software boundaries only. Physical sparse connector/detector electrical qualification, real remote owner restart/lost-ACK recovery, and post-restart independent address behavior require separate recorded DUT/member evidence.

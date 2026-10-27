@@ -14,7 +14,7 @@
         "tentacle_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4
+          "maximum": 3
         },
         "expected_presence_generation": {
           "allOf": [
@@ -52,15 +52,14 @@
         "tentacle_id": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4
+          "maximum": 3
         },
         "name": {
           "enum": [
             "HDMI adapter 1",
             "HDMI adapter 2",
             "HDMI adapter 3",
-            "HDMI adapter 4",
-            "HDMI adapter 5"
+            "HDMI adapter 4"
           ]
         },
         "configured": {
@@ -179,22 +178,6 @@
         {
           "if": {
             "properties": {
-              "tentacle_id": {
-                "const": 4
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "name": {
-                "const": "HDMI adapter 5"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
               "configured": {
                 "const": false
               }
@@ -234,7 +217,7 @@
         "adapters": {
           "type": "array",
           "minItems": 0,
-          "maxItems": 5,
+          "maxItems": 4,
           "items": {
             "$ref": "#/$defs/Adapter"
           }
@@ -271,7 +254,7 @@
         "changes": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 5,
+          "maxItems": 4,
           "items": {
             "$ref": "#/$defs/Change"
           }
@@ -312,7 +295,7 @@
         "changes": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 5,
+          "maxItems": 4,
           "items": {
             "$ref": "#/$defs/Change"
           }

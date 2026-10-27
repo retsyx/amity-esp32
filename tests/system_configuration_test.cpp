@@ -103,27 +103,32 @@ void journal_and_revisions() {
 }
 void optional_hardware_capacity() {
     auto c=direct_configuration();const auto before=serialize_configuration_v2(c);const auto domains=c.domains.size();const auto owner=c.octopuses.front().octopus_id;bool changed=false;std::string error;
-    assert(reconcile_hardware_profile(c,owner,5,0,random_source(),changed,error)&&changed);
-    assert(c.octopuses.front().supported_tentacles==5&&c.domains.size()==domains); // Unpopulated connectors consume no journal payload.
+    assert(reconcile_hardware_profile(c,owner,4,0,random_source(),changed,error)&&changed);
+    assert(c.octopuses.front().supported_tentacles==4&&c.domains.size()==domains); // Unpopulated connectors consume no journal payload.
     auto original=c;original.octopuses.front().supported_tentacles=1;assert(serialize_configuration_v2(original)==before);
     assert(serialize_configuration_v2(c).size()==before.size()); // Capacity metadata does not crowd out retained activities/slots.
-    assert(reconcile_hardware_profile(c,owner,5,16,random_source(),changed,error)&&!changed); // Sparse configured index4 never renumbers saved index0.
+    auto unsupported=c;unsupported.octopuses.front().supported_tentacles=5;ConfigurationV2 rejected;
+    assert(!validate_configuration_v2(unsupported,error)&&!parse_configuration_v2(serialize_configuration_v2(unsupported),rejected,error));
+    unsupported=c;unsupported.components[0].record.qualified_names[0].port.tentacle_id=4;
+    assert(!validate_configuration_v2(unsupported,error)&&!parse_configuration_v2(serialize_configuration_v2(unsupported),rejected,error));
+    assert(!reconcile_hardware_profile(c,owner,5,0,random_source(),changed,error));
+    assert(reconcile_hardware_profile(c,owner,4,8,random_source(),changed,error)&&!changed); // Sparse configured index3 never renumbers saved index0.
     ConfigurationV2 decoded;assert(parse_configuration_v2(serialize_configuration_v2(c),decoded,error));
-    for(auto& component:c.components)for(auto& n:component.record.qualified_names)n.port.tentacle_id=4;
-    for(auto& d:c.domains)for(auto& p:d.ports){p.port.tentacle_id=4;if(p.physical_address)p.physical_address->attachment=p.port;}
-    for(auto& b:c.binding_policies){b.port.tentacle_id=4;if(b.device_name)b.device_name->port.tentacle_id=4;}
+    for(auto& component:c.components)for(auto& n:component.record.qualified_names)n.port.tentacle_id=3;
+    for(auto& d:c.domains)for(auto& p:d.ports){p.port.tentacle_id=3;if(p.physical_address)p.physical_address->attachment=p.port;}
+    for(auto& b:c.binding_policies){b.port.tentacle_id=3;if(b.device_name)b.device_name->port.tentacle_id=3;}
     assert(validate_configuration_v2(c,error));c.octopuses.front().supported_tentacles=1;assert(!validate_configuration_v2(c,error));
-    assert(!reconcile_hardware_profile(decoded,owner,5,32,random_source(),changed,error));
-    auto passive=empty_configuration();passive.octopuses.front().supported_tentacles=5;const auto boot=id<model::BootId>(77);std::vector<model::PortPolicySnapshot> snapshots;
+    assert(!reconcile_hardware_profile(decoded,owner,4,16,random_source(),changed,error));
+    auto passive=empty_configuration();passive.octopuses.front().supported_tentacles=4;const auto boot=id<model::BootId>(77);std::vector<model::PortPolicySnapshot> snapshots;
     const auto zero=amity::synchronization::owner_state_json(passive,owner,boot,1,{});assert(!zero.empty()&&amity::synchronization::parse_owner_state(zero,passive,owner,boot,1,snapshots,error)&&snapshots.empty());
-    ConfigurationV2 connected;assert(propose_adapter_connection(passive,owner,4,{},random_source(),connected,error));
+    ConfigurationV2 connected;assert(propose_adapter_connection(passive,owner,3,{},random_source(),connected,error));
     assert(connected.domains.size()==2&&connected.activities.empty()&&connected.binding_policies.empty()&&connected.resources.empty()&&connected.routes.empty()&&connected.external_slots.empty());
-    for(const auto& domain:connected.domains){assert(domain.confirmed&&domain.ports.size()==1&&domain.ports[0].port.tentacle_id==4);assert(domain.ports[0].role==(domain.ports[0].port.side==model::Side::front?model::PortRole::playback_proxy:model::PortRole::tv_controller));assert(!domain.ports[0].physical_address);}
-    ConfigurationV2 fallback;assert(propose_adapter_connection(connected,owner,4,0x2000,random_source(),fallback,error));
+    for(const auto& domain:connected.domains){assert(domain.confirmed&&domain.ports.size()==1&&domain.ports[0].port.tentacle_id==3);assert(domain.ports[0].role==(domain.ports[0].port.side==model::Side::front?model::PortRole::playback_proxy:model::PortRole::tv_controller));assert(!domain.ports[0].physical_address);}
+    ConfigurationV2 fallback;assert(propose_adapter_connection(connected,owner,3,0x2000,random_source(),fallback,error));
     for(size_t n=0;n<fallback.domains.size();++n){const auto& domain=fallback.domains[n];assert(domain.domain_id==connected.domains[n].domain_id);if(domain.ports[0].port.side==model::Side::front){assert(domain.domain_revision==2&&domain.ports[0].physical_address->confirmed&&domain.ports[0].physical_address->provenance==model::PaProvenance::user_confirmed_fallback);}else assert(domain.domain_revision==1);}
-    assert(propose_adapter_connection(fallback,owner,4,{},random_source(),connected,error)&&serialize_configuration_v2(fallback)==serialize_configuration_v2(connected));
-    assert(!propose_adapter_connection(passive,owner,5,{},random_source(),connected,error));
-    assert(!propose_adapter_connection(passive,owner,4,uint16_t{0},random_source(),connected,error));
+    assert(propose_adapter_connection(fallback,owner,3,{},random_source(),connected,error)&&serialize_configuration_v2(fallback)==serialize_configuration_v2(connected));
+    assert(!propose_adapter_connection(passive,owner,4,{},random_source(),connected,error));
+    assert(!propose_adapter_connection(passive,owner,3,uint16_t{0},random_source(),connected,error));
     assert(!propose_adapter_connection(decoded,owner,0,{},random_source(),connected,error)); // Assigned logical equipment cannot be repurposed.
 }
 void external_slots() {
@@ -269,8 +274,8 @@ void owner_journal_and_sync() {
     }
     const auto bytes=amity::synchronization::owner_state_json(slice,owner,boot,7,policies); assert(!bytes.empty());std::vector<model::PortPolicySnapshot> parsed;
     assert(amity::synchronization::parse_owner_state(bytes,slice,owner,boot,7,parsed,error));assert(parsed.size()==policies.size());
-    auto expanded=slice;for(auto& board:expanded.octopuses)if(board.octopus_id==owner)board.supported_tentacles=5;
-    auto mixed=policies;auto spare=policies.front();spare.port.tentacle_id=4;spare.domain_id=id<model::DomainId>(500);spare.bindings.clear();spare.physical_address.reset();spare.owned_logical_address.reset();spare.role=model::PortRole::monitor;mixed.push_back(spare);
+    auto expanded=slice;for(auto& board:expanded.octopuses)if(board.octopus_id==owner)board.supported_tentacles=4;
+    auto mixed=policies;auto spare=policies.front();spare.port.tentacle_id=3;spare.domain_id=id<model::DomainId>(500);spare.bindings.clear();spare.physical_address.reset();spare.owned_logical_address.reset();spare.role=model::PortRole::monitor;mixed.push_back(spare);
     auto expanded_bytes=amity::synchronization::owner_state_json(expanded,owner,boot,7,mixed);assert(amity::synchronization::parse_owner_state(expanded_bytes,expanded,owner,boot,7,parsed,error)&&parsed.size()==mixed.size());
     mixed.back().role=model::PortRole::disabled;expanded_bytes=amity::synchronization::owner_state_json(expanded,owner,boot,7,mixed);assert(amity::synchronization::parse_owner_state(expanded_bytes,expanded,owner,boot,7,parsed,error));
     for(auto& policy:mixed)if(!policy.bindings.empty()){policy.role=model::PortRole::disabled;policy.owned_logical_address.reset();for(auto& binding:policy.bindings){binding.binding.role=model::PortRole::disabled;binding.binding.status=model::BindingStatus::unresolved;}}

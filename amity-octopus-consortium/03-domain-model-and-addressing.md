@@ -25,7 +25,7 @@ All opaque IDs below are random 128-bit values serialized as exactly 32 lowercas
 | `ActivityId`, `ZoneId`, `ResourceId`, `RouteId` | Stable desired-state objects and validated paths independent of UI order and labels. |
 | `SessionId`, `PlanId`, `CommandId`, `MessageId`, `ScanId`, `ResolutionId` | One runtime operation/session or binding-resolution exchange; IDs are not reused after a crash. |
 
-`TentacleId` is an integer **0–4**, assigned by the hardware profile to a stable connector slot. It does not change when the tentacle is unplugged or renamed. The UI displays HDMI 1–5; firmware and wire contracts use zero-based slot IDs. `side` is the literal string `front` or `back`. `logical_address` is integer 0–14 for a component endpoint. Address 15 is reserved for broadcast/unregistered protocol context and is not an equipment identity.
+`TentacleId` is an integer **0–3**, assigned by the hardware profile to a stable connector slot. It does not change when the tentacle is unplugged or renamed. The UI displays HDMI 1–4; firmware and wire contracts use zero-based slot IDs. `side` is the literal string `front` or `back`. `logical_address` is integer 0–14 for a component endpoint. Address 15 is reserved for broadcast/unregistered protocol context and is not an equipment identity.
 
 Every revision or ordered counter whose C++ type is `uint64_t` is serialized to JSON as a canonical decimal string without leading zeros, except `"0"`. Examples: `"0"`, `"19"`, `"18446744073709551615"`. The parser must reject overflow. Do not allow JavaScript's numeric precision to corrupt revisions. Small bounded quantities such as tentacle index, opcode, millisecond limits and protocol version remain JSON numbers.
 

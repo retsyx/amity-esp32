@@ -1,6 +1,7 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/json.hpp"
 #include "amity/consortium/session.hpp"
+#include "amity/consortium/settings.hpp"
 #include "amity/consortium/lifecycle.hpp"
 #include "amity/consortium/radio.hpp"
 #include "amity/consortium/bindings.hpp"
@@ -67,19 +68,35 @@ void hello_profile_tests(){
     assert(!parsed.hardware_profile&&parsed.supported_tentacles==1&&parsed.configured_tentacles_mask==1);
     assert(legacy.find("supported_tentacles")==std::string::npos); // Closed legacy extended profile stays unchanged.
     value.hardware_profile=true;
-    for(uint8_t count=1;count<=5;++count)for(uint8_t mask=0;mask<32;++mask){
+    for(uint8_t count=1;count<=4;++count)for(uint8_t mask=0;mask<32;++mask){
         value.supported_tentacles=count;value.configured_tentacles_mask=mask;const auto body=hello_json(value);
         if(mask<(1u<<count)){assert(!body.empty()&&parse_hello(body,parsed)==Error::none);assert(parsed.hardware_profile&&parsed.supported_tentacles==count&&parsed.configured_tentacles_mask==mask);}
         else assert(body.empty());
     }
-    value.supported_tentacles=5;value.configured_tentacles_mask=0;
+    value.supported_tentacles=4;value.configured_tentacles_mask=0;
     const auto all_unassigned=hello_json(value);assert(parse_hello(all_unassigned,parsed)==Error::none&&parsed.configured_tentacles_mask==0);
-    for(const auto &body:{replace(all_unassigned,"\"supported_tentacles\":5", "\"supported_tentacles\":0"),replace(all_unassigned,"\"supported_tentacles\":5", "\"supported_tentacles\":6"),replace(all_unassigned,"\"supported_tentacles\":5", "\"supported_tentacles\":\"5\""),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":32"),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":true"),replace(all_unassigned,",\"supported_tentacles\":5", ""),replace(all_unassigned,",\"configured_tentacles_mask\":0", "")})assert(parse_hello(body,parsed)==Error::invalid_message);
+    for(const auto &body:{replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":0"),replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":5"),replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":\"4\""),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":16"),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":true"),replace(all_unassigned,",\"supported_tentacles\":4", ""),replace(all_unassigned,",\"configured_tentacles_mask\":0", "")})assert(parse_hello(body,parsed)==Error::invalid_message);
     assert(parse_hello(replace(all_unassigned,"\"required_capabilities\":258047","\"required_capabilities\":262144"),parsed)==Error::invalid_message);
     assert(parse_hello(replace(all_unassigned,"\"optional_capabilities\":0","\"optional_capabilities\":4294967295"),parsed)==Error::none);
     Session session;auto sc=scope();assert(session.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);
     value.supported_tentacles=1;value.configured_tentacles_mask=2;assert(session.hello(value,known_capabilities)==Error::invalid_message);
-    value.supported_tentacles=5;value.configured_tentacles_mask=0;assert(session.hello(value,known_capabilities)==Error::none);
+    value.supported_tentacles=5;value.configured_tentacles_mask=0;assert(hello_json(value).empty()&&session.hello(value,known_capabilities)==Error::invalid_message);
+    value.supported_tentacles=4;value.configured_tentacles_mask=0;assert(session.hello(value,known_capabilities)==Error::none);
+}
+void adapter_index_tests(){
+    Json value;JsonError detail;const auto s=scope();
+    m::QualifiedDeviceName name{{s.consortium_id,s.local_id,3,m::Side::back},"Player"};
+    m::QualifiedDeviceName parsed_name;m::FullyQualifiedCecAddress parsed_address;
+    assert(parse_json(m::name_json(name),value,detail)&&parse_name(value,parsed_name));
+    value.get("tentacle_id")->integer=4;assert(!parse_name(value,parsed_name));
+    assert(parse_json(m::address_json({name.port,4}),value,detail)&&parse_address(value,parsed_address));
+    value.get("tentacle_id")->integer=4;assert(!parse_address(value,parsed_address));
+    DeviceSettingsWrite write,parsed_write;write.expected_boot=s.local_boot_id;write.expected_revision=1;write.changes.push_back({3,1,"2.0.0.0"});
+    assert(parse_json(device_settings_write_json(write),value,detail)&&parse_device_settings_write(value,parsed_write)==Error::none);
+    value.get("changes")->array[0].get("tentacle_id")->integer=4;assert(parse_device_settings_write(value,parsed_write)==Error::invalid_message);
+    const auto snapshot="{\"boot_id\":\""+s.local_boot_id.str()+"\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"presence\":\"unknown\",\"presence_generation\":\"1\",\"default_front_physical_address\":\"2.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":null}]}";
+    assert(parse_json(snapshot,value,detail)&&valid_settings_snapshot(value));
+    value.get("adapters")->array[0].get("tentacle_id")->integer=4;assert(!valid_settings_snapshot(value));
 }
 Operation operation(const LinkScope &s){Operation o;o.command_id=ident<m::CommandId>(11);o.command_sequence=1;o.plan_id=ident<m::PlanId>(12);o.session_id=ident<m::SessionId>(13);o.target={{s.consortium_id,s.local_id,0,m::Side::back},4};o.execution_lease_id=ident<m::ExecutionLeaseId>(14);return o;}
 void session_tests(){
@@ -219,7 +236,7 @@ void original_controller_tests(){
         auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none);assert(session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);
         for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(auto kind:{static_cast<Kind>(26),static_cast<Kind>(2),static_cast<Kind>(35),static_cast<Kind>(36),static_cast<Kind>(6)}){auto e=envelope(sc);e.kind=kind;assert(session.admit(e,100,100,false)==Error::unauthorized_role);}}
     }
-    auto profile=hello(scope());assert(execution_profile_supported(profile,true,true,5,31));profile.required_capabilities&=~original_controller_only;assert(!execution_profile_supported(profile,true,true,1,1));profile.optional_capabilities|=original_controller_only;assert(execution_profile_supported(profile,true,true,1,1));assert(!execution_profile_supported(profile,false,true,1,1)&&!execution_profile_supported(profile,true,false,5,31));
+    auto profile=hello(scope());assert(execution_profile_supported(profile,true,true,4,15));profile.required_capabilities&=~original_controller_only;assert(!execution_profile_supported(profile,true,true,1,1));profile.optional_capabilities|=original_controller_only;assert(execution_profile_supported(profile,true,true,1,1));assert(!execution_profile_supported(profile,false,true,1,1)&&!execution_profile_supported(profile,true,false,4,15));
     auto sc=scope();Session member;assert(member.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);assert(member.hello(hello(sc),known_capabilities)==Error::none&&member.synchronized(7,true,true)==Error::none);
     JsonError detail;auto lifecycle=envelope(sc);lifecycle.kind=Kind::membership_event;lifecycle.ttl_ms=2000;assert(parse_json("{\"phase\":\"handover_commit\"}",lifecycle.payload,detail));assert(member.admit(lifecycle,0,0,false)==Error::unauthorized_role);lifecycle.payload.get("phase")->string="factory_reset";assert(member.admit(lifecycle,0,0,false)==Error::none);
     lifecycle.kind=Kind::snapshot_request;assert(parse_json("{\"document_kind\":\"handover\"}",lifecycle.payload,detail));assert(member.admit(lifecycle,0,0,false)==Error::unauthorized_role);
@@ -244,4 +261,4 @@ void bootstrap_tests(){
     BootstrapRecords records;auto rid=ident<m::MessageId>(1);records.connect(5);assert(records.fragment(4,rid,8,0,"abcd")==BootstrapRecords::Result::stale);assert(records.fragment(5,rid,4097,0,"abcd")==BootstrapRecords::Result::invalid);assert(records.fragment(5,rid,8,0,"abcd")==BootstrapRecords::Result::incomplete);assert(records.fragment(5,rid,8,1,"X")==BootstrapRecords::Result::conflicting);assert(records.fragment(5,rid,8,0,"abcd")==BootstrapRecords::Result::incomplete);assert(records.fragment(5,rid,8,4,"efgh")==BootstrapRecords::Result::complete);CipherCounter counter;assert(counter.consume()==1);assert(records.finish(rid,"ciphertext"));assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::duplicate);assert(records.cached_response()=="ciphertext");assert(counter.consume()==2); // duplicate consumed no counter
     records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());EnrollmentWindow window;assert(!window.open(false,0));assert(window.open(true,0));for(int i=0;i<5;++i){assert(window.admit(i));assert(!window.admit(i));window.failed_proof();}assert(!window.available(100));assert(window.open(true,100));assert(!window.available(180100));
 }
-int main(int argc,char **argv){assert(argc==2);std::string root=argv[1];const auto power=read(root+"/amity-octopus-consortium/examples/operation-ensure-power.json");json_tests();frame_tests(power);envelope_tests(power);for(auto name:{"operation-activate-proxy.json","operation-press-key.json"}){Envelope e;assert(parse_envelope(read(root+"/amity-octopus-consortium/examples/"+name),e)==Error::none);}hello_profile_tests();session_tests();update_tests();ledger_and_hold_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();binding_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"consortium protocol/lifecycle fault tests passed\n";}
+int main(int argc,char **argv){assert(argc==2);std::string root=argv[1];const auto power=read(root+"/amity-octopus-consortium/examples/operation-ensure-power.json");json_tests();frame_tests(power);envelope_tests(power);for(auto name:{"operation-activate-proxy.json","operation-press-key.json"}){Envelope e;assert(parse_envelope(read(root+"/amity-octopus-consortium/examples/"+name),e)==Error::none);}hello_profile_tests();adapter_index_tests();session_tests();update_tests();ledger_and_hold_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();binding_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"consortium protocol/lifecycle fault tests passed\n";}

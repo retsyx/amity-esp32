@@ -2,8 +2,8 @@
   "package": "Amity Octopus and Consortium",
   "proposal_version": "0.1",
   "prepared_date": "2026-10-20",
-  "amendment_date": "2026-10-21",
-  "amendment": "Preserve current main behavior (98e64a6 at this merge), including independent per-key completions, immediate CEC admission while ACKs are pending, wait_for_release and fixed Siri macros. Distribution only moves messages to their owner and has zero CEC behavioral effect; d50af8026938797fc0820d0107f4c4e064c2d2bc remains historical evidence where unchanged. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight total messages per wire; releases at eight are dropped without executor admission retry, and every TX dropped because the FIFO is full is logged. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force.",
+  "amendment_date": "2026-10-26",
+  "amendment": "Preserve current main behavior (98e64a6 at this merge), including independent per-key completions, immediate CEC admission while ACKs are pending, wait_for_release and fixed Siri macros. Distribution only moves messages to their owner and has zero CEC behavioral effect; d50af8026938797fc0820d0107f4c4e064c2d2bc remains historical evidence where unchanged. State-change-only transport; executor owns button/message choices and successful completion pacing, has no TX buffer and supplies one attempt per key press. Failed key TX ends that key state; later up is a no-op. Global release is implicit at recipient stream end only when all its keys cease being pressed, including last-key failure. CEC mechanically sends supplied frames through eight total messages per wire; releases at eight are dropped without executor admission retry, and every TX dropped because the FIFO is full is logged. Necessary bounded task communication queues remain permitted, not outgoing/retry backlogs. Prior original-controller/headless, baseline-UI, hostname, settings, removal-reset and manual-recovery amendments remain in force. The 26 October 2026 hardware amendment limits each Amity to four tentacles/eight CEC ports, retains the one-tentacle default on GPIO1/2, and gives the optional four-slot XIAO profile overridable GPIO pairs 1/2, 5/6, 7/8 and 9/44.",
   "source_repository": "https://github.com/retsyx/amity-esp32",
   "source_commit": "d50af8026938797fc0820d0107f4c4e064c2d2bc",
   "status": "Current design package; software and physical validation are recorded separately in IMPLEMENTATION_STATUS.json.",
@@ -12,8 +12,8 @@
   "files": [
     {
       "path": "01-octopus-architecture.md",
-      "size_bytes": 15236,
-      "sha256": "2af97f633eb14261d97e518646833d978f6e6b264d3ff81492ad776d45720c95"
+      "size_bytes": 15245,
+      "sha256": "a42651db20c683319fcb84665b30f686eebd4d41ab15f2b20452aac01b233a5a"
     },
     {
       "path": "02-consortium-architecture.md",
@@ -23,22 +23,22 @@
     {
       "path": "03-domain-model-and-addressing.md",
       "size_bytes": 23976,
-      "sha256": "a22391ee6427dfcfce84044a4dd7eaaef59b15b0bb0d079b0213063b0a7dd847"
+      "sha256": "8b3f2bf113921c7a59915a63ee7d0f98d98cf0101a060378d96a9b0876b50dd5"
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 23960,
-      "sha256": "0549db888ee1f202dd22c976f2e487d481cb1c15d0222451b4a4d4f39dedc8a3"
+      "size_bytes": 27744,
+      "sha256": "373a1d3e69f290da7037dd35208d930d9cf5f941734adf3a3210037cb6825dc2"
     },
     {
       "path": "05-discovery-and-topology.md",
-      "size_bytes": 26532,
-      "sha256": "b3bd8b0896708ff4e6c86ef677a7bf71965b79ef05de11b5dbf143d1fc27af80"
+      "size_bytes": 26534,
+      "sha256": "5c1ea477fef50b377cad134c8bc72fa762625688315ef31ffcc490db639e1d69"
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
       "size_bytes": 22800,
-      "sha256": "5ca63b8f983914ad4a56a8b7d8b2f1c2b0ba3f43764d2242b29ae66ab4ec627e"
+      "sha256": "1a0f241bb16ee8dd5d42eb8dd2d8efbfc604a85bf8d004d3d0c92a9f8f0c57ab"
     },
     {
       "path": "07-activity-planning-and-execution.md",
@@ -48,7 +48,7 @@
     {
       "path": "08-consortium-transport-and-routing.md",
       "size_bytes": 27220,
-      "sha256": "286f27f2a521bfe429b252e954bee6d3f86a95bb7714276edf6685c2416b5726"
+      "sha256": "506c9901783f1a26c6639485326f52809af17c16bad75f1aacb128fbc10f8751"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -57,18 +57,18 @@
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
-      "size_bytes": 22115,
-      "sha256": "fb14e0f9ac07a44cc083c9f8720c14e5dd6a2631c446ed93446ae8a7199a2c7b"
+      "size_bytes": 22119,
+      "sha256": "b8acdfc96aaf1f62e4f53edff234f19ef2b178ed60ba551ef8296f4f679dae96"
     },
     {
       "path": "11-config-storage-and-migration.md",
-      "size_bytes": 34039,
-      "sha256": "06a71660b38a4516a340a3961ae8c8854132ff39e4bbe0fd3f11361607f13c9a"
+      "size_bytes": 34290,
+      "sha256": "03090325b07e01deb11bc2fb4fbcc670fdcb64bf60d60b8a7c99138610096ab7"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
       "size_bytes": 29527,
-      "sha256": "3be539ea0da2f8ccddc2361c0800b28d0c54381a9997f8e1fcd2abae98df209e"
+      "sha256": "72b4a613369fbbf804f6103cc3b674b411149585b9e5385bc95cf466483d499f"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
@@ -77,58 +77,58 @@
     },
     {
       "path": "14-ota-and-compatibility.md",
-      "size_bytes": 19753,
-      "sha256": "42224582ae97aa8b1aa71aaa818a5e7cfa3459a97a43997305c7d3538d88bcda"
+      "size_bytes": 20950,
+      "sha256": "b034733a2dc3cc091002100ec2a9530e4fdb3b6c3aab01c7233b7f69c350362d"
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 34028,
-      "sha256": "9576f3f676bdae0642324d19c4b409f18bb037d8bf043412a2a160a568b1116e"
+      "size_bytes": 34030,
+      "sha256": "3169776555abc9dc5141e11f388367de9580d3cc7bfb0a4b41307e0175910d8c"
     },
     {
       "path": "16-agent-work-breakdown.md",
-      "size_bytes": 16403,
-      "sha256": "752077cdb82ae6027ed4fce1e735a04d170531bd1ab6ea3764078d2f485c7ba2"
+      "size_bytes": 16405,
+      "sha256": "627f26c38641483880293870b75c6017942f4852f77a2778af00f553c05b704a"
     },
     {
       "path": "17-decisions-and-open-questions.md",
-      "size_bytes": 17534,
-      "sha256": "d8d684bd578156b99ece2f47b1e6f146f1559a4c49915d7638e698cacb3bf2f4"
+      "size_bytes": 17542,
+      "sha256": "d5518daaac32e8f79f7e9403963228a40508eb908b88cd9ff034f814d84f2973"
     },
     {
       "path": "18-requirements-and-traceability.md",
-      "size_bytes": 21312,
-      "sha256": "8b31a4a00c546df12c98636511f86297dfdf3a058c01e497cd7dc7aa31b82fc7"
+      "size_bytes": 21318,
+      "sha256": "da418ebad8b946e9e3b2274d9454e4b275c8eb0bfa833373682ae349cd38f874"
     },
     {
       "path": "19-source-baseline.md",
-      "size_bytes": 15994,
-      "sha256": "29d2c69be07556ebd2da17bba59c28611be3f91898f57e9361219497881b3c22"
+      "size_bytes": 16041,
+      "sha256": "c5872f62fb095db39912dc8b926bbad09c579d7735186f7c921c8071fd6be326"
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 18940,
-      "sha256": "8f76eeae4f5359365b4edf18759090c30df7483c93f8ed1a7047d7681d3bb7d9"
+      "size_bytes": 23355,
+      "sha256": "6a82accd137e02bcbd1684953ca20914cd53cdd1e9a8ff3615f25d84d1ed98db"
     },
     {
       "path": "21-original-controller-policy.md",
       "size_bytes": 27232,
-      "sha256": "3903f3a731d8d070cb647eaf7c099800bc6d34248c4eb73b86533a2f35ab3f39"
+      "sha256": "325532d45978aa7558ee9ef0feae345565280fdb68fd552e2be4171ded3b2afe"
     },
     {
       "path": "README.md",
-      "size_bytes": 16761,
-      "sha256": "642eeb5812febb6b54ef4ae5dc4c4fafaadc4d42b98194bc9ab4ef28639d754e"
+      "size_bytes": 16763,
+      "sha256": "11211997f3f4d474c684b33d071629e5c3382dac543d88ca35fec68fbdcad863"
     },
     {
       "path": "TODO.md",
       "size_bytes": 27712,
-      "sha256": "0c1606170fb3a1e541b98441a4a0a7f486cb04a2697c75b0a3d30abb3312df64"
+      "sha256": "930aa13a547d35a4fbd20999a09393af3c902cfd840cb9d88e2e53e51c10b00a"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 3948,
-      "sha256": "bd2e2308a4a06e45e6b1469adcf2ca289319b4a3fe600c74e84e4ec484c40873"
+      "size_bytes": 5224,
+      "sha256": "e257bb78e0721e5c06fe20cc6bbc9c2ccbec2125900e1ee7fe0ed319185aecf4"
     },
     {
       "path": "examples/README.md",
@@ -177,13 +177,13 @@
     },
     {
       "path": "schemas/README.md",
-      "size_bytes": 8655,
-      "sha256": "56b4acdf1720090784f7e558f52d014f888281ca7cbb6023842ff1d9a1dba1d9"
+      "size_bytes": 9270,
+      "sha256": "85d5a946c5e7503aad7d643097d72c6a83b70ba54e40e0b6f8dadbd2f3b2acbe"
     },
     {
       "path": "schemas/adapter-settings.schema.json",
-      "size_bytes": 8134,
-      "sha256": "780e0a9ac72a57df980c19d461ef4757ad4560e8bedff8d47a71d00e24ee864d"
+      "size_bytes": 7780,
+      "sha256": "2ee6010da4858353bd51238a37369c64e68902572f38237b359ed089a6c8d337"
     },
     {
       "path": "schemas/cec-address.schema.json",
@@ -198,7 +198,7 @@
     {
       "path": "schemas/core-types.schema.json",
       "size_bytes": 4166,
-      "sha256": "b27e3bf4f9f98830fc5ad5c44c891e053b692889d46f86bc68e617331bc8b670"
+      "sha256": "c7cc0974bbd6a7df8e72fef2239a027c8296dd8e34a4dd6f90ffc005ac002e6c"
     },
     {
       "path": "schemas/qualified-device-name.schema.json",
@@ -212,8 +212,8 @@
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 26908,
-      "sha256": "6b46f425b4c1a3b93e6f2152c98f0670ded9abeec486d5cf4d92849066568293"
+      "size_bytes": 34037,
+      "sha256": "38b81f96ee4652cfdb4fdba3374024d65f3d0833184b95b814da471bf73f995a"
     }
   ]
 }

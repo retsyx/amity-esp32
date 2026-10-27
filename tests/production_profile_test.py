@@ -23,14 +23,14 @@ with tempfile.TemporaryDirectory() as directory:
     changed=dict(values);changed['AMITY_RELEASE_PUBLIC_KEY_DER_HEX']='"00"';assert not profile.audit(changed,table,der)['profile_valid']
     assert not profile.audit(values,profile.partitions(ROOT/'partitions.csv'),der)['profile_valid']
     changed=dict(values);changed.pop('AMITY_BOARD_LEGACY_1T');assert not profile.audit(changed,table,der)['profile_valid']
-    changed=dict(values);changed['AMITY_BOARD_DEVELOPMENT_5T']='y';assert not profile.audit(changed,table,der)['profile_valid']
-    board={'AMITY_BOARD_LEGACY_1T':'n','AMITY_BOARD_DEVELOPMENT_5T':'y','AMITY_BOARD_RESET_GPIO':'-1'}
-    for slot in range(5):
+    changed=dict(values);changed['AMITY_BOARD_DEVELOPMENT_4T']='y';assert not profile.audit(changed,table,der)['profile_valid']
+    board={'AMITY_BOARD_LEGACY_1T':'n','AMITY_BOARD_DEVELOPMENT_4T':'y','AMITY_BOARD_RESET_GPIO':'-1'}
+    for slot in range(4):
         for name in ('FRONT_GPIO','BACK_GPIO','PRESENCE_GPIO'):board[f'AMITY_TENTACLE{slot}_{name}']='-1'
         board[f'AMITY_TENTACLE{slot}_PRESENT_HIGH']='y'
         board[f'AMITY_TENTACLE{slot}_PRESENCE_PULLUP']=board[f'AMITY_TENTACLE{slot}_PRESENCE_PULLDOWN']='n'
     development,evidence=profile.prepare(der,'/offline-separate-native-rsa3072.pem',path/'development',board)
-    assert evidence['profile_valid'] and evidence['hardware_profile']=='esp32s3-development-5t-v1' and len(evidence['hardware_mapping_sha256'])==64
+    assert evidence['profile_valid'] and evidence['hardware_profile']=='esp32s3-development-4t-v1' and len(evidence['hardware_mapping_sha256'])==64
     assert not evidence['production_qualified'] and not evidence['device_mutations']
     invalid=profile.read_config(development);invalid['AMITY_BOARD_RESET_GPIO']='19';assert not profile.audit(invalid,table,der)['profile_valid']
     changed=dict(values);changed['SECURE_BOOT_ALLOW_JTAG']='y';assert not profile.audit(changed,table,der)['profile_valid']

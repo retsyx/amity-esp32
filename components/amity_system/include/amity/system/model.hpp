@@ -1,5 +1,6 @@
 #pragma once
 
+#include "amity/hardware_limits.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>

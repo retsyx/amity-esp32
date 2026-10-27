@@ -26,7 +26,7 @@ bool propose_octopus_replacement(const ConfigurationV2& previous,const Replaceme
     if(!approval.previous||!approval.replacement||approval.previous==approval.replacement||!approval.previous_revoked||!approval.previous_isolated||!approval.replacement_enrolled)
         return fail("Revoke and physically isolate or positively retire the old hardware, then enroll the replacement with its own credentials");
     const auto target=std::find_if(previous.octopuses.begin(),previous.octopuses.end(),[&](const auto& o){return o.octopus_id==approval.replacement;});
-    if(target==previous.octopuses.end()||!target->supported_tentacles||target->supported_tentacles>5)return fail("Replacement requires a known Amity device hardware profile");
+    if(target==previous.octopuses.end()||!target->supported_tentacles||target->supported_tentacles>amity::max_tentacles)return fail("Replacement requires a known Amity device hardware profile");
     std::set<std::string> sources,targets;
     for(const auto& p:approval.ports){
         const auto from=key(p.previous),to=key(p.replacement);

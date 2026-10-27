@@ -81,9 +81,9 @@ static void observation_tests() {
     }
 }
 static void parallel_line_tests() {
-    cec::Engine local[10], peer[10], overflow;
+    cec::Engine local[8], peer[8], overflow;
     cec::EngineBank bank;
-    for (unsigned i = 0; i < 10; ++i) {
+    for (unsigned i = 0; i < 8; ++i) {
         assert(bank.attach(local[i], static_cast<uint8_t>(i + 32)) == static_cast<int>(i));
         local[i].set_address(4); peer[i].set_address(0);
     }
@@ -91,21 +91,21 @@ static void parallel_line_tests() {
     assert(bank.attach(local[0], 1) == -1);
     auto f = frame({0x40, 0x47, 0x55, 0xaa, 0xff, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
     for (auto &e : local) assert(e.begin(f, 0));
-    uint64_t low = 0; bool peer_low[10]{};
+    uint64_t low = 0; bool peer_low[8]{};
     for (uint64_t now = 0; now < 500000; now += 50) {
-        uint64_t levels = 0; bool high[10];
-        for (unsigned i = 0; i < 10; ++i) {
+        uint64_t levels = 0; bool high[8];
+        for (unsigned i = 0; i < 8; ++i) {
             high[i] = !(peer_low[i] || (low & (uint64_t{1} << (i + 32))));
             if (high[i]) levels |= uint64_t{1} << (i + 32);
         }
         low = bank.tick(now, levels);
-        for (unsigned i = 0; i < 10; ++i) peer_low[i] = peer[i].tick(now, high[i]);
+        for (unsigned i = 0; i < 8; ++i) peer_low[i] = peer[i].tick(now, high[i]);
     }
-    for (unsigned i = 0; i < 10; ++i) {
+    for (unsigned i = 0; i < 8; ++i) {
         assert(local[i].take_result() == cec::TxResult::Success);
         cec::Frame rx; assert(peer[i].take_received(rx) && same(rx, f));
     }
-    // A stuck line expires locally while the nine other lines complete.
+    // A stuck line expires locally while the seven other lines complete.
     for (auto &e : local) assert(e.begin(frame({0x4f, 0x36}), 500000));
     low = 0;
     for (uint64_t now = 500000; now < 1600000; now += 50) {
@@ -113,7 +113,7 @@ static void parallel_line_tests() {
         low = bank.tick(now, levels);
     }
     assert(local[0].take_result() == cec::TxResult::Timeout);
-    for (unsigned i = 1; i < 10; ++i) assert(local[i].take_result() == cec::TxResult::Success);
+    for (unsigned i = 1; i < 8; ++i) assert(local[i].take_result() == cec::TxResult::Success);
     bank.detach(local[0]);
     assert(bank.attach(overflow, 32) == 0);
 }
@@ -139,21 +139,23 @@ static void profile_tests() {
     assert(cec::validate_board_profile(p, valid_gpio) == E::InvalidCount);
     p = cec::legacy_board2_profile; p.ports[1].gpio = 3;
     assert(cec::validate_board_profile(p, valid_gpio) == E::Unsupported);
-    cec::BoardProfile development{cec::BoardProfileId::Development5Tentacle,1,5,{},-1,-1};
-    for(unsigned id=0;id<5;++id){development.ports[2*id]={static_cast<uint8_t>(id),cec::Side::Front,-1};development.ports[2*id+1]={static_cast<uint8_t>(id),cec::Side::Back,-1};}
+    cec::BoardProfile development{cec::BoardProfileId::Development4Tentacle,1,4,{},-1,-1};
+    auto oversized=development;oversized.tentacle_count=5;
+    assert(cec::validate_board_profile(oversized,valid_gpio)==E::InvalidCount);
+    for(unsigned id=0;id<4;++id){development.ports[2*id]={static_cast<uint8_t>(id),cec::Side::Front,-1};development.ports[2*id+1]={static_cast<uint8_t>(id),cec::Side::Back,-1};}
     assert(cec::validate_board_profile(development,valid_gpio)==E::None); // No adapters configured is valid, with no guessed GPIOs.
-    assert(!cec::connector_enabled(development,0)&&!cec::connector_enabled(development,4));
-    development.ports[8].gpio=7;assert(cec::validate_board_profile(development,valid_gpio)==E::InvalidConnector);
-    development.ports[9].gpio=8;assert(cec::validate_board_profile(development,valid_gpio)==E::None);
-    assert(!cec::connector_enabled(development,0)&&cec::connector_enabled(development,4)); // Sparse connector5 retains index4.
-    development.presence[4]={9,false,true,false};
+    assert(!cec::connector_enabled(development,0)&&!cec::connector_enabled(development,3));
+    development.ports[6].gpio=7;assert(cec::validate_board_profile(development,valid_gpio)==E::InvalidConnector);
+    development.ports[7].gpio=8;assert(cec::validate_board_profile(development,valid_gpio)==E::None);
+    assert(!cec::connector_enabled(development,0)&&cec::connector_enabled(development,3)); // Sparse connector4 retains index3.
+    development.presence[3]={9,false,true,false};
     assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::None);
-    development.presence[4].pulldown=true;assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::InvalidGpio);
-    development.presence[4]={7,true,false,false};assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::DuplicateGpio);
-    development.presence[4]={9,true,false,false};const int occupied[]={9};assert(cec::validate_board_profile(development,valid_gpio,occupied,1,valid_gpio)==E::PeripheralConflict);
+    development.presence[3].pulldown=true;assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::InvalidGpio);
+    development.presence[3]={7,true,false,false};assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::DuplicateGpio);
+    development.presence[3]={9,true,false,false};const int occupied[]={9};assert(cec::validate_board_profile(development,valid_gpio,occupied,1,valid_gpio)==E::PeripheralConflict);
     development.presence[0]={10,true,false,false};assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::InvalidGpio);
 }
 int main() {
     observation_tests(); parallel_line_tests(); profile_tests();
-    std::puts("CEC monitor ownership, frame-atomic policy, ten-engine simulation and board validation passed");
+    std::puts("CEC monitor ownership, frame-atomic policy, eight-engine simulation and board validation passed");
 }

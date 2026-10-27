@@ -8,15 +8,15 @@
 
 ## 1. Purpose
 
-An octopus is one Amity ESP32 processor controlling one to five HDMI pass-throughs, called tentacles. It can operate as a complete local system or as a member of a consortium. Both modes use the same topology, policy and execution contracts. A legacy board is a one-tentacle octopus, not a separate control architecture.
+An octopus is one Amity ESP32 processor controlling one to four HDMI pass-throughs, called tentacles. It can operate as a complete local system or as a member of a consortium. Both modes use the same topology, policy and execution contracts. A legacy board is a one-tentacle octopus, not a separate control architecture.
 
 [Issue 1](https://github.com/retsyx/amity/issues/1) describes three motivations: control a second display, control sources connected directly to display inputs, and prevent a source from stealing the selected input before an AVR or display reacts. These are related uses of independently isolated CEC segments; they do not require video switching inside the octopus.
 
-The existing firmware creates one `HubService` with a front and a back bus, one selected activity, and devices found by OSD name. Its high-level hub assumes a TV/AVR arrangement. An octopus must retain the useful CEC engine and queue protections while replacing that single-system assumption. Creating five independent copies of the existing hub would produce competing activity, power and address policies. [Current composition](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/main/main.cpp), [hub model](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/include/amity/hub.hpp).
+The existing firmware creates one `HubService` with a front and a back bus, one selected activity, and devices found by OSD name. Its high-level hub assumes a TV/AVR arrangement. An octopus must retain the useful CEC engine and queue protections while replacing that single-system assumption. Creating four independent copies of the existing hub would produce competing activity, power and address policies. [Current composition](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/main/main.cpp), [hub model](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/include/amity/hub.hpp).
 
 ## 2. Physical model
 
-Each tentacle contains two HDMI connectors with the ordinary HDMI signals passed through. Pin 13, CEC, is interrupted. Its **front** CEC port faces the downstream sink, such as a display or AVR input. Its **back** CEC port faces the upstream source, such as a streamer or AVR output. Each has its own GPIO and CEC state machine. Thus five tentacles require ten independently functioning CEC lines. Front and back describe cable orientation; they do not hardcode a TV or playback role.
+Each tentacle contains two HDMI connectors with the ordinary HDMI signals passed through. Pin 13, CEC, is interrupted. Its **front** CEC port faces the downstream sink, such as a display or AVR input. Its **back** CEC port faces the upstream source, such as a streamer or AVR output. Each has its own GPIO and CEC state machine. Thus four tentacles require eight independently functioning CEC lines. Front and back describe cable orientation; they do not hardcode a TV or playback role.
 
 ```mermaid
 flowchart TB
@@ -52,11 +52,11 @@ The local coordinator path uses an in-process implementation of the same command
 
 ## 4. CEC execution and resource budget
 
-The present bus creates a GPTimer per CEC line. ESP32-S3 has four general-purpose timers, so ten independent instances cannot be created unchanged. The proposed runtime uses one shared 50-microsecond timer with a fixed array of up to ten independent engines. The timer handler samples input, advances engines and releases/drives only the owned open-drain outputs; noncritical work happens outside the interrupt. This is an implementation candidate requiring worst-case measurements, not a proven capacity claim. [Current bus](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/bus.cpp), [ESP32-S3 datasheet, timers](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
+The present bus creates a GPTimer per CEC line. ESP32-S3 has four general-purpose timers, so eight independent instances cannot be created unchanged. The proposed runtime uses one shared 50-microsecond timer with a fixed array of up to eight independent engines. The timer handler samples input, advances engines and releases/drives only the owned open-drain outputs; noncritical work happens outside the interrupt. This is an implementation candidate requiring worst-case measurements, not a proven capacity claim. [Current bus](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/bus.cpp), [ESP32-S3 datasheet, timers](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
 
-One busy or stuck CEC wire must not stop the other nine. A shared dispatcher must track independent in-flight operations rather than invoke the existing blocking transmit function serially for every port. Preserve bounded RX draining, emergency key release, retry bounds and safe line release on timing failure. See [runtime contracts and qualification](04-hardware-and-cec-runtime.md).
+One busy or stuck CEC wire must not stop the other seven. A shared dispatcher must track independent in-flight operations rather than invoke the existing blocking transmit function serially for every port. Preserve bounded RX draining, emergency key release, retry bounds and safe line release on timing failure. See [runtime contracts and qualification](04-hardware-and-cec-runtime.md).
 
-A `BoardProfile` is validated before enabling any output. The five-tentacle pin map remains a hardware gate: GPIO availability alone does not establish safe boot behavior, electrical compatibility or freedom from flash, PSRAM, USB and strapping conflicts. A profile with duplicate or unsuitable pins must remain passive and display an actionable error. A one-tentacle profile must remain usable while the larger PCB is being qualified.
+A `BoardProfile` is validated before enabling any output. The four-tentacle pin map remains a hardware gate: GPIO availability alone does not establish safe boot behavior, electrical compatibility or freedom from flash, PSRAM, USB and strapping conflicts. A profile with duplicate or unsuitable pins must remain passive and display an actionable error. A one-tentacle profile must remain usable while the larger PCB is being qualified.
 
 ## 5. Electrical domains and proxy roles
 
@@ -64,7 +64,7 @@ A tentacle is not a CEC domain. Several front ports connected to different input
 
 Domain policy assigns each port one of `playback_proxy`, `tv_controller`, `monitor` or `disabled`. Roles and valid logical addresses are explicit resources. A shared source domain may need one virtual TV controller and several playback proxies. Other attached ports must not independently claim TV address 0. Monitoring foreign directed traffic must be separate from acknowledging ownership of an address. [Domain model](03-domain-model-and-addressing.md), [message policy](06-cec-roles-and-message-policy.md).
 
-Playback logical-address capacity is an admission gate. Five physical tentacles attached to one display do not guarantee five compatible playback identities on that display's CEC domain. Use standard playback addresses and only qualified CEC-version-dependent alternatives. Report address exhaustion; do not impersonate arbitrary device types to conceal it.
+Playback logical-address capacity is an admission gate. Four physical tentacles attached to one display do not guarantee four compatible playback identities on that display's CEC domain. Use standard playback addresses and only qualified CEC-version-dependent alternatives. Report address exhaustion; do not impersonate arbitrary device types to conceal it.
 
 ## 6. Source isolation and switching
 
@@ -99,13 +99,13 @@ On network loss, preserve electrical isolation and safe identity responses, stop
 
 The octopus architecture is ready for consortium integration when:
 
-- One- through five-tentacle profiles share one code path and invalid profiles cannot drive pins.
+- One- through four-tentacle profiles share one code path and invalid profiles cannot drive pins.
 - Configured device names end in OSD name and include consortium, octopus, tentacle and side. Every runtime observation/command is separately addressed with the currently resolved LA; repeated names or addresses on isolated attachments remain distinct.
 - An unchanged qualified OSD name automatically resolves to a new LA, preserving activity references while old-binding commands and holds are fenced. [Document 03](03-domain-model-and-addressing.md) owns the distinct name/address contracts.
-- Ten-line timing passes concurrent wire and radio/flash stress at the advertised capacity.
+- Eight-line timing passes concurrent wire and radio/flash stress at the advertised capacity.
 - Domain ownership prevents duplicate virtual TV identities and admits only supported playback resources.
 - An inactive source's activation is absent on the protected side, including during startup, scanning, configuration changes and coordinator loss.
 - Recabling invalidates bindings before fresh actions, and physical-address ambiguity is visible to setup.
 - The legacy one-tentacle activity/remote behavior passes regression tests through the new facade.
 
-Break work into the driver, local policy, discovery and single-node facade packages in [document 16](16-agent-work-breakdown.md). Do not block the one-tentacle software refactor on a speculative five-tentacle PCB, but do not advertise five-tentacle support until the hardware gate closes.
+Break work into the driver, local policy, discovery and single-node facade packages in [document 16](16-agent-work-breakdown.md). Do not block the one-tentacle software refactor on a speculative four-tentacle PCB, but do not advertise four-tentacle support until the hardware gate closes.

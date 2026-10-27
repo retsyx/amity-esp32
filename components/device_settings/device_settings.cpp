@@ -32,8 +32,18 @@ bool parse_defaults(const std::string& bytes, AdapterDefaults& result) {
     uint64_t revision=0;
     for(size_t n=at;n<end;++n){const auto b=bytes[n];if(b<'0'||b>'9'||revision>(std::numeric_limits<uint64_t>::max()-uint64_t(b-'0'))/10)return false;revision=revision*10+uint64_t(b-'0');}
     result.revision=revision;at=end+1;
-    for(auto& address:result.front_physical){end=bytes.find('\n',at);if(end==std::string::npos||end-at!=7||!parse_front_physical_address(std::string_view(bytes).substr(at,7),address))return false;at=end+1;}
-    return at==bytes.size();
+    // The earlier record shape had five addresses. Validate every stored
+    // address while retaining only the currently supported hardware slots.
+    constexpr size_t legacy_address_count=5;
+    size_t count=0;
+    while(at<bytes.size()) {
+        if(count>=result.front_physical.size()&&count>=legacy_address_count)return false;
+        uint16_t address=0;end=bytes.find('\n',at);
+        if(end==std::string::npos||end-at!=7||!parse_front_physical_address(std::string_view(bytes).substr(at,7),address))return false;
+        if(count<result.front_physical.size())result.front_physical[count]=address;
+        ++count;at=end+1;
+    }
+    return count==result.front_physical.size()||count==legacy_address_count;
 }
 std::string serialize_defaults(const AdapterDefaults& value){
     std::string bytes="AMITYPA1\n"+std::to_string(value.revision)+"\n";
@@ -106,11 +116,11 @@ AdapterDefaults startup_adapter_defaults(){std::lock_guard<std::mutex> lock(defa
 esp_err_t save_adapter_defaults(uint64_t expected_revision,const std::vector<AdapterDefaultChange>& changes){
     std::lock_guard<std::mutex> lock(defaults_mutex);
     if(expected_revision!=saved_defaults.revision||saved_defaults.revision==std::numeric_limits<uint64_t>::max())return ESP_ERR_INVALID_STATE;
-    if(changes.empty()||changes.size()>5)return ESP_ERR_INVALID_ARG;
+    if(changes.empty()||changes.size()>amity::max_tentacles)return ESP_ERR_INVALID_ARG;
     uint8_t changed=0;auto next=saved_defaults;
     for(const auto& change:changes){
         uint16_t parsed=0;
-        if(change.tentacle_id>=5||(changed&(1u<<change.tentacle_id))||!parse_front_physical_address(format_physical_address(change.front_physical),parsed))return ESP_ERR_INVALID_ARG;
+        if(change.tentacle_id>=amity::max_tentacles||(changed&(1u<<change.tentacle_id))||!parse_front_physical_address(format_physical_address(change.front_physical),parsed))return ESP_ERR_INVALID_ARG;
         changed|=uint8_t(1u<<change.tentacle_id);next.front_physical[change.tentacle_id]=parsed;
     }
     ++next.revision;

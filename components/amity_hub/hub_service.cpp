@@ -40,7 +40,14 @@
 #endif
 
 namespace amity {
-namespace { constexpr const char *TAG = "amity_hub"; }
+namespace {
+constexpr const char *TAG = "amity_hub";
+template<class T> constexpr std::array<T, amity::max_tentacles> filled_tentacles(T value) {
+    std::array<T, amity::max_tentacles> result{};
+    for(auto& item:result)item=value;
+    return result;
+}
+}
 struct HubService::Impl : Transport {
 #ifdef ESP_PLATFORM
     static void *operator new(size_t size) {
@@ -130,15 +137,15 @@ struct HubService::Impl : Transport {
     cec::TxCompletion discovery_completion;
     cec::Bus front, back;
     struct NativePort { uint8_t tentacle; system::Side side; cec::Bus* bus; int gpio; };
-    std::array<std::unique_ptr<cec::Bus>, 8> extra_buses;
-    std::array<NativePort, 10> native_ports{};
+    std::array<std::unique_ptr<cec::Bus>, amity::max_cec_ports - 2> extra_buses;
+    std::array<NativePort, amity::max_cec_ports> native_ports{};
     size_t native_port_count = 0;
     std::optional<cec::BoardProfile> hardware_profile;
-    std::array<std::optional<bool>, 5> presence{};
-    std::array<uint64_t, 5> presence_generations{{1, 1, 1, 1, 1}};
-    std::array<AdapterRuntimeState, 5> cached_adapters{};
+    std::array<std::optional<bool>, amity::max_tentacles> presence{};
+    std::array<uint64_t, amity::max_tentacles> presence_generations = filled_tentacles(uint64_t{1});
+    std::array<AdapterRuntimeState, amity::max_tentacles> cached_adapters{};
     std::function<int(int)> presence_reader;
-    std::array<uint16_t, 5> front_defaults{{0x1000, 0x1000, 0x1000, 0x1000, 0x1000}};
+    std::array<uint16_t, amity::max_tentacles> front_defaults = filled_tentacles(uint16_t{0x1000});
     std::unique_ptr<LiveSystem> live;
     std::atomic<bool> v2_mode{false};
     system::ConsortiumId consortium;
@@ -221,14 +228,14 @@ struct HubService::Impl : Transport {
         for (size_t i = 0; i < native_port_count; ++i) native_ports[i].bus->install_receive_policy({true, 15});
     }
     bool connector_configured(uint8_t id) const {
-        if (id >= 5) return false;
+        if (id >= amity::max_tentacles) return false;
         if (hardware_profile) return cec::connector_enabled(*hardware_profile, id);
         return id == 0 && native_port_count == 2;
     }
     void poll_presence(uint64_t now) {
         if (!hardware_profile) return;
         bool any_changed = false;
-        for (uint8_t id = 0; id < 5; ++id) {
+        for (uint8_t id = 0; id < amity::max_tentacles; ++id) {
             std::optional<bool> present;
             const auto& pin = hardware_profile->presence[id];
             if (connector_configured(id)) {
@@ -485,7 +492,7 @@ struct HubService::Impl : Transport {
             if (local_coordinator.load() || !command.system_config || !command.system_config->member ||
                 !command.system_config->coordinator_id || command.system_config->coordinator_epoch < coordinator_epoch ||
                 command.payload_hash.size() != 64 ||
-                command.system_config->port_templates.size() > 10 || command.system_config->topology.bindings.size() > 128)
+                command.system_config->port_templates.size() > amity::max_cec_ports || command.system_config->topology.bindings.size() > 128)
                 result = {system::AdmissionCode::invalid, "invalid member configuration, authority, or local HDMI adapter capacity"};
             else if (prepared_member && prepared_member_hash != command.payload_hash) result = {system::AdmissionCode::overloaded, "another member configuration is prepared"};
             else {
@@ -819,7 +826,7 @@ struct HubService::Impl : Transport {
             state.tx_errors += stats.tx_errors; state.rx_dropped += stats.rx_dropped;
         }
         xSemaphoreTake(lock, portMAX_DELAY);
-        for (uint8_t id = 0; id < 5; ++id) {
+        for (uint8_t id = 0; id < amity::max_tentacles; ++id) {
             auto& adapter = cached_adapters[id]; adapter.tentacle_id = id;
             adapter.configured = connector_configured(id); adapter.present = presence[id];
             adapter.presence_generation = presence_generations[id];
@@ -1251,11 +1258,11 @@ esp_err_t HubService::start(int front_gpio, int back_gpio, uint16_t front_physic
     return p.start_owner();
 }
 esp_err_t HubService::start(const cec::BoardProfile& profile, uint16_t front_physical) {
-    std::array<uint16_t, 5> defaults{{0x1000, 0x1000, 0x1000, 0x1000, 0x1000}};
+    auto defaults = filled_tentacles(uint16_t{0x1000});
     defaults[0] = front_physical;
     return start(profile, defaults);
 }
-esp_err_t HubService::start(const cec::BoardProfile& profile, const std::array<uint16_t, 5>& front_physical) {
+esp_err_t HubService::start(const cec::BoardProfile& profile, const std::array<uint16_t, amity::max_tentacles>& front_physical) {
     auto& p = *impl_;
     if (!p.lock || !p.configuration_gate) return ESP_ERR_NO_MEM;
     if (p.commands || p.native_port_count) return ESP_ERR_INVALID_STATE;
@@ -1305,7 +1312,7 @@ esp_err_t HubService::set_presence_reader(std::function<int(int)> reader) {
     impl_->presence_reader = std::move(reader); return ESP_OK;
 }
 std::optional<bool> HubService::connector_presence(uint8_t id) const {
-    if (id >= 5) return {};
+    if (id >= amity::max_tentacles) return {};
     auto& p = *impl_; xSemaphoreTake(p.lock, portMAX_DELAY);
     const auto present = p.presence[id]; xSemaphoreGive(p.lock); return present;
 }
@@ -1318,10 +1325,10 @@ esp_err_t HubService::commit_adapter_settings(system::BootId boot,
         std::vector<std::pair<uint8_t, uint64_t>> presence, uint64_t deadline,
         std::function<esp_err_t()> persist) {
     auto& p = *impl_;
-    if (!boot || !persist || presence.empty() || presence.size() > 5) return ESP_ERR_INVALID_ARG;
-    bool used[5]{};
+    if (!boot || !persist || presence.empty() || presence.size() > amity::max_tentacles) return ESP_ERR_INVALID_ARG;
+    bool used[amity::max_tentacles]{};
     for (const auto& item : presence) {
-        if (item.first >= 5 || !item.second || used[item.first]) return ESP_ERR_INVALID_ARG;
+        if (item.first >= amity::max_tentacles || !item.second || used[item.first]) return ESP_ERR_INVALID_ARG;
         used[item.first] = true;
     }
     const auto now = uint64_t(esp_timer_get_time()) / 1000;

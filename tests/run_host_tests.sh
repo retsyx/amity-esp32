@@ -9,6 +9,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out="$root/test-results/host"
 mkdir -p "$out"
+python3 "$root/amity-octopus-consortium/validate_contracts.py" --hardware-capacity-only
 sh "$root/tests/homekit_input_test.sh"
 sh "$root/tests/hap_http_test.sh"
 python3 "$root/tests/homekit_http_test.py"
@@ -20,12 +21,12 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 "$out/config_store_test"
 sh "$root/tests/cec_hub_test.sh"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-  -I"$root/tests/reset_fakes" -I"$root/components/device_settings/include" \
+  -I"$root/tests/reset_fakes" -I"$root/components/amity_system/include" -I"$root/components/device_settings/include" \
   "$root/components/device_settings/reset_button.cpp" "$root/tests/reset_button_test.cpp" -o "$out/reset_button_test"
 "$out/reset_button_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/tests/reset_button_fakes" -I"$root/tests/reset_fakes" \
-  -I"$root/components/device_settings/include" "$root/components/device_settings/reset_button.cpp" \
+  -I"$root/components/amity_system/include" -I"$root/components/device_settings/include" "$root/components/device_settings/reset_button.cpp" \
   "$root/tests/reset_button_interrupt_test.cpp" -o "$out/reset_button_interrupt_test"
 for scenario in idle boot-held hold short cancel boot-release-hold latched-edge retry \
   allocation-failure shared-service-failure handler-failure setup-short setup-three-seconds \
@@ -61,7 +62,7 @@ json="$root/managed_components/espressif__cjson/cJSON"
 test -f "$json/cJSON.c" || json="$root/managed_components/espressif__cjson"
 cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$json/cJSON.c" -o "$out/cjson.o"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-  -I"$json" -I"$root/components/web_admin/include" -I"$root/components/cec/include" -I"$root/components/amity_hub/include" \
+  -I"$json" -I"$root/components/web_admin/include" -I"$root/components/amity_system/include" -I"$root/components/cec/include" -I"$root/components/amity_hub/include" \
   "$root/components/web_admin/configuration.cpp" "$root/tests/configuration_test.cpp" "$out/cjson.o" -o "$out/configuration_test"
 "$out/configuration_test"
 node --check "$root/components/web_admin/assets/app.js"
@@ -71,7 +72,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 "$out/firmware_version_test" "$root/tests/firmware_versions.tsv"
 node "$root/tests/firmware_version_test.js"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-  -I"$root/components/device_settings/include" "$root/tests/physical_address_test.cpp" -o "$out/physical_address_test"
+  -I"$root/components/amity_system/include" -I"$root/components/device_settings/include" "$root/tests/physical_address_test.cpp" -o "$out/physical_address_test"
 "$out/physical_address_test"
 sh "$root/tests/device_settings_test.sh"
 sh "$root/tests/adapter_settings_test.sh"

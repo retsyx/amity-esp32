@@ -22,7 +22,7 @@
 
 ## Recommendation
 
-Build one common control system that scales from a single legacy board to several octopuses. An **octopus** owns one to five **tentacles**; each tentacle is an HDMI pass-through whose two CEC wires are electrically isolated and independently controlled. A **consortium** coordinates octopuses over the home LAN. Video continues to use the physical HDMI wiring.
+Build one common control system that scales from a single legacy board to several octopuses. An **octopus** owns one to four **tentacles**; each tentacle is an HDMI pass-through whose two CEC wires are electrically isolated and independently controlled. A **consortium** coordinates octopuses over the home LAN. Video continues to use the physical HDMI wiring.
 
 Use the immutable original first-setup controller for desired state, topology, membership and activity planning, the sole remote and all UI/home integrations. Keep CEC timing, address ownership, source-isolation policy, admission checks and held-key release local to each octopus. The initial consortium is an application-level mesh with a coordinator-routed control protocol; it does not require a Wi-Fi mesh network, cloud service, MQTT broker or separate computer.
 
@@ -35,7 +35,7 @@ The original controller is fixed. Added devices cannot become UI/input gateways 
 | [01 — Octopus architecture](01-octopus-architecture.md) | Local hardware/software architecture, roles and system boundaries. |
 | [02 — Consortium architecture](02-consortium-architecture.md) | Distributed architecture, end-user lifecycle and worked system topology. |
 | [03 — Domain model and addressing](03-domain-model-and-addressing.md) | Qualified OSD names, resolved runtime addresses, stable references, domains and bindings. |
-| [04 — Hardware and CEC runtime](04-hardware-and-cec-runtime.md) | Ten-line driver, shared timer, board profiles, timing and memory gates. |
+| [04 — Hardware and CEC runtime](04-hardware-and-cec-runtime.md) | Eight-line driver, shared timer, board profiles, timing and memory gates. |
 | [05 — Discovery and topology](05-discovery-and-topology.md) | Asynchronous scanning, physical-address evidence, domain correlation and recabling. |
 | [06 — CEC roles and message policy](06-cec-roles-and-message-policy.md) | Proxy identities, source isolation, translation and egress rules. |
 | [07 — Activity planning and execution](07-activity-planning-and-execution.md) | Multi-zone resource arbitration, distributed execution and remote input. |
@@ -85,11 +85,11 @@ Normative **MUST**, **MUST NOT**, **SHOULD** and **MAY** describe obligations wi
 - No distributed “exactly once” claim is made for CEC toggles or relative key actions after an uncertain crash.
 - Matter fabrics, HomeKit pairings, the sole controller BLE remote bond, administration credentials and consortium membership are separate security domains. Added devices host none of these user control surfaces; adoption preserves but disables pre-existing unrelated bonds/pairings.
 - Offline membership is retained. Removal is explicit. Neither coordinator loss nor removal causes a member to start independently controlling shared equipment.
-- A five-tentacle hardware promise and a consortium-size promise require measured timing, memory, addressing and interoperability evidence.
+- A four-tentacle hardware promise and a consortium-size promise require measured timing, memory, addressing and interoperability evidence.
 
 ## Initial scope
 
-The initial qualification target is up to **five tentacles per supported octopus profile** and **eight octopuses per consortium**. Eight is a proposed test target, not an architectural limit or a requirement from the issues. A product build must advertise the smaller capacity it has actually qualified. Existing single-tentacle boards remain a supported special case.
+The initial qualification target is up to **four tentacles per supported octopus profile** and **eight octopuses per consortium**. Eight is a proposed test target, not an architectural limit or a requirement from the issues. A product build must advertise the smaller capacity it has actually qualified. Existing single-tentacle boards remain a supported special case.
 
 Multi-zone control is part of the internal model. The initial Matter/HomeKit presentation remains the existing primary zone; publishing additional zones requires separately qualified endpoints/accessories. ARC/eARC, TV applications, arbitrary HDMI matrix behavior, direct peer actuation and Wi-Fi radio mesh formation are separate capabilities. Controller election, promotion, planned transfer and automatic failover are outside scope and not planned work: headless members preserve isolation, release/expire held work and wait for the original main to return.
 

@@ -125,7 +125,7 @@ const char* operation_name(model::OperationKind v) {
 bool port(cJSON* o, model::CecPortRef& p) {
     uint64_t index; std::string side;
     if (!keys(o, {"consortium_id", "octopus_id", "tentacle_id", "side"}) || !identifier(o, "consortium_id", p.consortium_id) ||
-        !identifier(o, "octopus_id", p.octopus_id) || !number(o, "tentacle_id", index, 4) || !text(o, "side", side, 5)) return false;
+        !identifier(o, "octopus_id", p.octopus_id) || !number(o, "tentacle_id", index, amity::last_tentacle_id) || !text(o, "side", side, 5)) return false;
     auto s = model::parse_side(side); if (!s) return false; p.tentacle_id = static_cast<uint8_t>(index); p.side = *s; return true;
 }
 bool name(cJSON* o, model::QualifiedDeviceName& n) {
@@ -133,7 +133,7 @@ bool name(cJSON* o, model::QualifiedDeviceName& n) {
     // Port and name are distinct canonical flat objects, never an LA locator.
     uint64_t index; std::string side;
     if (!identifier(o, "consortium_id", n.port.consortium_id) || !identifier(o, "octopus_id", n.port.octopus_id) ||
-        !number(o, "tentacle_id", index, 4) || !text(o, "side", side, 5) || !text(o, "osd_name", n.osd_name, 14)) return false;
+        !number(o, "tentacle_id", index, amity::last_tentacle_id) || !text(o, "side", side, 5) || !text(o, "osd_name", n.osd_name, 14)) return false;
     auto s = model::parse_side(side); if (!s) return false; n.port.side = *s; n.port.tentacle_id = static_cast<uint8_t>(index); return n.valid();
 }
 void string(cJSON* o, const char* k, const std::string& s) { cJSON_AddStringToObject(o, k, s.c_str()); }
@@ -296,7 +296,7 @@ bool parse_configuration_v2(const std::string& input, ConfigurationV2& out, std:
         !revision(root.get(), "config_revision", c.config_revision) || !revision(root.get(), "presentation_revision", c.presentation_revision) || !identifier(root.get(), "primary_zone_id", c.primary_zone_id)) return fail();
     if (!list(root.get(), "octopuses", c.octopuses, 64, [](cJSON* o, ConfiguredOctopus& b) {
         uint64_t cap;
-        if (!keys(o, {"octopus_id", "label", "generated_label", "label_override", "supported_tentacles"}) || !identifier(o, "octopus_id", b.octopus_id) || !label(o, b.label, b.generated_label, b.label_override) || !number(o, "supported_tentacles", cap, 5) || !cap) return false;
+        if (!keys(o, {"octopus_id", "label", "generated_label", "label_override", "supported_tentacles"}) || !identifier(o, "octopus_id", b.octopus_id) || !label(o, b.label, b.generated_label, b.label_override) || !number(o, "supported_tentacles", cap, amity::max_tentacles) || !cap) return false;
         b.supported_tentacles = static_cast<uint8_t>(cap); return true;
     }) || !list(root.get(), "components", c.components, 64, [](cJSON* o, ConfiguredComponent& v) {
         if (!keys(o, {"component_id", "label", "generated_label", "label_override", "kind", "qualified_names", "capabilities"}) || !identifier(o, "component_id", v.record.component_id) ||
@@ -525,7 +525,7 @@ bool validate_configuration_v2(const ConfigurationV2& c, std::string& error) {
     std::set<model::ComponentId> components; std::set<model::DomainId> domains; std::set<model::BindingId> bindings; std::set<model::ResourceId> resources; std::set<model::RouteId> routes; std::set<model::ActivityId> activities; std::set<model::ZoneId> zones;
     std::set<std::string> selectors, ports;
     std::set<model::OctopusId> octopuses;
-    for (const auto& b : c.octopuses) if (!b.octopus_id || !octopuses.insert(b.octopus_id).second || b.label.size() > 128 || b.generated_label.size() > 128 || !b.supported_tentacles || b.supported_tentacles > 5) return fail("Invalid Amity device location or hardware profile");
+    for (const auto& b : c.octopuses) if (!b.octopus_id || !octopuses.insert(b.octopus_id).second || b.label.size() > 128 || b.generated_label.size() > 128 || !b.supported_tentacles || b.supported_tentacles > amity::max_tentacles) return fail("Invalid Amity device location or hardware profile");
     if (c.controller_octopus_id && (!*c.controller_octopus_id || !octopuses.count(*c.controller_octopus_id))) return fail("The original controller must be retained");
     const auto valid_port = [&](const model::CecPortRef& p) {
         for (const auto& b : c.octopuses) if (b.octopus_id == p.octopus_id && p.tentacle_id < b.supported_tentacles) return p.valid() && p.consortium_id == c.consortium_id;
@@ -660,7 +660,7 @@ bool propose_adapter_connection(const ConfigurationV2& previous, model::OctopusI
 bool reconcile_hardware_profile(ConfigurationV2& configuration, model::OctopusId owner, uint8_t capacity,
     uint8_t configured_mask, const std::function<bool(uint8_t*, size_t)>&, bool& changed, std::string& error) {
     changed = false;
-    if (!owner || !capacity || capacity > 5 || (configured_mask >> capacity) || !validate_configuration_v2(configuration,error)) {
+    if (!owner || !capacity || capacity > amity::max_tentacles || (configured_mask >> capacity) || !validate_configuration_v2(configuration,error)) {
         if(error.empty())error="Invalid HDMI adapter capacity or configured connector mask";
         return false;
     }
@@ -668,7 +668,7 @@ bool reconcile_hardware_profile(ConfigurationV2& configuration, model::OctopusId
     auto board=std::find_if(candidate.octopuses.begin(),candidate.octopuses.end(),[&](const auto& b){return b.octopus_id==owner;});
     if(board==candidate.octopuses.end()){error="Hardware profile has no configured Amity device identity";return false;}
     // Unpopulated connectors are runtime monitor templates, not persisted
-    // electrical claims. Creating eight unused domain records would exceed
+    // electrical claims. Creating unused domain records would exceed
     // the 16KiB mutation budget on an existing six-activity installation.
     if(board->supported_tentacles<capacity){board->supported_tentacles=capacity;changed=true;}
     if(!validate_configuration_v2(candidate,error))return false;

@@ -42,12 +42,12 @@ bool parse(const c::Json& json,Request& request){
        !c::id(json.get("expected_boot_id"),request.boot)||!c::decimal(json.get("expected_settings_revision"),request.revision)||!request.revision||
        !c::json_bool(json.get("confirm_restart"),confirm)||!confirm)return false;
     const auto* changes=json.get("changes");
-    if(!changes||changes->type!=c::Json::Type::array||changes->array.empty()||changes->array.size()>5)return false;
+    if(!changes||changes->type!=c::Json::Type::array||changes->array.empty()||changes->array.size()>amity::max_tentacles)return false;
     uint8_t seen=0;
     for(const auto& item:changes->array){
         uint64_t id=0,generation=0;std::string physical;uint16_t parsed=0;
         if(!c::closed(item,{"tentacle_id","expected_presence_generation","default_front_physical_address"})||
-           !c::json_uint(item.get("tentacle_id"),id,0,4)||(seen&(1u<<id))||
+           !c::json_uint(item.get("tentacle_id"),id,0,amity::last_tentacle_id)||(seen&(1u<<id))||
            !c::decimal(item.get("expected_presence_generation"),generation)||!generation||
            !c::json_string(item.get("default_front_physical_address"),physical,0,7)||!device_settings::parse_front_physical_address(physical,parsed))return false;
         seen|=uint8_t(1u<<id);request.changes.push_back({{uint8_t(id),parsed},generation});
@@ -66,7 +66,7 @@ std::string snapshot(){
     std::string out="{\"boot_id\":\""+owner->boot_identity().str()+"\",\"settings_revision\":\""+std::to_string(defaults.revision)+"\",\"adapters\":[";
     bool first=true;
     for(const auto& row:runtime){
-        if(row.tentacle_id>=owner->supported_tentacles()||row.tentacle_id>=5)continue;
+        if(row.tentacle_id>=owner->supported_tentacles()||row.tentacle_id>=amity::max_tentacles)continue;
         if(!first)out+=',';
         first=false;
         out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"presence\":\""+(!row.present?"unknown":*row.present?"present":"absent")+"\",\"presence_generation\":\""+std::to_string(row.presence_generation)+"\",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+"}";

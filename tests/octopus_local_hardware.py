@@ -3,7 +3,7 @@
 
 Uses private saved admin credentials. Preserves the original portable config;
 never erases pairings, origin, factory data or Wi-Fi credentials. Wire captures
-establish CEC behavior only, not HDMI picture/audio or ten-line qualification.
+establish CEC behavior only, not HDMI picture/audio or eight-line qualification.
 """
 import argparse
 import shlex

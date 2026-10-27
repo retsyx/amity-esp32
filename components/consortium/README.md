@@ -119,7 +119,7 @@ coverage. Exact software snapshots and remaining physical gates are recorded in
 
 Host/fake-peer tests do not establish native ESP32-to-ESP32 radio interoperability,
 in-flight custom GATT continuity, remote/home pairing retention, peer CEC output,
-ten-wire timing, AV picture/audio or production security. The independent Pi
+eight-wire timing, AV picture/audio or production security. The independent Pi
 fixture's recorded image/topology limits each historical result.
 
 ## Per-device adapter settings

@@ -22,8 +22,8 @@ int main() {
 
 
 def settings(pairs, presence=None):
-    lines = ['#define CONFIG_AMITY_BOARD_DEVELOPMENT_5T 1', '#define CONFIG_AMITY_BOARD_RESET_GPIO -1']
-    for index in range(5):
+    lines = ['#define CONFIG_AMITY_BOARD_DEVELOPMENT_4T 1', '#define CONFIG_AMITY_BOARD_RESET_GPIO -1']
+    for index in range(4):
         front, back = pairs.get(index, (-1, -1))
         lines += [f'#define CONFIG_AMITY_TENTACLE{index}_FRONT_GPIO {front}',
                   f'#define CONFIG_AMITY_TENTACLE{index}_BACK_GPIO {back}',
@@ -33,19 +33,19 @@ def settings(pairs, presence=None):
 
 
 cases = [('legacy', '', 1, 1, True),
-         ('empty', settings({}), 5, 0, True),
-         ('sparse-fifth', settings({4: (7, 8)}), 5, 16, True),
-         ('full', settings({i: (2*i+1, 2*i+2) for i in range(5)}), 5, 31, True),
-         ('partial-pair', settings({3: (7, -1)}), 5, 0, False),
-         ('separate-presence', settings({4: (7, 8)}, {4: 42}), 5, 16, True),
-         ('presence-on-cec-rejected', settings({4: (7, 8)}, {4: 7}), 5, 16, False)]
+         ('empty', settings({}), 4, 0, True),
+         ('sparse-fourth', settings({3: (9, 44)}), 4, 8, True),
+         ('full', settings({0: (1, 2), 1: (5, 6), 2: (7, 8), 3: (9, 44)}), 4, 15, True),
+         ('partial-pair', settings({3: (9, -1)}), 4, 0, False),
+         ('separate-presence', settings({3: (9, 44)}, {3: 42}), 4, 8, True),
+         ('presence-on-cec-rejected', settings({3: (9, 44)}, {3: 9}), 4, 8, False)]
 with tempfile.TemporaryDirectory(prefix='amity-profile-') as directory:
     temporary = Path(directory)
     (temporary/'test.cpp').write_text(source)
     for name, config, count, mask, valid in cases:
         (temporary/'sdkconfig.h').write_text(config)
         subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-Wall', '-Wextra', '-Werror',
-                        '-I'+str(temporary), '-I'+str(root/'main'), '-I'+str(root/'components/cec/include'),
+                        '-I'+str(temporary), '-I'+str(root/'main'), '-I'+str(root/'components/cec/include'), '-I'+str(root/'components/amity_system/include'),
                         f'-DEXPECTED_COUNT={count}', f'-DEXPECTED_MASK={mask}', f'-DEXPECTED_VALID={int(valid)}',
                         str(temporary/'test.cpp'), '-o', str(temporary/'test')], check=True)
         subprocess.run([str(temporary/'test')], check=True)

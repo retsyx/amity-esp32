@@ -445,7 +445,7 @@ class Peer:
         assert server['consortium_id'] == p['consortium_id'] and server['coordinator_epoch'] == p['epoch']
         assert server['required_capabilities'] & ~self.capabilities == 0
         if writer.get_extra_info('ssl_object').selected_alpn_protocol() == TLS_PROFILES[0]:
-            assert 1 <= server['supported_tentacles'] <= 5
+            assert 1 <= server['supported_tentacles'] <= 4
             assert 0 <= server['configured_tentacles_mask'] < 1 << server['supported_tentacles']
         self.negotiated_capabilities = (server['required_capabilities'] | server['optional_capabilities']) & self.capabilities
         self.server_boot, self.config_revision = server['boot_id'], server['config_revision']

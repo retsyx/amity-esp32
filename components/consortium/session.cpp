@@ -19,7 +19,7 @@ Error Session::hello(const HelloFrame &h,uint32_t supported) {
     if(scope_.peer_boot_id&&h.boot_id!=scope_.peer_boot_id)return Error::stale_boot;
     scope_.peer_boot_id=h.boot_id;
     if(h.coordinator_epoch!=scope_.epoch)return Error::stale_epoch;
-    if(!h.supported_tentacles||h.supported_tentacles>5||h.configured_tentacles_mask>=(1u<<h.supported_tentacles))return Error::invalid_message;
+    if(!h.supported_tentacles||h.supported_tentacles>amity::max_tentacles||h.configured_tentacles_mask>=(1u<<h.supported_tentacles))return Error::invalid_message;
     if(h.protocol_min>1||h.protocol_max<1||(h.required_capabilities&~supported)||((h.required_capabilities|supported)&~known_capabilities))return Error::protocol_mismatch;
     capabilities_=(h.required_capabilities|h.optional_capabilities)&supported;
     state_=active_?ConnectionState::synchronizing:ConnectionState::restricted;return Error::none;

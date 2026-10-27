@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Validate this proposal's local schemas, fixtures and documentation links.
 
-Requires Python 3.10+ and jsonschema 4.x. No network or firmware access occurs.
+Requires Python 3.10+; full validation also needs jsonschema 4.x and referencing.
+The --hardware-capacity-only mode uses only the standard library.
+No network or firmware access occurs.
 The optional --reference-repo path checks pinned Amity citation paths only.
 """
 import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
 import sys
 from urllib.parse import unquote
-
-from jsonschema import Draft202012Validator
-from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parent
 BASE = 'https://amity.invalid/design/v0.1/'
@@ -34,10 +34,104 @@ def port_key(port):
     return tuple(port[k] for k in ('consortium_id', 'octopus_id', 'tentacle_id', 'side'))
 
 
+def check_hardware_capacity(schemas):
+    """Static schemas and Kconfig must mirror the shared firmware capacity."""
+    repo = ROOT.parent
+    header = repo / 'components/amity_system/include/amity/hardware_limits.hpp'
+    limits = re.findall(r'^#define\s+AMITY_MAX_TENTACLES\s+([1-9][0-9]*)\s*$',
+                        header.read_text(), re.M)
+    require(len(limits) == 1, 'Missing or ambiguous canonical hardware capacity')
+    maximum = int(limits[0])
+    last_slot = maximum - 1
+    by_name = {schema['$id'].rsplit('/', 1)[-1]: schema for schema in schemas}
+    core = by_name['core-types.schema.json']['$defs']
+    settings = by_name['adapter-settings.schema.json']['$defs']
+    for name in ('CecPortRef', 'FullyQualifiedCecAddress', 'QualifiedDeviceName'):
+        require(core[name]['properties']['tentacle_id']['maximum'] == last_slot,
+                f'{name} connector bound differs from canonical hardware capacity')
+    for name in ('Change', 'Adapter'):
+        require(settings[name]['properties']['tentacle_id']['maximum'] == last_slot,
+                f'Settings {name} connector bound differs from canonical hardware capacity')
+    for name, field in (('Snapshot', 'adapters'), ('WriteCore', 'changes'), ('WriteRequest', 'changes')):
+        require(settings[name]['properties'][field]['maxItems'] == maximum,
+                f'Settings {name} array bound differs from canonical hardware capacity')
+    require(settings['Adapter']['properties']['name']['enum'] ==
+            [f'HDMI adapter {slot + 1}' for slot in range(maximum)],
+            'Settings labels differ from canonical hardware capacity')
+    labels = {rule['if']['properties']['tentacle_id']['const']:
+              rule['then']['properties']['name']['const']
+              for rule in settings['Adapter']['allOf']
+              if 'tentacle_id' in rule['if']['properties']}
+    require(labels == {slot: f'HDMI adapter {slot + 1}' for slot in range(maximum)},
+            'Settings label rules differ from canonical hardware capacity')
+
+    production = json.loads((repo / 'components/consortium/protocol-v1.schema.json').read_text())['$defs']
+    hello = production['Hello']
+    require(hello['properties']['supported_tentacles']['maximum'] == maximum,
+            'Peer capacity bound differs from canonical hardware capacity')
+    require(hello['properties']['configured_tentacles_mask']['maximum'] == (1 << maximum) - 1,
+            'Peer connector mask differs from canonical hardware capacity')
+    for rule in hello['allOf']:
+        capacity = rule['if']['properties']['supported_tentacles']['const']
+        require(1 <= capacity <= maximum and
+                rule['then']['properties']['configured_tentacles_mask']['maximum'] == (1 << capacity) - 1,
+                'Peer conditional connector mask differs from its advertised capacity')
+    for name, field in (('DeviceSettingsSnapshot', 'adapters'), ('DeviceSettingsWrite', 'changes')):
+        array = production[name]['properties'][field]
+        require(array['maxItems'] == maximum and
+                array['items']['properties']['tentacle_id']['maximum'] == last_slot,
+                f'Peer {name} bounds differ from canonical hardware capacity')
+
+    kconfig = (repo / 'main/Kconfig.projbuild').read_text()
+    profiles = re.findall(r'AMITY_BOARD_DEVELOPMENT_([0-9]+)T\b', kconfig)
+    require(profiles and all(int(count) == maximum for count in profiles),
+            'Kconfig development profile differs from canonical hardware capacity')
+    menus = [(int(label), int(slot)) for label, slot in
+             re.findall(r'^menu "HDMI adapter ([0-9]+) \(stable connector ([0-9]+)\)"$', kconfig, re.M)]
+    require(menus == [(slot + 1, slot) for slot in range(maximum)],
+            'Kconfig connector menus differ from canonical hardware capacity')
+    fields = ('FRONT_GPIO', 'BACK_GPIO', 'PRESENCE_GPIO', 'PRESENT_HIGH',
+              'PRESENCE_PULLUP', 'PRESENCE_PULLDOWN')
+    expected = {f'AMITY_TENTACLE{slot}_{field}' for slot in range(maximum) for field in fields}
+    configured = re.findall(r'^config (AMITY_TENTACLE[0-9]+_[A-Z_]+)$', kconfig, re.M)
+    require(len(configured) == len(expected) and set(configured) == expected,
+            'Kconfig connector fields differ from canonical hardware capacity')
+    require(all(int(slot) < maximum for slot in re.findall(r'AMITY_TENTACLE([0-9]+)_', kconfig)),
+            'Kconfig references a connector beyond canonical hardware capacity')
+    require(re.search(r'^\s*default AMITY_BOARD_LEGACY_1T\s*$', kconfig, re.M),
+            'The default Kconfig board profile must retain one connector')
+
+    spec = importlib.util.spec_from_file_location('amity_contract_hardware_profile',
+                                                  repo / 'tools/hardware_profile.py')
+    hardware = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hardware)
+    require(hardware.MAX_TENTACLES == maximum and hardware.MAX_CEC_PORTS == 2 * maximum,
+            'Release tooling limits differ from canonical hardware capacity')
+    require(hardware.DEVELOPMENT == f'esp32s3-development-{maximum}t-v1' and
+            hardware.BOARD_FLAGS[1] == f'AMITY_BOARD_DEVELOPMENT_{maximum}T',
+            'Release tooling profile differs from canonical hardware capacity')
+    return maximum
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reference-repo', type=Path)
+    parser.add_argument('--hardware-capacity-only', action='store_true',
+                        help='Check canonical hardware limits across schemas, Kconfig and release tooling only')
     args = parser.parse_args()
+    schemas = [json.loads(path.read_text()) for path in sorted((ROOT / 'schemas').glob('*.schema.json'))]
+    max_tentacles = check_hardware_capacity(schemas)
+    last_tentacle_id = max_tentacles - 1
+    if args.hardware_capacity_only:
+        print(json.dumps({'schemas_checked': len(schemas),
+                          'hardware_capacity_consistency_checked': True,
+                          'max_tentacles': max_tentacles,
+                          'max_cec_ports': 2 * max_tentacles}, indent=2))
+        return
+    from jsonschema import Draft202012Validator
+    from referencing import Registry, Resource
+    for schema in schemas:
+        Draft202012Validator.check_schema(schema)
     manifest = read('MANIFEST.json')
     manifest_paths = set()
     for entry in manifest['files']:
@@ -50,9 +144,6 @@ def main():
     actual_paths = {str(p.relative_to(ROOT)) for p in ROOT.rglob('*')
                     if p.is_file() and p.suffix in ('.md', '.json', '.py') and p.name != 'MANIFEST.json'}
     require(manifest_paths == actual_paths, 'Manifest does not match current package files')
-    schemas = [json.loads(path.read_text()) for path in sorted((ROOT / 'schemas').glob('*.schema.json'))]
-    for schema in schemas:
-        Draft202012Validator.check_schema(schema)
     registry = Registry().with_resources((schema['$id'], Resource.from_contents(schema)) for schema in schemas)
 
     def validator(name):
@@ -80,6 +171,13 @@ def main():
         uint64.validate(text)
         positives += 1
 
+    # The highest supported connector remains valid for both locator contracts.
+    for v, obj in ((addr, addresses[0]), (qualified_name, names[0])):
+        candidate = copy.deepcopy(obj)
+        candidate['tentacle_id'] = last_tentacle_id
+        v.validate(candidate)
+        positives += 1
+
     # Delimiters and case are data inside the structured OSD field, not URI syntax.
     for text in ('HDMI / % Box', 'Apple TV', 'apple tv', ' Apple TV '):
         candidate = copy.deepcopy(names[0])
@@ -101,14 +199,14 @@ def main():
     settings_write = Draft202012Validator({'$ref': BASE + 'adapter-settings.schema.json#/$defs/WriteRequest'}, registry=registry)
     settings_pa = Draft202012Validator({'$ref': BASE + 'adapter-settings.schema.json#/$defs/PhysicalAddress'}, registry=registry)
     settings = {'boot_id': '3' * 32, 'settings_revision': '1', 'adapters': [
-        {'tentacle_id': i, 'name': f'HDMI adapter {i+1}', 'configured': i in (0,4),
+        {'tentacle_id': i, 'name': f'HDMI adapter {i+1}', 'configured': i in (0,last_tentacle_id),
          'presence': 'present' if i == 0 else 'unknown', 'presence_generation': str(i+1),
          'default_front_physical_address': f'{i+1}.0.0.0',
          'observed_front_physical_address': '2.0.0.0' if i == 0 else None,
-         'effective_front_physical_address': '2.0.0.0' if i == 0 else None} for i in range(5)]}
+         'effective_front_physical_address': '2.0.0.0' if i == 0 else None} for i in range(max_tentacles)]}
     write = {'request_id': '4' * 32, 'expected_boot_id': settings['boot_id'],
              'expected_settings_revision': '1', 'confirm_restart': True,
-             'changes': [{'tentacle_id': 4, 'expected_presence_generation': '5',
+             'changes': [{'tentacle_id': last_tentacle_id, 'expected_presence_generation': str(max_tentacles),
                           'default_front_physical_address': ''}]}
     for v, value in ((settings_snapshot, settings), (settings_write, write)):
         v.validate(value); positives += 1
@@ -167,11 +265,17 @@ def main():
                          ('changes', []), ('location', 'Bedroom')):
         candidate = copy.deepcopy(write); candidate[field] = value
         negatives.append((settings_write, candidate, f'invalid settings write {field}'))
-    for field, value in (('tentacle_id', 5), ('expected_presence_generation', '0'),
+    for field, value in (('tentacle_id', max_tentacles), ('expected_presence_generation', '0'),
                          ('default_front_physical_address', '1.0.2.0'), ('physical_presence', True)):
         candidate = copy.deepcopy(write); candidate['changes'][0][field] = value
         negatives.append((settings_write, candidate, f'invalid settings change {field}'))
-    candidate = copy.deepcopy(settings); candidate['adapters'][4]['name'] = 'HDMI adapter 1'
+    candidate = copy.deepcopy(settings); candidate['adapters'][last_tentacle_id]['tentacle_id'] = max_tentacles
+    negatives.append((settings_snapshot, candidate, 'connector index exceeds hardware capacity'))
+    candidate = copy.deepcopy(settings); candidate['adapters'].append(copy.deepcopy(settings['adapters'][0]))
+    negatives.append((settings_snapshot, candidate, 'settings snapshot exceeds hardware capacity'))
+    candidate = copy.deepcopy(write); candidate['changes'] *= max_tentacles + 1
+    negatives.append((settings_write, candidate, 'settings changes exceed hardware capacity'))
+    candidate = copy.deepcopy(settings); candidate['adapters'][last_tentacle_id]['name'] = 'HDMI adapter 1'
     negatives.append((settings_snapshot, candidate, 'renumbered sparse adapter'))
     candidate = copy.deepcopy(settings); candidate['adapters'][1]['presence'] = 'present'
     negatives.append((settings_snapshot, candidate, 'unconfigured adapter claims presence'))
@@ -184,7 +288,7 @@ def main():
         candidate = copy.deepcopy(device_status)
         candidate['payload'] = payload
         negatives.append((envelope, candidate, 'missing hostname or unsupported display alias'))
-    for field, value in [('tentacle_id', 5), ('tentacle_id', -1), ('side', 'source'),
+    for field, value in [('tentacle_id', max_tentacles), ('tentacle_id', -1), ('side', 'source'),
                          ('logical_address', 15), ('logical_address', '4'),
                          ('octopus_id', 'A' * 32), ('octopus_id', '0' * 32)]:
         candidate = copy.deepcopy(addresses[0])
@@ -194,7 +298,7 @@ def main():
     del candidate['consortium_id']
     negatives.append((addr, candidate, 'missing consortium'))
     for field, value in [('osd_name', ''), ('osd_name', 4), ('osd_name', 'x' * 15),
-                         ('logical_address', 4), ('tentacle_id', 5), ('side', 'source')]:
+                         ('logical_address', 4), ('tentacle_id', max_tentacles), ('side', 'source')]:
         candidate = copy.deepcopy(names[0])
         candidate[field] = value
         negatives.append((qualified_name, candidate, f'qualified name {field}={value!r}'))
@@ -275,7 +379,8 @@ def main():
     require(len(nodes) == len(scenario['octopuses']), 'Duplicate OctopusId')
     expected_ports = set()
     for node, slots in nodes.items():
-        require(1 <= len(slots) <= 5 and all(0 <= s <= 4 for s in slots), 'Invalid populated slots')
+        require(1 <= len(slots) <= max_tentacles and
+                all(0 <= s <= last_tentacle_id for s in slots), 'Invalid populated slots')
         for slot in slots:
             for side in ('front', 'back'):
                 expected_ports.add((scenario['consortium_id'], node, slot, side))
@@ -403,7 +508,8 @@ def main():
         for relative in repo_paths:
             require((args.reference_repo / relative).exists(), f'Missing pinned repository path {relative}')
     result = {'manifest_entries_checked': len(manifest_paths),
-              'schemas_checked': len(schemas), 'positive_schema_vectors': positives,
+              'schemas_checked': len(schemas), 'hardware_capacity_consistency_checked': True,
+              'positive_schema_vectors': positives,
               'negative_schema_vectors': len(negatives), 'binding_relationships_checked': len(bindings),
               'operation_relationships_checked': len(operations), 'fixture_cec_ports': len(expected_ports),
               'configured_qualified_names_checked': len(configured_names),

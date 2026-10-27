@@ -95,9 +95,20 @@ idf.py build provisioning-package
 | `build/amity.bin` | Raw application image for USB/debugging or an explicitly pre-staged update |
 | `build/amity-provision-native` | Setup tool for the build computer |
 
-The default board profile keeps the existing GPIO1/GPIO2 HDMI adapter mapping and GPIO4 setup/reset button. For a custom development carrier, run `idf.py menuconfig` and select **Amity board profile → Development carrier**. Assign each adapter's two isolated CEC GPIOs together, or leave both unassigned. Adapter numbers stay fixed when connections are unused. Configure the optional active-low setup/reset button GPIO if the carrier needs the physical setup gesture; it defaults to disabled. A separate presence input is optional; without one, physical attachment remains unknown and equipment availability comes from discovery. The CEC wires use external pull-ups with the internal GPIO pulls disabled.
+The default board profile keeps the existing GPIO1/GPIO2 HDMI adapter mapping and GPIO4 setup/reset button. For a custom development carrier, run `idf.py menuconfig` and select **Amity board profile → Development carrier**. Its default isolated CEC GPIO assignments use the standard XIAO ESP32-S3 edge headers:
 
-The development profile accepts up to five adapters, including a device with none configured. Invalid mappings or allocation failures leave administration available with HDMI control disabled. Its GPIO mapping is included in the firmware identity, so an update for a different profile or mapping is rejected. Use a separate build directory for each carrier mapping and qualify its electrical behavior and simultaneous CEC timing before use.
+| HDMI adapter | Front GPIO | XIAO pin | Back GPIO | XIAO pin |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | D0 | 2 | D1 |
+| 2 | 5 | D4 | 6 | D5 |
+| 3 | 7 | D8 | 8 | D9 |
+| 4 | 9 | D10 | 44 | D7 / RX |
+
+GPIO10 is not D10: the standard XIAO's D10 connects to GPIO9. These defaults leave GPIO4 / D3 available for the setup/reset button, avoid strapping GPIO3 / D2, and avoid GPIO43 / D6 / TX because ROM boot output can drive it before the firmware starts. GPIO44 / D7 / RX supports ordinary bidirectional GPIO; keep UART0 unused on that pin. The standard headers provide four adapter pairs under these constraints. [Seeed pinout](https://wiki.seeedstudio.com/xiao_esp32s3_pin_multiplexing/), [ESP32-S3 boot and UART behavior](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
+
+Override these assignments in menuconfig to match the carrier, or set both GPIOs of an unused adapter to `-1`. Saved assignments, including explicit `-1` values, take precedence over these defaults. Adapter numbers stay fixed when connections are unused. Configure the optional active-low setup/reset button GPIO if the carrier needs the physical setup gesture; it defaults to disabled. A separate presence input is optional and defaults to unassigned; without one, physical attachment remains unknown and equipment availability comes from discovery. The CEC wires use external pull-ups with the internal GPIO pulls disabled.
+
+The development profile accepts up to four adapters, including a device with none configured. Invalid mappings or allocation failures leave administration available with HDMI control disabled. Its GPIO mapping is included in the firmware identity, so an update for a different profile or mapping is rejected. Use a separate build directory for each carrier mapping and qualify its electrical behavior and simultaneous CEC timing before use.
 
 To prepare a fresh device:
 

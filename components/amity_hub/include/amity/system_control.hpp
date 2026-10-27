@@ -47,7 +47,7 @@ public:
         if (result == ESP_OK) board_profile_ = profile;
         return result;
     }
-    esp_err_t start(const cec::BoardProfile& profile, const std::array<uint16_t, 5>& physical) {
+    esp_err_t start(const cec::BoardProfile& profile, const std::array<uint16_t, amity::max_tentacles>& physical) {
         if (!consortium_ || !octopus_) return ESP_ERR_INVALID_STATE;
         const auto result = local_.start(profile, physical);
         if (result == ESP_OK) board_profile_ = profile;

@@ -105,7 +105,7 @@ Use bounded chunks and backpressure. Resume only when the target has a durable r
 
 The baseline upload uses a 2 KiB buffer; retain bounded memory rather than loading an entire image into RAM. The present partition table has two `0x3d0000`-byte application slots; a larger binary requires an explicit layout/provisioning design, not a relaxed length check. [Upload buffering][b-upload] [OTA slots][b-partitions]
 
-Flash erase/write and concurrent TLS can contend with the ten-line CEC runtime and BLE. Gate production on measured ISR timing, local release watchdog deadlines, queue capacity and reconnect behavior during updates. Keep the shared CEC timer and required code/data in the validated IRAM-safe path. An upload must be throttled or suspended if it threatens those guarantees; it must not disable local protocol checks or source filtering. [CEC runtime](04-hardware-and-cec-runtime.md) [Radio coexistence](10-ble-and-matter-coexistence.md)
+Flash erase/write and concurrent TLS can contend with the eight-line CEC runtime and BLE. Gate production on measured ISR timing, local release watchdog deadlines, queue capacity and reconnect behavior during updates. Keep the shared CEC timer and required code/data in the validated IRAM-safe path. An upload must be throttled or suspended if it threatens those guarantees; it must not disable local protocol checks or source filtering. [CEC runtime](04-hardware-and-cec-runtime.md) [Radio coexistence](10-ble-and-matter-coexistence.md)
 
 The current global socket ceiling is 16; HTTPS and HomeKit each allow four open sockets, and the consortium adds persistent links. A fleet transfer must fit the approved socket/internal-RAM profile. Increasing a constant without stress and leak measurements is not an accepted fix. [Network limits][b-limits]
 
@@ -160,7 +160,7 @@ Power loss during inactive-slot writing must leave the running image bootable; p
 | Durable group update job | Coordinator/peer/browser interruption at each stage resumes or terminates without duplicate install/actuation. |
 | Boot-health and schema bridge | Successful update preserves identity/pairings; failed image rolls back into a readable protected state. |
 | Production provisioning profile | Recorded secure-boot/encryption settings, approved keys and demonstrated physical recovery on disposable test hardware. |
-| Coexistence limits | Ten CEC lines plus Wi-Fi/BLE/TLS/OTA meet the runtime and hold-release deadlines with no unwanted egress. |
+| Coexistence limits | Eight CEC lines plus Wi-Fi/BLE/TLS/OTA meet the runtime and hold-release deadlines with no unwanted egress. |
 
 The release owner signs off exact SDK/image identities, rollback matrix, storage budget, security profile and hardware fixture evidence. Development passing does not imply production security passing. Outstanding gates remain visible in [validation](15-validation-and-release-gates.md) and [decisions](17-decisions-and-open-questions.md).
 

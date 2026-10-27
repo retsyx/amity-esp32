@@ -134,7 +134,7 @@ int main(int argc,char**argv){
 
 class BundleTests(unittest.TestCase):
     def image_manifest(self):
-        image=bytearray(288);image[0]=0xe9;image[32:36]=bytes.fromhex('3254cdab');image[176:208]=bytes(range(32));image+=hardware.descriptor({'AMITY_BOARD_LEGACY_1T':'y','AMITY_BOARD_DEVELOPMENT_5T':'n'})
+        image=bytearray(288);image[0]=0xe9;image[32:36]=bytes.fromhex('3254cdab');image[176:208]=bytes(range(32));image+=hardware.descriptor({'AMITY_BOARD_LEGACY_1T':'y','AMITY_BOARD_DEVELOPMENT_4T':'n'})
         value={'image_bytes':str(len(image)),'image_sha256':hashlib.sha256(image).hexdigest(),'image_elf_sha256':image[176:208].hex(),'security_profile':'development','signing_key_id':'','hardware_profiles':['esp32s3-legacy-1t-v1']}
         return bytes(image),value
     def canonical(self,value):return json.dumps(value,sort_keys=True,separators=(',',':')).encode()

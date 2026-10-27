@@ -27,7 +27,7 @@ def main():
         return dict(value='component:'+f'{value:032x}', title=title, location=location, roles=roles)
     choices = [choice(10, 'Display', 'amity-living-room · HDMI adapter 1', ['display', 'audio']),
                choice(11, 'Apple TV', 'amity-living-room · HDMI adapter 1', ['source']),
-               choice(12, 'Apple TV', 'amity-bedroom · HDMI adapter 5', ['source'])]
+               choice(12, 'Apple TV', 'amity-bedroom · HDMI adapter 4', ['source'])]
     activities = [dict(activity_id=aid, name='Watch TV', display=choices[0]['value'], source=choices[1]['value'], audio=choices[0]['value']),
                   dict(activity_id=second, name='Bedroom source', display=choices[0]['value'], source=choices[2]['value'], audio=choices[0]['value'])]
     editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1', activities=activities, device_choices=choices, quirks=[])
@@ -37,7 +37,7 @@ def main():
                   expected_state_revision='1', expected_boot_id='a'*32, devices=[], device_choices=choices)
     status['devices'] = [dict(name=c['value'], title=c['title'], location=c['location'], bus='front' if i == 0 else 'back', type=0 if i == 0 else 4, address=0 if i == 0 else 4, physical_address=0 if i == 0 else 4096) for i, c in enumerate(choices)]
     configuration = dict(version=2, controller_octopus_id=controller, config_revision='1', presentation_revision='1',
-                         octopuses=[dict(octopus_id=member, label='Bedroom Amity', supported_tentacles=5), dict(octopus_id=controller, label='Living room Amity', supported_tentacles=1)],
+                         octopuses=[dict(octopus_id=member, label='Bedroom Amity', supported_tentacles=4), dict(octopus_id=controller, label='Living room Amity', supported_tentacles=1)],
                          activities=[], zones=[], external_slots=[dict(slot=5, activity_id=aid)])
     system = dict(octopus_id=controller, hostname='amity-living-room',
                   named_devices=[dict(octopus_id=controller, hostname='amity-living-room'),
@@ -187,7 +187,7 @@ def main():
             page.locator('#discover').click()
             expect(page.locator('#deviceList .device')).to_have_count(3)
             expect(page.locator('#deviceList')).to_contain_text('amity-living-room · HDMI adapter 1')
-            expect(page.locator('#deviceList')).to_contain_text('amity-bedroom · HDMI adapter 5')
+            expect(page.locator('#deviceList')).to_contain_text('amity-bedroom · HDMI adapter 4')
             assert not re.search(r'\b(octopus|tentacle|consortium)\b', page.locator('body').inner_text(), re.I)
             page.screenshot(path=str(ROOT/'test-results/controller-locations-ui-0.1.73.png'), full_page=True)
             passed('duplicate equipment names carry canonical owning hostnames and stable adapter numbers')
@@ -195,7 +195,7 @@ def main():
             labels = page.locator('#activityFields label').all_text_contents()
             assert [x.split('\n')[0] for x in labels] == ['Name', 'Display', 'Source', 'Audio', 'Switch Device', 'Input']
             source = page.locator('#activityFields input').nth(2)
-            source.fill('Apple TV · amity-bedroom · HDMI adapter 5')
+            source.fill('Apple TV · amity-bedroom · HDMI adapter 4')
             page.locator('#activityForm button[type=submit]').click()
             count = len([1 for p, _ in fixture['posts'] if p.endswith('/activity')])
             page.locator('#saveActivities').click()
@@ -213,7 +213,7 @@ def main():
             assert [b for p, b in fixture['posts'] if p.endswith('/activity')][-1]['activity_id'] == aid
             passed('Save and start retains the original control and stable activity identity')
             page.locator('#addActivity').click()
-            for index, value in enumerate(['New source', 'Display · amity-living-room · HDMI adapter 1', 'Apple TV · amity-bedroom · HDMI adapter 5', 'Display · amity-living-room · HDMI adapter 1']):
+            for index, value in enumerate(['New source', 'Display · amity-living-room · HDMI adapter 1', 'Apple TV · amity-bedroom · HDMI adapter 4', 'Display · amity-living-room · HDMI adapter 1']):
                 page.locator('#activityFields input').nth(index).fill(value)
             page.locator('#activityForm button[type=submit]').click()
             page.locator('#saveActivities').click()

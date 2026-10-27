@@ -15,7 +15,7 @@ bool SystemControl::compile_v2(const config_store::ConfigurationV2& config, syst
     for (const auto& slot : config.external_slots) slice.external_slots.push_back({slot.slot, slot.activity_id, slot.hidden, slot.tombstone, slot.alias});
     for (const auto& domain : config.domains) {
         for (const auto& port : domain.ports) if (port.port.octopus_id == octopus_) {
-            if (port.port.tentacle_id >= 5 || port.port.consortium_id != consortium_) {
+            if (port.port.tentacle_id >= amity::max_tentacles || port.port.consortium_id != consortium_) {
                 error = "local attachment is outside the supported HDMI adapter indices"; return false;
             }
             if (std::any_of(slice.port_templates.begin(), slice.port_templates.end(), [&](const auto& p) { return p.port == port.port; })) {
@@ -47,7 +47,7 @@ bool SystemControl::compile_v2(const config_store::ConfigurationV2& config, syst
             slice.port_templates.push_back(std::move(policy));
         }
     }
-    if (slice.port_templates.size() > 10 || slice.topology.bindings.size() > 128) { error = "local runtime capacity exceeded"; return false; }
+    if (slice.port_templates.size() > amity::max_cec_ports || slice.topology.bindings.size() > 128) { error = "local runtime capacity exceeded"; return false; }
     for (size_t i = 0; i < slice.port_templates.size(); ++i) for (size_t j = 0; j < i; ++j)
         if (slice.port_templates[i].domain_id == slice.port_templates[j].domain_id && slice.port_templates[i].role == system::PortRole::tv_controller && slice.port_templates[j].role == system::PortRole::tv_controller) {
             error = "electrical domain cannot allocate two local TV-controller identities"; return false;

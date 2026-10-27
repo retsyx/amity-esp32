@@ -108,8 +108,8 @@ private:
     system::DiscoveryService discovery_;
     std::vector<Port> ports_;
     // Owned by the containing internal-RAM HubService::Impl, never PSRAM.
-    std::atomic<uint32_t> wire_generations_[10]{};
-    std::atomic<uint32_t> work_generations_[10][10]{};
+    std::atomic<uint32_t> wire_generations_[amity::max_cec_ports]{};
+    std::atomic<uint32_t> work_generations_[amity::max_cec_ports][10]{};
     BindingGuard binding_guards_[128];
     size_t guard_count_ = 0;
     std::vector<system::CecObservation> observations_;

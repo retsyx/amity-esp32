@@ -30,9 +30,9 @@ bool send(Active&,Kind kind,std::string_view payload,uint32_t){assert(kind==Kind
 '''
 HELPERS=r'''
 namespace amity::consortium {
-std::string snapshot(model::BootId target={}){if(!target)target=boot;return "{\"boot_id\":\""+target.str()+"\",\"settings_revision\":\""+std::to_string(revision)+"\",\"adapters\":[{\"tentacle_id\":4,\"name\":\"HDMI adapter 5\",\"configured\":true,\"presence\":\"present\",\"presence_generation\":\""+std::to_string(generation)+"\",\"default_front_physical_address\":\"A.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]}";}
+std::string snapshot(model::BootId target={}){if(!target)target=boot;return "{\"boot_id\":\""+target.str()+"\",\"settings_revision\":\""+std::to_string(revision)+"\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"presence\":\"present\",\"presence_generation\":\""+std::to_string(generation)+"\",\"default_front_physical_address\":\"A.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]}";}
 Json parsed(std::string_view text){Json out;JsonError detail;assert(parse_json(text,out,detail));return out;}
-Json core(model::BootId target={},uint64_t expected=2,uint64_t presence=7){if(!target)target=boot;return parsed("{\"expected_boot_id\":\""+target.str()+"\",\"expected_settings_revision\":\""+std::to_string(expected)+"\",\"confirm_restart\":true,\"changes\":[{\"tentacle_id\":4,\"expected_presence_generation\":\""+std::to_string(presence)+"\",\"default_front_physical_address\":\"A.0.0.0\"}]}");}
+Json core(model::BootId target={},uint64_t expected=2,uint64_t presence=7){if(!target)target=boot;return parsed("{\"expected_boot_id\":\""+target.str()+"\",\"expected_settings_revision\":\""+std::to_string(expected)+"\",\"confirm_restart\":true,\"changes\":[{\"tentacle_id\":3,\"expected_presence_generation\":\""+std::to_string(presence)+"\",\"default_front_physical_address\":\"A.0.0.0\"}]}");}
 Error apply(model::MessageId id,const Json& body,uint64_t deadline,std::string& response){
  DeviceSettingsWrite write;Error error=parse_device_settings_write(body,write);
  if(effect_fault==1)clock_ms=deadline;
@@ -65,8 +65,10 @@ void codec_tests(){
  for(const auto* valid:{"","0.0.0.0","A.0.0.0","a.1.0.0","1.2.3.4"}){auto value=core();value.get("changes")->array[0].get("default_front_physical_address")->string=valid;DeviceSettingsWrite write;assert(parse_device_settings_write(value,write)==Error::none);}
  for(const auto* invalid:{"F.F.F.F","1.0.1.0","1.2.0.3","x.0.0.0","1.0.0","1.0.0.0.0"}){auto value=core();value.get("changes")->array[0].get("default_front_physical_address")->string=invalid;DeviceSettingsWrite write;assert(parse_device_settings_write(value,write)!=Error::none);}
  auto duplicate=core();duplicate.get("changes")->array.push_back(duplicate.get("changes")->array[0]);DeviceSettingsWrite decoded;assert(parse_device_settings_write(duplicate,decoded)!=Error::none);
+ auto unsupported=core();unsupported.get("changes")->array[0].get("tentacle_id")->integer=4;assert(parse_device_settings_write(unsupported,decoded)!=Error::none);
+ snap=parsed(snapshot());snap.get("adapters")->array[0].get("tentacle_id")->integer=4;assert(!valid_settings_snapshot(snap));
  assert(parse_device_settings_write(core({},2,0),decoded)!=Error::none);
- std::cout<<"PASS closed settings codec: fifthstable slot, unknownpresence generation0, positivewritegeneration, blank/root/case PAcompat, invalidtopology/duplicate slots rejected\n";
+ std::cout<<"PASS closed settings codec: fourth stable slot, unknownpresence generation0, positivewritegeneration, blank/root/case PAcompat, invalidtopology/duplicate slots rejected\n";
 }
 void receiver_tests(){
  reset(false);auto active=connection(true);auto request=write_message(active);assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);assert(parsed(sent.back()).get("stage")->string=="applied");
@@ -105,17 +107,18 @@ def schema_vectors(binary):
  resources=[protocol]+[json.loads(path.read_text()) for path in (ROOT/'amity-octopus-consortium/schemas').glob('*.json')]
  registry=Registry().with_resources((value['$id'],Resource.from_contents(value)) for value in resources)
  jsonschema.Draft202012Validator.check_schema(protocol)
- snapshot={'boot_id':'1'*32,'settings_revision':'2','adapters':[{'tentacle_id':4,'name':'HDMI adapter 5','configured':True,'presence':'present','presence_generation':'7','default_front_physical_address':'A.0.0.0','observed_front_physical_address':None,'effective_front_physical_address':'1.0.0.0'}]}
- core={'expected_boot_id':'1'*32,'expected_settings_revision':'2','confirm_restart':True,'changes':[{'tentacle_id':4,'expected_presence_generation':'7','default_front_physical_address':'A.0.0.0'}]}
+ snapshot={'boot_id':'1'*32,'settings_revision':'2','adapters':[{'tentacle_id':3,'name':'HDMI adapter 4','configured':True,'presence':'present','presence_generation':'7','default_front_physical_address':'A.0.0.0','observed_front_physical_address':None,'effective_front_physical_address':'1.0.0.0'}]}
+ core={'expected_boot_id':'1'*32,'expected_settings_revision':'2','confirm_restart':True,'changes':[{'tentacle_id':3,'expected_presence_generation':'7','default_front_physical_address':'A.0.0.0'}]}
  vectors=[('DeviceSettingsSnapshot',snapshot),('DeviceSettingsWrite',core),('SettingsRead',{'request_id':'2'*32}),('SettingsWrite',{'request_id':'2'*32,'execution_lease_id':'3'*32,'settings':core})]
  for pa in ['', '0.0.0.0','A.0.0.0','a.b.0.0','1.2.3.4','F.F.F.E','F.F.F.F','f.f.f.f','1.0.1.0','0.1.0.0','1.2.0.3','x.0.0.0','1.0.0','1.0.0.0.0']:
   value=copy.deepcopy(core);value['changes'][0]['default_front_physical_address']=pa;vectors.append(('DeviceSettingsWrite',value))
   value=copy.deepcopy(snapshot);value['adapters'][0]['default_front_physical_address']=pa;vectors.append(('DeviceSettingsSnapshot',value))
  for field,value in [('expected_boot_id','0'*32),('expected_settings_revision','0'),('expected_settings_revision','01'),('expected_settings_revision',2),('expected_settings_revision','18446744073709551616'),('confirm_restart',False),('extra',True)]:
   candidate=copy.deepcopy(core);candidate[field]=value;vectors.append(('DeviceSettingsWrite',candidate))
- for field,value in [('tentacle_id',5),('tentacle_id',-1),('tentacle_id','4'),('expected_presence_generation','0'),('expected_presence_generation','07'),('extra',True)]:
+ for field,value in [('tentacle_id',4),('tentacle_id',-1),('tentacle_id','3'),('expected_presence_generation','0'),('expected_presence_generation','07'),('extra',True)]:
   candidate=copy.deepcopy(core);candidate['changes'][0][field]=value;vectors.append(('DeviceSettingsWrite',candidate))
- for count in [0,2,6]:
+ candidate=copy.deepcopy(snapshot);candidate['adapters'][0]['tentacle_id']=4;vectors.append(('DeviceSettingsSnapshot',candidate))
+ for count in [0,2,5]:
   candidate=copy.deepcopy(core);candidate['changes']=candidate['changes']*count;vectors.append(('DeviceSettingsWrite',candidate))
  for configured,presence,generation in itertools.product([False,True],['present','absent','unknown','invalid'],['0','7','07']):
   candidate=copy.deepcopy(snapshot);candidate['adapters'][0].update(configured=configured,presence=presence,presence_generation=generation);vectors.append(('DeviceSettingsSnapshot',candidate))

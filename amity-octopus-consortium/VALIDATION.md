@@ -12,9 +12,18 @@ Run `.cache/contracts-python/bin/python amity-octopus-consortium/validate_contra
 
 - Current manifest file coverage, sizes and SHA256 digests, excluding the manifest itself.
 - Six local Draft2020-12 schemas with a local reference registry.
+- Canonical hardware capacity from `hardware_limits.hpp`, including schema index/count/mask bounds and settings labels, complete Kconfig connector menus/profile/default selection, and release-tool constants/profile. Mismatched schema bounds reject.
 - Positive and malformed address/name/binding/operation/hostname-metadata/per-adapter-settings/removal-reset vectors, including rejection of removed input/transfer/remote-management/hold-renew kinds, obsolete per-button lease fields and obsolete generic retirement wire phases.
 - Scoped native/proxy binding relationships and a synthetic LA re-resolution case without persisted LA selectors.
 - Local Markdown targets, reference labels and balanced fences. Optional `--reference-repo` checks historical baseline citation paths.
+
+To run only the shared hardware-capacity guard independently of manifest and historical document-link checks:
+
+```sh
+python3 amity-octopus-consortium/validate_contracts.py --hardware-capacity-only
+```
+
+This mode uses only the Python standard library: it reads the six JSON schema files and checks their capacity constraints, canonical limits, Kconfig connector menus/profile and release tooling, then prints its JSON result and exits. It passes with four tentacles and eight CEC ports. Complete schema meta-validation, positive/negative fixture and Markdown-link checks remain part of the full validator, which requires `jsonschema` and `referencing`.
 
 This record covers package consistency only. Compiler, host/browser, exact image and historical hardware evidence live in [implementation status](../IMPLEMENTATION_STATUS.json); the [release gates](15-validation-and-release-gates.md) remain separate. Schema acceptance does not establish executable authority, electrical correctness, cryptography, actual pairing retention or AV picture/audio.
 
@@ -23,13 +32,16 @@ This record covers package consistency only. Compiler, host/browser, exact image
 | Check | Result |
 |---|---|
 | JSON schemas |6 checked|
-| Positive vectors |63 accepted|
-| Negative vectors |94 rejected|
+| Canonical capacity across schemas/Kconfig/tooling |Passed; mismatched schema bounds rejected|
+| Positive vectors |65 accepted|
+| Negative vectors |97 rejected|
 | Binding relationships |12 checked|
 | Native configured-name relationships |7 checked|
 | Operation relationships |3 checked|
 | Synthetic populated CEC ports |10|
 | Runtime LA re-resolution fixture |Passed|
 | Firmware/hardware tests run by this validator |None|
+
+The four-slot structural/schema checks above pass. The complete validator currently stops during Markdown-link verification at a pre-existing missing historical log, `test-results/aggregate-core-holds-0.1.73.log`, linked by TODO.md; this does not qualify that absent evidence.
 
 The manifest and validator output are the authoritative package counts. Removed guided-wizard/draft, multi-remote/member-input and controller-transfer files are not retained as implementation contracts or positive fixtures. The internal core, scoped discovery, multi-CEC runtime, guarded semantic planning, authenticated enrollment, configuration synchronization and updates remain required.

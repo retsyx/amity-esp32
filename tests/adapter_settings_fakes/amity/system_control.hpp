@@ -9,7 +9,7 @@ namespace amity {
 struct AdapterRuntimeState {uint8_t tentacle_id=0;bool configured=false;std::optional<bool> present;uint64_t presence_generation=0;std::optional<uint16_t> observed_front_physical,effective_front_physical;};
 class SystemControl {
 public:
-    system::BootId boot;uint8_t capacity=5;
+    system::BootId boot;uint8_t capacity=4;
     std::vector<AdapterRuntimeState> rows;
     std::function<esp_err_t(system::BootId,std::vector<std::pair<uint8_t,uint64_t>>,uint64_t,std::function<esp_err_t()>)> gate;
     system::BootId boot_identity() const{return boot;}

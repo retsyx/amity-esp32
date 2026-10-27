@@ -90,7 +90,7 @@ bool object_fields(cJSON* value,std::initializer_list<const char*> required,std:
 bool parse_port_value(cJSON* value,m::CecPortRef& port){
     if(!object_fields(value,{"consortium_id","octopus_id","tentacle_id","side"}))return false;
     const auto group=m::ConsortiumId::parse(string(value,"consortium_id"));const auto owner=m::OctopusId::parse(string(value,"octopus_id"));auto* tentacle=cJSON_GetObjectItemCaseSensitive(value,"tentacle_id");const auto side=string(value,"side");
-    if(!group||!owner||!cJSON_IsNumber(tentacle)||tentacle->valuedouble!=tentacle->valueint||tentacle->valueint<0||tentacle->valueint>4||(side!="front"&&side!="back"))return false;
+    if(!group||!owner||!cJSON_IsNumber(tentacle)||tentacle->valuedouble!=tentacle->valueint||tentacle->valueint<0||static_cast<unsigned>(tentacle->valueint)>amity::last_tentacle_id||(side!="front"&&side!="back"))return false;
     port={*group,*owner,static_cast<uint8_t>(tentacle->valueint),side=="front"?m::Side::front:m::Side::back};return port.valid();
 }
 std::optional<std::string> device_settings_target(const std::string& path){

@@ -32,12 +32,12 @@ int main(){
     denied=approval;denied.equipment[0].same_equipment_confirmed=false;assert(!propose_octopus_replacement(previous,denied,observations,random,candidate,affected,error));
     auto duplicate=observations;auto clone=duplicate[0];clone.endpoint.logical_address=8;duplicate.push_back(clone);assert(!propose_octopus_replacement(previous,approval,duplicate,random,candidate,affected,error));
     duplicate=observations;duplicate[0].stale=true;assert(!propose_octopus_replacement(previous,approval,duplicate,random,candidate,affected,error));
-    auto five=previous;for(auto& board:five.octopuses)if(board.octopus_id==replacement)board.supported_tentacles=5;
-    auto fifth=approval;for(auto& mapping:fifth.ports)mapping.replacement.tentacle_id=4;for(auto& mapping:fifth.equipment)mapping.replacement.port.tentacle_id=4;
-    auto fifth_observations=observations;for(auto& observation:fifth_observations)observation.endpoint.port.tentacle_id=4;
-    auto fifth_random=[counter=uint64_t{9000}](uint8_t* bytes,size_t size)mutable{std::fill(bytes,bytes+size,0);++counter;for(size_t n=0;n<std::min<size_t>(size,8);++n)bytes[size-1-n]=uint8_t(counter>>(8*n));return true;};
-    assert(propose_octopus_replacement(five,fifth,fifth_observations,fifth_random,candidate,affected,error));
+    auto four=previous;for(auto& board:four.octopuses)if(board.octopus_id==replacement)board.supported_tentacles=4;
+    auto fourth=approval;for(auto& mapping:fourth.ports)mapping.replacement.tentacle_id=3;for(auto& mapping:fourth.equipment)mapping.replacement.port.tentacle_id=3;
+    auto fourth_observations=observations;for(auto& observation:fourth_observations)observation.endpoint.port.tentacle_id=3;
+    auto fourth_random=[counter=uint64_t{9000}](uint8_t* bytes,size_t size)mutable{std::fill(bytes,bytes+size,0);++counter;for(size_t n=0;n<std::min<size_t>(size,8);++n)bytes[size-1-n]=uint8_t(counter>>(8*n));return true;};
+    assert(propose_octopus_replacement(four,fourth,fourth_observations,fourth_random,candidate,affected,error));
     assert(candidate.activities.front().activity_id==previous.activities.front().activity_id&&candidate.external_slots.front().activity_id==previous.external_slots.front().activity_id);
-    for(const auto& component:candidate.components)for(const auto& name:component.record.qualified_names)assert(name.port.tentacle_id==4);
-    std::cout<<"PASS explicit replacement isolation, scoped equipment, fresh bindings, swapped/fifth connectors and immutable original controller\n";
+    for(const auto& component:candidate.components)for(const auto& name:component.record.qualified_names)assert(name.port.tentacle_id==3);
+    std::cout<<"PASS explicit replacement isolation, scoped equipment, fresh bindings, swapped/fourth connectors and immutable original controller\n";
 }

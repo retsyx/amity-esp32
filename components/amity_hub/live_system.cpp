@@ -17,7 +17,7 @@ void LiveSystem::operator delete(void* p) { heap_caps_free(p); }
 LiveSystem::LiveSystem(ConsortiumId group, OctopusId owner, BootId boot, std::function<bool(uint8_t*, size_t)> random, uint64_t epoch)
     : random_(std::move(random)), consortium_(group), octopus_(owner), boot_(boot), epoch_(epoch), coordinator_(random_) {}
 void LiveSystem::attach(CecPortRef key, cec::Bus& bus, uint8_t identity, uint16_t physical) {
-    if (ports_.size() >= 10 || port(key)) return;
+    if (key.tentacle_id >= amity::max_tentacles || ports_.size() >= amity::max_cec_ports || port(key)) return;
     const auto index = ports_.size();
     ports_.push_back({key, &bus, identity, physical, &wire_generations_[index], {}, {}, {}, false, 0, 0});
     ports_.back().slot_index = index;
@@ -46,7 +46,7 @@ std::pair<std::optional<uint16_t>, std::optional<uint16_t>> LiveSystem::front_ph
     return {observed, selected};
 }
 void LiveSystem::set_tentacle_present(uint8_t id, bool present, uint64_t now) {
-    if (id >= 5) return;
+    if (id >= amity::max_tentacles) return;
     bool changed = false;
     for (auto& p : ports_) if (p.key.tentacle_id == id && p.present != present) {
         changed = true; p.present = present; ++*p.wire_generation;
@@ -102,7 +102,7 @@ bool LiveSystem::configure(LocalConfiguration config, uint64_t now, std::string&
     }
     if (!quiescent()) { error = "local holds or wire work have not drained"; return false; }
     configured_ = false; installed_ = false;
-    if (config.port_templates.size() > 10 || config.topology.bindings.size() > 128) {
+    if (config.port_templates.size() > amity::max_cec_ports || config.topology.bindings.size() > 128) {
         error = "configuration references unsupported local port capacity"; return false;
     }
     for (auto& policy : config.port_templates) {

@@ -36,7 +36,9 @@ python3 -m pip install jsonschema
 python3 validate_contracts.py
 ```
 
-The validator registers every schema locally, checks the schemas themselves, validates positive/negative fixtures and checks selected cross-object relationships. It also checks local document links, Markdown fences and cited baseline paths when `--reference-repo` is supplied. It performs no network request, firmware build or hardware test.
+The validator registers every schema locally, checks the schemas themselves, validates positive/negative fixtures and checks selected cross-object relationships. Hardware capacity comes from the single `AMITY_MAX_TENTACLES` definition in [hardware_limits.hpp](../../components/amity_system/include/amity/hardware_limits.hpp). The validator checks schema bounds, settings sizes/labels, Kconfig connector menus/profile and release-tool limits against it; these static formats cannot drift independently. It also checks local document links, Markdown fences and cited baseline paths when `--reference-repo` is supplied. It performs no network request, firmware build or hardware test.
+
+Add `--hardware-capacity-only` to run the canonical capacity/schema/Kconfig/tooling check using only the Python standard library, before schema meta-validation, manifest and Markdown-link checks. The complete invocation above remains the fixture and document-package check.
 
 The IDs and setup context in the examples are synthetic. None is a credential or an enrolled authority. Runtime cryptographic enrollment, key proof, leases and timing require separate source, host and physical evidence; schema validation establishes none of them.
 

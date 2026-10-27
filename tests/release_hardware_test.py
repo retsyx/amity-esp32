@@ -18,8 +18,8 @@ import release_manifest as release
 
 
 def development():
-    values = {'AMITY_BOARD_LEGACY_1T': 'n', 'AMITY_BOARD_DEVELOPMENT_5T': 'y', 'AMITY_BOARD_RESET_GPIO': '-1'}
-    for slot in range(5):
+    values = {'AMITY_BOARD_LEGACY_1T': 'n', 'AMITY_BOARD_DEVELOPMENT_4T': 'y', 'AMITY_BOARD_RESET_GPIO': '-1'}
+    for slot in range(4):
         for key in ('FRONT_GPIO', 'BACK_GPIO', 'PRESENCE_GPIO'):
             values[f'AMITY_TENTACLE{slot}_{key}'] = '-1'
         for key, value in [('PRESENT_HIGH', 'y'), ('PRESENCE_PULLUP', 'n'), ('PRESENCE_PULLDOWN', 'n')]:
@@ -68,7 +68,7 @@ class HardwareReleaseTests(unittest.TestCase):
         sources = ['components/system_services/release_manifest.cpp', 'components/consortium/json.cpp',
                    'components/consortium/update.cpp', 'components/consortium/wire.cpp', 'components/consortium/relay.cpp',
                    'components/consortium/control.cpp', 'components/consortium/transfer.cpp', 'components/consortium/settings.cpp', 'components/amity_system/model.cpp']
-        for name, config in [('legacy', {'AMITY_BOARD_LEGACY_1T': 'y', 'AMITY_BOARD_DEVELOPMENT_5T': 'n'}), ('development', development())]:
+        for name, config in [('legacy', {'AMITY_BOARD_LEGACY_1T': 'y', 'AMITY_BOARD_DEVELOPMENT_4T': 'n'}), ('development', development())]:
             flags = ['-DCONFIG_' + key + '=' + ('1' if value == 'y' else '0' if value == 'n' else value) for key, value in config.items()]
             binary = cls.base / name
             subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
@@ -116,7 +116,7 @@ class HardwareReleaseTests(unittest.TestCase):
                 absent = dict(value); absent.pop('hardware_mapping_sha256')
                 self.assertFalse(self.accepts(name, absent))
                 self.assertFalse(self.accepts(name, value | {'hardware_mapping_sha256': '0' * 64}))
-                changed = dict(config); changed['AMITY_TENTACLE4_FRONT_GPIO'] = '1'; changed['AMITY_TENTACLE4_BACK_GPIO'] = '2'
+                changed = dict(config); changed['AMITY_TENTACLE3_FRONT_GPIO'] = '1'; changed['AMITY_TENTACLE3_BACK_GPIO'] = '2'
                 self.assertFalse(self.accepts(name, value | {'hardware_mapping_sha256': hashlib.sha256(hardware.descriptor(changed)).hexdigest()}))
             else:
                 self.assertNotIn('hardware_mapping_sha256', value)
@@ -131,19 +131,30 @@ class HardwareReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'differs'):
             self.manifest(image, sdkconfig)
         raw = image.read_bytes()
-        for data in [raw[:288], raw + hardware.descriptor(config), raw.replace(b'development-5t-v1', b'development-5t-v2'), raw.replace(b'capacity=5', b'capacity=6')]:
+        for data in [raw[:288], raw + hardware.descriptor(config), raw.replace(b'development-4t-v1', b'development-4t-v2'), raw.replace(b'capacity=4', b'capacity=5')]:
             image.write_bytes(data)
             with self.assertRaises(ValueError):
                 self.manifest(image)
 
     def test_explicit_sdk_selection_and_gpio_validation(self):
-        for config in [{}, {'AMITY_BOARD_LEGACY_1T': 'y', 'AMITY_BOARD_DEVELOPMENT_5T': 'y'}]:
+        for config in [{}, {'AMITY_BOARD_LEGACY_1T': 'y', 'AMITY_BOARD_DEVELOPMENT_4T': 'y'}]:
             with self.assertRaises(ValueError): hardware.descriptor(config)
         for key, value in [('AMITY_TENTACLE0_FRONT_GPIO', '1'), ('AMITY_BOARD_RESET_GPIO', '19'), ('AMITY_BOARD_RESET_GPIO', '24'), ('AMITY_TENTACLE0_PRESENCE_PULLUP', 'invalid')]:
             config = development(); config[key] = value
             with self.assertRaises(ValueError): hardware.descriptor(config)
         config = development(); config.pop('AMITY_TENTACLE0_PRESENT_HIGH')
         with self.assertRaises(ValueError): hardware.descriptor(config)
+
+    def test_saved_menuconfig_pullup_omits_dependent_pulldown(self):
+        config = development()
+        config.update(AMITY_TENTACLE2_FRONT_GPIO='7', AMITY_TENTACLE2_BACK_GPIO='8',
+                      AMITY_TENTACLE2_PRESENCE_GPIO='41', AMITY_TENTACLE2_PRESENT_HIGH='n',
+                      AMITY_TENTACLE2_PRESENCE_PULLUP='y')
+        config.pop('AMITY_TENTACLE2_PRESENCE_PULLDOWN')
+        implicit = hardware.descriptor(config)
+        config['AMITY_TENTACLE2_PRESENCE_PULLDOWN'] = 'n'
+        self.assertEqual(implicit, hardware.descriptor(config))
+        self.assertIn(b'slot2=7,8,41,0,1,0\n', implicit)
 
 
 if __name__ == '__main__':

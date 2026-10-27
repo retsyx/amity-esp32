@@ -41,16 +41,16 @@ int main() {
     assert(control.configure_v2(config) == ESP_ERR_INVALID_STATE); // Passive member cannot become local coordinator.
     assert(control.retire_membership() == ESP_OK);
     assert(!control.snapshot().ready && control.execution_snapshot().applied_config_revision == 2); // Historical installed graph survives authority fence.
-    for(const uint8_t mask:{uint8_t{0},uint8_t{16}}){
+    for(const uint8_t mask:{uint8_t{0},uint8_t{8}}){
         amity::SystemControl optional;optional.set_identity(config.consortium_id,owner);optional.set_boot_identity(input_id<BootId>(90));optional.set_coordinator_authority(false,1);
-        cec::BoardProfile profile{cec::BoardProfileId::Development5Tentacle,1,5,{},-1,-1};
-        for(uint8_t id=0;id<5;++id){profile.ports[2*id]={id,cec::Side::Front,(mask&(1u<<id))?7:-1};profile.ports[2*id+1]={id,cec::Side::Back,(mask&(1u<<id))?8:-1};}
-        assert(optional.start(profile)==ESP_OK&&optional.supported_tentacles()==5&&optional.configured_tentacles_mask()==mask);
-        auto expanded=config;for(auto& board:expanded.octopuses)if(board.octopus_id==owner)board.supported_tentacles=5;
+        cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,4,{},-1,-1};
+        for(uint8_t id=0;id<4;++id){profile.ports[2*id]={id,cec::Side::Front,(mask&(1u<<id))?7:-1};profile.ports[2*id+1]={id,cec::Side::Back,(mask&(1u<<id))?8:-1};}
+        assert(optional.start(profile)==ESP_OK&&optional.supported_tentacles()==4&&optional.configured_tentacles_mask()==mask);
+        auto expanded=config;for(auto& board:expanded.octopuses)if(board.octopus_id==owner)board.supported_tentacles=4;
         fixture_sent.clear();assert(optional.configure_member_slice(expanded,authority,1)==ESP_OK);
         assert(optional.execution_snapshot().applied_config_revision==expanded.config_revision&&optional.snapshot().ready);
         const auto policies=optional.local_policy_snapshot();assert(policies.size()==(mask?2:0));
-        for(const auto& policy:policies)assert(policy.port.tentacle_id==4&&policy.role==PortRole::monitor&&!policy.owned_logical_address);
+        for(const auto& policy:policies)assert(policy.port.tentacle_id==3&&policy.role==PortRole::monitor&&!policy.owned_logical_address);
         assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&(sent.frame.data[1]==0x44||sent.frame.data[1]==0x36||sent.frame.data[1]==0x82||sent.frame.data[1]==0x86||sent.frame.data[1]==0x04||sent.frame.data[1]==0x0d);}));
     }
     {

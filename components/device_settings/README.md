@@ -8,12 +8,16 @@ commissioning values; the web server seeds its password only if none is saved.
 Hostname changes write `amity_cfg/amity/hostname` and apply on reboot. They never
 modify the factory record or activity backup document.
 
-Per-device **Amity → Settings** saves a complete five-slot preference record in
+Per-device **Amity → Settings** saves a complete four-slot preference record in
 `amity_cfg/amity/front_defaults`, with a durable revision and an atomic batch.
 The old `front_physical` scalar is read only when that record is absent and
 migrates into slot0 alone. Other slots start at `1.0.0.0`. Stable internal slots
-0–4 are displayed as HDMI adapters 1–5 within the hardware profile's capacity;
+0–3 are displayed as HDMI adapters 1–4 within the hardware profile's capacity;
 absent, unconfigured and unknown-presence slots retain their own settings.
+The reader accepts prior longer preference records only after validating every
+stored address, retains the four supported entries and their durable revision,
+and writes only four entries on the next save. It rejects malformed trailing
+addresses or extra data; it does not expose an additional adapter slot.
 
 The stored copy and boot-applied copy remain separate until restart. Empty input
 resets that slot to `1.0.0.0`; the existing dotted hexadecimal topology validator
@@ -34,7 +38,7 @@ scheduling that target's restart, even if the connection has already closed.
 A lost reply leaves the client uncertain; it does not cancel the explicitly
 requested restart or repeat the write. Other devices are not restarted. The dialog reports saved, observed and
 selected addresses separately and performs no scan on read. Software tests do
-not qualify physical five-adapter wiring or presence sensing.
+not qualify physical four-adapter wiring or presence sensing.
 
 Factory reset writes a durable marker in `amity_cfg/amity_reset`, then reboots.
 Before starting network or application tasks, the boot path erases normal NVS

@@ -1,6 +1,7 @@
 /* Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later */
 #include "runtime.hpp"
 #include "cec/bus.hpp"
+#include "amity/hardware_limits.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -441,15 +442,16 @@ int main() {
     assert(!timer && !output_low && tasks.empty());
     assert(cec::Bus::runtime_statistics().active_ports == 0 && cec::Bus::runtime_statistics().timer_instances == 0);
     {
-        // Ten actual Bus instances share one dispatcher. A stuck line
-        // remains pending while the other nine complete, without a task wait.
-        std::array<cec::Bus, 10> lines;
-        std::array<std::atomic<uint32_t>, 10> counters;
+        // Eight actual Bus instances share one dispatcher. A stuck line
+        // remains pending while the other seven complete, without a task wait.
+        std::array<cec::Bus, amity::max_cec_ports> lines;
+        std::array<std::atomic<uint32_t>, amity::max_cec_ports> counters;
         for (unsigned i = 0; i < lines.size(); ++i) {
             counters[i].store(1);
-            assert(lines[i].start(10 + i, cec::Bus::QueueProfile::Native) == ESP_OK);
+            // Include the XIAO's GPIO44 to exercise the high GPIO bank.
+            assert(lines[i].start(i + 1 == lines.size() ? 44 : 10 + i, cec::Bus::QueueProfile::Native) == ESP_OK);
         }
-        assert(tasks.size() == 1 && cec::Bus::runtime_statistics().active_ports == 10);
+        assert(tasks.size() == 1 && cec::Bus::runtime_statistics().active_ports == amity::max_cec_ports);
         assert(cec::Bus::runtime_statistics().timer_instances == 1);
         external_low = (uint64_t{1} << 10) | (uint64_t{1} << 12); gpio_set_level(10, 1); step();
         external_low &= ~(uint64_t{1} << 12); gpio_set_level(12, 1); step(); // Fresh free-time interval before first edge.
@@ -473,12 +475,12 @@ int main() {
         for (unsigned pass = 0; pass < 1400; ++pass) pump();
         assert(lines[0].take_completion(result) && result.result != cec::TxResult::Success);
         lines[0].stop(); external_low = 0; gpio_set_level(10, 1);
-        assert(tasks.size() == 1 && cec::Bus::runtime_statistics().active_ports == 9);
-        for (unsigned token = 20; token < 28; ++token) assert(lines[9].submit_guarded(f, {}, token, 1));
-        assert(!lines[9].submit_guarded(f, {}, 28, 1)); // Eight exact completion reservations.
+        assert(tasks.size() == 1 && cec::Bus::runtime_statistics().active_ports == amity::max_cec_ports - 1);
+        for (unsigned token = 20; token < 28; ++token) assert(lines.back().submit_guarded(f, {}, token, 1));
+        assert(!lines.back().submit_guarded(f, {}, 28, 1)); // Eight exact completion reservations.
         for (unsigned pass = 0; pass < 1600; ++pass) pump();
         for (unsigned token = 20; token < 28; ++token)
-            assert(lines[9].take_completion(result) && result.operation_token == token && result.result == cec::TxResult::Success);
+            assert(lines.back().take_completion(result) && result.operation_token == token && result.result == cec::TxResult::Success);
     }
     assert(!timer && tasks.empty() && !output_low && cec::Bus::runtime_statistics().active_ports == 0);
     for (int budget : {0, 1, 2}) {

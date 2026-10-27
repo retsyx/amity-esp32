@@ -4,7 +4,7 @@
 #include "amity/consortium/wire.hpp"
 #include <algorithm>
 #include <set>
-#if CONFIG_AMITY_BOARD_DEVELOPMENT_5T
+#if CONFIG_AMITY_BOARD_DEVELOPMENT_4T
 namespace config_store { std::string sha256_hex(std::string_view); }
 #endif
 namespace system_services::updates {
@@ -35,7 +35,7 @@ std::string compiled_hardware_profile(){
     return std::string(descriptor.substr(first+8,end-first-8));
 }
 std::string compiled_hardware_mapping_sha256(){
-#if CONFIG_AMITY_BOARD_DEVELOPMENT_5T
+#if CONFIG_AMITY_BOARD_DEVELOPMENT_4T
     return config_store::sha256_hex(hardware_descriptor_anchor);
 #else
     return {};
@@ -56,9 +56,11 @@ bool parse_release_manifest(std::string_view text,ReleaseManifest& out,std::stri
     if(!std::all_of(m.release_id.begin(),m.release_id.end(),[](unsigned char b){return (b>='a'&&b<='z')||(b>='A'&&b<='Z')||(b>='0'&&b<='9')||b=='.'||b=='_'||b=='-';}))return fail("Invalid release identifier");
     const auto* profiles=value.get("hardware_profiles");if(!profiles||profiles->type!=c::Json::Type::array||profiles->array.size()!=1||!token(&profiles->array.front(),m.hardware_profile,1,64)||m.hardware_profile!=compiled_hardware_profile())return fail("Firmware does not support this board profile");
     const auto* mapping=value.get("hardware_mapping_sha256");
-    if(m.hardware_profile=="esp32s3-development-5t-v1"){
+#if CONFIG_AMITY_BOARD_DEVELOPMENT_4T
         if(!token(mapping,m.hardware_mapping_sha256,64,64)||!hex(m.hardware_mapping_sha256,64)||m.hardware_mapping_sha256!=compiled_hardware_mapping_sha256())return fail("Firmware GPIO mapping differs from this board profile");
-    }else if(mapping)return fail("Unexpected GPIO mapping identity for the legacy board profile");
+#else
+    if(mapping)return fail("Unexpected GPIO mapping identity for the legacy board profile");
+#endif
     uint64_t origin_min,origin_max,origin_write,factory_min,factory_max,factory_write;
     if(!bounds(value.get("configuration"),m.config_read_min,m.config_read_max,m.config_write)||!bounds(value.get("storage"),m.storage_read_min,m.storage_read_max,m.storage_write)||
        !bounds(value.get("origin"),origin_min,origin_max,origin_write)||origin_min>1||origin_max<1||origin_write!=1||!bounds(value.get("factory"),factory_min,factory_max,factory_write)||factory_min>1||factory_max<4||factory_write!=4)return fail("Unsupported configuration, origin or factory format");

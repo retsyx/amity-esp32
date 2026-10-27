@@ -12,7 +12,7 @@ One agent owns each contract-changing package. Other agents consume its versione
 
 For user-facing work, [20](20-user-interface.md) owns baseline workflows, vocabulary and device-list presentation and UX-01 through UX-16. [12](12-control-surfaces-and-admin.md) continues to own adapters/APIs/integrations, and [11](11-config-storage-and-migration.md) owns configuration persistence and activation. Do not make a technical work package's internal fields into mandatory setup questions.
 
-Keep the current one-tentacle build operational through the refactor. Introduce interfaces with a local adapter first, then move behavior behind them. Do not create five copies of the legacy hub, replace its queue protections with network callbacks, or begin by writing a distributed election system.
+Keep the current one-tentacle build operational through the refactor. Introduce interfaces with a local adapter first, then move behavior behind them. Do not create four copies of the legacy hub, replace its queue protections with network callbacks, or begin by writing a distributed election system.
 
 For each task, the implementing agent must state: existing behavior, intended contract change, files/modules touched, dependency version, failure behavior, tests that establish it, and unresolved gates. A test that mirrors an implementation detail is insufficient evidence for source isolation, secure enrollment or timing capacity.
 
@@ -26,7 +26,7 @@ The dependency column denotes required contracts or completed evidence, not nece
 | W01 | Strong ID types, distinct QualifiedDeviceName and resolved-address types, canonical codecs, revisions and snapshots. | W00 | OSD-name/address substitution rejection, scoped duplicate names, overflow and repeated-address fixtures. |
 | W02 | Multiport/multinode deterministic simulation harness with independent clocks, domains, packet faults and power cuts. | W01 | Tests can reproduce stale boot, shared domain and protected-egress absence. |
 | W03 | BoardProfile registry, electrical/pin audit and supported button/indicator/USB setup profile. | W00; gesture contract [10](10-ble-and-matter-coexistence.md) | Validated pin mapping; debounce and 3/10-second boundary/continuing-hold tests; one press opens at most one eligible workflow; printed/browser instructions match actual hardware. |
-| W04 | Shared CEC timing runtime and independent nonblocking TX scheduling. | W02, W03 | One-to-ten simultaneous-line behavior, timing/IRAM measurements; [G01](17-decisions-and-open-questions.md) closes for advertised capacity. |
+| W04 | Shared CEC timing runtime and independent nonblocking TX scheduling. | W02, W03 | One-to-eight simultaneous-line behavior, timing/IRAM measurements; [G01](17-decisions-and-open-questions.md) closes for advertised capacity. |
 | W05 | Passive monitor-all receive path separated from ACK ownership. | W02; integrate W04 | Directed traffic observed without foreign ACK; bounded loss counters. |
 | W06 | Domain identity allocator and four explicit port roles. | W01, W04, W05 | Shared-bus collision, occupied TV0, playback exhaustion and inactive-role tests. |
 | W07 | Asynchronous per-domain scanner, observation registry, scoped OSD-name resolver and immutable bounded discovery snapshots. | W01, W02, W05 | Automatic LA churn, ambiguity/reuse/alias cases and bounded scans; UX-05/06/10 consume evidence without duplicate equipment cards or repeated scans. |
@@ -57,7 +57,7 @@ Start W00/W01, W02, W03 and W14 concurrently. These expose the largest architect
 
 The first useful software milestone is a **one-tentacle octopus through the new facade**, with stable IDs, policy/binding generations and all existing remote/CEC regression guarantees. It should not require a second board or a production provisioning redesign. Keep new consortium APIs unavailable until their trust and membership prerequisites are implemented; a temporary unauthenticated control port is not an acceptable integration shortcut.
 
-The next useful milestone is **several tentacles on one processor**, exercising electrical domains, source isolation, PA bootstrap and shared resource planning without network uncertainty. Qualify the claimed port count rather than assuming the five-tentacle profile is ready because the firmware compiles.
+The next useful milestone is **several tentacles on one processor**, exercising electrical domains, source isolation, PA bootstrap and shared resource planning without network uncertainty. Qualify the claimed port count rather than assuming the four-tentacle profile is ready because the firmware compiles.
 
 Then demonstrate **two octopuses** with authenticated enrollment, one coordinator, independent clocks, full bindings and stale-work rejection. Larger group sizes are a capacity qualification phase; they are not necessary to establish basic distributed correctness.
 
@@ -106,7 +106,7 @@ Every subtask should name the owning document, exact invariant it implements, re
 
 > Implement monitor-all delivery in the CEC engine while retaining separate ACK ownership. Owner: document 04/06, W05. A directed frame for another logical address must be observable but never acknowledged by this engine. Preserve normal addressed and broadcast receive behavior. Add deterministic waveform tests and counters; do not implement topology merging or raw forwarding in this task.
 
-When evidence invalidates a proposed decision, record the result and amend the owner document rather than hiding the change in code. Useful negative findings include a five-tentacle GPIO profile that is unsafe, a receiver that rejects extra playback identities, or a BLE API that cannot coordinate commissioning without a narrow pinned-SDK patch. Those results should reduce supported scope or trigger an explicit design change.
+When evidence invalidates a proposed decision, record the result and amend the owner document rather than hiding the change in code. Useful negative findings include a four-tentacle GPIO profile that is unsafe, a receiver that rejects extra playback identities, or a BLE API that cannot coordinate commissioning without a narrow pinned-SDK patch. Those results should reduce supported scope or trigger an explicit design change.
 
 ## 7. Definition of done
 

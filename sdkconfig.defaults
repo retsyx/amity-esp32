@@ -26,7 +26,7 @@ CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 # Root, video player, speaker, remote battery, and compatibility power endpoints
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
 
-# GPIO5 is unused on current devices; its pull-up keeps FW_RESET inactive.
+# The board profile selects the setup/reset GPIO (GPIO4 on existing boards).
 CONFIG_AMITY_FW_RESET_BUTTON=y
 
 # disable softap by default

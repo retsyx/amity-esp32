@@ -9,9 +9,9 @@
 #define AMITY_FW_RESET_GPIO 4
 
 namespace amity {
-#if CONFIG_AMITY_BOARD_DEVELOPMENT_5T
+#if CONFIG_AMITY_BOARD_DEVELOPMENT_4T
 inline constexpr cec::BoardProfile board_profile{
-    cec::BoardProfileId::Development5Tentacle, 1, 5,
+    cec::BoardProfileId::Development4Tentacle, 1, amity::max_tentacles,
     {
         {0, cec::Side::Front, CONFIG_AMITY_TENTACLE0_FRONT_GPIO},
         {0, cec::Side::Back, CONFIG_AMITY_TENTACLE0_BACK_GPIO},
@@ -21,8 +21,6 @@ inline constexpr cec::BoardProfile board_profile{
         {2, cec::Side::Back, CONFIG_AMITY_TENTACLE2_BACK_GPIO},
         {3, cec::Side::Front, CONFIG_AMITY_TENTACLE3_FRONT_GPIO},
         {3, cec::Side::Back, CONFIG_AMITY_TENTACLE3_BACK_GPIO},
-        {4, cec::Side::Front, CONFIG_AMITY_TENTACLE4_FRONT_GPIO},
-        {4, cec::Side::Back, CONFIG_AMITY_TENTACLE4_BACK_GPIO},
     }, CONFIG_AMITY_BOARD_RESET_GPIO, -1,
     {
         {CONFIG_AMITY_TENTACLE0_PRESENCE_GPIO,
@@ -85,22 +83,6 @@ inline constexpr cec::BoardProfile board_profile{
             false,
 #endif
 #ifdef CONFIG_AMITY_TENTACLE3_PRESENCE_PULLDOWN
-            true},
-#else
-            false},
-#endif
-        {CONFIG_AMITY_TENTACLE4_PRESENCE_GPIO,
-#ifdef CONFIG_AMITY_TENTACLE4_PRESENT_HIGH
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE4_PRESENCE_PULLUP
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE4_PRESENCE_PULLDOWN
             true},
 #else
             false},

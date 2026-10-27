@@ -24,7 +24,7 @@ std::optional<Side> parse_side(std::string_view text) {
 }
 const char* side_name(Side side) { return side == Side::front ? "front" : "back"; }
 bool CecPortRef::valid() const {
-    return consortium_id.valid() && octopus_id.valid() && tentacle_id <= 4 &&
+    return consortium_id.valid() && octopus_id.valid() && tentacle_id <= amity::last_tentacle_id &&
            (side == Side::front || side == Side::back);
 }
 bool QualifiedDeviceName::valid() const {
@@ -48,7 +48,7 @@ std::optional<FullyQualifiedCecAddress> parse_cec_uri(std::string_view text) {
     }
     auto consortium = ConsortiumId::parse(fields[0]); auto octopus = OctopusId::parse(fields[1]);
     auto tentacle = parse_uint64(fields[2]); auto side = parse_side(fields[3]); auto la = parse_uint64(fields[4]);
-    if (!consortium || !octopus || !tentacle || *tentacle > 4 || !side || !la || *la > 14) return {};
+    if (!consortium || !octopus || !tentacle || *tentacle > amity::last_tentacle_id || !side || !la || *la > 14) return {};
     return FullyQualifiedCecAddress{{*consortium, *octopus, static_cast<uint8_t>(*tentacle), *side}, static_cast<uint8_t>(*la)};
 }
 namespace {
@@ -126,7 +126,7 @@ std::optional<CecPortRef> decode_port(const std::map<std::string, JsonValue>& fi
     auto ti = fields.find("tentacle_id"); if (ti == fields.end() || ti->second.quoted) return {};
     auto cid = ConsortiumId::parse(fields.at("consortium_id").text); auto oid = OctopusId::parse(fields.at("octopus_id").text);
     auto side = parse_side(fields.at("side").text); auto tentacle = parse_uint64(ti->second.text);
-    if (!cid || !oid || !side || !tentacle || *tentacle > 4) return {};
+    if (!cid || !oid || !side || !tentacle || *tentacle > amity::last_tentacle_id) return {};
     return CecPortRef{*cid, *oid, static_cast<uint8_t>(*tentacle), *side};
 }
 }

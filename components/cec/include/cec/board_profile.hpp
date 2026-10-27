@@ -1,11 +1,12 @@
 /* Copyright 2026. GPL-3.0-or-later. */
 #pragma once
+#include "amity/hardware_limits.hpp"
 #include <cstddef>
 #include <cstdint>
 
 namespace cec {
 enum class Side : uint8_t { Front, Back };
-enum class BoardProfileId : uint8_t { LegacyBoard2 = 1, LegacyButtonless = 2, Development5Tentacle = 3 };
+enum class BoardProfileId : uint8_t { LegacyBoard2 = 1, LegacyButtonless = 2, Development4Tentacle = 3 };
 struct PortPin {
     uint8_t tentacle_id = 0;
     Side side = Side::Front;
@@ -21,10 +22,10 @@ struct BoardProfile {
     BoardProfileId id;
     uint32_t revision;
     uint8_t tentacle_count;
-    PortPin ports[10];
+    PortPin ports[amity::max_cec_ports];
     int reset_button = -1;
     int status_led = -1;
-    PresencePin presence[5]{};
+    PresencePin presence[amity::max_tentacles]{};
 };
 // These mappings describe the existing board. They do not qualify additional
 // tentacles or new setup gestures, indicators, or HDMI electrical performance.
@@ -50,10 +51,10 @@ inline bool connector_enabled(const BoardProfile& profile, uint8_t id) {
 inline ProfileError validate_board_profile(const BoardProfile &profile,
         bool (*valid_output)(int), const int *reserved = nullptr, size_t reserved_count = 0,
         bool (*valid_input)(int) = nullptr) {
-    if (!profile.tentacle_count || profile.tentacle_count > 5) return ProfileError::InvalidCount;
-    const bool development = profile.id == BoardProfileId::Development5Tentacle;
-    if (development && (profile.revision != 1 || profile.tentacle_count != 5)) return ProfileError::Unsupported;
-    bool connectors[10]{};
+    if (!profile.tentacle_count || profile.tentacle_count > amity::max_tentacles) return ProfileError::InvalidCount;
+    const bool development = profile.id == BoardProfileId::Development4Tentacle;
+    if (development && (profile.revision != 1 || profile.tentacle_count != amity::max_tentacles)) return ProfileError::Unsupported;
+    bool connectors[amity::max_cec_ports]{};
     const size_t count = 2u * profile.tentacle_count;
     for (size_t i = 0; i < count; ++i) {
         const auto &port = profile.ports[i];

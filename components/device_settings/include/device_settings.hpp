@@ -10,6 +10,7 @@
 #include "esp_err.h"
 #include "factory_credentials.hpp"
 #include "physical_address.hpp"
+#include "amity/hardware_limits.hpp"
 #include <string>
 #include <array>
 #include <vector>
@@ -34,9 +35,14 @@ uint16_t front_physical_address();
 esp_err_t save_front_physical_address(const std::string &value); // Applies on reboot.
 // Stable hardware slots, never a compact list of attached adapters. The boot
 // copy is immutable; saved preferences become active only after a restart.
+constexpr std::array<uint16_t, amity::max_tentacles> default_adapter_physical_addresses() {
+    std::array<uint16_t, amity::max_tentacles> result{};
+    for(auto& address:result)address=default_front_physical_address;
+    return result;
+}
 struct AdapterDefaults {
     uint64_t revision = 1;
-    std::array<uint16_t,5> front_physical{{0x1000,0x1000,0x1000,0x1000,0x1000}};
+    std::array<uint16_t, amity::max_tentacles> front_physical = default_adapter_physical_addresses();
 };
 struct AdapterDefaultChange { uint8_t tentacle_id; uint16_t front_physical; };
 AdapterDefaults adapter_defaults();

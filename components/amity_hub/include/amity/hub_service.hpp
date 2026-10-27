@@ -35,7 +35,7 @@ public:
     // Board-local connector capacity and wiring. Unassigned GPIO pairs are
     // disabled; optional cable/module presence never follows CEC silence.
     esp_err_t start(const cec::BoardProfile&, uint16_t front_physical = 0x1000);
-    esp_err_t start(const cec::BoardProfile&, const std::array<uint16_t, 5>& front_physical);
+    esp_err_t start(const cec::BoardProfile&, const std::array<uint16_t, amity::max_tentacles>& front_physical);
     // Optional board I/O adapter, installed before start. Only explicitly
     // declared presence GPIOs are sampled; a negative result means unknown.
     esp_err_t set_presence_reader(std::function<int(int)>);

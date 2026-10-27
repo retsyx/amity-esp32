@@ -199,13 +199,13 @@
         "supported_tentacles": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 5,
+          "maximum": 4,
           "description": "Configured hardware-profile capacity. This is not proof of physical adapter presence. Omitted legacy fields mean capacity1 and mask1."
         },
         "configured_tentacles_mask": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 31,
+          "maximum": 15,
           "description": "GPIO-assigned profile slots, not physical population. Bit n covers both sides of slot n; zero is a valid all-unassigned profile."
         }
       },
@@ -2609,14 +2609,14 @@
         "adapters": {
           "type": "array",
           "minItems": 0,
-          "maxItems": 5,
+          "maxItems": 4,
           "items": {
             "type": "object",
             "properties": {
               "tentacle_id": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 4
+                "maximum": 3
               },
               "name": {
                 "type": "string",
@@ -2811,14 +2811,14 @@
         "changes": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 5,
+          "maxItems": 4,
           "items": {
             "type": "object",
             "properties": {
               "tentacle_id": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 4
+                "maximum": 3
               },
               "expected_presence_generation": {
                 "allOf": [

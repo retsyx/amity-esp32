@@ -117,13 +117,13 @@ PA-changing transitions and return audio remain unavailable without the required
 equipment evidence and control profile.
 
 The default hardware profile retains one HDMI adapter/two isolated CEC ports.
-An opt-in experimental development profile provides five stable adapter indices
-with explicitly configured GPIO pairs. Zero or sparse configured pairs are valid;
+An opt-in experimental development profile provides four stable adapter indices
+with menuconfig-overridable GPIO pairs defaulting to 1/2, 5/6, 7/8 and 9/44. Zero or sparse configured pairs are valid;
 missing adapters retain their configured identities and unavailable bindings.
 Optional presence sensing uses a separate configured input; CEC silence never
 establishes physical absence. Unused connectors stay passive until their
-connection is explicitly confirmed. This profile does not qualify five attached
-adapters or ten physical CEC lines.
+connection is explicitly confirmed. This profile does not qualify four attached
+adapters or eight physical CEC lines.
 
 The active Amity system remains limited to three devices; a replacement spare
 does not increase that limit. Current bench evidence covers one device with two
@@ -131,7 +131,7 @@ isolated CEC lines, plus an independent passive Pi enrollment/TLS peer. It does
 not qualify native multi-device enrollment, peer execution or recovery.
 Electrical domain confirmation, combined-load timing and memory margins,
 real AV equipment held-button/link failures, native ESP32 protocol interoperability,
-receiver output capabilities, five-adapter hardware, production security and observed
+receiver output capabilities, four-adapter hardware, production security and observed
 usability retain the release gates in documents 15 and 17. Host tests and static
 IRAM audits cannot close those gates. See the
 [implementation status](../../IMPLEMENTATION_STATUS.json) for recorded checks and

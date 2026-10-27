@@ -40,18 +40,18 @@ int main(){
     assert(device_settings::init()==ESP_OK);
     auto defaults=device_settings::adapter_defaults();
     assert(defaults.revision==1&&defaults.front_physical[0]==0x3000);
-    for(size_t n=1;n<5;++n)assert(defaults.front_physical[n]==0x1000);
+    for(size_t n=1;n<4;++n)assert(defaults.front_physical[n]==0x1000);
     const auto initial_writes=writes;
-    assert(device_settings::save_adapter_defaults(1,{{4,0x5200},{1,0x2100}})==ESP_OK&&writes==initial_writes+1);
-    defaults=device_settings::adapter_defaults();assert(defaults.revision==2&&defaults.front_physical[0]==0x3000&&defaults.front_physical[1]==0x2100&&defaults.front_physical[4]==0x5200);
-    assert(device_settings::startup_adapter_defaults().revision==1&&device_settings::startup_adapter_defaults().front_physical[4]==0x1000);
+    assert(device_settings::save_adapter_defaults(1,{{3,0x5200},{1,0x2100}})==ESP_OK&&writes==initial_writes+1);
+    defaults=device_settings::adapter_defaults();assert(defaults.revision==2&&defaults.front_physical[0]==0x3000&&defaults.front_physical[1]==0x2100&&defaults.front_physical[3]==0x5200);
+    assert(device_settings::startup_adapter_defaults().revision==1&&device_settings::startup_adapter_defaults().front_physical[3]==0x1000);
     assert(device_settings::front_physical_address()==0x3000);
     auto durable=records.at("front_defaults");const auto saved_writes=writes;
     assert(device_settings::save_adapter_defaults(1,{{0,0x4000}})==ESP_ERR_INVALID_STATE);
-    for(const auto& invalid:std::vector<std::vector<device_settings::AdapterDefaultChange>>{{},{{5,0x1000}},{{1,0x1000},{1,0x2000}},{{2,0x1010}},{{2,0xffff}}})
+    for(const auto& invalid:std::vector<std::vector<device_settings::AdapterDefaultChange>>{{},{{4,0x1000}},{{1,0x1000},{1,0x2000}},{{2,0x1010}},{{2,0xffff}}})
         assert(device_settings::save_adapter_defaults(2,invalid)==ESP_ERR_INVALID_ARG);
     assert(writes==saved_writes&&records.at("front_defaults")==durable);
-    write_result=ESP_FAIL;assert(device_settings::save_adapter_defaults(2,{{0,0x4000},{4,0x6000}})==ESP_FAIL);
+    write_result=ESP_FAIL;assert(device_settings::save_adapter_defaults(2,{{0,0x4000},{3,0x6000}})==ESP_FAIL);
     assert(device_settings::adapter_defaults().revision==2&&records.at("front_defaults")==durable);
     write_result=ESP_OK;
     // A reboot adopts the batch without compacting sparse slots. The legacy
@@ -60,10 +60,19 @@ int main(){
     assert(device_settings::startup_adapter_defaults().front_physical==defaults.front_physical);
     assert(device_settings::save_adapter_defaults(2,{{3,0}})==ESP_OK);
     assert(device_settings::init()==ESP_OK&&device_settings::adapter_defaults().front_physical[3]==0);
-    durable=records.at("front_defaults");records["front_defaults"]+="extra";
+    durable=records.at("front_defaults");
+    // Upgrade the prior storage shape without losing the first four defaults.
+    records["front_defaults"]+="5.0.0.0\n";
+    assert(device_settings::init()==ESP_OK&&device_settings::adapter_defaults().front_physical==device_settings::startup_adapter_defaults().front_physical);
+    assert((device_settings::adapter_defaults().front_physical==std::array<uint16_t,4>({0x3000,0x2100,0x1000,0})));
+    assert(device_settings::save_adapter_defaults(3,{{3,0x4000}})==ESP_OK);
+    assert(records.at("front_defaults")=="AMITYPA1\n4\n3.0.0.0\n2.1.0.0\n1.0.0.0\n4.0.0.0\n");
+    records["front_defaults"]=durable+"1.0.1.0\n";assert(device_settings::init()==ESP_ERR_INVALID_STATE);
+    records["front_defaults"]=durable+"5.0.0.0\n6.0.0.0\n";assert(device_settings::init()==ESP_ERR_INVALID_STATE);
+    records["front_defaults"]=durable;records["front_defaults"]+="extra";
     assert(device_settings::init()==ESP_ERR_INVALID_STATE);records["front_defaults"]=durable;
     records["front_defaults"]="AMITYPA1\n18446744073709551615\n1.0.0.0\n1.0.0.0\n1.0.0.0\n1.0.0.0\n1.0.0.0\n";
     assert(device_settings::init()==ESP_OK&&device_settings::save_adapter_defaults(UINT64_MAX,{{0,0x2000}})==ESP_ERR_INVALID_STATE);
     std::cout<<"PASS actual enrollment hostname: normalized durable commit precedes live name, write failure preserves old name, invalid names make no writes, Advanced remains reboot-applied\n";
-    std::cout<<"PASS stable adapter defaults: scalar migrates only slot0, atomic sparse batch, revision CAS/exhaustion, invalid/duplicate rejection, write failure, reboot-only application\n";
+    std::cout<<"PASS stable adapter defaults: scalar migrates only slot0, atomic sparse batch, legacy record migration, revision CAS/exhaustion, invalid/duplicate rejection, write failure, reboot-only application\n";
 }

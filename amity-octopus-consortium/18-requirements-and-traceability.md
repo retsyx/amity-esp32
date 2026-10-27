@@ -8,7 +8,7 @@
 
 | ID | Requirement and origin | Design owner | Required evidence |
 |---|---|---|---|
-| P01 | One octopus controls up to five HDMI pass-throughs. User request. | [01](01-octopus-architecture.md), [04](04-hardware-and-cec-runtime.md) | Five physical tentacles/ten concurrent CEC lines qualified on an explicit hardware profile, or clearly reduced advertised capacity. |
+| P01 | One octopus controls up to four HDMI pass-throughs. User request. | [01](01-octopus-architecture.md), [04](04-hardware-and-cec-runtime.md) | Four physical tentacles/eight concurrent CEC lines qualified on an explicit hardware profile, or clearly reduced advertised capacity. |
 | P02 | Multiple displays, including a secondary receiver output with no useful CEC. [Issue 1](https://github.com/retsyx/amity/issues/1). | [02](02-consortium-architecture.md), [05](05-discovery-and-topology.md), [06](06-cec-roles-and-message-policy.md) | TV/projector can be selected independently where actual cable/resource capabilities allow; silent output does not block unrelated roles. |
 | P03 | Sources connected directly to different display inputs can be selected. Issue 1. | [06](06-cec-roles-and-message-policy.md), [07](07-activity-planning-and-execution.md) | Independent per-input proxies and valid PAs select real wired inputs; no assumed TV-app/return-audio support. |
 | P04 | Stop source theft before the switching device reacts. Issue 1. | [04](04-hardware-and-cec-runtime.md), [06](06-cec-roles-and-message-policy.md) | Protected-side capture shows absence of unauthorized activation/routing/standby, including boot/scan/partition; video observations distinguish non-CEC causes. |
@@ -28,7 +28,7 @@
 | D01 | Persisted QualifiedDeviceName includes consortium, octopus, tentacle, side and OSD name; resolved runtime endpoint uses the same prefix plus current LA. | [03](03-domain-model-and-addressing.md), W01 | Type substitution fails; duplicate names/addresses across distinct attachments stay distinct. |
 | D02 | Component records persist qualified OSD names; ComponentId provides internal references and observations/bindings remain versioned. | 03, W01/W07/W08 | Name-to-LA resolution, receiver aliases, replacement and recabling preserve explicit configured selection. |
 | D03 | Domain ownership is separate from connector ownership. | [05](05-discovery-and-topology.md), [06](06-cec-roles-and-message-policy.md), W06 | Several ports on one wire cannot claim conflicting TV/proxy identities. |
-| D04 | Ten-line runtime does not allocate ten GPTimers. | [04](04-hardware-and-cec-runtime.md), W04 | Shared timer verified under simultaneous wire/radio/OTA load. |
+| D04 | Eight-line runtime does not allocate eight GPTimers. | [04](04-hardware-and-cec-runtime.md), W04 | Shared timer verified under simultaneous wire/radio/OTA load. |
 | D05 | Passive observation does not ACK unowned addresses. | 04/06, W05 | Directed foreign frame captured with no observer ACK. |
 | D06 | Scans are per domain, bounded, cancelable and nonblocking for release. | 05, W07 | Noisy unrelated domains cannot extend scan indefinitely; key release wins. |
 | D07 | Physical-address evidence is scoped and ambiguity is explicit. | 05, W08 | Child-only/late/conflicting reports and dual-output paths do not cause guessed announcements. |
@@ -117,7 +117,7 @@ The package's own `VALIDATION.md` records only document/fixture checks. It must 
 
 | ID | Requirement | Owning contract | Acceptance evidence |
 |---|---|---|---|
-| PA-01 | Per-device Settings replaces only the former global Advanced default front address; five stable connector slots retain independent defaults. | 11/12/20 | Zero/sparse/full fixtures, slot-0-only migration and unchanged activity forms. |
+| PA-01 | Per-device Settings replaces only the former global Advanced default front address; four stable connector slots retain independent defaults. | 11/12/20 | Zero/sparse/full fixtures, slot-0-only migration and unchanged activity forms. |
 | PA-02 | Edits require fresh named owner, positively present configured slot and exact boot/settings/presence generation. Unknown CEC presence cannot authorize Save. | 04/12/20 | Actual owner removal/reinsert ABA, absent/unknown, busy sessions/holds, expired/revoked queued request rejection without writes. |
 | PA-03 | Detected and selected default hints are separate; no fallback becomes route or identity authority. | 05/11 | Independent slot values, fresh same-slot report override, absence withdrawal, unresolved route remains blocked. |
 | PA-04 | Durable application precedes only the selected device's explicit restart after response attempt; lost result is unknown and never auto-replayed. | 08/12/20 | Late bounded write returns actual outcome, failure before write is inert, response loss/reconnect and selected-owner restart tests. |

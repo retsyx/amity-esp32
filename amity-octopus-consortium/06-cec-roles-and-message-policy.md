@@ -12,7 +12,7 @@ The local rule is preventive: an unwanted source's activation, routing, standby,
 
 This guarantee covers **CEC-induced changes propagated by Amity**. HDMI HPD, EDID, HDCP, video-mode renegotiation, native vendor signal-detection switching, and actions from an unisolated device remain separate mechanisms. CEC filtering cannot promise absence of every visible blank or change. The hardware passes those non-CEC paths through; implementing a DDC/HDCP proxy or video switch is outside this feature. See [hardware scope](04-hardware-and-cec-runtime.md).
 
-The gate applies before membership activation, during reboot, while offline, and after retirement. No default state bridges CEC. Losing the network does not trigger a local “repair input” routine or broadcast standby. The existing [Hub::source_thief()](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) reacts by sending standby and restoring an input. That behavior must be replaced for consortium operation; five independent copies would compete over shared equipment and still act after a source's message had reached the AVR.
+The gate applies before membership activation, during reboot, while offline, and after retirement. No default state bridges CEC. Losing the network does not trigger a local “repair input” routine or broadcast standby. The existing [Hub::source_thief()](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) reacts by sending standby and restoring an input. That behavior must be replaced for consortium operation; four independent copies would compete over shared equipment and still act after a source's message had reached the AVR.
 
 ## 2. Four explicit port roles
 
@@ -27,7 +27,7 @@ Physical orientation and protocol role are separate. A back port connected to an
 
 A domain has one policy authority and at most one designated virtual TV. Several playback proxies may legitimately share the domain, each with its own address and attachment. Poll and allocate each identity once. A real TV already occupying address 0 blocks an incompatible virtual-TV assignment; do not conceal the conflict by automatically claiming address 14. [Discovery](05-discovery-and-topology.md) owns validation and quarantine.
 
-Normal playback candidates are 4, 8, and 11. Addresses 12 and 13 are conditional CEC 2.0 backup candidates and require a qualified compatibility policy. Five tentacles terminating on one TV or receiver may therefore exceed usable identities. Reject an unsupported allocation with an actionable capacity explanation; do not reuse an address or impersonate a recorder/tuner to fit. The baseline [claim_addresses()](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub_service.cpp) is a migration seam, not a sufficient multi-domain allocator.
+Normal playback candidates are 4, 8, and 11. Addresses 12 and 13 are conditional CEC 2.0 backup candidates and require a qualified compatibility policy. Four tentacles terminating on one TV or receiver may therefore exceed usable identities. Reject an unsupported allocation with an actionable capacity explanation; do not reuse an address or impersonate a recorder/tuner to fit. The baseline [claim_addresses()](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub_service.cpp) is a migration seam, not a sufficient multi-domain allocator.
 
 An audio-system proxy is not one of the four v1 roles. ARC/eARC and system-audio bridging require a separate capability design and hardware/interoperability gate. Ordinary directed volume keys and audio-status queries to a real AVR may be supported without claiming an audio-system role or promising a return-audio path.
 
@@ -127,7 +127,7 @@ When authority expires or the coordinator becomes unavailable, retain local sour
 
 ## 8. Implementation work and acceptance criteria
 
-Extract role-specific identity and message handling from [hub.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) into host-testable policy/compile functions. Reuse validated frame parsing, power/key recipes and existing hold-generation lessons. Replace global bare-name lookup with the scoped `QualifiedDeviceName` resolver; remove single-activity assumptions, automatic theft repair, and discovery-triggered routing. Wire the functions into one `LocalCecAgent` over the shared runtime; do not instantiate five independent `HubService` activity controllers.
+Extract role-specific identity and message handling from [hub.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) into host-testable policy/compile functions. Reuse validated frame parsing, power/key recipes and existing hold-generation lessons. Replace global bare-name lookup with the scoped `QualifiedDeviceName` resolver; remove single-activity assumptions, automatic theft repair, and discovery-triggered routing. Wire the functions into one `LocalCecAgent` over the shared runtime; do not instantiate four independent `HubService` activity controllers.
 
 Acceptance must include wire capture as well as unit tests:
 
