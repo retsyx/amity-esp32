@@ -11,7 +11,6 @@
 // The scheduler is deterministic: tests pause the worker to fill its queue,
 // then execute exactly one command to check reservation ownership transfer.
 #include "amity/hub_service.hpp"
-#include "coordinator_intent.hpp"
 #include "cec/bus.hpp"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -32,11 +31,13 @@ struct StopWorker {};
 static FakeTask *latest_task;
 static int worker_receives = -1;
 static bool fixture_present = false;
+static std::function<uint8_t(int)> fixture_peer_address;
+static uint8_t fixture_peer(int gpio) { return fixture_peer_address ? fixture_peer_address(gpio) : gpio == 1 ? 0 : 4; }
 static std::function<bool(int)> fixture_completion_ready;
 static std::function<bool(int, const cec::Frame&)> fixture_submit_admission;
 static std::function<cec::TxResult(int, const cec::Frame&)> fixture_wait_outcome;
 static bool fixture_driver_paused = false;
-static bool fixture_wire_deadlines = false; // Direct LiveSystem tests supply their own clock.
+static bool fixture_wire_deadlines = false;
 static int64_t fixture_time = 1000000;
 static int64_t fixture_tick = 100000;
 static int idle_passes = -1;
@@ -72,14 +73,6 @@ static std::deque<PendingFrame> fixture_pending;
 
 static std::function<esp_err_t(int)> fixture_start_bus;
 static std::vector<int> fixture_stopped_buses;
-namespace config_store {
-static std::vector<RequestedSession> fixture_requested;
-esp_err_t remember_requested_session(amity::system::ConsortiumId, amity::system::ZoneId zone, std::optional<amity::system::ActivityId> activity, std::string&) {
-    fixture_requested.erase(std::remove_if(fixture_requested.begin(), fixture_requested.end(), [&](const auto& r) { return r.zone_id == zone; }), fixture_requested.end());
-    if (activity) fixture_requested.push_back({zone, *activity}); return ESP_OK;
-}
-esp_err_t load_last_requested_sessions(amity::system::ConsortiumId, std::vector<RequestedSession>& out, std::string&) { out = fixture_requested; return ESP_OK; }
-}
 
 QueueHandle_t xQueueCreate(unsigned capacity, size_t item_size) { return new FakeQueue{capacity, item_size, {}}; }
 int xQueueSend(QueueHandle_t q, const void *item, unsigned) {
@@ -175,7 +168,7 @@ bool Bus::send(const Frame &frame) {
     fixture_sent.push_back({impl_->gpio, frame, 3, 0});
     if (fixture_admission && !fixture_admission(impl_->gpio,frame)) return false;
     if (fixture_send) return fixture_send(impl_->gpio, frame);
-    const uint8_t peer = impl_->gpio == 1 ? 0 : 4;
+    const uint8_t peer = fixture_peer(impl_->gpio);
     if (!fixture_present || frame.size < 2 || frame.destination() != peer) return true;
     Frame reply;
     switch (frame.data[1]) {
@@ -250,7 +243,7 @@ static Completion fixture_emit(Bus& bus,int gpio,const FixtureQueued& work){
         started=true;fixture_submitted.push_back({gpio,work.item.frame,work.item.attempts});
         if(work.item.frame.size==1) {
             fixture_transmitted.push_back({gpio,work.item.frame,work.item.attempts,0});
-            result=fixture_transmit?fixture_transmit(gpio,work.item.frame):fixture_present&&work.item.frame.destination()==(gpio==1?0:4)?TxResult::Success:TxResult::Nack;
+            result=fixture_transmit?fixture_transmit(gpio,work.item.frame):fixture_present&&work.item.frame.destination()==fixture_peer(gpio)?TxResult::Success:TxResult::Nack;
         } else result=bus.send_guarded(work.item.frame,work.item.fence,work.item.attempts)?
             (fixture_wait_outcome?fixture_wait_outcome(gpio,work.item.frame):TxResult::Success):TxResult::Nack;
     }
@@ -297,7 +290,7 @@ static bool fixture_complete_next(cec::TxResult result, int gpio) {
         if (result == cec::TxResult::Pending) {
             if (pending.frame.size == 1)
                 result = fixture_transmit ? fixture_transmit(pending.gpio, pending.frame) :
-                    fixture_present && pending.frame.destination() == (pending.gpio == 1 ? 0 : 4) ?
+                    fixture_present && pending.frame.destination() == fixture_peer(pending.gpio) ?
                         cec::TxResult::Success : cec::TxResult::Nack;
             else result = fixture_wait_outcome ? fixture_wait_outcome(pending.gpio, pending.frame) : cec::TxResult::Success;
         }

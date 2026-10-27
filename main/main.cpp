@@ -127,7 +127,7 @@ void setup_button(bool consortium_setup,void*) {
         if(amity::consortium::runtime_open_enrollment(generation)!=ESP_OK)amity::radio::release(generation);
     }else {
         amity_matter_status_t matter{};const auto config=hub.active_configuration();
-        const bool configured=config?(!config->activities.empty()||!config->components.empty()||!config->binding_policies.empty()):!hub.snapshot().activities.empty();
+        const bool configured=config?(!config->activities.empty()||!config->components.empty()):!hub.snapshot().activities.empty();
         if(amity::consortium::runtime_original_setup_eligible()&&!group.member&&!group.coordinator&&!configured&&
            amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count==0)
             amity_matter_open_commissioning(300);
@@ -137,9 +137,9 @@ esp_err_t power(bool on,void *) {
     if(!on)return hub.request_activity(-1);
     const int target=hub.activity_target();
     const auto state=hub.snapshot();
-    if(target>=0)return hub.request_activity(target);
+    if(target>=0)return hub.request_remote_activity(static_cast<unsigned>(target));
     for(size_t index=0;index<state.activities.size();++index)
-        if(!state.activities[index].name.empty())return hub.request_activity(static_cast<int>(index));
+        if(!state.activities[index].name.empty())return hub.request_remote_activity(static_cast<unsigned>(index));
     return ESP_ERR_INVALID_STATE;
 }
 esp_err_t activity(uint8_t index,void *) {return hub.request_activity(index);}
@@ -454,7 +454,7 @@ extern "C" void app_main() {
         if(web!=ESP_OK)return web;
         if(matter!=ESP_OK)return matter;
         return home;
-    },[](amity::system::OctopusId owner){hub.update_remote_owner(owner,{},false);},
+    },[](amity::system::OctopusId owner){amity::forget_owner(owner);},
     [](amity::system::OctopusId coordinator){return system_services::prepare_removed_device_reset(hub,coordinator);},
     system_services::removed_device_reset_response_attempted});
     system_services::updates::maintenance_hooks([]{
@@ -491,7 +491,7 @@ extern "C" void app_main() {
     },nullptr));
     hub.on_change([](const amity::Snapshot &s) {
         if(!original_interfaces_enabled.load())return;
-        amity_matter_state_t state{};state.power=s.current_activity>=0;state.current_input=s.current_activity<0?0:s.current_activity;
+        amity_matter_state_t state{};state.power=s.current_activity>=0;const auto input=hub.external_activity_index(s);state.current_input=input.value_or(0);
         state.mute_known=s.audio_status_known;state.muted=s.muted;
         state.volume_known=s.audio_status_known&&s.volume<=100;state.volume=state.volume_known?(s.volume*254+50)/100:0;
         amity_matter_update_state(&state);

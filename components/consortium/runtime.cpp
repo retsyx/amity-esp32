@@ -15,6 +15,7 @@
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/transfer.hpp"
 #include "amity/consortium/update.hpp"
+#include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/settings.hpp"
 #include "system_configuration.hpp"
 #include "ble_remote.h"
@@ -45,6 +46,15 @@ namespace {
 constexpr size_t maximum_links=2;
 constexpr size_t maximum_roster_peers=maximum_links;
 struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0;};
+static bool queued_cleanup(const Queued& queued){
+    Json value;JsonError error;
+    if(!parse_json(queued.payload,value,error))return false;
+    if(queued.kind==Kind::scoped_result)return value.get("input_result")!=nullptr;
+    return queued.kind==Kind::scoped_intent&&value.get("action")&&value.get("action")->string=="key_up";
+}
+// Losing an accepted action would break causal context or leave its lookup
+// continuation waiting forever. Fence this link instead of replaying work.
+static bool queued_causal(const Queued& queued){return queued.kind==Kind::scoped_intent||queued.kind==Kind::scoped_result;}
 struct Active {
     std::shared_ptr<TlsLink> tls;
     Session session;
@@ -52,7 +62,7 @@ struct Active {
     std::mutex mutex;
     std::mutex close_mutex;bool closed_notified=false;
     std::deque<Queued> queue;
-    std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false};
+    std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false};
     // Published and read only under the global runtime lock. The copied old
     // pin is usable only to finish this exact removed enrollment transaction.
     std::optional<EnrollmentAbort> enrollment_abort;
@@ -62,8 +72,7 @@ struct Active {
     model::MessageId update_begin_id;
     RuntimePeerStatus status;
     model::ExecutionLeaseId own_control,own_realtime;
-    uint64_t own_control_deadline=0,own_realtime_deadline=0;
-    uint64_t config_wait_until=0;std::string config_wait_key;
+    std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};
 };
 std::mutex lock;
 std::mutex enrollment_lock;
@@ -82,7 +91,6 @@ RuntimeNetworkHooks network;
 Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view bytes){return write_record("amity_group","hostnames",bytes)==ESP_OK;});}
 RuntimeControlHooks controls;
 RuntimeLifecycleHooks lifecycle;
-RuntimeOperation operation_handler;
 RuntimeUpdateHooks updates;
 std::vector<std::shared_ptr<Active>> links;
 std::vector<std::pair<model::OctopusId,std::string>> enrollment_errors;
@@ -99,11 +107,6 @@ void error(std::string value){std::lock_guard<std::mutex> guard(lock);status.las
 template<class T>T random_id(){auto value=T::parse(random_hex(16));return value?*value:T{};}
 Envelope outgoing(const Active &link,Kind kind,uint32_t ttl){auto s=link.session.scope();Envelope e;e.consortium_id=s.consortium_id;e.message_id=random_id<model::MessageId>();e.origin_octopus_id=s.local_id;e.origin_boot_id=s.local_boot_id;e.destination_octopus_id=s.peer_id;e.destination_boot_id=s.peer_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=ttl;return e;}
 bool lifecycle_kind(Kind kind){return kind==Kind::membership_event||kind==Kind::membership_result;}
-std::string configuration_correlation(const Json& payload){
-    std::string key;
-    for(const auto name:{"config_revision","presentation_revision","owner_boot_id","payload_hash","policy_hash"}){const auto* field=payload.get(name);if(!field||field->type!=Json::Type::string)return {};key+=field->string;key+=':';}
-    return key;
-}
 bool current_peer_credential(const Active &link,const Group &current){
     for(const auto &peer:current.peers)if(peer.id==link.tls->authenticated)for(const auto &allowed:link.tls->allowed)if(allowed.id==peer.id&&allowed.der==peer.der&&allowed.pin==peer.pin)return true;
     return false;
@@ -341,7 +344,7 @@ bool establish(Active &active,bool server){
     Group current;Identity local;uint64_t config;uint8_t profile_count,profile_mask;std::string policy_hash;std::optional<EnrollmentAbort> cancelled_join;
     {std::lock_guard<std::mutex> guard(lock);current=group;local=identity;config=configuration;policy_hash=configuration_hash;profile_count=hardware_tentacles;profile_mask=hardware_tentacles_mask;if(server&&abort_peer_credential(active,group))cancelled_join=active.enrollment_abort;}
     if(!controller_membership_compatible(current))return false;
-    HelloFrame ours;ours.consortium_id=current.consortium;ours.octopus_id=local.id;ours.boot_id=boot;ours.coordinator_epoch=current.epoch;ours.config_revision=config;ours.config_hash=policy_hash.empty()?sha256(std::to_string(config)):policy_hash;ours.required_capabilities=semantic_operations|token_holds|binding_synchronization|source_isolation_v1;ours.optional_capabilities=(active.tls->extended_profile()?known_capabilities:1023u)&~ours.required_capabilities;
+    HelloFrame ours;ours.consortium_id=current.consortium;ours.octopus_id=local.id;ours.boot_id=boot;ours.coordinator_epoch=current.epoch;ours.config_revision=config;ours.config_hash=policy_hash.empty()?sha256(std::to_string(config)):policy_hash;ours.required_capabilities=qualified_lookup|owner_repeated_keys|original_controller_only|chunked_snapshots;ours.optional_capabilities=(active.tls->extended_profile()?known_capabilities:1023u)&~ours.required_capabilities;
     const auto *application=esp_app_get_description();ours.firmware_identity=hex(std::string_view(reinterpret_cast<const char*>(application->app_elf_sha256),32));
     ours.hardware_profile=active.tls->hardware_profile();ours.supported_tentacles=profile_count;ours.configured_tentacles_mask=profile_mask;
     if(active.tls->extended_profile()&&current.join_id&&((!server&&current.role==Group::prepared)||(server&&current.joining_id==active.tls->authenticated))){ours.pending_join_id=current.join_id;ours.join_digest=current.join_digest;}
@@ -415,6 +418,12 @@ bool retire_member(Active &active,const Envelope &envelope,uint64_t received){
     const std::string response="{\"mutation_id\":\""+mutation.str()+"\",\"proposal_digest\":\""+digest+"\",\"phase\":\"factory_reset\",\"membership_revision\":\""+std::to_string(revision)+"\",\"expected_boot_id\":\""+target_boot.str()+"\",\"result\":\"reset_scheduled\"}";
     const bool sent=send(active,Kind::membership_result,response,2000);hooks.after_factory_reset();return sent;
 }
+bool initialize_context(Active& active){
+    if(active.context_ready)return true;
+    RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
+    if(!hooks.ready||!hooks.ready(active.peer))return false;
+    active.context_ready=true;return true;
+}
 void active_loop_work(void *arg){
     std::unique_ptr<std::shared_ptr<Active>> holder(static_cast<std::shared_ptr<Active>*>(arg));auto active=*holder;holder.reset();bool server=active->tls->server;
     if(!active->tls->handshake()||!establish(*active,server)){if(!active->lifecycle_only)error("Operational authentication or synchronization failed");active->cancelled=true;}else{
@@ -424,21 +433,17 @@ void active_loop_work(void *arg){
     while(!active->cancelled){
         if(active->retiring){retirement_attempted=true;finish_retirement(*active);break;}
         auto now=now_ms();
-        if(active->config_wait_until&&now>=active->config_wait_until)break;
-        const bool applying_configuration=active->config_wait_until!=0;
         if(!server&&active->ready&&now>=renewal){auto realtime=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(realtime,LeaseClass::realtime_input,500,now);if(now>=control_renewal){auto control=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(control,LeaseClass::control,5000,now);active->own_control=control;active->own_control_deadline=now+5000;if(!send(*active,Kind::execution_lease,lease_json(control,active->session.scope().link_id,LeaseClass::control,5000)))break;control_renewal=now+4000;}active->own_realtime=realtime;active->own_realtime_deadline=now+500;if(!send(*active,Kind::execution_lease,lease_json(realtime,active->session.scope().link_id,LeaseClass::realtime_input,500)))break;renewal=now+250;}
-        if(!applying_configuration&&now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}"))break;heartbeat=now+1000;}
+        if(now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}"))break;heartbeat=now+1000;}
         now=now_ms();
-        Queued queued;bool have=false;{std::lock_guard<std::mutex> guard(active->mutex);if(!applying_configuration&&!active->queue.empty()){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}}
-        if(have&&queued.kind==Kind::hold_release&&(now<queued.created||now-queued.created>=queued.ttl))break;
+        Queued queued;bool have=false;{std::lock_guard<std::mutex> guard(active->mutex);if(!active->queue.empty()){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}}
+        if(have&&queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl))break;
         if(have&&now>=queued.created&&now-queued.created<queued.ttl){
             if(!send(*active,queued.kind,queued.payload,queued.ttl-static_cast<uint32_t>(now-queued.created)))break;
-            if(server&&queued.kind==Kind::config_activate){Json request;JsonError detail;if(!parse_json(queued.payload,request,detail))break;active->config_wait_key=configuration_correlation(request);if(active->config_wait_key.empty())break;active->config_wait_until=now_ms()+40000;}
         }
         fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0)break;if(!ready&&mbedtls_ssl_check_pending(&active->tls->ssl)==0)continue;
         std::string text;if(!active->tls->receive(text))break;Envelope envelope;if(parse_envelope(text,envelope)!=Error::none)break;const auto received=now_ms();
         if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);}break;}}
-        if(server&&active->config_wait_until&&envelope.kind==Kind::config_result&&envelope.payload.get("phase")->string=="activate"&&configuration_correlation(envelope.payload)==active->config_wait_key&&active->session.admit(envelope,received,received,false)==Error::none){active->config_wait_until=0;active->config_wait_key.clear();}
         if(!server&&envelope.kind==Kind::membership_event){if(active->session.admit(envelope,received,received)!=Error::none)break;retire_member(*active,envelope,received);break;}
         if(active->management_ready&&envelope.kind==Kind::execution_lease){if(active->session.admit(envelope,received,received)!=Error::none)break;continue;}
         if(is_settings_kind(envelope.kind)){if(!settings_dispatch(active,envelope,received))break;continue;}
@@ -466,9 +471,40 @@ void active_loop_work(void *arg){
                 }
             }
         }
-        else if(envelope.kind==Kind::operation){Operation op;if(parse_operation(envelope.payload,op)!=Error::none||!op.command_sequence||active->session.admit_operation(envelope,op,received,received)!=Error::none)break;RuntimeOperation handler;{std::lock_guard<std::mutex> guard(lock);handler=operation_handler;}if(!handler||!active->ready)continue;const auto deadline=active->session.execution_leases().deadline(op.execution_lease_id,op.operation==SemanticOperation::key_press?LeaseClass::realtime_input:LeaseClass::control,active->session.scope(),received);if(deadline&&received<=UINT64_MAX-envelope.ttl_ms)handler(op,envelope,std::min<uint64_t>(*deadline,received+envelope.ttl_ms),active->session.scope().link_id);}
-        else if(envelope.kind==Kind::execution_lease&&server){if(active->session.admit(envelope,received,received)!=Error::none)break;model::ExecutionLeaseId id;model::LinkId link;uint64_t duration=0;if(!consortium::id(envelope.payload.get("lease_id"),id)||!consortium::id(envelope.payload.get("link_id"),link)||link!=active->session.scope().link_id||!json_uint(envelope.payload.get("validity_ms"),duration,1,10000))break;std::lock_guard<std::mutex> guard(active->mutex);if(envelope.payload.get("class")->string=="control"){active->status.control_lease=id;active->status.control_usable_until_ms=received+(duration>100?duration-100:0);}else{active->status.realtime_lease=id;active->status.realtime_usable_until_ms=received+(duration>100?duration-100:0);}}
-        else if(envelope.kind!=Kind::heartbeat){const auto admitted=active->session.admit(envelope,received,received);if(admitted==Error::duplicate&&envelope.kind==Kind::hold_release)continue;if(admitted!=Error::none)break;RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}uint64_t deadline=0;if(envelope.kind==Kind::scan_request||(envelope.kind==Kind::plan_barrier&&envelope.payload.get("phase")->string=="renew")){model::ExecutionLeaseId lease;if(!id(envelope.payload.get("execution_lease_id"),lease))break;auto exact=active->session.execution_leases().deadline(lease,LeaseClass::control,active->session.scope(),received);if(!exact)continue;if(received>UINT64_MAX-envelope.ttl_ms)continue;deadline=std::min<uint64_t>(*exact,received+envelope.ttl_ms);}if(hooks.control){const auto result=hooks.control(active->peer,envelope,deadline,active->session.scope().link_id);if(envelope.kind==Kind::hold_release&&(result==Error::queue_full||result==Error::lease_expired))break;}}
+        else if(envelope.kind==Kind::execution_lease&&server){
+            if(active->session.admit(envelope,received,received)!=Error::none)break;
+            model::ExecutionLeaseId id;model::LinkId link;uint64_t duration=0;
+            if(!consortium::id(envelope.payload.get("lease_id"),id)||!consortium::id(envelope.payload.get("link_id"),link)||link!=active->session.scope().link_id||!json_uint(envelope.payload.get("validity_ms"),duration,1,10000))break;
+            const bool control=envelope.payload.get("class")->string=="control";
+            {std::lock_guard<std::mutex> guard(active->mutex);
+                if(control){active->status.control_lease=id;active->status.control_usable_until_ms=received+(duration>100?duration-100:0);}
+                else{active->status.realtime_lease=id;active->status.realtime_usable_until_ms=received+(duration>100?duration-100:0);}
+            }
+            if(control&&!initialize_context(*active))break;
+        }
+        else if(envelope.kind!=Kind::heartbeat){
+            const auto admitted=active->session.admit(envelope,received,received);
+            if(admitted==Error::duplicate)continue;
+            if(admitted!=Error::none)break;
+            RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
+            uint64_t deadline=0;
+            if(envelope.kind==Kind::scoped_intent){
+                model::OwnedIntent intent;model::ExecutionLeaseId lease;
+                if(parse_owned_intent(envelope.payload,intent,lease)!=Error::none)break;
+                if(received>UINT64_MAX-envelope.ttl_ms)continue;
+                deadline=received+envelope.ttl_ms;
+                if(intent.kind!=model::OwnedIntentKind::key_up){
+                    const auto cls=intent.kind==model::OwnedIntentKind::key_down?LeaseClass::realtime_input:LeaseClass::control;
+                    auto exact=active->session.execution_leases().deadline(lease,cls,active->session.scope(),received);
+                    if(!exact)continue;
+                    deadline=std::min(deadline,*exact);
+                }
+            }
+            if(hooks.control){
+                const auto result=hooks.control(active->peer,envelope,deadline,active->session.scope().link_id);
+                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||(envelope.kind==Kind::scoped_intent&&(envelope.payload.get("action")->string=="key_up"||envelope.payload.get("action")->string=="source_input"||envelope.payload.get("action")->string=="context"))))break;
+            }
+        }
         else if(active->session.admit(envelope,received,received)!=Error::none)break;
     }
     if(server&&active->retiring&&!retirement_attempted)finish_retirement(*active);
@@ -673,7 +709,7 @@ RuntimeStatus runtime_status(){
         if(link->status.id!=link->peer||!link->status.boot_id||link->status.config_revision!=configuration)continue;
         ++out.active_peers;out.connected=true;
         // This aggregate has always meant at least one ready link. Per-owner
-        // readiness and retained-member barriers remain separate control gates.
+        // readiness is reported separately for each owner.
         out.synchronized=out.synchronized||(link->ready&&link->status.ready);
     }
     return out;
@@ -699,7 +735,6 @@ void runtime_network_hooks(RuntimeNetworkHooks hooks){std::lock_guard<std::mutex
 void runtime_lifecycle_hooks(RuntimeLifecycleHooks hooks){std::lock_guard<std::mutex> guard(lock);if(hooks.retire)lifecycle.retire=std::move(hooks.retire);if(hooks.revoked)lifecycle.revoked=std::move(hooks.revoked);if(hooks.factory_reset)lifecycle.factory_reset=std::move(hooks.factory_reset);if(hooks.after_factory_reset)lifecycle.after_factory_reset=std::move(hooks.after_factory_reset);}
 void runtime_update_hooks(RuntimeUpdateHooks hooks){std::lock_guard<std::mutex> guard(lock);updates=std::move(hooks);}
 void runtime_control_hooks(RuntimeControlHooks hooks){std::lock_guard<std::mutex> guard(lock);controls=std::move(hooks);}
-void runtime_operation_handler(RuntimeOperation handler){std::lock_guard<std::mutex> guard(lock);operation_handler=std::move(handler);}
 std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId peer_boot){
     std::lock_guard<std::mutex> guard(lock);
     for(const auto& active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&active->ready){
@@ -856,19 +891,6 @@ esp_err_t runtime_send_update(model::OctopusId owner,Kind kind,std::string paylo
     }
     return ESP_ERR_INVALID_STATE;
 }
-static bool queued_key_state(const Queued& queued){
-    if(queued.kind==Kind::hold_release)return true;
-    if(queued.kind!=Kind::operation)return false;
-    Json payload;JsonError error;Operation operation;
-    return parse_json(queued.payload,payload,error)&&parse_operation(payload,operation)==Error::none&&operation.operation==SemanticOperation::key_press;
-}
-static void enqueue_cleanup(Active& active,Queued cleanup){
-    std::deque<Queued> keys,ordinary;
-    for(auto& queued:active.queue)(queued_key_state(queued)?keys:ordinary).push_back(std::move(queued));
-    keys.push_back(std::move(cleanup));
-    for(auto& queued:ordinary)keys.push_back(std::move(queued));
-    active.queue=std::move(keys);
-}
 static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl,std::optional<model::LinkId> expected_link){
     if(is_update_kind(kind))return runtime_send_update(owner,kind,std::move(payload),ttl);
     if(retired_kind(kind))return ESP_ERR_NOT_SUPPORTED;
@@ -877,43 +899,64 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
         std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();
-        const bool expired_cleanup=std::any_of(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued.kind==Kind::hold_release&&(now<queued.created||now-queued.created>=queued.ttl);});
+        const bool expired_cleanup=std::any_of(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl);});
         if(expired_cleanup){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);return ESP_ERR_INVALID_STATE;}
         active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[now](const auto& queued){return now<queued.created||now-queued.created>=queued.ttl;}),active->queue.end());
-        const bool cleanup=kind==Kind::hold_release;
+        const bool cleanup=queued_cleanup({kind,payload,ttl,now});
         if(active->queue.size()>=(cleanup?16u:15u)){
             if(cleanup){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
             return ESP_ERR_NO_MEM;
         }
-        if(cleanup)enqueue_cleanup(*active,{kind,std::move(payload),ttl,now});
-        else if(kind==Kind::config_result)active->queue.push_front({kind,std::move(payload),ttl,now});
-        else active->queue.push_back({kind,std::move(payload),ttl,now});
+        active->queue.push_back({kind,std::move(payload),ttl,now});
         return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
 }
 esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){
-    if(kind==Kind::hold_release||kind==Kind::operation)return ESP_ERR_INVALID_ARG;
+    if(kind==Kind::scoped_intent)return ESP_ERR_INVALID_ARG;
     return queue_control(owner,kind,std::move(payload),ttl,{});
 }
-esp_err_t runtime_send_cleanup(model::OctopusId owner,std::string payload,model::LinkId expected_link,uint32_t ttl){
-    if(!expected_link)return ESP_ERR_INVALID_ARG;
-    return queue_control(owner,Kind::hold_release,std::move(payload),ttl,expected_link);
+esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl){
+    if(!link)return ESP_ERR_INVALID_ARG;
+    return queue_control(owner,Kind::scoped_result,std::move(payload),ttl,link);
 }
-esp_err_t runtime_send_operation(model::OctopusId owner,const Operation &op,model::LinkId expected_link,uint32_t ttl){
-    if(!expected_link||!ttl||!op.command_sequence)return ESP_ERR_INVALID_ARG;
-    std::string arguments,semantic;
-    switch(op.operation){
-    case SemanticOperation::ensure_power:semantic="ensure_power";arguments="{\"on\":"+std::string(op.on?"true":"false")+"}";break;
-    case SemanticOperation::select_route:semantic="select_route";arguments="{\"route_id\":\""+op.route_id.str()+"\"}";break;
-    case SemanticOperation::announce_active_source:semantic="announce_active_source";arguments="{}";break;
-    case SemanticOperation::key_press:semantic="key_press";arguments="{\"key_code\":"+std::to_string(op.key_code)+",\"hold_token\":\""+op.hold_token.str()+"\",\"repeat\":"+(op.repeat?"true":"false")+"}";break;
-    case SemanticOperation::query_state:semantic="query_state";if(op.query_field!="power"&&op.query_field!="audio")return ESP_ERR_INVALID_ARG;arguments="{\"field\":\""+op.query_field+"\"}";break;
-    }
-    const std::string payload="{\"command_id\":\""+op.command_id.str()+"\",\"command_sequence\":\""+std::to_string(op.command_sequence)+"\",\"plan_id\":\""+op.plan_id.str()+"\",\"session_id\":\""+op.session_id.str()+"\",\"component_id\":\""+op.component_id.str()+"\",\"binding_id\":\""+op.binding_id.str()+"\",\"domain_id\":\""+op.domain_id.str()+"\",\"execution_lease_id\":\""+op.execution_lease_id.str()+"\",\"route_generation\":\""+std::to_string(op.route_generation)+"\",\"binding_revision\":\""+std::to_string(op.binding_revision)+"\",\"domain_revision\":\""+std::to_string(op.domain_revision)+"\",\"target\":"+model::address_json(op.target)+",\"operation\":\""+semantic+"\",\"arguments\":"+arguments+"}";
-    Json parsed;JsonError error;Operation checked;if(!parse_json(payload,parsed,error)||parse_operation(parsed,checked)!=Error::none||op.target.port.octopus_id!=owner)return ESP_ERR_INVALID_ARG;
-    return queue_control(owner,Kind::operation,payload,std::min<uint32_t>(ttl,op.operation==SemanticOperation::key_press?500:1000),expected_link);
+void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
+    if(!link)return;
+    std::lock_guard<std::mutex> guard(lock);
+    for(auto& active:links)if(active->peer==owner&&active->session.scope().link_id==link){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
 }
+esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
+    RuntimePeerStatus peer;model::LinkId link;
+    {std::lock_guard<std::mutex> guard(lock);if(!original_controller(group,identity.id)||!status.authority_ready)return ESP_ERR_INVALID_STATE;
+        for(const auto& active:links)if(active->peer==intent.target.port.octopus_id&&active->ready&&!active->cancelled){
+            if(!active->context_ready&&intent.kind!=model::OwnedIntentKind::context)return ESP_ERR_INVALID_STATE;
+            std::lock_guard<std::mutex> qguard(active->mutex);peer=active->status;link=active->session.scope().link_id;break;}}
+    if(!link||!(peer.negotiated_capabilities&qualified_lookup))return ESP_ERR_INVALID_STATE;
+    const bool key=intent.kind==model::OwnedIntentKind::key_down;
+    const bool cleanup=intent.kind==model::OwnedIntentKind::key_up;
+    const auto lease=key?peer.realtime_lease:peer.control_lease;
+    const auto now=now_ms(),until=key?peer.realtime_usable_until_ms:peer.control_usable_until_ms;
+    if(!lease||(!cleanup&&now>=until))return ESP_ERR_INVALID_STATE;
+    const auto payload=owned_intent_json(intent,lease);if(payload.empty())return ESP_ERR_INVALID_ARG;
+    const uint32_t cap=cleanup?2000:key?500:1000;
+    const uint32_t ttl=cleanup?cap:static_cast<uint32_t>(std::min<uint64_t>(cap,until-now));
+    const auto result=queue_control(intent.target.port.octopus_id,Kind::scoped_intent,payload,ttl,link);
+    if(result!=ESP_OK&&intent.kind==model::OwnedIntentKind::context)runtime_fence_owned_link(intent.target.port.octopus_id,link);
+    return result;
+}
+uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){
+    std::lock_guard<std::mutex> guard(lock);
+    if(auth.owner_boot!=boot||auth.config_revision!=configuration)return 0;
+    if(auth.controller_id==identity.id)return !auth.link_id&&auth.controller_boot==boot&&original_controller(group,identity.id)&&status.authority_ready?UINT64_MAX:0;
+    if(group.role!=Group::member||group.authority!=auth.controller_id)return 0;
+    for(const auto& active:links)if(active->peer==auth.controller_id&&active->ready&&!active->cancelled&&!active->retiring){const auto& scope=active->session.scope();if(scope.link_id==auth.link_id&&scope.peer_boot_id==auth.controller_boot&&scope.local_boot_id==auth.owner_boot&&scope.config_revision==auth.config_revision){
+        if(auth.authority==model::OwnedAuthority::cleanup)return UINT64_MAX;
+        const auto deadline=auth.authority==model::OwnedAuthority::realtime?active->own_realtime_deadline.load():active->own_control_deadline.load();
+        return now_ms()<deadline?deadline:0;
+    }}
+    return 0;
+}
+bool runtime_owned_authorized(const model::OwnedAuthorization& auth){return runtime_owned_deadline(auth)!=0;}
 std::vector<RuntimePeerStatus> runtime_peers(){
     std::lock_guard<std::mutex> guard(lock);std::vector<RuntimePeerStatus> out;
     for(const auto &peer:group.peers){RuntimePeerStatus result;result.id=peer.id;result.hostname=hostnames.lookup(peer.id);result.enrolled=peer.active;result.provisional=!peer.active;

@@ -52,7 +52,7 @@ public:
     // authenticated_peer must come from exact-leaf mTLS, never the Hello body.
     Error authenticate(const LinkScope &, model::OctopusId authenticated_peer,PeerRole,bool active_membership);
     Error hello(const HelloFrame &,uint32_t supported_capabilities);
-    Error synchronized(uint64_t applied_config_revision,bool membership_current,bool bindings_current);
+    Error synchronized(uint64_t applied_config_revision,bool membership_current,bool owner_metadata_current);
     void disconnect();
     void restrict_lifecycle();
     void restrict_management();
@@ -61,7 +61,6 @@ public:
     LeaseBook<model::ExecutionLeaseId> &execution_leases(){return execution_;}
     // Recheck positive work both on receipt and immediately before execution.
     Error admit(const Envelope &,uint64_t received_at_ms,uint64_t now_ms,bool remember_message=true);
-    Error admit_operation(const Envelope &,const Operation &,uint64_t received_at_ms,uint64_t now_ms,bool remember_message=true);
     uint32_t negotiated_capabilities() const {return capabilities_;}
 private:
     Error common(const Envelope &,uint64_t,uint64_t) const;
@@ -72,24 +71,5 @@ private:
     LinkScope scope_;ConnectionState state_=ConnectionState::disconnected;PeerRole role_=PeerRole::actuator;
     bool active_=false,management_=false;uint32_t capabilities_=0;
     LeaseBook<model::ExecutionLeaseId> execution_;
-};
-// Up to32 outcomes are queryable for at most30s; terminal pressure may evict
-// earlier and returns UNKNOWN. Positive per-plan sequences permit eviction while a
-// retained high-water mark prevents old commands executing again. Every command
-// requires a positive sequence; outcome-cache eviction never resets its fence.
-enum class Outcome { received, rejected, applied, observed, failed, unknown };
-class CommandLedger {
-public:
-    static constexpr size_t capacity=32;
-    static constexpr uint64_t query_window_ms=30000;
-    void activate(model::PlanId,model::SessionId);
-    void invalidate();
-    Error receive(const Operation &,uint64_t now_ms);
-    bool result(model::CommandId,Outcome,uint64_t now_ms);
-    std::optional<Outcome> query(model::CommandId,uint64_t now_ms) const;
-private:
-    struct Entry {model::CommandId id;Outcome outcome=Outcome::unknown;uint64_t at=0,sequence=0;bool valid=false;};
-    std::array<Entry,capacity> entries_{};model::PlanId plan_;model::SessionId session_;
-    uint64_t highwater_=0;
 };
 } // namespace amity::consortium

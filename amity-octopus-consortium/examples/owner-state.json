@@ -1,0 +1,44 @@
+{
+  "protocol_version": 1,
+  "consortium_id": "00000000000000000000000000001001",
+  "message_id": "00000000000000000000000000006001",
+  "origin_octopus_id": "00000000000000000000000000002002",
+  "origin_boot_id": "00000000000000000000000000007002",
+  "destination_octopus_id": "00000000000000000000000000002001",
+  "destination_boot_id": "00000000000000000000000000007001",
+  "coordinator_epoch": "1",
+  "config_revision": "1",
+  "kind": "scoped_result",
+  "ttl_ms": 1000,
+  "payload": {
+    "snapshot": {
+      "owner": "00000000000000000000000000002002",
+      "boot": "00000000000000000000000000007002",
+      "adapter": 0,
+      "front_address": 4,
+      "back_address": 0,
+      "front_physical_address": 8448,
+      "ready": true,
+      "discovering": false,
+      "discovery_generation": 1,
+      "audio_status_known": false,
+      "muted": false,
+      "volume": 127,
+      "devices": [
+        {
+          "side": "back",
+          "osd_name": "Apple TV",
+          "logical_address": 4,
+          "physical_address": 8448,
+          "device_type": 4,
+          "vendor_id": 107,
+          "resolved": true
+        }
+      ],
+      "setup_generation": 0,
+      "setup_last_sequence": "0",
+      "setup_pending": 0,
+      "setup_replies_pending": false
+    }
+  }
+}

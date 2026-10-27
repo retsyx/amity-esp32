@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://amity.invalid/design/v0.1/core-types.schema.json",
-  "title": "Amity proposed v0.1 core types",
-  "$comment": "Owned by document03. Schema IDs are identifiers, not a deployed network service.",
+  "title": "Amity qualified equipment and runtime address types",
+  "$comment": "Owned by document03. Stable selectors are saved intent; logical addresses are runtime only.",
   "$defs": {
     "Id128": {
       "type": "string",

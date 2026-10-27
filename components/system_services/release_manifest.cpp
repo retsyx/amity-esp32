@@ -76,7 +76,7 @@ bool parse_release_manifest(std::string_view text,ReleaseManifest& out,std::stri
 }
 bool compatible_release(const ReleaseManifest& m,uint64_t slot,uint64_t installed,uint64_t rollback,uint32_t capabilities,bool production,std::string& error){
     if(m.image_bytes>slot||m.slot_bytes>slot||m.image_bytes>m.slot_bytes){error="Image exceeds the installed OTA partition";return false;}
-    if(m.config_read_min>2||m.config_read_max<2||m.config_write!=2||installed<m.storage_read_min||installed>m.storage_read_max||m.storage_write>rollback||m.storage_write>m.rollback_readable_max){error="Release is incompatible with installed configuration or rollback storage";return false;}
+    if(m.config_read_min>3||m.config_read_max<3||m.config_write!=3||installed<m.storage_read_min||installed>m.storage_read_max||m.storage_write>rollback||m.storage_write>m.rollback_readable_max){error="Release is incompatible with installed configuration or rollback storage";return false;}
     if(m.required_capabilities&~capabilities){error="Release requires an unsupported control capability";return false;}
     if(production!=(m.security_profile=="production")){error="A remote update cannot change the provisioned security profile";return false;}
     if(production&&m.signing_key_id.empty()){error="Production release requires a trusted publisher signature";return false;}

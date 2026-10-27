@@ -1,47 +1,34 @@
-# Validation of this documentation package
+# Current contract validation
 
-The behavior baseline is current `main` (`98e64a6` for this merge), with identical CEC behavior for local and remote ownership. Historical interface evidence at `d50af8026938797fc0820d0107f4c4e064c2d2bc` remains relevant where unchanged, with the current [original-controller policy](21-original-controller-policy.md) and [baseline interface](20-user-interface.md). One firmware supports one main and headless actuators. The sole remote and all user-facing services remain on the main. Manual replacement-main backup recovery establishes fresh authority; no automatic election, live transfer or pairing cloning exists.
+The current package describes qualified saved intent and original owner-local execution. Removed planner/resource/binding/route approval fixtures are not active alternatives. The 27 October 2026 instruction and migration lesson are recorded in [AGENTS.md](../AGENTS.md).
 
-The 21 October 2026 amendment makes preservation of original algorithms/functionality normative unless the user explicitly requests a change, including Siri swipe recognition, timing and generated event sequences. Held-button contracts now carry state changes only, with the original completion-paced CEC repeat loop at the output owner. Per-button renewal/lease requirements are superseded; first-delivery freshness and current general link/plan authority remain separate. [Repository-wide instruction](../AGENTS.md).
+## Checks and limits
 
-Subsequent explicit user changes require one attempt per key-press frame, ended key state and repetition after TX failure with later button-up a no-op, implicit global release at recipient stream end only when all its keys cease being pressed (including last-key failure), no executor outgoing buffer, and a mechanical CEC layer with the only FIFO with eight total messages per wire. The executor owns button/message choices. Package checks validate contract consistency; actual direct-admission, atomic-batch, failure/up and single-FIFO software evidence is recorded separately in implementation status.
+`validate_contracts.py` checks schema-3 saved intent, qualified selectors and separate runtime endpoints, current scoped owner intents, supported management payload references, rejection of obsolete graph/kinds/fields, actual wire-kind registry consistency, hardware-capacity agreement, local documentation links and exact manifest coverage/hashes. Its hardware-capacity-only mode uses the standard library; full validation uses jsonschema/referencing and performs no network/device operations.
 
-## Package checks
-
-Run `.cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py` from the repository root, or a Python environment with `jsonschema`4.x and `referencing`. The validator performs no network, device or firmware action. It checks:
-
-- Current manifest file coverage, sizes and SHA256 digests, excluding the manifest itself.
-- Six local Draft2020-12 schemas with a local reference registry.
-- Canonical hardware capacity from `hardware_limits.hpp`, including schema index/count/mask bounds and settings labels, complete Kconfig connector menus/profile/default selection, and release-tool constants/profile. Mismatched schema bounds reject.
-- Positive and malformed address/name/binding/operation/hostname-metadata/per-adapter-settings/removal-reset vectors, including rejection of removed input/transfer/remote-management/hold-renew kinds, obsolete per-button lease fields and obsolete generic retirement wire phases.
-- Scoped native/proxy binding relationships and a synthetic LA re-resolution case without persisted LA selectors.
-- Local Markdown targets, reference labels and balanced fences. Optional `--reference-repo` checks historical baseline citation paths.
-
-To run only the shared hardware-capacity guard independently of manifest and historical document-link checks:
+Run:
 
 ```sh
 python3 amity-octopus-consortium/validate_contracts.py --hardware-capacity-only
+python3 amity-octopus-consortium/validate_contracts.py
 ```
 
-This mode uses only the Python standard library: it reads the six JSON schema files and checks their capacity constraints, canonical limits, Kconfig connector menus/profile and release tooling, then prints its JSON result and exits. It passes with four tentacles and eight CEC ports. Complete schema meta-validation, positive/negative fixture and Markdown-link checks remain part of the full validator, which requires `jsonschema` and `referencing`.
+A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch/quirks, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
-This record covers package consistency only. Compiler, host/browser, exact image and historical hardware evidence live in [implementation status](../IMPLEMENTATION_STATUS.json); the [release gates](15-validation-and-release-gates.md) remain separate. Schema acceptance does not establish executable authority, electrical correctness, cryptography, actual pairing retention or AV picture/audio.
+## Recorded package check — 27 October 2026
 
-## Current structural checks
+The full validator passed using `.cache/contracts-python/bin/python`: 34 manifest files, 6 schemas, 17 positive and 55 negative vectors, 4 configured selectors, 23 current wire kinds and 119 local links. Hardware-capacity-only validation also passed for four adapters/eight CEC ports. These are contract/software checks; they perform no firmware/device operations. Firmware tests/build results are recorded separately after execution.
 
-| Check | Result |
-|---|---|
-| JSON schemas |6 checked|
-| Canonical capacity across schemas/Kconfig/tooling |Passed; mismatched schema bounds rejected|
-| Positive vectors |65 accepted|
-| Negative vectors |97 rejected|
-| Binding relationships |12 checked|
-| Native configured-name relationships |7 checked|
-| Operation relationships |3 checked|
-| Synthetic populated CEC ports |10|
-| Runtime LA re-resolution fixture |Passed|
-| Firmware/hardware tests run by this validator |None|
+The actual synchronization integration suite `sh tests/system_sync_test.sh` also passed with ASan/UBSan: minimal identity/revision handshake and first-lease nonemitting context hook, failed snapshot IPC admission, derived control/realtime/cleanup authority with unchanged receiver auth/deadline, deferred owner-local lookup results bound to the exact authenticated link, actual source presence despite CEC admission failure, no fabricated lookup after IPC failure, setup completion/pending-reply snapshot metadata, exact boot/link disconnect, callback cleanup on failed initialization, sparse scans, saved adapter capacity retention, applied-revision status and real journal commit/failure independent of offline peers. Its SystemControl boundary is a spy; actual owner/facade CEC behavior is covered separately.
 
-The four-slot structural/schema checks above pass. The complete validator currently stops during Markdown-link verification at a pre-existing missing historical log, `test-results/aggregate-core-holds-0.1.73.log`, linked by TODO.md; this does not qualify that absent evidence.
+The full host runner `sh tests/run_host_tests.sh` exited 0 using pinned SDK Python 3.14 plus the local contracts site-packages. Its log is `test-results/host/intent-full-suite.log`; coverage includes the retained CEC/owner/configuration/remote/protocol/security/update suites, 27 local hardware-harness tests and offline production-security profile. After the final duplicate-name lookup simplification, `sh tests/cec_hub_test.sh` passed all five baseline suites and `sh tests/owned_hub_test.sh` passed its main and nonzero-settling suites. Those final checks cover baseline first OSD match/side isolation, coordinator-cache independence, two-owner AVR/switch/quirks, startup taps, observation IPC pressure and global last-completion settling.
 
-The manifest and validator output are the authoritative package counts. Removed guided-wizard/draft, multi-remote/member-input and controller-transfer files are not retained as implementation contracts or positive fixtures. The internal core, scoped discovery, multi-CEC runtime, guarded semantic planning, authenticated enrollment, configuration synchronization and updates remain required.
+The final native `idf.py build provisioning-package` passed with the pinned SDK environment, including 35 public-record layout checks and package generation. The application is 2,420,848 bytes (`0x24f070`) in the `0x3d0000` OTA slot, with `0x180f90` free (39%). Image SHA-256 is `f7a28b2ff519eacc32e3a7ed3550eff2d39d9c27f7c21cc0cad6e54fe306e5af`; the log is `build/qualified-lookup-build.log`. The final build includes the baseline first-name lookup correction. This task has not deployed that image to a device.
+
+## Historical evidence
+
+The earlier graph-model schema/vector counts and firmware checks belong to their original commits/artifacts. The 0.1.80 deployment verified two image/startup results and independent credentials; its retained activity metadata concealed disabled AVR/switch behavior. It is not parity evidence for this model. Historical details remain in git and existing test-results artifacts instead of being retained as a second active design.
+
+## Physical scope
+
+No physical radio, CEC, AV, four-adapter timing, ecosystem retention or production-security result is inferred from documentation/host tests. Record actual device identity, image/source, configuration, input/observations and wire captures separately when such work is explicitly performed.

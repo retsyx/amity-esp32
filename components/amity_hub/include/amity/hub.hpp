@@ -8,6 +8,8 @@
 
 #pragma once
 #include "cec/engine.hpp"
+#include "amity/system/owned_intent.hpp"
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -25,18 +27,16 @@ struct Device {
     uint16_t physical_address = 0xffff;
     uint8_t type = 0xff;
     uint32_t vendor_id = 0;
-    // An actual OSD report and unambiguous current attachment are required.
+    // The original owner-local cache has a name for this appliance.
     bool resolved = false;
 };
 struct Quirk {
     uint32_t vendor_id = 0;
     std::vector<uint8_t> power_on, power_off;
 };
-// Labels are presentation metadata. Their replacement must not cancel input or
-// run an equipment transition. Order remains semantic in the legacy adapter.
-bool same_executable_configuration(const std::vector<Activity> &, const std::vector<Quirk> &,
-                                   const std::vector<Activity> &, const std::vector<Quirk> &);
 struct Snapshot {
+    uint64_t applied_config_revision=0,applied_presentation_revision=0;
+    uint32_t processed_activity_selection=0;
     std::vector<Activity> activities;
     std::vector<Device> devices;
     int current_activity = -1;
@@ -67,6 +67,22 @@ class Hub {
 public:
     explicit Hub(Transport &transport) : transport_(transport) {}
     void configure(std::vector<Activity> activities, std::vector<Quirk> quirks = {});
+    using OwnedSender = std::function<system::OwnedDispatchResult(system::OwnedIntent)>;
+    using OwnedLookup = std::function<std::optional<Device>(const system::QualifiedDeviceName&)>;
+    void scoped_transport(std::vector<system::ScopedSelector>, OwnedSender, OwnedLookup,
+                          std::optional<system::CecPortRef> default_port = {});
+    bool scoped() const { return bool(owned_sender_); }
+    uint64_t scoped_generation() const { return owned_generation_; }
+    bool input_pending()const{return !pending_inputs_.empty();}
+    bool held_recipient(uint8_t key,BusSide side,uint8_t address)const;
+    // Owner-local actions reuse the same original translation and held state.
+    bool execute_owned(const system::OwnedIntent&);
+    bool owned_target_available(const system::QualifiedDeviceName&);
+    void owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
+    void fence_owned_owner(system::OctopusId);
+    bool refresh_owned_context(system::OctopusId owner){return publish_owned_context(false,owner);}
+    void qualified_names(bool value=true){qualified_names_=value;}
+    void scoped_audio_status(bool known, bool muted, uint8_t volume);
     void set_addresses(uint8_t front, uint8_t back, uint16_t physical = 0x1000);
     void announce(BusSide side);
     bool select_activity(int index);
@@ -94,25 +110,44 @@ private:
     Device *find(const std::string &name);
     const Device *known(const std::string &name) const;
     Device *discovery_device(BusSide side, uint8_t address);
-    void resolve_device(BusSide side, uint8_t address);
+    void resolve_device(BusSide side, uint8_t address, bool restore_route);
     void invalidate_endpoint(BusSide side, uint8_t address);
-    bool configured_name(const std::string &name) const;
     Activity current() const;
     bool send(BusSide side, uint8_t dest, std::initializer_list<uint8_t> data);
-    void power(const Device &device, bool on, bool quirk = true);
+    bool power(const Device &device, bool on, bool quirk = true);
     void input(const Activity &activity);
-    void active_source();
+    void fallback_input(const Activity&);
+    void active_source(const std::string& display = {});
     void identity(BusSide side, const cec::Frame &frame);
-    void request_audio_status();
+    void source_thief(const cec::Frame&);
+    void request_audio_status(bool resolved_input = false);
     bool audio_key_held() const;
+    Device *find_on_side(BusSide, const std::string&);
+    bool press_device(const Device*, uint8_t key, bool repeat);
+    bool finite_press(const Device&, const uint8_t*, size_t);
+    std::optional<system::QualifiedDeviceName> target(const std::string&) const;
+    bool owned(system::OwnedIntentKind, const std::string&, bool on = false, uint8_t value = 0, bool repeat = false, bool quirks = true);
+    bool publish_owned_context(bool source_changed,system::OctopusId owner={});
     Transport &transport_;
+    std::vector<system::ScopedSelector> scoped_selectors_;
+    OwnedSender owned_sender_;
+    OwnedLookup owned_lookup_;
+    std::optional<system::CecPortRef> scoped_default_port_;
+    struct PendingInput {Activity activity;system::OctopusId owner;uint64_t generation=0,sequence=0;bool query_audio=false;};
+    std::vector<PendingInput> pending_inputs_;
+    uint64_t current_input_sequence_=0;
+    bool qualified_names_=false;
+    mutable Device scoped_device_;
+    uint64_t owned_generation_ = 1;
+    std::optional<BusSide> owner_source_side_, owner_audio_side_;
     std::vector<Activity> activities_;
     std::vector<Device> devices_;
     std::vector<Device> discovery_;
-    std::vector<std::pair<std::string, BusSide>> name_scopes_;
     bool discovering_ = false;
     std::vector<Quirk> quirks_;
     int selected_ = -1;
+    std::optional<int> lookup_previous_selection_;
+    uint32_t lookup_previous_generation_=0;
     uint32_t activity_generation_ = 0;
     uint32_t binding_generation_ = 0, uncertain_releases_ = 0;
     uint8_t front_ = 15, back_ = 15;
@@ -123,6 +158,7 @@ private:
         BusSide bus;
         uint8_t address;
         bool audio;
+        std::string selector{};
     };
     std::vector<HeldKey> held_keys_;
     bool audio_query_pending_ = false;

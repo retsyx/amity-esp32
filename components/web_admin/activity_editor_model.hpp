@@ -28,9 +28,6 @@ std::vector<Choice> choices(const config_store::ConfigurationV2&, const std::vec
     const OwnerHostnames& = {});
 std::vector<m::ActivityId> projected_activities(const config_store::ConfigurationV2&);
 std::string component_value(std::optional<m::ComponentId>);
-struct DiscoveryOwner { m::OctopusId owner; uint8_t configured_mask=0; };
-bool prepare_discovery(const config_store::ConfigurationV2&, const std::vector<DiscoveryOwner>&,
-    const std::function<bool(uint8_t*, size_t)>&, config_store::ConfigurationV2&, bool& changed, std::string& error);
 bool edit(const config_store::ConfigurationV2&, const std::vector<Row>&, const std::vector<Choice>&,
           const std::function<bool(uint8_t*, size_t)>&, config_store::ConfigurationV2&,
           std::vector<std::string>& unresolved, std::string& error);

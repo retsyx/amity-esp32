@@ -16,7 +16,7 @@ This version runs on the Amity ESP32 board. The [original Amity](https://github.
 
 ### Amity is an HDMI-CEC Controller (Not a Universal Remote)
 
-Amity controls confirmed HDMI paths using the roles supported by the connected equipment. A receiver path needs a known input/output control profile. A source connected directly to a screen can use an isolated source identity at its confirmed screen input; the screen must honor the corresponding CEC source announcement. The activity editor leaves unverified paths disabled. Built-in smart TV apps and ARC/eARC are not automatically inferred as supported routes.
+Amity uses HDMI-CEC to control the equipment selected in each activity. Display, source, audio and optional receiver-input choices keep the original Amity behavior. Equipment on another Amity device is addressed by that device, HDMI adapter, CEC side and OSD name; its owner performs the same local handling. Equipment can remain selected while it is powered off or unavailable.
 
 Amity can only control devices that support HDMI-CEC! However, devices that don't support HDMI-CEC (old game consoles, for example) can still be facilitated.
 
@@ -25,11 +25,11 @@ Amity can only control devices that support HDMI-CEC! However, devices that don'
 
 ### Development Status
 
-The development implementation follows the [multi-device control design](amity-octopus-consortium/README.md): schema-2 configuration and migration, scoped equipment discovery, guarded distributed planning, authenticated enrollment and member transport, scoped configuration and repair, explicit actuator recovery, and manifest-bound updates. The existing board defaults to **one HDMI adapter (two isolated CEC ports)**. A separate development profile supports **up to four optional HDMI adapters per device**, with a software limit of **three active devices per system**. Each device uses one shared CEC timer. Historical bench evidence covers one device and an independent passive peer; group capacity, four-adapter electrical timing, AV equipment, production security provisioning and observed novice usability need their own qualification evidence. See [implementation status](IMPLEMENTATION_STATUS.json) for exact checks and remaining qualification gates.
+The development implementation follows the [multi-device control design](amity-octopus-consortium/README.md): schema-3 activity configuration and migration, scoped equipment lookup, original local activity handling, authenticated enrollment and owner delivery, explicit device recovery, and manifest-bound updates. The existing board defaults to **one HDMI adapter (two isolated CEC ports)**. A separate development profile supports **up to four optional HDMI adapters per device**, with a software limit of **three active devices per system**. Each device uses one shared CEC timer. Historical bench evidence covers one device and an independent passive peer; group capacity, four-adapter electrical timing, AV equipment, production security provisioning and observed novice usability need their own qualification evidence. See [implementation status](IMPLEMENTATION_STATUS.json) for exact checks and remaining qualification gates.
 
-The original first-setup Amity remains the controller, hosts the only browser UI and Matter/Apple Home integration, and pairs with the sole remote. Other Amity devices are subordinate actuators with no UI. The one remote and browser can select activities for multiple screens. Amity device names equal their actual hostnames. Add requires a valid Name and applies it to the added device; main hostname changes remain in Advanced. Names are not separate cosmetic aliases, while equipment selectors, activity IDs, home-app slots and pairings remain stable. Restarted activities stay paused until explicitly started again.
+The original first-setup Amity remains the controller, hosts the only browser UI and Matter/Apple Home integration, and pairs with the sole remote. Other Amity devices are subordinate actuators with no UI. The one remote and browser can select activities for multiple screens. Amity device names equal their actual hostnames. Add requires a valid Name and applies it to the added device; main hostname changes remain in Advanced. Names are not separate cosmetic aliases, while equipment selectors, activity IDs, home-app slots and pairings remain stable. No saved current-activity/resume journal or missed input is replayed after restart.
 
-Configuration saves and discovery no longer power or route equipment. Unsolicited source activation no longer triggers automatic standby or route repair; explicitly select the activity again when needed. Preventing source-to-receiver theft requires isolating each source before its first shared CEC junction. A splice only at the receiver output cannot block traffic already shared between its sources and receiver.
+Configuration, discovery, received frames and explicit activity selection retain the original local Amity handling. Additional devices provide ownership and delivery; they do not introduce an activity-enable switch, receiver-profile approval or a new HDMI-path setup workflow.
 
 HDMI-CEC implementations vary between manufacturers, and this version of Amity has been tested with a limited range of equipment. It may work well with your system, or particular devices may need workarounds. See the [implementation and validation status](IMPLEMENTATION_STATUS.json) for the recorded checks and remaining qualification gates.
 
@@ -205,7 +205,7 @@ A short press of **Power** starts the first activity. Other activity shortcuts d
 | Atomic activity buttons 1–4 | Activities 1–4 | Activities 5–8 |
 | Siri Remote Select, Up, Right, Down, Left | Activities 1–5, in that order | Activities 6–10, in that order |
 
-These are the original stable shortcut slots. Reordering activity cards does not retarget them. The remote remains on the original controller while selecting activities for different screens.
+These shortcuts select activities by their current order in the list. The remote remains on the original controller while selecting activities for different screens.
 
 A long press of **Power** repeats the standby commands. This is useful if a device is still on when it should be off.
 
@@ -221,7 +221,7 @@ Give your equipment a few seconds to finish switching before choosing a differen
 
 ## Non-CEC Sources
 
-A source without HDMI-CEC needs a receiver with an established CEC input-control profile. The activity editor does not infer this support or guess receiver input numbers. Imported receiver activities remain available for review and stay disabled when their path cannot be validated. Use the source's own controls for its power, navigation and playback.
+For a source without HDMI-CEC, select its receiver or switch in **Switch Device** and enter the receiver input number in **Input**. Amity retains its original explicit receiver-input fallback when the source cannot be found. Use the source's own controls for its power, navigation and playback. The receiver must support the corresponding CEC input command.
 
 ## Matter
 
@@ -241,15 +241,17 @@ HomeKit has its own pairing code, separate from Matter. Removing the HomeKit ass
 
 ## Backup & Restore
 
-Open **Advanced**. In the 'Configuration' section, press 'Download' to save a portable backup, or select a backup to preview its import. Different hardware requires equipment confirmation before use. Saving a reviewed import is separate from trying an activity.
+Open **Advanced**. In the 'Configuration' section, press 'Download' to save a portable backup, or select a backup to preview its import. For replacement hardware, explicitly map saved equipment owners to the replacement devices. Missing equipment remains selected and uses ordinary lookup when an activity runs.
 
 The backup contains activities and device-specific control settings. It does not contain Wi-Fi settings, admin credentials, pairings, hostname changes, or the HDMI-CEC address. Keep the original installation folder as well; a configuration backup does not replace your pairing card or USB installation image.
 
-If the main Amity fails, disconnect/isolate it, set up replacement hardware through Matter BLE, and use the existing **Advanced** configuration upload/restore to recover saved activity/device IDs, names and order. Pair the remote and home integrations again, and factory-reset each other Amity device with the existing ten-second button hold, then open its three-to-below-ten-second Add window and re-add it through the replacement main. Its saved Add code/hardware identity survives reset; Wi-Fi and old operational trust are cleared. The backup does not copy keys, pairings or trust in the old main. Restored activities initially remain disabled; use **Scan HDMI**, then the original activity **Edit/Save** controls with fresh equipment to repair supported direct paths. Unsupported receiver/audio/switch paths remain unavailable. Restoration does not start an activity. This is manual recovery, with no automatic failover or live authority transfer.
+If the main Amity fails, disconnect/isolate it, set up replacement hardware through Matter BLE, and use the existing **Advanced** configuration upload/restore to recover saved activity/device IDs, names and order. Pair the remote and home integrations again, and factory-reset each other Amity device with the existing ten-second button hold, then open its three-to-below-ten-second Add window and re-add it through the replacement main. Its saved Add code/hardware identity survives reset; Wi-Fi and old operational trust are cleared. The backup does not copy keys, pairings or trust in the old main. Restored activities retain their original equipment and receiver-input choices. Runtime lookup reports unavailable owners or equipment without permanently disabling an activity. Restoration does not start an activity. This is manual recovery, with no automatic failover or live authority transfer.
 
 ## Firmware Updates
 
 Read the new release's notes before updating, especially before version 1.0. Normal updates preserve settings, pairings, passwords, and the original Matter setup code, but a release may require a fresh installation. Downgrades are unsupported.
+
+The qualified-lookup release uses a new saved configuration format. Existing **0.1.80** devices need a USB firmware upgrade that preserves their factory data and settings; their current browser updater rejects the new format. Follow the [existing-device upgrade instructions](BUILDING.md#upgrading-an-existing-0180-installation-to-schema-3), and do not flash a full fresh-install image over existing settings.
 
 1. Download `amity-update.bin` from the release. This one file contains the unchanged application image, its exact manifest, and the publisher signature for a signed release. Local development builds produce an unsigned update file.
 2. Open **Advanced → Update Firmware** and select `amity-update.bin`. Review the version and confirm installation.

@@ -158,7 +158,7 @@ esp_err_t stage_cohort(std::string_view manifest,std::string_view proof,std::vec
     // without maintenance; an older management-only peer uses its original
     // begin/abort protocol while execution remains quarantined by the runtime.
     for(bool legacy_phase:{false,true})for(auto target:targets)if(target!=local){
-        const auto status=peer(target);const bool legacy=status&&status->management_ready&&!(status->negotiated_capabilities&c::sequenced_operations);
+        const auto status=peer(target);const bool legacy=status&&status->management_ready&&!(status->negotiated_capabilities&c::qualified_lookup);
         if(legacy!=legacy_phase)continue;
         const auto id=fresh();c::Json response;
         const auto request="{"+base(id,release)+",\"canonical_manifest\":"+quote(manifest)+",\"signature_hex\":"+quote(proof)+(legacy?"}":",\"validate_only\":true}");

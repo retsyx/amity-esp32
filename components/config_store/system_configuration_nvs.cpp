@@ -1,5 +1,4 @@
 #include "system_configuration.hpp"
-#include "coordinator_intent.hpp"
 #include "candidate_network.hpp"
 #include "nvs_budget.hpp"
 #include "config_store.hpp"
@@ -95,8 +94,6 @@ private:
 };
 NvsConfiguration backend;
 ConfigurationStore store(backend);
-OwnerConfigurationJournal owner_store(backend);
-CoordinatorIntentJournal intent_store(backend);
 CandidateNetworkJournal candidate_network_store(backend);
 std::mutex gate;
 bool recovered = false;
@@ -142,42 +139,15 @@ esp_err_t staged_system_configuration(ConfigurationV2& out) {
     std::lock_guard<std::mutex> lock(gate); if (!store.staged()) return ESP_ERR_INVALID_STATE;
     out = *store.staged(); return ESP_OK;
 }
-esp_err_t mark_configuration_ready(model::OctopusId owner, std::string_view digest) {
-    std::lock_guard<std::mutex> lock(gate); return result(store.ready(owner, digest));
-}
-std::string staged_configuration_digest() { std::lock_guard<std::mutex> lock(gate); return store.candidate_digest(); }
-std::vector<model::OctopusId> required_staged_owners() { std::lock_guard<std::mutex> lock(gate); return store.staged_owners(); }
 esp_err_t cancel_staged_configuration() { std::lock_guard<std::mutex> lock(gate); store.cancel_stage(); return ESP_OK; }
 esp_err_t activate_system_configuration(ConfigurationV2& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); return result(store.commit(out, error));
-}
-esp_err_t configuration_applied(model::OctopusId owner, RevisionPair revisions, std::string_view hash) {
-    std::lock_guard<std::mutex> lock(gate); return result(store.applied(owner, revisions, hash));
-}
-esp_err_t persist_owner_configuration(const ConfigurationV2& config, model::OctopusId owner,
-    model::OctopusId coordinator, uint64_t epoch, std::string& error) {
-    std::lock_guard<std::mutex> lock(gate);
-    return result(owner_store.commit(config, owner, coordinator, epoch, error));
 }
 esp_err_t load_candidate_network(CandidateNetwork& out,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.recover(out,error));}
 esp_err_t stage_candidate_network(const CandidateNetwork& value,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.stage(value,error));}
 esp_err_t decide_candidate_network(model::JoinId join,const std::string& digest,bool use_candidate,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.decide(join,digest,use_candidate,error));}
 esp_err_t finish_candidate_network(model::JoinId join,const std::string& digest,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.finish(join,digest,error));}
 esp_err_t abandon_candidate_network(model::JoinId join,const std::string& digest,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.abandon(join,digest,error));}
-esp_err_t remember_requested_session(model::ConsortiumId consortium, model::ZoneId zone, std::optional<model::ActivityId> activity, std::string& error) {
-    std::lock_guard<std::mutex> lock(gate); return result(intent_store.request(consortium, zone, activity, error));
-}
-esp_err_t load_last_requested_sessions(model::ConsortiumId consortium, std::vector<RequestedSession>& out, std::string& error) {
-    std::lock_guard<std::mutex> lock(gate); CoordinatorIntent intent; auto status = intent_store.recover(intent, error);
-    if (status != ConfigResult::ok) return result(status);
-    if (intent.consortium_id != consortium) return ESP_ERR_INVALID_STATE;
-    out = std::move(intent.last_requested_sessions); return ESP_OK;
-}
-esp_err_t load_owner_configuration(ConfigurationV2& out, std::string& error) {
-    std::lock_guard<std::mutex> lock(gate);
-    model::OctopusId owner, coordinator; uint64_t epoch = 0;
-    return result(owner_store.recover(out, owner, coordinator, epoch, error));
-}
 esp_err_t migrate_system_configuration(const std::string& original, const LegacyConfiguration& legacy, model::ConsortiumId consortium,
     model::OctopusId octopus, const std::vector<LegacyEvidence>& evidence, ConfigurationV2& out, std::vector<std::string>& tasks, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); const auto status = recover_once(error);

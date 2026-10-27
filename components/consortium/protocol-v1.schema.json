@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json",
-  "title": "Bounded consortium v1 implemented payload contracts",
-  "$comment": "Implemented bounded protocol payload contracts. Envelopes require current authenticated membership, exact boots/epoch/config, receiver leases and committed owner policy. Snapshot chunks carry at most2048 decoded bytes; manifests require exact identity/hash/length/revision and ordered ACKs. Plan/control types grant no raw CEC and are validated against persisted selectors and live bindings.",
+  "title": "Implemented authenticated owner intents and Amity management payloads",
+  "$comment": "Closed typed owner delivery plus existing management. Scoped recipients resolve locally; no persisted enabled, route/binding/domain/resource approvals or prepared execution plans. Exact membership/boot/config/input authorization remains runtime enforcement.",
   "$defs": {
     "Hello": {
       "type": "object",
@@ -387,166 +387,6 @@
         }
       ]
     },
-    "HoldRelease": {
-      "type": "object",
-      "properties": {
-        "plan_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "hold_token": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        }
-      },
-      "required": [
-        "plan_id",
-        "session_id",
-        "hold_token",
-        "route_generation"
-      ],
-      "additionalProperties": false
-    },
-    "BindingUpdate": {
-      "type": "object",
-      "properties": {
-        "resolution_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "device_name": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
-        },
-        "observation_boot_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "observation_sequence": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "bindings": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "expected_binding_revision": {
-                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-              },
-              "binding": {
-                "allOf": [
-                  {
-                    "$ref": "https://amity.invalid/design/v0.1/component-binding.schema.json"
-                  },
-                  {
-                    "properties": {
-                      "binding_kind": {
-                        "const": "native_appliance"
-                      }
-                    },
-                    "required": [
-                      "device_name"
-                    ]
-                  }
-                ]
-              }
-            },
-            "required": [
-              "expected_binding_revision",
-              "binding"
-            ],
-            "additionalProperties": false
-          },
-          "minItems": 1,
-          "maxItems": 8
-        }
-      },
-      "required": [
-        "resolution_id",
-        "device_name",
-        "observation_boot_id",
-        "observation_sequence",
-        "bindings"
-      ],
-      "additionalProperties": false
-    },
-    "BindingResult": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "resolution_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "result": {
-              "const": "applied"
-            },
-            "bindings": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "binding_id": {
-                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-                  },
-                  "binding_revision": {
-                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-                  }
-                },
-                "required": [
-                  "binding_id",
-                  "binding_revision"
-                ],
-                "additionalProperties": false
-              },
-              "minItems": 1,
-              "maxItems": 8
-            }
-          },
-          "required": [
-            "resolution_id",
-            "result",
-            "bindings"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "resolution_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "result": {
-              "const": "rejected"
-            },
-            "bindings": {
-              "type": "array",
-              "items": {},
-              "minItems": 0,
-              "maxItems": 0
-            },
-            "error": {
-              "enum": [
-                "STALE_BINDING",
-                "STALE_DOMAIN",
-                "STALE_BOOT",
-                "STALE_CONFIG",
-                "INVALID_MESSAGE",
-                "NOT_READY"
-              ]
-            }
-          },
-          "required": [
-            "resolution_id",
-            "result",
-            "bindings",
-            "error"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
     "EnrollmentControl": {
       "oneOf": [
         {
@@ -863,485 +703,6 @@
         }
       ]
     },
-    "PlanContext": {
-      "type": "object",
-      "properties": {
-        "plan_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "policy_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "plan_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "policy_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        }
-      },
-      "required": [
-        "plan_id",
-        "session_id",
-        "route_generation",
-        "policy_generation",
-        "plan_digest",
-        "policy_hash"
-      ],
-      "additionalProperties": false
-    },
-    "BindingRequirement": {
-      "type": "object",
-      "properties": {
-        "binding_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "component_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "domain_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "binding_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "domain_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "target": {
-          "$ref": "https://amity.invalid/design/v0.1/cec-address.schema.json"
-        }
-      },
-      "required": [
-        "binding_id",
-        "component_id",
-        "domain_id",
-        "binding_revision",
-        "domain_revision",
-        "target"
-      ],
-      "additionalProperties": false
-    },
-    "PreparedGrant": {
-      "type": "object",
-      "properties": {
-        "binding_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "permitted_paths": {
-          "type": "array",
-          "items": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65534
-          },
-          "minItems": 0,
-          "maxItems": 16
-        }
-      },
-      "required": [
-        "binding_id",
-        "permitted_paths"
-      ],
-      "additionalProperties": false
-    },
-    "PlanPrepare": {
-      "type": "object",
-      "properties": {
-        "plan_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "policy_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "plan_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "policy_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "activity_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "zone_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "operation_capacity": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 64
-        },
-        "bindings": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/BindingRequirement"
-          },
-          "minItems": 1,
-          "maxItems": 8
-        },
-        "grants": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/PreparedGrant"
-          },
-          "minItems": 0,
-          "maxItems": 8
-        }
-      },
-      "required": [
-        "plan_id",
-        "session_id",
-        "route_generation",
-        "policy_generation",
-        "plan_digest",
-        "policy_hash",
-        "activity_id",
-        "zone_id",
-        "route_id",
-        "operation_capacity",
-        "bindings",
-        "grants"
-      ],
-      "additionalProperties": false
-    },
-    "PlanBarrier": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "plan_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "session_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "route_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            "policy_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            "plan_digest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "minLength": 64,
-              "maxLength": 64
-            },
-            "policy_hash": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "minLength": 64,
-              "maxLength": 64
-            },
-            "phase": {
-              "const": "fence"
-            },
-            "old_session_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "old_route_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            }
-          },
-          "required": [
-            "plan_id",
-            "session_id",
-            "route_generation",
-            "policy_generation",
-            "plan_digest",
-            "policy_hash",
-            "phase"
-          ],
-          "additionalProperties": false,
-          "dependentRequired": {
-            "old_session_id": [
-              "old_route_generation"
-            ],
-            "old_route_generation": [
-              "old_session_id"
-            ]
-          }
-        },
-        {
-          "type": "object",
-          "properties": {
-            "plan_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "session_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "route_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            "policy_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            "plan_digest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "minLength": 64,
-              "maxLength": 64
-            },
-            "policy_hash": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "minLength": 64,
-              "maxLength": 64
-            },
-            "phase": {
-              "const": "activate"
-            },
-            "authority_ttl_ms": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 5000
-            }
-          },
-          "required": [
-            "plan_id",
-            "session_id",
-            "route_generation",
-            "policy_generation",
-            "plan_digest",
-            "policy_hash",
-            "phase",
-            "authority_ttl_ms"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "plan_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "session_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            },
-            "route_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            "policy_generation": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            "plan_digest": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "minLength": 64,
-              "maxLength": 64
-            },
-            "policy_hash": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "minLength": 64,
-              "maxLength": 64
-            },
-            "phase": {
-              "const": "renew"
-            },
-            "authority_ttl_ms": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 5000
-            },
-            "execution_lease_id": {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-            }
-          },
-          "required": [
-            "plan_id",
-            "session_id",
-            "route_generation",
-            "policy_generation",
-            "plan_digest",
-            "policy_hash",
-            "phase",
-            "authority_ttl_ms",
-            "execution_lease_id"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
-    "PlanAbort": {
-      "$ref": "#/$defs/PlanContext"
-    },
-    "PlanResult": {
-      "type": "object",
-      "properties": {
-        "plan_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "policy_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "plan_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "policy_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "phase": {
-          "enum": [
-            "prepare",
-            "fence",
-            "activate",
-            "abort"
-          ]
-        },
-        "result": {
-          "enum": [
-            "ready",
-            "quiescent",
-            "applied",
-            "aborted",
-            "pending",
-            "rejected"
-          ]
-        },
-        "error": {
-          "type": "string",
-          "maxLength": 32
-        }
-      },
-      "required": [
-        "plan_id",
-        "session_id",
-        "route_generation",
-        "policy_generation",
-        "plan_digest",
-        "policy_hash",
-        "phase",
-        "result"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "const": "ready"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "phase": {
-                "const": "prepare"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "const": "quiescent"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "phase": {
-                "const": "fence"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "const": "applied"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "phase": {
-                "const": "activate"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "const": "aborted"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "phase": {
-                "const": "abort"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "const": "rejected"
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "error"
-            ]
-          },
-          "else": {
-            "not": {
-              "required": [
-                "error"
-              ]
-            }
-          }
-        }
-      ]
-    },
     "SnapshotRequest": {
       "type": "object",
       "properties": {
@@ -1444,245 +805,6 @@
         "data"
       ],
       "additionalProperties": false
-    },
-    "ConfigPrepare": {
-      "type": "object",
-      "properties": {
-        "config_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "presentation_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "owner_boot_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "payload_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "policy_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "phase": {
-          "const": "prepare"
-        }
-      },
-      "required": [
-        "config_revision",
-        "presentation_revision",
-        "owner_boot_id",
-        "payload_hash",
-        "policy_hash",
-        "phase"
-      ],
-      "additionalProperties": false
-    },
-    "ConfigActivate": {
-      "type": "object",
-      "properties": {
-        "config_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "presentation_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "owner_boot_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "payload_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "policy_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "phase": {
-          "const": "activate"
-        }
-      },
-      "required": [
-        "config_revision",
-        "presentation_revision",
-        "owner_boot_id",
-        "payload_hash",
-        "policy_hash",
-        "phase"
-      ],
-      "additionalProperties": false
-    },
-    "ConfigResult": {
-      "type": "object",
-      "properties": {
-        "config_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "presentation_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "owner_boot_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "payload_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "policy_hash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "phase": {
-          "enum": [
-            "prepare",
-            "activate"
-          ]
-        },
-        "result": {
-          "enum": [
-            "ready",
-            "applied",
-            "rejected"
-          ]
-        },
-        "error": {
-          "enum": [
-            "STALE_BOOT",
-            "STALE_CONFIG",
-            "INVALID_MESSAGE",
-            "NOT_READY",
-            "STORAGE_FAILURE",
-            "QUEUE_FULL"
-          ]
-        }
-      },
-      "required": [
-        "config_revision",
-        "presentation_revision",
-        "owner_boot_id",
-        "payload_hash",
-        "policy_hash",
-        "phase",
-        "result"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "const": "rejected"
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "error"
-            ]
-          },
-          "else": {
-            "not": {
-              "required": [
-                "error"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "OperationResult": {
-      "type": "object",
-      "properties": {
-        "command_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "plan_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "result": {
-          "enum": [
-            "admitted",
-            "applied",
-            "observed",
-            "rejected",
-            "timed_out",
-            "unknown"
-          ]
-        },
-        "error": {
-          "enum": [
-            "STALE_BOOT",
-            "STALE_CONFIG",
-            "STALE_BINDING",
-            "STALE_DOMAIN",
-            "STALE_ROUTE",
-            "LEASE_EXPIRED",
-            "NOT_READY",
-            "QUEUE_FULL",
-            "INVALID_MESSAGE",
-            "UNSUPPORTED_CAPABILITY",
-            "UNKNOWN_OUTCOME",
-            "nack",
-            "arbitration_lost",
-            "canceled",
-            "expired",
-            "line_error",
-            "admission_rejected"
-          ]
-        }
-      },
-      "required": [
-        "command_id",
-        "plan_id",
-        "session_id",
-        "route_generation",
-        "result"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "result": {
-                "enum": [
-                  "admitted",
-                  "applied",
-                  "observed"
-                ]
-              }
-            }
-          },
-          "then": {
-            "not": {
-              "required": [
-                "error"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    "ExecutionLease": {
-      "$ref": "#/$defs/Lease"
     },
     "UpdateBegin": {
       "type": "object",
@@ -1939,262 +1061,6 @@
         "error"
       ],
       "additionalProperties": false
-    },
-    "ScanRequest": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "execution_lease_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        }
-      },
-      "required": [
-        "request_id",
-        "execution_lease_id"
-      ],
-      "additionalProperties": false
-    },
-    "ScanResult": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "result": {
-          "enum": [
-            "admitted",
-            "rejected"
-          ]
-        },
-        "error": {
-          "enum": [
-            "",
-            "NOT_READY",
-            "LEASE_EXPIRED"
-          ]
-        }
-      },
-      "required": [
-        "request_id",
-        "result",
-        "error"
-      ],
-      "additionalProperties": false
-    },
-    "Operation": {
-      "type": "object",
-      "properties": {
-        "command_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "plan_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "component_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "binding_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "domain_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "execution_lease_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "binding_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "domain_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "target": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/FullyQualifiedCecAddress"
-        },
-        "operation": {
-          "enum": [
-            "ensure_power",
-            "select_route",
-            "announce_active_source",
-            "key_press",
-            "query_state"
-          ]
-        },
-        "arguments": {
-          "type": "object"
-        },
-        "command_sequence": {
-          "allOf": [
-            {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            {
-              "not": {
-                "const": "0"
-              }
-            }
-          ]
-        }
-      },
-      "required": [
-        "command_id",
-        "plan_id",
-        "session_id",
-        "component_id",
-        "binding_id",
-        "domain_id",
-        "execution_lease_id",
-        "route_generation",
-        "binding_revision",
-        "domain_revision",
-        "target",
-        "operation",
-        "arguments",
-        "command_sequence"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "ensure_power"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "on": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "on"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "select_route"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "route_id": {
-                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-                  }
-                },
-                "required": [
-                  "route_id"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "announce_active_source"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "key_press"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "key_code": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 255
-                  },
-                  "hold_token": {
-                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-                  },
-                  "repeat": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "key_code",
-                  "hold_token",
-                  "repeat"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "query_state"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "field": {
-                    "enum": [
-                      "power",
-                      "audio"
-                    ]
-                  }
-                },
-                "required": [
-                  "field"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        }
-      ]
     },
     "RelayReserve": {
       "type": "object",
@@ -3106,6 +1972,689 @@
               }
             ]
           }
+        }
+      ]
+    },
+    "ScopedIntent": {
+      "type": "object",
+      "properties": {
+        "execution_lease_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "generation": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
+        },
+        "sequence": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "consortium_id": {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+            },
+            "octopus_id": {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+            },
+            "tentacle_id": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            "side": {
+              "enum": [
+                "front",
+                "back"
+              ]
+            },
+            "osd_name": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 14,
+              "description": "Exact nonempty OSD text from the shared CEC decoder, not the UI label. No case folding or trimming. The decoder also enforces the CEC payload octet budget; this schema checks decoded text only."
+            }
+          },
+          "required": [
+            "consortium_id",
+            "octopus_id",
+            "tentacle_id",
+            "side",
+            "osd_name"
+          ],
+          "additionalProperties": false,
+          "description": "Persisted qualified device selector. Discovery resolves its exact OSD name to a separate runtime CEC address; no logical address is stored here."
+        },
+        "action": {
+          "enum": [
+            "power",
+            "source_input",
+            "switch_input",
+            "announce_active_source",
+            "query_audio",
+            "key_down",
+            "key_up",
+            "context",
+            "standby_wire",
+            "discover"
+          ]
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "setup_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "execution_lease_id",
+        "generation",
+        "sequence",
+        "target",
+        "action",
+        "arguments",
+        "setup_generation"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "power"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  },
+                  "apply_quirks": {
+                    "type": "boolean"
+                  },
+                  "quirks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "vendor_id": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 16777215
+                        },
+                        "power_on": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          "minItems": 0,
+                          "maxItems": 15
+                        },
+                        "power_off": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          "minItems": 0,
+                          "maxItems": 15
+                        }
+                      },
+                      "required": [
+                        "vendor_id",
+                        "power_on",
+                        "power_off"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 0,
+                    "maxItems": 32
+                  }
+                },
+                "required": [
+                  "on",
+                  "apply_quirks",
+                  "quirks"
+                ],
+                "additionalProperties": false
+              },
+              "target": {
+                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "source_input"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              },
+              "target": {
+                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "switch_input"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  }
+                },
+                "required": [
+                  "input"
+                ],
+                "additionalProperties": false
+              },
+              "target": {
+                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "announce_active_source"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "query_audio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              },
+              "target": {
+                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "key_down"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "repeat": {
+                    "type": "boolean"
+                  },
+                  "token": {
+                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+                  }
+                },
+                "required": [
+                  "key",
+                  "repeat",
+                  "token"
+                ],
+                "additionalProperties": false
+              },
+              "target": {
+                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "key_up"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "token": {
+                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+                  }
+                },
+                "required": [
+                  "key",
+                  "token"
+                ],
+                "additionalProperties": false
+              },
+              "target": {
+                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "context"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {
+                  "selected": {
+                    "type": "boolean"
+                  },
+                  "source_changed": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "anyOf": [
+                      {
+                        "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "audio": {
+                    "anyOf": [
+                      {
+                        "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "display": {
+                    "anyOf": [
+                      {
+                        "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "switch_device": {
+                    "anyOf": [
+                      {
+                        "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "input": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  }
+                },
+                "required": [
+                  "selected",
+                  "source_changed",
+                  "source",
+                  "audio",
+                  "display",
+                  "switch_device",
+                  "input"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "standby_wire"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "discover"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "OwnedAdapterSnapshot": {
+      "type": "object",
+      "properties": {
+        "owner": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "boot": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "adapter": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "front_address": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "back_address": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "front_physical_address": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "discovering": {
+          "type": "boolean"
+        },
+        "discovery_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "audio_status_known": {
+          "type": "boolean"
+        },
+        "muted": {
+          "type": "boolean"
+        },
+        "volume": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "side": {
+                "enum": [
+                  "front",
+                  "back"
+                ]
+              },
+              "osd_name": {
+                "type": "string",
+                "maxLength": 14
+              },
+              "logical_address": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 14
+              },
+              "physical_address": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "device_type": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "vendor_id": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 16777215
+              },
+              "resolved": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "side",
+              "osd_name",
+              "logical_address",
+              "physical_address",
+              "device_type",
+              "vendor_id",
+              "resolved"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "resolved": {
+                      "const": true
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "osd_name": {
+                      "minLength": 1,
+                      "pattern": "^[^\\x00-\\x1f\\x7f]*$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 30
+        },
+        "setup_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "setup_last_sequence": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+        },
+        "setup_pending": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "setup_replies_pending": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "owner",
+        "boot",
+        "adapter",
+        "front_address",
+        "back_address",
+        "front_physical_address",
+        "ready",
+        "discovering",
+        "discovery_generation",
+        "audio_status_known",
+        "muted",
+        "volume",
+        "devices",
+        "setup_generation",
+        "setup_last_sequence",
+        "setup_pending",
+        "setup_replies_pending"
+      ],
+      "additionalProperties": false
+    },
+    "ScopedResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "snapshot": {
+              "$ref": "#/$defs/OwnedAdapterSnapshot"
+            }
+          },
+          "required": [
+            "snapshot"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input_result": {
+              "type": "object",
+              "properties": {
+                "generation": {
+                  "allOf": [
+                    {
+                      "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+                    },
+                    {
+                      "not": {
+                        "const": "0"
+                      }
+                    }
+                  ]
+                },
+                "sequence": {
+                  "allOf": [
+                    {
+                      "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+                    },
+                    {
+                      "not": {
+                        "const": "0"
+                      }
+                    }
+                  ]
+                },
+                "source_present": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "generation",
+                "sequence",
+                "source_present"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "input_result"
+          ],
+          "additionalProperties": false
         }
       ]
     }

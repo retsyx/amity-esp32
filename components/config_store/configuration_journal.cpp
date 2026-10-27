@@ -39,7 +39,7 @@ bool verified(ConfigBackend& backend, const char* key, const std::string& payloa
 }
 std::string record(const ConfigurationV2& config) {
     const auto payload = serialize_configuration_v2(config);
-    return "AMITY2\n" + config.consortium_id.str() + "\n" + model::format_uint64(config.config_revision) + "\n" +
+    return "AMITY3\n" + config.consortium_id.str() + "\n" + model::format_uint64(config.config_revision) + "\n" +
         model::format_uint64(config.presentation_revision) + "\n" + model::format_uint64(payload.size()) + "\n" + sha256_hex(payload) + "\n" + payload;
 }
 bool decode_record(const std::string& value, ConfigurationV2& out, std::string& error) {
@@ -50,21 +50,13 @@ bool decode_record(const std::string& value, ConfigurationV2& out, std::string& 
     }
     auto consortium = model::ConsortiumId::parse(fields[1]); auto semantic = model::parse_uint64(fields[2]);
     auto presentation = model::parse_uint64(fields[3]); auto length = model::parse_uint64(fields[4]);
-    if (fields[0] != "AMITY2" || !consortium || !semantic || !presentation || !length || *length != input.size() || *length > configuration_compatibility_limit ||
+    if ((fields[0] != "AMITY2" && fields[0] != "AMITY3") || !consortium || !semantic || !presentation || !length || *length != input.size() || *length > configuration_compatibility_limit ||
         sha256_hex(input) != fields[5] || !parse_configuration_v2(std::string(input), out, error) || out.consortium_id != *consortium ||
-        out.config_revision != *semantic || out.presentation_revision != *presentation || serialize_configuration_v2(out) != input) {
+        out.config_revision != *semantic || out.presentation_revision != *presentation || (!out.legacy_encoding && serialize_configuration_v2(out) != input)) {
         if (error.empty()) error = "Configuration record metadata, canonical payload, or digest mismatch";
         return false;
     }
     return true;
-}
-std::vector<model::OctopusId> owners(const ConfigurationV2& c) {
-    std::vector<model::OctopusId> result;
-    auto add = [&](model::OctopusId id) { if (std::find(result.begin(), result.end(), id) == result.end()) result.push_back(id); };
-    for (const auto& b : c.binding_policies) add(b.port.octopus_id);
-    for (const auto& d : c.domains) { if (d.confirmed) add(d.owner_octopus_id); for (const auto& p : d.ports) add(p.port.octopus_id); }
-    for (const auto& r : c.resources) add(r.owner_octopus_id);
-    return result;
 }
 std::string presentation_hash(const ConfigurationV2& c) {
     auto encoded = serialize_configuration_v2(c); auto* root = cJSON_Parse(encoded.c_str()); if (!root) return {};
@@ -92,13 +84,13 @@ ConfigResult ConfigurationStore::recover(ConfigurationV2& out, std::string& erro
     if (status != ConfigResult::ok) return status;
     ConfigurationV2 config; if (!decode_record(payload, config, error)) return ConfigResult::recovery_required;
     active_ = config; generation_ = selected.generation; active_slot_ = selected.slot; candidate_.reset();
-    candidate_digest_.clear(); required_ = owners(config); ready_.clear(); applied_.clear(); out = std::move(config);
+    out = std::move(config);
     backend_.erase(selected.slot ? "c0" : "c1");
     std::string migration; if (backend_.read("migration_map", migration) == ReadResult::found) backend_.erase("migration_map");
     // Only after the selected complete record is proven may superseded,
     // nonsecret wizard/promotion artifacts be reclaimed. Keep the original
     // legacy backup and identity seed, which are independent recovery data.
-    for(const auto* key:{"d0","d1","dm0","dm1","hprepare","hauthority"})backend_.erase(key);
+    for(const auto* key:{"d0","d1","dm0","dm1","hprepare","hauthority","intent0","intent1","imark0","imark1","slice0","slice1","smark0","smark1"})backend_.erase(key);
     return ConfigResult::ok;
 }
 ConfigResult ConfigurationStore::stage(ConfigurationV2 candidate, RevisionPair expected, std::string& error) {
@@ -107,7 +99,7 @@ ConfigResult ConfigurationStore::stage(ConfigurationV2 candidate, RevisionPair e
     if ((active_ && expected != active_->revisions()) || (!active_ && expected != RevisionPair{})) { error = "Configuration or presentation revision changed"; return ConfigResult::conflict; }
     if (generation_ == std::numeric_limits<uint64_t>::max()) { error = "Storage generation exhausted"; return ConfigResult::recovery_required; }
     if(!validate_configuration_v2(candidate,error))return ConfigResult::invalid;
-    candidate.legacy_remote_configuration.clear();
+
     bool semantic = true;
     if (active_) {
         if (candidate.consortium_id != active_->consortium_id) { error = "Import cannot replace consortium authority"; return ConfigResult::invalid; }
@@ -132,24 +124,16 @@ ConfigResult ConfigurationStore::stage(ConfigurationV2 candidate, RevisionPair e
     if (encoded.size() > configuration_payload_limit) { error = "Candidate exceeds the16KiB payload capacity for this board"; return ConfigResult::capacity; }
     const auto complete_record = record(candidate); const auto inactive = active_slot_ ? 0u : 1u;
     if (write_verified(inactive ? "c1" : "c0", complete_record) != ConfigResult::ok) { error = "Candidate write/readback failed; old active record retained"; return ConfigResult::storage_error; }
-    candidate_digest_ = sha256_hex(encoded); candidate_ = std::move(candidate);
-    previous_required_ = required_; previous_applied_ = applied_;
-    required_ = semantic ? owners(*candidate_) : std::vector<model::OctopusId>{}; ready_.clear(); return ConfigResult::ok;
-}
-ConfigResult ConfigurationStore::ready(model::OctopusId owner, std::string_view digest) {
-    if (!candidate_ || digest != candidate_digest_ || std::find(required_.begin(), required_.end(), owner) == required_.end()) return ConfigResult::not_ready;
-    if (std::find(ready_.begin(), ready_.end(), owner) == ready_.end()) ready_.push_back(owner);
-    return ConfigResult::ok;
+    candidate_ = std::move(candidate); return ConfigResult::ok;
 }
 ConfigResult ConfigurationStore::commit(ConfigurationV2& out, std::string& error) {
-    if (!candidate_ || ready_.size() != required_.size()) { error = "Required owners have not acknowledged the exact staged payload"; return ConfigResult::not_ready; }
+    if (!candidate_) { error = "No configuration transaction is staged"; return ConfigResult::not_ready; }
     const unsigned slot = active_slot_ ? 0u : 1u; const auto complete = record(*candidate_); std::string reread;
     if (backend_.read(slot ? "c1" : "c0", reread) != ReadResult::found || reread != complete) { error = "Staged candidate changed before commit"; return ConfigResult::recovery_required; }
     const Marker next{generation_ + 1, slot, sha256_hex(complete)};
     if (write_verified(slot ? "cm1" : "cm0", marker_text(next)) != ConfigResult::ok) { error = "Activation marker write/readback failed"; return ConfigResult::storage_error; }
     // This is the durable decision, not an assertion of simultaneous effects.
     active_ = candidate_; candidate_.reset(); generation_ = next.generation; active_slot_ = slot; out = *active_;
-    applied_.clear(); previous_required_.clear(); previous_applied_.clear();
     // Prove the selected complete payload again after the durable marker. Only
     // obsolete records may be reclaimed; the only committed record is retained.
     std::string committed;
@@ -159,16 +143,6 @@ ConfigResult ConfigurationStore::commit(ConfigurationV2& out, std::string& error
     if (backend_.read("migration_map", migration) == ReadResult::found) backend_.erase("migration_map");
     return ConfigResult::ok;
 }
-void ConfigurationStore::cancel_stage() {
-    if (!candidate_) return;
-    candidate_.reset(); candidate_digest_.clear(); ready_.clear();
-    required_ = previous_required_; applied_ = previous_applied_; previous_required_.clear(); previous_applied_.clear();
-}
-ConfigResult ConfigurationStore::applied(model::OctopusId owner, RevisionPair revisions, std::string_view hash) {
-    if (!active_ || active_->revisions() != revisions || executable_policy_hash(*active_) != hash || std::find(required_.begin(), required_.end(), owner) == required_.end()) return ConfigResult::not_ready;
-    if (std::find(applied_.begin(), applied_.end(), owner) == applied_.end()) applied_.push_back(owner);
-    return ConfigResult::ok;
-}
-bool ConfigurationStore::activation_complete() const { return active_ && applied_.size() == required_.size(); }
+void ConfigurationStore::cancel_stage() { candidate_.reset(); }
 
 } // namespace config_store

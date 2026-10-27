@@ -1,6 +1,7 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "amity/consortium/session.hpp"
+#include "amity/system/owned_intent.hpp"
 #include "esp_err.h"
 #include <functional>
 namespace amity::consortium {
@@ -74,6 +75,8 @@ struct RuntimeControlHooks {
     // Exact receiver-local deadline and immutable authenticated TLS link.
     std::function<Error(model::OctopusId,const Envelope &,uint64_t,model::LinkId)> control;
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;
+    // Queue current nonemitting context before the first positive owner action.
+    std::function<bool(model::OctopusId)> ready = {};
 };
 void runtime_control_hooks(RuntimeControlHooks);
 struct RuntimeLifecycleHooks {
@@ -90,7 +93,6 @@ esp_err_t runtime_finish_reclaim(std::function<esp_err_t()> preserve_network = {
 esp_err_t runtime_reclaim_membership(model::OctopusId confirmed_local_id);
 
 esp_err_t runtime_send_control(model::OctopusId,Kind,std::string payload,uint32_t ttl_ms=1000);
-esp_err_t runtime_send_cleanup(model::OctopusId,std::string payload,model::LinkId expected_link,uint32_t ttl_ms=2000);
 struct RuntimeSettingsHooks {
     std::function<std::string()> snapshot;
     std::function<Error(model::MessageId,const Json&,uint64_t receiver_deadline_ms,std::string& response)> apply;
@@ -125,12 +127,13 @@ struct RuntimePeerStatus {
 std::vector<RuntimePeerStatus> runtime_peers();
 // Bounded public metadata retained offline/after removal. Never an allowlist.
 std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames();
-// Exact semantic ingress is delivered only after mTLS, sync and current leases.
-// Callback is the SystemControl owner, runs outside GAP/CEC timing callbacks.
-using RuntimeOperation = std::function<Error(const Operation &,const Envelope &,uint64_t receiver_deadline,model::LinkId)>;
-void runtime_operation_handler(RuntimeOperation);
+// Delivery and live authorization for original Amity actions.
+esp_err_t runtime_send_owned(const model::OwnedIntent&);
+esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,std::string payload,uint32_t ttl_ms=1000);
+void runtime_fence_owned_link(model::OctopusId,model::LinkId);
+uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
+bool runtime_owned_authorized(const model::OwnedAuthorization&);
 std::optional<model::LinkId> runtime_link_id(model::OctopusId,model::BootId);
-esp_err_t runtime_send_operation(model::OctopusId,const Operation &,model::LinkId expected_link,uint32_t ttl_ms=1000);
 // Explicit physical USB-assisted bootstrap provisioning. Input must be generated
 // by the provisioning tool. No password/verifier is generated automatically.
 esp_err_t runtime_crypto_self_test();

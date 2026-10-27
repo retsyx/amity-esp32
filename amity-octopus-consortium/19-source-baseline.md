@@ -1,82 +1,23 @@
-# 19 — Source baseline and evidence
+# Authoritative local behavior and comparison sources
 
-**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+The authoritative behavior baseline is local Amity at `98e64a6`, plus the user's explicit amendments in [AGENTS.md](../AGENTS.md). The earlier design pin `d50af8026938797fc0820d0107f4c4e064c2d2bc` is historical source evidence only where behavior is unchanged. Local `main` branch position alone does not supersede the recorded merge baseline.
 
-**Reviewed:** 20 October 2026. **Repository baseline:** [`d50af8026938797fc0820d0107f4c4e064c2d2bc`](https://github.com/retsyx/amity-esp32/tree/d50af8026938797fc0820d0107f4c4e064c2d2bc), “Dynamic determination of front side physical address.” The documentation is a proposal against this snapshot. Future implementing agents must inspect upstream changes before applying these findings.
+## Sources to compare before changes
 
-**21 October 2026 algorithm-preservation amendment:** this commit is the authoritative baseline for original Amity algorithms and functionality, not merely historical context. Preserve its behavior unless the user explicitly requests a change. The consortium adds ownership and transport around the original algorithms; earlier proposals do not authorize algorithm changes. Read the [normative preservation rule](21-original-controller-policy.md#original-algorithms-and-functionality-amendment--21-october-2026) and repository-wide [AGENTS.md](../AGENTS.md). Explicit user amendments remain in force.
+- `components/amity_hub/hub.cpp` and `include/amity/hub.hpp`: activity fields, selective power, source routing/switch fallback, quirks, received frames, metadata, held recipients and audio/playback state.
+- `components/amity_hub/hub_service.cpp`: owner-task input/RX/setup/discovery sequencing, original allocation/back-first PA selection, asynchronous CEC submission and completion handling.
+- `components/ble_remote`, `main/swipe_sequence.hpp` and original controller input code: HID/Siri recognition, macros, input gate, gesture sequence and cancellation.
+- `components/cec`: mechanical transmit admission, wire protocol/timing, attempts/results and the eight-slot FIFO.
+- Baseline UI sources and the approved presentation baseline `aa9395aaecdc861e1d4cce040079a5ac6121e67d`: original workflow plus explicitly approved visual changes.
 
-**Explicit subsequent exceptions:** the user removes key-press retries, makes key TX failure end that key's pressed state and repetition with later button-up a no-op, derives implicit global release from recipient stream end only when all its keys cease being pressed (including last-key failure), removes all executor outgoing-message buffering, and requires CEC to be a mechanical sender with the sole FIFO with eight total messages per wire. Button state and message choices remain in the executor. The historical facts below explain the baseline; they do not override these [explicit amendments](21-original-controller-policy.md#executor-and-cec-boundary-amendment--21-october-2026).
+Use `git show 98e64a6:<path>` and the relevant baseline tests when comparing changed code. Do not copy an older algorithm merely because its design document contains a detailed proposal.
 
-## 1. Source requirements
+## Necessary distributed adaptation
 
-[Amity issue 1 — The Octopus](https://github.com/retsyx/amity/issues/1) requests additional CEC splices for multiple displays, direct-TV playback devices and suppression of source theft before the switching device reacts. Its secondary-output discussion is an example of receiver behavior, not proof that every receiver has the same CEC wiring. It explicitly does not claim that splicing direct sources enables built-in TV applications.
+Save a qualified owner/adapter/side/OSD selector instead of treating names as globally unique. Resolve the owner at the controller and equipment at that owner; deliver original typed intents/state in causal order. Keep authentication and boot/input fences so stale work cannot reach another endpoint. Keep exact admitted held recipients for cleanup. These changes must preserve the baseline's CEC frames, order, attempts, admission, input lifecycle, discovery/PA and AVR/switch behavior.
 
-[Amity issue 2 — The Consortium](https://github.com/retsyx/amity/issues/2) proposes clustered Amities, potentially octopuses, for physically distributed systems such as a living-room TV and remote AV rack. Neither issue specifies a wire protocol, security authority or election algorithm. The coordinator, transport, ID and enrollment choices in this package are proposed design decisions.
+The removed graph model added persistent enabled and route/capability/resource approvals that blocked original AVR/switch activities. It is not part of the baseline and is not required by transport. Migration, UI or tests must not retain that alternative policy.
 
-The user now limits each ESP32 to four pass-throughs, with the default build retaining one, and additionally requested agent-oriented implementation documents, BLE/Matter coexistence, message routing, HDMI scanning and fully qualified names containing octopus/tentacle scope. The user clarified that configured device names must use OSD names, while changing logical addresses are resolved at runtime. The earlier scenario adds TV, projector and shared-receiver routing and easy group addition/removal.
+## Evidence limits
 
-## 2. SDK pins
-
-From the repository's [SDK_VERSIONS.txt](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/SDK_VERSIONS.txt):
-
-| Dependency | Pinned revision |
-|---|---|
-| ESP-IDF, project 6.1 baseline | `fff9895c82d744c7237be8847347bdd1b07c6643` |
-| ESP-Matter | `59574f3fb62fddc690b4127fd3a4a43cfce4245e` |
-| ConnectedHomeIP | `539342f32d5f4dc93761c2f9325afe29270068f1` |
-| Vendored HomeKit subset | `676fabac4a4a05184be020611cb069faa0016411` |
-
-The implementation must recheck exact pinned headers and behavior when changing these versions. Current online “latest” documentation is supporting context, not a substitute for pinned integration tests.
-
-## 3. Existing implementation facts and implications
-
-| Existing fact | Source | Design implication |
-|---|---|---|
-| One global HubService with one front/back pair and one selected activity. | [main.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/main/main.cpp), [hub.hpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/include/amity/hub.hpp) | Introduce SystemControl/GroupService and explicit local executors; do not instantiate competing hubs. |
-| Activities resolve by OSD name; the resolver already follows a known name moving to a new LA. | [hub.hpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/include/amity/hub.hpp), [hub.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) | Preserve automatic name resolution, add consortium/octopus/tentacle/side scope, and separate configured names from versioned runtime addresses. |
-| Each Bus allocates a GPTimer, worker stack and bounded queues. | [bus.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/bus.cpp) | Eight-line scaling requires shared timing and explicit memory/scheduling work. |
-| Engine receive filtering excludes foreign directed messages from delivered frames. | [engine.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/engine.cpp) | Add observe-all mode without expanding ACK ownership. |
-| Hub configure can enter standby; discovery/identity can trigger route restoration. | [hub.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) | Configuration/discovery must no longer independently mutate group desired state. |
-| HubService reserves admission before persistence, rejects stale generation work and preserves emergency release. | [hub_service.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub_service.cpp) | Preserve these local invariants while adding network boundaries. |
-| HubService repeats a held key after the previous synchronous CEC attempt completes, only when no command is waiting; release, cancellation or press-admission failure stops it. `send_and_wait()` returns queue admission after completion, so a completed wire NACK/error alone does not stop the loop. | [hub_service.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub_service.cpp), [hub.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp) | Historical behavior only: superseded by current `main` (`98e64a6` at this merge). Preserve independent per-key completion pacing and immediate command submission while ACKs are pending. Transport only button state changes; no per-button lease, renewal traffic, repeat timer or queued repeat bursts. |
-| Current physical-address startup is dynamic but heuristic. | [hub.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp), [startup scan](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub_service.cpp) | Preserve as scoped evidence, not a global HDMI topology oracle. |
-| Matter callbacks provide a command boundary, while web/HomeKit also read single-hub state. | [Matter interface](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_matter/include/amity_matter.h), [web admin](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/web_admin/web_admin.cpp), [HomeKit](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_homekit/homekit.cpp) | Adapt all ingress/state consumers to SystemControl and explicit zone snapshots. |
-| Remote stamps use local time/activity generation/target; one local managed remote. | [remote_input.hpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/ble_remote/include/remote_input.hpp), [ble_remote.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/ble_remote/ble_remote.cpp) | Retain sole remote on original controller; add stable multi-screen intent/session context and reject member input. Never compare independent monotonic clocks. |
-| Config parsing is strict and size-bounded; activity external identifiers are positional. | [configuration.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/web_admin/configuration.cpp), [HomeKit](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_homekit/homekit.cpp) | Keep parser discipline; migrate to stable IDs/slot tombstones before reorder. |
-| Factory format v3 is 288 bytes with reserved bytes required zero. | [factory_credentials.hpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/device_settings/include/factory_credentials.hpp) | New bootstrap identity needs explicit origin/factory versioning, not silent use of reserved space. |
-| Project documents no ARC/eARC or direct-TV-source support in its current single-tentacle design. | [README](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/README.md) | Direct-source control is new scope; return audio and TV applications remain separate gates. |
-| Flash and existing service budgets are finite. | [partitions.csv](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/partitions.csv), [sdkconfig.defaults](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/sdkconfig.defaults) | Measure combined TLS/CEC/radio/OTA capacity, not isolated feature memory. |
-
-### October 19 physical-address behavior
-
-The reviewed version initializes front PA to unknown, scans the back side, chooses the numerically lowest usable nonzero back-side report, or uses configured fallback. It claims/announces the front identity after that decision and holds the result for the boot. Later scans do not automatically revise it. This is newer than the earlier `ca36720` review and supersedes any claim that the firmware simply uses a fixed front PA at startup.
-
-It does not read EDID or prove the report came from the immediate peer. Full source isolation can remove native reports from a shared receiver domain, and a receiver's two output paths may need different evidence. Those are design gaps addressed by [document 05](05-discovery-and-topology.md). [Relevant tests](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/cec_front_physical_test.cpp).
-
-## 4. External primary sources
-
-| Source | Relevant evidence |
-|---|---|
-| [Espressif ESP32-S3 datasheet v2.2](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf) | Four general-purpose timers, GPIO restrictions, memory/radio resources. |
-| [ESP-IDF tagged S3 SoC capability header](https://github.com/espressif/esp-idf/blob/v 5.5.5/components/soc/esp32s3/include/soc/soc_caps.h) | Supporting chip resource count; not the project's SDK pin. |
-| [ESP-IDF GPTimer documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/peripherals/gptimer.html) | Timer callbacks, resource allocation and cache/IRAM requirements. |
-| [Unified provisioning](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/provisioning/provisioning.html), [protocomm](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/provisioning/protocomm.html) | Security2 SRP/channel framework and transports; exact client/host integration still requires work. |
-| [Pinned ESP-Matter controller Kconfig](https://github.com/espressif/esp-matter/blob/59574f3fb62fddc690b4127fd3a4a43cfce4245e/components/esp_matter_controller/Kconfig) | Stock commissioner configuration excludes simultaneous Matter server path. Do not remove the guard as a design solution. |
-| [Pinned CHIP NimBLE implementation](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/platform/ESP32/nimble/BLEManagerImpl.cpp) | Pre-start extra GATT service hook, shared-host and advertising behavior. |
-| [Pinned CHIP Wi-Fi driver](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/platform/ESP32/NetworkCommissioningDriver.cpp) | Staged network commit/rollback integration; exact use is described in document 10. |
-| [ESP-TLS](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/protocols/esp_tls.html), [ESP-IDF security](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/security/security.html) | Verification and production protection mechanisms; not evidence that Amity enables them. |
-| [Pinned Espressif Mbed TLS header](https://github.com/espressif/mbedtls/blob/a2b32072ea898afc1ed5b6caf6931e36028c91d6/include/mbedtls/ssl.h) | Per-configuration verification API underlying the proposed operational pin verifier. |
-| [Linux CEC physical-address API](https://docs.kernel.org/userspace-api/media/cec/cec-ioc-adap-g-phys-addr.html) | Physical-address/EDID relationship and unknown-address handling as implementation context. |
-
-Detailed implementation guides cite the specific source paths used for their claims, including proof-format differences between HomeKit SRP and protocomm Security2. The proposal does not reproduce or purport to replace the HDMI-CEC specification; opcode implementations must be checked against the supported CEC version and licensed/available normative references during implementation.
-
-## 5. Existing test assets
-
-The repository has useful starting points: [host test runner](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/run_host_tests.sh), [hub commit tests](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/cec_hub_commit_test.cpp), [remote input tests](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/remote_input_test.cpp), [factory reset tests](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/factory_reset_test.cpp), [physical-address hardware test](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/cec_front_physical_hardware.py) and [CEC/web activity test](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/cec_web_activity.py).
-
-Their current single-node or two-interface fixtures do not establish eight-line timing, distributed authority or prevention before source theft reaches the receiver. Mocked browser tests do not prove actual CEC behavior. [Document 15](15-validation-and-release-gates.md) specifies extensions and evidence classes.
-
-## 6. Review limits
-
-This was source and documentation analysis. No firmware implementation, build, flashing, CEC capture, BLE pairing, Matter commissioning, physical pin measurement, runtime capacity benchmark or security certification was performed during the original review. The existing source repository was not modified or published during that review. Proposed numbers such as eight members and 8192-byte frames are explicit initial design/qualification targets, not measured capabilities of the current firmware. The subsequently rejected per-button lease/renewal proposal is not part of the original algorithm or current contract. Current implementation and validation evidence lives in [implementation status](../IMPLEMENTATION_STATUS.json).
+Compare local and remote execution transcripts, including missing equipment and return, not just stored fields or Ready. Current firmware/build identity and software checks are recorded in [VALIDATION.md](VALIDATION.md) and `IMPLEMENTATION_STATUS.json`; older graph-model evidence is historical. Real CEC timing, AV results, combined hardware load and ecosystem retention require physical evidence beyond host tests.

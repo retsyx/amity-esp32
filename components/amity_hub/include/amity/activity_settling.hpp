@@ -22,21 +22,28 @@ public:
     static constexpr uint64_t reply_timeout_us = 2000000;
     void reserve(int target) {
         target_ = target; active_ = quiet_us_ != 0; preparing_ = active_;
-        peers_.clear(); replies_.clear(); quiet_since_ = reply_deadline_ = 0;
+        peers_.clear(); replies_.clear(); external_replies_=false; quiet_since_ = reply_deadline_ = 0;
     }
     void start(int target, std::vector<Peer> peers) { reserve(target); peers_ = std::move(peers); }
     void finish(uint64_t now) {
         if (!active_) return;
         preparing_ = false; quiet_since_ = now; reply_deadline_ = now + reply_timeout_us;
     }
-    void cancel() { active_ = preparing_ = false; peers_.clear(); replies_.clear(); }
+    void cancel() { active_ = preparing_ = external_replies_ = false; peers_.clear(); replies_.clear(); }
+    bool pending_replies()const{return !replies_.empty();}
+    // Owner-local reply evidence joins the original global setup deadline.
+    // A late snapshot cannot rearm an already elapsed reply timeout.
+    void external_replies(bool pending,uint64_t now){
+        if(pending){if(preparing_)external_replies_=true;}
+        else if(external_replies_){external_replies_=false;quiet_since_=now;}
+    }
     int target() const { return target_; }
     bool active(uint64_t now) {
         if (!active_ || preparing_) return active_;
-        if (!replies_.empty() && now >= reply_deadline_) {
-            replies_.clear(); quiet_since_ = std::max(quiet_since_, reply_deadline_);
+        if ((!replies_.empty()||external_replies_) && now >= reply_deadline_) {
+            replies_.clear(); external_replies_=false; quiet_since_ = std::max(quiet_since_, reply_deadline_);
         }
-        if (replies_.empty() && now >= quiet_since_ && now - quiet_since_ >= quiet_us_) active_ = false;
+        if (replies_.empty() && !external_replies_ && now >= quiet_since_ && now - quiet_since_ >= quiet_us_) active_ = false;
         return active_;
     }
     void expect(BusSide side, uint8_t destination, const uint8_t *data, size_t size) {
@@ -64,11 +71,11 @@ public:
             if (duplicate == replies_.end()) replies_.push_back(reply);
         }
     }
-    void received(BusSide side, const cec::Frame &frame, uint8_t own, uint64_t now) {
+    void received(BusSide side, const cec::Frame &frame, uint8_t own, uint64_t now,bool retain_setup=false) {
         // Replies can arrive while other setup messages are still awaiting TX.
         // Collect them immediately; finish() starts quiet time after the final
         // admitted setup message completes.
-        if (!active(now) || frame.size < 2 || frame.size > 16 || frame.source() >= 15) return;
+        if (!(retain_setup?active_:active(now)) || frame.size < 2 || frame.size > 16 || frame.source() >= 15) return;
         const auto old_size = replies_.size();
         replies_.erase(std::remove_if(replies_.begin(), replies_.end(), [&](const Reply &r) {
             if (r.peer.side != side || r.peer.address != frame.source()) return false;
@@ -84,7 +91,7 @@ private:
     struct Reply { Peer peer; uint8_t request, response, minimum; bool broadcast, route; };
     uint64_t quiet_us_, quiet_since_ = 0, reply_deadline_ = 0;
     int target_ = -1;
-    bool active_ = false, preparing_ = false;
+    bool active_ = false, preparing_ = false,external_replies_=false;
     std::vector<Peer> peers_;
     std::vector<Reply> replies_;
 };

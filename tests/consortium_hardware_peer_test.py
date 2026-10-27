@@ -18,8 +18,8 @@ from consortium_provision import verifier
 
 class HarnessTests(unittest.TestCase):
     def test_capabilities_are_only_implemented_passive_contracts(self):
-        self.assertEqual(peer.KNOWN_CAPABILITIES, 222431)
-        self.assertEqual(peer.KNOWN_CAPABILITIES & (32 | 256 | 512 | 2048 | 4096), 0)
+        self.assertEqual(peer.KNOWN_CAPABILITIES, 483402)
+        self.assertEqual(peer.KNOWN_CAPABILITIES & (1 | 4 | 16 | 32 | 128 | 256 | 512 | 1024 | 2048 | 4096), 0)
     def exchange(self):
         identity = '00000000000000000000000000000001'
         password = 'a' * 64
@@ -161,17 +161,11 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
         self.peer.state['proposal'] = {'consortium_id': '1' * 32, 'coordinator_id': '2' * 32, 'epoch': '1', 'join_id': '3' * 32, 'revision': '2'}
         self.peer.state['join_digest'] = 'a' * 64
         self.peer.server_boot, self.peer.config_revision, self.peer.link = '4' * 32, '1', '5' * 32
-        self.peer.pending_config = None
         self.sent = []
         async def capture(writer, message):
             self.sent.append(message)
         self.peer.send = capture
-        identity = self.peer.state['id']
-        self.config = {'version': 2, 'consortium_id': '1' * 32, 'config_revision': '1', 'presentation_revision': '1', 'primary_zone_id': '6' * 32, 'controller_octopus_id': '2' * 32,
-            'octopuses': [{'octopus_id': identity, 'label': 'Bench', 'generated_label': 'Amity', 'label_override': True, 'supported_tentacles': 1}],
-            'components': [], 'domains': [], 'binding_policies': [], 'resources': [], 'signal_edges': [], 'routes': [], 'activities': [],
-            'zones': [{'zone_id': '6' * 32, 'label': 'Room', 'generated_label': 'Room', 'label_override': False, 'activity_order': []}],
-            'external_slots': [], 'quirks': []}
+        self.config = {'controller': '2' * 32, 'config_revision': '1'}
 
     async def transfer(self, config):
         raw = peer.encoded(config)
@@ -187,9 +181,13 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_owner_state_has_current_required_schema(self):
         await self.transfer(self.config)
         owner = json.loads(self.peer.owner_state())
-        self.assertEqual(owner['observations'], [])
-        self.assertEqual(owner['policy_hash'], peer.executable_hash(self.config))
-        self.assertTrue(all(p['role'] == 1 and p['owned_logical_address'] == 15 and not p['bindings'] for p in owner['ports']))
+        self.assertEqual(set(owner), {'adapters'})
+        self.assertEqual(owner['adapters'], [self.peer.adapter_state()])
+        self.assertEqual(owner['adapters'][0]['devices'], [])
+        self.assertFalse(owner['adapters'][0]['ready'])
+        self.assertEqual(owner['adapters'][0]['front_address'], 15)
+        self.assertEqual(owner['adapters'][0]['setup_last_sequence'], '0')
+        self.assertNotIn('configuration', json.loads(self.peer.path.read_text()))
         outgoing = self.peer.outgoing['manifest']
         await self.peer.handle_snapshot(None, {'kind': 'snapshot_request', 'payload': outgoing | {'phase': 'ack'}})
         data = json.loads(bytes.fromhex(self.sent[-1]['payload']['data']))
@@ -198,13 +196,21 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.peer.link_ready)
         self.assertIsNone(self.peer.outgoing)
 
-    async def test_executable_hash_excludes_active_presentation_only(self):
-        changed = copy.deepcopy(self.config)
-        changed['zones'][0].update(label='Different', generated_label='Other', label_override=True)
-        changed['activity_order'] = ['7' * 32]
-        self.assertEqual(peer.executable_hash(changed), peer.executable_hash(self.config))
-        changed['controller_octopus_id'] = '8' * 32
-        self.assertNotEqual(peer.executable_hash(changed), peer.executable_hash(self.config))
+    async def test_setup_metadata_is_closed_exact_and_link_local(self):
+        original = self.peer.path.read_bytes()
+        for changed in [self.config | {'controller': '8' * 32},
+                        self.config | {'config_revision': '2'},
+                        self.config | {'config_revision': '01'},
+                        self.config | {'config_revision': '18446744073709551616'},
+                        self.config | {'activities': []}]:
+            with self.assertRaises(AssertionError):
+                await self.transfer(changed)
+            self.assertEqual(self.peer.path.read_bytes(), original)
+        await self.transfer(self.config)
+        self.assertEqual(self.peer.controller_metadata, self.config)
+        self.assertEqual(self.peer.path.read_bytes(), original)
+        restarted = peer.Peer(self.peer.path, self.peer.result_path)
+        self.assertIsNone(restarted.controller_metadata)
 
     async def test_authenticated_hostname_metadata_has_no_execution_authority(self):
         self.peer.state['hostname'] = 'bench-member'
@@ -229,31 +235,42 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
                 await self.peer.handle(None, message)
         self.assertFalse(self.sent)
 
-    async def test_configured_monitor_domains_and_no_actuator_authority(self):
-        config = copy.deepcopy(self.config)
-        config['domains'] = [{'domain_id': '9' * 32, 'domain_revision': '7', 'owner_octopus_id': self.peer.state['id'], 'confirmed': False,
-            'ports': [{'port': {'consortium_id': '1' * 32, 'octopus_id': self.peer.state['id'], 'tentacle_id': 0, 'side': 'front'}, 'role': 'monitor', 'physical_address': None}]}]
-        ports = peer.monitor_ports(config, self.peer.state['id'])
-        self.assertEqual((ports[0]['domain_id'], ports[0]['domain_revision']), ('9' * 32, '7'))
-        config['domains'][0]['ports'][0]['role'] = 'tv_controller'
-        with self.assertRaises(AssertionError):
-            await self.transfer(config)
+    async def test_monitor_rejects_all_positive_scoped_intents_and_retired_configuration(self):
+        for kind in ['scoped_intent', 'config_prepare', 'config_activate', 'config_result']:
+            message = self.peer.envelope(kind, {})
+            message.update(origin_octopus_id='2' * 32, origin_boot_id=self.peer.server_boot,
+                           destination_octopus_id=self.peer.state['id'], destination_boot_id=self.peer.boot)
+            with self.assertRaises(AssertionError):
+                await self.peer.handle(None, message)
+        self.assertFalse(self.sent)
+        self.assertNotIn('configuration', json.loads(self.peer.path.read_text()))
 
-    async def test_prepare_activate_exact_correlation_and_durable_passive_apply(self):
+    async def test_context_is_nonemitting_exact_scope_and_link_local(self):
+        await self.transfer(self.config)
         self.peer.link_ready = True
-        config = copy.deepcopy(self.config)
-        config['config_revision'] = '2'
-        await self.transfer(config)
-        payload = {'config_revision': '2', 'presentation_revision': '1', 'owner_boot_id': self.peer.boot,
-            'payload_hash': peer.digest(peer.encoded(config)), 'policy_hash': peer.executable_hash(config), 'phase': 'activate'}
-        with self.assertRaises(AssertionError):
-            await self.peer.config_control(None, {'kind': 'config_activate', 'payload': payload})
-        await self.peer.config_control(None, {'kind': 'config_prepare', 'payload': payload | {'phase': 'prepare'}})
-        self.assertEqual(self.sent[-1]['payload']['result'], 'ready')
-        await self.peer.config_control(None, {'kind': 'config_activate', 'payload': payload})
-        self.assertEqual(self.sent[-1]['payload']['result'], 'applied')
-        self.assertEqual(json.loads(self.peer.path.read_text())['configuration']['config_revision'], '2')
-        self.assertEqual(self.peer.config_revision, '1')  # Existing TLS scope is never rewritten.
+        self.peer.control_leases['6' * 32] = time.monotonic() + 5
+        before = self.peer.path.read_bytes()
+        target = {'consortium_id': '1' * 32, 'octopus_id': self.peer.state['id'], 'tentacle_id': 0, 'side': 'front', 'osd_name': ''}
+        payload = {'execution_lease_id': '6' * 32, 'generation': '1', 'sequence': '1', 'setup_generation': 0,
+            'target': target, 'action': 'context', 'arguments': {'selected': True, 'source_changed': True,
+                'source': None, 'audio': None, 'display': None, 'switch_device': None, 'input': 0}}
+        message = self.peer.envelope('scoped_intent', payload)
+        message.update(origin_octopus_id='2' * 32, origin_boot_id=self.peer.server_boot,
+                       destination_octopus_id=self.peer.state['id'], destination_boot_id=self.peer.boot)
+        sent = len(self.sent)
+        await self.peer.handle(None, message)
+        self.assertEqual(self.peer.received_context, payload)
+        self.assertEqual(len(self.sent), sent)
+        self.assertEqual(self.peer.path.read_bytes(), before)
+        for changed in [payload | {'sequence': '1'}, payload | {'sequence': '2', 'action': 'power'},
+                        payload | {'sequence': '2', 'execution_lease_id': '7' * 32},
+                        payload | {'sequence': '2', 'target': target | {'octopus_id': '8' * 32}},
+                        payload | {'sequence': '2', 'arguments': payload['arguments'] | {'extra': True}}]:
+            with self.assertRaises(AssertionError):
+                await self.peer.handle(None, message | {'payload': changed})
+        restarted = peer.Peer(self.peer.path, self.peer.result_path)
+        self.assertIsNone(restarted.received_context)
+        self.assertEqual(restarted.control_leases, {})
 
     def removal_message(self):
         self.peer.state['active'] = True

@@ -1,172 +1,33 @@
-# Hardware and CEC runtime
+# HDMI adapters and the local CEC runtime
 
-**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+This document owns hardware scope and the unchanged local runtime. [Addressing](03-domain-model-and-addressing.md), [discovery](05-discovery-and-topology.md), [CEC behavior](06-cec-roles-and-message-policy.md) and [AGENTS.md](../AGENTS.md) define the operating model.
 
-**21 October 2026 algorithm-preservation amendment:** scaling the runtime must preserve original CEC/remote algorithms and functionality unless the user explicitly requests a change. The current `main` implementation is authoritative (`98e64a6` for this merge). Each key has its own completion-paced continuation; new keys and commands submit immediately while earlier ACKs are pending, with no timer or queued repeat burst. All profiles use the same dispatcher, wire engine, eight-message FIFO and receive capacity. Distribution only moves messages and must have zero effect on CEC behavior. Reporting more precise wire outcomes must not change those rules. Necessary distributed fences are recorded separately. [Normative rule](21-original-controller-policy.md#original-algorithms-and-functionality-amendment--21-october-2026).
+## Hardware scope
 
-**Status: proposed implementation specification v0.1.** This document defines the local electrical and timing foundation for an OCTOPUS with one to four TENTACLES. It does not claim that the existing two-port hardware or firmware has passed eight-line qualification. The source baseline is Amity-esp32 commit `d50af8026938797fc0820d0107f4c4e064c2d2bc`.
+An Amity device supports the adapter capacity advertised by its compiled hardware profile. The existing board has one front/back adapter on GPIO1/GPIO2. The development XIAO ESP32-S3 profile supports up to four optional adapters, using overridable pairs 1/2, 5/6, 7/8 and 9/44. Each adapter has two independent CEC wires. Stable internal slots 0–3 are displayed as HDMI adapter 1–4; absent slots never compress numbering.
 
-## 1. Responsibilities and boundaries
+The shared limits in `components/amity_system/include/amity/hardware_limits.hpp`, Kconfig, release hardware identity and schemas must agree. Do not infer capacity from discoveries. Unsupported GPIO mappings or allocation errors cannot authorize driving an unintended wire. Keep the existing passive error/admin behavior of the selected profile.
 
-One TENTACLE is one HDMI pass-through with two separated CEC conductors. Its `front` port faces the HDMI sink; its `back` port faces the source. Consequently, four tentacles require **eight independently timed CEC engines and eight suitable GPIO connections**. Orientation is a physical property, independent of the port roles defined in [CEC roles and message policy](06-cec-roles-and-message-policy.md).
+The wires use external pull-ups with internal GPIO pulls disabled. Preserve the existing timer architecture and wire protocol/timing. A profile's GPIO mapping is part of firmware compatibility identity. Four-adapter simultaneous electrical/timing behavior requires its own physical qualification; a passing one-adapter capture is not that evidence.
 
-The runtime owns open-drain GPIO operation, frame timing, arbitration, ACK generation, bounded transmit queues, receive observations, and local completion results. It does not own activities, membership, equipment identity, or routing decisions. `LocalCecAgent` installs authorized policy and submits operations; the runtime executes local wire work. Neither LAN latency nor coordinator availability may determine a CEC ACK bit.
+## One original local runtime per adapter
 
-The explicit [executor/CEC amendment](21-original-controller-policy.md#executor-and-cec-boundary-amendment--21-october-2026) requires one TX FIFO per CEC wire in every profile, including legacy: eight total messages, counting queued and active work together. All messages, including releases, reject at eight queued-plus-active messages. A rejected release is dropped without executor admission retry. Every TX dropped because of full-FIFO admission is logged, including every frame of a rejected atomic batch. This is the only outgoing-frame buffer. The executor owns button state and all message/repeat/release choices, with no TX queue. CEC is a mechanical sender: it obeys supplied frames, attempt budgets and generic guards; it must not inspect a key opcode to choose policy or synthesize messages. The executor supplies one wire attempt for every key-press frame. Failed key TX ends that key's pressed state and repetition, so later button-up is a no-op. The executor attempts implicit release at the end of a receiving device's press stream, including last-key failure, only when all its keys are no longer pressed.
+Each configured adapter uses the same original front playback/back TV behavior and CEC algorithms. The owner task handles input, received frames, allocation/discovery, setup and completions while transmissions remain outstanding. Preserve original logical-address candidates, poll/announcement budgets, back-first scan, lowest usable back-device PA or saved fallback and fixed-for-boot selected front PA.
 
-The existing PCB separates HDMI pin 13 into `/HDMI_CEC_0` and `/HDMI_CEC_1`. Other HDMI paths, including DDC and HPD, are passed through. The existing mapping uses GPIO1 and GPIO2 for CEC and GPIO4 for the reset button. These are facts about the current board, not a four-tentacle pin assignment. See the pinned [PCB](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/hw/board/hdmi.kicad_pcb), [schematic](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/hw/board/hdmi.kicad_sch), and [board pins](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/main/board_pins.h).
+The distribution layer does not allocate identities from a persistent electrical-domain or proxy-resource graph. It selects an owner and adapter; the owner applies the original local algorithm there. Settings and actual hardware availability are separate from a stored approval to use an activity.
 
-The CEC cut remains when the board is unpowered: there is no bypass relay. This provides no galvanic isolation, because HDMI grounds and other conductors remain connected. Product instructions must distinguish “HDMI continues through the connector” from “CEC continues through the connector.”
+## Transmission and queue ownership
 
-## 2. Hardware profiles are a release gate
+CEC mechanically transmits supplied frames and attempt budgets through one FIFO per wire, with eight queued-plus-active messages total. Releases share those eight slots. Full admission drops the submitted frame and logs it; every member of a rejected atomic batch is logged. No reserved release slot, executor outgoing backlog or later retry of a dropped release exists.
 
-Introduce a compiled, versioned `BoardProfile`, selected independently of portable system configuration. Its immutable tentacle indices are `0..3`; user-facing labels are 1–4.
+State and completion trackers belong to the original executor. Each held key continues after its own successful attempt; failed key TX ends it. New commands submit immediately without waiting for another key's ACK or queue capacity. Bounded task IPC remains appropriate where needed for causal request/state handoff.
 
-```cpp
-struct PortPin {
-    TentacleId tentacle_id;
-    Side side;                 // front or back
-    int gpio;
-};
+## Presence and per-device settings
 
-struct BoardProfile {
-    BoardProfileId id;
-    uint32_t revision;
-    uint8_t tentacle_count;     // validated against amity::max_tentacles
-    std::array<PortPin, amity::max_cec_ports> ports;
-    OptionalPin reset_button;
-    OptionalPin status_led;
-};
-```
+A separate, electrically qualified presence detector may report attached/absent. Without one, physical presence is unknown; CEC silence and saved selections do not prove detachment. Keep actual presence generations for approved settings/remove-reinsert checks. Do not add detection pulses or pull-downs to a live CEC line.
 
-Only `2 * tentacle_count` entries are active. Startup validation must reject repeated GPIOs, invalid output GPIOs, pins assigned to another enabled peripheral, mismatched connector indices, and a profile unsupported by the firmware. Invalid profiles leave every available CEC output released and report a local hardware fault; they do not partially activate a guessed mapping.
+Each adapter has its own saved default front physical address. The owner uses it in the original startup algorithm; it is not a verified route or a stored PA-evidence grant. Explicit per-device Settings retain fresh owner boot/settings/presence checks, atomic save and selected-device restart after the response attempt. See [UI settings](20-user-interface.md#per-device-hdmi-adapter-settings-amendment--20-october-2026).
 
-The standard XIAO ESP32-S3 supports four adapter pairs using its edge headers while retaining GPIO4 for the original button. Pin selection must account for strapping pins, boot ROM behavior, UART/USB use, flash/PSRAM wiring, LEDs, and any fixture connections. GPIO quantity alone does not establish electrical suitability. Consult the [Seeed pin documentation](https://wiki.seeedstudio.com/xiao_esp32s3_pin_multiplexing/) and [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
+## Qualification
 
-**26 October 2026 hardware-capacity and GPIO-default amendment:** support at most four adapters per Amity. The legacy one-adapter profile remains the default build selection, preserving front GPIO1, back GPIO2 and setup/reset GPIO4. For the user's standard XIAO ESP32-S3, selecting the development carrier supplies default front/back pairs **1/2, 5/6, 7/8 and 9/44**, with stable connector indices **0–3**. All assignments remain overridable per GPIO through menuconfig. Explicit saved values, including paired `-1` to disable an adapter, remain authoritative. The optional reset and separate presence GPIOs still default to `-1`. These assignments use the standard edge headers, avoid the existing reserved-pin list and leave GPIO4 available for the original button. GPIO3 is reserved for strapping safety, and GPIO43 is avoided because ROM UART0 TX can drive it before firmware GPIO setup even with the USB application console. GPIO44 is UART0 RX by default and supports bidirectional GPIO; UART0 must remain unused on that pin. D10 on the standard XIAO is GPIO9, not GPIO10.
-
-[hardware_limits.hpp](../components/amity_system/include/amity/hardware_limits.hpp) owns the single authoritative `AMITY_MAX_TENTACLES` value; firmware derives `amity::max_tentacles`, `last_tentacle_id` and `max_cec_ports` from it, and Python release tooling reads the same definition. The contract validator checks the static schema bounds, settings labels/array sizes, Kconfig profile and complete connector menus against that value, so changing a copy alone fails validation. The canonical cross-layer check passes and deliberately mismatched schema bounds reject.
-
-The compiled development hardware profile is `esp32s3-development-4t-v1`; its update identity includes exactly four GPIO pairs and their presence inputs. Configuration, peer metadata, settings and UI contracts use the same four-slot limit, while the original board still advertises one slot. This amendment changes hardware configuration and bounded capacity only: startup validation, hardware-identity fencing and local/distributed CEC execution use the same existing paths, with no algorithm, attempt-budget, FIFO, input or transport-policy change. Pin defaults do not qualify the carrier's electrical behavior or eight-line timing. Contract validation rejects connector index 4 and accepts the highest supported index 3.
-
-**26 October 2026 software evidence:** the complete ESP32-S3 `idf.py build` passed with the default legacy one-adapter profile. Focused ASan/UBSan suites passed for CEC board/runtime behavior (including GPIO44 in the high GPIO bank), model, consortium, configuration/replacement, activity editor, synchronization, hub/native ports, original-controller remote control, adapter settings and settings storage, including validated prior-record migration. The five release-hardware tests and production-profile checks passed. Actual ESP-IDF Kconfig selections generated C++ profiles and release descriptors with matching GPIO identities before and after saving/reloading configuration, including a presence pull-up override. The current `consortium_settings_test.py` JSON Schema/codec matrix passed **361 vectors: 42 positive, 319 negative, zero discrepancies**; earlier 360-vector evidence remains historical.
-
-The standard-library-only `validate_contracts.py --hardware-capacity-only` check is integrated into `tests/run_host_tests.sh` and passes with four tentacles/eight ports. Full package validation still stops at the pre-existing missing historical log documented in [VALIDATION](VALIDATION.md), after the structural/schema checks pass. These software results do not qualify actual four-adapter electrical behavior, removable-module detection or simultaneous wire timing; [implementation status](../IMPLEMENTATION_STATUS.json) retains the remaining physical gates.
-
-| Gate | Owner | Evidence required before approving a profile |
-| --- | --- | --- |
-| GPIO allocation | Hardware engineer | Schematic and boot/reset measurements demonstrating released CEC outputs, no push-pull conflict, and correct button behavior. |
-| CEC loading | Hardware engineer | Pull-up, capacitance, voltage, leakage, ESD, powered and unpowered measurements, including multiple ports attached to one external domain. |
-| HDMI pass-through | Hardware engineer | Signal-integrity and interoperability evidence for the advertised cable lengths, resolutions, refresh rates, and HDMI features. |
-| Runtime resources | Firmware engineer | Eight-line timing, internal memory, interrupt and task-stack measurements with the final radio and OTA configuration. |
-
-The existing 27 kΩ per-port pull-ups must not simply be multiplied without evaluating the resulting shared-domain load. I²C GPIO expanders are not an acceptable replacement for directly timed CEC pins in this design.
-
-## 3. Replace per-port timers with one shared scheduler
-
-The current `cec::Bus::Impl` allocates one GPTimer and one 3072-byte transmit task per wire. Its timer runs at 1 MHz with a 50 µs repeating alarm. Sharing an interrupt input does not share the underlying hardware timer. See [bus.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/bus.cpp).
-
-ESP32-S3 has two timer groups with two general-purpose timers each: **four GPTimers, not eight**. The official, version-pinned [ESP-IDF v5.5.5 capability header](https://github.com/espressif/esp-idf/blob/v5.5.5/components/soc/esp32s3/include/soc/soc_caps.h) defines `SOC_TIMER_GROUPS` and `SOC_TIMER_GROUP_TIMERS_PER_GROUP` as two each. This hardware limit also appears in the datasheet; the project itself pins a newer development SDK in [SDK_VERSIONS.txt](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/SDK_VERSIONS.txt). The implementation must compile against that project SDK and assert the target capabilities instead of downgrading it to match this reference.
-
-Create one `CecRuntime` and retain up to eight allocation-free `cec::Engine` instances. Its default schedule is one 50 µs hardware alarm. The ISR performs a fixed, bounded pass:
-
-1. Capture one monotonic timestamp and the required GPIO input-bank snapshots.
-2. Tick every enabled engine against that timestamp and its captured input level.
-3. Apply the resulting open-drain low/release changes after all input levels have been sampled.
-4. Copy completed observations and transmission results into bounded internal-memory slots; notify the worker once.
-
-Sampling all lines before changing outputs prevents software iteration order from inventing different observations when two local ports are electrically on the same external domain. GPIO-bank reads cannot be physically simultaneous; their bounded skew must be measured. Domain scheduling should avoid unnecessary local self-contention, but ordinary arbitration remains mandatory.
-
-The ISR must not allocate, log, parse JSON, perform TLS work, access PSRAM-only data, wait on a task mutex, or invoke flash-resident helpers. Review the entire called code path and linker map. The current engine deliberately uses 32-bit division during transmission to avoid a flash-resident 64-bit division helper; preserve that property. Espressif documents cache-safe GPTimer operation and memory requirements in its [v6.1 GPTimer guide](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/peripherals/gptimer.html).
-
-Missed time must be handled as a discontinuity, not by replaying synthetic ticks. The current [engine.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/engine.cpp) invalidates receive state and releases an active transmission after a gap over 200 µs. Preserve its pulse validation, arbitration, ACK, free-time, frame-length, and stuck-line checks. Eight-line support must not be achieved by relaxing those checks.
-
-## 4. Separate observation from ACK ownership
-
-The current engine both ACKs its configured logical address and delivers only frames addressed to that address or broadcast. Shared-domain discovery needs to observe foreign directed traffic without claiming it. Add independent controls:
-
-```cpp
-struct ReceivePolicy {
-    bool observe_all;                        // delivery, never ownership
-    std::optional<CecLogicalAddress> ack_address;
-};
-
-struct ReceiveObservation {
-    PortKey port;
-    Frame frame;
-    uint64_t local_rx_sequence;
-    uint64_t local_monotonic_us;
-    bool addressed_to_local_identity;
-};
-```
-
-`ack_address` is either absent or `0..14`. Address 15 is never an owned identity. A monitor has no ACK address. A local playback proxy may observe all traffic while ACKing only its assigned address. A port continues to use one owned identity in v1; this change does not imply a multiple-address ACK mask or permission to impersonate other equipment.
-
-Policy replacement must be atomic relative to frame reception. A role/address change waits for the applicable frame boundary before committing, or explicitly aborts and releases the line during a fault transition. It must not ACK the beginning of a frame as one identity and its end as another. Existing self-transmission suppression must remain distinguishable from observations made by a different local port on the same domain.
-
-## 5. Asynchronous submission and bounded queues
-
-Expose a narrow runtime API. Types referenced here are internal interfaces; network encoding belongs to [consortium transport](08-consortium-transport-and-routing.md).
-
-```cpp
-StartResult start(const BoardProfile&);
-PortHandle port(TentacleId, Side);
-InstallResult install_receive_policy(PortHandle, ReceivePolicy);
-AdmissionResult submit(PortHandle, const WireOperation&);
-void cancel_queued(const ExecutionFence&);
-void service_completions();
-void release_all_outputs();
-RuntimeStatistics snapshot_statistics() const;
-```
-
-`WireOperation` contains a validated frame, local operation identifier, attempt bound, expiry and generic generation fences supplied by the executor. It is not an externally accessible arbitrary-frame API. The executor validates semantic policy before direct submission; CEC mechanically checks the supplied deadline/generation guards immediately before `Engine::begin()`, not only on queue insertion. It does not interpret membership, route, button or opcode meaning. A cancelled operation that has already begun must produce an explicit in-flight result; route transitions use the barrier in [activity execution](07-activity-planning-and-execution.md).
-
-Admission copies messages directly into the single per-wire FIFO with eight total messages. Finite key recipes submit their press directly and then attempt final release immediately only if the press was admitted and no other key keeps the recipient's stream open; they do not reserve two slots atomically. With seven occupied slots, the press enters slot eight and the release is dropped and logged. At eight, the press is dropped and logged, with no release attempt. Explicitly submitted generic Bus batches retain all-or-busy admission to the same FIFO; failed batch admission enqueues nothing and logs every rejected frame. No executor queue may hold a remainder for later. Completion correlations and stable guard storage remain bounded by admitted work and survive until its terminal result; cancellation cannot acknowledge quiescence while a started frame remains active. End-of-stream cleanup is executor state, separate from ended key tokens, until the release decision can be ordered after its admitted presses. Attempt direct admission once: rejection at eight consumes/drops that release decision and logs the dropped TX, with no later capacity retry. CEC never creates that release itself.
-
-**21 October 2026 capacity-amendment software evidence:** `sh tests/cec_runtime_test.sh` passes against the real Bus in both profiles. It covers the hard eight-message limit with an active transmission, a permanently dropped full-FIFO release, atomic batch rejection, and one warning per rejected frame including a maximum-length frame. Warnings identify the wire GPIO and frame bytes and run after queue locks are released. `main` at `b682cea` separately passes `sh tests/cec_bus_test.sh`, `sh tests/cec_hub_test.sh` and a complete ESP32-S3 firmware build. The consortium branch also passes `sh tests/cec_hub_test.sh`; a complete consortium ESP32-S3 firmware build also passes for this amendment. Completion and guard metadata are bookkeeping for each wire's maximum eight admitted messages; bounded candidate guard slots do not add frame capacity. Final focused reruns pass sequential press/release admission matching main at seven and eight occupied slots, including finite audio taps and discrete power through actual typed owner operations, without a finite release first-edge dependency. No per-device release reserve, overflow flag or extra transmit queue remains. These host results do not qualify physical wire timing or actual remote/equipment behavior.
-
-A nonblocking dispatcher should advance independent lines concurrently. Waiting up to a second on one wire must not stall the other seven. Keep per-line FIFO ordering within a priority class and bounded fairness between discovery and routine control. A domain-aware task layer serializes planned transactions on ports sharing a domain; the ISR still handles independent engines and local ACKs.
-
-Maintain distinct outcomes: rejected admission, admitted, wire success, NACK, arbitration loss, timeout, line error, cancelled before transmission, and uncertain completion after restart. Wire success is not proof that equipment changed state. The baseline `send_and_wait()` reports queue admission and worker completion, not the actual CEC ACK outcome; callers must not preserve that ambiguity under a name implying success. See the existing [bus interface](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/cec/include/cec/bus.hpp).
-
-Allocate queues and engine state once at startup in internal memory. Reserve completion capacity for every admitted operation. Keep button-up/cancel state admission and the local authority/liveness monitor independent of ordinary semantic overload, without adding another outgoing frame queue. Reducing eight transmit tasks to one dispatcher is recommended, but the final memory report must include all queues, stacks, snapshots, protocol buffers, and radio allocations; PSRAM capacity does not establish ISR memory headroom.
-
-## 6. Lifecycle and failure behavior
-
-Runtime states are `stopped`, `starting`, `running`, `quiescing`, and `faulted`. Start with outputs released and ACK ownership absent. Install only a validated profile, start the scheduler, then let discovery and policy assign identities. A partially failed start cleans up allocated resources and releases every configured output.
-
-Quiescing rejects ordinary submissions, cancels stale queued work, services matching key releases, and waits for a bounded in-flight drain before disabling timing. A hardware or timing fault releases the affected line and reports its state without repeatedly resetting the entire Octopus. A shared scheduler failure releases all lines. No failure reconnects front CEC electrically to back CEC, and no network outage starts a transparent software bridge.
-
-Record per-port receive drops, queue high-water marks, retry outcomes, arbitration losses, late ticks, maximum tick gap, and line faults. Record shared ISR execution time and internal-memory low-water marks without logging inside the ISR. Local monotonic timestamps are diagnostic within one boot; include `BootId` in exported events and do not compare them directly across Octopuses.
-
-## 7. Implementation work and integration
-
-1. Extract timer/GPIO ownership from `cec::Bus` into `CecRuntime`; preserve the pure engine and one-tentacle adapter during migration.
-2. Add monitor-all delivery and explicit ACK ownership, with host tests proving their independence.
-3. Replace blocking completion coupling with per-line operation state, actual `TxResult` propagation, generic cancellation guards and direct admission to the sole CEC FIFO with eight total messages. Keep release decisions in executor button state, with no additional frame buffer.
-4. Replace fixed macros at the startup seam in [main.cpp](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/main/main.cpp) with the validated hardware profile. Expose one runtime through system services, not four independent activity hubs.
-5. Connect `LocalCecAgent`, asynchronous scans, and policy installation only after engine regression tests pass.
-6. Qualify each advertised hardware profile. If eight-line timing or GPIO qualification fails, reduce the supported profile or design a separately qualified hardware offload; do not label the unqualified configuration supported.
-
-## 8. Acceptance criteria
-
-The existing [host CEC tests](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/cec_hub_test.sh) and [hardware fixture](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/tests/cec_hardware.py) are starting points. Passing the present two-wire fixture is insufficient for four tentacles.
-
-- Parameterize engine/runtime tests over 2, 4, 6, and 8 lines. Eight simultaneous maximum-length frames must complete without cross-port delivery, lost completion ownership, or serialized independent-wire operation.
-- Prove foreign directed traffic is observed but never ACKed by a monitor. A locally addressed frame must be ACKed by exactly its owner; broadcast must retain the correct ACK behavior.
-- Exercise simultaneous local transmission and external arbitration, receive-after-arbitration-loss, stuck-low faults, queue saturation, cancellation, malformed pulses, and the existing over-200 µs discontinuity behavior.
-- Connect multiple local ports to one real electrical domain. Validate shared sampling, address ownership, and that domain scheduling never depends on port iteration order.
-- On actual target hardware, capture waveforms on all eight lines while Wi-Fi, the original controller's BLE remote, Matter, HTTPS, discovery, and OTA flash writes run. Under the declared release workload, require protocol-valid waveforms, no unhandled timing discontinuities, no completion loss, and timely matching key release. Publish the workload, duration, maximum ISR duration and tick gap, and resource headroom.
-- Test power-on, brownout, reset, initialization failure, and firmware restart electrically. No CEC pin may drive a conflicting high level, and no boot state may join the two CEC sides.
-
-Detailed release ownership and test evidence are consolidated in [validation and release gates](15-validation-and-release-gates.md). Approval of the shared scheduler is conditional on this evidence, not on the nominal 50 µs period alone.
-
-## Per-adapter settings presence and owner barrier
-
-The explicit fixed legacy one-adapter profiles may report connector 0 present by construction. Development profiles must not borrow that fact: unconfigured pads and configured connectors without a qualified detector remain unknown, independent of CEC replies. Poll only an explicitly configured separate defined-state presence GPIO; do not enable CEC pull-downs, artificial detection pulses or a permanent weak-divider assumption. A removable-module pull-up or a floating idle CEC pin is not reliable positive presence evidence. Electrical qualification of any new detector remains required.
-
-The removable-module pull-up can supply the positive signal on a **separate presence contact**: the module provides the pull-up, and the base provides a defined absent bias so unplugging it produces the opposite valid logic level. Keep this sense net independent of both HDMI-CEC wires. Qualify its voltage, leakage, thresholds, contact behavior and powered/unpowered states before selecting resistor values or enabling any sense-input bias. Configure that socket's `AMITY_TENTACLEn_PRESENCE_GPIO` and `AMITY_TENTACLEn_PRESENT_HIGH` to match the qualified circuit; any `PRESENCE_PULLUP`/`PRESENCE_PULLDOWN` applies only to that dedicated sense input. Internal slot `n=0` is displayed as **HDMI adapter 1**, through slot `n=3` / **HDMI adapter 4**. An unmapped or unreadable detector stays unknown and cannot unlock settings; the user does not manually mark an adapter present in the dialog.
-
-Track each connector's cached optional presence and monotonic generation on the sole owner. Publish a change even when the device is idle/passive. Removal, unreadable detector and reinsertion fence only affected native bindings/first-edge work; reinsertion never replays activity or a hold. A Settings request captures the exact generation, and the owner re-reads the detector immediately before persistence so present→absent→present cannot pass as the original attachment. Unknown/absent settings are read-only; saved preferences retain their stable connector index.
-
-The settings barrier rejects active sessions/holds, existing maintenance and pending configuration. It reserves positive admission, cancels discovery, drains started frame/completion and exact cleanup, rechecks BootId/generations/deadline, then invokes one owned bounded persistence callback. Waiting cancellation prevents that callback forever; once it starts, obtain its actual result. Durable success keeps the device quiescent for its explicit restart after the response transmission attempt. The four startup defaults and detected/selected diagnostic values confer no new CEC identity or route authority. [Settings acceptance](20-user-interface.md#per-device-hdmi-adapter-settings-amendment--20-october-2026).
+Host tests establish addressing, queue, state and transcript behavior. Physical checks must establish each GPIO/wire mapping, external electrical behavior, original CEC timing and ACK behavior, sparse/removable adapter safety, simultaneous adapter load and behavior under Wi-Fi/BLE/HTTPS load. Preserve the distinction between CEC ACK and actual AV picture/audio.

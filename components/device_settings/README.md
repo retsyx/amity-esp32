@@ -23,10 +23,10 @@ The stored copy and boot-applied copy remain separate until restart. Empty input
 resets that slot to `1.0.0.0`; the existing dotted hexadecimal topology validator
 rejects holes and `F.F.F.F`. Defaults are excluded from activity backup/restore
 and reset with the application namespace. A usable address from applicable
-native evidence takes priority over that same front's default. A default is an
-unconfirmed fallback hint, never an observed address, route confirmation or
-permission to replay an activity. Legacy adapter0 retains its existing startup
-fallback behavior; typed execution still requires qualified topology evidence.
+native evidence takes priority over that same front's default. Each adapter uses its default only when the original back-first startup scan
+finds no usable physical address; the original selected front address stays
+fixed for that boot. No separately approved topology or persistent PA-evidence
+gate is required. Settings do not themselves replay an activity.
 
 The shared settings service checks the target BootId, durable settings revision,
 original authority deadline and native attachment generation before persistence

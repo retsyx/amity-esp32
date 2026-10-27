@@ -36,10 +36,10 @@ SERVICE = 'd6357cd0-0116-4681-a7b5-cb9d090ca311'
 RECORD = 'd6357cd0-0116-4681-a7b5-cb9d090ca312'
 APP = '/amity/consortium'
 ADV = '/amity/consortium_advertisement'
-# Monitor-only semantic/token/isolation contract, lifecycle, hashed snapshots,
-# configuration activation, sequence fences, and state-change-only key semantics.
-# All positive operations remain rejected: no prepared plans, CEC binding, OTA or relay claim.
-KNOWN_CAPABILITIES = 23 | 8 | 64 | 128 | 1024 | 8192 | 16384 | 65536 | 131072
+# The fixture implements authenticated enrollment, hashed setup metadata,
+# observation reports and removal. It never owns a CEC transmitter.
+REQUIRED_CAPABILITIES = 64 | 8192 | 131072 | 262144
+KNOWN_CAPABILITIES = REQUIRED_CAPABILITIES | 2 | 8 | 16384 | 65536
 TLS_PROFILES = ['amity-consortium-v1.hardware', 'amity-consortium-v1.extended']
 
 
@@ -55,42 +55,6 @@ def encoded(value):
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
-
-
-def executable_hash(config):
-    value = json.loads(encoded(config))
-    for key in ['config_revision', 'presentation_revision', 'activity_order']:
-        value.pop(key, None)
-    for table in ['octopuses', 'components', 'activities', 'zones']:
-        for item in value.get(table, []):
-            for key in ['label', 'generated_label', 'label_override']:
-                item.pop(key, None)
-    for item in value['zones']:
-        item.pop('activity_order', None)
-    for item in value['external_slots']:
-        item.pop('hidden', None)
-        item.pop('alias', None)
-    return digest(encoded(value))
-
-
-def monitor_ports(config, identity):
-    assert not any(p['port']['octopus_id'] == identity for p in config['binding_policies'])
-    ports = {}
-    for domain in config['domains']:
-        for item in domain['ports']:
-            port = item['port']
-            if port['octopus_id'] != identity:
-                continue
-            assert port['tentacle_id'] == 0 and port['side'] in ['front', 'back']
-            assert item['role'] in ['monitor', 'disabled'] and port['side'] not in ports
-            ports[port['side']] = {'tentacle_id': 0, 'side': port['side'], 'domain_id': domain['domain_id'],
-                'domain_revision': domain['domain_revision'], 'policy_generation': config['config_revision'],
-                'owned_logical_address': 15, 'role': 1 if item['role'] == 'monitor' else 0, 'bindings': []}
-    for side in ['front', 'back']:
-        ports.setdefault(side, {'tentacle_id': 0, 'side': side,
-            'domain_id': digest((identity + side).encode())[:32], 'domain_revision': '1',
-            'policy_generation': config['config_revision'], 'owned_logical_address': 15, 'role': 1, 'bindings': []})
-    return [ports[side] for side in ['front', 'back']]
 
 
 class Retired(Exception):
@@ -263,9 +227,13 @@ class Peer:
         self.connection_device = None
         self.reset()
         self.operational = None
-        self.active_config = self.state.get('configuration')
+        if self.state.pop('configuration', None) is not None:
+            self.persist()
+        self.controller_metadata = None
+        self.received_context = None
+        self.context_sequence = self.context_generation = 0
+        self.control_leases = {}
         self.incoming = self.outgoing = None
-        self.prepared = None
         self.last_control = time.monotonic()
         self.link_ready = False
         if resumed_reset:
@@ -437,8 +405,8 @@ class Peer:
         await self.send(writer, {'type': 'hello', 'protocol_min': 1, 'protocol_max': 1,
              'consortium_id': p['consortium_id'], 'octopus_id': self.state['id'], 'boot_id': self.boot,
              'coordinator_epoch': p['epoch'], 'config_revision': '1', 'config_hash': '0' * 64,
-             'firmware_identity': 'independent-python-monitor-peer', 'required_capabilities': 23,
-             'optional_capabilities': self.capabilities & ~23, 'frame_cap': 8192,
+             'firmware_identity': 'independent-python-monitor-peer', 'required_capabilities': REQUIRED_CAPABILITIES,
+             'optional_capabilities': self.capabilities & ~REQUIRED_CAPABILITIES, 'frame_cap': 8192,
              **hello_hardware_fields(writer.get_extra_info('ssl_object').selected_alpn_protocol())})
         server = await self.receive(reader)
         assert server['type'] == 'hello' and server['octopus_id'] == p['coordinator_id']
@@ -501,16 +469,21 @@ class Peer:
                 raise Retired()
             message = await self.receive(reader)
 
+    def adapter_state(self):
+        # An observation-only slot advertises no owned LA, attached device or
+        # ability to emit CEC. Link readiness is independent of this report.
+        return {'owner': self.state['id'], 'boot': self.boot, 'adapter': 0,
+            'front_address': 15, 'back_address': 15, 'front_physical_address': 65535,
+            'ready': False, 'discovering': False, 'discovery_generation': 0,
+            'setup_generation': 0, 'setup_last_sequence': '0', 'setup_pending': 0, 'setup_replies_pending': False,
+            'audio_status_known': False, 'muted': False, 'volume': 127, 'devices': []}
+
     def owner_state(self):
-        config = self.active_config
-        assert config and config['config_revision'] == self.config_revision
-        return encoded({'owner_octopus_id': self.state['id'], 'owner_boot_id': self.boot,
-            'coordinator_epoch': self.state['proposal']['epoch'], 'config_revision': self.config_revision,
-            'presentation_revision': config['presentation_revision'], 'policy_hash': executable_hash(config),
-            'ports': monitor_ports(config, self.state['id']), 'observations': []})
+        assert self.controller_metadata and self.controller_metadata['config_revision'] == self.config_revision
+        return encoded({'adapters': [self.adapter_state()]})
 
     async def send_owner(self, writer):
-        if self.outgoing is not None or self.active_config is None or self.active_config['config_revision'] != self.config_revision:
+        if self.outgoing is not None or self.controller_metadata is None or self.controller_metadata['config_revision'] != self.config_revision:
             return
         data = self.owner_state()
         manifest = {'transfer_id': secrets.token_hex(16), 'phase': 'begin', 'owner_octopus_id': self.state['id'],
@@ -535,7 +508,7 @@ class Peer:
                 self.outgoing = None
                 if not self.link_ready:
                     self.link_ready = True
-                    self.event('bidirectional_hashed_snapshot_sync', configuration_bytes=self.configuration_bytes, owner_bytes=sent['total_length'])
+                    self.event('bidirectional_hashed_snapshot_sync', controller_metadata_bytes=self.controller_metadata_bytes, owner_bytes=sent['total_length'])
                 return
             assert payload['phase'] == 'ack'
             data = self.outgoing['data'][index * 2048:(index + 1) * 2048]
@@ -567,44 +540,19 @@ class Peer:
         if complete:
             raw = bytes(incoming['data'])
             assert len(raw) == manifest['total_length'] and digest(raw) == manifest['payload_hash']
-            config = json.loads(raw)
-            assert config['consortium_id'] == self.state['proposal']['consortium_id'] and config['config_revision'] == manifest['config_revision'] and config['controller_octopus_id'] == self.state['proposal']['coordinator_id']
-            monitor_ports(config, self.state['id'])  # Reject all physical actuator authority.
-            self.configuration_bytes = len(raw)
-            self.pending_config = {'config': config, 'payload_hash': digest(raw), 'policy_hash': executable_hash(config)}
-            if not self.link_ready:
-                self.active_config = config
-                self.state['configuration'] = config
-                self.persist()
+            metadata = json.loads(raw)
+            assert set(metadata) == {'controller', 'config_revision'}
+            assert metadata['controller'] == self.state['proposal']['coordinator_id']
+            assert re.fullmatch(r'[1-9][0-9]{0,19}', metadata['config_revision'])
+            assert int(metadata['config_revision']) <= 2**64-1
+            assert metadata['config_revision'] == manifest['config_revision'] == self.config_revision
+            self.controller_metadata_bytes = len(raw)
+            self.controller_metadata = metadata  # Link-local identity metadata, never a saved activity replica.
         await self.send(writer, self.envelope('snapshot_request', manifest | {'phase': 'complete' if complete else 'ack', 'next_index': incoming['index']}))
         if complete:
             self.incoming = None
             if not self.link_ready:
                 await self.send_owner(writer)
-
-    async def config_control(self, writer, message):
-        payload = message['payload']
-        self.last_control = time.monotonic()
-        pending = self.pending_config
-        assert pending and payload['owner_boot_id'] == self.boot
-        config = pending['config']
-        for key, value in [('config_revision', config['config_revision']), ('presentation_revision', config['presentation_revision']),
-                ('payload_hash', pending['payload_hash']), ('policy_hash', pending['policy_hash'])]:
-            assert payload[key] == value
-        activate = message['kind'] == 'config_activate'
-        correlation = {key: payload[key] for key in ['config_revision', 'presentation_revision', 'owner_boot_id', 'payload_hash', 'policy_hash']}
-        if activate:
-            assert self.prepared == correlation or self.active_config == config
-            self.active_config = config
-            self.state['configuration'] = config
-            self.persist()
-            self.prepared = None
-        else:
-            assert message['kind'] == 'config_prepare'
-            self.prepared = correlation
-        await self.send(writer, self.envelope('config_result', correlation | {'phase': 'activate' if activate else 'prepare',
-            'result': 'applied' if activate else 'ready', 'error': ''}))
-        self.event('passive_configuration_applied' if activate else 'passive_configuration_prepared', config_revision=config['config_revision'])
 
     def finish_synthetic_reset(self):
         # Only this fixture's own private state is reset. No Pi network settings,
@@ -614,7 +562,7 @@ class Peer:
         self.state = {'id': self.state['id'], 'password': self.state['password'],
             'key': key, 'leaf': leaf, 'retired': True, 'factory_reset_receipt': receipt}
         self.persist()
-        self.active_config = self.incoming = self.outgoing = self.prepared = None
+        self.controller_metadata = self.incoming = self.outgoing = None
         self.link_ready = False
 
     async def factory_reset_removal(self, writer, message):
@@ -650,6 +598,38 @@ class Peer:
                 evidence='fixture-private membership/configuration and old operational leaf cleared; no host reset')
         raise Retired()
 
+    def accept_context(self, payload):
+        assert self.link_ready and self.controller_metadata
+        assert set(payload) == {'execution_lease_id', 'generation', 'sequence', 'setup_generation', 'target', 'action', 'arguments'}
+        assert payload['action'] == 'context'  # No transmitting action is implemented.
+        assert self.control_leases.get(payload['execution_lease_id'], 0) > time.monotonic()
+        def decimal(value):
+            assert isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,19}', value) and int(value) <= 2**64-1
+            return int(value)
+        generation, sequence = decimal(payload['generation']), decimal(payload['sequence'])
+        assert generation >= self.context_generation and sequence > self.context_sequence
+        assert type(payload['setup_generation']) is int and 0 <= payload['setup_generation'] <= 2**32-1
+        def name(value, local=False, allow_empty=False):
+            assert isinstance(value, dict) and set(value) == {'consortium_id', 'octopus_id', 'tentacle_id', 'side', 'osd_name'}
+            assert value['consortium_id'] == self.state['proposal']['consortium_id']
+            assert isinstance(value['octopus_id'], str) and re.fullmatch(r'[0-9a-f]{32}', value['octopus_id']) and int(value['octopus_id'], 16)
+            assert type(value['tentacle_id']) is int and 0 <= value['tentacle_id'] < 4
+            if local:
+                assert value['octopus_id'] == self.state['id'] and value['tentacle_id'] == 0
+            assert value['side'] in ['front', 'back']
+            osd = value['osd_name']
+            assert isinstance(osd, str) and (allow_empty or osd) and len(osd.encode()) <= 14 and all(ord(c) >= 32 and ord(c) != 127 for c in osd)
+        name(payload['target'], local=True, allow_empty=True)
+        args = payload['arguments']
+        assert set(args) == {'selected', 'source_changed', 'source', 'audio', 'display', 'switch_device', 'input'}
+        assert type(args['selected']) is bool and type(args['source_changed']) is bool
+        assert type(args['input']) is int and 0 <= args['input'] <= 255
+        for role in ['source', 'audio', 'display', 'switch_device']:
+            if args[role] is not None:
+                name(args[role])
+        self.received_context = json.loads(encoded(payload))
+        self.context_generation, self.context_sequence = generation, sequence
+
     async def handle(self, writer, message):
         self.scope(message)
         kind = message['kind']
@@ -659,8 +639,9 @@ class Peer:
             self.event('authenticated_hostname_exchanged')
         elif kind in ['snapshot_request', 'snapshot_chunk']:
             await self.handle_snapshot(writer, message)
-        elif kind in ['config_prepare', 'config_activate']:
-            await self.config_control(writer, message)
+        elif kind == 'scoped_intent':
+            assert type(message['ttl_ms']) is int
+            self.accept_context(message['payload'])
         elif kind == 'membership_event':
             await self.factory_reset_removal(writer, message)
         else:
@@ -737,8 +718,9 @@ class Peer:
         while not self.state.get('retired'):
             writer = read_task = None
             try:
-                self.incoming = self.outgoing = self.prepared = None
-                self.pending_config = None
+                self.incoming = self.outgoing = self.controller_metadata = self.received_context = None
+                self.context_sequence = self.context_generation = 0
+                self.control_leases = {}
                 self.link_ready = False
                 self.last_control = time.monotonic()
                 reader, writer = await self.connect()
@@ -752,11 +734,15 @@ class Peer:
                 sequence = 0
                 while not self.state.get('retired'):
                     now = time.monotonic()
-                    current = self.link_ready and self.active_config['config_revision'] == self.config_revision
+                    current = self.link_ready and self.controller_metadata['config_revision'] == self.config_revision
                     if current:
                         for kind, duration, due in [('control', 5000, control), ('realtime_input', 500, realtime)]:
                             if now >= due:
-                                await self.send(writer, self.envelope('execution_lease', {'lease_id': secrets.token_hex(16), 'link_id': self.link, 'class': kind, 'validity_ms': duration}))
+                                lease = secrets.token_hex(16)
+                                if kind == 'control':
+                                    self.control_leases = {key: until for key, until in self.control_leases.items() if until > now}
+                                    self.control_leases[lease] = now + duration / 1000
+                                await self.send(writer, self.envelope('execution_lease', {'lease_id': lease, 'link_id': self.link, 'class': kind, 'validity_ms': duration}))
                                 if kind == 'control':
                                     control = now + 4
                                 else:
@@ -765,8 +751,10 @@ class Peer:
                             sequence += 1
                             await self.send(writer, self.envelope('heartbeat', {'sequence': str(sequence), 'observation_cursor': '0', 'ready': True}))
                             heartbeat = now + 1
-                        if now >= owner and self.outgoing is None and self.prepared is None:
-                            await self.send_owner(writer)
+                        # Synthetic monitor harness traffic only; firmware reports
+                        # changed observations and does not use this cadence.
+                        if now >= owner and self.outgoing is None:
+                            await self.send(writer, self.envelope('scoped_result', {'snapshot': self.adapter_state()}))
                             owner = now + 2
                     if self.outgoing and now - self.outgoing['started'] >= 10:
                         raise TimeoutError('bounded owner snapshot ACK timeout')
@@ -778,7 +766,7 @@ class Peer:
                             self.event('operational_ready_and_execution_leases')
                             ready_reported = True
                         read_task = asyncio.create_task(self.receive(reader))
-                    quiet = current and ready_reported and self.incoming is None and self.outgoing is None and self.prepared is None and now - self.last_control >= 5
+                    quiet = current and ready_reported and self.incoming is None and self.outgoing is None and now - self.last_control >= 5
                     if quiet and self.cert_faults:
                         await self.rejected_certificates()
                         self.cert_faults = False

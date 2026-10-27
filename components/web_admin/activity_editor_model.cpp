@@ -30,7 +30,7 @@ std::string location(const OwnerHostnames& names,const m::QualifiedDeviceName& n
 }
 const m::CecObservation* observed(const std::vector<m::CecObservation>& observations,const m::QualifiedDeviceName& name) {
     const m::CecObservation* match=nullptr;
-    for(const auto& o:observations)if(!o.stale&&o.kind==m::ObservationKind::native_appliance&&o.osd_name&&o.endpoint.port==name.port&&*o.osd_name==name.osd_name){
+    for(const auto& o:observations)if(!o.stale&&o.osd_name&&o.endpoint.port==name.port&&*o.osd_name==name.osd_name){
         if(match&&match->endpoint!=o.endpoint)return nullptr;
         match=&o;
     }
@@ -61,9 +61,7 @@ bool unchanged_quirks(const cJSON* array,const cs::ConfigurationV2& config){
     }return true;
 }
 
-bool same_fields(const cs::ConfiguredActivity& a,const cs::ConfiguredActivity& b) {
-    return a.source==b.source&&a.display==b.display&&a.audio==b.audio&&a.switch_device==b.switch_device&&a.switch_input==b.switch_input;
-}
+
 }
 std::string component_value(std::optional<m::ComponentId> id) { return id?"component:"+id->str():std::string{}; }
 bool parse_submission(const std::string& body,const cs::ConfigurationV2& config,Submission& out,std::string& error) {
@@ -110,7 +108,7 @@ std::vector<Choice> choices(const cs::ConfigurationV2& config,const std::vector<
     }
     std::set<std::string> seen;
     for(const auto& o:observations){
-        if(o.stale||o.kind!=m::ObservationKind::native_appliance||!o.osd_name)continue;
+        if(o.stale||!o.osd_name)continue;
         m::QualifiedDeviceName name{o.endpoint.port,*o.osd_name};if(!name.valid()||!observed(observations,name))continue;
         const auto key=m::name_json(name);
         if(!seen.insert(key).second||std::any_of(config.components.begin(),config.components.end(),[&](const auto& c){return contains(c.record.qualified_names,name);}))continue;
@@ -132,28 +130,6 @@ std::vector<m::ActivityId> projected_activities(const cs::ConfigurationV2& confi
     auto result=cs::ordered_activities(config);if(result.size()>16)result.resize(16);
     return result;
 }
-bool prepare_discovery(const cs::ConfigurationV2& previous,const std::vector<DiscoveryOwner>& owners,
-    const std::function<bool(uint8_t*,size_t)>& random,cs::ConfigurationV2& out,bool& changed,std::string& error) {
-    changed=false;if(!previous.controller_octopus_id||owners.size()>3||!cs::validate_configuration_v2(previous,error))return false;
-    auto candidate=previous;std::set<m::OctopusId> seen;
-    for(const auto& owner:owners){
-        const auto board=std::find_if(candidate.octopuses.begin(),candidate.octopuses.end(),[&](const auto& b){return b.octopus_id==owner.owner;});
-        if(board==candidate.octopuses.end()||!seen.insert(owner.owner).second||(owner.configured_mask>>board->supported_tentacles)){error="The equipment scan hardware profile changed";return false;}
-        const auto capacity=board->supported_tentacles;
-        for(uint8_t connector=0;connector<capacity;++connector)if(owner.configured_mask&(1u<<connector)){
-            // Existing equipment and confirmed shared electrical domains retain
-            // their assignments. Scan authorizes only unused private roles.
-            if(std::any_of(candidate.binding_policies.begin(),candidate.binding_policies.end(),[&](const auto& b){return b.port.octopus_id==owner.owner&&b.port.tentacle_id==connector;}))continue;
-            bool independent=true;for(const auto& d:candidate.domains)for(const auto& p:d.ports)if(p.port.octopus_id==owner.owner&&p.port.tentacle_id==connector){
-                const auto desired=p.port.side==m::Side::front?m::PortRole::playback_proxy:m::PortRole::tv_controller;
-                if(d.ports.size()!=1||(d.confirmed&&p.role!=desired))independent=false;
-            }
-            if(!independent)continue;
-            cs::ConfigurationV2 next;if(!cs::propose_adapter_connection(candidate,owner.owner,connector,{},random,next,error))return false;candidate=std::move(next);
-        }
-    }
-    changed=cs::serialize_configuration_v2(candidate)!=cs::serialize_configuration_v2(previous);out=std::move(candidate);return true;
-}
 bool edit(const cs::ConfigurationV2& previous,const std::vector<Row>& rows,const std::vector<Choice>& available,
     const std::function<bool(uint8_t*,size_t)>& random,cs::ConfigurationV2& out,std::vector<std::string>& unresolved,std::string& error) {
     const auto fail=[&](const char* reason){error=reason;return false;};
@@ -166,46 +142,23 @@ bool edit(const cs::ConfigurationV2& previous,const std::vector<Row>& rows,const
         const auto choice=std::find_if(available.begin(),available.end(),[&](const auto& c){return c.value==value&&contains(c.roles,std::string(role));});
         if(choice==available.end()){error="Choose identified equipment from this activity field's list";return false;}
         if(choice->component_id){id=choice->component_id;return true;}
-        if(!choice->native_name||!choice->observation)return fail("The selected equipment no longer has a unique native identity");
+        if(!choice->native_name)return fail("The selected equipment has no scoped OSD name");
         for(const auto& c:candidate.components)if(contains(c.record.qualified_names,*choice->native_name)){id=c.record.component_id;return true;}
         cs::ConfiguredComponent c;c.record.component_id=fresh(m::ComponentId{});if(!c.record.component_id)return fail("Equipment identity allocation failed");
-        c.record.qualified_names={*choice->native_name};c.record.label=c.generated_label=choice->title;c.kind=kind(choice->observation->device_type);id=c.record.component_id;candidate.components.push_back(std::move(c));return true;
+        c.record.qualified_names={*choice->native_name};c.record.label=c.generated_label=choice->title;c.kind=choice->observation?kind(choice->observation->device_type):(std::string(role)=="display"?"display":std::string(role)=="source"?"source":"receiver");id=c.record.component_id;candidate.components.push_back(std::move(c));return true;
     };
     for(const auto& row:rows){
         if(row.name.empty()||row.name.size()>63||!names.insert(row.name).second)return fail("Use distinct activity names of at most 63 bytes");
-        cs::ConfiguredActivity activity;const cs::ConfiguredActivity* old=nullptr;
+        cs::ConfiguredActivity activity;
         if(row.activity_id){
             if(!contains(projection,*row.activity_id)||!retained.insert(*row.activity_id).second)return fail("An activity identity is unknown or repeated");
-            const auto found=std::find_if(previous.activities.begin(),previous.activities.end(),[&](const auto& a){return a.activity_id==*row.activity_id;});if(found==previous.activities.end())return fail("The activity no longer exists");old=&*found;activity=*old;
+            const auto found=std::find_if(previous.activities.begin(),previous.activities.end(),[&](const auto& a){return a.activity_id==*row.activity_id;});if(found==previous.activities.end())return fail("The activity no longer exists");activity=*found;
         }else{
-            activity.activity_id=fresh(m::ActivityId{});activity.route_id=fresh(m::RouteId{});activity.zone_id=previous.primary_zone_id;activity.enabled=false;
-            if(!activity.activity_id||!activity.route_id||contains(projection,activity.activity_id)||!retained.insert(activity.activity_id).second)return fail("Activity identity allocation failed");
+            activity.activity_id=fresh(m::ActivityId{});activity.zone_id=previous.primary_zone_id;
+            if(!activity.activity_id||contains(projection,activity.activity_id)||!retained.insert(activity.activity_id).second)return fail("Activity identity allocation failed");
         }
         activity.label=row.name;activity.generated_label=row.name;activity.label_override=true;activity.switch_input=row.switch_input;
         if(!selected(row.display,"display",activity.display)||!selected(row.source,"source",activity.source)||!selected(row.audio,"audio",activity.audio)||!selected(row.switch_device,"switch",activity.switch_device))return false;
-        if(!old||!old->enabled||!same_fields(activity,*old)){
-            activity.enabled=false;
-            const auto proven=std::find_if(previous.activities.begin(),previous.activities.end(),[&](const auto& a){return a.enabled&&same_fields(a,activity);});
-            if(proven!=previous.activities.end()){activity.route_id=proven->route_id;activity.zone_id=proven->zone_id;activity.enabled=true;}
-            else if(activity.source&&activity.display&&!activity.switch_device&&(!activity.audio||activity.audio==activity.display||activity.audio==activity.source)){
-                const auto find_choice=[&](m::ComponentId id)->const Choice*{
-                    const auto c=std::find_if(candidate.components.begin(),candidate.components.end(),[&](const auto& c){return c.record.component_id==id;});
-                    if(c==candidate.components.end()||c->record.qualified_names.empty())return nullptr;
-                    const auto v=std::find_if(available.begin(),available.end(),[&](const auto& v){return v.native_name&&*v.native_name==c->record.qualified_names[0];});return v==available.end()?nullptr:&*v;
-                };
-                const auto* source=find_choice(*activity.source);const auto* screen=find_choice(*activity.display);
-                if(source&&screen&&source->native_name&&screen->native_name&&source->observation&&screen->observation&&source->native_name->port.side==m::Side::back&&screen->native_name->port.side==m::Side::front&&source->native_name->port.octopus_id==screen->native_name->port.octopus_id&&source->native_name->port.tentacle_id==screen->native_name->port.tentacle_id&&m::valid_physical_address(source->observation->physical_address,false)){
-                    const auto pa=source->observation->physical_address;
-                    std::vector<cs::LegacyEvidence> evidence{{*source->native_name,true,true,pa,true,true,false,0},{*screen->native_name,true,true,screen->observation->physical_address,false,true,false,static_cast<uint8_t>(pa>>12)}};
-                    cs::LegacyActivity desired{row.name,screen->native_name->osd_name,source->native_name->osd_name,activity.audio?(activity.audio==activity.display?screen->native_name->osd_name:source->native_name->osd_name):std::string{},"",0};
-                    cs::ConfigurationV2 built;std::vector<std::string> tasks;
-                    if(!cs::propose_local_activity(candidate,desired,evidence,random,built,tasks,error))return false;
-                    const auto created=built.activities.back();built.activities.pop_back();for(auto& z:built.zones)z.activity_order.erase(std::remove(z.activity_order.begin(),z.activity_order.end(),created.activity_id),z.activity_order.end());built.external_slots.erase(std::remove_if(built.external_slots.begin(),built.external_slots.end(),[&](const auto& slot){return slot.activity_id==created.activity_id;}),built.external_slots.end());
-                    candidate=std::move(built);activity.route_id=created.route_id;activity.zone_id=old?old->zone_id:previous.primary_zone_id;activity.enabled=created.enabled;
-                }
-            }
-            if(!activity.enabled)unresolved.push_back(activity.label+": the selected input, sound or switching path is not established; its fields are saved without automatic control");
-        }
         candidate.activities.erase(std::remove_if(candidate.activities.begin(),candidate.activities.end(),[&](const auto& a){return a.activity_id==activity.activity_id;}),candidate.activities.end());candidate.activities.push_back(activity);order.push_back(activity.activity_id);
     }
     const auto removed=[&](m::ActivityId id){return contains(projection,id)&&!retained.count(id);};

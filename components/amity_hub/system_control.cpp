@@ -1,178 +1,119 @@
 #include "amity/system_control.hpp"
-#ifdef ESP_PLATFORM
-#include "esp_random.h"
-#else
-#include <random>
-#endif
-
 namespace amity {
-bool SystemControl::compile_v2(const config_store::ConfigurationV2& config, system::LocalConfiguration& slice, std::string& error) const {
-    if(!config.legacy_remote_configuration.empty()){error="Upgrade the saved configuration before activating it";return false;}
-    if (!config_store::validate_configuration_v2(config, error) || !config.controller_octopus_id || config.consortium_id != consortium_) return false;
-    slice.topology = config_store::configured_topology(config); slice.primary_zone_id = config.primary_zone_id;
-    slice.presentation_revision = config.presentation_revision; slice.executable_hash = config_store::executable_policy_hash(config);
-    for (const auto& a : config.activities) if (a.enabled) slice.activities.push_back({a.activity_id, a.zone_id, a.label, a.source, a.display, a.audio});
-    for (const auto& slot : config.external_slots) slice.external_slots.push_back({slot.slot, slot.activity_id, slot.hidden, slot.tombstone, slot.alias});
-    for (const auto& domain : config.domains) {
-        for (const auto& port : domain.ports) if (port.port.octopus_id == octopus_) {
-            if (port.port.tentacle_id >= amity::max_tentacles || port.port.consortium_id != consortium_) {
-                error = "local attachment is outside the supported HDMI adapter indices"; return false;
-            }
-            if (std::any_of(slice.port_templates.begin(), slice.port_templates.end(), [&](const auto& p) { return p.port == port.port; })) {
-                error = "local attachment is assigned more than one domain"; return false;
-            }
-            if (!domain.confirmed && (port.role == system::PortRole::tv_controller || port.role == system::PortRole::playback_proxy)) { error = "active CEC domain is not confirmed"; return false; }
-            system::PortPolicySnapshot policy;
-            policy.port = port.port; policy.domain_id = domain.domain_id; policy.domain_revision = domain.domain_revision;
-            policy.role = connector_enabled(port.port.tentacle_id) ? port.role : system::PortRole::disabled;
-            policy.physical_address = port.physical_address; policy.components = slice.topology.components;
-            for (const auto& binding : config.binding_policies) if (binding.port == port.port && binding.domain_id == domain.domain_id) {
-                system::ComponentBinding record;
-                record.binding_id = binding.binding_id; record.component_id = binding.component_id; record.capability = binding.capability;
-                record.kind = binding.kind; record.device_name = binding.device_name; record.endpoint.port = binding.port;
-                record.owner_octopus_id = octopus_; record.domain_id = domain.domain_id; record.domain_revision = domain.domain_revision;
-                record.binding_revision = 1; record.role = policy.role; record.proxy_identity_resource_id = binding.proxy_identity_resource_id;
-                record.physical_address_evidence_ref = system::EvidenceId::generate([](uint8_t* data, size_t size) {
-#ifdef ESP_PLATFORM
-                    esp_fill_random(data, size);
-#else
-                    std::random_device random; for (size_t i = 0; i < size; ++i) data[i] = static_cast<uint8_t>(random());
-#endif
-                    return true;
-                }).value_or(system::EvidenceId{});
-                slice.topology.bindings.push_back(record);
-                policy.bindings.push_back({record, binding.discrete_power_on, binding.discrete_power_off, binding.image_view_on, binding.exact_path_selection});
-            }
-            if (policy.bindings.size() > 64) { error = "local port exceeds bounded binding capacity"; return false; }
-            slice.port_templates.push_back(std::move(policy));
-        }
-    }
-    if (slice.port_templates.size() > amity::max_cec_ports || slice.topology.bindings.size() > 128) { error = "local runtime capacity exceeded"; return false; }
-    for (size_t i = 0; i < slice.port_templates.size(); ++i) for (size_t j = 0; j < i; ++j)
-        if (slice.port_templates[i].domain_id == slice.port_templates[j].domain_id && slice.port_templates[i].role == system::PortRole::tv_controller && slice.port_templates[j].role == system::PortRole::tv_controller) {
-            error = "electrical domain cannot allocate two local TV-controller identities"; return false;
-        }
-    for (uint8_t id = 0; id < supported_tentacles(); ++id) if (connector_enabled(id))
-    for (auto side : {system::Side::front, system::Side::back}) if (std::none_of(slice.port_templates.begin(), slice.port_templates.end(), [&](const auto& p) { return p.port.tentacle_id == id && p.port.side == side; })) {
-        // Unknown attachments start in a private runtime quarantine domain.
-        // This grants observation only; configuration must explicitly confirm
-        // a domain before installing an active control role.
-        system::PortPolicySnapshot policy;
-        policy.port = {consortium_, octopus_, id, side}; policy.role = system::PortRole::monitor; policy.domain_revision = 1;
-        policy.domain_id = system::DomainId::generate([](uint8_t* data, size_t size) {
-#ifdef ESP_PLATFORM
-            esp_fill_random(data, size);
-#else
-            std::random_device random; for (size_t i = 0; i < size; ++i) data[i] = static_cast<uint8_t>(random());
-#endif
-            return true;
-        }).value_or(system::DomainId{});
-        slice.port_templates.push_back(std::move(policy));
-    }
-    return true;
-}
-esp_err_t SystemControl::configure_v2(config_store::ConfigurationV2 config, std::function<esp_err_t()> commit) {
-    if (!local_coordinator_.load() || maintenance_.load()) return ESP_ERR_INVALID_STATE;
-    if (!config.controller_octopus_id || *config.controller_octopus_id != octopus_) return ESP_ERR_INVALID_ARG;
-    system::LocalConfiguration slice; std::string error;
-    if (!compile_v2(config, slice, error)) return ESP_ERR_INVALID_ARG;
-    auto stored = std::make_shared<const config_store::ConfigurationV2>(std::move(config));
-    const auto result = local_.configure_v2(std::move(slice), std::move(commit));
-    if (result == ESP_OK) std::atomic_store(&active_config_, std::move(stored));
+esp_err_t SystemControl::transition_coordinator_authority(bool enabled,uint64_t epoch){
+    auto config=std::atomic_load(&active_);
+    if(enabled&&(epoch!=1||(config&&config->controller_octopus_id!=octopus_)))return ESP_ERR_INVALID_STATE;
+    auto result=local_.transition_coordinator_authority(enabled,epoch);
+    if(result==ESP_OK)local_coordinator_.store(enabled);
     return result;
 }
-esp_err_t SystemControl::configure_passive_metadata(const config_store::ConfigurationV2& config) {
+std::vector<Activity> SystemControl::activities(const config_store::ConfigurationV2& config)const{
+    std::vector<Activity> out;
+    for(auto id:config_store::ordered_activities(config))for(const auto& a:config.activities)if(a.activity_id==id){
+        auto value=[](const auto& ref){return ref?ref->str():std::string{};};
+        out.push_back({a.label,value(a.display),value(a.source),value(a.audio),value(a.switch_device),a.switch_input});
+    }
+    return out;
+}
+bool SystemControl::dispatch_owned(system::OwnedIntent intent){
+    const auto sender=std::atomic_load(&sender_);return sender&&(*sender)(std::move(intent));
+}
+esp_err_t SystemControl::configure_v2(config_store::ConfigurationV2 config,std::function<esp_err_t()> commit){
+    refresh_outcomes();
     std::string error;
-    if (local_coordinator_.load() || maintenance_.load()) return ESP_ERR_INVALID_STATE;
-    const auto previous = std::atomic_load(&active_config_);
-    if (!config.controller_octopus_id || (previous && previous->controller_octopus_id && previous->controller_octopus_id != config.controller_octopus_id) || config.consortium_id != consortium_ || !config_store::validate_configuration_v2(config, error)) return ESP_ERR_INVALID_ARG;
-    std::atomic_store(&active_config_, std::make_shared<const config_store::ConfigurationV2>(config));
-    return ESP_OK;
-}
-esp_err_t SystemControl::configure_member_slice(config_store::ConfigurationV2 config, system::OctopusId coordinator, uint64_t epoch) {
-    if (!coordinator || coordinator == octopus_ || epoch != 1 || !config.controller_octopus_id || *config.controller_octopus_id != coordinator) return ESP_ERR_INVALID_ARG;
-    const auto previous = std::atomic_load(&active_config_);
-    if (previous && previous->controller_octopus_id && previous->controller_octopus_id != config.controller_octopus_id) return ESP_ERR_INVALID_ARG;
-    system::LocalConfiguration slice; std::string error;
-    if (!compile_v2(config, slice, error)) return ESP_ERR_INVALID_ARG;
-    slice.member = true; slice.coordinator_id = coordinator; slice.coordinator_epoch = epoch;
-    auto stored = std::make_shared<const config_store::ConfigurationV2>(std::move(config));
-    const auto result = local_.configure_member_v2(std::move(slice), [stored, owner = octopus_, coordinator, epoch] {
-        std::string reason; return config_store::persist_owner_configuration(*stored, owner, coordinator, epoch, reason);
-    });
-    if (result == ESP_OK) std::atomic_store(&active_config_, std::move(stored));
-    return result;
-}
-system::AdmissionResult SystemControl::prepare_member_configuration(config_store::ConfigurationV2 config, system::OctopusId coordinator, uint64_t epoch, std::string hash) {
-    if (!coordinator || coordinator == octopus_ || epoch != 1 || !config.controller_octopus_id || *config.controller_octopus_id != coordinator || hash.size() != 64 ||
-        std::any_of(hash.begin(), hash.end(), [](char c) { return (c < '0' || c > '9') && (c < 'a' || c > 'f'); }))
-        return {system::AdmissionCode::invalid, "invalid member configuration correlation"};
-    const auto previous = std::atomic_load(&active_config_);
-    if (previous && previous->controller_octopus_id && previous->controller_octopus_id != config.controller_octopus_id)
-        return {system::AdmissionCode::unauthorized, "the original controller cannot be changed"};
-    system::LocalConfiguration slice; std::string error;
-    if (!compile_v2(config, slice, error)) return {system::AdmissionCode::invalid, error};
-    slice.member = true; slice.coordinator_id = coordinator; slice.coordinator_epoch = epoch;
-    auto prepared = std::make_shared<const PreparedMember>(PreparedMember{hash, std::move(config)});
-    const auto result = local_.prepare_member_v2(std::move(slice), std::move(hash), [prepared, owner = octopus_, coordinator, epoch] {
-        std::string reason; return config_store::persist_owner_configuration(prepared->configuration, owner, coordinator, epoch, reason);
-    });
-    if (result) std::atomic_store(&prepared_member_, std::move(prepared));
-    return result;
-}
-esp_err_t SystemControl::activate_member_configuration(const std::string& hash) {
-    auto prepared = std::atomic_load(&prepared_member_);
-    if (!prepared || prepared->payload_hash != hash) return ESP_ERR_INVALID_STATE;
-    const auto result = local_.activate_member_v2(hash);
-    if (result == ESP_OK) {
-        std::atomic_store(&active_config_, std::make_shared<const config_store::ConfigurationV2>(prepared->configuration));
-        std::atomic_store(&prepared_member_, std::shared_ptr<const PreparedMember>{});
+    if(!accepts_local_input()||!config_store::validate_configuration_v2(config,error)||config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
+    std::vector<system::ScopedSelector> selectors;
+    for(const auto& c:config.components)for(const auto& name:c.record.qualified_names){
+        std::vector<system::OwnedQuirk> effective;
+        for(const auto& q:config.quirks)if(!q.component_id||q.component_id==c.record.component_id)effective.push_back({q.vendor_id,q.power_on,q.power_off});
+        selectors.push_back({c.record.component_id.str(),name,std::move(effective)});
     }
+    std::vector<Quirk> quirks;for(const auto& q:config.quirks)if(!q.component_id)quirks.push_back({q.vendor_id,q.power_on,q.power_off});
+    auto stored=std::make_shared<const config_store::ConfigurationV2>(std::move(config));
+    const auto result=local_.configure_scoped(activities(*stored),std::move(selectors),std::move(quirks),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,std::move(commit),stored->presentation_revision);
+    if(result==ESP_OK)std::atomic_store(&active_,std::move(stored));
     return result;
 }
-void SystemControl::abort_member_configuration(const std::string& hash) {
-    local_.abort_member_v2(hash);
-    auto prepared = std::atomic_load(&prepared_member_);
-    if (prepared && prepared->payload_hash == hash) std::atomic_store(&prepared_member_, std::shared_ptr<const PreparedMember>{});
+esp_err_t SystemControl::configure_passive_metadata(const config_store::ConfigurationV2& config){
+    std::string error;if(local_coordinator_.load()||!config_store::validate_configuration_v2(config,error)||config.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
+    std::atomic_store(&active_,std::make_shared<const config_store::ConfigurationV2>(config));return ESP_OK;
 }
-system::AdmissionResult SystemControl::update_remote_owner(system::OctopusId owner, std::vector<system::PortPolicySnapshot> policies, bool ready, uint32_t ttl) {
-    auto config = std::atomic_load(&active_config_);
-    if (!config || !owner || owner == octopus_) return {system::AdmissionCode::unauthorized, "owner is not in an active Amity system configuration"};
-    for (const auto& policy : policies) {
-        const auto domain = std::find_if(config->domains.begin(), config->domains.end(), [&](const auto& d) { return d.domain_id == policy.domain_id && d.domain_revision == policy.domain_revision && d.owner_octopus_id == owner; });
-        const bool passive = (policy.role == system::PortRole::monitor || policy.role == system::PortRole::disabled) && !policy.owned_logical_address && policy.bindings.empty();
-        const bool unavailable = (policy.role == system::PortRole::disabled || policy.role == system::PortRole::monitor) && !policy.owned_logical_address &&
-            std::none_of(policy.bindings.begin(),policy.bindings.end(),[](const auto& p){return p.binding.status==system::BindingStatus::verified;});
-        if(domain==config->domains.end()&&passive){
-            const auto board=std::find_if(config->octopuses.begin(),config->octopuses.end(),[&](const auto& b){return b.octopus_id==owner;});
-            if(board!=config->octopuses.end()&&policy.port.consortium_id==consortium_&&policy.port.octopus_id==owner&&policy.port.tentacle_id<board->supported_tentacles&&policy.config_revision==config->config_revision)continue;
+esp_err_t SystemControl::request_activity_v2(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
+    refresh_outcomes();
+    if(!accepts_local_input()||!request)return ESP_ERR_INVALID_STATE;
+    if(expected&&*expected!=execution_snapshot().state_revision)return ESP_ERR_INVALID_STATE;
+    auto config=std::atomic_load(&active_);if(!config)return ESP_ERR_INVALID_STATE;
+    auto order=config_store::ordered_activities(*config);auto found=std::find(order.begin(),order.end(),activity);
+    const auto target=std::find_if(config->activities.begin(),config->activities.end(),[&](const auto& a){return a.activity_id==activity&&a.zone_id==zone;});
+    if(found==order.end()||target==config->activities.end())return ESP_ERR_INVALID_ARG;
+    const int index=static_cast<int>(found-order.begin());
+    std::lock_guard<std::mutex> lock(outcomes_mutex_);
+    auto terminal=pending_.end();
+    if(pending_.size()==32){terminal=std::find_if(pending_.begin(),pending_.end(),[](const auto& value){return value.stage!="admitted";});if(terminal==pending_.end())return ESP_ERR_NO_MEM;}
+    uint32_t selection=0;const auto result=local_.request_activity(index,&selection);
+    if(result==ESP_OK){if(terminal!=pending_.end())pending_.erase(terminal);pending_.push_back({request,index,selection,config->revisions(),"admitted",{}});}
+    return result;
+}
+esp_err_t SystemControl::stop_zone_v2(system::ZoneId zone){
+    const auto state=execution_snapshot();if(!state.sessions.empty()&&state.sessions.front().zone_id!=zone)return ESP_ERR_INVALID_ARG;
+    return request_activity(-1);
+}
+void SystemControl::update_outcomes_locked(const Snapshot& state,const config_store::ConfigurationV2* config)const{
+    for(auto& pending:pending_){
+        if(pending.stage!="admitted")continue;
+        if(!config||config->revisions()!=pending.revisions){pending.stage="rejected";pending.error="The saved configuration changed before this request completed";continue;}
+        const auto processed=state.processed_activity_selection;
+        if(processed!=pending.selection){
+            if(static_cast<int32_t>(processed-pending.selection)>0){pending.stage="rejected";pending.error="Playback changed before this request completed";}
+            continue;
         }
-        if (domain == config->domains.end() || (!domain->confirmed && !passive && !unavailable) || policy.config_revision != config->config_revision ||
-            std::none_of(domain->ports.begin(), domain->ports.end(), [&](const auto& p) { return p.port == policy.port && (p.role == policy.role || unavailable); }))
-            return {system::AdmissionCode::unauthorized, "remote policy is outside its committed attachment domain"};
-        for (const auto& permission : policy.bindings) {
-            const auto& binding = permission.binding;
-            const auto expected = std::find_if(config->binding_policies.begin(), config->binding_policies.end(), [&](const auto& p) { return p.binding_id == binding.binding_id; });
-            if (expected == config->binding_policies.end() || expected->component_id != binding.component_id || expected->domain_id != binding.domain_id ||
-                expected->port != binding.endpoint.port || expected->capability != binding.capability || expected->kind != binding.kind || expected->device_name != binding.device_name ||
-                expected->proxy_identity_resource_id != binding.proxy_identity_resource_id ||
-                (binding.status==system::BindingStatus::verified?(expected->discrete_power_on!=permission.discrete_power_on||expected->discrete_power_off!=permission.discrete_power_off||expected->image_view_on!=permission.image_view_on||expected->exact_path_selection!=permission.exact_path_selection):
-                 ((permission.discrete_power_on&&!expected->discrete_power_on)||(permission.discrete_power_off&&!expected->discrete_power_off)||(permission.image_view_on&&!expected->image_view_on)||(permission.exact_path_selection&&!expected->exact_path_selection))))
-                return {system::AdmissionCode::unauthorized, "remote binding changes committed component or semantic permissions"};
+        if(state.activity_settling)continue;
+        if(!state.activity_error.empty()){pending.stage="failed";pending.error=state.activity_error;}
+        else if(state.current_activity==pending.target)pending.stage="applied";
+        else {pending.stage="rejected";pending.error="Playback changed before this request completed";}
+    }
+}
+void SystemControl::refresh_outcomes()const{
+    const auto config=std::atomic_load(&active_);const auto state=local_.snapshot();
+    std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config.get());
+}
+system::ExecutionSnapshot SystemControl::execution_snapshot()const{
+    system::ExecutionSnapshot out;auto config=std::atomic_load(&active_);const auto state=local_.snapshot();
+    out.state_revision=local_.activity_selection();out.activity_settling=state.activity_settling;out.error=state.activity_error;
+    const bool installed=config&&state.applied_config_revision==config->config_revision&&state.applied_presentation_revision==config->presentation_revision;
+    if(installed){
+        out.applied_config_revision=config->config_revision;out.applied_presentation_revision=config->presentation_revision;out.applied_policy_hash=config_store::executable_policy_hash(*config);
+        const auto order=config_store::ordered_activities(*config);
+        if(state.current_activity>=0&&static_cast<size_t>(state.current_activity)<order.size()){
+            const auto id=order[state.current_activity];for(const auto& a:config->activities)if(a.activity_id==id)out.sessions.push_back({system::SessionId::parse(boot_.str()).value_or(system::SessionId{}),a.zone_id,id,state.activity_generation});
         }
     }
-    return local_.update_remote_owner(owner, std::move(policies), ready, ttl);
+    {std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config.get());for(const auto& pending:pending_)out.activity_outcomes.push_back({pending.id,pending.stage,pending.error});}
+    out.native_observations=native_observations();return out;
 }
-std::optional<config_store::ConfigurationV2> SystemControl::active_configuration() const {
-    auto config = std::atomic_load(&active_config_); if (config) return *config; return {};
+std::vector<system::CecObservation> SystemControl::native_observations()const{
+    std::vector<system::CecObservation> out;
+    for(const auto& a:local_.owned_snapshots())if(a.owner==octopus_)for(const auto& d:a.devices)if(d.resolved){system::CecObservation o;o.endpoint={{consortium_,a.owner,a.adapter,d.side},d.logical_address};o.osd_name=d.osd_name;o.owner_boot_id=a.boot;o.local_sequence=a.discovery_generation+1;o.scan_id=system::ScanId::parse(a.boot.str()).value_or(system::ScanId{});o.physical_address=d.physical_address;o.device_type=d.device_type;o.vendor_id=d.vendor_id;out.push_back(std::move(o));}
+    return out;
 }
-std::optional<config_store::ConfiguredActivity> SystemControl::external_activity(unsigned slot) const {
-    auto config = std::atomic_load(&active_config_); if (!config) return {};
-    const auto* activity = config_store::activity_for_slot(*config, slot); if (!activity || !activity->enabled || activity->zone_id != config->primary_zone_id) return {}; return *activity;
+std::optional<config_store::ConfiguredActivity> SystemControl::external_activity(unsigned slot)const{
+    auto config=std::atomic_load(&active_);if(!config)return {};auto* activity=config_store::activity_for_slot(*config,slot);return activity&&activity->zone_id==config->primary_zone_id?std::optional<config_store::ConfiguredActivity>(*activity):std::nullopt;
 }
-std::optional<config_store::ExternalSlot> SystemControl::external_slot(unsigned index) const {
-    auto config = std::atomic_load(&active_config_); if (!config) return {};
-    for (const auto& slot : config->external_slots) if (slot.slot == index && (slot.tombstone || std::any_of(config->activities.begin(), config->activities.end(), [&](const auto& activity) { return activity.activity_id == slot.activity_id && activity.zone_id == config->primary_zone_id; }))) return slot;
+std::optional<config_store::ExternalSlot> SystemControl::external_slot(unsigned slot)const{
+    auto config=std::atomic_load(&active_);if(config)for(const auto& s:config->external_slots)if(s.slot==slot)return s;return {};
+}
+std::optional<unsigned> SystemControl::external_activity_index(const Snapshot& state)const{
+    auto config=std::atomic_load(&active_);
+    if(!config)return state.current_activity<0?std::nullopt:std::optional<unsigned>{static_cast<unsigned>(state.current_activity)};
+    if(state.applied_config_revision!=config->config_revision||state.applied_presentation_revision!=config->presentation_revision||state.current_activity<0)return {};
+    const auto order=config_store::ordered_activities(*config);
+    if(static_cast<size_t>(state.current_activity)>=order.size())return {};
+    const auto id=order[state.current_activity];
+    for(const auto& slot:config->external_slots)if(!slot.tombstone&&slot.activity_id==id){
+        const auto* activity=config_store::activity_for_slot(*config,slot.slot);
+        if(activity&&activity->zone_id==config->primary_zone_id)return slot.slot;
+    }
     return {};
 }
+
 }

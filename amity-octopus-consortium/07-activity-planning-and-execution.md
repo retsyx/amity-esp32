@@ -1,188 +1,47 @@
-# 07 — Activity planning and execution
+# Original activity handling with owner delivery
 
-**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+**27 October 2026 user amendment.** The local Amity algorithms remain the activity model. Distribution adds a stable equipment owner and transports original intents; it does not introduce persisted executable plans or a replacement activity planner. [AGENTS.md](../AGENTS.md), [addressing](03-domain-model-and-addressing.md), [CEC behavior](06-cec-roles-and-message-policy.md) and [transport](08-consortium-transport-and-routing.md) are normative.
 
-**Status:** proposed v0.1. **Owns:** desired state, resource arbitration, operation plans and input lifetime. **Dependencies:** [model](03-domain-model-and-addressing.md), [CEC policy](06-cec-roles-and-message-policy.md), [transport](08-consortium-transport-and-routing.md).
+## 1. Saved choices and live execution
 
-## 1. Replace independent hub decisions with one planner
+An activity retains name, display, source, audio, optional switch device and switch input. Equipment choices resolve through `Amity device ID / HDMI adapter / CEC side / OSD name`. Stable IDs preserve labels and external integration identity; activity order drives the original remote shortcuts. These records are not route-approval tokens.
 
-The existing hub selects one activity and powers/routes named equipment relative to the previous activity. `configure()` can call standby; new discoveries can cause input restoration. These behaviors are understandable for one two-bus controller but become unsafe when several controllers share a receiver or display. [Current activity and discovery logic](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub.cpp).
+There is no persistent `enabled` flag, approved route, physical cable graph, capability gate, resource reservation or saved physical-address evidence needed to execute an activity. The chosen owner, adapter and name either resolve under the original local rules or they do not. Missing equipment stays saved. Its return does not require a user repair/approval operation.
 
-The coordinator MUST be the sole author of group desired state and resource allocations. Local agents implement explicit admitted primitives and local invariants. They MUST NOT infer an independent whole-system activity from the last CEC `Active Source`, a remote key, or a stale configuration replica.
+## 2. Reuse the original decisions
 
-The planner is a host-testable, deterministic module: given a committed topology, current sessions, qualified observations and an intent, return a proposed transition, a conflict, or a reason the route is unresolved. Network and GPIO operations belong to separate executors.
+The original controller sequences the existing activity decisions relative to the current activity: selective power-off/on, deduplication of equipment used in several roles, original source routing or explicit switch-input fallback, audio status handling, standby and same-target repair. Preserve the same original decisions for local and remotely owned recipients.
 
-## 2. Public intent contract
+Deliver each typed intent in the original order to the selected owner. The owner performs the actual local lookup and local CEC handling. Do not centralize discovered CEC addresses or translate a semantic operation into a new remotely prescribed CEC policy. Do not wait for all owners to acknowledge or reserve a global plan before the original algorithm can make its next submission. A source-input lookup result may return its original generation/sequence and actual presence so the controller continues the original switch fallback/audio query; this does not wait for CEC ACK or completion.
 
-`SystemControl` accepts requests such as:
+Preserve the original treatment of absent source/display/audio/switch equipment and partial progress. A failed lookup must not become a persistent activity veto or a new all-or-nothing transaction. Preserve original configure/discovery/received-frame effects, activity settling, same-target selection and long-Power repair. The distributed layer adds no normal-operation delay, retry cadence, compensation sequence, automatic failover or automatic activity resumption.
 
-```text
-SelectActivity(actor, request_id, zone_id, activity_id, expected_state_revision?)
-StopSession(actor, request_id, session_id)
-AllOff(actor, request_id, scope)
-KeyEvent(actor, remote_id, input_session_id, sequence, zone_id, event)
-SetAudio(actor, request_id, zone_id, desired_audio_state)
-Scan(actor, request_id, scope)
-```
+## 3. Put work at the owner
 
-These are interface sketches, not final C++ signatures. Actor identity carries authenticated role and origin octopus. A web request is authorized before becoming a system intent; only the original controller may originate activity/key input; a member cannot obtain input-gateway permission or mutate membership. `request_id` deduplicates retries of the user's intent.
+Each adapter's owner maintains its original discovery cache, allocated identities, physical-address selection and local CEC execution. A controller-side lookup selects the authenticated owning Amity; adapter/side/OSD resolution belongs to that owner. Static user choices are not replaced by copied logical addresses.
 
-Selecting an already selected activity is a reconciliation request, not a fresh sequence of power toggles. Stopping one zone does not mean powering off the consortium. `AllOff` is explicit, scoped and still respects configured exclusions and projector/device shutdown behavior. An external integration that exposes one primary zone maps its power control to that zone's session, not to every zone.
+A one-shot operation is not retained for later replay when an owner reconnects. An uncertain relative action is not retried under a new identity. Unavailable equipment receives the original failure/discovery handling. Network loss does not cause a headless member to choose an activity independently.
 
-When two users request conflicting changes, serialize requests at the coordinator and use expected state revision where the UI offers a choice. The second request sees the new state or receives a conflict. Do not apply stale confirmation text to a different running session.
+## 4. Remote input and held keys
 
-## 3. Resources and compatible sessions
+Keep the original controller's input and gesture algorithms, startup/selection wait-for-release gate, one-second fallback, Siri-only Power/selector macros and exact swipe sequences. Transport button state changes. Keep per-key completion-paced repetition at the emitting owner with one attempt per key press. A failed key ends its state; repeated unchanged down reports and authority refresh do not revive it.
 
-Represent each exclusive or conditionally shareable capability as a `ResourceId`, with owner and a compatibility function. Examples:
+An admitted hold retains its exact recipient even when later name lookup changes. Final release is a recipient-stream decision over all keys on the same physical wire, initiator and destination. Exact cleanup, stale-input generation checks and bounded causal IPC remain necessary. They are transient lifecycle state, not a durable activity graph.
 
-| Resource | Example demand | Compatibility rule |
-|---|---|---|
-| Receiver input selector | Input 3 | Share only if input values agree. |
-| Receiver output enables | A, B or A+B | Supported combinations declared per receiver; not inferred from socket count. |
-| Receiver main audio | Source X, main zone | Usually one source; second audio zone requires separate verified capability. |
-| Display selector | HDMI 2 | One visible input per display. |
-| Source transport | Play/seek/navigation | Multiple viewing sessions may share output, but conflicting user navigation has one explicit control owner. |
-| Proxy identity | Playback LA and PA on one CEC domain | Exclusive identity allocation; compatible consumers may share the same selected route representation. |
-| Component power | On | Reference-count compatible consumers; power off only after all relevant demands are released. |
+## 5. Queues and completion
 
-The planner MUST reject an unsupported path before issuing power or routing commands. It must not display a TV-only source on a projector by substituting a similarly named source. A route contains the physical path, internal equipment selectors, proxy operations, control bindings and any required capabilities.
+Use bounded IPC where thread/task communication requires it. Preserve causal down/up ordering and failed-key no-op behavior under pressure. The executor submits directly to CEC and does not retain ordinary work for capacity. Only CEC has a transmit FIFO: eight total active/queued frames per wire, including releases. Every full-FIFO TX drop is logged; a dropped release remains dropped.
 
-Resource ownership is not a generic count alone. Two sessions asking for the same receiver input can share that selector, but may disagree about output enables, audio target or CEC active-source policy. All constraints must be compatible. Sharing a source's picture does not authorize conflicting remote/browser/automation commands; the sole controller applies a visible, deterministic input-control policy.
+Owners report volatile setup generation, last submitted sequence and pending admitted-frame completions so the original controller preserves the baseline activity-settling latch. This is necessary completion bookkeeping for already submitted work, not a prepared plan, persistent state or an outgoing queue. New keys and ordinary commands still submit immediately without waiting for setup ACK/completion or CEC capacity.
 
-## 4. State separates intent from equipment
+Submission, CEC admission, transmission completion and equipment state remain different outcomes. A successful transport receipt is not proof of a CEC ACK or picture/audio. These distinctions do not justify a persistent approval barrier.
 
-Each session snapshot includes:
+## 6. Restart and configuration
 
-- Desired activity and desired source/display/audio/resource modes.
-- Plan status: `idle`, `preparing`, `executing`, `verifying`, `active`, `degraded`, `failed` or `stopping`.
-- Current `SessionId`, `PlanId` and `route_generation`.
-- Per-step result: not sent, admitted, applied, observed, rejected, timed out or unknown.
-- Observed equipment fields with age/provenance and unsupported/unknown distinctions.
+Persist activity configuration, identity/trust and necessary crash-consistent configuration/reset records. Do not persist an executable queue, current-activity resume journal, active holds, discovered addresses or valid execution grants. Reboot does not replay missed input. Keep the baseline's normal startup behavior and explicit user activity controls.
 
-`applied` means the local operation reached its defined wire-completion milestone. It does not mean that the television displays the expected image, the receiver finished switching, or the source is playing. CEC ACK and a report are different evidence. The UI may show “route commands sent; display state unconfirmed.”
+An edit validates the user's fields and selectors without requiring current equipment presence. Preserve the original configure behavior: every accepted configuration application clears the selected activity to standby and advances its generation, including label-only edits. Do not add an in-place presentation optimization that retains running activity/held state. Discovery refreshes runtime lookup; it does not rewrite activity availability. Configuration CAS and authenticated delivery prevent stale edits without compiling an owner-specific topology approval.
 
-V1 durably records `last_requested_sessions` for display and explicit resumption. After coordinator reboot they enter `suspended_after_restart`: synchronize and observe, but do not automatically wake, route or put equipment in standby. A fresh Select/Resume intent creates new SessionId/PlanId after validation. Restarting a required actuator degrades its affected sessions and likewise requires an explicit reconciliation intent; unaffected sessions continue. Runtime BootIds, holds, leases and command outcomes are never restored as valid merely because desired state was saved.
+## 7. Acceptance evidence
 
-An ordinary same-boot reconnect may restore input eligibility for an existing session only after observing that its bindings/policy remain valid. It does not replay relative inputs or silently apply missed routing steps. If the route is uncertain, show the affected session as degraded and require a new Select/Resume intent.
-
-## 5. Transition protocol
-
-### Resolve and reserve
-
-Resolve every required binding against current topology and domain revisions. Validate members, capabilities, protocol compatibility and observations. Reserve the complete resource set atomically within the coordinator's planner. Allocate `PlanId`, next route generation and operation IDs. Concurrent plans touching the same exclusive resource are ordered; disjoint compatible plans may proceed independently.
-
-Activity component references resolve through their persisted `QualifiedDeviceName` selectors to current native bindings; proxies follow the separate representation bindings. Do not persist a resolved logical address as the selected device. An unambiguous LA change for an unchanged selector automatically refreshes resolution without modifying the activity/configuration or requiring Select/Resume solely for that change. Local discovery fences the old binding immediately; the coordinator and actuator synchronize all affected capability bindings before fresh input or replanned work can execute. Cancel old queued steps and held-key contexts rather than silently rewriting their targets. A new binding never authorizes replay of uncertain one-shot actions or discovery-triggered power/routing. Independently uncertain routes and Octopus restart recovery retain their existing explicit reconciliation rules.
-
-### Prepare
-
-Send a bounded preparation request to each affected owner. It contains the plan digest, required binding/domain revisions, intended policy generation and bounded operation capacity. The local agent validates and reserves capacity but does not route, power or claim unvalidated identities. A scan needed to establish a binding is a separate preflight job; it does not get hidden inside plan preparation.
-
-If any required member rejects or times out before effects begin, release reservations and leave the existing route intact. Persist only enough coordinator intent/journal data to explain and recover the transition; do not persist a queue of relative CEC actions for blind replay.
-
-### Fence and drain
-
-Close admission for the old generation, including automatic routing/Active Source replies, then cancel old input holds and invalidate queued route/input work for affected resources. Closing admission must precede draining so new old-generation work cannot appear between drain and commit. Each local owner acknowledges a barrier only after an already-started frame completes or safely aborts and matching releases are handled. A new generation cannot make an old frame disappear midway through its waveform.
-
-The policy transition must specify whether the previous route remains permitted during preparation. Conflicting routing authority transfers only after all required barriers. If a required owner is unavailable, do not grant a competing identity or conflicting shared-resource plan under a guessed timeout.
-
-### Execute a dependency graph
-
-Install the prepared local policy and issue semantic operations in a bounded dependency graph. Typical order is: obtain known bindings, wake required sinks/receiver, wait for qualified readiness or bounded delay, set verified receiver selector/output mode, wake the selected source through its native isolated-side binding at the tested sink/EDID readiness point, activate the chosen downstream proxy path, then allow ordinary source input. A verified always-on/source-less capability can omit source wake. Spontaneous activation caused by waking the source remains suppressed; authorized proxy actions establish the route. Independent display wake operations may run in parallel.
-
-No universal CEC sequence is prescribed for all equipment. The plan compiler uses tested role and quirk capabilities from [document 06](06-cec-roles-and-message-policy.md). It must expose why it selected a nonstandard sequence. Protected source activation remains blocked until the local policy grants the corresponding path; a spontaneous source frame never becomes the grant.
-
-Receiver output-mode changes can change EDID-derived physical addresses without any cable movement. A plan may continue using its prepared PAs only when that transition has qualified address stability. Otherwise treat output selection as an explicit topology-changing stage: keep activation grants closed, perform the admitted output operation, collect fresh per-attachment PA evidence, commit revised bindings, and replan remaining work with a new PlanId/route generation. Retain resource reservations while bounded discovery/revalidation runs. Timeout produces a visible degraded transition; the old plan must never emit PA-dependent routing after invalidating its own assumptions.
-
-Each operation carries configuration, domain, binding, route generation and a receiver-issued execution lease. Validate again immediately before wire start. Sender receipt/queue acceptance is not completion. Query status by `CommandId`; do not create a new ID simply because the previous response was lost.
-
-### Verify and retire unused demands
-
-Collect meaningful reports and settle deadlines. Mark unknown fields explicitly. Release previous session demands once the new route reaches its defined success/degraded milestone. Power down an old display only when it is no longer needed and the transition policy requests that behavior. Keep shared receiver/source resources alive while another session consumes them.
-
-### Fail or compensate
-
-Before effects, abort cleanly. After effects, report partial application and reconcile observed state. Compensation is explicit and capability-aware: a known absolute input selection may be safe to restore; an unconfirmed power toggle is not. Do not power everything off to simulate transaction rollback. A projector warm-up/cooldown sequence must not be interrupted by automatic power cycling.
-
-```mermaid
-stateDiagram-v2
-  [*] --> Resolving
-  Resolving --> Preparing: valid route and resources
-  Resolving --> Rejected: unresolved or conflict
-  Preparing --> Fencing: all owners ready
-  Preparing --> Aborted: no effects yet
-  Fencing --> Executing: barriers complete
-  Fencing --> Degraded: owner unavailable
-  Executing --> Verifying: steps applied
-  Executing --> Degraded: partial or unknown
-  Verifying --> Active: sufficient evidence
-  Verifying --> Degraded: evidence missing
-  Degraded --> Resolving: explicit reconciliation
-```
-
-## 6. Worked activity transition between displays
-
-Suppose the TV is showing receiver source X, and the user wants X on the projector instead. The planner reserves projector input, required receiver output mode and the existing source/receiver demands. It wakes the projector, establishes its separate downstream proxy path, and waits for the required readiness criterion. It does not stop source X or change the shared receiver selector simply because the display changes.
-
-After the projector path is applied, retire the TV session if the user requested a move, release TV-only resources and optionally put the TV in standby. If the user requested simultaneous viewing, retain both display demands. A receiver with only an exclusive output choice may require a visible interruption; represent that capability rather than assuming seamless simultaneous output.
-
-If source Y is then requested on the TV and the receiver has one input selector, the planner returns the conflicting projector session. If source Y is instead physically connected directly to the TV and no shared audio/resource conflict exists, both sessions may run independently.
-
-## 7. Keys and remote input
-
-The [original-algorithm preservation rule](21-original-controller-policy.md#original-algorithms-and-functionality-amendment--21-october-2026) applies to this entire document. Ownership and transport wrap the original activity/AVR/audio/switch and remote algorithms; they do not authorize replacing their normal behavior.
-
-Normalize remote gestures locally into intents. The current input pipeline already stamps activity generation and protects releases; retain those protections while adding origin, remote, input session and destination binding. [Current input stamps](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/ble_remote/include/remote_input.hpp), [queue/generation behavior](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_hub/hub_service.cpp).
-
-Siri remote swipes MUST retain the original gesture recognition and downstream sequence algorithms: same thresholds, direction/acceleration, timing, generated presses/releases, cancellation and activity-generation behavior. Recognition remains on the original controller. Only the resulting original button transitions/taps travel to the output owner; ownership must not reinterpret a swipe or turn its finite steps into a continuing hold. Validate identical recorded input traces against the baseline with both local and remote equipment targets.
-
-A press is bound to the zone/session/route that existed when admitted. Its hold token contains original-controller boot, local input-session ID, ordered event sequence, target binding and route generation. A release references that exact token. A late release must not stop a newer hold from another control adapter or activity. Only the original controller owns the remote; its target zone can change without adding a member gateway.
-
-The original controller sends only button state changes: an initial down with the key, exact hold token and `repeat=true`, then an exact-token up. Repeated remote reports of the same down state do not create additional network operations. A tap uses `repeat=false` and submits one press directly. If admitted, its finite down/up ends immediately and the executor attempts final release without waiting for press completion or first edge, only if no other keys remain pressed for that receiving device. A rejected press does not cause a release attempt. Volume keys resolve to the activity's configured audio component; the owning Amity performs the CEC work whether local or remote.
-
-Preserve the baseline audio-key set (`0x41`–`0x43`, `0x65`, `0x66`) and release-driven audio query: after the physical output's CEC bus queue admits the matching release, schedule `Give Audio Status` (`0x71`) for 500 ms later, suppress it while an audio key is held, and retry after 500 ms only if query admission fails. Internal cleanup reservation and wire completion are different milestones; neither starts that timer. The explicit eight-message FIFO amendment supersedes the former extra release slot and the original `release_pending` admission retry: if eight messages are already admitted, drop and log the release without retaining it for a later attempt. A dropped release does not start the audio-query timer. This observation uses the same verified endpoint and current authority; it does not authorize a new route or retargeting. CEC ACK/wire failure remains distinct from queue admission, as in the original algorithm. Scoped `Report Audio Status` (`0x7a`) projection still requires its own parity evidence; emitting a query alone does not prove volume/mute feedback.
-
-The emitting executor preserves current `main` behavior: each key has independent pressed state and completion pacing. A successful attempt permits only that key's next press. Newly received key presses and other commands submit immediately without waiting for a pending ACK, another key's completion or queue capacity. A matching up ends only its key; already admitted frames remain in FIFO order. Input, replies, setup and discovery continue while transmissions are outstanding. There is no timer-driven repeat cadence, accumulated repeat backlog or periodic inter-device renewal. Every `0x44` key-press frame uses one wire attempt. Any failed key transmission ends that key's pressed state and repetition; a later matching button-up is a no-op. Unchanged down reports or general authority/policy refresh MUST NOT restart the key. When no keys remain pressed for that receiving device, the executor attempts a final release, including when last-key TX failure ended the stream. These `main` rules apply identically to local and remotely owned outputs; distribution only moves the original messages. The initial input/delivery deadline gates the first press and is not a lifetime limit for a successfully continuing admitted hold.
-
-Button state and message selection belong to the executor. It validates/translates and submits directly to CEC without an ordinary, cleanup or repeat frame queue. The sole outgoing FIFO is in the CEC layer and holds eight total messages per CEC wire. CEC sends exactly the supplied frames/attempt budgets and reports completion; it does not infer button state or select key/repeat/release policy from an opcode. Supplied numeric frame-start fences remain mechanical instructions from the executor. A full CEC FIFO rejects all admission immediately and logs every dropped TX, including every frame of a rejected atomic batch; no executor backlog is created. Finite key recipes use main's sequential direct admission: submit the press, then attempt final release immediately only if the press was admitted and no other key remains pressed for the recipient. At seven occupied slots the press is admitted as message eight, then release is dropped and logged. At eight the press is dropped and logged, and no release is attempted. No completion or first-edge dependency delays the finite recipe's release. Generic Bus batches remain atomic only when a caller explicitly submits a batch. The executor may retain exact button state, pending end-of-stream cleanup, audio-query due state and bounded correlations for already admitted work; it must not retain unsent frames as a second buffer. When the final key ends, submit release immediately behind already admitted presses in the same FIFO, without waiting for ACK, completion or first edge. Once admission of that release is attempted, consume the decision even if the eight-message limit rejects it; do not retain an unsent release or retry when capacity opens.
-
-Each further CEC attempt still requires current acknowledged owner/plan/route authority and unchanged boot/binding context. Release, remote disconnect/lost-input cancellation, route or binding retirement, maintenance, exact authenticated link loss, or loss of current authority stops the loop and initiates matching cleanup. General authenticated link/plan liveness supplies the failure bound when a connection silently stalls; it is independent of button state and never renews or replays a gesture. The earlier per-button lease and renewal proposal is superseded.
-
-**21 October 2026 capacity-amendment adaptation and evidence:** local and remote owners submit to the same hard-eight-message Bus without a release-overflow flag. Completion records follow the driver's bound of eight admitted messages per physical wire, rather than an old global nine-record precheck that could reject before Bus admission and omit the full-FIFO log. Bounded candidate guard storage lets the actual CEC layer make each direct admission decision; it is not an outgoing queue. `sh tests/system_hold_test.sh`, `sh tests/amity_system_test.sh`, `sh tests/system_remote_control_test.sh` and `sh tests/cec_hub_test.sh` pass after the finite-key parity adaptation. Core and real-Bus owner-operation fixtures cover finite audio taps and discrete power at seven/eight occupied slots, the original command correlation across press/release, original attempt budgets, no finite release first-edge dependency, and no dropped-release retry or audio-query timer after 600 ms. The legacy HubService boundary regression is shared with main. Unchanged down and later up do not regenerate failed-key cleanup. Physical local/remote-owner holds and Siri gesture qualification remain open under INPUT-03.
-
-The asynchronous multi-port runtime may yield for one RTOS tick while local transmissions are outstanding. Every eligible held key submits its own continuation in the same owner iteration; another key or a pending owner command cannot gate it. New commands also submit without waiting for earlier completions. Remote-held bookkeeping is transport state rather than a source of periodic traffic or a busy loop. Measure scheduling overhead during physical qualification without changing input/CEC behavior.
-
-Exact button-up processing is retained even when ordinary semantic admission is busy. It cannot bypass bytes already in a congested TCP stream; general local authority/liveness fencing supplies the failure bound. Button-up updates only the exact key's state and stops future repeats; it does not cancel an initial or repeated press already admitted to CEC. `0x45` is global for its receiving device, with no key operand: the executor submits it immediately when all keys for that physical wire/initiator/destination are no longer pressed, ordered behind admitted presses without waiting for them to finish. Finite tap down/up, cancellation and last-key failure also end a stream; they are not remote key-up events. Preserve the initial press of a short tap. Cancellation of a never-started held press alone needs no new release decision; a finite recipe's already attempted release remains governed by its original sequential admission and supplied authority guards. Pending final release must precede new positive work for that recipient. Cleanup uses a retained exact stream context separate from ended key tokens, despite the old route generation or initial input lease being retired, and cannot act on an unrelated or rebound component. Unsafe binding reuse withdraws old output permission and reports uncertainty rather than addressing a newly discovered appliance. CEC never invents release messages because of failure, timeout or queue state.
-
-Relative volume steps, menu navigation, play/pause toggles and held-key repeats are not replayed after reconnect or reboot. If a source may have acted but the acknowledgement was lost, return `UNKNOWN_OUTCOME`. Prefer discrete power/mute commands where verified, but never relabel an inherently relative action as idempotent.
-
-## 8. Concurrency and queue rules
-
-The coordinator serializes mutations of desired state and resource ownership. A member serializes mutations of its local policy and port state while independent CEC engines continue concurrently. Planning, SRP, JSON, TLS and flash writes never occur in the CEC timer path.
-
-Every queue has a measured capacity and an overload outcome. Normalized observations can coalesce by field and sequence; the latest power report replaces an older unsent power report. Plan steps and key events cannot be silently coalesced unless their operation contract explicitly permits it. Trace data is lowest priority and may drop with counters.
-
-Outgoing CEC messages are buffered only by the CEC layer's FIFO with eight total messages per wire. Executor state/completion bookkeeping must not become an additional transmit queue. Network envelopes and ingress events have their own bounded transport contracts; they are not permission to accumulate CEC frames in the executor.
-
-Configuration edits interact with plans through revisions. A pure component/activity-label or UI-order edit increments `presentation_revision` only and preserves active sessions, leases and holds without touching executable policy. A semantic edit increments `config_revision`, fences affected operations and requires explicit reconciliation where control behavior changes. Unchanged live owners acknowledge an idempotent revision rebase only after verifying an identical executable-policy hash and unchanged referenced bindings/roles; until then, the coordinator sends no work at their unacknowledged revision. [Document 11](11-config-storage-and-migration.md) owns that transaction. Calling the old configuration method that unconditionally puts an active system into standby violates this contract.
-
-## 9. Work items and acceptance evidence
-
-Implement a pure route/resource planner first, then a single-octopus executor and a fault-injected multi-octopus executor. Test at least:
-
-- A receiver/source shared by two sessions stays on when one session stops.
-- Unsupported dual-source output requests fail before any CEC effect.
-- A TV-only source cannot resolve to the projector by name or coincidental PA.
-- The same `request_id` creates one plan; uncertain relative operations are not replayed as new commands.
-- Delayed steps from an old route, boot, binding or domain cannot start a frame.
-- Policy fencing waits for already-started frames and rejects all queued stale ones.
-- Queue overflow, remote disconnect and LAN loss stop held repetition and attempt matching cleanup within the qualified local bound. A release rejected by the full eight-message CEC FIFO is dropped and logged without a later admission retry; cleanup processing does not guarantee wire delivery.
-- Delayed release of hold A does not release newer hold B.
-- A several-second hold sends one down and one up across devices while the owner repeats locally with baseline completion pacing. No per-button renewal traffic is required, including beyond the initial delivery deadline.
-- Pending commands/button-up win before a next repeat; a busy wire cannot accumulate a burst of repeats. Every key frame has one wire attempt; a failed transmission ends that key's pressed state and repetition, with later button-up a no-op and no restart on unchanged down or authority renewal. Final release occurs only at the recipient's stream end, including last-key failure; ending one of multiple active keys must not release the others.
-- The executor has no outgoing frame queue. Full CEC FIFO admission reports busy immediately, explicitly submitted Bus batches admit entirely or not at all, finite key recipes preserve sequential press/release admission at six/seven/eight occupied slots, and final release is dropped and logged at eight without executor admission retry. CEC contains no opcode-based button/repeat/release decisions.
-- Taps remain finite single presses, with implicit release at stream end; a tap must not release another active key. Equivalent local and remote audio targets preserve the original held-volume behavior.
-- Siri swipe traces preserve baseline gesture recognition, timing and generated event sequences for local/remote targets, including finite-step completion, interrupted gestures, disconnect and activity changes.
-- Partial execution produces accurate per-step status and safe reconciliation without blanket standby.
-- Configuration rename/reorder preserves active behavior and external selectors.
-
-The existing host tests for configuration admission, emergency release and stale generations are regression requirements, not expendable scaffolding. Extend their simulation model for independent ports, nodes and clocks before claiming distributed guarantees. See [validation](15-validation-and-release-gates.md).
+The decisive test is equivalent original behavior. For the same saved activity/input/observations, compare baseline local execution, qualified all-local execution and execution with each role moved to another owner. Assert frames, ordering, attempts, admission and key lifecycle. Include AVR audio, explicit receiver inputs, missing OSD names and return, duplicate scoped names, LA change while held, failed TX, full FIFO and scan progress while transmissions remain outstanding. See [validation](15-validation-and-release-gates.md).

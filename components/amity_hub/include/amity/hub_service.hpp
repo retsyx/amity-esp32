@@ -1,121 +1,54 @@
-/*
- * Copyright 2026.
- * This file is part of Amity-esp32.
- * Amity-esp32 is free software: you can redistribute it and/or modify it under the terms of the
- * GNU General Public License as published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- */
-
+// Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "amity/hub.hpp"
-#include "amity/system/coordinator.hpp"
+#include "amity/system/execution.hpp"
 #include "cec/board_profile.hpp"
 #include "esp_err.h"
+#include <array>
 #include <functional>
 #include <memory>
-#include <array>
-
 namespace amity {
 struct AdapterRuntimeState {
-    uint8_t tentacle_id = 0;
-    bool configured = false;
-    std::optional<bool> present;
-    uint64_t presence_generation = 1;
-    std::optional<uint16_t> observed_front_physical, effective_front_physical;
+    uint8_t tentacle_id=0;bool configured=false;std::optional<bool> present;
+    uint64_t presence_generation=1;std::optional<uint16_t> observed_front_physical,effective_front_physical;
 };
-// Thread-safe facade. Commands are queued; snapshot returns the latest state.
-// Callback runs on the hub task, outside the snapshot lock. It should be brief.
+// One owner task advances every original per-adapter discovery/key executor.
 class HubService {
 public:
-    HubService();
-    ~HubService();
-    // Discover the front physical address on startup; use the supplied default
-    // only if the back scan yields no usable physical-address report.
-    esp_err_t start(int front_gpio, int back_gpio, uint16_t front_physical = 0x1000);
-    // Board-local connector capacity and wiring. Unassigned GPIO pairs are
-    // disabled; optional cable/module presence never follows CEC silence.
-    esp_err_t start(const cec::BoardProfile&, uint16_t front_physical = 0x1000);
-    esp_err_t start(const cec::BoardProfile&, const std::array<uint16_t, amity::max_tentacles>& front_physical);
-    // Optional board I/O adapter, installed before start. Only explicitly
-    // declared presence GPIOs are sampled; a negative result means unknown.
+    HubService();~HubService();
+    esp_err_t start(int front,int back,uint16_t physical=0x1000);
+    esp_err_t start(const cec::BoardProfile&,uint16_t physical=0x1000);
+    esp_err_t start(const cec::BoardProfile&,const std::array<uint16_t,amity::max_tentacles>&);
     esp_err_t set_presence_reader(std::function<int(int)>);
-    std::optional<bool> connector_presence(uint8_t tentacle_id) const;
-    std::vector<AdapterRuntimeState> adapter_runtime_snapshot() const;
-    // Persist only after idle admission, physical-generation validation and
-    // owner quiescence. Own the callback/captures; success stays closed for reboot.
-    esp_err_t commit_adapter_settings(system::BootId, std::vector<std::pair<uint8_t, uint64_t>>,
-                                     uint64_t deadline_ms, std::function<esp_err_t()> persist);
-    bool configure(std::vector<Activity> activities, std::vector<Quirk> quirks = {});
-    // Reserve command capacity before committing external state. The callback
-    // runs synchronously on the caller, must return an error on failure, and
-    // must not call configure recursively. A failed reservation never calls it.
-    esp_err_t configure_with_commit(std::vector<Activity> activities, std::vector<Quirk> quirks,
-                                    std::function<esp_err_t()> commit);
-    // ESP_ERR_TIMEOUT means ignored during settling; same-target repair bypasses it.
-    esp_err_t request_activity(int index);
-    // Power-long repair does not enter Python's activity-selection input gate.
-    esp_err_t repair_activity();
-    // Advances on accepted selections/configuration, including same-target
-    // selections, so input can observe them before queued execution completes.
-    uint32_t activity_selection() const;
-    int activity_target() const;
-    bool select_activity(int index);
-    // Each held key has its own completion-paced continuation. Submission of
-    // other keys and commands never waits for a wire attempt or acknowledgement.
-    bool press_key(uint8_t key, bool repeat = false);
-    // The worker discards this press if the activity/configuration changed
-    // after the originating operation captured its generation. repeat=true
-    // starts a held stream with the same cancellation policy as press_key().
-    bool press_key_for_activity(uint8_t key, uint32_t activity_generation, bool repeat = false);
-    uint32_t activity_generation() const;
-    bool release_key(uint8_t key);
-    // Release every held key (disconnect, input loss, or legacy callers).
-    bool release_key();
-    bool standby();
-    bool discover();
-    Snapshot snapshot() const;
-    void on_change(std::function<void(const Snapshot &)> callback);
-    void set_system_identity(system::ConsortiumId, system::OctopusId);
-    void set_boot_identity(system::BootId);
-    void set_coordinator_authority(bool local_coordinator, uint64_t epoch);
-    esp_err_t transition_coordinator_authority(bool local_coordinator, uint64_t epoch);
-    esp_err_t configure_v2(system::LocalConfiguration, std::function<esp_err_t()> commit = {});
-    esp_err_t request_activity_v2(system::ZoneId, system::ActivityId, system::MessageId,
-                                 std::optional<uint64_t> expected_state = {}, bool repair = false);
-    esp_err_t stop_zone_v2(system::ZoneId);
-    esp_err_t execute_authorized(system::AuthorizedCecOperation);
-    // Authenticated network consumers wait for validation by the sole owner;
-    // queue admission is never reported as semantic authorization.
-    system::AdmissionResult admit_authorized(system::AuthorizedCecOperation, uint32_t timeout_ms = 1000);
-    // Absence proves inactive only for a caller retaining the exact down's
-    // successful synchronous admission (published before its reply).
-    std::optional<bool> remote_key_active(const system::AuthorizedCecOperation&, bool synchronously_admitted = false) const;
-    esp_err_t configure_member_v2(system::LocalConfiguration, std::function<esp_err_t()> persist = {});
-    system::AdmissionResult prepare_member_v2(system::LocalConfiguration, std::string payload_hash, std::function<esp_err_t()> persist);
-    esp_err_t activate_member_v2(std::string payload_hash);
-    void abort_member_v2(std::string payload_hash);
-    system::AdmissionResult prepare_remote_plan(system::Plan, std::vector<system::PortPolicySnapshot>);
-    system::AdmissionResult fence_remote_route(system::SessionId, uint64_t generation);
-    bool remote_route_quiescent(system::SessionId, uint64_t generation) const;
-    system::AdmissionResult activate_remote_plan(system::PlanId, uint32_t authority_ttl_ms);
-    system::AdmissionResult abort_remote_plan(system::PlanId);
-    system::AdmissionResult renew_remote_authority(system::PlanId, system::SessionId, uint64_t generation, uint32_t authority_ttl_ms);
-    system::AdmissionResult discover_authorized(uint32_t ttl_ms);
-    std::vector<system::PortPolicySnapshot> local_policy_snapshot() const;
-    void set_remote_execution_hooks(system::RemoteExecutionHooks);
-    system::AdmissionResult update_remote_owner(system::OctopusId, std::vector<system::PortPolicySnapshot>, bool ready, uint32_t authority_ttl_ms = 5000);
-    system::AdmissionResult remote_plan_result(system::OctopusId, system::PlanId, system::RemotePlanPhase, bool accepted, std::string error = {});
-    system::AdmissionResult remote_operation_result(system::OctopusId, system::CommandId, system::StepResult, std::string error = {});
-    system::InputContext input_context() const;
-    system::AdmissionResult submit_input_intent(system::InputIntent);
-    esp_err_t retire_membership();
-    esp_err_t begin_maintenance();
-    void end_maintenance();
-    bool maintenance_ready() const;
-    system::ExecutionSnapshot execution_snapshot() const;
+    std::optional<bool> connector_presence(uint8_t)const;
+    std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const;
+    esp_err_t commit_adapter_settings(system::BootId,std::vector<std::pair<uint8_t,uint64_t>>,uint64_t,std::function<esp_err_t()>);
+    bool configure(std::vector<Activity>,std::vector<Quirk> = {});
+    esp_err_t configure_with_commit(std::vector<Activity>,std::vector<Quirk>,std::function<esp_err_t()>);
+    esp_err_t request_activity(int,uint32_t* accepted_selection=nullptr);esp_err_t repair_activity();uint32_t activity_selection()const;int activity_target()const;
+    bool select_activity(int);bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
+    uint32_t activity_generation()const;bool release_key(uint8_t);bool release_key();bool standby();bool discover();
+    Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
+    void set_system_identity(system::ConsortiumId,system::OctopusId);void set_boot_identity(system::BootId);
+    void set_coordinator_authority(bool,uint64_t);esp_err_t transition_coordinator_authority(bool,uint64_t);
+    esp_err_t retire_membership();esp_err_t begin_maintenance();void end_maintenance();bool maintenance_ready()const;
+    using OwnedSender=Hub::OwnedSender;
+    esp_err_t configure_scoped(std::vector<Activity>,std::vector<system::ScopedSelector>,std::vector<Quirk>,OwnedSender,
+        system::OctopusId controller,uint64_t config_revision,std::function<esp_err_t()> commit={},uint64_t presentation_revision=1);
+    system::AdmissionResult submit_owned(system::OwnedIntent,system::OwnedAuthorization,uint32_t timeout_ms=1000);
+    esp_err_t bind_owned_controller(system::OctopusId,uint64_t config_revision);
+    void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)>);
+    void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)>);
+    void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)>);
+    void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)>);
+    bool update_owned_snapshot(system::OwnedAdapterSnapshot);
+    bool refresh_owned_context(system::OctopusId);
+    std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const;
+    bool fence_owned(system::OctopusId controller,system::LinkId link);
+    bool discover_owned(system::OctopusId owner,uint8_t adapter);
+    uint64_t applied_configuration_revision()const;
+    bool owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
 private:
-    esp_err_t request_activity(int index, bool notify_selection);
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    esp_err_t request_activity(int,bool notify_selection,uint32_t* accepted_selection);struct Impl;std::unique_ptr<Impl> impl_;
 };
 }

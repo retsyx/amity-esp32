@@ -59,7 +59,7 @@ void runtime_update_hooks(RuntimeUpdateHooks hooks){transport=std::move(hooks);}
 esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_t){
     auto value=parse(body);assert(valid_update(kind,value));
     if(kind==Kind::update_result){if(drop_next){drop_next=false;return ESP_OK;}return transport.result(destination,value)==Error::none?ESP_OK:ESP_FAIL;}
-    for(const auto& peer:peers)if(peer.id==to&&peer.management_ready&&!(peer.negotiated_capabilities&sequenced_operations)&&kind==Kind::update_begin)assert(!value.get("validate_only"));
+    for(const auto& peer:peers)if(peer.id==to&&peer.management_ready&&!(peer.negotiated_capabilities&qualified_lookup)&&kind==Kind::update_begin)assert(!value.get("validate_only"));
     sent.emplace_back(to,kind);const auto old=destination;destination=to;
     Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.message_id=identity<m::MessageId>(++message);envelope.config_revision=7;envelope.coordinator_epoch=1;
     transport.handle(local,envelope);destination=old;return ESP_OK;

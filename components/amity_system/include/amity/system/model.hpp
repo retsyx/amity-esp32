@@ -58,15 +58,14 @@ private:
 
 #define AMITY_SYSTEM_ID(Name) struct Name##Tag {}; using Name = Id<Name##Tag>
 AMITY_SYSTEM_ID(OctopusId); AMITY_SYSTEM_ID(ConsortiumId); AMITY_SYSTEM_ID(BootId);
-AMITY_SYSTEM_ID(ComponentId); AMITY_SYSTEM_ID(DomainId); AMITY_SYSTEM_ID(BindingId);
-AMITY_SYSTEM_ID(ActivityId); AMITY_SYSTEM_ID(ZoneId); AMITY_SYSTEM_ID(ResourceId);
-AMITY_SYSTEM_ID(RouteId); AMITY_SYSTEM_ID(SessionId); AMITY_SYSTEM_ID(PlanId);
-AMITY_SYSTEM_ID(CommandId); AMITY_SYSTEM_ID(MessageId); AMITY_SYSTEM_ID(ScanId);
-AMITY_SYSTEM_ID(ResolutionId); AMITY_SYSTEM_ID(ExecutionLeaseId);
-AMITY_SYSTEM_ID(InputSessionId); AMITY_SYSTEM_ID(LinkId);
+AMITY_SYSTEM_ID(ComponentId);
+AMITY_SYSTEM_ID(ActivityId); AMITY_SYSTEM_ID(ZoneId);
+AMITY_SYSTEM_ID(SessionId);
+AMITY_SYSTEM_ID(MessageId); AMITY_SYSTEM_ID(ScanId);
+AMITY_SYSTEM_ID(ExecutionLeaseId);
+AMITY_SYSTEM_ID(LinkId);
 AMITY_SYSTEM_ID(JoinId); AMITY_SYSTEM_ID(MutationId);
 AMITY_SYSTEM_ID(HoldToken);
-AMITY_SYSTEM_ID(EvidenceId);
 #undef AMITY_SYSTEM_ID
 
 std::optional<uint64_t> parse_uint64(std::string_view);
@@ -113,50 +112,9 @@ std::optional<QualifiedDeviceName> parse_name_json(std::string_view);
 std::optional<FullyQualifiedCecAddress> parse_address_json(std::string_view);
 bool valid_physical_address(uint16_t, bool allow_root = true);
 
-enum class Capability { power, routing, navigation, volume, audio_status, proxy_activation, identity, audio, query_state };
-enum class Support { unknown, unsupported, supported };
-enum class PortRole { disabled, monitor, tv_controller, playback_proxy };
-enum class BindingKind { native_appliance, proxy_representation };
-enum class BindingStatus { unresolved, tentative, verified, quarantined, retired };
 struct Component {
     ComponentId component_id;
     std::string label;
     std::vector<QualifiedDeviceName> qualified_names;
 };
-struct ComponentBinding {
-    BindingId binding_id;
-    ComponentId component_id;
-    Capability capability = Capability::identity;
-    BindingKind kind = BindingKind::native_appliance;
-    std::optional<QualifiedDeviceName> device_name;
-    FullyQualifiedCecAddress endpoint;
-    OctopusId owner_octopus_id;
-    DomainId domain_id;
-    uint64_t domain_revision = 0;
-    uint64_t binding_revision = 0;
-    PortRole role = PortRole::disabled;
-    BindingStatus status = BindingStatus::unresolved;
-    EvidenceId physical_address_evidence_ref;
-    std::optional<ResourceId> proxy_identity_resource_id;
-};
-bool valid_binding(const ComponentBinding&, const Component&);
-
-struct ExecutionFence {
-    BootId owner_boot_id;
-    uint64_t coordinator_epoch = 0;
-    uint64_t config_revision = 0;
-    uint64_t domain_revision = 0;
-    uint64_t binding_revision = 0;
-    SessionId session_id;
-    uint64_t route_generation = 0;
-    uint64_t policy_generation = 0;
-    friend bool operator==(const ExecutionFence& a, const ExecutionFence& b) {
-        return a.owner_boot_id == b.owner_boot_id && a.coordinator_epoch == b.coordinator_epoch &&
-               a.config_revision == b.config_revision && a.domain_revision == b.domain_revision &&
-               a.binding_revision == b.binding_revision && a.session_id == b.session_id &&
-               a.route_generation == b.route_generation && a.policy_generation == b.policy_generation;
-    }
-    friend bool operator!=(const ExecutionFence& a, const ExecutionFence& b) { return !(a == b); }
-};
-
 } // namespace amity::system

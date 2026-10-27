@@ -73,17 +73,18 @@ int main() {
     assert(hub.activity_target() == 0);
     for (int i = 0; i < 32; ++i) run_one_command();
     assert(!hub.snapshot().activity_settling);
-    { // A failed equipment preflight must release its preparing reservation,
-      // report the failure, and permit the user to choose/retry another route.
+    { // Main at 98e64a6 accepts missing-equipment activities and applies
+      // its ordinary fallback/settling behavior. No approval preflight exists.
         fixture_present = false;
         amity::HubService missing; assert(missing.start(1, 2) == ESP_OK);
         assert(missing.configure({{"Unavailable", "TV", "Source", "Source", "", 0},
                                  {"Other", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(missing);
         assert(missing.request_activity(0) == ESP_OK); run_one_command();
         const auto failed = missing.snapshot();
-        assert(failed.current_activity == -1 && !failed.activity_settling && !failed.activity_error.empty());
+        assert(failed.current_activity == 0 && failed.activity_error.empty());
+        fixture_time += 10000000; run_idle(1);
         assert(missing.request_activity(1) == ESP_OK); run_one_command();
-        assert(!missing.snapshot().activity_settling);
+        assert(missing.snapshot().current_activity == 1);
     }
     puts("Hub settling admission, ignored requests, repair bypass, standby and configuration tests passed");
 }

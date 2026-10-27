@@ -1,237 +1,29 @@
-> 20 October 2026 scope amendment: the original first-setup Amity alone owns the sole remote, UI/admin and home integrations. Added devices are UI-less actuators, with no member input gateway or coordinator promotion/handover. Preserve the original activity UI with only canonical Amity-hostname context and one Amity management tab. [Normative contract](../../amity-octopus-consortium/21-original-controller-policy.md).
+# Original Amity handling and qualified owner dispatch
 
-The current `main` implementation is the behavior baseline (this merge uses
-`98e64a6`). Distribution layers message transport and ownership onto that same
-behavior. Moving a command to another Amity must not change its CEC frames,
-ordering, attempt budgets, admission, repeat/release lifecycle, input gate or
-macros. Local and remote execution must remain equivalent; the API and lane
-names below describe plumbing, not separate behavioral policies.
+`amity::Hub` remains the behavior source for activities, separate AVR/audio, source routing and explicit switch-input fallback, vendor quirks, received frames, discovery and held keys. Compare baseline `98e64a6` and [AGENTS.md](../../AGENTS.md) before changing those algorithms. Distribution adds scoped recipients and typed delivery; it does not provide a second CEC policy.
 
-Schema-2 runtime and control-surface evidence is documented in
-[CONTROL_SURFACE_EVIDENCE.md](CONTROL_SURFACE_EVIDENCE.md). `SystemControl`
-uses the scoped planner/agent path for live schema-2 configuration; the legacy
-`Hub` path below is retained for compatibility and bounded migration discovery.
-Controlled consortium startup does not activate its legacy roles automatically.
+The configured equipment address is Amity device ID / HDMI adapter / CEC side / OSD name, scoped to the installation. `SystemControl` carries original activity choices and stable presentation/slot identity. The controller sequences the original decisions and selects the owner; the owner resolves local adapter/side/OSD equipment and applies the original local operation. Missing equipment stays configured and uses ordinary lookup rather than an enabled/approved-route gate.
 
-`amity::Hub` contains the activity/device behavior independently of ESP-IDF.
-It implements the front playback/back TV topology from `hdmi.py`, selective
-power transitions, activity repair, source routing and switch-input fallback,
-vendor power quirks, source isolation, device metadata discovery,
-and per-bus power-status replies. Logical addresses remain scoped to their
-own bus when resolving discovery updates.
+Each configured adapter is an independent original front/back pair. `HubService` owns local input/RX/setup/discovery and CEC completion work. Preserve the original allocation candidates, asynchronous scans, lowest usable back-device PA or that adapter's saved fallback, fixed-for-boot front PA, announcement order and original received-frame/configuration effects. An adapter's default/observations never determine another adapter's identity.
 
-`amity::HubService` owns the configured `cec::Bus` instances and serializes
-hub state changes and received frames on its task. The compatibility path
-uses one front/back pair; schema-2 configurations use independent lanes for
-each enabled physical port, with ownership and routing enforced by
-`LiveSystem`, the coordinator and local CEC agents. Each dispatched command
-submits its frames to CEC without waiting for queue capacity, transmission or an ACK.
-Public methods queue work and return whether that command was accepted; this
-does not guarantee later CEC admission or acknowledgement. `snapshot()` returns
-a copy; `on_change()` runs outside the snapshot mutex, on the hub task. Keep callbacks brief and
-schedule expensive application work on the appropriate subsystem task.
-`configure_with_commit()` allocates its command and reserves capacity before
-calling the caller's synchronous commit callback. Ordinary requests reserve
-from 32 slots, maintaining `queued + deferred + reserved <= 32`. Exact-token
-`hold_release` input has a separate 64-slot cleanup reservation. Both use one
-96-entry IPC FIFO, preserving down/up order; ordinary saturation cannot consume
-the cleanup capacity or lose a matching physical up. Token cleanup admission
-returns immediately without waiting for an owner reply, CEC capacity or ACK.
-The worker returns the appropriate reservation when the request is ready to
-execute, including after any required metadata discovery. These bounded
-requests communicate between tasks; they are not a second outgoing CEC-frame
-queue. CEC uses an eight-message FIFO per wire, counting queued and active work together. A full queue or a competing
-configuration call returns before the callback runs. A failed callback returns
-its error, releases the slot, and leaves the live hub untouched. A successful
-callback is followed by a guaranteed nonblocking enqueue. Configuration calls
-are serialized with a nonblocking mutex so commit order equals enqueue order.
-Persistence remains entirely in the caller; the hub has no NVS dependency.
-On dual-core targets a temporary core-1 initialization task allocates the CEC
-GPIO timers there, keeping their high-rate interrupts off the default Wi-Fi
-and BLE controller core. Startup still returns peripheral errors synchronously.
-Single-core targets initialize directly; the generic CEC component does not
-assume a core assignment.
-Address allocation uses two unanswered polls and retries if a bus is busy.
-Allocation and discovery advance through asynchronous poll completions and
-bounded reply windows. Neither waits on the hub task for a CEC ACK, so received
-frames, known-device commands and each held key continue to be handled.
-The front tries playback 4, 8, 11, then CEC 2.0 backup addresses 12/13. The
-back tries TV 0, then specific-use address 14, matching the Linux allocator.
-At each boot the front physical address starts unknown. The owner claims the
-back logical address and scans that bus first, including its bounded identity
-reply window. It chooses the numerically lowest usable physical address reported
-by a back device, or the configured default (`1.0.0.0` unless changed) if none
-is reported. If the back logical address cannot be claimed, it still polls and
-sends directed Give Physical Address from the unregistered address; those
-replies are broadcasts. Only then does it claim and announce the front playback device and
-scan the front bus. Both discovered and fallback results remain fixed until
-reboot; later scans and unsolicited reports only update device metadata.
-`Snapshot::front_physical_address` is `0xffff` until determination completes.
+The sole original controller hosts UI, home integrations and the remote. Added devices remain headless and accept only authenticated original-controller delivery. No planner/resource/domain/profile graph, prepared global execution plan or durable current-activity/resume ledger is part of normal execution. Canonical schema 3 stores original activity fields, qualified selectors, labels/order/slots and quirks. [Addressing](../../amity-octopus-consortium/03-domain-model-and-addressing.md) and [execution](../../amity-octopus-consortium/07-activity-planning-and-execution.md).
 
-This inference follows the [CEC physical-address hierarchy](https://docs.kernel.org/userspace-api/media/cec/cec-ioc-adap-g-phys-addr.html):
-an AVR at `2.0.0.0` precedes its children at `2.1.0.0`, `2.2.0.0`, etc.
-Root `0.0.0.0`, invalid `F.F.F.F`, and malformed paths such as `2.0.1.0` are
-excluded. A poll ACK without a valid physical-address report is insufficient.
-Numeric minimum is not generally equivalent to the most trailing zero digits
-across unrelated branches (`1.2.0.0` is less than `2.0.0.0`). This is a
-best-effort estimate, not a replacement for EDID: if an AVR does not report its
-address but a child does, the child's address may be selected instead.
+## Keys, submissions and cleanup
 
-Missing-device automatic rescans are
-limited to once per two minutes; explicit discovery requests can rescan.
-The owner checks the names needed by an activity/key command before applying
-it. A command that needs missing metadata may be deferred until a permitted
-rescan completes; this does not defer unrelated commands or held keys whose
-recipients are already known. Deferred commands retain their command-capacity
-reservation and are validated again when resumed.
-Discovery builds a separate replacement list, preserving live power replies
-and routing until metadata collection completes. An OSD name that moves to
-a different logical address replaces its stale record. Discovery does not
-restore a route or replay an activity; fresh explicit control uses the resolved
-binding after the relevant fences have synchronized.
-`Snapshot::discovering` stays true until polls, queued identity requests, and
-a 1.1-second quiet response window complete (bounded to five additional
-seconds). Activity commands that need the missing metadata resume after this
-window, so those names are resolved before display/source selection.
+Preserve independent logical keys. Each still-down key repeats after its own successful completion. New keys and other commands submit immediately without waiting for another key's ACK or capacity. A failed key press ends it; unchanged down and authority refresh cannot restart it, and matching later up is a no-op. Keep the accepted recipient for a hold even if discovery changes its name's current logical address.
 
-Identity replies mirror the Linux CEC core behavior inherited by the Python
-application: OSD name `amity`, vendor ID zero, CEC version 2.0, physical
-address/type, feature report with no advertised optional features, and
-refused Abort. Directed unhandled opcodes are ignored as they are by the
-Python follower. Power-state replies come from the selected activity: the
-front reports on for any activity, while the back reports on only to its
-selected source. Device-initiated source activation cannot change activity.
+Release is implicit at recipient stream end over all active keys sharing physical wire, initiator and destination. Final up submits release immediately behind admitted presses without waiting for completion or first edge. Last-key failure can also end a stream. Retain exact safe cleanup state independently from the ended token; never release a newly resolved recipient in its place.
 
-The held-button contract follows Python Amity's
-[independent key state and keyed release](https://github.com/retsyx/amity/blob/main/main.py#L144-L208),
-[per-key transmission coroutine](https://github.com/retsyx/amity/blob/main/main.py#L286-L320),
-and [asynchronous CEC submission/completion](https://github.com/retsyx/amity/blob/main/cec.py#L669-L683).
-Each key owns its pressed state and completion. The hub immediately attempts
-to admit its first press to CEC's FIFO when it handles the command, even if
-another key is awaiting an ACK. The completion of one press only controls that
-key's next press.
-`press_key(key, true)` permits at most one outstanding attempt for that held
-key; a successful completion permits another while it remains pressed. There
-is no repeat timer, frame backlog, or ACK wait on the hub task. New keys,
-one-shot commands, replies, activity setup, and discovery can submit their own
-frames while earlier transmissions remain outstanding. CEC still transmits
-frames serially on each physical wire; all enabled wires progress independently.
+CEC contains the only outgoing FIFO: eight total queued-plus-active messages per wire, releases included. The executor submits directly and does not keep a retry/repeat backlog. Full-FIFO submissions are dropped and every dropped TX is logged, including members of rejected atomic batches. A dropped release is consumed, not retried when capacity opens. CEC mechanically transmits supplied frames/attempt budgets; it does not inspect opcodes to choose policy.
 
-`release_key(key)` ends only that key's hold. Frames already admitted to CEC
-remain in FIFO order and finish, as in Python; completion cannot restart an
-ended hold. A normal button-up does not advance a shared cancellation counter
-or cancel another key's queued transmission. Every key-press frame has one
-wire attempt. Admission failure or unsuccessful TX ends only that key's
-pressed state and repetition, with one final-cleanup decision. Unchanged down
-reports and authority renewal cannot restart a failed hold; a subsequent up
-and fresh down can.
+Bounded causal task IPC and completion bookkeeping remain necessary. They must preserve down/up ordering and failed-key no-op handling under pressure, without becoming outgoing frame storage. Authentication/current boot/configuration/input fences reject stale distributed work without changing normal CEC timing or original task ownership.
 
-Volume and mute target the activity's configured audio device; other keys
-target its source. A held key retains its accepted bus, recipient and mapped
-key for subsequent repeats and cleanup. The default play/pause control is
-emulated once per press and keeps that mapping while held. `USER_CONTROL_RELEASED`
-(`45`) has no key operand, so final release is scoped to the receiving
-`(physical wire, initiator, destination)` and is submitted only when all keys
-for that recipient have ended, including a last-key failure. This extends Python's global
-all-keys-ended/source-release behavior to release the actual audio or source
-recipient correctly. One-shot keys, including Matter volume steps, submit their press directly, then
-attempt final release immediately if the press was admitted and no other held
-key at that recipient still needs the stream open. The two submissions are
-sequential: at seven occupied slots the press enters slot eight and the release
-is dropped and logged; at eight the press is dropped and logged with no release
-attempt. Neither completion nor the first wire edge gates that release attempt.
+## Original input
 
-For example, hold Volume Up, press Right, then release Right:
+Keep the shared original controller input algorithms: startup and accepted-selection wait-for-release (including same target), all-up clearing and one-second fallback, swallowed holds not replayed, rejected selection/long-Power repair not arming the gate. Keep Siri-only fixed Power+selector macros and exact swipe/tap recognition, acceleration, timing, generated sequences and cancellation.
 
-- Volume Up (`44 41`) continues independently throughout.
-- Right (`44 04`) stops repeating when Right is released. If source and audio
-  are different recipients, the source receives `45` and volume continues at
-  the audio recipient, even when both devices use the same physical wire.
-- If source and audio are the same recipient, Right-up sends no `45` while
-  Volume Up remains held. Releasing Volume Up then submits that recipient's
-  final `45`.
+Devices exchange resulting state changes/intents, not periodic presses or button renewals. The emitting owner performs repetition and aggregate stream release using the original algorithm.
 
-Outgoing frames are buffered only in CEC's FIFO: eight queued-plus-active
-messages per wire, including releases. The executor retains
-button state and bounded completion trackers, without a second frame queue.
-Schema-2 ownership transports exact key state and hold tokens; the receiving
-owner performs repetition and aggregates releases on its own wire. Remote
-state admission is distinct from CEC admission and successful transmission.
-Submissions never wait for capacity. Key presses use one wire attempt; final
-releases and other ordinary commands use up to three. If the eight-message FIFO
-is full, a final release is dropped, logged and its cleanup decision is consumed.
-No tick, later button-up, or newly available capacity retries that admission.
-This also applies to power-quirk and switch-key cleanup. Every TX dropped because
-the FIFO is full is logged, including each frame in a rejected atomic batch. An
-admitted release follows the recipient's already queued presses, and later
-commands cannot overtake it.
+## Evidence
 
-Activity changes, configuration replacement, standby, remote disconnect and
-input loss cancel all held keys and clean up their recipients. If the hub
-command queue itself is full, keyed release has a per-key emergency epoch;
-explicit release-all has a global emergency epoch. These are overload
-fallbacks, not the normal key-up mechanism. They invalidate the corresponding
-older unexecuted key commands while allowing newer presses to proceed.
-
-Remote input also follows Python's `wait_for_release` selection gate: startup
-and successful selections block fresh forwarded buttons/swipes until every
-physical button is released, with a one-second fallback. This includes an
-explicit same-target activity selection; long-Power repair and rejected
-requests do not arm it. `activity_selection()` notifies the input task even
-when the activity generation stays unchanged. A gate cleared by the local
-selection's final button-up is not armed again by its notification. Swallowed
-holds cannot replay after timeout. See the [remote input contract](../ble_remote/README.md)
-for release ordering, aliases and gesture handling. This is an input policy,
-independent of the asynchronous CEC completion and settling state machines.
-
-Speaker mute/volume state comes only from `REPORT_AUDIO_STATUS` from the current
-audio device. It is unknown until reported and becomes unknown during an
-adjustment; volume 127 also means unknown. Explicit mute/restore keys 0x65/0x66
-route to audio. `GIVE_AUDIO_STATUS` is requested after activity selection and
-coalesced after audio changes, with a 500 ms delay and no active audio hold.
-That is a scheduling delay, not a guarantee of wire transmission or a reply
-within 500 ms; bus traffic and admission can delay it.
-
-Activity/configuration changes advance `Snapshot::activity_generation`.
-`press_key_for_activity()` checks that generation on the owner task before
-sending, so queued volume work cannot cross into a different activity, or a
-later restart of the same activity index. `main/volume_sequence.hpp` paces
-relative adjustments and cancels their remaining steps when this generation
-changes, including old adjustments still waiting in the application queue.
-
-The host tests exercise the behavior against captured outgoing messages,
-including shared devices, power quirks, fallback switch input, source theft,
-front/back identity, audio feedback, and same-address devices on two buses.
-`tests/cec_hub_commit_test.cpp` covers independent outstanding held-key TX,
-keyed releases and command admission without waiting for ACKs.
-`tests/system_hold_test.cpp` checks token-scoped holds, aggregate releases,
-failed-key cleanup and sole-FIFO capacity; `tests/system_remote_control_test.cpp`
-checks input through the original controller and scoped owner path.
-`tests/cec_bus_test.cpp` covers asynchronous FIFO admission, per-operation
-completion, capacity limits and independent buses. `sh tests/cec_hub_test.sh`
-and `sh tests/cec_bus_test.sh` run these host checks.
-
-Activity admission uses `ActivitySettling` with the compile-time
-`CONFIG_AMITY_ACTIVITY_SETTLE_SECONDS` (default 5; 0 disables it). Reservation
-happens before enqueue, so rapid requests during setup are rejected rather than
-queued for later. Same-target requests, including standby while already off,
-are repairs and bypass the guard without starting another quiet period. Remote
-Power uses the reserved target, so a second short press during startup cannot
-be mistaken for a repair because the published snapshot has not caught up yet.
-The web endpoint reports HTTP 409 with a settling message; Matter receives the
-same admission failure, while remote requests are simply ignored.
-
-Changed-activity setup submits frames without blocking and tracks their FIFO
-completions asynchronously. Ordinary commands use up to three wire attempts;
-key-press frames use one. The tracker includes known devices in both the
-outgoing and incoming
-activities, scopes addresses to each bus, and matches expected query replies
-or the selected source's Active Source response to Set Stream Path. A matching
-Feature Abort completes its request too. Setup completes only after its final
-wire attempt; the quiet period then follows the last expected reply. Missing
-replies have a two-second deadline before quiet time starts. Duplicates,
-malformed replies, unrelated devices/opcodes and later repair/key traffic do
-not restart it. Standby normally expects ACKs only, so its quiet period starts
-at the final transmitted frame. Configuration replacement clears the old guard
-because activity indices may change. `Snapshot::activity_settling` and
-`/api/status.activity_settling` expose whether a transition is still settling.
+[Control-surface evidence](CONTROL_SURFACE_EVIDENCE.md) distinguishes current checks from historical graph-model validation. Compare baseline and scoped local/remote frame transcripts, including AVR/audio/switch, unavailable equipment return, original discovery/PA and FIFO/key behavior. A Ready device or retained JSON is insufficient to prove parity. Physical radio/CEC/AV and four-adapter timing qualification remain separate.

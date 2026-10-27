@@ -161,18 +161,4 @@ bool valid_physical_address(uint16_t address, bool allow_root) {
     }
     return true;
 }
-bool valid_binding(const ComponentBinding& binding, const Component& component) {
-    if (!binding.binding_id || !binding.component_id || binding.component_id != component.component_id ||
-        !binding.endpoint.valid() || !binding.domain_id || !binding.domain_revision || !binding.binding_revision ||
-        !binding.physical_address_evidence_ref || binding.owner_octopus_id != binding.endpoint.port.octopus_id ||
-        (binding.role != PortRole::tv_controller && binding.role != PortRole::playback_proxy)) return false;
-    if (binding.kind == BindingKind::native_appliance) {
-        return binding.device_name && binding.device_name->valid() && binding.device_name->port == binding.endpoint.port &&
-               !binding.proxy_identity_resource_id &&
-               std::find(component.qualified_names.begin(), component.qualified_names.end(), *binding.device_name) != component.qualified_names.end();
-    }
-    return !binding.device_name && binding.proxy_identity_resource_id && binding.proxy_identity_resource_id->valid() &&
-           binding.role == PortRole::playback_proxy;
-}
-
 } // namespace amity::system

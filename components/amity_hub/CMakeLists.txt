@@ -4,5 +4,5 @@
 # GNU General Public License as published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
 
-idf_component_register(SRCS "hub.cpp" "hub_service.cpp" "live_system.cpp" "system_control.cpp" "remote_control.cpp" INCLUDE_DIRS "include"
+idf_component_register(SRCS "hub.cpp" "hub_service.cpp" "system_control.cpp" "remote_control.cpp" INCLUDE_DIRS "include"
     REQUIRES cec esp_timer amity_system config_store)

@@ -1,130 +1,43 @@
-# 10. BLE and Matter coexistence
+# Shared BLE, Matter and setup ownership
 
-**20 October 2026 controller-policy amendment:** [Original controller and subordinate devices](21-original-controller-policy.md) is normative. The original first-setup Amity alone hosts the UI/integrations and sole remote; added devices are UI-less actuators, never input gateways or successor controllers.
+The selector/owner-delivery model does not redesign radio, Wi-Fi or remote algorithms. Preserve the existing single NimBLE host, CHIP Wi-Fi owner, setup arbiter and physical authorization. [Membership](09-membership-security-and-enrollment.md), [role policy](21-original-controller-policy.md) and [source baseline](19-source-baseline.md) apply.
 
-## Purpose and baseline
+## One shared runtime
 
-This proposed contract integrates consortium enrollment with the existing Matter server and BLE remote. It does not add a second Bluetooth host, a second Wi-Fi manager, or an ESP-Matter commissioner. Enrollment security is defined in [09](09-membership-security-and-enrollment.md); [20](20-user-interface.md) defines the baseline interface. This document remains authoritative for radio ownership, physical entry, and Wi-Fi integration.
+Matter, the sole controller remote and the Amity setup service share the existing host. Added devices retain the substrate needed for authenticated setup/member communication but cannot expose a user-control integration or pair a remote. Do not start a second protocomm/NimBLE host, reinitialize Wi-Fi for enrollment or destroy the host after commissioning.
 
-At Amity `d50af8026938797fc0820d0107f4c4e064c2d2bc`, Matter initializes NimBLE and station networking. The BLE remote starts afterwards and consumes that shared host. The configuration keeps BLE after commissioning, enables central/observer/GATT-client roles, permits three simultaneous connections and four bonds, and disables SoftAP. `ble_remote` manages one remote and can start an indefinite reconnect initiation. These facts are visible in pinned [startup](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/main/main.cpp), [Matter startup](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/amity_matter/amity_matter.cpp), [BLE remote](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/components/ble_remote/ble_remote.cpp), and [sdkconfig defaults](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/sdkconfig.defaults).
+Register the extra GATT service through the pinned CHIP extra-services hook before Matter starts. Definitions and callback context outlive asynchronous host startup. GATT callbacks perform bounded validation/copying and hand work to workers; crypto, flash and network changes do not run inside callbacks. Preserve bounded fragmentation/reassembly, minimum-MTU support and connection/generation correlation.
 
-The SDK versions are pinned in [SDK_VERSIONS.txt](https://github.com/retsyx/amity-esp32/blob/d50af8026938797fc0820d0107f4c4e064c2d2bc/SDK_VERSIONS.txt): ESP-IDF `fff9895c82d744c7237be8847347bdd1b07c6643`, ESP-Matter `59574f3fb62fddc690b4127fd3a4a43cfce4245e`, and ConnectedHomeIP `539342f32d5f4dc93761c2f9325afe29270068f1`. Agents must verify these integration points again when changing a pin.
+Use the exact SDK pins in `SDK_VERSIONS.txt` and inspect their actual service-registration behavior before changing hooks. A similarly named API in another SDK release is not evidence for this build.
 
-## Ownership and invariants
+## Role before services
 
-Matter remains the lifetime owner of NimBLE, Wi-Fi, the station netif, and CHIP event processing. A new application `BleRadioArbiter` owns admission and scheduling of Amity's high-level workflows. It does not replace Matter's host reset/synchronization callbacks. A `ConsortiumGattTransport` supplies one additional service, and a `WifiEnrollmentAdapter` calls the existing CHIP network driver.
+A freshly prepared board has no Wi-Fi credentials and no browser UI. Matter BLE setup establishes the original controller; authenticated Amity BLE setup establishes a headless added device. Resolve durable role before exposing any original-only service. Last-fabric removal and reboot do not turn an established device into an unclaimed candidate.
 
-The following are invariants:
+Suppress the SDK's independent no-fabric automatic commissioning-window and BLE advertising-autostart paths. Open setup only from the existing eligibility/physical authorization policy. An unconfigured board may confirm local firmware health without having completed human setup; lack of enrollment alone is not a boot failure.
 
-- Starting or finishing a workflow never deinitializes NimBLE, releases Bluetooth controller memory, or clears all bonds.
-- An established remote connection may remain active during enrollment or Matter induction. Its input and release path must continue to meet [07](07-activity-planning-and-execution.md)'s hold deadlines.
-- Remote pairing, remote reconnect initiation, consortium scanning/connection, and connectable advertising are explicitly scheduled; modules do not compete by issuing uncoordinated GAP calls.
-- No enrollment service accepts a PAKE session outside its physically authorized window. A registered GATT table is not an open enrollment window.
-- All radio work is bounded. Local CEC timing, filtering, and release handling continue even while crypto, Wi-Fi, or BLE fails.
+## Physical gestures
 
-Matter fabric membership, Wi-Fi provisioning, system membership and BLE remote bonding remain separate states. Only the original controller runs user-facing Matter/HomeKit and the sole remote. Added devices retain the shared CHIP Wi-Fi/NimBLE host needed by enrollment and networking, but must not publish home-control endpoints, open commissioning/admin UI, or scan/pair/reconnect for a remote. Adoption disables any existing remote/integration activity while preserving stored bonds/fabrics. Removing a fabric does not remove membership or reopen setup.
+Preserve the existing debounced single-action button interpretation:
 
-The same firmware handles fresh and enrolled roles. Fresh boot has no Wi-Fi credentials, HTTP/UI, HomeKit or remote connection. A bounded physical Matter BLE setup window can establish the original controller; authenticated Amity BLE can instead prepare a headless member. Persist the role separately from fabrics. Only a fully completed/committed Matter enrollment with checked network persistence, or proven retained original authority, may trigger the durable original-role CAS and then user-service startup. A pending member transaction wins against delayed Matter completion; no callback, reset/reconnect or last-fabric removal silently changes the chosen role. Protect local boot health before waiting for a human to enroll, so an unconfigured board is not rolled back merely for lacking a network. [Startup acceptance](21-original-controller-policy.md).
+| Gesture | Result when eligible |
+|---|---|
+| Release before three seconds | Initial bounded Matter setup for a fresh/unconfigured main. |
+| Release after at least three and before ten seconds | Bounded Add to Amity candidate enrollment. |
+| Hold reaches ten seconds | Existing durable factory-reset path. Neither shorter setup action fires first. |
 
-## Register the extra GATT service before host startup
+Configured/prepared/member/retired/recovery states keep their existing eligibility restrictions. A raw absence of Wi-Fi/fabrics is not authorization to reopen setup. Buttonless profiles retain the explicit USB-assisted physical path. Indicators and printed instructions must match actual hardware; do not claim an unconfigured detector or button exists.
 
-The pinned ESP32 NimBLE implementation exposes a supported hook:
+## Arbiter and callbacks
 
-```cpp
-CHIP_ERROR ConfigureExtraServices(
-    std::vector<struct ble_gatt_svc_def> &extGattSvcs,
-    bool afterMatterSvc);
-```
+Keep the existing one-workflow radio reservation, local deadline, in-memory generation, connection handles and cancellation lifecycle. Matter setup, remote pairing and Amity candidate/inviter/opaque relay work cannot replace one another through late callbacks. Existing remote reconnect/input continues under its original policy and measured resource budget.
 
-Call `chip::DeviceLayer::BLEMgrImpl().ConfigureExtraServices(...)` before `esp_matter::start()`, once per boot. Keep the service definition, characteristic arrays, UUIDs, and callback context alive for the entire host lifetime. Supply the extra service definitions without a premature terminating service; the hook adds the final terminator.
+Do not add normal-operation timeouts, repeat cadence or radio recovery merely to accommodate distribution. Enrollment/setup deadlines remain their existing separate contracts. No periodic per-button lease renewal or transmitted press stream is added. The owner repeats a held key using its original completion-paced local handling.
 
-The boolean name is misleading at this exact pin: `false` produces Matter followed by the extra services; `true` places the extras before Matter. Check the implementation, not the parameter name. Calls after the internal service vector has been populated return `CHIP_ERROR_INCORRECT_STATE`. NimBLE initialization later counts/adds the combined services before starting its host task. See the pinned [public hook](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/platform/ESP32/BLEManagerImpl.h) and [service construction and initialization](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/platform/ESP32/nimble/BLEManagerImpl.cpp).
+## Wi-Fi and persistence
 
-Do not append services with an ad hoc `ble_gatts_add_svcs()` after the running host has registered its table. Do not invoke `protocomm_ble_start()` alongside Matter: the pinned protocomm NimBLE transport initializes a host, installs callbacks, and starts its own task. Reuse the protocomm session/security/request functions through the custom transport instead. See pinned [protocomm NimBLE ownership](https://github.com/espressif/esp-idf/blob/fff9895c82d744c7237be8847347bdd1b07c6643/components/protocomm/src/transports/protocomm_nimble.c).
+Bootstrap transfers supported credentials only within authenticated Security2 and only when needed. Stage/commit through the existing CHIP Wi-Fi owner, preserve an already networked candidate and distinguish network success from committed member authority. Preserve original main/Matter fail-safe handling. Hostname selection is authenticated metadata and never device identity.
 
-Map an admitted connection to exactly one `protocomm_open_session` / `protocomm_req_handle` / `protocomm_close_session` lifecycle. A second unsolicited connection cannot replace the active session. The enrollment service does not require a persistent BLE bond: Security2 authenticates and encrypts its application records. This avoids consuming the remote's bond budget or weakening global security settings to accommodate enrollment.
+## Evidence
 
-GATT callbacks perform bounded validation/copying and enqueue work. SRP, GCM, protobuf parsing, flash commits, and Wi-Fi transitions run in workers. Support the negotiated ATT MTU, including the minimum; the existing preferred MTU of 527 is not a guarantee. Fragment whole Security2 records with bounded offsets, transaction/connection generation, and duplicate detection. Never hand individual fragments to the crypto layer.
-
-## Boot policy must close two independent automatic paths
-
-An active consortium member may deliberately have no Matter fabric. Boot must not make such a board perpetually commissionable.
-
-1. Before Matter start, supply a persistent `chip::CommonCaseDeviceServerInitParams` through `esp_matter::set_server_init_params()`, with `advertiseCommissionableIfNoFabrics=false`. The pinned ESP-Matter core performs `InitializeStaticResourcesBeforeServerInit()` on the selected object and supplies its default AppDelegate only when none is provided. The object must outlive asynchronous server initialization. See pinned [ESP-Matter initialization](https://github.com/espressif/esp-matter/blob/59574f3fb62fddc690b4127fd3a4a43cfce4245e/components/esp_matter/esp_matter_core.cpp) and [Matter no-fabric window](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/app/server/Server.cpp).
-2. Set `CHIP_DEVICE_CONFIG_CHIPOBLE_ENABLE_ADVERTISING_AUTOSTART` to false through the project CHIP configuration. The pinned BLE manager independently initializes its advertising-enabled flag from this macro. Disabling the server's automatic commissioning window alone is insufficient. Keep `CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n`; suppressing an advertisement is different from destroying the shared host.
-
-After host synchronization, the application opens only the workflow justified by durable state and physical authorization. The first-board Matter setup experience remains available through the explicit gesture policy below; an upgrade must not silently reopen setup on an established device. An eligible fresh/unconfigured singleton can enter first-board setup, while an OCTOPUS with a consortium record and no fabric starts its existing network and operational service with enrollment closed. Absence of a network or fabric alone is not setup authorization. Pending, retired, or recovery-required records follow [09](09-membership-security-and-enrollment.md) and [13](13-faults-removal-and-recovery.md).
-
-The current `amity_matter_open_commissioning()`/close wrappers become arbiter clients. Also observe commissioning initiated by an external administrator over an existing Matter fabric; gating only the web buttons is incomplete.
-
-### Proposed retail-profile physical entry
-
-The following is a proposed requirement for supported button-equipped retail profiles, not behavior supplied by the baseline firmware. Evaluate a debounced press as one action; do not enter a shorter-duration mode while a longer press remains held.
-
-| Physical action | Permitted request |
-| --- | --- |
-| Release before 3 seconds after debounce | Open the bounded initial Matter setup window only for a fresh/unconfigured singleton with no active consortium membership, prepared join, existing operational configuration, or conflicting arbiter session. |
-| Release after at least 3 seconds and before 10 seconds | Open the 180-second consortium enrollment window only when [09](09-membership-security-and-enrollment.md)'s bootstrap and physical-authorization prerequisites and the arbiter permit it. |
-| Hold reaches 10 seconds | Follow the factory-reset path; neither shorter setup mode may have opened during that hold or open on its eventual release. |
-
-Creating an origin identity or an otherwise unconfigured singleton does not itself open a window. In configured, pending, retired, or recovery states, the short gesture does not silently commission the device; use the existing authorized management/recovery path. Reboot, window expiry, and removal of the last Matter fabric never substitute for a new authorized setup action. Conflicting sessions return busy under the arbiter contract rather than admitting competing advertising.
-
-Each hardware profile must supply the exact gesture in its printed and browser instructions, define indicator behavior only for indicators it actually supports, and retain the USB-assisted physical path for buttonless legacy hardware. Qualify debounce and releases below/at/above 3 seconds and 10 seconds, a hold continuing through both thresholds, release after reset admission, and state/arbiter eligibility. These checks must prove that one press cannot open both Matter and consortium setup or bypass a prepared/active membership.
-
-## Radio arbiter contract
-
-The arbiter maintains an owner, local monotonic deadline, monotonically increasing in-memory generation, active connection handles, and pending cancellation state. Callers receive a reservation or an explicit busy result. Late callbacks carry their generation and may clean up their old resources, but may not advance the replacement workflow.
-
-| Mode | Discovery/advertising owner | Admitted new work | Existing remote |
-| --- | --- | --- | --- |
-| Operational | None, or scheduled remote reconnect | Routine reconnect when no setup reservation exists | Continues |
-| Matter induction | Matter commissioning manager | Matter session only; new consortium/remote pairing requests deferred | Continues if resources permit |
-| Remote pairing | Remote central/scanner | One user-authorized remote pairing attempt | Existing bond replacement is explicit |
-| Consortium candidate | Amity connectable advertisement | One physically authorized Security2 server session | Continues |
-| Consortium inviter/relay | Amity central/scanner | One selected candidate connection | Continues |
-| Transition/cancel | Previous owner until cleanup completes | No new GAP operation | Continues where possible |
-
-An operational CASE connection over Wi-Fi does not consume a BLE connection. Budget at most one connected remote plus one active setup connection for normal v1 operation, leaving the third configured slot for bounded transition/error handling. Do not assume another advertising set exists, increase connection counts without memory/timing measurements, or consume four bonds for consortium members.
-
-Use these initial acceptance targets: a 180-second enrollment reservation, a 20-second discovery attempt, a 10-second connection attempt, and a 5-second cancellation completion deadline. Existing explicit remote scan/pairing behavior may retain its shorter user-visible limits. A timeout reports a bounded failure; it does not reset the shared host to make progress. These are proposed policy constants to validate, not measured guarantees.
-
-Before the original controller scans/connects as inviter, suspend its sole remote's saved-peer reconnect procedure. An actuator never starts remote reconnect; a bounded relay only suspends conflicting enrollment radio work. The baseline invokes `ble_gap_connect(..., BLE_HS_FOREVER, ...)`, so “the remote is currently disconnected” does not imply GAP is free. Invalidate its attempt token, request `ble_gap_conn_cancel()`, and wait for completion before granting the reservation. Likewise cancel a remote scan before a conflicting scan. Preserve the remote bond and restart scheduled reconnect after releasing the reservation. The existing generation-based cancellation logic is the starting point; expose it through the arbiter rather than duplicating hidden GAP ownership.
-
-Before candidate advertising, close/disable Matter advertising through the Matter API and observe the stopped state. Only then install the Amity advertisement and start it with the existing host. On exit, stop the Amity advertisement, finish session cleanup, and restore whichever authorized workflow the arbiter admits next. `ConfigureScanResponseData()` changes Matter's advertisement data; it is not an independent Amity advertising owner.
-
-### Externally initiated Matter commissioning
-
-An active Matter PASE/fail-safe operation has priority and is never preempted by a consortium join. A newly opened external Matter window cancels an uncommitted consortium radio workflow and defers remote pairing. Committed pending enrollment can later resume over its pinned LAN channel.
-
-The pinned `CommissioningWindowManager::StartAdvertisement()` calls `SetBLEAdvertisingEnabled(true)` before `OnCommissioningWindowOpened()`. The AppDelegate callback is therefore an observation hook, not an admission veto. Use a synchronous integration adapter to stop Amity advertising/initiation and invalidate its generation before a competing host procedure can start. Preserve the default ESP-Matter delegate's four posted session/window events when installing a custom delegate; add establishment/fail-safe tracking rather than suppressing those notifications. See pinned [commissioning order and callbacks](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/app/server/CommissioningWindowManager.cpp).
-
-This ordering is a mandatory hardware integration gate. If the pinned stack's task scheduling cannot guarantee race-free handoff, add a narrow reviewed pre-advertisement admission hook in the tracked SDK integration, with regression coverage. Do not ship simultaneous competing advertisement owners or pretend the post-open callback itself vetoes Matter. Keep the protocol-level commissioning behavior valid and preserve an ongoing PASE session.
-
-## Wi-Fi remains owned by CHIP without a Matter fabric
-
-The existing Matter stack may own station networking even when `FabricCount == 0`. Consortium enrollment must not call a second `esp_wifi_init()`, a separate provisioning manager, or SoftAP. Create an application adapter around the pinned `ESPWiFiDriver` on the CHIP task/under its expected lock. Its public API includes `AddOrUpdateNetwork`, `ConnectNetwork`, `CommitConfiguration`, and `RevertConfiguration`; none requires inventing a Matter fabric. See pinned [driver interface](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/platform/ESP32/NetworkCommissioningDriver.h) and [driver persistence and connection logic](https://github.com/project-chip/connectedhomeip/blob/539342f32d5f4dc93761c2f9325afe29270068f1/src/platform/ESP32/NetworkCommissioningDriver.cpp).
-
-The driver has one staged network. It backs up configuration during change, and initialization reverts an uncommitted backup. A successful station connection is consequently not proof that new credentials survive reboot. Its configured connect timeout is 30 seconds; the adapter reports that stage accurately instead of using the 10-second BLE-connect timeout.
-
-For a previously unconfigured candidate, apply this transaction:
-
-1. Require a mutually authenticated Security2 session and matching prepared join. Serialize against Matter network commissioning and its armed fail-safe.
-2. Supply SSID/credentials through the existing driver, connect, and wait for its result plus a usable IP address. Never log credentials or embed them in portable configuration.
-3. Persist the pending enrollment record as described in [09](09-membership-security-and-enrollment.md). Call `CommitConfiguration()` once the intended Wi-Fi connection succeeds, before reporting the network step durable. Maintain journal markers so restart can distinguish an SDK rollback from an already committed network.
-4. Perform the separate mTLS LAN proof and membership commit. If it fails, the candidate may remain on the successfully provisioned network with pending/no membership. Explain this state in the UI; do not claim an atomic cross-device Wi-Fi/membership transaction.
-
-An interrupted uncommitted network change is reverted through the driver. A restart must reconcile the journal with the actual driver state before claiming network readiness; if necessary, the already prepared transaction can reapply its retained, protected credentials, or ask the owner to resume. It must not silently reopen unauthenticated provisioning.
-
-For an already networked candidate, retain its network and attempt the pinned LAN proof. Different SSIDs can reach the same LAN; SSID equality is not membership proof. The pinned driver's single-network behavior can reject a different staged SSID, so do not work around that by clearing configuration secretly. Network migration is a separate explicit operation that also respects Matter fail-safe state. V1 credential transfer should target the network modes actually supported and tested by the existing station build; do not promise enterprise credential cloning.
-
-## Why not commission an internal Matter fabric in v1?
-
-The pinned ESP-Matter Kconfig makes `ESP_MATTER_COMMISSIONER_ENABLE` depend on `!ESP_MATTER_ENABLE_MATTER_SERVER`. Amity is already a Matter server. A controller/server example does not establish commissioner/server support, nor does it prove sufficient memory alongside HomeKit, remote BLE, and eight CEC engines. See pinned [controller Kconfig](https://github.com/espressif/esp-matter/blob/59574f3fb62fddc690b4127fd3a4a43cfce4245e/components/esp_matter_controller/Kconfig).
-
-V1 retains Matter for external home integration on the original controller only; members use the shared host/network substrate without user-facing home-control services and communicate through the separate system protocol. An internal Matter fabric remains a future architecture spike requiring a working combined build and resource/upgrade/security evidence. Ordinary Matter group membership also does not define Amity's resource graph, enrollment authority, or authorize controller transfer.
-
-## Integration tasks and acceptance gates
-
-Implement startup gating in `amity_matter`, arbiter-mediated GAP operations in `ble_remote`, the extra pre-start GATT service, the Security2 worker transport, and the CHIP Wi-Fi adapter. Wire durable state into startup before `esp_matter::start()`. Preserve the original controller's bond-specific unpair/fabric behavior. Member startup and adoption must disable radio input and user-facing integrations without deleting unrelated pairings or resetting the shared host.
-
-Release gates include: extra service visible on the first boot without a second host; no automatic Matter window/advertisement after reboot of a consortium-only member; remote reconnect cancellation followed by successful enrollment; connected remote key release under SRP and Wi-Fi load; minimum-MTU fragmentation; three-link exhaustion returning busy; external Matter window races; interrupted Wi-Fi apply/commit/restart; removal of the last Matter fabric without membership loss; and memory/CEC-timing stress with the full eight-line hardware profile. [15](15-validation-and-release-gates.md) consolidates the release matrix. Failure of a gate blocks the conflicting feature combination rather than weakening authentication or CEC timing.
+Test service registration before host startup, role-before-service ordering, both automatic commissioning paths closed, exact gesture thresholds, long-hold exclusivity, stale callback rejection, partial records/minimum MTU and cancellation. Physical qualification must cover real Matter setup, remote gestures/reconnect and custom GATT under CEC/radio load; host tests alone do not establish that interoperability.

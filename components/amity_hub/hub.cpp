@@ -31,46 +31,111 @@ std::vector<std::string> names(const Activity &a) {
     return result;
 }
 }
-bool same_executable_configuration(const std::vector<Activity> &a, const std::vector<Quirk> &qa,
-                                   const std::vector<Activity> &b, const std::vector<Quirk> &qb) {
-    if (a.size() != b.size() || qa.size() != qb.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (a[i].display != b[i].display || a[i].source != b[i].source || a[i].audio != b[i].audio ||
-            a[i].switch_device != b[i].switch_device || a[i].switch_input != b[i].switch_input) return false;
-    for (size_t i = 0; i < qa.size(); ++i)
-        if (qa[i].vendor_id != qb[i].vendor_id || qa[i].power_on != qb[i].power_on || qa[i].power_off != qb[i].power_off) return false;
-    return true;
-}
 void Hub::configure(std::vector<Activity> activities, std::vector<Quirk> quirks) {
-    if (!same_executable_configuration(activities_, quirks_, activities, quirks)) {
-        // Installation is not an activity intent. Fence old input and suspend
-        // its logical route without powering off, waking or routing equipment.
-        release_key();
-        selected_ = -1;
-        audio_query_pending_ = false;
-        audio_status_known_ = false;
-        ++activity_generation_;
+    if (selected_ >= 0) standby();
+    ++activity_generation_; ++owned_generation_; pending_inputs_.clear();lookup_previous_selection_.reset();
+    activities_ = std::move(activities); quirks_ = std::move(quirks);
+    if (owned_sender_) publish_owned_context(true);
+}
+void Hub::scoped_transport(std::vector<system::ScopedSelector> selectors, OwnedSender sender, OwnedLookup lookup,
+        std::optional<system::CecPortRef> default_port) {
+    scoped_selectors_ = std::move(selectors); owned_sender_ = std::move(sender); owned_lookup_ = std::move(lookup);
+    scoped_default_port_ = std::move(default_port);
+    if(owned_sender_)publish_owned_context(true);
+}
+std::optional<system::QualifiedDeviceName> Hub::target(const std::string& value) const {
+    for (const auto& selector : scoped_selectors_) if (selector.value == value) return selector.target;
+    return {};
+}
+bool Hub::owned(system::OwnedIntentKind kind, const std::string& value, bool on, uint8_t data, bool repeat, bool apply_quirks) {
+    if (!owned_sender_) return false;
+    auto endpoint = target(value); if (!endpoint) return false;
+    system::OwnedIntent intent; intent.kind = kind; intent.target = *endpoint; intent.generation = owned_generation_;
+    intent.on = on; intent.key = data; intent.input = data; intent.repeat = repeat; intent.apply_quirks = apply_quirks;
+    if (kind == system::OwnedIntentKind::power) for (const auto& q : quirks_) intent.quirks.push_back({q.vendor_id,q.power_on,q.power_off});
+    if (kind == system::OwnedIntentKind::power) for (const auto& selector : scoped_selectors_)
+        if (selector.value == value && selector.quirks) { intent.quirks = *selector.quirks; break; }
+    return bool(owned_sender_(std::move(intent)));
+}
+bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
+    if (!owned_sender_) return false;
+    bool admitted=true;
+    const auto activity = current(); std::vector<system::CecPortRef> ports;
+    for (const auto& selector : scoped_selectors_) {
+        if(owner&&selector.target.port.octopus_id!=owner)continue;
+        auto port = selector.target.port; port.side = system::Side::front;
+        if (std::find(ports.begin(), ports.end(), port) != ports.end()) continue;
+        ports.push_back(port); system::OwnedIntent intent; intent.kind = system::OwnedIntentKind::context;
+        intent.target.port = port; intent.generation = owned_generation_; intent.selected = selected_ >= 0;
+        intent.source_changed = source_changed; intent.source = target(activity.source); intent.audio = target(activity.audio);
+        intent.display = target(activity.display); intent.switch_device = target(activity.switch_device); intent.input = activity.switch_input;
+        admitted=bool(owned_sender_(std::move(intent)))&&admitted;
     }
-    activities_ = std::move(activities);
-    quirks_ = std::move(quirks);
-    // Scope memory belongs to configured selectors, not every untrusted OSD
-    // string ever seen. Semantic configuration already fenced removed intent.
-    name_scopes_.erase(std::remove_if(name_scopes_.begin(), name_scopes_.end(), [&](const auto& scope) {
-        return !configured_name(scope.first);
-    }), name_scopes_.end());
-    for (auto& d : devices_) if (d.resolved && configured_name(d.name)) {
-        auto scope = std::find_if(name_scopes_.begin(), name_scopes_.end(), [&](const auto& item) { return item.first == d.name; });
-        if (scope != name_scopes_.end()) d.resolved = scope->second == d.bus;
-        else if (name_scopes_.size() < 64) name_scopes_.push_back({d.name, d.bus});
-        else d.resolved = false;
+    return admitted;
+}
+void Hub::scoped_audio_status(bool known, bool muted, uint8_t volume) {
+    audio_status_known_ = known; muted_ = muted; volume_ = volume;
+}
+Device *Hub::find_on_side(BusSide side, const std::string& name) {
+    if(!name.empty())for(auto& device:devices_)if(device.bus==side&&device.name==name)return &device;
+    return nullptr;
+}
+bool Hub::owned_target_available(const system::QualifiedDeviceName& name) {
+    return find_on_side(name.port.side==system::Side::front?BusSide::Front:BusSide::Back,name.osd_name)!=nullptr;
+}
+void Hub::owned_input_result(system::OctopusId owner,uint64_t generation,uint64_t sequence,bool present) {
+    const auto found=std::find_if(pending_inputs_.begin(),pending_inputs_.end(),[&](const auto& pending){return pending.owner==owner&&pending.generation==generation&&pending.sequence==sequence;});
+    if(found==pending_inputs_.end()||generation!=owned_generation_)return;
+    const auto pending=*found;pending_inputs_.erase(found);
+    if(!present)fallback_input(pending.activity);
+    if(pending.query_audio)request_audio_status(true);
+    if(pending_inputs_.empty())lookup_previous_selection_.reset();
+}
+void Hub::fence_owned_owner(system::OctopusId owner){
+    pending_inputs_.erase(std::remove_if(pending_inputs_.begin(),pending_inputs_.end(),[&](const auto& pending){return pending.owner==owner;}),pending_inputs_.end());
+    if(pending_inputs_.empty())lookup_previous_selection_.reset();
+}
+bool Hub::execute_owned(const system::OwnedIntent& intent) {
+    const auto side = intent.target.port.side == system::Side::front ? BusSide::Front : BusSide::Back;
+    if (intent.kind == system::OwnedIntentKind::context) {
+        const auto previous_source=current().source;const auto previous_side=owner_source_side_;
+        Activity context; owner_source_side_.reset(); owner_audio_side_.reset();
+        if(intent.source)context.source="@foreign:"+intent.source->port.octopus_id.str()+":"+intent.source->osd_name;
+        if (intent.source && intent.source->port.octopus_id == intent.target.port.octopus_id && intent.source->port.tentacle_id == intent.target.port.tentacle_id) {
+            context.source = intent.source->osd_name; owner_source_side_ = intent.source->port.side == system::Side::front ? BusSide::Front : BusSide::Back;
+        }
+        if (intent.audio && intent.audio->port.octopus_id == intent.target.port.octopus_id && intent.audio->port.tentacle_id == intent.target.port.tentacle_id) {
+            context.audio = intent.audio->osd_name; owner_audio_side_ = intent.audio->port.side == system::Side::front ? BusSide::Front : BusSide::Back;
+        }
+        if(intent.display&&intent.display->port.octopus_id==intent.target.port.octopus_id&&intent.display->port.tentacle_id==intent.target.port.tentacle_id)context.display=intent.display->osd_name;
+        if(intent.switch_device&&intent.switch_device->port.octopus_id==intent.target.port.octopus_id&&intent.switch_device->port.tentacle_id==intent.target.port.tentacle_id){context.switch_device=intent.switch_device->osd_name;context.switch_input=intent.input;}
+        activities_ = {context}; selected_ = intent.selected ? 0 : -1;
+        if (intent.source_changed||previous_source!=context.source||previous_side!=owner_source_side_) playing_ = false;
+        return true;
+    }
+    if (intent.kind == system::OwnedIntentKind::announce_active_source) { active_source(); return true; }
+    if (intent.kind == system::OwnedIntentKind::standby_wire) return send(side,15,{0x36});
+    if (intent.kind == system::OwnedIntentKind::key_up) return release_key(intent.key);
+    auto* device = find_on_side(side,intent.target.osd_name); if (!device) { transport_.request_scan(); return false; }
+    switch (intent.kind) {
+    case system::OwnedIntentKind::power:
+        quirks_.clear(); for (const auto& q : intent.quirks) quirks_.push_back({q.vendor_id,q.power_on,q.power_off});
+        return power(*device,intent.on,intent.apply_quirks);
+    case system::OwnedIntentKind::source_input:
+        return send(side,15,{0x86,static_cast<uint8_t>(device->physical_address>>8),static_cast<uint8_t>(device->physical_address)});
+    case system::OwnedIntentKind::switch_input: {
+        const uint8_t data[] = {0x44,0x69,intent.input}; return finite_press(*device,data,sizeof(data));
+    }
+    case system::OwnedIntentKind::query_audio: {
+        const bool admitted = send(side,device->address,{0x71});
+        audio_query_pending_ = !admitted; if (!admitted) audio_query_due_ = now_us_ + 500000;
+        return admitted;
+    }
+    case system::OwnedIntentKind::key_down: return press_device(device,intent.key,intent.repeat);
+    default: return false;
     }
 }
-bool Hub::configured_name(const std::string& name) const {
-    if (name.empty()) return false;
-    for (const auto& activity : activities_) for (const auto* candidate : {&activity.display, &activity.source, &activity.audio, &activity.switch_device})
-        if (*candidate == name) return true;
-    return false;
-}
+
 void Hub::set_addresses(uint8_t front, uint8_t back, uint16_t physical) {
     front_ = front; back_ = back; physical_ = physical;
 }
@@ -86,8 +151,8 @@ void Hub::announce(BusSide side) {
 }
 Snapshot Hub::snapshot() const {
     Snapshot s;
-    s.activities = activities_; s.devices = devices_; s.current_activity = selected_;
-    s.activity_generation = activity_generation_;
+    s.activities = activities_; s.devices = devices_; s.current_activity = lookup_previous_selection_.value_or(selected_);
+    s.activity_generation = lookup_previous_selection_?lookup_previous_generation_:activity_generation_;
     s.binding_generation = binding_generation_; s.uncertain_releases = uncertain_releases_;
     s.front_address = front_; s.back_address = back_; s.front_physical_address = physical_;
     s.ready = front_ < 15 && back_ < 15 && physical_ != 0xffff;
@@ -99,22 +164,28 @@ Activity Hub::current() const {
 }
 Device *Hub::find(const std::string &name) {
     if (name.empty()) return nullptr;
-    Device *match = nullptr;
-    for (auto &d : devices_) if (d.name == name) {
-        if (!d.resolved || match) { transport_.request_scan(); return nullptr; }
-        match = &d;
+    if (owned_sender_) {
+        const auto selector = target(name); if(!selector){transport_.request_scan();return nullptr;}
+        const auto device = owned_lookup_ ? owned_lookup_(*selector) : std::optional<Device>{};
+        scoped_device_ = device.value_or(Device{});scoped_device_.name=name;
+        scoped_device_.bus=selector->port.side==system::Side::front?BusSide::Front:BusSide::Back;return &scoped_device_;
     }
-    if (match) return match;
-    transport_.request_scan();
-    return nullptr;
+    if (owner_source_side_ && name == current().source) return find_on_side(*owner_source_side_,name);
+    if (owner_audio_side_ && name == current().audio) return find_on_side(*owner_audio_side_,name);
+    for (auto& device : devices_) if (device.name == name) return &device;
+    transport_.request_scan(); return nullptr;
 }
 const Device *Hub::known(const std::string &name) const {
-    const Device *match = nullptr;
-    if (!name.empty()) for (const auto &d : devices_) if (d.name == name) {
-        if (!d.resolved || match) return nullptr;
-        match = &d;
+    if (owned_sender_) {
+        const auto selector=target(name);if(!selector)return nullptr;
+        const auto device=owned_lookup_?owned_lookup_(*selector):std::optional<Device>{};
+        scoped_device_=device.value_or(Device{});scoped_device_.name=name;
+        scoped_device_.bus=selector->port.side==system::Side::front?BusSide::Front:BusSide::Back;return &scoped_device_;
     }
-    return match;
+    if (owner_source_side_ && name == current().source) return const_cast<Hub*>(this)->find_on_side(*owner_source_side_,name);
+    if (owner_audio_side_ && name == current().audio) return const_cast<Hub*>(this)->find_on_side(*owner_audio_side_,name);
+    if (!name.empty()) for (const auto& device : devices_) if (device.name == name) return &device;
+    return nullptr;
 }
 bool Hub::send(BusSide side, uint8_t dest, std::initializer_list<uint8_t> data) {
     return transport_.send(side, dest, data.begin(), data.size());
@@ -131,45 +202,70 @@ bool Hub::key_needs_discovery(uint8_t key) const {
     const auto &name = ((key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66) ? a.audio : a.source;
     return !name.empty() && !known(name);
 }
-void Hub::power(const Device &device, bool on, bool quirk) {
+bool Hub::power(const Device &device, bool on, bool quirk) {
+    if (owned_sender_) return owned(system::OwnedIntentKind::power,device.name,on,0,false,quirk);
     if (quirk) for (const auto &q : quirks_) {
         if (q.vendor_id != device.vendor_id) continue;
         const auto &data = on ? q.power_on : q.power_off;
         if (data.empty() || data.size() > 15) continue;
-        const bool admitted = transport_.send(device.bus, device.address, data.data(), data.size());
-        if (admitted && data[0] == 0x44) send(device.bus, device.address, {0x45});
-        return;
+        return data[0] == 0x44 ? finite_press(device,data.data(),data.size()) :
+            transport_.send(device.bus,device.address,data.data(),data.size());
     }
-    if (!on) send(device.bus, device.address, {0x36});
-    else if (device.type == 0) send(device.bus, device.address, {0x04});
+    if (!on) return send(device.bus, device.address, {0x36});
+    else if (device.type == 0) return send(device.bus, device.address, {0x04});
     else {
-        if (send(device.bus, device.address, {0x44, 0x6d})) send(device.bus, device.address, {0x45});
+        const uint8_t data[] = {0x44,0x6d}; return finite_press(device,data,sizeof(data));
     }
 }
-void Hub::active_source() {
+bool Hub::finite_press(const Device& device, const uint8_t* data, size_t size) {
+    if (!transport_.send(device.bus,device.address,data,size)) return false;
+    const bool held = std::any_of(held_keys_.begin(),held_keys_.end(),[&](const auto& key){return key.bus == device.bus && key.address == device.address;});
+    return held || send(device.bus,device.address,{0x45});
+}
+void Hub::active_source(const std::string& display) {
+    if (owned_sender_) {
+        const auto value=display.empty()?current().display:display;
+        if(target(value))owned(system::OwnedIntentKind::announce_active_source,value);
+        else if (scoped_default_port_) {
+            system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::announce_active_source;
+            intent.target.port=*scoped_default_port_;intent.generation=owned_generation_;owned_sender_(std::move(intent));
+        }
+        return;
+    }
     if (physical_ == 0xffff) return;
     send(BusSide::Front, 15, {0x82, static_cast<uint8_t>(physical_ >> 8), static_cast<uint8_t>(physical_)});
 }
 void Hub::input(const Activity &activity) {
+    if(owned_sender_)if(const auto source=target(activity.source)){
+        current_input_sequence_=0;
+        if(pending_inputs_.size()>=32)return;
+        system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::source_input;intent.target=*source;intent.generation=owned_generation_;
+        const auto result=owned_sender_(std::move(intent));
+        if(result.source_present){if(!*result.source_present)fallback_input(activity);}
+        else if(result.admitted){pending_inputs_.push_back(PendingInput{activity,source->port.octopus_id,owned_generation_,result.sequence,false});current_input_sequence_=result.sequence;}
+        return;
+    }
     if (auto *d = find(activity.source)) {
         send(d->bus, 15, {0x86, static_cast<uint8_t>(d->physical_address >> 8), static_cast<uint8_t>(d->physical_address)});
         return;
     }
-    if (!activity.source.empty()) return; // Unresolved source cannot authorize a fallback route.
+    fallback_input(activity);
+}
+void Hub::fallback_input(const Activity& activity){
     if (!activity.switch_device.empty()) {
         auto *d = find(activity.switch_device);
         if (!d) return;
-        if (send(d->bus, d->address, {0x44, 0x69, activity.switch_input})) send(d->bus, d->address, {0x45});
+        if (owned_sender_) owned(system::OwnedIntentKind::switch_input,activity.switch_device,false,activity.switch_input);
+        else { const uint8_t data[] = {0x44,0x69,activity.switch_input}; finite_press(*d,data,sizeof(data)); }
     }
-    active_source();
+    active_source(activity.display);
 }
 bool Hub::select_activity(int index) {
     if (index < -1 || index >= static_cast<int>(activities_.size())) return false;
-    if (index >= 0) for (const auto& name : names(activities_[index])) if (!known(name)) {
-        transport_.request_scan(); return false; // Reject before partial power/routing effects.
-    }
     if (index == selected_) { fix_current_activity(); return true; }
     release_key();
+    pending_inputs_.clear();
+    ++owned_generation_;
     const auto before_activity = current();
     const auto before = names(before_activity);
     const auto after_activity = index < 0 ? Activity{} : activities_[index];
@@ -181,22 +277,29 @@ bool Hub::select_activity(int index) {
         if (auto *d = find(name)) power(*d, true);
     }
     input(after_activity);
+    if(input_pending()){lookup_previous_selection_=selected_;lookup_previous_generation_=activity_generation_;}
     selected_ = index;
     ++activity_generation_;
     audio_status_known_ = false; volume_ = 127;
+    publish_owned_context(index < 0 || before_activity.source != after_activity.source);
     request_audio_status();
     if (index < 0 || before_activity.source != after_activity.source) playing_ = false;
     return true;
 }
 void Hub::fix_current_activity() {
     const auto a = current();
-    for (const auto& name : names(a)) if (!known(name)) { transport_.request_scan(); return; }
     for (const auto &name : names(a)) if (auto *d = find(name)) power(*d, true);
     input(a);
     request_audio_status();
 }
-void Hub::request_audio_status() {
-    if (const auto *d = known(current().audio)) {
+void Hub::request_audio_status(bool resolved_input) {
+    if(owned_sender_&&!resolved_input&&current_input_sequence_){
+        for(auto& pending:pending_inputs_)if(pending.sequence==current_input_sequence_)pending.query_audio=true;
+        current_input_sequence_=0;return;
+    }
+    const auto *audio = owner_audio_side_ ? find_on_side(*owner_audio_side_,current().audio) : known(current().audio);
+    if (const auto *d = audio) {
+        if (owned_sender_) { owned(system::OwnedIntentKind::query_audio,current().audio); return; }
         audio_query_pending_ = !send(d->bus, d->address, {0x71});
         if (audio_query_pending_) audio_query_due_ = now_us_ + 500000;
     } else audio_query_pending_ = false;
@@ -207,12 +310,35 @@ void Hub::standby() {
     playing_ = false;
 }
 void Hub::force_standby() {
+    if (owned_sender_) {
+        std::vector<system::CecPortRef> ports;
+        for (const auto& selector : scoped_selectors_) for (const auto side : {system::Side::front,system::Side::back}) {
+            auto port = selector.target.port; port.side = side;
+            if (std::find(ports.begin(),ports.end(),port) != ports.end()) continue;
+            ports.push_back(port); system::OwnedIntent intent; intent.kind = system::OwnedIntentKind::standby_wire;
+            intent.target.port = port; intent.generation = owned_generation_; owned_sender_(std::move(intent));
+        }
+        return;
+    }
     send(BusSide::Front, 15, {0x36});
     send(BusSide::Back, 15, {0x36});
 }
 bool Hub::press_key(uint8_t key, bool repeat) {
-    const auto a = current();
+    const auto a = lookup_previous_selection_?(*lookup_previous_selection_>=0?activities_[*lookup_previous_selection_]:Activity{}):current();
     if (key == 0x40) { standby(); return true; }
+    if (owned_sender_) {
+        const auto held = std::find_if(held_keys_.begin(),held_keys_.end(),[&](const auto& h){return h.raw_key == key;});
+        if (repeat && held != held_keys_.end()) return true;
+        const bool audio = (key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66;
+        const auto selector = held != held_keys_.end() ? held->selector : audio ? a.audio : a.source;
+        if (!known(selector) || !owned(system::OwnedIntentKind::key_down,selector,false,key,repeat)) return false;
+        if (repeat) held_keys_.push_back({key,key,BusSide::Back,15,audio,selector});
+        return true;
+    }
+    return press_device(nullptr,key,repeat);
+}
+bool Hub::press_device(const Device* supplied, uint8_t key, bool repeat) {
+    const auto a = current();
     const uint8_t raw_key = key;
     const auto held = std::find_if(held_keys_.begin(), held_keys_.end(),
                                    [raw_key](const HeldKey &h) { return h.raw_key == raw_key; });
@@ -224,7 +350,7 @@ bool Hub::press_key(uint8_t key, bool repeat) {
     const bool audio_key = (key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66;
     // A held key keeps its accepted recipient even if discovery changes the
     // device cache before a repeat or release arrives.
-    const auto *d = held == held_keys_.end() ? find(audio_key ? a.audio : a.source) : nullptr;
+    const auto *d = held == held_keys_.end() ? (supplied ? supplied : find(audio_key ? a.audio : a.source)) : nullptr;
     if (held == held_keys_.end() && !d) return false;
     const BusSide bus = held != held_keys_.end() ? held->bus : d->bus;
     const uint8_t address = held != held_keys_.end() ? held->address : d->address;
@@ -255,6 +381,7 @@ bool Hub::release_key(uint8_t key) {
     if (held == held_keys_.end()) return true;
     const HeldKey ended = *held;
     held_keys_.erase(held);
+    if (owned_sender_) return owned(system::OwnedIntentKind::key_up,ended.selector,false,key);
     const bool recipient_held = std::any_of(held_keys_.begin(), held_keys_.end(),
         [&ended](const HeldKey &h) { return h.bus == ended.bus && h.address == ended.address; });
     const bool admitted = recipient_held || send(ended.bus, ended.address, {0x45});
@@ -277,6 +404,9 @@ bool Hub::release_key() {
 bool Hub::audio_key_held() const {
     return std::any_of(held_keys_.begin(), held_keys_.end(), [](const HeldKey &h) { return h.audio; });
 }
+bool Hub::held_recipient(uint8_t key,BusSide side,uint8_t address)const{
+    return std::any_of(held_keys_.begin(),held_keys_.end(),[&](const auto& held){return held.raw_key==key&&held.bus==side&&held.address==address;});
+}
 void Hub::tick(uint64_t now_us) {
     now_us_ = now_us;
     if (audio_query_pending_ && now_us_ >= audio_query_due_ && !audio_key_held()) request_audio_status();
@@ -284,7 +414,6 @@ void Hub::tick(uint64_t now_us) {
 void Hub::invalidate_endpoint(BusSide side, uint8_t address) {
     transport_.invalidate_binding(side, address);
     ++binding_generation_;
-    ++activity_generation_; // Fence old normalized input while keeping intent selected.
     // Never send cleanup to an address whose appliance may have changed.
     for (auto it = held_keys_.begin(); it != held_keys_.end();) {
         if (it->bus == side && it->address == address) { ++uncertain_releases_; it = held_keys_.erase(it); }
@@ -294,10 +423,7 @@ void Hub::invalidate_endpoint(BusSide side, uint8_t address) {
     audio_status_known_ = false;
     for (auto &d : devices_) if (d.bus == side && d.address == address) d.resolved = false;
 }
-void Hub::clear_devices() {
-    for (const auto &d : devices_) if (d.resolved) invalidate_endpoint(d.bus, d.address);
-    devices_.clear(); discovery_.clear(); name_scopes_.clear(); discovering_ = false;
-}
+void Hub::clear_devices() { devices_.clear(); discovery_.clear(); discovering_ = false; }
 void Hub::begin_discovery() { discovery_.clear(); discovered_physical_ = 0xffff; discovering_ = true; }
 void Hub::determine_front_physical_address(uint16_t fallback) {
     if (physical_ != 0xffff) return;
@@ -307,62 +433,51 @@ void Hub::determine_front_physical_address(uint16_t fallback) {
 }
 void Hub::finish_discovery() {
     if (!discovering_) return;
-    // A bounded scan, rather than arrival order or remembered LA, establishes
-    // uniqueness. Names and PAs never erase another responding native device.
-    for (auto &d : discovery_) {
-        const auto count = std::count_if(discovery_.begin(), discovery_.end(), [&](const Device& candidate) { return !d.name.empty() && candidate.name == d.name; });
-        auto scope = std::find_if(name_scopes_.begin(), name_scopes_.end(), [&](const auto& item) { return item.first == d.name; });
-        d.resolved = !d.name.empty() && count == 1 && (scope == name_scopes_.end() || scope->second == d.bus);
-        if (d.resolved && scope == name_scopes_.end() && configured_name(d.name)) {
-            if (name_scopes_.size() < 64) name_scopes_.push_back({d.name, d.bus});
-            else d.resolved = false;
-        }
-    }
-    for (const auto &old : devices_) if (old.resolved) {
-        const auto unchanged = std::find_if(discovery_.begin(), discovery_.end(), [&](const Device& d) {
-            return d.resolved && d.bus == old.bus && d.address == old.address && d.name == old.name && d.physical_address == old.physical_address;
-        });
-        if (unchanged == discovery_.end()) invalidate_endpoint(old.bus, old.address);
-    }
+    const auto *before = known(current().source);
+    const bool had_source = before != nullptr;
+    const Device previous = before ? *before : Device{};
     devices_ = std::move(discovery_);
     discovering_ = false;
+    const auto *after = known(current().source);
+    if (after && after->physical_address != 0xffff && (!had_source || previous.bus != after->bus ||
+        previous.address != after->address || previous.physical_address != after->physical_address)) input(current());
 }
 Device *Hub::discovery_device(BusSide side, uint8_t address) {
     auto &devices = discovering_ ? discovery_ : devices_;
     for (auto &d : devices) if (d.bus == side && d.address == address) return &d;
     return nullptr;
 }
-void Hub::resolve_device(BusSide side, uint8_t address) {
+void Hub::resolve_device(BusSide side, uint8_t address, bool restore_route) {
     auto *found = discovery_device(side, address);
     if (!found) return;
+    found->resolved = !found->name.empty();
     const auto device = *found;
     auto &devices = discovering_ ? discovery_ : devices_;
-    if (device.name.empty()) { found->resolved = false; return; }
-    bool ambiguous = false;
-    for (auto &other : devices_) {
-        if (other.name != device.name || (other.bus == side && other.address == address)) continue;
-        // A name collision changes lookup confidence, not the identity of
-        // the existing address. Already accepted holds retain their recipient.
-        other.resolved = false;
-        ambiguous = true;
-    }
-    const auto matches = std::count_if(devices.begin(), devices.end(), [&](const Device& other) { return other.name == device.name; });
-    auto scope = std::find_if(name_scopes_.begin(), name_scopes_.end(), [&](const auto& item) { return item.first == device.name; });
-    found->resolved = matches == 1 && (!ambiguous || discovering_) && (scope == name_scopes_.end() || scope->second == side);
-    if (found->resolved && scope == name_scopes_.end() && configured_name(device.name)) {
-        if (name_scopes_.size() < 64) name_scopes_.push_back({device.name, side});
-        else found->resolved = false;
-    }
-    if (!discovering_ && !found->resolved) transport_.request_scan();
+    // Python's dictionary replaces the previous record when a known OSD name
+    // moves to a new logical address. Physical-address conflicts are bus local.
+    devices.erase(std::remove_if(devices.begin(), devices.end(), [&](const Device &other) {
+        if (other.bus == side && other.address == address) return false;
+        return (!device.name.empty() && other.name == device.name && (!qualified_names_ || other.bus == side)) ||
+               (device.physical_address != 0xffff && other.bus == side && other.physical_address == device.physical_address);
+    }), devices.end());
+    if (!discovering_ && restore_route && device.name == current().source &&
+        !device.name.empty() && device.physical_address != 0xffff) input(current());
 }
 void Hub::discovered(BusSide side, uint8_t address) {
     if (address > 14 || discovery_device(side, address)) return;
     Device d; d.bus = side; d.address = address;
-    if (address == 0) { d.physical_address = 0; d.type = 0; }
+    if (address == 0) { d.name = "TV"; d.resolved = true; d.physical_address = 0; d.type = 0; }
     (discovering_ ? discovery_ : devices_).push_back(d);
     send(side, address, {0x83});
     send(side, address, {0x46});
     send(side, address, {0x8c});
+}
+void Hub::source_thief(const cec::Frame &frame) {
+    if (selected_ < 0) { force_standby(); return; }
+    const auto a = current();
+    bool fix = a.source.empty();
+    if (auto *d = find(a.source)) fix = d->address != frame.source();
+    if (fix) { send(BusSide::Back, frame.source(), {0x36}); input(a); }
 }
 void Hub::identity(BusSide side, const cec::Frame &frame) {
     const auto src = frame.source(), op = frame.data[1];
@@ -381,11 +496,7 @@ void Hub::identity(BusSide side, const cec::Frame &frame) {
     case 0x8f: {
         if (src == 15) break;
         bool on = selected_ >= 0;
-        if (on && !front) {
-            auto *d = known(current().source);
-            if (!d && !current().source.empty()) break; // Do not report stale/unknown equipment as off.
-            on = d && d->bus == side && d->address == src;
-        }
+        if (on && !front) { auto *d = find(current().source); on = d && d->bus == side && d->address == src; }
         send(side, src, {0x90, static_cast<uint8_t>(on ? 0 : 1)});
         break;
     }
@@ -401,10 +512,8 @@ void Hub::receive(BusSide side, const cec::Frame &frame) {
     if (op == 0x84 && frame.size >= 5 && frame.destination() == 15 && frame.source() < 15) {
         discovered(side, frame.source());
         auto *d = discovery_device(side, frame.source());
-        const uint16_t reported = static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]);
-        for (const auto& old : devices_) if (old.resolved && old.bus == side && old.address == frame.source() &&
-            old.physical_address != 0xffff && old.physical_address != reported) invalidate_endpoint(side, frame.source());
-        d->physical_address = reported;
+        const auto physical = static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]);
+        d->physical_address = physical;
         // Only actual reports from the initial back scan count; a poll ACK or
         // a synthesized TV record is not physical-address evidence. Collect
         // before name/address deduplication can remove a responding device.
@@ -412,34 +521,28 @@ void Hub::receive(BusSide side, const cec::Frame &frame) {
             usable_front_physical_address(d->physical_address))
             discovered_physical_ = std::min(discovered_physical_, d->physical_address);
         d->type = frame.data[4];
-        resolve_device(side, frame.source());
+        resolve_device(side, frame.source(), true);
     } else if (op == 0x47 && frame.destination() != 15) {
         if (auto *d = discovery_device(side, frame.source())) {
-            // Preserve the exact valid OSD payload; malformed/missing names
-            // never acquire a fabricated TV/LA-based persistent selector.
-            std::string reported;
-            bool valid = frame.size >= 3;
-            for (uint8_t i = 2; i < frame.size; ++i) {
-                if (frame.data[i] < 32 || frame.data[i] == 127) valid = false;
-                reported += static_cast<char>(frame.data[i]);
-            }
-            if (!valid) reported.clear();
-            for (const auto& old : devices_) if (old.resolved && old.bus == side && old.address == frame.source() &&
-                !old.name.empty() && old.name != reported) invalidate_endpoint(side, frame.source());
-            d->name = std::move(reported);
-            resolve_device(side, frame.source());
+            const auto old_name = d->name;
+            d->name.clear();
+            for (uint8_t i = 2; i < frame.size; ++i) if (frame.data[i]) d->name += static_cast<char>(frame.data[i]);
+            const auto reported = d->name;
+            if (!old_name.empty() && old_name != reported) invalidate_endpoint(side,frame.source());
+            resolve_device(side, frame.source(), old_name != reported);
         }
     } else if (op == 0x87 && frame.size >= 5 && frame.destination() == 15) {
         if (auto *d = discovery_device(side, frame.source())) d->vendor_id = (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
     } else if (op == 0x7a && frame.size >= 3 && frame.destination() != 15) {
-        if (auto *d = find(current().audio); d && d->bus == side && d->address == frame.source()) {
+        auto* d = owner_audio_side_ ? find_on_side(*owner_audio_side_,current().audio) : find(current().audio);
+        if (d && d->bus == side && d->address == frame.source()) {
             muted_ = (frame.data[2] & 0x80) != 0;
             const auto volume = frame.data[2] & 0x7f;
             volume_ = volume <= 100 ? volume : 127;
             audio_status_known_ = true;
         }
     }
-    // Source traffic is observation only. In particular, activation, routing,
-    // standby and unknown vendor traffic never create a route or power grant.
+    if (side == BusSide::Back && ((op == 0x04 && frame.destination() != 15) ||
+        (op == 0x82 && frame.size >= 4 && frame.destination() == 15))) source_thief(frame);
 }
 }

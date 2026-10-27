@@ -1,47 +1,86 @@
 #pragma once
-#include "amity/system/coordinator.hpp"
 #include "system_configuration.hpp"
+#include "amity/system/execution.hpp"
+#include "amity/system/owned_intent.hpp"
 #include "esp_err.h"
+#include <functional>
+#include <tuple>
+
 namespace amity {
-extern uint64_t synchronization_test_now;
+// A spy at the live-owner boundary. All synchronization, parsing and storage
+// decisions under test come from the production synchronization/journal code.
 class SystemControl {
 public:
     config_store::ConfigurationV2 configuration;
     system::OctopusId identity;
-    system::Coordinator owner{[](uint8_t* data,size_t size){static unsigned next=100;std::fill(data,data+size,0);data[size-1]=++next;return true;}};
-    std::vector<std::pair<system::SessionId,uint64_t>> route_fences;bool reject_fence=false;std::optional<system::AdmissionCode> cleanup_admission;
-    std::function<std::optional<bool>(const system::AuthorizedCecOperation&)> classify_remote_key;
-    unsigned admissions=0; bool published=true;uint64_t publication_at_ms=0;std::optional<system::InputIntent> last_input;
-    system::ConsortiumId consortium_id()const{return configuration.consortium_id;}
-    system::OctopusId octopus_id()const{return identity;}
-    uint8_t supported_tentacles()const{return 1;}
-    uint8_t configured_tentacles_mask()const{return 1;}
-    system::BootId boot_identity()const{return {};}
-    std::optional<config_store::ConfigurationV2> active_configuration()const{return configuration;}
-    std::vector<system::PortPolicySnapshot> local_policy_snapshot()const{return owner.policies();}
-    system::ExecutionSnapshot execution_snapshot()const{auto snapshot=owner.snapshot();if(published&&synchronization_test_now>=publication_at_ms){snapshot.applied_config_revision=configuration.config_revision;snapshot.applied_presentation_revision=configuration.presentation_revision;snapshot.applied_policy_hash=config_store::executable_policy_hash(configuration);}return snapshot;}
-    esp_err_t configure_member_slice(config_store::ConfigurationV2 c,system::OctopusId,uint64_t){configuration=std::move(c);return ESP_OK;}
-    system::AdmissionResult prepare_member_configuration(config_store::ConfigurationV2,system::OctopusId,uint64_t,std::string){return {system::AdmissionCode::accepted,{}};}
-    esp_err_t activate_member_configuration(const std::string&){return ESP_OK;}
-    system::AdmissionResult prepare_remote_plan(system::Plan p,std::vector<system::PortPolicySnapshot> policies){return owner.prepare_remote_plan(p,policies,synchronization_test_now);}
-    system::AdmissionResult fence_remote_route(system::SessionId s,uint64_t g){route_fences.push_back({s,g});return reject_fence?system::AdmissionResult{system::AdmissionCode::overloaded,"injected owner queue full"}:owner.fence_remote_route(s,g);}
-    bool remote_route_quiescent(system::SessionId s,uint64_t g)const{return owner.remote_route_quiescent(s,g);}
-    system::AdmissionResult activate_remote_plan(system::PlanId id,uint32_t ttl){return owner.activate_remote_plan(id,ttl,synchronization_test_now);}
-    std::vector<system::CecObservation> native_observations()const{return {};}
-    bool discover(){return true;}
-    system::AdmissionResult discover_authorized(uint32_t){return {system::AdmissionCode::accepted,{}};}
-    system::AdmissionResult renew_remote_authority(system::PlanId,system::SessionId,uint64_t,uint32_t){return {system::AdmissionCode::accepted,{}};}
-    system::AdmissionResult abort_remote_plan(system::PlanId id){owner.abort_remote_plan(id);return {system::AdmissionCode::accepted,{}};}
-    system::AdmissionResult admit_authorized(system::AuthorizedCecOperation op){++admissions;if(op.kind==system::OperationKind::release_key&&cleanup_admission)return {*cleanup_admission,"injected cleanup owner admission"};return owner.execute_authorized(op,synchronization_test_now);}
-    std::optional<bool> remote_key_active(const system::AuthorizedCecOperation& op,bool synchronously_admitted=false)const{return synchronously_admitted&&classify_remote_key?classify_remote_key(op):std::nullopt;}
-    system::AdmissionResult update_remote_owner(system::OctopusId,std::vector<system::PortPolicySnapshot>,bool){return {system::AdmissionCode::accepted,{}};}
-    system::AdmissionResult remote_plan_result(system::OctopusId,system::PlanId,system::RemotePlanPhase,bool,std::string){return {system::AdmissionCode::accepted,{}};}
-    system::AdmissionResult remote_operation_result(system::OctopusId,system::CommandId,system::StepResult,std::string){return {system::AdmissionCode::accepted,{}};}
-    void set_remote_execution_hooks(system::RemoteExecutionHooks hooks){owner.remote_execution_hooks(std::move(hooks));}
-    system::InputContext input_context()const{return {};}
-    system::AdmissionResult submit_input_intent(system::InputIntent input){last_input=input;return {system::AdmissionCode::accepted,{}};}
-    esp_err_t retire_membership(){return ESP_OK;}
-    std::optional<system::CommandOutcome> command_outcome(system::CommandId id)const{for(const auto& result:owner.snapshot().command_outcomes)if(result.command_id==id)return result;return {};}
-    esp_err_t configure_v2(config_store::ConfigurationV2 c,std::function<esp_err_t()> commit){auto result=commit();if(result==ESP_OK)configuration=std::move(c);return result;}
+    system::BootId boot;
+    bool local_input = true, local_scan_result = true, remote_scan_result = true, lookup_result = true, auto_apply = true, update_result = true, refresh_result = true, fence_result = true;
+    system::ExecutionSnapshot applied;
+    std::optional<bool> source_present = true;
+    esp_err_t configure_result = ESP_OK, bind_result = ESP_OK;
+    system::AdmissionCode admission = system::AdmissionCode::accepted;
+    unsigned configure_calls = 0, bind_calls = 0, local_scan_calls = 0;
+    system::OctopusId bound_controller;
+    uint64_t bound_revision = 0;
+    std::vector<system::OwnedIntent> submitted;
+    std::vector<system::OctopusId> refreshed_context;
+    std::vector<std::tuple<system::OctopusId,uint64_t,uint64_t,bool>> input_results;
+    std::vector<system::OwnedAuthorization> authorizations;
+    std::vector<system::OwnedAdapterSnapshot> snapshots, updates;
+    std::vector<system::CecObservation> observations;
+    std::vector<std::pair<system::OctopusId,uint8_t>> remote_scans;
+    std::vector<std::pair<system::OctopusId,system::LinkId>> fences;
+    std::function<bool(const system::OwnedIntent&)> sender;
+    std::function<void(const system::OwnedAdapterSnapshot&)> observer;
+    std::function<bool(const system::OwnedAuthorization&)> authorizer;
+    std::function<uint64_t(const system::OwnedAuthorization&)> deadline;
+    std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)> input_observer;
+
+    system::ConsortiumId consortium_id() const { return configuration.consortium_id; }
+    system::OctopusId octopus_id() const { return identity; }
+    system::BootId boot_identity() const { return boot; }
+    std::optional<config_store::ConfigurationV2> active_configuration() const { return configuration; }
+    bool accepts_local_input() const { return local_input; }
+    void set_owned_sender(std::function<bool(const system::OwnedIntent&)> fn) { sender=std::move(fn); }
+    void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> fn) { observer=std::move(fn); }
+    void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> fn) { authorizer=std::move(fn); }
+    void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> fn) { deadline=std::move(fn); }
+    void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)> fn) { input_observer=std::move(fn); }
+    system::ExecutionSnapshot execution_snapshot() const { return applied; }
+    system::AdmissionResult submit_owned(system::OwnedIntent intent,system::OwnedAuthorization auth) {
+        submitted.push_back(std::move(intent));authorizations.push_back(auth);
+        if(authorizer&&!authorizer(auth))return {system::AdmissionCode::unauthorized,"injected runtime authorization rejection"};
+        system::AdmissionResult result{admission,{}};
+        if(admission==system::AdmissionCode::accepted||admission==system::AdmissionCode::unresolved||admission==system::AdmissionCode::overloaded)result.source_present=source_present;
+        return result;
+    }
+    esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision) {
+        ++bind_calls;
+        if(configuration.controller_octopus_id&&*configuration.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
+        if(bind_result!=ESP_OK)return bind_result;
+        bound_controller=controller;bound_revision=revision;return ESP_OK;
+    }
+    bool owned_input_result(system::OctopusId owner,uint64_t generation,uint64_t sequence,bool present) {
+        input_results.push_back({owner,generation,sequence,present});return lookup_result;
+    }
+    bool update_owned_snapshot(system::OwnedAdapterSnapshot report) { updates.push_back(std::move(report));return update_result; }
+    bool refresh_owned_context(system::OctopusId owner) { refreshed_context.push_back(owner);return refresh_result; }
+    std::vector<system::OwnedAdapterSnapshot> owned_snapshots() const { return snapshots; }
+    std::vector<system::CecObservation> native_observations() const { return observations; }
+    bool fence_owned(system::OctopusId owner,system::LinkId link) { fences.push_back({owner,link});return fence_result; }
+    bool discover() { ++local_scan_calls;return local_scan_result; }
+    bool discover_owned(system::OctopusId owner,uint8_t adapter) {
+        remote_scans.push_back({owner,adapter});return remote_scan_result;
+    }
+    esp_err_t configure_v2(config_store::ConfigurationV2 next,std::function<esp_err_t()> commit={}) {
+        ++configure_calls;
+        if(configure_result!=ESP_OK)return configure_result;
+        const auto result=commit?commit():ESP_OK;
+        if(result==ESP_OK){
+            configuration=std::move(next);
+            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;}
+        }
+        return result;
+    }
 };
 }

@@ -61,7 +61,7 @@ void runtime_configuration_changed(uint64_t,const std::string&){events.push_back
 }
 namespace amity::radio{int reserve_consortium(bool,uint64_t&g){g=1;return 0;}void release(uint64_t){}}
 namespace device_settings{const char*hostname(){return "amity-test";}const char*initial_admin_auth(){return "private-fixture";}}
-struct Config{uint64_t config_revision=2;std::vector<int>activities,components,binding_policies;};
+struct Config{uint64_t config_revision=2;std::vector<int>activities,components;};
 struct FakeHub {struct Id{std::string str()const{return std::string(32,'1');}};
 std::shared_ptr<Config>config;struct Snapshot{std::vector<int>activities;};Id octopus_id(){return {};}
 std::shared_ptr<Config>active_configuration(){return config;}Snapshot snapshot(){return {};}

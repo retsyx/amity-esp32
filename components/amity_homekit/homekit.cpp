@@ -87,16 +87,16 @@ void refresh_remote_battery(){
 void refresh_values(){
     const auto s=hub->snapshot();
     update(active,s.current_activity>=0);update(speaker_active,s.current_activity>=0);
-    update(active_input,s.current_activity>=0?s.current_activity+1:0);
+    const auto selected=hub->external_activity_index(s);update(active_input,selected?*selected+1:0);
     audio_known=s.audio_status_known;
     if(audio_known)update_bool(mute_char,s.muted);
-    const bool schema2=hub->schema2_active();
+    const bool configured=hub->active_configuration().has_value();
     for(unsigned i=0;i<inputs.size();++i){
-        const auto activity=schema2?hub->external_activity(i):std::optional<config_store::ConfiguredActivity>{};
-        const auto slot=schema2?hub->external_slot(i):std::optional<config_store::ExternalSlot>{};
-        auto &in=inputs[i];const bool exists=schema2?activity.has_value():i<s.activities.size();
-        const std::string name=exists?(schema2?activity->label:s.activities[i].name):"Unused "+std::to_string(i+1);
-        const std::string identity=schema2?(activity?hub->octopus_id().str()+":"+activity->activity_id.str():"tombstone:"+std::to_string(i)):name;
+        const auto activity=configured?hub->external_activity(i):std::optional<config_store::ConfiguredActivity>{};
+        const auto slot=configured?hub->external_slot(i):std::optional<config_store::ExternalSlot>{};
+        auto &in=inputs[i];const bool exists=configured?activity.has_value():i<s.activities.size();
+        const std::string name=exists?(configured?activity->label:s.activities[i].name):"Unused "+std::to_string(i+1);
+        const std::string identity=configured?(activity?hub->octopus_id().str()+":"+activity->activity_id.str():"tombstone:"+std::to_string(i)):name;
         if(in.activity!=identity){
             in.activity=identity;in.alias=slot?slot->alias:std::string{};in.hidden=slot&&slot->hidden;
             std::string record;
@@ -104,7 +104,7 @@ void refresh_values(){
                 const auto split=record.find('\0');
                 if(split!=std::string::npos&&record.size()>split+1&&(record[split+1]=='0'||record[split+1]=='1')&&record.size()-split-2<=63&&record.find('\0',split+1)==std::string::npos){
                     const auto guard=record.substr(0,split);
-                    const bool legacy=schema2&&activity&&guard==activity->generated_label&&guard.size()<=63;
+                    const bool legacy=configured&&activity&&guard==activity->generated_label&&guard.size()<=63;
                     if(guard==identity||legacy){in.hidden=record[split+1]=='1';in.alias=record.substr(split+2);if(legacy)save_input(i);}
                 }
             }
@@ -134,8 +134,8 @@ int write(hap_write_data_t data[],int count,void *,void *){
     for(int i=0;i<count;++i){
         auto &d=data[i];esp_err_t result=ESP_ERR_INVALID_ARG;
         if(d.hc==active&&(d.val.i==0||d.val.i==1))result=callbacks.power(d.val.i!=0,callbacks.context);
-        else if(d.hc==active_input&&d.val.i>=1&&d.val.i<=static_cast<int>(hub->snapshot().activities.size())&&
-                (!hub->schema2_active()||hub->external_activity(d.val.i-1)))
+        else if(d.hc==active_input&&d.val.i>=1&&d.val.i<=static_cast<int>(inputs.size())&&
+                (hub->active_configuration().has_value()?hub->external_activity(d.val.i-1).has_value():d.val.i<=static_cast<int>(hub->snapshot().activities.size())))
             result=callbacks.activity(d.val.i-1,callbacks.context);
         else if(d.hc==mute_char)result=callbacks.mute(d.val.b,callbacks.context);
         else if(d.hc==volume_selector&&(d.val.i==0||d.val.i==1))result=callbacks.volume_step(d.val.i==0?1:-1,callbacks.context);
@@ -147,7 +147,7 @@ int write(hap_write_data_t data[],int count,void *,void *){
             result=config_store::write("hap_name",d.val.s);
         else for(unsigned n=0;n<inputs.size();++n){
             auto &in=inputs[n];
-            if(hub->schema2_active()&&!hub->external_activity(n))continue;
+            if(hub->active_configuration().has_value()&&!hub->external_activity(n))continue;
             if(d.hc==in.name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63){
                 const auto old=in.alias;in.alias=d.val.s;result=save_input(n);if(result!=ESP_OK)in.alias=old;break;
             }

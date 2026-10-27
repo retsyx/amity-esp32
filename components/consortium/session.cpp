@@ -3,6 +3,7 @@
 #include "amity/consortium/update.hpp"
 #include "amity/consortium/relay.hpp"
 #include "amity/consortium/settings.hpp"
+#include "amity/consortium/owned_intent.hpp"
 namespace amity::consortium {
 Error Session::authenticate(const LinkScope &scope,model::OctopusId peer,PeerRole role,bool active) {
     disconnect();
@@ -24,8 +25,8 @@ Error Session::hello(const HelloFrame &h,uint32_t supported) {
     capabilities_=(h.required_capabilities|h.optional_capabilities)&supported;
     state_=active_?ConnectionState::synchronizing:ConnectionState::restricted;return Error::none;
 }
-Error Session::synchronized(uint64_t config,bool membership,bool bindings) {
-    if(state_!=ConnectionState::synchronizing||!active_||!membership||!bindings)return Error::not_ready;
+Error Session::synchronized(uint64_t config,bool membership,bool owner_metadata) {
+    if(state_!=ConnectionState::synchronizing||!active_||!membership||!owner_metadata)return Error::not_ready;
     if(config!=scope_.config_revision)return Error::stale_config;
     state_=ConnectionState::ready;execution_.bind(scope_);return Error::none;
 }
@@ -44,80 +45,44 @@ Error Session::common(const Envelope &e,uint64_t received,uint64_t now)const {
     return permitted(e.kind)?Error::none:Error::unauthorized_role;
 }
 bool Session::permitted(Kind kind)const {
-    // Enrolled devices are actuators only. Retained legacy input grants and a
-    // correctly authenticated controller cannot delegate home/remote input.
     if(retired_kind(kind))return false;
-    if(state_==ConnectionState::synchronizing)return active_&&role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk||
-        (role_==PeerRole::coordinator&&(kind==Kind::config_prepare||kind==Kind::config_activate))||
-        (role_==PeerRole::actuator&&kind==Kind::config_result));
-    if(state_==ConnectionState::restricted&&management_){if(kind==Kind::heartbeat||kind==Kind::device_status||kind==Kind::execution_lease)return true;if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind==Kind::settings_read:kind==Kind::settings_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return kind==Kind::membership_event||kind==Kind::membership_result;}
-    if(state_==ConnectionState::restricted)return role_==PeerRole::provisional_candidate?(kind==Kind::enrollment_control||kind==Kind::heartbeat):(kind==Kind::membership_event||kind==Kind::membership_result);
+    if(state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
+    if(state_==ConnectionState::restricted){
+        if(management_){if(kind==Kind::heartbeat||kind==Kind::device_status||kind==Kind::execution_lease)return true;if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind==Kind::settings_read:kind==Kind::settings_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return kind==Kind::membership_event||kind==Kind::membership_result;}
+        return role_==PeerRole::provisional_candidate?(kind==Kind::enrollment_control||kind==Kind::heartbeat):(kind==Kind::membership_event||kind==Kind::membership_result);
+    }
     if(!active_)return false;
     if(kind==Kind::heartbeat||kind==Kind::device_status)return true;
     if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::settings_result:role_==PeerRole::actuator&&kind==Kind::settings_result;
-    switch(role_) {
-    case PeerRole::coordinator:return kind==Kind::relay_reserve||kind==Kind::relay_record||kind==Kind::relay_close||kind==Kind::operation||kind==Kind::hold_release||kind==Kind::binding_update||kind==Kind::membership_event||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk||kind==Kind::config_prepare||kind==Kind::config_activate||kind==Kind::plan_prepare||kind==Kind::plan_barrier||kind==Kind::plan_abort||kind==Kind::scan_request||(is_update_kind(kind)&&kind!=Kind::update_result);
-    case PeerRole::actuator:return kind==Kind::relay_result||kind==Kind::execution_lease||kind==Kind::binding_result||kind==Kind::membership_result||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk||kind==Kind::config_result||kind==Kind::plan_result||kind==Kind::operation_result||kind==Kind::scan_result||kind==Kind::update_result;
-    case PeerRole::provisional_candidate:return false;
-    }
+    if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:role_==PeerRole::actuator&&kind==Kind::update_result;
+    if(is_relay_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::relay_result:role_==PeerRole::actuator&&kind==Kind::relay_result;
+    if(role_==PeerRole::coordinator)return kind==Kind::scoped_intent||kind==Kind::membership_event;
+    if(role_==PeerRole::actuator)return kind==Kind::scoped_result||kind==Kind::execution_lease||kind==Kind::membership_result;
     return false;
 }
-Error Session::admit_checked(const Envelope &e,uint64_t received,uint64_t now,bool remember) {
-    auto err=common(e,received,now);if(err!=Error::none)return err;
-    for(const auto &v:seen_)if(v.valid&&v.id==e.message_id)return Error::duplicate;
+Error Session::admit_checked(const Envelope& e,uint64_t received,uint64_t now,bool remember){
+    auto error=common(e,received,now);if(error!=Error::none)return error;
+    for(const auto& entry:seen_)if(entry.valid&&entry.id==e.message_id)return Error::duplicate;
     if(remember){seen_[next_seen_]={e.message_id,now,true};next_seen_=(next_seen_+1)%seen_.size();}
     return Error::none;
 }
-Error Session::admit(const Envelope &e,uint64_t received,uint64_t now,bool remember) {
-    auto err=admit_checked(e,received,now,false);
-    if(err!=Error::none)return err;
-    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&e.ttl_ms>2000)return Error::invalid_message;
-    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&(!e.payload.get("phase")||e.payload.get("phase")->string!="factory_reset"))return Error::unauthorized_role;
-    if(e.kind==Kind::snapshot_request){const auto* kind=e.payload.get("document_kind");if(!kind||kind->type!=Json::Type::string||(kind->string!="configuration"&&kind->string!="owner_state"))return Error::unauthorized_role;}
-    if(e.kind==Kind::operation){Operation op;err=parse_operation(e.payload,op);return err==Error::none?admit_operation(e,op,received,now,remember):err;}
+Error Session::admit(const Envelope& e,uint64_t received,uint64_t now,bool remember){
+    auto error=admit_checked(e,received,now,false);if(error!=Error::none)return error;
+    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&(!(capabilities_&lifecycle_journal)||!(capabilities_&factory_reset_removal)||e.ttl_ms>2000))return Error::unsupported_kind;
+    if(e.kind==Kind::scoped_intent){
+        model::OwnedIntent intent;model::ExecutionLeaseId lease;
+        if(!(capabilities_&qualified_lookup)||!(capabilities_&owner_repeated_keys)||parse_owned_intent(e.payload,intent,lease)!=Error::none)return Error::unsupported_kind;
+        if(intent.target.port.consortium_id!=scope_.consortium_id||intent.target.port.octopus_id!=scope_.local_id)return Error::target_not_local;
+        // Up is exact-token cleanup, independent of positive-work authority.
+        if(intent.kind!=model::OwnedIntentKind::key_up){const auto cls=intent.kind==model::OwnedIntentKind::key_down?LeaseClass::realtime_input:LeaseClass::control;if(!execution_.valid(lease,cls,scope_,now))return Error::lease_expired;}
+    }
+    if(e.kind==Kind::scoped_result&&!(capabilities_&qualified_lookup))return Error::unsupported_kind;
     if(is_settings_kind(e.kind)&&!(capabilities_&per_adapter_settings))return Error::unsupported_kind;
-    if(e.kind==Kind::settings_write){model::ExecutionLeaseId lease;if(!id(e.payload.get("execution_lease_id"),lease))return Error::invalid_message;if(!execution_.valid(lease,LeaseClass::control,scope_,now))return Error::lease_expired;}
+    if(e.kind==Kind::settings_write){model::ExecutionLeaseId lease;if(!id(e.payload.get("execution_lease_id"),lease)||!execution_.valid(lease,LeaseClass::control,scope_,now))return Error::lease_expired;}
     if(e.kind==Kind::device_status&&!(capabilities_&hostname_metadata))return Error::unsupported_kind;
-    if((e.kind==Kind::binding_update||e.kind==Kind::binding_result)&&!(capabilities_&binding_synchronization))return Error::unsupported_kind;
-    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&(!(capabilities_&lifecycle_journal)||!(capabilities_&factory_reset_removal)))return Error::unsupported_kind;
     if((e.kind==Kind::snapshot_request||e.kind==Kind::snapshot_chunk)&&!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
-    if((e.kind==Kind::config_prepare||e.kind==Kind::config_activate||e.kind==Kind::config_result)&&!(capabilities_&configuration_activation))return Error::unsupported_kind;
-    if((e.kind==Kind::plan_prepare||e.kind==Kind::plan_barrier||e.kind==Kind::plan_abort||e.kind==Kind::plan_result)&&!(capabilities_&prepared_plans))return Error::unsupported_kind;
-    if(e.kind==Kind::operation_result&&!(capabilities_&operation_outcomes))return Error::unsupported_kind;
-    if((e.kind==Kind::scan_request||e.kind==Kind::scan_result)&&!(capabilities_&binding_synchronization))return Error::unsupported_kind;
-    if(e.kind==Kind::scan_request){model::ExecutionLeaseId lease;if(!id(e.payload.get("execution_lease_id"),lease))return Error::invalid_message;if(!execution_.valid(lease,LeaseClass::control,scope_,now))return Error::lease_expired;}
     if(is_relay_kind(e.kind)&&!(capabilities_&bootstrap_relay))return Error::unsupported_kind;
     if(is_update_kind(e.kind)&&!(capabilities_&peer_firmware_update))return Error::unsupported_kind;
-    if(e.kind==Kind::hold_release&&!(capabilities_&token_holds))return Error::unsupported_kind;
     return remember?admit_checked(e,received,now,true):Error::none;
 }
-Error Session::admit_operation(const Envelope &e,const Operation &op,uint64_t received,uint64_t now,bool remember) {
-    if(e.kind!=Kind::operation)return Error::invalid_message;
-    auto err=admit_checked(e,received,now,false);if(err!=Error::none)return err;
-    if(!op.command_sequence)return Error::invalid_message;
-    if(!(capabilities_&sequenced_operations)||!(capabilities_&owner_repeated_keys))return Error::unsupported_kind;
-    if(!(capabilities_&semantic_operations)||(op.operation==SemanticOperation::key_press&&!(capabilities_&token_holds)))return Error::unsupported_kind;
-    if(op.target.port.consortium_id!=scope_.consortium_id)return Error::wrong_consortium;
-    if(op.target.port.octopus_id!=scope_.local_id)return Error::target_not_local;
-    const auto kind=op.operation==SemanticOperation::key_press?LeaseClass::realtime_input:LeaseClass::control;
-    if(!execution_.valid(op.execution_lease_id,kind,scope_,now))return Error::lease_expired;
-    return remember?admit_checked(e,received,now,true):Error::none;
-}
-void CommandLedger::activate(model::PlanId plan,model::SessionId session){invalidate();plan_=plan;session_=session;}
-void CommandLedger::invalidate(){plan_={};session_={};highwater_=0;for(auto &v:entries_)v.valid=false;}
-Error CommandLedger::receive(const Operation &op,uint64_t now){
-    if(!plan_||op.plan_id!=plan_||op.session_id!=session_)return Error::stale_route;
-    if(!op.command_id||!op.command_sequence)return Error::invalid_message;
-    for(const auto &v:entries_)if(v.valid&&v.id==op.command_id)return v.sequence==op.command_sequence?Error::duplicate:Error::transaction_conflict;
-    if(op.command_sequence<=highwater_)return Error::duplicate;
-    Entry *slot=nullptr;
-    for(auto &v:entries_)if(!v.valid){slot=&v;break;}
-    if(!slot)for(auto &v:entries_)if(v.outcome!=Outcome::received&&now>=v.at&&(!slot||v.sequence<slot->sequence))slot=&v;
-    if(!slot)return Error::queue_full;
-    *slot={op.command_id,Outcome::received,now,op.command_sequence,true};
-    highwater_=op.command_sequence;
-    return Error::none;
-}
-bool CommandLedger::result(model::CommandId id,Outcome outcome,uint64_t now){for(auto &v:entries_)if(v.valid&&v.id==id){if(now<v.at)return false;v.outcome=outcome;v.at=now;return true;}return false;}
-std::optional<Outcome> CommandLedger::query(model::CommandId id,uint64_t now)const {for(const auto &v:entries_)if(v.valid&&v.id==id&&now>=v.at&&now-v.at<query_window_ms)return v.outcome;return {};}
 } // namespace amity::consortium

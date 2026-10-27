@@ -385,6 +385,10 @@ int main() {
         run_one_command();
         cec::Frame replacement{{0x4f, 0x84, 0x20, 0, 4}, 5};
         fixture_incoming.push_back({2, replacement}); run_idle(1);
+        // Original main reroutes a changed PA without cancelling admitted
+        // work for the same appliance. Replacing its OSD identity fences it.
+        assert(cec::current_fence(release_fence));
+        fixture_incoming.push_back({2, cec::Frame{{static_cast<uint8_t>(0x40|hub.snapshot().back_address),0x47,'O','t','h','e','r'},7}});run_idle(1);
         assert(!cec::current_fence(release_fence));
         fixture_guarded.clear(); fixture_present = false;
     }

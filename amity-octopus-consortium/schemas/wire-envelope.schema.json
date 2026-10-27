@@ -1,8 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://amity.invalid/design/v0.1/wire-envelope.schema.json",
-  "title": "Proposed consortium protocol v1 envelope",
-  "$comment": "Common fields, semantic operations, negotiated device metadata/settings and explicit member factory-reset removal payloads are closed here. Other kinds require their owner-document payload schemas; this is not a complete protocol schema.",
+  "title": "Authenticated scoped owner intents and supported management envelopes",
   "type": "object",
   "properties": {
     "protocol_version": {
@@ -35,35 +34,28 @@
     "kind": {
       "enum": [
         "heartbeat",
-        "snapshot_request",
-        "snapshot_chunk",
-        "observation",
-        "binding_update",
-        "binding_result",
-        "plan_prepare",
-        "plan_barrier",
-        "plan_abort",
-        "plan_result",
         "execution_lease",
-        "operation",
-        "operation_result",
-        "operation_query",
-        "hold_release",
-        "hold_result",
-        "scan_request",
-        "scan_event",
-        "config_prepare",
-        "config_activate",
-        "config_result",
+        "relay_reserve",
+        "relay_record",
+        "relay_close",
+        "relay_result",
+        "enrollment_control",
         "membership_event",
         "membership_result",
-        "enrollment_control",
-        "enrollment_relay",
-        "error",
+        "snapshot_request",
+        "snapshot_chunk",
+        "update_begin",
+        "update_chunk",
+        "update_install",
+        "update_status",
+        "update_abort",
+        "update_result",
         "device_status",
         "settings_read",
         "settings_write",
-        "settings_result"
+        "settings_result",
+        "scoped_intent",
+        "scoped_result"
       ]
     },
     "ttl_ms": {
@@ -90,480 +82,19 @@
     "payload"
   ],
   "additionalProperties": false,
-  "$defs": {
-    "Operation": {
-      "type": "object",
-      "properties": {
-        "command_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "plan_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "session_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "component_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "binding_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "domain_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "execution_lease_id": {
-          "$ref": "core-types.schema.json#/$defs/Id128"
-        },
-        "route_generation": {
-          "$ref": "core-types.schema.json#/$defs/UInt64String"
-        },
-        "binding_revision": {
-          "$ref": "core-types.schema.json#/$defs/UInt64String"
-        },
-        "domain_revision": {
-          "$ref": "core-types.schema.json#/$defs/UInt64String"
-        },
-        "target": {
-          "$ref": "core-types.schema.json#/$defs/FullyQualifiedCecAddress"
-        },
-        "operation": {
-          "enum": [
-            "ensure_power",
-            "select_route",
-            "announce_active_source",
-            "key_press",
-            "query_state"
-          ]
-        },
-        "arguments": {
-          "type": "object"
-        },
-        "command_sequence": {
-          "$ref": "core-types.schema.json#/$defs/UInt64String",
-          "not": {
-            "const": "0"
-          },
-          "description": "Required canonical nonzero sequence within the active prepared plan; no unsequenced legacy admission."
-        }
-      },
-      "required": [
-        "command_id",
-        "command_sequence",
-        "plan_id",
-        "session_id",
-        "component_id",
-        "binding_id",
-        "domain_id",
-        "execution_lease_id",
-        "route_generation",
-        "binding_revision",
-        "domain_revision",
-        "target",
-        "operation",
-        "arguments"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "ensure_power"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "on": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "on"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "select_route"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "route_id": {
-                    "$ref": "core-types.schema.json#/$defs/Id128"
-                  }
-                },
-                "required": [
-                  "route_id"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "announce_active_source"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "key_press"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "key_code": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 255
-                  },
-                  "hold_token": {
-                    "$ref": "core-types.schema.json#/$defs/Id128"
-                  },
-                  "repeat": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "key_code",
-                  "hold_token",
-                  "repeat"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "operation": {
-                "const": "query_state"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "arguments": {
-                "type": "object",
-                "properties": {
-                  "field": {
-                    "enum": [
-                      "power",
-                      "audio"
-                    ]
-                  }
-                },
-                "required": [
-                  "field"
-                ],
-                "additionalProperties": false
-              }
-            }
-          }
-        }
-      ]
-    },
-    "DeviceStatus": {
-      "type": "object",
-      "properties": {
-        "hostname": {
-          "$ref": "core-types.schema.json#/$defs/Hostname"
-        }
-      },
-      "required": [
-        "hostname"
-      ],
-      "additionalProperties": false
-    },
-    "SettingsRead": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        }
-      },
-      "required": [
-        "request_id"
-      ],
-      "additionalProperties": false
-    },
-    "SettingsWrite": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "execution_lease_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "settings": {
-          "$ref": "https://amity.invalid/design/v0.1/adapter-settings.schema.json#/$defs/WriteCore"
-        }
-      },
-      "required": [
-        "request_id",
-        "execution_lease_id",
-        "settings"
-      ],
-      "additionalProperties": false
-    },
-    "SettingsResult": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "operation": {
-          "enum": [
-            "read",
-            "write"
-          ]
-        },
-        "stage": {
-          "enum": [
-            "admitted",
-            "applied",
-            "failed"
-          ]
-        },
-        "error": {
-          "enum": [
-            "",
-            "INVALID_MESSAGE",
-            "STALE_BOOT",
-            "CONFLICT",
-            "NOT_READY",
-            "LEASE_EXPIRED",
-            "STORAGE_FAILURE",
-            "QUEUE_FULL"
-          ]
-        },
-        "snapshot": {
-          "oneOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "https://amity.invalid/design/v0.1/adapter-settings.schema.json#/$defs/Snapshot"
-            }
-          ]
-        },
-        "rebooting": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "request_id",
-        "operation",
-        "stage",
-        "error",
-        "snapshot",
-        "rebooting"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "stage": {
-                "const": "applied"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "error": {
-                "const": ""
-              },
-              "snapshot": {
-                "$ref": "https://amity.invalid/design/v0.1/adapter-settings.schema.json#/$defs/Snapshot"
-              }
-            },
-            "allOf": [
-              {
-                "if": {
-                  "properties": {
-                    "operation": {
-                      "const": "write"
-                    }
-                  }
-                },
-                "then": {
-                  "properties": {
-                    "rebooting": {
-                      "const": true
-                    }
-                  }
-                },
-                "else": {
-                  "properties": {
-                    "rebooting": {
-                      "const": false
-                    }
-                  }
-                }
-              }
-            ]
-          },
-          "else": {
-            "properties": {
-              "snapshot": {
-                "type": "null"
-              },
-              "rebooting": {
-                "const": false
-              }
-            },
-            "allOf": [
-              {
-                "if": {
-                  "properties": {
-                    "stage": {
-                      "const": "admitted"
-                    }
-                  }
-                },
-                "then": {
-                  "properties": {
-                    "operation": {
-                      "const": "write"
-                    },
-                    "error": {
-                      "const": ""
-                    }
-                  }
-                },
-                "else": {
-                  "properties": {
-                    "error": {
-                      "not": {
-                        "const": ""
-                      }
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "FactoryResetRequest": {
-      "type": "object",
-      "properties": {
-        "mutation_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "proposal_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "phase": {
-          "const": "factory_reset"
-        },
-        "membership_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "expected_boot_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        }
-      },
-      "required": [
-        "mutation_id",
-        "proposal_digest",
-        "phase",
-        "membership_revision",
-        "expected_boot_id"
-      ],
-      "additionalProperties": false
-    },
-    "FactoryResetResult": {
-      "type": "object",
-      "properties": {
-        "mutation_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "proposal_digest": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "phase": {
-          "const": "factory_reset"
-        },
-        "membership_revision": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "expected_boot_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "result": {
-          "enum": [
-            "reset_scheduled",
-            "rejected",
-            "unknown"
-          ]
-        }
-      },
-      "required": [
-        "mutation_id",
-        "proposal_digest",
-        "phase",
-        "membership_revision",
-        "expected_boot_id",
-        "result"
-      ],
-      "additionalProperties": false
-    }
-  },
   "allOf": [
     {
       "if": {
         "properties": {
           "kind": {
-            "const": "operation"
+            "const": "heartbeat"
           }
         }
       },
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/Operation"
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/Heartbeat"
           }
         }
       }
@@ -572,14 +103,14 @@
       "if": {
         "properties": {
           "kind": {
-            "const": "device_status"
+            "const": "execution_lease"
           }
         }
       },
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/DeviceStatus"
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/Lease"
           }
         }
       }
@@ -588,14 +119,14 @@
       "if": {
         "properties": {
           "kind": {
-            "const": "settings_read"
+            "const": "relay_reserve"
           }
         }
       },
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/SettingsRead"
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayReserve"
           }
         }
       }
@@ -604,14 +135,14 @@
       "if": {
         "properties": {
           "kind": {
-            "const": "settings_write"
+            "const": "relay_record"
           }
         }
       },
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/SettingsWrite"
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayRecord"
           }
         }
       }
@@ -620,14 +151,46 @@
       "if": {
         "properties": {
           "kind": {
-            "const": "settings_result"
+            "const": "relay_close"
           }
         }
       },
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/SettingsResult"
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayClose"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "relay_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "enrollment_control"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/EnrollmentControl"
           }
         }
       }
@@ -643,12 +206,7 @@
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/FactoryResetRequest"
-          },
-          "ttl_ms": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 2000
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/MembershipEvent"
           }
         }
       }
@@ -664,8 +222,248 @@
       "then": {
         "properties": {
           "payload": {
-            "$ref": "#/$defs/FactoryResetResult"
-          },
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/MembershipResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "snapshot_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/SnapshotRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "snapshot_chunk"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/SnapshotChunk"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update_begin"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/UpdateBegin"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update_chunk"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/UpdateChunk"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update_install"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/UpdateInstall"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update_status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/UpdateStatus"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update_abort"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/UpdateAbort"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "update_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/UpdateResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "device_status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/DeviceStatus"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "settings_read"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/SettingsRead"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "settings_write"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/SettingsWrite"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "settings_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/SettingsResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "scoped_intent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/ScopedIntent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "scoped_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/ScopedResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "membership_event",
+              "membership_result"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
           "ttl_ms": {
             "type": "integer",
             "minimum": 1,

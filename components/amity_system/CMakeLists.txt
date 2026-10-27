@@ -1,1 +1,1 @@
-idf_component_register(SRCS "model.cpp" "discovery.cpp" "policy.cpp" "planner.cpp" "coordinator.cpp" INCLUDE_DIRS "include")
+idf_component_register(SRCS "model.cpp" INCLUDE_DIRS "include")
