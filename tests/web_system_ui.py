@@ -44,7 +44,7 @@ def main():
                                  dict(octopus_id=member, hostname='amity-bedroom')],
                   membership=dict(membership_revision='1', peers=[dict(octopus_id=member, hostname='amity-bedroom', enrolled=True, ready=True, boot_id='b'*32)]))
     remote = dict(bonded=False, ready=True, devices=[], boot_id='b'*32, remote_generation='1')
-    fixture = dict(posts=[], operations={}, next_id=100, scans=0, fail_save=False, fail_add=True, config=configuration, remove_mode='scheduled', remove_release=False)
+    fixture = dict(posts=[], operations={}, next_id=100, scans=0, fail_save=False, fail_add=True, config=configuration, remove_mode='scheduled', remove_release=False, admission=dict(scan_id=None, phase='idle', error='', requires_setup_code=False, candidates=[], candidate_id=None))
     errors, checks = [], []
     def passed(value):
         checks.append(value)
@@ -65,7 +65,8 @@ def main():
         def do_GET(self):
             values = {'/api/setup': dict(required=False), '/api/v2/activity-editor': editor,
                       '/api/v2/activity-editor/status': status, '/api/v2/config': fixture['config'], '/api/v2/system': system,
-                      '/api/remotes': remote, '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False)}
+                      '/api/remotes': remote, '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False),
+                      '/api/v2/membership/admission': fixture['admission']}
             if self.path in values:
                 return self.reply(deepcopy(values[self.path]))
             if self.path.startswith('/api/v2/operations/'):
@@ -123,8 +124,18 @@ def main():
                 assert body['expected_presentation_revision'] == editor['expected_presentation_revision']
                 assert body['configuration']['controller_octopus_id'] == 'f'*32
                 kind = 'config'
+            elif self.path == '/api/v2/membership/scan':
+                assert set(body) == {'request_id'}
+                fixture['admission'].update(scan_id=body['request_id'], phase='found', error='', candidates=[dict(token='nearby-token', label='Amity A1B2')], candidate_id=None)
+                return self.reply(dict(operation_id=body['request_id'], stage='complete'))
+            elif self.path == '/api/v2/membership/cancel':
+                assert set(body) == {'request_id', 'scan_id'} and body['scan_id'] == fixture['admission']['scan_id']
+                fixture['admission']['phase'] = 'cancelled'
+                return self.reply(dict(operation_id=body['request_id'], stage='complete'))
             elif self.path == '/api/v2/membership/add':
-                assert set(body) == {'request_id', 'setup_code', 'name'}
+                assert set(body) == {'request_id', 'scan_id', 'candidate_token', 'setup_code', 'name'}
+                assert body['scan_id'] == fixture['admission']['scan_id'] and body['candidate_token'] == 'nearby-token'
+                assert fixture['admission']['requires_setup_code'] and body['setup_code'] == '1234-567-8901'
                 assert re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?', body['name'].lower())
                 assert body['name'] in ('a', 'n' * 32, 'amity-office')
                 if fixture['fail_add']:
@@ -312,9 +323,12 @@ def main():
                 system['membership']['peers'] = saved_peers
                 page.evaluate('amityInterface.refresh()')
             expect(rows).to_have_count(2)
+            fixture['admission']['requires_setup_code'] = True
             page.locator('#addAmity').click()
             dialog = page.locator('dialog:visible')
-            secret = 'amityc1:'+'1'*32+':'+'2'*64
+            expect(dialog).to_contain_text('FW RESET for 3 seconds')
+            expect(dialog.get_by_label('Matter setup code')).to_be_visible()
+            secret = '1234-567-8901'
             name = dialog.get_by_label('Name', exact=True)
             expect(name).to_have_attribute('required', '')
             expect(name).to_have_attribute('maxlength', '32')
@@ -322,22 +336,23 @@ def main():
             before_add = len([p for p, _ in fixture['posts'] if p == '/api/v2/membership/add'])
             for invalid in ('', 'bad name', '-bad', 'bad-', 'amity.room', 'café'):
                 name.fill(invalid)
-                dialog.locator('input').nth(1).fill(secret)
+                dialog.get_by_label('Matter setup code').fill(secret)
                 dialog.get_by_role('button', name='Add', exact=True).click()
                 assert len([p for p, _ in fixture['posts'] if p == '/api/v2/membership/add']) == before_add
                 expect(dialog).to_be_visible()
             for entered, canonical in (('a', 'a'), ('n' * 32, 'n' * 32), ('  AMITY-OFFICE  ', 'amity-office')):
                 name.fill(entered)
-                dialog.locator('input').nth(1).fill(secret)
+                dialog.get_by_label('Matter setup code').fill(secret)
                 with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/add')):
                     dialog.get_by_role('button', name='Add', exact=True).click()
                 expect(page.locator('#message')).to_have_text('The setup code could not be verified')
                 expect(dialog.get_by_role('button', name='Add', exact=True)).to_be_enabled()
                 assert [body for path, body in fixture['posts'] if path == '/api/v2/membership/add'][-1]['name'] == canonical
-                expect(dialog.locator('input').nth(1)).to_have_value('')
+                expect(dialog.get_by_label('Matter setup code')).to_have_value('')
             assert secret not in page.evaluate('JSON.stringify({...localStorage,...sessionStorage})')
-            dialog.get_by_role('button', name='Cancel').click()
-            passed('Add requires a valid hostname Name, sends no location alias and clears setup secrets after failure')
+            with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/cancel')):
+                dialog.get_by_role('button', name='Cancel').click()
+            passed('Add scans first, requires a valid hostname, uses only strict printed Matter codes, clears them after failure and cancels the exact scan')
             # All destructive responses below are synthetic localhost fixture
             # outcomes. No device, pairing, network or reset API is contacted.
             saved_config = deepcopy(fixture['config'])

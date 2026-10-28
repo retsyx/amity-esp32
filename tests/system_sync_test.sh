@@ -18,7 +18,7 @@ cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$j
     "$root/components/amity_system/model.cpp" "$root/components/config_store/system_configuration.cpp" \
     "$root/components/config_store/configuration_journal.cpp" "$root/components/config_store/configuration_migration.cpp" \
     "$root/components/consortium/json.cpp" "$root/components/consortium/wire.cpp" "$root/components/consortium/owned_intent.cpp" \
-    "$root/components/consortium/settings.cpp" "$root/components/consortium/relay.cpp" \
+    "$root/components/consortium/settings.cpp" \
     "$root/components/consortium/update.cpp" "$root/components/consortium/transfer.cpp" \
     "$root/tests/system_sync_protocol_test.cpp" "$out/cjson.o" $openssl_lib -lcrypto -o "$out/test"
 "$out/test"

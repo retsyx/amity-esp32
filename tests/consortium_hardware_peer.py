@@ -2,8 +2,7 @@
 """Independent BlueZ candidate and mutual-TLS peer for a physical consortium bench.
 
 Run only on an explicitly reserved harness. It registers its own GATT application
-and advertisement, never removes bonds or changes adapter state. Private state
-and setup code are mode0600 files. No real CEC actuator is impersonated: owner
+and advertisement, never removes bonds or changes adapter state. Private fixture state uses mode0600 files. No real CEC actuator is impersonated: owner
 snapshots report only unconfigured monitor ports. Requires dbus-next+cryptography.
 """
 import argparse
@@ -19,18 +18,13 @@ import socket
 import ssl
 import struct
 import time
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-
-# Same RFC5054 3072-bit group, independently computed with Python integer pow.
-from consortium_provision import N
 
 SERVICE = 'd6357cd0-0116-4681-a7b5-cb9d090ca311'
 RECORD = 'd6357cd0-0116-4681-a7b5-cb9d090ca312'
@@ -95,113 +89,75 @@ def new_credential(identity):
                              serialization.NoEncryption()).decode(), cert.public_bytes(serialization.Encoding.DER).hex()
 
 
-def varint(n):
-    result = bytearray()
-    while n > 127:
-        result.append((n & 127) | 128)
-        n >>= 7
-    result.append(n)
-    return bytes(result)
+ADMISSION_MAGIC = b'AMADMIT3'
+ADMISSION_INFO = b'Amity admission directional AES-256-GCM v1'
 
 
-def field(number, value):
-    if isinstance(value, int):
-        return varint(number << 3) + varint(value)
-    return varint(number << 3 | 2) + varint(len(value)) + value
+class AdmissionServer:
+    """Independent normal-profile server; no setup secret or PAKE fixture.
 
-
-def fields(data):
-    position = 0
-    result = {}
-
-    def integer():
-        nonlocal position
-        value = 0
-        for shift in range(0, 64, 7):
-            if position >= len(data):
-                raise ValueError('truncated protobuf')
-            byte = data[position]
-            position += 1
-            value |= (byte & 127) << shift
-            if not byte & 128:
-                return value
-        raise ValueError('oversized protobuf varint')
-
-    while position < len(data):
-        tag = integer()
-        number, wire = tag >> 3, tag & 7
-        if not number or number in result:
-            raise ValueError('duplicate protobuf field')
-        if wire == 0:
-            value = integer()
-        elif wire == 2:
-            length = integer()
-            value = data[position:position + length]
-            position += length
-            if len(value) != length:
-                raise ValueError('truncated protobuf bytes')
-        else:
-            raise ValueError('unexpected protobuf wire type')
-        result[number] = value
-    return result
-
-
-class Security2Server:
-    def __init__(self, identity, password):
+    The fixture implements only the default button-authorized profile. It
+    rejects strict-profile requests instead of selecting a weaker exchange.
+    """
+    def __init__(self, identity):
+        assert re.fullmatch(r'[0-9a-f]{32}', identity) and int(identity, 16)
         self.identity = identity.encode()
-        self.password = password.encode()
         self.phase = 0
-        self.counter = 1
-        self.nonce_prefix = secrets.token_bytes(8)
-        self.salt = bytes(range(32))  # Deliberately includes leading zero salt.
+        self.tx_sequence = self.rx_sequence = 0
+        self.tx = self.rx = None
+        self.transcript_hash = None
 
     @staticmethod
-    def h(*parts):
-        return hashlib.sha512(b''.join(parts)).digest()
+    def packet(kind, body):
+        return ADMISSION_MAGIC + bytes([kind, 0]) + body
+
+    def _seal(self, plain):
+        assert self.phase != 4 and self.tx and 0 < len(plain) <= 4000 and self.tx_sequence < 2**64-1
+        sequence = self.tx_sequence + 1
+        header = b'AE3' + bytes([1]) + struct.pack('>Q', sequence)
+        result = header + self.tx.encrypt(header, plain, self.transcript_hash + header)
+        self.tx_sequence = sequence
+        return result
+
+    def _open(self, packet):
+        assert self.phase != 4 and self.rx and 29 <= len(packet) <= 4028
+        header = packet[:12]
+        sequence, = struct.unpack('>Q', header[4:])
+        assert header[:4] == b'AE3\x00' and self.rx_sequence < 2**64-1 and sequence == self.rx_sequence + 1
+        plain = self.rx.decrypt(header, packet[12:], self.transcript_hash + header)
+        self.rx_sequence = sequence
+        return plain
 
     def session(self, packet):
-        outer = fields(packet)
-        assert outer.keys() == {2, 12} and outer[2] == 2
-        sec = fields(outer[12])
-        if self.phase == 0:
-            assert sec.get(1, 0) == 0 and 20 in sec and len(sec) <= 2
-            cmd = fields(sec[20])
-            assert cmd.keys() == {1, 2} and cmd[1] == self.identity and len(cmd[2]) == 384
-            self.A_bytes = cmd[2]
-            self.A = int.from_bytes(self.A_bytes, 'big')
-            assert 0 < self.A < N
-            padN = N.to_bytes(384, 'big')
-            padg = (5).to_bytes(384, 'big')
-            x = int.from_bytes(self.h(self.salt, self.h(self.identity, b':', self.password)), 'big')
-            v = pow(5, x, N)
-            b = secrets.randbits(256) | (1 << 255)
-            k = int.from_bytes(self.h(padN, padg), 'big')
-            B = (k * v + pow(5, b, N)) % N
-            self.B_bytes = B.to_bytes(384, 'big')
-            u = int.from_bytes(self.h(self.A_bytes, self.B_bytes), 'big')
-            assert B and u
-            shared = pow(self.A * pow(v, u, N) % N, b, N)
-            key = self.h(shared.to_bytes((shared.bit_length() + 7) // 8, 'big'))
-            xor = bytes(a ^ b for a, b in zip(self.h(padN), self.h(padg)))
-            self.proof = self.h(xor, self.h(self.identity), self.salt, self.A_bytes, self.B_bytes, key)
-            self.server_proof = self.h(self.A_bytes, self.proof, key)
-            self.aes = AESGCM(key[:32])
-            self.phase = 1
-            response = field(2, self.B_bytes) + field(3, self.salt)
-            return field(2, 2) + field(12, field(1, 1) + field(21, response))
-        assert self.phase == 1 and sec.keys() == {1, 22} and sec[1] == 2
-        cmd = fields(sec[22])
-        assert cmd.keys() == {1} and secrets.compare_digest(cmd[1], self.proof)
-        self.phase = 2
-        response = field(2, self.server_proof) + field(3, self.nonce_prefix + struct.pack('>I', 1))
-        return field(2, 2) + field(12, field(1, 3) + field(23, response))
+        try:
+            if self.phase == 0:
+                assert len(packet) == 107 and packet[:10] == ADMISSION_MAGIC + b'\x01\x00'
+                public = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), packet[10:75])
+                key = ec.generate_private_key(ec.SECP256R1())
+                own_public = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+                response = self.packet(2, self.identity + own_public + secrets.token_bytes(32))
+                self.transcript_hash = hashlib.sha256(packet + response).digest()
+                keys = HKDF(algorithm=hashes.SHA256(), length=64, salt=self.transcript_hash, info=ADMISSION_INFO).derive(key.exchange(ec.ECDH(), public))
+                self.rx, self.tx = AESGCM(keys[:32]), AESGCM(keys[32:])
+                self.phase = 1
+                return response
+            assert self.phase == 1 and packet[:10] == ADMISSION_MAGIC + b'\x03\x00'
+            plain = self._open(packet[10:])
+            assert secrets.compare_digest(plain, b'Amity admission client binding v1:' + self.transcript_hash)
+            response = self.packet(4, self._seal(b'Amity admission server binding v1:' + self.transcript_hash))
+            self.phase = 3
+            return response
+        except Exception:
+            self.phase = 4
+            raise
 
     def crypt(self, packet, encrypt):
-        assert self.phase == 2 and 0 < self.counter < 0xffffffff
-        nonce = self.nonce_prefix + struct.pack('>I', self.counter)
-        result = self.aes.encrypt(nonce, packet, None) if encrypt else self.aes.decrypt(nonce, packet, None)
-        self.counter += 1
-        return result
+        try:
+            assert self.phase == 3
+            return self._seal(packet) if encrypt else self._open(packet)
+        except Exception:
+            self.phase = 4
+            raise
 
 
 class Peer:
@@ -217,8 +173,10 @@ class Peer:
         else:
             identity = secrets.token_hex(16)
             key, leaf = new_credential(identity)
-            self.state = {'id': identity, 'password': secrets.token_hex(32), 'key': key, 'leaf': leaf}
+            self.state = {'id': identity, 'key': key, 'leaf': leaf}
             self.persist()
+        if self.state.pop('password', None) is not None:
+            self.persist()  # Retire only this harness's obsolete private Add secret.
         resumed_reset = bool(self.state.get('factory_reset_pending'))
         if resumed_reset:
             self.finish_synthetic_reset()
@@ -248,7 +206,7 @@ class Peer:
         print(name, flush=True)
 
     def reset(self):
-        self.security = Security2Server(self.state['id'], self.state['password'])
+        self.security = AdmissionServer(self.state['id'])
         self.record = 0
         self.record_endpoint = 0
         self.request = b''
@@ -347,8 +305,8 @@ class Peer:
                 self.response = self.security.crypt(self.join(self.security.crypt(self.request, False)), True)
             else:
                 self.response = self.security.session(self.request)
-                if self.security.phase == 2:
-                    self.event('srp_mutual_proofs_verified')
+                if self.security.phase == 3:
+                    self.event('ephemeral_admission_confirmed')
             self.event('gatt_response_ready', record=record, encrypted=bool(endpoint), response_bytes=len(self.response))
 
     def read(self, mtu):
@@ -559,7 +517,7 @@ class Peer:
         # Bluetooth bonds, adapters, services, or other files are modified.
         receipt = self.state['factory_reset_pending']
         key, leaf = new_credential(self.state['id'])
-        self.state = {'id': self.state['id'], 'password': self.state['password'],
+        self.state = {'id': self.state['id'],
             'key': key, 'leaf': leaf, 'retired': True, 'factory_reset_receipt': receipt}
         self.persist()
         self.controller_metadata = self.incoming = self.outgoing = None
@@ -807,7 +765,6 @@ async def run(args):
     from dbus_next.service import ServiceInterface, method, dbus_property
     from dbus_next.constants import PropertyAccess
     peer = Peer(args.state, args.result, args.faults, args.legacy_removal_capability)
-    atomic_private(args.code, ('amityc1:' + peer.state['id'] + ':' + peer.state['password'] + '\n').encode())
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     class Service(ServiceInterface):
@@ -930,7 +887,6 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', required=True, type=Path)
-    parser.add_argument('--code', required=True, type=Path)
     parser.add_argument('--result', required=True, type=Path)
     parser.add_argument('--seconds', type=int, default=600)
     parser.add_argument('--stop-file', type=Path, help='Stop when this run-owned marker exists; never changes adapter state')

@@ -94,7 +94,9 @@ window.amityInterface=(()=>{
   const localRow=document.createElement('article'),localActions=deviceHeader(localRow,(system.hostname||'Name unavailable')+' (this device)');
   localActions.append(button('Settings',()=>deviceSettings({octopus_id:system.octopus_id})));
   root.append(localRow);
-  for(const board of configuration.octopuses||[]){
+  const boards=[...(configuration.octopuses||[])];
+  for(const peer of system.membership?.peers||[])if((peer.enrolled||peer.provisional)&&!boards.some(board=>board.octopus_id===peer.octopus_id))boards.push({octopus_id:peer.octopus_id,supported_tentacles:peer.supported_tentacles||1});
+  for(const board of boards){
    if(board.octopus_id===original)continue;
    const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));row.append(text(peer?.ready?'Connected':peer?.management_ready?'Firmware update required':peer?.enrolled?'Not responding':'Removed · equipment retained'));
    row.append(text('Controlled by the original Amity · up to '+board.supported_tentacles+' HDMI adapters'));
@@ -204,12 +206,77 @@ window.amityInterface=(()=>{
   });d.append(remove,close);
  }
  function add(){
-  const d=dialog('Add Amity'),name=field('Name'),code=field('Amity setup code'),status=text('');status.hidden=true;name.input.required=true;name.input.maxLength=32;name.input.pattern='[A-Za-z0-9]((?:[A-Za-z0-9]|-){0,30}[A-Za-z0-9])?';name.input.title='Use 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.';name.input.autocomplete='off';name.input.spellcheck=false;code.input.autocomplete='off';code.input.spellcheck=false;d.append(name.label,code.label,status);
+  const d=dialog('Add Amity'),scanId=identifier(),name=field('Name'),code=field('Matter setup code'),status=text('Searching for Amity devices…');
+  const selection=document.createElement('label'),select=document.createElement('select'),found=text('');selection.textContent='Amity device';selection.append(select);selection.hidden=true;
+  name.input.required=true;name.input.maxLength=32;name.input.pattern='[A-Za-z0-9]((?:[A-Za-z0-9]|-){0,30}[A-Za-z0-9])?';name.input.title='Use 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.';name.input.autocomplete='off';name.input.spellcheck=false;
+  code.input.type='password';code.input.maxLength=256;code.input.autocomplete='off';code.input.spellcheck=false;code.input.placeholder='Printed Matter setup code';code.input.title='Enter the printed Matter setup code or the text from its Matter QR code.';
+  name.label.hidden=code.label.hidden=true;found.hidden=true;
+  d.append(text('On the Amity you want to add, hold FW RESET for 3 seconds, then release it before 10 seconds. Keep it powered on and nearby.'),status,found,selection,name.label,code.label);
+  let closed=false,timer=null,polling=false,candidates=[],selected='',requiresCode=false,adding=false,admitted=false,finished=false,ended=false,operationId=null,phase='scanning';
+  const live=()=>!closed&&openDialog===d&&d.isConnected;
+  const controls=()=>{
+   const choose=phase==='found'&&!!selected&&!adding&&!ended;name.label.hidden=!selected;name.input.disabled=!choose;
+   code.label.hidden=!selected||!requiresCode;code.input.disabled=!choose;code.input.required=requiresCode;
+   select.disabled=adding||ended;start.disabled=!choose||(requiresCode&&!code.input.value);
+  };
+  const showCandidates=state=>{
+   const next=Array.isArray(state.candidates)?state.candidates:[];
+   if(JSON.stringify(next)!==JSON.stringify(candidates)){
+    candidates=next;if(!candidates.some(candidate=>candidate.token===selected))selected='';
+    select.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='Choose an Amity';select.append(empty);
+    for(const candidate of candidates){const option=document.createElement('option');option.value=candidate.token;option.textContent=candidate.label;select.append(option);}
+   }
+   if(phase==='found'&&candidates.length===1)selected=candidates[0].token;
+   select.value=selected;selection.hidden=candidates.length<2;found.hidden=candidates.length!==1;found.textContent=candidates.length===1?candidates[0].label:'';
+  };
+  const cancelSearch=async()=>{
+   try{await mutation('membership/cancel',{scan_id:scanId});}
+   catch(error){try{const state=await request('v2/membership/admission');if(state.scan_id===scanId&&['connecting','finishing'].includes(state.phase))message('Adding Amity is still finishing. Check the Amity devices list shortly.');else if(state.scan_id===scanId&&state.phase==='complete')message('Amity was added. Check the Amity devices list.');}catch(ignored){}}
+  };
+  d.addEventListener('close',()=>{
+   closed=true;if(timer!==null)clearTimeout(timer);code.input.value='';
+   if(!finished&&!admitted)void cancelSearch();
+   else if(admitted&&!finished&&!ended)message('Adding Amity continues. Check the Amity devices list shortly.');
+  });
+  async function poll(){
+   if(!live()||polling||ended)return;polling=true;
+   try{
+    const state=await request('v2/membership/admission');if(!live())return;
+    if(operationId){
+     const operation=await request('v2/operations/'+operationId);if(!live())return;
+     if(['failed','rejected','cancelled','unknown'].includes(operation.stage)){ended=true;adding=false;status.textContent=customerText(operation.message||'The result could not be confirmed. Check the Amity devices list before trying again.');controls();return;}
+     if(operation.stage==='complete'){
+      finished=true;ended=true;code.input.value='';await refresh();if(live()){d.close();message('Amity added.');}return;
+     }
+    }
+    if(state.scan_id!==scanId){ended=true;status.textContent='The search changed. Check the Amity devices list before trying again.';controls();return;}
+    phase=state.phase;requiresCode=state.requires_setup_code===true;if(!requiresCode)code.input.value='';
+    showCandidates(state);
+    if(['failed','cancelled'].includes(state.phase)){ended=true;adding=false;status.textContent=customerText(state.error||'The search ended. Close this window and try again.');controls();return;}
+    if(state.phase==='found')status.textContent=candidates.length>1?'Choose the Amity you want to add, then give it a name.':candidates.length===1?'Give this Amity a name.':'No Amity was found. Close this window and try again.';
+    else if(state.phase==='connecting')status.textContent='Connecting to Amity…';
+    else if(state.phase==='finishing'||state.phase==='complete')status.textContent='Finishing setup…';
+    else status.textContent='Searching for Amity devices…';
+
+    controls();
+   }catch(error){if(live()){ended=true;status.textContent=customerText(error.message||'The search status is unavailable. Close this window and try again.');controls();}}
+   finally{polling=false;if(live()&&!ended)timer=setTimeout(poll,400);}
+  }
+  select.addEventListener('change',()=>{selected=select.value;controls();if(selected)name.input.focus();});code.input.addEventListener('input',controls);
   const start=button('Add',async()=>{
+   if(adding||ended||phase!=='found'||!selected)return;
    const hostname=name.input.value.trim().toLowerCase();name.input.value=hostname;if(!name.input.reportValidity())return;
-   start.disabled=true;let secret=code.input.value.trim();code.input.value='';
-   try{status.hidden=false;status.textContent='Connecting to Amity…';await completed('membership/add',{setup_code:secret,name:hostname});secret='';status.textContent='Amity added.';await refresh();d.close();}finally{secret='';start.disabled=false;}
-  });d.append(start,button('Cancel',()=>d.close()));
+   if(requiresCode&&!code.input.reportValidity())return;
+   adding=true;status.textContent='Connecting to Amity…';controls();let secret=code.input.value;code.input.value='';
+   try{
+    const body={scan_id:scanId,candidate_token:selected,name:hostname};if(requiresCode)body.setup_code=secret;
+    const result=await mutation('membership/add',body);secret='';admitted=true;operationId=result.operation_id;
+    if(live()){closeButton.textContent='Close';status.textContent='Connecting to Amity…';if(timer!==null)clearTimeout(timer);void poll();}
+   }catch(error){secret='';if(live()){adding=false;ended=!error.status||error.status>=500;status.textContent=ended?'The result could not be confirmed. Check the Amity devices list before trying again.':customerText(error.message);controls();}throw error;}
+   finally{secret='';}
+  });
+  const closeButton=button('Cancel',()=>d.close());d.append(start,closeButton);controls();
+  void (async()=>{try{await request('v2/membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
  }
  async function updateDevice(board,file){
   const header=new Uint8Array(await file.slice(0,32).arrayBuffer());

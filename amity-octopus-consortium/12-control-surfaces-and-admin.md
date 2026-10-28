@@ -22,7 +22,7 @@ Use the approved tabs: Activities, Remote, Matter, HomeKit, Amity devices, Advan
 
 The Amity devices tab lists the main first as `<hostname> (this device)` with Settings in the same title row. Added devices have actual hostnames, Settings and appropriate Remove/Replace actions; their firmware updates go through the main. No main Remove/Replace action, independent Location alias, member UI, remote-owner mapping or primary-zone chooser is added.
 
-Add requires an explicitly authorized candidate/setup code and a valid unique Name. The required name becomes the candidate's persistent lowercase hostname through authenticated bootstrap. Renaming a network endpoint does not change the stable device ID or equipment selections. Missing legacy names display Name unavailable; cosmetic aliases cannot rename hardware during migration.
+Add scans directly from the main for unclaimed candidates with physically opened setup windows. The user chooses a candidate if several appear, supplies a valid unique Name, and adds it. Only the stricter matched build profile asks for the candidate’s existing printed Matter manual code or QR payload. The required name becomes its persistent lowercase hostname through the encrypted admission session. Renaming a network endpoint does not change the stable device ID or equipment selections. Missing legacy names display Name unavailable; cosmetic aliases cannot rename hardware during migration.
 
 ## Administration data
 

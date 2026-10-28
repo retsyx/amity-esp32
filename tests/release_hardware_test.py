@@ -66,7 +66,7 @@ class HardwareReleaseTests(unittest.TestCase):
             include = ['-I/opt/homebrew/opt/openssl@3/include']
             libraries = ['-L/opt/homebrew/opt/openssl@3/lib']
         sources = ['components/system_services/release_manifest.cpp', 'components/consortium/json.cpp',
-                   'components/consortium/update.cpp', 'components/consortium/wire.cpp', 'components/consortium/relay.cpp',
+                   'components/consortium/update.cpp', 'components/consortium/wire.cpp',
                    'components/consortium/owned_intent.cpp', 'components/consortium/transfer.cpp', 'components/consortium/settings.cpp', 'components/amity_system/model.cpp']
         for name, config in [('legacy', {'AMITY_BOARD_LEGACY_1T': 'y', 'AMITY_BOARD_DEVELOPMENT_4T': 'n'}), ('development', development())]:
             flags = ['-DCONFIG_' + key + '=' + ('1' if value == 'y' else '0' if value == 'n' else value) for key, value in config.items()]

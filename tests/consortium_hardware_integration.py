@@ -17,6 +17,20 @@ import uuid
 from cec_web_activity import Admin, read_password, write_private
 
 
+def candidate_token(admission, scan_id, label):
+    """Select only this run's advertised fixture; never the first nearby board."""
+    if admission.get('scan_id') != scan_id:
+        raise AssertionError('Admission scan changed during fixture selection')
+    if admission.get('requires_setup_code') is not False:
+        raise AssertionError('The passive fixture requires the normal admission build')
+    matches = [item for item in admission.get('candidates', []) if item.get('label') == label]
+    if not matches:
+        return None
+    if len(matches) != 1 or not isinstance(matches[0].get('token'), str) or not 1 <= len(matches[0]['token']) <= 128:
+        raise AssertionError('Fixture candidate selection is ambiguous or invalid')
+    return matches[0]['token']
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', required=True)
@@ -38,6 +52,7 @@ def main():
     process = None
     log = None
     removed = False
+    scan_id = None
 
     def run(*command):
         result = subprocess.run(ssh + [shlex.join(command)], capture_output=True, text=True, timeout=15)
@@ -157,7 +172,7 @@ def main():
         log = os.fdopen(fd, 'wb', buffering=0)
         command = ['/tmp/amity-consortium-peer-venv/bin/python', '-u',
                    '/tmp/amity-consortium-peer/tests/consortium_hardware_peer.py',
-                   '--state', remote + '/state.json', '--code', remote + '/code',
+                   '--state', remote + '/state.json',
                    '--result', remote + '/result.json', '--seconds', str(args.seconds + 60),
                    '--faults', '--stop-file', remote + '/stop']
         process = subprocess.Popen(ssh + [shlex.join(command)], stdout=log, stderr=log)
@@ -171,11 +186,22 @@ def main():
                 break
             time.sleep(.5)
         check('independent GATT candidate registered without adapter changes', peer_id is not None)
-        code = run('cat', remote + '/code').strip()
-        try:
-            operation = mutation('membership/add', setup_code=code, name='bench-member-'+peer_id[-8:])
-        finally:
-            code = ''
+        scan = mutation('membership/scan')
+        scan_id = scan['operation_id']
+        check('main accepts this run’s discovery request', scan['stage'] == 'complete')
+        deadline = time.monotonic() + 35
+        token = None
+        while time.monotonic() < deadline:
+            admission = admin.request('/api/v2/membership/admission')
+            token = candidate_token(admission, scan_id, 'Amity ' + peer_id[-6:])
+            if token:
+                break
+            if admission.get('phase') in ('failed', 'cancelled'):
+                raise AssertionError('Candidate discovery did not complete')
+            time.sleep(.5)
+        check('main discovers the exact advertised fixture without an Add secret', token is not None)
+        operation = mutation('membership/add', scan_id=scan_id, candidate_token=token,
+                             name='bench-member-' + peer_id[-8:])
         report['add_admission'] = operation
         print('Enrollment admitted; waiting for independent peer checks', flush=True)
         deadline = time.monotonic() + args.seconds
@@ -196,7 +222,7 @@ def main():
             time.sleep(2)
         check('independent peer completes its bounded fault sequence', bool(result and result.get('qualified')))
         events = {e['event'] for e in result['events']}
-        for event in ['srp_mutual_proofs_verified', 'encrypted_identity_requested',
+        for event in ['ephemeral_admission_confirmed', 'encrypted_identity_requested',
                       'prepared_after_authenticated_proposal', 'mutual_tls_lan_commit',
                       'bidirectional_hashed_snapshot_sync', 'operational_ready_and_execution_leases',
                       'tls_rejected_no_certificate', 'tls_rejected_unknown',
@@ -230,6 +256,12 @@ def main():
         raise
     finally:
         if report.get('error'):
+            if scan_id:
+                def cancel_scan():
+                    admission = admin.request('/api/v2/membership/admission')
+                    if admission.get('scan_id') == scan_id and admission.get('phase') not in ('idle', 'complete', 'failed', 'cancelled'):
+                        mutation('membership/cancel', scan_id=scan_id)
+                cleanup_attempt('cancel_admission', cancel_scan)
             # Stop this failed candidate before inspecting its durable roster
             # entry; no late preparation can race the cleanup inspection.
             stop_fixture()

@@ -1,52 +1,47 @@
-# Identity, membership and authorized enrollment
+# Identity, membership and adding a device
 
 Membership protects who may deliver work to an owner. It does not approve HDMI routes or replace local Amity algorithms. [Transport](08-consortium-transport-and-routing.md), [shared radio/setup](10-ble-and-matter-coexistence.md), [storage](11-config-storage-and-migration.md) and [original-controller policy](21-original-controller-policy.md) apply.
 
-## Separate identities and credentials
+## Identity and credentials
 
-- Stable random Amity device ID identifies hardware independently of MAC, hostname, IP address or Matter identity.
-- Installation ID and the durable original-controller/member role identify the current system authority.
-- Reset-retained origin and Add authorization remain separate from reset-owned operational group credentials.
-- The Add to Amity code is separate from Matter/HomeKit setup codes, web admin password and remote bonds. The current physical USB tool writes a private `amityc1:<device-id>:<secret>` artifact and installs only its salt/SRP verifier on the device; it does not retain a recoverable raw code there. Follow the actual tool/codec bounds rather than inventing a second code format.
-- Operational P-256 private keys and exact peer leaf pins are separate from browser HTTPS keys and release-signing keys. Private keys do not leave their device.
+Stable random Amity device IDs identify hardware independently of MAC, hostname, IP address and Matter identity. Installation identity, durable original-controller/member roles, operational private keys and exact peer leaf pins retain their separate purposes. Private keys stay on their device. Origin IDs and factory Matter/admin credentials survive the ordinary factory-reset contract; operational group trust/network/roles are reset-owned.
 
-An existing board with no Add verifier cannot be enrolled until it is physically provisioned. Lost/disclosed Add authorization uses the explicit identity-confirmed physical rotation path. Retain existing stable origin identity and independent Matter/admin credentials. Do not silently use reserved factory bytes, reset pairings or generate a new device identity to repair a missing setup code.
+There is no separate Add secret, stored bootstrap verifier or USB Add-code provisioning/rotation step. Startup discards the obsolete legacy Add-verifier record without loading it; an erasure failure is a warning, never an admission gate, and does not change origin or factory credentials. Adding a device does not require restoring old provisioning artifacts. The factory Matter code remains available for ordinary Matter setup and the optional stricter Amity admission profile.
 
-## Original-controller authority
+## Physical workflow
 
-The first successful Matter setup establishes the original controller only after committed fabric, fully disarmed fail-safe and checked persistent connected Wi-Fi. Proven retained original authority can recover the same role on upgrade. Merely receiving Wi-Fi, seeing a fabric arrive or reading a portable config file cannot create authority. The durable role survives removing the last fabric and ordinary reboot.
+On the original main, open **Amity devices → Add** to scan directly for nearby unclaimed boards. Hold the candidate's **FW RESET** for at least three seconds and release before ten seconds. Choose the candidate if several are found, enter a valid unique **Name**, then add it. The candidate must remain within the existing bounded physical setup window. A ten-second hold retains its factory-reset meaning; the shorter setup action must not fire first.
 
-An added device commits its headless member role before adoption acknowledgment. It cannot host UI/home integrations, own a remote, promote itself or become an input gateway. Stale or competing setup cannot change a committed role. Ambiguous/corrupt identity or membership remains passive for physical recovery rather than guessing a new authority.
+Normalize names to lowercase after trimming surrounding whitespace: 1–32 letters, digits or hyphens, with no leading/trailing hyphen. Bind the selected candidate ID and proposed hostname into admission before applying credentials or membership. A hostname is metadata, never authority or equipment identity. Do not turn old cosmetic labels into hostnames during migration.
 
-## Physical setup and naming
+## Admission profiles
 
-Use the existing bounded setup gestures and arbiter. A fresh eligible main uses Matter BLE; a candidate uses its separate Add code and physically opened Amity enrollment window. An administrator password alone cannot replace physical candidate authorization. The existing three-to-below-ten-second hold opens candidate setup; a ten-second hold performs factory reset. Buttonless hardware uses the approved explicit USB path.
+The normal build uses fresh ephemeral key exchange and AEAD-protected messages during the physically authorized window. Sensitive Wi-Fi and membership records travel only after the encrypted session is established.
 
-Add requires a valid unique Name before radio work. Normalize the 1–32-character DNS hostname label to lowercase after trimming surrounding whitespace; reject internal spaces/punctuation and leading/trailing hyphens. Bootstrap profile 2 binds that actual persistent candidate hostname to the authenticated proposal. Naming does not change device identity or saved equipment selectors. A legacy cosmetic location alias cannot rename hardware on upgrade.
+`CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE`, default off, selects the stricter build. The user enters the candidate's existing printed Matter manual setup code or QR payload; PAKE proves code possession and authenticates the fresh Amity admission session keys. It does not run full Matter commissioning, add a fabric or create an original-controller role through Matter.
 
-Transfer the system's available supported Wi-Fi credentials only through authenticated bootstrap when needed. Preserve an already configured candidate network. Do not expose network credentials or raw setup secrets to the browser, relay, URLs, logs, analytics or third-party QR services.
+Both main and candidate must use the same profile. Bind the profile and participants into the exchange and reject profile mismatch, malformed records, bad proofs and replay without downgrade or fallback. Keep setup codes and derived secrets transient; do not write them to browser storage, logs or portable configuration.
 
-## Durable enrollment transaction
+## Commit the existing membership transaction
 
-Keep the existing bounded single-candidate transaction and canonical request/digest correlation:
+After the selected profile establishes the encrypted session, retain the existing bounded enrollment transaction:
 
-1. Authenticate both Security2 SRP/AEAD endpoints; reject wrong proofs and unsupported profiles without insecure fallback.
-2. Bind candidate/controller IDs, installation, proposed headless role, join identity/digest, membership revision, exact operational leaves/pins and required canonical hostname.
-3. Persist prepared records; the candidate commits/validates the agreed hostname before network staging and acknowledgment. Provisional trust grants setup/status only.
-4. Commit network state through the existing Wi-Fi owner, then prove the prepared exact-pin operational LAN path with a fresh challenge.
-5. Commit membership durably and idempotently on both sides before reporting ready. A lost acknowledgment reconciles the same transaction; it does not allocate a second member or revert committed authority.
-6. Close the setup advertisement and erase ephemeral secrets. Retain only necessary membership/identity/transaction records, not browser setup-code copies.
+1. Bind candidate/controller IDs, installation, proposed headless role, join identity/digest, membership revision, operational leaves/pins and canonical hostname.
+2. Persist prepared records and commit/validate the candidate hostname before network staging and acknowledgment. Seal candidate advertising once prepared, while the same encrypted connection may finish network transfer. Provisional trust grants setup/status only.
+3. Commit supported network credentials through the existing CHIP Wi-Fi owner when needed, then prove the prepared exact-pin LAN path with a fresh challenge.
+4. Commit membership durably and idempotently on both sides before reporting ready. A lost acknowledgment reconciles the same transaction.
+5. Close the setup advertisement and clear ephemeral admission secrets.
 
-Restart/cancel/status follows the actual durable pre- or post-commit state. A pre-commit abort removes provisional trust; post-commit cancellation is explicit removal. A prepared pinned LAN transaction may resume without reopening BLE or saving the raw code. A new bootstrap session still needs physical authorization.
+Cancellation and restart follow actual pre- or post-commit state. Abort removes provisional trust before commit; post-commit removal remains explicit. Prepared exact-pin LAN transactions may reconcile without reopening BLE. New admission sessions still require a physically opened candidate window. Scanning and admission run directly on the main; another member does not relay them.
 
-## Operational delivery and relays
+## Original-controller authority and operation
 
-Exact-peer TLS and current original-controller role authorize typed owner delivery. Reject wrong installation/owner, stale boot/link/configuration/input context, replay and malformed messages. These fences cannot become a stored activity-enabled/profile/route approval. Owners use current local equipment lookup and original algorithms.
+The first successful Matter setup establishes the original controller only after committed fabric, disarmed fail-safe and checked persistent connected Wi-Fi, or proven retained original authority. Receiving Wi-Fi, entering a setup code or reading a portable document cannot create that role. Reboot and last-fabric removal retain it.
 
-An authorized nearby helper may relay opaque bootstrap records under the existing bounded reservation. PAKE endpoints remain controller and candidate; the helper sees neither Add secret nor plaintext Wi-Fi credentials and gains no control/input authority. No generic peer-to-peer command overlay is added.
+An added device commits its headless member role before adoption acknowledgment. It cannot host UI/home integrations, pair a remote, become an input gateway or promote itself. Ambiguous/corrupt identity or membership stays passive for physical recovery.
 
-## Removal and qualification
+Exact-peer TLS and original-controller authority protect subsequent owner delivery. Keep stale boot/link/configuration/input and replay fences, separate from runtime equipment lookup. Explicit removal retains the established drain/reset-journal/result-attempt flow; generic loss or setup abort does not erase a device. [Recovery](13-faults-removal-and-recovery.md).
 
-Explicit removal revokes the selected member and follows the established drain/reset-journal/result-attempt flow. Generic link/authority loss and setup abort do not erase devices. Origin/Add authorization remains reset-retained; operational trust/network/roles are reset-owned. [Recovery](13-faults-removal-and-recovery.md).
+## Evidence
 
-Keep protocol/parser, wrong-proof, exact-pin rejection, storage-cut, late-callback and concurrent-role tests. Physical radio interoperability, credential protection and production secure boot/storage require separate evidence. Authenticated peer reports are not hardware attestation or proof that HDMI equipment responded.
+Test direct discovery and exact candidate selection, physical-window eligibility, both profiles, mismatched-profile rejection, wrong-code/proof/replay failure, encrypted credential transfer, exact-pin LAN proof, storage cuts and role-before-service boot. Physical radio interoperability and production secret storage require separate evidence. Peer reports are not hardware attestation or proof of HDMI response.

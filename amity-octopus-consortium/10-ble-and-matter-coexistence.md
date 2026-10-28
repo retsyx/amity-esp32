@@ -23,20 +23,20 @@ Preserve the existing debounced single-action button interpretation:
 | Gesture | Result when eligible |
 |---|---|
 | Release before three seconds | Initial bounded Matter setup for a fresh/unconfigured main. |
-| Release after at least three and before ten seconds | Bounded Add to Amity candidate enrollment. |
+| Release after at least three and before ten seconds | Bounded candidate window for the main’s Amity devices → Add scan. |
 | Hold reaches ten seconds | Existing durable factory-reset path. Neither shorter setup action fires first. |
 
 Configured/prepared/member/retired/recovery states keep their existing eligibility restrictions. A raw absence of Wi-Fi/fabrics is not authorization to reopen setup. Buttonless profiles retain the explicit USB-assisted physical path. Indicators and printed instructions must match actual hardware; do not claim an unconfigured detector or button exists.
 
 ## Arbiter and callbacks
 
-Keep the existing one-workflow radio reservation, local deadline, in-memory generation, connection handles and cancellation lifecycle. Matter setup, remote pairing and Amity candidate/inviter/opaque relay work cannot replace one another through late callbacks. Existing remote reconnect/input continues under its original policy and measured resource budget.
+Keep the existing one-workflow radio reservation, local deadline, in-memory generation, connection handles and cancellation lifecycle. Matter setup, remote pairing and Amity candidate/main admission work cannot replace one another through late callbacks. Existing remote reconnect/input continues under its original policy and measured resource budget.
 
 Do not add normal-operation timeouts, repeat cadence or radio recovery merely to accommodate distribution. Enrollment/setup deadlines remain their existing separate contracts. No periodic per-button lease renewal or transmitted press stream is added. The owner repeats a held key using its original completion-paced local handling.
 
 ## Wi-Fi and persistence
 
-Bootstrap transfers supported credentials only within authenticated Security2 and only when needed. Stage/commit through the existing CHIP Wi-Fi owner, preserve an already networked candidate and distinguish network success from committed member authority. Preserve original main/Matter fail-safe handling. Hostname selection is authenticated metadata and never device identity.
+Admission transfers supported credentials only after the selected encrypted session is established and only when needed. The normal profile uses ephemeral key exchange; the optional setup-code profile uses the printed Matter code through PAKE. Both ends require the same profile, without fallback; this exchange neither opens Matter commissioning nor creates a fabric. Stage/commit through the existing CHIP Wi-Fi owner, preserve an already networked candidate and distinguish network success from committed member authority. Preserve original main/Matter fail-safe handling. Hostname selection is authenticated metadata and never device identity.
 
 ## Evidence
 

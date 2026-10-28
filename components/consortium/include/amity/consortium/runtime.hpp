@@ -7,7 +7,7 @@
 namespace amity::consortium {
 struct RuntimeStatus {
     bool initialized=false,credential_ready=false,crypto_ready=false,coordinator=false,member=false;
-    bool bootstrap_ready=false,enrollment_open=false,connected=false,synchronized=false;
+    bool enrollment_open=false,connected=false,synchronized=false;
     bool authority_ready=false;
     uint32_t active_peers=0;uint64_t epoch=0,membership_revision=0;
     std::string phase,last_error,leaf_spki_sha256;
@@ -23,8 +23,8 @@ esp_err_t runtime_read_startup(model::OctopusId,RuntimeStartup &);
 // Before runtime_start: GPIO/profile availability, not physical adapter presence.
 esp_err_t runtime_set_hardware_profile(uint8_t supported_tentacles,uint8_t configured_tentacles_mask);
 // Call once after the shared CHIP host and station networking exist. Credentials
-// are stored in reset-owned amity_group; factory/bootstrap verifiers are retained
-// separately. No listener opens until a durable original claim or committed join.
+// are stored in reset-owned amity_group; factory Matter credentials are separate.
+// No listener opens until a durable original claim or committed join.
 esp_err_t runtime_start(model::ConsortiumId,model::OctopusId,model::BootId,uint64_t config_revision);
 RuntimeStatus runtime_status();
 void runtime_configuration_changed(uint64_t config_revision,const std::string &policy_hash);
@@ -40,11 +40,21 @@ void runtime_close_enrollment();
 bool runtime_cancel_radio_workflows();
 // Register before esp_matter::start. No second NimBLE/provisioning host is started.
 esp_err_t runtime_register_gatt();
-// Authenticated coordinator administration begins one bounded candidate workflow.
-// Code encoding: amityc1:<OctopusId>:<32 lowercase hexadecimal secret bytes>.
-esp_err_t runtime_add_octopus(const std::string &code,const std::string &hostname);
-// Candidate-specific terminal bootstrap error; unrelated link errors are excluded.
-std::string runtime_enrollment_error(model::OctopusId);
+struct RuntimeAdmissionCandidate { std::string token,label; };
+struct RuntimeAdmissionStatus {
+    model::MessageId scan_id;
+    std::string phase="idle",error;
+    bool requires_setup_code=false;
+    std::vector<RuntimeAdmissionCandidate> candidates;
+    model::OctopusId candidate_id;
+};
+// Authenticated administration opens one bounded, transient discovery window.
+// Candidate tokens are opaque and valid only for this scan and radio generation.
+RuntimeAdmissionStatus runtime_admission_status();
+esp_err_t runtime_scan_admission(model::MessageId scan_id);
+esp_err_t runtime_cancel_admission(model::MessageId scan_id);
+esp_err_t runtime_add_octopus(model::MessageId scan_id,const std::string &candidate_token,
+                             const std::string &hostname,const std::string &setup_code={});
 esp_err_t runtime_remove_octopus(model::OctopusId,model::MessageId request_id,uint64_t expected_membership_revision,std::optional<model::BootId> expected_target_boot);
 // Complete means local roster removal. scheduled confirms only a durable reset marker.
 std::string runtime_removal_operation(model::OctopusId,model::MessageId request_id);
@@ -88,7 +98,7 @@ struct RuntimeLifecycleHooks {
 void runtime_lifecycle_hooks(RuntimeLifecycleHooks);
 // Resume an already physically authorized reclaim before identity/CEC startup.
 esp_err_t runtime_finish_reclaim(std::function<esp_err_t()> preserve_network = {});
-// Physical USB only. Preserves origin/bootstrap and unrelated pairings/settings;
+// Physical USB only. Preserves origin and unrelated pairings/settings;
 // rotates operational credentials and group identity via a resumable reboot.
 esp_err_t runtime_reclaim_membership(model::OctopusId confirmed_local_id);
 
@@ -134,9 +144,5 @@ void runtime_fence_owned_link(model::OctopusId,model::LinkId);
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);
 std::optional<model::LinkId> runtime_link_id(model::OctopusId,model::BootId);
-// Explicit physical USB-assisted bootstrap provisioning. Input must be generated
-// by the provisioning tool. No password/verifier is generated automatically.
 esp_err_t runtime_crypto_self_test();
-esp_err_t runtime_rotate_bootstrap(model::OctopusId confirmed,const std::string &salt_hex,const std::string &verifier_hex);
-esp_err_t runtime_install_bootstrap(const std::string &salt_hex,const std::string &verifier_hex);
 } // namespace amity::consortium

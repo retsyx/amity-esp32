@@ -36,11 +36,11 @@ Keep the approved tab order **Activities, Remote, Matter, HomeKit, Amity devices
 
 Keep stable per-device adapter settings within the advertised one/four-adapter profile. Show saved default, original detected and selected front PA separately. Actual presence/boot/settings-generation checks protect an explicit selected-device atomic save/restart; they do not approve activity routes. CEC silence is not physical presence evidence.
 
-Explicit Remove revokes the selected responding member, drains/fences current work, commits its established reset journal and schedules only that target's restart after response attempt. Offline/unconfirmed removal requires the existing at-least-ten-second physical reset instructions. Generic loss, retirement or setup cancellation does not reset anything. Origin/Add authorization remains retained; operational trust/network/roles are reset-owned.
+Explicit Remove revokes the selected responding member, drains/fences current work, commits its established reset journal and schedules only that target's restart after response attempt. Offline/unconfirmed removal requires the existing at-least-ten-second physical reset instructions. Generic loss, retirement or setup cancellation does not reset anything. Origin identity and factory Matter/admin credentials remain retained; operational trust/network/roles are reset-owned.
 
 If the main fails, isolate it, Matter-enroll replacement hardware as a new main and use existing Advanced upload/restore. Preserve portable IDs, original fields/selectors/order/slots/quirks and explicitly map replacement owners; drop obsolete schema-2 executable approvals, old addresses and activity-resume state. Do not disable restored activities pending graph repair. Pair the sole remote and home integrations again; never clone old private keys, pairing stores, network/admin credentials or controller authority.
 
-Factory-reset each old headless member with the existing ≥10-second hold, then use its three-to-below-ten-second Add window and retained Add code to re-enroll with fresh trust. A returning old main stays isolated until explicitly reset/reclaimed. There is no live transfer, member promotion or automatic failover. [Recovery](13-faults-removal-and-recovery.md).
+Factory-reset each old headless member with the existing ≥10-second hold, then use its three-to-below-ten-second candidate window and Amity devices → Add to re-enroll with fresh trust. Only the stricter matched build asks for the existing printed Matter code. A returning old main stays isolated until explicitly reset/reclaimed. There is no live transfer, member promotion or automatic failover. [Recovery](13-faults-removal-and-recovery.md).
 
 ## Acceptance
 

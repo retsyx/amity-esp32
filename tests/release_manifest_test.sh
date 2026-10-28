@@ -15,6 +15,6 @@ PY
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/consortium/include" -I"$root/components/amity_system/include" -I"$root/components/system_services/include" \
   "$root/components/system_services/release_manifest.cpp" "$root/components/consortium/json.cpp" \
-  "$root/components/consortium/update.cpp" "$root/components/consortium/wire.cpp" "$root/components/consortium/settings.cpp" "$root/components/consortium/relay.cpp" "$root/components/consortium/owned_intent.cpp" "$root/components/consortium/transfer.cpp" \
+  "$root/components/consortium/update.cpp" "$root/components/consortium/wire.cpp" "$root/components/consortium/settings.cpp" "$root/components/consortium/owned_intent.cpp" "$root/components/consortium/transfer.cpp" \
   "$root/components/amity_system/model.cpp" "$root/tests/release_manifest_test.cpp" -o "$out/release_manifest_test"
 "$out/release_manifest_test" "$out/release-manifest.json"

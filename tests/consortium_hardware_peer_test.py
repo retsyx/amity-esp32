@@ -13,61 +13,137 @@ from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 import consortium_hardware_peer as peer
-from consortium_provision import verifier
+from consortium_hardware_integration import candidate_token
+
+
+class NormalClient:
+    def __init__(self):
+        self.key = peer.ec.generate_private_key(peer.ec.SECP256R1())
+        self.tx_sequence = self.rx_sequence = 0
+        self.ready = False
+
+    def hello(self):
+        public = self.key.public_key().public_bytes(peer.serialization.Encoding.X962, peer.serialization.PublicFormat.UncompressedPoint)
+        self.request = peer.ADMISSION_MAGIC + b'\x01\x00' + public + peer.secrets.token_bytes(32)
+        return self.request
+
+    def finish(self, welcome):
+        assert len(welcome) == 139 and welcome[:10] == peer.ADMISSION_MAGIC + b'\x02\x00'
+        public = peer.ec.EllipticCurvePublicKey.from_encoded_point(peer.ec.SECP256R1(), welcome[42:107])
+        self.transcript_hash = hashlib.sha256(self.request + welcome).digest()
+        keys = peer.HKDF(algorithm=peer.hashes.SHA256(), length=64, salt=self.transcript_hash,
+                         info=peer.ADMISSION_INFO).derive(self.key.exchange(peer.ec.ECDH(), public))
+        self.tx, self.rx = peer.AESGCM(keys[:32]), peer.AESGCM(keys[32:])
+        return peer.ADMISSION_MAGIC + b'\x03\x00' + self.encrypt(b'Amity admission client binding v1:' + self.transcript_hash)
+
+    def confirm(self, response):
+        assert response[:10] == peer.ADMISSION_MAGIC + b'\x04\x00'
+        assert self.decrypt(response[10:]) == b'Amity admission server binding v1:' + self.transcript_hash
+        self.ready = True
+
+    def encrypt(self, plain):
+        self.tx_sequence += 1
+        header = b'AE3\x00' + struct.pack('>Q', self.tx_sequence)
+        return header + self.tx.encrypt(header, plain, self.transcript_hash + header)
+
+    def decrypt(self, packet):
+        header = packet[:12]
+        sequence, = struct.unpack('>Q', header[4:])
+        assert header[:4] == b'AE3\x01' and sequence == self.rx_sequence + 1
+        result = self.rx.decrypt(header, packet[12:], self.transcript_hash + header)
+        self.rx_sequence = sequence
+        return result
 
 
 class HarnessTests(unittest.TestCase):
     def test_capabilities_are_only_implemented_passive_contracts(self):
         self.assertEqual(peer.KNOWN_CAPABILITIES, 483402)
         self.assertEqual(peer.KNOWN_CAPABILITIES & (1 | 4 | 16 | 32 | 128 | 256 | 512 | 1024 | 2048 | 4096), 0)
-    def exchange(self):
-        identity = '00000000000000000000000000000001'
-        password = 'a' * 64
-        server = peer.Security2Server(identity, password)
-        a = int.from_bytes(bytes(range(32)), 'big')
-        A = pow(5, a, peer.N).to_bytes(384, 'big')
-        first = peer.field(2, 2) + peer.field(12, peer.field(20, peer.field(1, identity.encode()) + peer.field(2, A)))
-        response = peer.fields(peer.fields(peer.fields(server.session(first))[12])[21])
-        B = int.from_bytes(response[2], 'big')
-        h = server.h
-        N = peer.N.to_bytes(384, 'big')
-        g = (5).to_bytes(384, 'big')
-        x = int.from_bytes(h(response[3], h(identity.encode(), b':', password.encode())), 'big')
-        u = int.from_bytes(h(A, response[2]), 'big')
-        k = int.from_bytes(h(N, g), 'big')
-        shared = pow((B - k * pow(5, x, peer.N)) % peer.N, a + u * x, peer.N)
-        key = h(shared.to_bytes((shared.bit_length() + 7) // 8, 'big'))
-        proof = h(bytes(a ^ b for a, b in zip(h(N), h(g))), h(identity.encode()), response[3], A, response[2], key)
-        second = peer.field(2, 2) + peer.field(12, peer.field(1, 2) + peer.field(22, peer.field(1, proof)))
-        final = peer.fields(peer.fields(peer.fields(server.session(second))[12])[23])
-        self.assertEqual(final[2], h(A, proof, key))
-        self.assertEqual(final[3][-4:], struct.pack('>I', 1))
-        return server, key, final[3]
+    def exchange(self, server=None):
+        server = server or peer.AdmissionServer('00000000000000000000000000000001')
+        client = NormalClient()
+        request = client.hello()
+        welcome = server.session(request)
+        confirmed = server.session(client.finish(welcome))
+        client.confirm(confirmed)
+        self.assertEqual((server.phase, client.ready), (3, True))
+        self.assertEqual((server.tx_sequence, server.rx_sequence), (1, 1))
+        return server, client
 
-    def test_known_verifier_leading_zero_salt(self):
-        value = verifier('00000000000000000000000000000001', 'a' * 64, bytes(range(32)))
-        self.assertEqual(len(value), 384)
-        self.assertEqual(hashlib.sha256(value).hexdigest(), '6d4599ff7aed7b021cfa1846cac82127e0ea3462e1e6cf4c8ec97a1fbb5de324')
-
-    def test_srp_mutual_proofs_and_gcm_counter(self):
-        server, key, nonce = self.exchange()
-        client = peer.AESGCM(key[:32])
-        request = client.encrypt(nonce, b'independent request', None)
+    def test_ephemeral_mutual_confirmation_and_directional_gcm(self):
+        server, client = self.exchange()
+        request = client.encrypt(b'independent request')
         self.assertEqual(server.crypt(request, False), b'independent request')
         reply = server.crypt(b'reply', True)
-        self.assertEqual(client.decrypt(nonce[:8] + struct.pack('>I', 2), reply, None), b'reply')
-        self.assertEqual(server.counter, 3)
+        self.assertEqual(client.decrypt(reply), b'reply')
+        self.assertEqual((server.rx_sequence, server.tx_sequence), (2, 2))
         with self.assertRaises(Exception):
-            server.crypt(reply, False)  # Wrong nonce/direction replay cannot authenticate.
-        self.assertEqual(server.counter, 3)
+            server.crypt(request, False)
+        self.assertEqual(server.phase, 4)  # Replay poisons the whole channel.
+        with self.assertRaises(Exception):
+            server.crypt(b'later', True)
 
-    def test_bad_public_and_duplicate_protobuf(self):
-        server = peer.Security2Server('1' * 32, 'a' * 64)
-        command = peer.field(2, 2) + peer.field(12, peer.field(20, peer.field(1, b'1' * 32) + peer.field(2, bytes(384))))
-        with self.assertRaises(AssertionError):
-            server.session(command)
-        with self.assertRaises(ValueError):
-            peer.fields(peer.field(2, 2) + peer.field(2, 2))
+    def test_wrong_profile_public_and_unconfirmed_app_rejected(self):
+        hello = NormalClient().hello()
+        for invalid in [hello[:9] + b'\x01' + hello[10:], hello[:10] + bytes(65) + hello[75:],
+                        hello + b'extra', b'AMADMIT2' + hello[8:]]:
+            server = peer.AdmissionServer('1' * 32)
+            with self.assertRaises(Exception):
+                server.session(invalid)
+            self.assertEqual(server.phase, 4)
+        server = peer.AdmissionServer('1' * 32)
+        server.session(hello)
+        with self.assertRaises(Exception):
+            server.crypt(b'unconfirmed', True)
+
+    def test_bad_tag_direction_gap_and_transcript_binding_poison(self):
+        for mutate in [lambda p: p[:-1] + bytes([p[-1] ^ 1]),
+                       lambda p: p[:3] + b'\x01' + p[4:],
+                       lambda p: p[:4] + struct.pack('>Q', 3) + p[12:]]:
+            server, client = self.exchange()
+            with self.assertRaises(Exception):
+                server.crypt(mutate(client.encrypt(b'test')), False)
+            self.assertEqual(server.phase, 4)
+        server = peer.AdmissionServer('1' * 32)
+        client = NormalClient()
+        welcome = server.session(client.hello())
+        # A substitution changes transcript-derived keys and confirmation.
+        changed = welcome[:10] + b'2' * 32 + welcome[42:]
+        with self.assertRaises(Exception):
+            server.session(client.finish(changed))
+        self.assertEqual(server.phase, 4)
+
+    def test_actual_gatt_fragmented_ephemeral_handshake_and_duplicate_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = peer.Peer(Path(directory) / 'state', Path(directory) / 'result')
+            client = NormalClient()
+            def exchange(record, request):
+                for offset in range(0, len(request), 10):
+                    fixture.write(struct.pack('>BBIHH', 1, 0, record, len(request), offset) + request[offset:offset + 10])
+                response = bytearray()
+                while len(response) < len(fixture.response):
+                    fixture.write(struct.pack('>BIH', 2, record, len(response)))
+                    packet = fixture.read(23)
+                    self.assertLessEqual(len(packet), 22)
+                    response.extend(packet[12:])
+                return bytes(response)
+            welcome = exchange(1, client.hello())
+            finish = client.finish(welcome)
+            client.confirm(exchange(2, finish))
+            self.assertEqual(fixture.security.phase, 3)
+            self.assertEqual((fixture.security.tx_sequence, fixture.security.rx_sequence), (1, 1))
+            self.assertIn('ephemeral_admission_confirmed', [event['event'] for event in fixture.result['events']])
+            self.assertNotIn('password', json.loads(fixture.path.read_text()))
+
+    def test_integration_selects_exact_scan_and_label_not_another_nearby_board(self):
+        scan = {'scan_id': '1' * 32, 'requires_setup_code': False, 'candidates': [
+            {'token': 'other', 'label': 'Amity 111111'}, {'token': 'selected', 'label': 'Amity aaaaaa'}]}
+        self.assertEqual(candidate_token(scan, '1' * 32, 'Amity aaaaaa'), 'selected')
+        self.assertIsNone(candidate_token(scan, '1' * 32, 'Amity bbbbbb'))
+        for invalid in [scan | {'scan_id': '2' * 32}, scan | {'requires_setup_code': True},
+                        scan | {'candidates': scan['candidates'] + [scan['candidates'][1]]}]:
+            with self.assertRaises(AssertionError):
+                candidate_token(invalid, '1' * 32, 'Amity aaaaaa')
 
     def memory_tls(self, replacement=False, client_profiles=None, server_profiles=None, expected_profile=None):
         with tempfile.TemporaryDirectory() as directory:
@@ -135,16 +211,16 @@ class HarnessTests(unittest.TestCase):
     def test_fragment_duplicate_does_not_advance_counter(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = peer.Peer(Path(directory) / 'state', Path(directory) / 'result')
-            fixture.security, key, nonce = self.exchange()
+            fixture.security, client = self.exchange()
             fixture.join = lambda plain: b'{"ready":true}'
-            ciphertext = peer.AESGCM(key[:32]).encrypt(nonce, b'{}', None)
+            ciphertext = client.encrypt(b'{}')
             packet = struct.pack('>BBIHH', 1, 1, 1, len(ciphertext), 0) + ciphertext
             fixture.write(packet)
-            self.assertEqual(fixture.security.counter, 3)
+            self.assertEqual((fixture.security.tx_sequence, fixture.security.rx_sequence), (2, 2))
             response = fixture.read(23)
             self.assertLessEqual(len(response), 22)
             fixture.write(packet)
-            self.assertEqual(fixture.security.counter, 3)
+            self.assertEqual((fixture.security.tx_sequence, fixture.security.rx_sequence), (2, 2))
             self.assertEqual(fixture.read(23), response)
             altered = packet[:-1] + bytes([packet[-1] ^ 1])
             with self.assertRaises(AssertionError):
@@ -227,7 +303,7 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
                 await self.peer.handle(None, message)
 
     async def test_retired_input_and_management_packets_rejected(self):
-        for kind in ['hold_renew', 'ingress_lease', 'intent', 'integration_state', 'remote_management', 'remote_management_result', 'operation']:
+        for kind in ['relay_reserve', 'relay_record', 'relay_close', 'relay_result', 'hold_renew', 'ingress_lease', 'intent', 'integration_state', 'remote_management', 'remote_management_result', 'operation']:
             message = self.peer.envelope(kind, {})
             message.update(origin_octopus_id='2' * 32, origin_boot_id=self.peer.server_boot,
                            destination_octopus_id=self.peer.state['id'], destination_boot_id=self.peer.boot)
@@ -305,7 +381,8 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('configuration', saved)
         self.assertNotEqual(saved['leaf'], old_leaf)
         self.assertNotEqual(saved['key'], original['key'])
-        self.assertEqual((saved['id'], saved['password']), (original['id'], original['password']))
+        self.assertEqual(saved['id'], original['id'])
+        self.assertNotIn('password', saved)
         self.assertEqual(self.sent[-1]['payload']['result'], 'reset_scheduled')
         self.assertEqual([e['event'] for e in self.peer.result['events']][-2:],
             ['authenticated_factory_reset_acknowledged', 'synthetic_factory_reset_completed'])
@@ -360,7 +437,7 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('proposal', resumed.state)
         self.assertNotEqual(previous['leaf'], resumed.state['leaf'])
         self.assertEqual(previous['id'], resumed.state['id'])
-        self.assertEqual(previous['password'], resumed.state['password'])
+        self.assertNotIn('password', resumed.state)
         self.assertEqual(resumed.result['events'][-1]['event'], 'synthetic_factory_reset_recovered')
 
     async def test_stop_marker_is_bounded_and_has_no_radio_action(self):
@@ -412,19 +489,16 @@ class PassiveSessionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.peer.valid_certificate_control.await_count, 2)
 
 
-class BootstrapRecordTests(unittest.IsolatedAsyncioTestCase):
+class AdmissionRecordTests(unittest.IsolatedAsyncioTestCase):
     async def test_encrypted_identify_then_full_prepare_at_default_att_mtu(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             fixture = peer.Peer(base / 'state', base / 'result')
-            fixture.security, key, _ = HarnessTests().exchange()
+            fixture.security, client = HarnessTests().exchange()
             fixture.member_loop = AsyncMock()  # No network or radio action in this test.
-            client = peer.AESGCM(key[:32])
 
             def exchange(record, plain):
-                counter = fixture.security.counter
-                nonce = fixture.security.nonce_prefix + struct.pack('>I', counter)
-                ciphertext = client.encrypt(nonce, plain, None)
+                ciphertext = client.encrypt(plain)
                 self.assertLessEqual(len(ciphertext), 4096)
                 for offset in range(0, len(ciphertext), 10):
                     packet = struct.pack('>BBIHH', 1, 1, record, len(ciphertext), offset) + ciphertext[offset:offset + 10]
@@ -437,8 +511,7 @@ class BootstrapRecordTests(unittest.IsolatedAsyncioTestCase):
                     header = struct.unpack('>BBIHBBH', fragment[:12])
                     self.assertEqual(header, (1, 1, record, len(fixture.response), 1, 0, len(response)))
                     response += fragment[12:]
-                nonce = fixture.security.nonce_prefix + struct.pack('>I', counter + 1)
-                return json.loads(client.decrypt(nonce, response, None))
+                return json.loads(client.decrypt(response))
 
             identity = exchange(3, peer.encoded({'phase': 'identify'}))
             self.assertEqual(identity['leaf'], fixture.state['leaf'])
@@ -465,12 +538,12 @@ class BootstrapRecordTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result, {'phase': 'prepared', 'join_id': '3' * 32, 'digest': peer.digest(raw), 'hostname': 'bench-member'})
             self.assertEqual(json.loads(fixture.path.read_text())['proposal'], proposal)
             self.assertTrue(any(e['event'] == 'prepared_after_authenticated_proposal' for e in fixture.result['events']))
-            self.assertEqual(fixture.security.counter, 5)
+            self.assertEqual((fixture.security.tx_sequence, fixture.security.rx_sequence), (3, 3))
 
     async def test_rejection_diagnostics_have_only_framing_and_error_category(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = peer.Peer(Path(directory) / 'state', Path(directory) / 'result')
-            fixture.security, _, _ = HarnessTests().exchange()
+            fixture.security, _ = HarnessTests().exchange()
             secret = b'NEVER_LOG_THIS_SECRET'
             with self.assertRaises(Exception):
                 fixture.write(struct.pack('>BBIHH', 1, 1, 4, len(secret), 0) + secret)
@@ -483,11 +556,11 @@ class BootstrapRecordTests(unittest.IsolatedAsyncioTestCase):
     async def test_unrelated_bluez_device_disconnect_cannot_reset_security(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = peer.Peer(Path(directory) / 'state', Path(directory) / 'result')
-            fixture.security, _, _ = HarnessTests().exchange()
+            fixture.security, _ = HarnessTests().exchange()
             fixture.connection_device = '/own-device'
-            fixture.security.counter = 7
+            fixture.security.tx_sequence = 7
             fixture.bluez_disconnected('/unrelated-device')
-            self.assertEqual((fixture.security.phase, fixture.security.counter), (2, 7))
+            self.assertEqual((fixture.security.phase, fixture.security.tx_sequence), (3, 7))
             fixture.bluez_disconnected('/own-device')
             self.assertEqual(fixture.security.phase, 0)
             self.assertIsNone(fixture.connection_device)

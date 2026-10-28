@@ -22,8 +22,8 @@ template<class T>T ident(unsigned n){char value[33];snprintf(value,sizeof(value)
 struct FakeTls{bool server=false;int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;std::vector<std::string> frames;size_t next=0;bool receive(std::string& out,uint32_t timeout){assert(timeout<=2000);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}};
 struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false;RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
 std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
-unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0;bool disk_ok=true,send_ok=true;unsigned failure=0;bool relay_running=false;std::vector<std::string> events,sent;
-void relay_cancel_all(){}void gatt_client_disconnect(){}
+unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;
+void gatt_client_disconnect(){}
 esp_err_t save_group(const Group&){++group_saves;return disk_ok?ESP_OK:ESP_FAIL;}
 bool current_peer_credential(const Active& active,const Group& value){for(const auto& peer:value.peers)if(peer.id==active.peer&&peer.id==active.tls->authenticated)for(const auto& allowed:active.tls->allowed)if(peer.id==allowed.id&&peer.der==allowed.der&&peer.pin==allowed.pin)return true;return false;}
 // The cryptographic primitive is injected, not the production scope/digest
@@ -125,7 +125,7 @@ def main():
  with tempfile.TemporaryDirectory(prefix='amity-removal-') as temp:
   temp=Path(temp);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+private+actual+'\n}\n'+SUITE)
-  sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','relay.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
+  sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
   subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(temp)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+list(map(str,[cpp]+sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)
   schema_vectors(binary)

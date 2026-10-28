@@ -12,7 +12,9 @@ The owner resolves equipment using ordinary local discovery and applies original
 
 ## Enrollment and role
 
-Keep independent origin/Add authorization, Security2 physical bootstrap, actual-hostname profile-2 proposal, exact-leaf LAN proof and durable headless adoption. Prepared transactions reconcile idempotently; a lost acknowledgment does not create a new member or undo committed authority. An authorized helper may relay opaque setup bytes but gains no input/control authority or plaintext setup/network secrets.
+The main’s Amity devices → Add scans directly for unclaimed candidates after the user opens their three-to-below-ten-second FW RESET window. Admission uses fresh ephemeral key exchange and AEAD by default. `CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE`, default off, requires the candidate’s existing printed Matter manual/QR code through PAKE to authenticate fresh Amity session keys. Both ends require the same profile without fallback; no full Matter commissioning or fabric creation occurs. There is no separate Add secret, stored verifier, USB provisioning/rotation step or member relay. Preserve stable origin identity and factory Matter/admin credentials.
+
+Bind the selected candidate and actual hostname, retain exact-leaf LAN proof and commit headless adoption durably. Prepared transactions reconcile idempotently; a lost acknowledgment does not create a new member or undo committed authority.
 
 Only checked committed Matter/network setup or proven retained original authority establishes the main. Reboot and last-fabric removal preserve role. Added devices cannot host UI/home integrations, own a remote, become input gateways, promote/elect themselves or fail over automatically.
 

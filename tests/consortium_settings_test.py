@@ -139,7 +139,7 @@ def main():
  public=''.join(function(source,name) for name in ['void runtime_settings_hooks(','bool runtime_device_settings_authorized(','std::string runtime_device_settings(','esp_err_t runtime_write_device_settings(','std::string runtime_device_settings_operation(','void runtime_device_settings_response_attempted('])
  with tempfile.TemporaryDirectory(prefix='amity-settings-') as directory:
   directory=Path(directory);(directory/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5;\n');cpp=directory/'test.cpp';binary=directory/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+private+public+'\n}\n'+HELPERS)
-  sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','relay.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
+  sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
   subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(directory)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+[str(cpp)]+list(map(str,sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)
   schema_vectors(binary)

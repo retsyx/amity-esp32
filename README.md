@@ -113,7 +113,9 @@ If the `esptool` command is unavailable, use `python3 -m esptool` on macOS/Linux
 
 When installation finishes, leave the board powered on, or connect it to its USB-C power supply.
 
-For first-board Matter setup on a fresh, unconfigured board, press and release **FW RESET before three seconds**. Setup stays closed after a normal reboot. To add a prepared board to an existing Amity system, use its separate Add to Amity code, hold FW RESET for at least three seconds, and release before ten seconds. Holding for ten seconds performs factory reset.
+For first-board Matter setup on a fresh, unconfigured board, press and release **FW RESET before three seconds**. Setup stays closed after a normal reboot. To add an unclaimed board to an existing system, open **Amity devices → Add** on the main, hold the new board’s **FW RESET** for at least three seconds, and release before ten seconds. Choose it if several boards appear, enter its name, and add it. Holding for ten seconds performs factory reset.
+
+Adding devices requires updated firmware on both boards. Normal setup needs no code. If Amity asks for one, use the new board's existing Matter manual code or QR payload. Existing Matter setup cards remain valid. Adding a device does not enroll it in a Matter home.
 
 ### HDMI Connections
 
@@ -132,7 +134,7 @@ On hardware with several HDMI adapters, unused connections can stay empty. Adapt
 
 Matter pairing supplies Amity with its Wi-Fi settings. Complete this step even if you intend to use HomeKit for everyday control.
 
-1. On a fresh first board with no home pairing or configured equipment, press **FW RESET** and release before three seconds to open Matter setup. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`, or enter the manual pairing code from `amity-pairing.txt`. An additional board uses the additional **Amity** tab on the original controller instead.
+1. On a fresh first board with no home pairing or configured equipment, press **FW RESET** and release before three seconds to open Matter setup. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`, or enter the manual pairing code from `amity-pairing.txt`. Add another board through **Amity devices → Add** on the original controller instead.
 2. Follow the app's prompts to connect Amity to your 2.4 GHz Wi-Fi network. If its first setup window expires, use the same short press to reopen it while the board remains eligible. Holding FW RESET for ten seconds performs a factory reset.
 3. On a phone or computer connected to the same network, open the administration address on the setup card. For the example above, it is `https://living-room.local`. The default hostname gives `https://amity.local`.
 4. The browser will show a certificate warning because Amity creates its own certificate for encryption. Open the warning's details and accept the certificate to continue.
@@ -245,7 +247,7 @@ Open **Advanced**. In the 'Configuration' section, press 'Download' to save a po
 
 The backup contains activities and device-specific control settings. It does not contain Wi-Fi settings, admin credentials, pairings, hostname changes, or the HDMI-CEC address. Keep the original installation folder as well; a configuration backup does not replace your pairing card or USB installation image.
 
-If the main Amity fails, disconnect/isolate it, set up replacement hardware through Matter BLE, and use the existing **Advanced** configuration upload/restore to recover saved activity/device IDs, names and order. Pair the remote and home integrations again, and factory-reset each other Amity device with the existing ten-second button hold, then open its three-to-below-ten-second Add window and re-add it through the replacement main. Its saved Add code/hardware identity survives reset; Wi-Fi and old operational trust are cleared. The backup does not copy keys, pairings or trust in the old main. Restored activities retain their original equipment and receiver-input choices. Runtime lookup reports unavailable owners or equipment without permanently disabling an activity. Restoration does not start an activity. This is manual recovery, with no automatic failover or live authority transfer.
+If the main Amity fails, disconnect/isolate it, set up replacement hardware through Matter BLE, and use the existing **Advanced** configuration upload/restore to recover saved activity/device IDs, names and order. Pair the remote and home integrations again, and factory-reset each other Amity device with the existing ten-second button hold, then open its three-to-below-ten-second Add window and re-add it through the replacement main. Its hardware identity and original Matter setup code survive reset; Wi-Fi and old operational trust are cleared. The backup does not copy keys, pairings or trust in the old main. Restored activities retain their original equipment and receiver-input choices. Runtime lookup reports unavailable owners or equipment without permanently disabling an activity. Restoration does not start an activity. This is manual recovery, with no automatic failover or live authority transfer.
 
 ## Firmware Updates
 

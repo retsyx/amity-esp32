@@ -131,3 +131,22 @@ endmenu
 endif
 endmenu
 
+menu "Amity admission"
+
+config AMITY_ADMISSION_REQUIRE_SETUP_CODE
+    bool "Require the printed setup code when adding Amity"
+    default n
+    help
+        By default, an unclaimed device is added through a physically opened
+        setup window using ephemeral key exchange and encrypted messages.
+
+        Enable this option to require the candidate's existing printed Matter
+        manual setup code or QR code through a password-authenticated exchange.
+        The original controller and candidate must use the same setting;
+        mismatched profiles are rejected without falling back to another mode.
+
+        This authenticates only Amity admission. It does not commission Matter,
+        create a Matter fabric, or change the device's controller/member role.
+        No separate Add to Amity secret is provisioned or stored.
+
+endmenu

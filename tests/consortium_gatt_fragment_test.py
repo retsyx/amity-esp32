@@ -24,6 +24,7 @@ constexpr uint16_t BLE_HS_CONN_HANDLE_NONE = 0xffff;
 constexpr size_t BLE_ATT_ATTR_MAX_LEN = 512;
 uint16_t client_connection = 31;
 uint64_t client_generation = 7;
+uint32_t client_callback_cookie = 7;
 uint32_t client_record = 0;
 std::mutex client_mutex;
 std::string client_response;

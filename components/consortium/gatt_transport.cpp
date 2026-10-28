@@ -2,9 +2,8 @@
 #ifdef ESP_PLATFORM
 #include "platform.hpp"
 #include "amity/consortium/bootstrap.hpp"
-#include "protocomm.h"
-#include "session.pb-c.h"
-#include "protocomm_security2.h"
+#include "admission_crypto.hpp"
+#include "device_settings.hpp"
 #include "platform/CHIPDeviceLayer.h"
 #include "platform/internal/BLEManager.h"
 #include "freertos/FreeRTOS.h"
@@ -30,48 +29,77 @@ const ble_uuid128_t record_uuid=BLE_UUID128_INIT(0x12,0xa3,0x0c,0x09,0x9d,0xcb,0
 struct Work {uint64_t generation=0,session=0;uint16_t connection=0,total=0,offset=0,length=0;uint32_t record=0;uint8_t endpoint=0,bytes[512]{};bool close=false;};
 QueueHandle_t work_queue=nullptr;
 std::mutex state_mutex;
-uint64_t generation=0,deadline=0,server_session=0,pc_session=0;
+uint64_t generation=0,deadline=0,server_session=0;
 uint16_t server_connection=BLE_HS_CONN_HANDLE_NONE,attribute_handle=0;
-std::string srv_salt,srv_verifier,srv_response,advertised_name;
+std::string srv_response,advertised_name,server_id;uint32_t server_pin=0,server_callback_cookie=0;
 BootstrapHandler server_handler;
-bool server_open=false,registered=false;
+bool server_open=false,server_sealed=false,registered=false;
 std::atomic_uint failed_proofs{0};
-std::atomic_bool processing_record{false},pc_live{false};
+std::atomic_bool processing_record{false},channel_live{false};
 std::atomic_uint outstanding_work{0};
 bool post_work(const Work &work){++outstanding_work;if(work_queue&&xQueueSend(work_queue,&work,0)==pdTRUE)return true;--outstanding_work;return false;}
 struct WorkFinished {~WorkFinished(){processing_record=false;--outstanding_work;}};
 uint16_t cancelled_server=BLE_HS_CONN_HANDLE_NONE,cancelled_client=BLE_HS_CONN_HANDLE_NONE;
 uint32_t response_record=0;uint16_t response_offset=0;
 uint8_t response_endpoint=0,response_status=0;
-protocomm_t *pc=nullptr;
-std::string pc_salt,pc_verifier;
-protocomm_security2_params_t pc_params{};
-uint16_t pc_connection=BLE_HS_CONN_HANDLE_NONE;
+std::unique_ptr<AdmissionServer> server_channel;
 BootstrapRecords records;
-uint64_t pc_started=0,record_started=0;uint32_t pending_record=0;bool pc_authenticated=false;
-esp_err_t endpoint(uint32_t,const uint8_t *in,ssize_t size,uint8_t **out,ssize_t *outsize,void*){
-    if(size<=0||size>4080)return ESP_ERR_INVALID_SIZE;
-    BootstrapHandler handler;{std::lock_guard<std::mutex> guard(state_mutex);if(!server_open||now_ms()>=deadline)return ESP_ERR_INVALID_STATE;handler=server_handler;}std::string response;auto result=handler?handler(std::string_view(reinterpret_cast<const char*>(in),size),response):ESP_ERR_INVALID_STATE;if(result!=ESP_OK||response.empty()||response.size()>4080)return result==ESP_OK?ESP_ERR_INVALID_SIZE:result;*out=static_cast<uint8_t*>(malloc(response.size()));if(!*out)return ESP_ERR_NO_MEM;memcpy(*out,response.data(),response.size());*outsize=response.size();return ESP_OK;
-}
-void close_pc(){if(pc){if(pc_connection!=BLE_HS_CONN_HANDLE_NONE)protocomm_close_session(pc,pc_connection);protocomm_delete(pc);pc=nullptr;}pc_live=false;pc_connection=BLE_HS_CONN_HANDLE_NONE;pc_session=0;pc_started=record_started=0;pending_record=0;pc_authenticated=false;records.disconnect();}
-void worker(void*){Work work;while(true){if(xQueueReceive(work_queue,&work,pdMS_TO_TICKS(100))!=pdTRUE){
-        if(pc&&((!pc_authenticated&&now_ms()-pc_started>=30000)||(record_started&&now_ms()-record_started>=30000))){
-            const auto connection=pc_connection;close_pc();++failed_proofs;ble_gap_terminate(connection,BLE_ERR_REM_USER_CONN_TERM);
+uint64_t channel_session=0,channel_started=0,record_started=0;
+uint32_t pending_record=0;uint8_t pending_endpoint=0,last_endpoint=0;
+void close_channel(){server_channel.reset();channel_live=false;channel_session=channel_started=record_started=0;pending_record=0;records.disconnect();}
+void worker(void*){
+    Work work;
+    while(true){
+        if(xQueueReceive(work_queue,&work,pdMS_TO_TICKS(100))!=pdTRUE){
+            if(server_channel&&((!server_channel->authenticated()&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000))){
+                uint16_t connection;{std::lock_guard<std::mutex> guard(state_mutex);connection=server_connection;}
+                close_channel();++failed_proofs;if(connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(connection,BLE_ERR_REM_USER_CONN_TERM);
+            }
+            continue;
         }
-        continue;
-    }processing_record=true;WorkFinished finished;if(work.close){close_pc();continue;}std::string salt,verifier;{std::lock_guard<std::mutex> guard(state_mutex);if(!server_open||generation!=work.generation||server_session!=work.session||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;salt=srv_salt;verifier=srv_verifier;}
-        if(pc&&((!pc_authenticated&&now_ms()-pc_started>=30000)||(record_started&&now_ms()-record_started>=30000))){close_pc();++failed_proofs;ble_gap_terminate(work.connection,BLE_ERR_REM_USER_CONN_TERM);continue;}
-        if(pc&&pc_session!=work.session)close_pc();
-        if(!pc){pc_session=work.session;pc=protocomm_new();pc_live=pc!=nullptr;pc_salt=salt;pc_verifier=verifier;pc_params={pc_salt.data(),static_cast<uint16_t>(pc_salt.size()),pc_verifier.data(),static_cast<uint16_t>(pc_verifier.size())};if(!pc||protocomm_set_security(pc,"session",&protocomm_security2,&pc_params)!=ESP_OK||protocomm_add_endpoint(pc,"join",endpoint,nullptr)!=ESP_OK||protocomm_open_session(pc,work.connection)!=ESP_OK){close_pc();continue;}pc_connection=work.connection;pc_started=now_ms();records.connect(work.generation);}
-        if(!record_started){pending_record=work.record;record_started=now_ms();}
-        char rid[33];snprintf(rid,sizeof(rid),"%032x",static_cast<unsigned>(work.record));auto parsed=model::MessageId::parse(rid);if(!parsed)continue;auto result=records.fragment(work.generation,*parsed,work.total,work.offset,std::string_view(reinterpret_cast<char*>(work.bytes),work.length));if(result==BootstrapRecords::Result::incomplete)continue;
-        std::string response;bool good=false;if(result==BootstrapRecords::Result::duplicate){response=std::string(records.cached_response());good=true;record_started=0;}
-        else if(result==BootstrapRecords::Result::complete){processing_record=true;uint8_t *out=nullptr;ssize_t length=0;auto request=records.request();auto e=protocomm_req_handle(pc,work.endpoint?"join":"session",work.connection,reinterpret_cast<const uint8_t*>(request.data()),request.size(),&out,&length);good=e==ESP_OK&&out&&length>0&&length<=4096;if(good){response.assign(reinterpret_cast<char*>(out),length);good=records.finish(*parsed,response);record_started=0;
-            if(!work.endpoint){SessionData *session=session_data__unpack(nullptr,response.size(),reinterpret_cast<const uint8_t*>(response.data()));if(session&&session->sec_ver==SEC_SCHEME_VERSION__SecScheme2&&session->sec2&&session->sec2->msg==SEC2_MSG_TYPE__S2Session_Response1&&session->sec2->sr1&&session->sec2->sr1->status==STATUS__Success)pc_authenticated=true;if(session)session_data__free_unpacked(session,nullptr);}
-        }free(out);if(!good){++failed_proofs;close_pc();}}
-        {std::lock_guard<std::mutex> guard(state_mutex);if(server_open&&generation==work.generation&&server_session==work.session&&server_connection==work.connection){response_record=work.record;response_endpoint=work.endpoint;response_status=good?1:2;srv_response=std::move(response);}}
+        processing_record=true;WorkFinished finished;
+        if(work.close){close_channel();continue;}
+        std::string own_id;uint32_t pin=0;
+        {std::lock_guard<std::mutex> guard(state_mutex);
+            if(!server_open||generation!=work.generation||server_session!=work.session||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;
+            own_id=server_id;pin=server_pin;
+        }
+        if(server_channel&&channel_session!=work.session)close_channel();
+        if(!server_channel){
+            server_channel=std::make_unique<AdmissionServer>(configured_admission_mode(),own_id,pin);
+            channel_live=true;channel_session=work.session;channel_started=now_ms();records.connect(work.generation);
+        }
+        if((!server_channel->authenticated()&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000)){
+            close_channel();++failed_proofs;ble_gap_terminate(work.connection,BLE_ERR_REM_USER_CONN_TERM);continue;
+        }
+        if(record_started&&(pending_record!=work.record||pending_endpoint!=work.endpoint)){
+            close_channel();++failed_proofs;ble_gap_terminate(work.connection,BLE_ERR_REM_USER_CONN_TERM);continue;
+        }
+        if(!record_started){pending_record=work.record;pending_endpoint=work.endpoint;record_started=now_ms();}
+        char rid[33];snprintf(rid,sizeof(rid),"%032x",static_cast<unsigned>(work.record));auto parsed=model::MessageId::parse(rid);if(!parsed)continue;
+        const auto result=records.fragment(work.generation,*parsed,work.total,work.offset,std::string_view(reinterpret_cast<char*>(work.bytes),work.length));
+        if(result==BootstrapRecords::Result::incomplete)continue;
+        std::string response;bool good=false;
+        if(result==BootstrapRecords::Result::duplicate&&last_endpoint==work.endpoint){response=std::string(records.cached_response());good=true;record_started=0;}
+        else if(result==BootstrapRecords::Result::complete){
+            const auto request=records.request();
+            if(!work.endpoint)good=server_channel->handshake(request,response);
+            else if(server_channel->authenticated()){
+                std::string plaintext,reply;BootstrapHandler handler;
+                {std::lock_guard<std::mutex> guard(state_mutex);if(server_open&&generation==work.generation&&server_session==work.session&&now_ms()<deadline)handler=server_handler;}
+                good=handler&&server_channel->decrypt(request,plaintext)&&handler(plaintext,reply)==ESP_OK&&!reply.empty()&&server_channel->encrypt(reply,response);
+                if(!plaintext.empty())std::fill(plaintext.begin(),plaintext.end(),0);
+            }
+            good=good&&!response.empty()&&response.size()<=4096&&records.finish(*parsed,response);
+            if(good){last_endpoint=work.endpoint;record_started=0;}
+        }
+        if(!good){++failed_proofs;close_channel();}
+        {std::lock_guard<std::mutex> guard(state_mutex);
+            if(server_open&&generation==work.generation&&server_session==work.session&&server_connection==work.connection){response_record=work.record;response_endpoint=work.endpoint;response_status=good?1:2;srv_response=std::move(response);}
+        }
         if(failed_proofs>=5){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}
-    }}
+    }
+}
 int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){
     std::lock_guard<std::mutex> guard(state_mutex);if(!server_open||now_ms()>=deadline||failed_proofs>=5||server_connection!=connection)return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
     if(context->op==BLE_GATT_ACCESS_OP_WRITE_CHR){const auto length=OS_MBUF_PKTLEN(context->om);if(length<7||length>BLE_ATT_ATTR_MAX_LEN)return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;uint8_t bytes[BLE_ATT_ATTR_MAX_LEN];if(os_mbuf_copydata(context->om,0,length,bytes))return BLE_ATT_ERR_UNLIKELY;
@@ -90,14 +118,14 @@ int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){
 }
 int server_gap(ble_gap_event *,void *);
 int advertise_remaining(){
-    if(!server_open||now_ms()>=deadline||failed_proofs>=5)return BLE_HS_EAPP;
+    if(!server_open||server_sealed||now_ms()>=deadline||failed_proofs>=5)return BLE_HS_EAPP;
     ble_gap_adv_params params{};params.conn_mode=BLE_GAP_CONN_MODE_UND;params.disc_mode=BLE_GAP_DISC_MODE_GEN;
-    return ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC,nullptr,static_cast<int32_t>(deadline-now_ms()),&params,server_gap,reinterpret_cast<void*>(static_cast<uintptr_t>(generation)));
+    return ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC,nullptr,static_cast<int32_t>(deadline-now_ms()),&params,server_gap,reinterpret_cast<void*>(static_cast<uintptr_t>(server_callback_cookie)));
 }
 int server_gap(ble_gap_event *event,void *token){
-    const auto expected=reinterpret_cast<uintptr_t>(token);std::lock_guard<std::mutex> guard(state_mutex);if(expected!=generation)return 0;
+    const auto expected=reinterpret_cast<uintptr_t>(token);std::lock_guard<std::mutex> guard(state_mutex);if(expected!=server_callback_cookie)return 0;
     if(event->type==BLE_GAP_EVENT_CONNECT){
-        if(!event->connect.status){if(!server_open||server_connection!=BLE_HS_CONN_HANDLE_NONE||server_session==UINT64_MAX)ble_gap_terminate(event->connect.conn_handle,BLE_ERR_REM_USER_CONN_TERM);else{++server_session;server_connection=event->connect.conn_handle;}}
+        if(!event->connect.status){if(!server_open||server_sealed||server_connection!=BLE_HS_CONN_HANDLE_NONE||server_session==UINT64_MAX)ble_gap_terminate(event->connect.conn_handle,BLE_ERR_REM_USER_CONN_TERM);else{++server_session;server_connection=event->connect.conn_handle;}}
         else advertise_remaining();
     }else if(event->type==BLE_GAP_EVENT_DISCONNECT&&event->disconnect.conn.conn_handle==server_connection){
         server_connection=BLE_HS_CONN_HANDLE_NONE;Work work;work.close=true;post_work(work);srv_response.clear();response_record=response_status=0;
@@ -110,25 +138,32 @@ std::mutex client_mutex;
 uint64_t client_generation=0;
 uint16_t client_connection=BLE_HS_CONN_HANDLE_NONE,client_service_start=0,client_service_end=0,client_attribute=0;
 ble_addr_t candidate_address{};
-model::OctopusId expected_candidate;
-bool found_candidate=false,client_workflow=false,client_discovery_waiting=false;
-int client_error=0;
+struct Discovered {RuntimeAdmissionCandidate public_value;ble_addr_t address;};
+std::vector<Discovered> discovered;
+uint32_t client_callback_cookie=0;
+bool client_workflow=false,client_discovery_waiting=false;
+std::atomic_bool client_stopping{true};
+std::atomic_int client_error{0};
 std::string client_response;
 uint32_t client_record=0;
 void complete(int error){client_error=error;xSemaphoreGive(client_done);}
-bool current(void *token){return reinterpret_cast<uintptr_t>(token)==client_generation;}
+bool current(void *token){return client_workflow&&reinterpret_cast<uintptr_t>(token)==client_callback_cookie;}
+bool admission_service(const ble_hs_adv_fields& fields){
+    for(size_t i=0;i<fields.num_uuids128;++i)if(ble_uuid_cmp(&fields.uuids128[i].u,&service_uuid.u)==0)return true;
+    return false;
+}
 int client_gap(ble_gap_event *event,void *token){std::lock_guard<std::mutex> guard(client_mutex);if(!current(token))return 0;
-    if(event->type==BLE_GAP_EVENT_DISC&&client_discovery_waiting){ble_hs_adv_fields fields{};if(ble_hs_adv_parse_fields(&fields,event->disc.data,event->disc.length_data)==0&&fields.name&&fields.name_len==8){const std::string name(reinterpret_cast<const char*>(fields.name),fields.name_len);if(name=="A-"+expected_candidate.str().substr(26)){
-        candidate_address=event->disc.addr;found_candidate=true;client_discovery_waiting=false;
-        // Pinned NimBLE cancellation disables scanning and resets its master
-        // state without emitting DISC_COMPLETE. Wake this generation's scan
-        // waiter explicitly, once cancellation has actually succeeded. A late
-        // natural completion must not wake the following connection wait.
-        complete(ble_gap_disc_cancel());
-    }}}
-    else if(event->type==BLE_GAP_EVENT_DISC_COMPLETE&&client_discovery_waiting){client_discovery_waiting=false;complete(found_candidate?0:BLE_HS_ENOENT);}
+    if(event->type==BLE_GAP_EVENT_DISC&&client_discovery_waiting){
+        ble_hs_adv_fields fields{};
+        if(ble_hs_adv_parse_fields(&fields,event->disc.data,event->disc.length_data)!=0||!admission_service(fields))return 0;
+        const auto duplicate=std::find_if(discovered.begin(),discovered.end(),[&](const auto& value){return value.address.type==event->disc.addr.type&&memcmp(value.address.val,event->disc.addr.val,6)==0;});
+        if(duplicate!=discovered.end()||discovered.size()>=8)return 0;
+        std::string label="Amity";
+        if(fields.name&&fields.name_len==8&&fields.name[0]=='A'&&fields.name[1]=='-'&&std::all_of(fields.name+2,fields.name+8,[](uint8_t c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');}))label+=" "+std::string(reinterpret_cast<const char*>(fields.name+2),6);
+        discovered.push_back({{random_hex(16),label},event->disc.addr});
+    }else if(event->type==BLE_GAP_EVENT_DISC_COMPLETE&&client_discovery_waiting){client_discovery_waiting=false;complete(0);}
     else if(event->type==BLE_GAP_EVENT_CONNECT){if(!event->connect.status)client_connection=event->connect.conn_handle;complete(event->connect.status);}
-    else if(event->type==BLE_GAP_EVENT_DISCONNECT){if(client_connection==event->disconnect.conn.conn_handle){client_connection=BLE_HS_CONN_HANDLE_NONE;complete(BLE_HS_ENOTCONN);}}
+    else if(event->type==BLE_GAP_EVENT_DISCONNECT&&client_connection==event->disconnect.conn.conn_handle){client_connection=BLE_HS_CONN_HANDLE_NONE;client_stopping=true;complete(BLE_HS_ENOTCONN);}
     return 0;
 }
 int on_service(uint16_t,const ble_gatt_error *error,const ble_gatt_svc *service,void *token){std::lock_guard<std::mutex> guard(client_mutex);if(!current(token))return BLE_HS_EDONE;if(!error->status&&service){client_service_start=service->start_handle;client_service_end=service->end_handle;}else complete(error->status==BLE_HS_EDONE?0:error->status);return 0;}
@@ -140,28 +175,62 @@ int on_read_fragment(uint16_t,const ble_gatt_error *error,ble_gatt_attr *attribu
     const auto count=OS_MBUF_PKTLEN(attribute->om);if(count>512){complete(BLE_HS_EMSGSIZE);return BLE_HS_EDONE;}
     client_response.resize(count);if(os_mbuf_copydata(attribute->om,0,count,client_response.data()))complete(BLE_HS_EINVAL);else complete(0);return 0;
 }
-bool wait(uint32_t ms){return xSemaphoreTake(client_done,pdMS_TO_TICKS(ms))==pdTRUE&&client_error==0;}
-void clear_done(){while(xSemaphoreTake(client_done,0)==pdTRUE){}client_error=0;}
+bool wait(uint32_t ms){return !client_stopping.load()&&xSemaphoreTake(client_done,pdMS_TO_TICKS(ms))==pdTRUE&&!client_stopping.load()&&client_error.load()==0;}
+void clear_done(){while(xSemaphoreTake(client_done,0)==pdTRUE){}if(!client_stopping.load())client_error=0;}
 }
 esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=xQueueCreate(16,sizeof(Work));client_done=xSemaphoreCreateBinary();if(!work_queue||!client_done)return ESP_ERR_NO_MEM;
     static ble_gatt_chr_def chars[2]{};chars[0].uuid=&record_uuid.u;chars[0].access_cb=access;chars[0].flags=BLE_GATT_CHR_F_READ|BLE_GATT_CHR_F_WRITE;chars[0].val_handle=&attribute_handle;
     static std::vector<ble_gatt_svc_def> services;ble_gatt_svc_def service{};service.type=BLE_GATT_SVC_TYPE_PRIMARY;service.uuid=&service_uuid.u;service.characteristics=chars;services.push_back(service);
     if(chip::DeviceLayer::Internal::BLEMgrImpl().ConfigureExtraServices(services,false)!=CHIP_NO_ERROR)return ESP_ERR_INVALID_STATE;
-    if(xTaskCreateWithCaps(worker,"group_pake",16384,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
+    if(xTaskCreateWithCaps(worker,"group_admission",16384,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     registered=true;return ESP_OK;
 }
-esp_err_t gatt_server_open(uint64_t gen,std::string salt,std::string verifier,BootstrapHandler handler){std::lock_guard<std::mutex> guard(state_mutex);if(!registered||server_open||!gen||salt.size()!=32||verifier.size()!=384)return ESP_ERR_INVALID_STATE;generation=gen;deadline=now_ms()+180000;srv_salt=std::move(salt);srv_verifier=std::move(verifier);server_handler=std::move(handler);server_connection=BLE_HS_CONN_HANDLE_NONE;failed_proofs=0;response_status=response_record=0;srv_response.clear();
-    // Runtime identity is public; derive the advertisement suffix from its
-    // already configured own certificate SAN through the callback-free ID API.
-    std::string origin;auto e=read_record("amity_origin","committed",origin,128);if(e!=ESP_OK||origin.size()!=origin_record_prefix.size()+32||std::string_view(origin).substr(0,origin_record_prefix.size())!=origin_record_prefix)return ESP_ERR_INVALID_STATE;advertised_name="A-"+origin.substr(origin.size()-6);
-    ble_hs_adv_fields fields{};fields.flags=BLE_HS_ADV_F_DISC_GEN|BLE_HS_ADV_F_BREDR_UNSUP;fields.uuids128=const_cast<ble_uuid128_t*>(&service_uuid);fields.num_uuids128=1;fields.uuids128_is_complete=1;fields.name=reinterpret_cast<const uint8_t*>(advertised_name.data());fields.name_len=advertised_name.size();fields.name_is_complete=1;
-    int result=ble_gap_adv_set_fields(&fields);if(result)return ESP_FAIL;ble_gap_adv_params params{};params.conn_mode=BLE_GAP_CONN_MODE_UND;params.disc_mode=BLE_GAP_DISC_MODE_GEN;server_open=true;result=ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC,nullptr,180000,&params,server_gap,reinterpret_cast<void*>(static_cast<uintptr_t>(gen)));if(result){server_open=false;return ESP_FAIL;}return ESP_OK;
+esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler handler){
+    std::lock_guard<std::mutex> guard(state_mutex);
+    if(!registered||server_open||!gen||!own_id||!handler||server_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
+    const auto* factory=device_settings::factory();
+    if(configured_admission_mode()==AdmissionMode::setup_code&&(!factory||!amity::valid_setup_pin(factory->passcode)))return ESP_ERR_INVALID_STATE;
+    generation=gen;deadline=now_ms()+180000;server_sealed=false;server_id=own_id.str();server_pin=factory?factory->passcode:0;server_handler=std::move(handler);
+    server_connection=BLE_HS_CONN_HANDLE_NONE;failed_proofs=0;response_status=response_record=0;srv_response.clear();++server_callback_cookie;
+    advertised_name="A-"+server_id.substr(26);
+    ble_hs_adv_fields fields{};fields.flags=BLE_HS_ADV_F_DISC_GEN|BLE_HS_ADV_F_BREDR_UNSUP;fields.uuids128=const_cast<ble_uuid128_t*>(&service_uuid);fields.num_uuids128=1;fields.uuids128_is_complete=1;
+    fields.name=reinterpret_cast<const uint8_t*>(advertised_name.data());fields.name_len=advertised_name.size();fields.name_is_complete=1;
+    int result=ble_gap_adv_set_fields(&fields);if(result)return ESP_FAIL;
+    ble_gap_adv_params params{};params.conn_mode=BLE_GAP_CONN_MODE_UND;params.disc_mode=BLE_GAP_DISC_MODE_GEN;server_open=true;
+    result=ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC,nullptr,180000,&params,server_gap,reinterpret_cast<void*>(static_cast<uintptr_t>(server_callback_cookie)));
+    if(result){server_open=false;return ESP_FAIL;}return ESP_OK;
 }
-void gatt_server_close(){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_server=server_connection;ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}server_connection=BLE_HS_CONN_HANDLE_NONE;if(was_open||pc_live){Work work;work.close=true;if(work_queue)post_work(work);}srv_response.clear();server_handler={};}
-esp_err_t gatt_client_connect(model::OctopusId expected,uint64_t gen){if(!registered||!expected||!gen)return ESP_ERR_INVALID_STATE;{std::lock_guard<std::mutex> guard(client_mutex);client_generation=gen;client_workflow=true;expected_candidate=expected;client_connection=BLE_HS_CONN_HANDLE_NONE;client_service_start=client_service_end=client_attribute=0;found_candidate=false;client_discovery_waiting=true;client_record=0;clear_done();}
-    void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(gen));ble_gap_disc_params params{};params.passive=0;params.filter_duplicates=1;if(ble_gap_disc(BLE_OWN_ADDR_PUBLIC,20000,&params,client_gap,token)||!wait(21000))return ESP_FAIL;ble_gap_conn_params connect{};connect.scan_itvl=0x10;connect.scan_window=0x10;connect.itvl_min=24;connect.itvl_max=40;connect.supervision_timeout=400;clear_done();if(ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,&connect,client_gap,token)||!wait(11000))return ESP_FAIL;clear_done();if(ble_gattc_disc_svc_by_uuid(client_connection,&service_uuid.u,on_service,token)||!wait(5000)||!client_service_start)return ESP_FAIL;clear_done();if(ble_gattc_disc_chrs_by_uuid(client_connection,client_service_start,client_service_end,&record_uuid.u,on_characteristic,token)||!wait(5000)||!client_attribute)return ESP_FAIL;return ESP_OK;
+void gatt_server_close(){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;server_pin=0;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_server=server_connection;ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}server_connection=BLE_HS_CONN_HANDLE_NONE;if(was_open||channel_live){Work work;work.close=true;post_work(work);}srv_response.clear();server_handler={};}
+void gatt_server_seal(){std::lock_guard<std::mutex> guard(state_mutex);server_sealed=true;if(ble_gap_adv_active())ble_gap_adv_stop();}
+esp_err_t gatt_client_discover(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){
+    output.clear();if(!registered||!gen)return ESP_ERR_INVALID_STATE;
+    void* token=nullptr;
+    {std::lock_guard<std::mutex> guard(client_mutex);
+        if(client_connection!=BLE_HS_CONN_HANDLE_NONE||client_discovery_waiting||client_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
+        client_generation=gen;client_workflow=true;client_stopping=false;++client_callback_cookie;token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));
+        discovered.clear();client_discovery_waiting=true;client_record=0;clear_done();
+    }
+    ble_gap_disc_params params{};params.passive=0;params.filter_duplicates=1;
+    if(ble_gap_disc(BLE_OWN_ADDR_PUBLIC,20000,&params,client_gap,token)||!wait(21000)){gatt_client_disconnect();return ESP_FAIL;}
+    std::lock_guard<std::mutex> guard(client_mutex);if(!current(token)||client_generation!=gen||client_stopping)return ESP_ERR_INVALID_STATE;
+    for(const auto& candidate:discovered)output.push_back(candidate.public_value);
+    return ESP_OK;
 }
-bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){if(request.empty()||request.size()>4096||client_connection==BLE_HS_CONN_HANDLE_NONE||client_record==UINT32_MAX)return false;const auto rid=++client_record;void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_generation));const auto mtu=ble_att_mtu(client_connection);
+esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
+    void* token=nullptr;
+    {std::lock_guard<std::mutex> guard(client_mutex);
+        if(!client_workflow||client_stopping||client_generation!=gen||client_discovery_waiting||client_connection!=BLE_HS_CONN_HANDLE_NONE||client_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
+        const auto found=std::find_if(discovered.begin(),discovered.end(),[&](const auto& value){return value.public_value.token==selected;});if(found==discovered.end())return ESP_ERR_INVALID_ARG;
+        candidate_address=found->address;discovered.clear();++client_callback_cookie;token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));
+        client_service_start=client_service_end=client_attribute=0;client_record=0;clear_done();
+    }
+    ble_gap_conn_params connect{};connect.scan_itvl=0x10;connect.scan_window=0x10;connect.itvl_min=24;connect.itvl_max=40;connect.supervision_timeout=400;
+    if(ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,&connect,client_gap,token)||!wait(11000))return ESP_FAIL;
+    clear_done();if(ble_gattc_disc_svc_by_uuid(client_connection,&service_uuid.u,on_service,token)||!wait(5000)||!client_service_start)return ESP_FAIL;
+    clear_done();if(ble_gattc_disc_chrs_by_uuid(client_connection,client_service_start,client_service_end,&record_uuid.u,on_characteristic,token)||!wait(5000)||!client_attribute)return ESP_FAIL;
+    return ESP_OK;
+}
+bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){if(request.empty()||request.size()>4096||client_connection==BLE_HS_CONN_HANDLE_NONE||client_record==UINT32_MAX)return false;const auto rid=++client_record;void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));const auto mtu=ble_att_mtu(client_connection);
     // The ATT value limit is 512 even when the negotiated MTU is 517 or 527.
     // Leave room for this protocol's ten-byte fragment header as well as the
     // write request's three-byte ATT header.
@@ -186,10 +255,10 @@ bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &r
     }
     return false;
 }
-void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);if(!client_workflow)return;client_workflow=false;client_discovery_waiting=false;ble_gap_disc_cancel();ble_gap_conn_cancel();if(client_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}client_connection=BLE_HS_CONN_HANDLE_NONE;++client_generation;}
+void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);if(!client_workflow)return;client_stopping=true;client_workflow=false;client_discovery_waiting=false;discovered.clear();ble_gap_disc_cancel();ble_gap_conn_cancel();if(client_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}client_connection=BLE_HS_CONN_HANDLE_NONE;if(client_callback_cookie<UINT32_MAX)++client_callback_cookie;complete(BLE_HS_ENOTCONN);}
 bool gatt_candidate_transport_idle(){std::lock_guard<std::mutex> guard(state_mutex);return server_connection==BLE_HS_CONN_HANDLE_NONE&&!processing_record&&!outstanding_work;}
 bool gatt_quiescent(){
-    if(ble_gap_adv_active()||ble_gap_disc_active()||ble_gap_conn_active()||processing_record||outstanding_work||pc_live)return false;
+    if(ble_gap_adv_active()||ble_gap_disc_active()||ble_gap_conn_active()||processing_record||outstanding_work||channel_live)return false;
     ble_gap_conn_desc descriptor{};
     {std::lock_guard<std::mutex> guard(state_mutex);if(server_open||server_connection!=BLE_HS_CONN_HANDLE_NONE)return false;if(cancelled_server!=BLE_HS_CONN_HANDLE_NONE&&ble_gap_conn_find(cancelled_server,&descriptor)==0)return false;cancelled_server=BLE_HS_CONN_HANDLE_NONE;}
     {std::lock_guard<std::mutex> guard(client_mutex);if(client_workflow||client_connection!=BLE_HS_CONN_HANDLE_NONE)return false;if(cancelled_client!=BLE_HS_CONN_HANDLE_NONE&&ble_gap_conn_find(cancelled_client,&descriptor)==0)return false;cancelled_client=BLE_HS_CONN_HANDLE_NONE;}

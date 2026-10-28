@@ -1,7 +1,7 @@
 {
-  "status": "Qualified owner-lookup implementation replaces the former persistent graph/enablement model. Current-task verification is recorded below; historical startup/metadata checks do not establish activity parity.",
+  "status": "Qualified owner lookup preserves original Amity behavior. Direct physical-window admission replaces separate Add-secret provisioning; current admission evidence is recorded separately below.",
   "audit_date": "2026-10-27",
-  "firmware_version": "0.1.81",
+  "firmware_version": "0.1.83",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -33,8 +33,9 @@
     "qualified_lookup_capability": 262144,
     "scoped_intent_kind": 41,
     "scoped_result_kind": 42,
-    "known_protocol_capabilities": 518730,
-    "minimum_execution_capabilities": 401472
+    "known_protocol_capabilities": 516682,
+    "minimum_execution_capabilities": 401472,
+    "admission_require_setup_code_default": false
   },
   "controller_policy": {
     "original": "Immutable original controller, only UI/admin/remote/Matter/HomeKit owner",
@@ -76,7 +77,9 @@
       "free_percent_reported": 39,
       "layout_checks": "35 public records consistent; provisioning package/browser update bundle generated",
       "source_freshness": "Final production sources frozen; build includes final baseline first-name lookup correction",
-      "device_deployment": false
+      "device_deployment": false,
+      "firmware_version": "0.1.81",
+      "matter_software_version": 82
     },
     "physical_devices": "No new deployment, CEC/AV or radio qualification claimed by this implementation task",
     "focused_synchronization": {
@@ -96,7 +99,8 @@
         "test-results/host/intent-final-cec.log",
         "test-results/host/intent-final-owned.log"
       ]
-    }
+    },
+    "scope": "Previous qualified-lookup refactor at firmware 0.1.81/software 82; retained as context, not evidence for the new admission workflow."
   },
   "historical_evidence": {
     "release": "0.1.80",
@@ -114,5 +118,74 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 82
+  "matter_software_version": 84,
+  "admission_validation": {
+    "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
+    "host_runner": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/admission-2026-10-27/host-tests.log",
+      "scope": "Retained host suites including 29 independent passive harness tests; no physical radio operation"
+    },
+    "api": {
+      "result": "PASS",
+      "log": "test-results/admission-2026-10-27/admission-api-tests.log",
+      "scope": "Actual closed scan/token/name/code handlers; both profiles, stale scan rejection and exact final candidate/name"
+    },
+    "ui": {
+      "result": "PASS",
+      "log": "test-results/admission-2026-10-27/admission-ui-tests.log",
+      "scope": "Immediate scan, profile-dependent code input, multiple candidates, scoped cancel and stale/late dialog handling"
+    },
+    "contracts": {
+      "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "checks": {
+        "manifest_entries_checked": 34,
+        "schemas_checked": 6,
+        "positive_schema_vectors": 17,
+        "negative_schema_vectors": 59,
+        "configured_selectors_checked": 4,
+        "current_wire_kinds_checked": 19,
+        "markdown_files_checked": 20,
+        "local_links_checked": 119,
+        "firmware_or_hardware_tests_run": false
+      }
+    },
+    "native_normal": {
+      "result": "PASS",
+      "firmware_version": "0.1.83",
+      "log": "test-results/admission-2026-10-27/build-normal.log"
+    },
+    "native_strict": {
+      "result": "PASS",
+      "firmware_version": "0.1.83",
+      "log": "test-results/admission-2026-10-27/build-code-verified.log",
+      "artifact_verification": "test-results/admission-2026-10-27/code-verified/verification.json"
+    },
+    "host_crypto": {
+      "result": "PASS in both compiled profile variants",
+      "scope": "Actual admission_crypto.cpp with real OpenSSL-backed PSA P-256 ECDH, HKDF-SHA256 and AES-256-GCM in both compiled profiles; strict transcript binding uses explicit mock Security2/protocomm and CHIP-parser seams. Tests cover normal confirmation, strict binding, mode mismatch, wrong-PIN seam and direction/sequence/replay/cross-session/header/cipher/tag/transcript tampering.",
+      "log": "test-results/admission-2026-10-27/admission-crypto-tests.log",
+      "command": "python3 tests/consortium_admission_crypto_test.py",
+      "limitation": "Actual SDK SRP interoperability and CHIP manual/QR/check-digit self-tests compile into firmware but have not executed on hardware."
+    },
+    "physical_admission": "Not run on actual ESP32 radio; no new physical deployment claimed",
+    "device_srp_selftest": "Compiled into firmware; not executed on an ESP32 in this admission task",
+    "runtime_workflow": {
+      "result": "PASS",
+      "log": "test-results/admission-2026-10-27/admission-workflow-tests.log",
+      "scope": "Actual runtime worker/public APIs with deterministic task/radio/crypto seams: both profiles, selected token/name, cancel/deadline/role/identity checks and durable enrollment/readiness correlation"
+    },
+    "gatt_callbacks": {
+      "result": "PASS",
+      "log": "test-results/admission-2026-10-27/admission-gatt-tests.log",
+      "scope": "Actual GATT callback paths against deterministic host seams; no real radio operation"
+    },
+    "fragmentation": {
+      "result": "PASS",
+      "log": "test-results/admission-2026-10-27/admission-fragment-tests.log",
+      "scope": "Actual framing/client exchange paths across nine ATT MTUs with host seams"
+    }
+  }
 }

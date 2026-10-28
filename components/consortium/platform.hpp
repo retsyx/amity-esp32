@@ -46,9 +46,12 @@ std::string envelope_json(const Envelope &,std::string_view payload);
 namespace amity::consortium::platform {
 using BootstrapHandler=std::function<esp_err_t(std::string_view,std::string&)>;
 esp_err_t gatt_register();
-esp_err_t gatt_server_open(uint64_t generation,std::string salt,std::string verifier,BootstrapHandler);
+esp_err_t gatt_server_open(uint64_t generation,model::OctopusId,BootstrapHandler);
 void gatt_server_close();
-esp_err_t gatt_client_connect(model::OctopusId expected,uint64_t generation);
+// A durable prepared decision permits only this already connected workflow.
+void gatt_server_seal();
+esp_err_t gatt_client_discover(uint64_t generation,std::vector<RuntimeAdmissionCandidate>&);
+esp_err_t gatt_client_connect_candidate(std::string_view token,uint64_t generation);
 bool gatt_client_exchange(bool encrypted,std::string_view,std::string &);
 void gatt_client_disconnect();
 bool gatt_quiescent();

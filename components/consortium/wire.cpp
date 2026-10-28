@@ -1,6 +1,5 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/wire.hpp"
-#include "amity/consortium/relay.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/transfer.hpp"
 #include "amity/consortium/update.hpp"
@@ -34,7 +33,6 @@ bool membership(const Json &v) {
 }
 bool payload(Kind kind,const Json &v) {
     switch(kind) {
-    case Kind::relay_reserve:case Kind::relay_record:case Kind::relay_close:case Kind::relay_result:return validate_relay_payload(kind,v);
     case Kind::settings_read:case Kind::settings_write:case Kind::settings_result:return valid_settings_payload(kind,v);
     case Kind::device_status:return closed(v,{"hostname"})&&v.get("hostname")->type==Json::Type::string&&valid_hostname(v.get("hostname")->string);
     case Kind::heartbeat:return closed(v,{"sequence","observation_cursor","ready"})&&decimal_field(v,"sequence")&&decimal_field(v,"observation_cursor")&&bool_field(v,"ready");
@@ -63,7 +61,7 @@ const char *error_name(Error v) {
 }
 const char *kind_name(Kind k) {switch(k) {
 #define K(a) case Kind::a:return #a
-K(relay_reserve);K(relay_record);K(relay_close);K(relay_result);K(heartbeat);K(execution_lease);K(enrollment_control);K(membership_event);K(membership_result);
+K(heartbeat);K(execution_lease);K(enrollment_control);K(membership_event);K(membership_result);
 K(snapshot_request);K(snapshot_chunk);K(update_begin);K(update_chunk);K(update_install);K(update_status);K(update_abort);K(update_result);K(device_status);K(settings_read);K(settings_write);K(settings_result);K(scoped_intent);K(scoped_result);
 #undef K
 }return "";}
@@ -85,7 +83,7 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     uint64_t version=0,ttl=0;if(!json_uint(v.get("protocol_version"),version,1,1))return Error::protocol_mismatch;
     Envelope x;
     if(!id(v.get("consortium_id"),x.consortium_id)||!id(v.get("message_id"),x.message_id)||!id(v.get("origin_octopus_id"),x.origin_octopus_id)||!id(v.get("origin_boot_id"),x.origin_boot_id)||!id(v.get("destination_octopus_id"),x.destination_octopus_id)||!id(v.get("destination_boot_id"),x.destination_boot_id)||!decimal(v.get("coordinator_epoch"),x.coordinator_epoch)||!decimal(v.get("config_revision"),x.config_revision)||!json_uint(v.get("ttl_ms"),ttl,1,10000))return Error::invalid_message;
-    bool recognized=false;for(auto kind:{Kind::relay_reserve,Kind::relay_record,Kind::relay_close,Kind::relay_result,Kind::heartbeat,Kind::execution_lease,Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
+    bool recognized=false;for(auto kind:{Kind::heartbeat,Kind::execution_lease,Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
     if(!recognized||retired_kind(x.kind))return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
     if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;

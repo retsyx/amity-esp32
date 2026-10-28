@@ -40,7 +40,7 @@ A replacement main is established through Matter setup with old-main isolation; 
 
 Preserve the approved atomic per-device settings record and stable adapter slots within the four-adapter profile. The old singleton front-address default migrates only to adapter 1. Each adapter's owner applies its own saved default to the original back-first address selection at boot; it is a fallback setting, not confirmed PA evidence or executable route permission. Keep actual presence generations and selected-owner restart checks for settings changes. CEC silence is not physical detachment.
 
-GPIO mapping, factory commissioning records, reset-retained origin/Add authorization and reset-owned operational trust keep their existing storage contracts. Explicit member removal uses the established durable reset journal and response-attempt boundary. Authority loss and generic fencing do not reset a device.
+GPIO mapping, factory commissioning records, reset-retained origin identity and factory setup credentials and reset-owned operational trust keep their existing storage contracts. Explicit member removal uses the established durable reset journal and response-attempt boundary. Authority loss and generic fencing do not reset a device.
 
 ## 7. Evidence and migration lesson
 

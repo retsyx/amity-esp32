@@ -1,7 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/session.hpp"
 #include "amity/consortium/update.hpp"
-#include "amity/consortium/relay.hpp"
 #include "amity/consortium/settings.hpp"
 #include "amity/consortium/owned_intent.hpp"
 namespace amity::consortium {
@@ -55,7 +54,6 @@ bool Session::permitted(Kind kind)const {
     if(kind==Kind::heartbeat||kind==Kind::device_status)return true;
     if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::settings_result:role_==PeerRole::actuator&&kind==Kind::settings_result;
     if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:role_==PeerRole::actuator&&kind==Kind::update_result;
-    if(is_relay_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::relay_result:role_==PeerRole::actuator&&kind==Kind::relay_result;
     if(role_==PeerRole::coordinator)return kind==Kind::scoped_intent||kind==Kind::membership_event;
     if(role_==PeerRole::actuator)return kind==Kind::scoped_result||kind==Kind::execution_lease||kind==Kind::membership_result;
     return false;
@@ -81,7 +79,6 @@ Error Session::admit(const Envelope& e,uint64_t received,uint64_t now,bool remem
     if(e.kind==Kind::settings_write){model::ExecutionLeaseId lease;if(!id(e.payload.get("execution_lease_id"),lease)||!execution_.valid(lease,LeaseClass::control,scope_,now))return Error::lease_expired;}
     if(e.kind==Kind::device_status&&!(capabilities_&hostname_metadata))return Error::unsupported_kind;
     if((e.kind==Kind::snapshot_request||e.kind==Kind::snapshot_chunk)&&!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
-    if(is_relay_kind(e.kind)&&!(capabilities_&bootstrap_relay))return Error::unsupported_kind;
     if(is_update_kind(e.kind)&&!(capabilities_&peer_firmware_update))return Error::unsupported_kind;
     return remember?admit_checked(e,received,now,true):Error::none;
 }

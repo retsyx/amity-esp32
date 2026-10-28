@@ -24,6 +24,7 @@ struct {std::function<esp_err_t()> retire;}lifecycle;
 struct {bool member=false,authority_ready=false;std::string phase;}status;
 #define pdMS_TO_TICKS(x) (x)
 void vTaskDelay(unsigned){}
+void gatt_server_seal(){effects.push_back("seal_admission");}
 int ble_remote_set_controller_enabled(bool enabled){assert(!enabled);effects.push_back("remote_off");return ESP_OK;}
 int save_group(const Group& value){++saves;effects.push_back("membership");if(save_failure)return ESP_FAIL;durable=value;return ESP_OK;}
 std::string host_ip(){return {};}
@@ -51,7 +52,7 @@ int main(){
  for(auto bad:{"","Living-room","amity.local","-room","room-","room name","a_b","abcdefghijklmnopqrstuvwxyz1234567"})assert(!valid_hostname(bad));
  reset();std::string response;assert(bootstrap_request("{\"phase\":\"identify\"}",response)==ESP_OK&&response.find("\"bootstrap_profile\":2")!=std::string::npos);
  assert(bootstrap_request(prepare(),response)==ESP_OK&&current_name=="living-room"&&group.role==Group::prepared&&durable.join_hostname=="living-room"&&candidate_passive);
- assert(effects==std::vector<std::string>({"persist_hostname","membership","remote_off","retire"}));
+ assert(effects==std::vector<std::string>({"persist_hostname","membership","remote_off","retire","seal_admission"}));
  Json prepared;JsonError detail;assert(parse_json(response,prepared,detail)&&prepared.get("hostname")->string=="living-room");
  assert(bootstrap_request(prepare(),response)==ESP_OK&&group.join_hostname=="living-room");
  reset();network.set_hostname={};assert(bootstrap_request(prepare(),response)==ESP_ERR_NOT_SUPPORTED&&!saves&&group.role==Group::unclaimed);
@@ -79,7 +80,7 @@ def main():
  actual=function(source,'esp_err_t bootstrap_request(')+function(source,'bool exchange_hostname(')
  with tempfile.TemporaryDirectory(prefix='amity-hostname-') as directory:
   cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(PREFIX+actual+SUITE)
-  sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','relay.cpp','transfer.cpp','enrollment.cpp']]+[ROOT/'components/amity_system/model.cpp']
+  sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp','enrollment.cpp']]+[ROOT/'components/amity_system/model.cpp']
   subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined']+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+[str(cpp)]+list(map(str,sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)
 if __name__=='__main__':main()

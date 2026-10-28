@@ -10,7 +10,7 @@ class RadioArbiter {
 public:
     static constexpr uint32_t enrollment_ms=180000,discovery_ms=20000,connection_ms=10000,cancel_ms=5000;
     // This scheduling core is ready for integration. Actual consortium GAP is
-    // gated until Security2 and external Matter pre-advertisement handoff pass.
+    // gated until encrypted admission and external Matter handoff pass.
     static constexpr bool consortium_radio_available=false;
     RadioResult request(RadioMode,uint64_t now_ms,uint32_t duration_ms,bool enforce_release_gates=true);
     void remote_reconnect_running(bool running){remote_reconnect_=running;}
@@ -38,7 +38,7 @@ private:
 struct SetupEligibility {
     bool fresh_unconfigured_singleton=false;
     bool active_membership=false,prepared_join=false,operational_configuration=false,retired=false,recovery_required=false;
-    bool bootstrap_ready=false,physical_authorization_supported=false,radio_available=false;
+    bool physical_authorization_supported=false,radio_available=false;
 };
 bool initial_matter_eligible(const SetupEligibility &);
 bool consortium_setup_eligible(const SetupEligibility &);

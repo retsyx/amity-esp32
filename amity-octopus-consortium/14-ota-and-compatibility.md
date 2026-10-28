@@ -18,7 +18,7 @@ Only native bytes enter OTA verification. Raw `amity.bin` remains available for 
 
 Canonical saved configuration is schema 3. Conversion retains user selectors/activity fields and drops obsolete enabled/graph approval data; it does not require equipment to answer. Do not roll back to an image that cannot read the committed storage safely or enforce current original-controller/member authority.
 
-`qualified_lookup` capability 262144 identifies the current typed owner-intent contract. Scoped intent/result use new numeric slots 41/42. Retired operation/plan/profile/config-replication slots remain retired and are never reassigned. An old peer may remain reachable for compatible authenticated management/update but cannot receive work through a superseded planner/CEC policy. Existing `owner_repeated_keys` semantics require state changes with owner-local repetition, not periodic presses or button renewals.
+`qualified_lookup` capability 262144 identifies the current typed owner-intent contract. Scoped intent/result use new numeric slots 41/42. Retired operation/plan/profile/config-replication and admission-relay slots remain retired and are never reassigned; relay kinds 7–10 and capability 2048 are not supported. An old peer may remain reachable for compatible authenticated management/update but cannot receive work through a superseded planner/CEC policy. Existing `owner_repeated_keys` semantics require state changes with owner-local repetition, not periodic presses or button renewals.
 
 Reject incompatible hardware/protocol/security combinations explicitly. Compatibility must not silently select an alternate CEC algorithm. A required update is a peer transport compatibility issue, not a persistent disabled activity or approved-route bit.
 
@@ -34,7 +34,7 @@ The original controller brokers member updates through the authenticated managem
 
 Maintenance state and update journals protect an explicit flash transaction. They are distinct from ordinary activity execution; do not preserve a durable current-activity resume ledger or executable plan. Quiesce/drain the selected owner's current wire/cleanup state under the existing rules, never erase unrelated owners' identities or assume CEC success from an update receipt.
 
-After reboot, verify expected image/ELF/version, new boot identity and protected local health. Reconnect under current trust and transport context. Uncertain installation calls for status inspection, not blindly resending chunks or creating a new relative operation. Preserve factory setup codes, Add authorization, Wi-Fi, remote bonds, Matter/HomeKit relationships, admin/TLS identity and user intent on normal OTA.
+After reboot, verify expected image/ELF/version, new boot identity and protected local health. Reconnect under current trust and transport context. Uncertain installation calls for status inspection, not blindly resending chunks or creating a new relative operation. Preserve factory setup codes, origin identity, Wi-Fi, remote bonds, Matter/HomeKit relationships, admin/TLS identity and user intent on normal OTA.
 
 ## Security and recovery evidence
 

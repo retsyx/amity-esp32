@@ -28,7 +28,7 @@ Verify temporarily absent equipment remains selected, AVR/switch activities rema
 
 Test current exact owner/controller membership, boot/link/config/input context, sequence/replay rejection, bounded IPC and stale messages. Locally and remotely delivered original intents must use the same executor behavior. Auth rejection and state cleanup must not redirect a release or restart a failed key.
 
-Retain enrollment Security2/physical-window, exact-leaf TLS, durable original role/headless boot, settings generation/atomic-save/response-attempt restart, explicit removal/reset and exact-image update checks. Those are separate management/security contracts and do not justify persisted HDMI route approval.
+Retain direct enrollment discovery/physical-window, encrypted ephemeral admission and optional printed-Matter-code PAKE with profile-mismatch rejection, exact-leaf TLS, durable original role/headless boot, settings generation/atomic-save/response-attempt restart, explicit removal/reset and exact-image update checks. Those are separate management/security contracts and do not justify persisted HDMI route approval.
 
 ## User interface
 

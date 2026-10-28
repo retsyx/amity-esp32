@@ -1,7 +1,7 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef ESP_PLATFORM
 #include "platform.hpp"
-#include "security2_client.hpp"
+#include "admission_crypto.hpp"
 #include "config_store.hpp"
 #include "candidate_network.hpp"
 #include "candidate_enrollment.hpp"
@@ -10,8 +10,6 @@
 #include "hostname_registry.hpp"
 #include "production_storage.hpp"
 #include "amity/consortium/bootstrap.hpp"
-#include "amity/consortium/bootstrap_record.hpp"
-#include "amity/consortium/relay.hpp"
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/transfer.hpp"
 #include "amity/consortium/update.hpp"
@@ -79,7 +77,14 @@ std::mutex enrollment_lock;
 Identity identity;
 Group group;
 HostnameRegistry hostnames;
-struct InviteRequest {std::string code,hostname;};
+struct InviteRequest {model::MessageId scan_id;};
+struct Admission {
+    RuntimeAdmissionStatus view;
+    uint64_t generation=0,deadline=0;
+    std::string selected_token,hostname;
+    uint32_t pin=0;
+    bool submitted=false;
+} admission;
 model::ConsortiumId singleton;
 model::BootId boot;
 uint64_t configuration=1;
@@ -93,7 +98,6 @@ RuntimeControlHooks controls;
 RuntimeLifecycleHooks lifecycle;
 RuntimeUpdateHooks updates;
 std::vector<std::shared_ptr<Active>> links;
-std::vector<std::pair<model::OctopusId,std::string>> enrollment_errors;
 std::atomic_bool initialized{false};
 std::atomic_bool invitation_running{false};
 std::atomic_bool invitation_cancelled{false};
@@ -102,7 +106,6 @@ bool candidate_passive=false;
 std::atomic_bool candidate_network_recovered{false};
 bool recovery_console=false;
 int listener=-1;
-std::string salt,verifier;
 void error(std::string value){std::lock_guard<std::mutex> guard(lock);status.last_error=std::move(value);}
 template<class T>T random_id(){auto value=T::parse(random_hex(16));return value?*value:T{};}
 Envelope outgoing(const Active &link,Kind kind,uint32_t ttl){auto s=link.session.scope();Envelope e;e.consortium_id=s.consortium_id;e.message_id=random_id<model::MessageId>();e.origin_octopus_id=s.local_id;e.origin_boot_id=s.local_boot_id;e.destination_octopus_id=s.peer_id;e.destination_boot_id=s.peer_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.kind=kind;e.ttl_ms=ttl;return e;}
@@ -132,7 +135,6 @@ bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
     }
     return link.tls->send(envelope_json(outgoing(link,kind,ttl),payload));
 }
-#include "relay_runtime.inc"
 #include "settings_runtime.inc"
 #include "removal_runtime.inc"
 template<class LeaseId> std::string lease_json(LeaseId id,model::LinkId link,LeaseClass kind,uint32_t ms){return "{\"lease_id\":\""+id.str()+"\",\"link_id\":\""+link.str()+"\",\"class\":\""+(kind==LeaseClass::control?"control":"realtime_input")+"\",\"validity_ms\":"+std::to_string(ms)+"}";}
@@ -408,7 +410,6 @@ bool retire_member(Active &active,const Envelope &envelope,uint64_t received){
     }
     active.session.restrict_lifecycle();
     {std::lock_guard<std::mutex> guard(active.mutex);active.ready=false;active.management_ready=false;active.status.ready=false;active.status.management_ready=false;active.queue.clear();}
-    relay_cancel_all();if(relay_running)gatt_client_disconnect();
     if(hooks.retire()!=ESP_OK)return false;
     {std::lock_guard<std::mutex> guard(lock);removal_authorization={active.peer,mutation,digest,envelope.origin_boot_id,target_boot,revision,envelope.config_revision,until,&active};}
     struct Clear{~Clear(){std::lock_guard<std::mutex> guard(lock);removal_authorization={};}} clear;
@@ -447,7 +448,6 @@ void active_loop_work(void *arg){
         if(!server&&envelope.kind==Kind::membership_event){if(active->session.admit(envelope,received,received)!=Error::none)break;retire_member(*active,envelope,received);break;}
         if(active->management_ready&&envelope.kind==Kind::execution_lease){if(active->session.admit(envelope,received,received)!=Error::none)break;continue;}
         if(is_settings_kind(envelope.kind)){if(!settings_dispatch(active,envelope,received))break;continue;}
-        if(is_relay_kind(envelope.kind)){if(active->session.admit(envelope,received,received)!=Error::none||!active->ready)break;relay_dispatch(active,envelope);continue;}
         if(is_update_kind(envelope.kind)) {
             if(active->session.admit(envelope,received,received)!=Error::none || (!active->ready&&!active->management_ready)) break;
             RuntimeUpdateHooks hooks; bool allowed=false;
@@ -509,7 +509,7 @@ void active_loop_work(void *arg){
     }
     if(server&&active->retiring&&!retirement_attempted)finish_retirement(*active);
     if(active->update_begin_id) {RuntimeUpdateHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=updates;}if(hooks.disconnected) hooks.disconnected(active->peer,active->update_begin_id);}
-    relay_link_closed(active);active->cancelled=true;
+    active->cancelled=true;
     const bool fenced=notify_link_closed(*active);
     active->session.disconnect();::shutdown(active->tls->socket,SHUT_RDWR);
     {std::lock_guard<std::mutex> guard(lock);if(fenced)links.erase(std::remove(links.begin(),links.end(),active),links.end());status.connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});status.synchronized=false;}
@@ -560,7 +560,6 @@ bool recover_candidate_network(){
 void network_loop(void*){
     uint32_t backoff=1000;uint64_t next_discovery=0;size_t next_hint=0;std::vector<std::string> discovered;
     while(true){if(!recover_candidate_network()){vTaskDelay(pdMS_TO_TICKS(100));continue;}Group current;Identity local;bool may_connect;{std::lock_guard<std::mutex> guard(lock);current=group;local=identity;may_connect=current.role!=Group::prepared||(candidate_passive&&gatt_candidate_transport_idle());}
-        relay_expire();
         advertise_group_hint(current);
         reap_closed_links();
         if(current.role==Group::coordinator){if(listener<0){int fd=::socket(AF_INET,SOCK_STREAM,0);int yes=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_port=htons(7443);addr.sin_addr.s_addr=INADDR_ANY;if(fd<0||::bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))||::listen(fd,2)){if(fd>=0)::close(fd);vTaskDelay(pdMS_TO_TICKS(1000));continue;}listener=fd;timeval timeout{0,200000};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));}
@@ -605,37 +604,107 @@ esp_err_t bootstrap_request(std::string_view request,std::string &response){
     if(group.role!=Group::unclaimed&&!(group.role==Group::prepared&&group.join_id==next.join_id&&group.join_digest==next.join_digest))return ESP_ERR_INVALID_STATE;
     if(!network.set_hostname||!network.get_hostname)return ESP_ERR_NOT_SUPPORTED;
     const auto named=network.set_hostname(decoded.candidate_hostname);if(named!=ESP_OK||network.get_hostname()!=decoded.candidate_hostname)return named==ESP_OK?ESP_ERR_INVALID_STATE:named;
-    auto saved=save_group(next);if(saved!=ESP_OK)return saved;group=std::move(next);status.member=true;status.authority_ready=false;status.phase="finishing_enrollment";candidate_passive=false;auto hooks=lifecycle;const auto prepared_id=group.join_id;const auto prepared_digest=group.join_digest;guard.unlock();esp_err_t remote=ESP_ERR_TIMEOUT;for(unsigned attempt=0;attempt<50&&remote==ESP_ERR_TIMEOUT;++attempt){remote=ble_remote_set_controller_enabled(false);if(remote==ESP_ERR_TIMEOUT)vTaskDelay(pdMS_TO_TICKS(100));}const auto fenced=hooks.retire?hooks.retire():ESP_ERR_INVALID_STATE;guard.lock();if(group.join_id!=prepared_id||group.join_digest!=prepared_digest||fenced!=ESP_OK||remote!=ESP_OK)return ESP_ERR_INVALID_STATE;candidate_passive=true;response="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+decoded.candidate_hostname+"\"}";return ESP_OK;
+    auto saved=save_group(next);if(saved!=ESP_OK)return saved;group=std::move(next);status.member=true;status.authority_ready=false;status.phase="finishing_enrollment";candidate_passive=false;auto hooks=lifecycle;const auto prepared_id=group.join_id;const auto prepared_digest=group.join_digest;guard.unlock();esp_err_t remote=ESP_ERR_TIMEOUT;for(unsigned attempt=0;attempt<50&&remote==ESP_ERR_TIMEOUT;++attempt){remote=ble_remote_set_controller_enabled(false);if(remote==ESP_ERR_TIMEOUT)vTaskDelay(pdMS_TO_TICKS(100));}const auto fenced=hooks.retire?hooks.retire():ESP_ERR_INVALID_STATE;guard.lock();if(group.join_id!=prepared_id||group.join_digest!=prepared_digest||fenced!=ESP_OK||remote!=ESP_OK)return ESP_ERR_INVALID_STATE;candidate_passive=true;gatt_server_seal();response="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+decoded.candidate_hostname+"\"}";return ESP_OK;
+}
+void admission_failed(model::MessageId scan,const std::string& failure){
+    std::lock_guard<std::mutex> guard(lock);
+    if(admission.view.scan_id!=scan)return;
+    // A lost BLE reply cannot undo a prepared transaction. The exact pinned
+    // LAN path may still finish it; report uncertainty until that is known.
+    const bool prepared=group.join_id&&group.joining_id==admission.view.candidate_id&&group.join_hostname==admission.hostname;
+    const bool committed=hostnames.lookup(admission.view.candidate_id)==admission.hostname&&
+        std::any_of(group.peers.begin(),group.peers.end(),[&](const auto& peer){return peer.id==admission.view.candidate_id&&peer.active;});
+    if(prepared||committed){
+        admission.view.phase="finishing";
+        admission.view.error="Setup could not be confirmed yet. Check the Amity devices list before trying again.";
+        admission.deadline=0;admission.pin=0;status.phase="finishing_enrollment";
+        return;
+    }
+    admission.view.phase=invitation_cancelled?"cancelled":"failed";
+    admission.view.error=failure;admission.pin=0;
+    status.phase="enrollment_failed";status.last_error=failure;
+
 }
 void invite_worker_work(void *arg){
-    std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));std::string value=std::move(invite->code);const auto hostname=std::move(invite->hostname);invite.reset();auto candidate=model::OctopusId::parse(value.substr(8,32));std::string password=value.substr(41);std::fill(value.begin(),value.end(),0);
-    uint64_t generation=0;RuntimeRadioHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=radio;status.phase="finding_octopus";}
-    const auto join=random_id<model::JoinId>();std::shared_ptr<RelayClient> helper;
-    const bool reserved=!invitation_cancelled&&candidate&&hooks.reserve&&hooks.reserve(true,generation)==ESP_OK;
-    if(!reserved)generation=0;
-    bool direct=reserved&&gatt_client_connect(*candidate,generation)==ESP_OK;
-    if(reserved&&!direct&&!invitation_cancelled){gatt_client_disconnect();defer_radio_release(generation);generation=0;helper=relay_open(*candidate,join);}
-    bool good=direct||bool(helper);Security2Client client(candidate?candidate->str():"",password);std::fill(password.begin(),password.end(),0);std::string request,response,failure;
-    auto exchange=[&](bool encrypted,std::string_view bytes,std::string &reply){return !invitation_cancelled&&(helper?relay_exchange(helper,encrypted,bytes,reply):gatt_client_exchange(encrypted,bytes,reply));};
-    good=good&&client.begin(request)&&exchange(false,request,response)&&client.challenge(response,request)&&exchange(false,request,response)&&client.verify(response);
-    auto secure=[&](std::string_view plain,std::string &result){std::string encrypted,reply;return !invitation_cancelled&&client.encrypt(plain,encrypted)&&exchange(true,encrypted,reply)&&client.decrypt(reply,result);};
-    good=good&&secure("{\"phase\":\"identify\"}",response);Json identity_json;JsonError err;Peer peer;bool networked=false;uint64_t bootstrap_profile=0;
-    if(good){const bool parsed=parse_json(response,identity_json,err);const bool supported=parsed&&json_uint(identity_json.get("bootstrap_profile"),bootstrap_profile,2,2);if(!supported)failure="Update this Amity before adding it so its network name can be set.";good=supported&&closed(identity_json,{"phase","bootstrap_profile","octopus_id","leaf","networked"})&&id(identity_json.get("octopus_id"),peer.id)&&peer.id==*candidate&&identity_json.get("leaf")->type==Json::Type::string&&unhex(identity_json.get("leaf")->string,peer.der,1024)&&certificate(peer.der,peer.id,peer.pin)&&json_bool(identity_json.get("networked"),networked);}
-    Group current;Identity local;{std::lock_guard<std::mutex> guard(lock);current=group;local=identity;}
-    std::string proposal,digest;
-    if(good){const auto host=host_ip();good=!host.empty()&&current.role==Group::coordinator&&current.peers.size()<maximum_roster_peers&&current.revision<UINT64_MAX;for(const auto &old:current.peers)if(old.id==peer.id||old.pin==peer.pin)good=false;
-        if(good){proposal=proposal_json(join,current.consortium,local.id,peer.id,current.epoch,current.revision+1,local.der,peer.der,host,hostname);digest=sha256(proposal);current.join_id=join;current.joining_id=peer.id;current.join_digest=digest;current.join_hostname=hostname;current.join_revision=current.revision+1;current.peers.push_back(peer);std::lock_guard<std::mutex> guard(lock);good=group.role==Group::coordinator&&!group.join_id&&group.revision+1==current.join_revision&&save_group(current)==ESP_OK;if(good)group=current;}}
-    if(good){std::string quoted;quoted.reserve(proposal.size()+128);for(char c:proposal){if(c=='"'||c=='\\')quoted+='\\';quoted+=c;}good=secure("{\"phase\":\"prepare\",\"proposal\":\""+quoted+"\",\"digest\":\""+digest+"\"}",response);}
-    if(good){Json prepared;good=parse_json(response,prepared,err)&&closed(prepared,{"phase","join_id","digest","hostname"})&&prepared.get("phase")->type==Json::Type::string&&prepared.get("phase")->string=="prepared"&&prepared.get("join_id")->type==Json::Type::string&&prepared.get("join_id")->string==join.str()&&prepared.get("digest")->type==Json::Type::string&&prepared.get("digest")->string==digest&&prepared.get("hostname")->type==Json::Type::string&&prepared.get("hostname")->string==hostname;if(good){std::lock_guard<std::mutex> guard(lock);good=remember_hostname(peer.id,hostname)==Error::none;}}
-    if(good&&!networked){RuntimeNetworkHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=network;status.phase="connecting_wifi";}std::string ssid,password;good=hooks.export_credentials&&hooks.export_credentials(ssid,password)&&ssid.size()<=32&&password.size()<=64;
-        if(good)good=secure("{\"phase\":\"wifi\",\"join_id\":\""+current.join_id.str()+"\",\"digest\":\""+digest+"\",\"ssid\":\""+hex(ssid)+"\",\"password\":\""+hex(password)+"\"}",response);
-        std::fill(password.begin(),password.end(),0);
+    std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));
+    const auto scan=invite->scan_id;invite.reset();
+    uint64_t generation=0,deadline=0;RuntimeRadioHooks hooks;
+    {std::lock_guard<std::mutex> guard(lock);hooks=radio;}
+    const bool reserved=!invitation_cancelled&&hooks.reserve&&hooks.reserve(true,generation)==ESP_OK;
+    if(!reserved){admission_failed(scan,"Adding an Amity could not start. Finish the current setup operation and try again.");return;}
+    // All paths return through C++ and release the exact reserved radio owner.
+    struct Cleanup {uint64_t generation;~Cleanup(){gatt_client_disconnect();defer_radio_release(generation);}} cleanup{generation};
+    {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan||invitation_cancelled)return;admission.generation=generation;admission.deadline=deadline=now_ms()+EnrollmentWindow::duration_ms;}
+    auto current=[&](){return !invitation_cancelled&&now_ms()<deadline;};
+    while(current()){
+        std::vector<RuntimeAdmissionCandidate> candidates;
+        const auto discovered=gatt_client_discover(generation,candidates);
+        if(!current())break;
+        if(discovered!=ESP_OK||candidates.empty()){vTaskDelay(pdMS_TO_TICKS(100));continue;}
+        {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan||invitation_cancelled)return;admission.view.candidates=std::move(candidates);admission.view.phase="found";}
+        break;
     }
-    if(helper)relay_close_client(helper,good);else gatt_client_disconnect();defer_radio_release(generation);{std::lock_guard<std::mutex> guard(lock);status.phase=good?"finishing_enrollment":"enrollment_failed";if(!good){status.last_error=failure.empty()?"Adding this Amity was interrupted. Check its connection and try again.":failure;if(candidate){auto found=std::find_if(enrollment_errors.begin(),enrollment_errors.end(),[&](const auto& entry){return entry.first==*candidate;});if(found!=enrollment_errors.end())found->second=status.last_error;else{if(enrollment_errors.size()==16)enrollment_errors.erase(enrollment_errors.begin());enrollment_errors.emplace_back(*candidate,status.last_error);}}}}
-    // Returning destroys the Security2 client (MPI/AES keys) and all buffers.
+    std::string token,hostname;uint32_t pin=0;bool submitted=false;
+    while(current()){
+        {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan)return;if(admission.submitted){token=admission.selected_token;hostname=admission.hostname;pin=admission.pin;admission.pin=0;submitted=true;break;}}
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if(!submitted){admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;}
+    bool good=current()&&gatt_client_connect_candidate(token,generation)==ESP_OK;
+    AdmissionClient client(configured_admission_mode(),pin);pin=0;
+    good=good&&client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply)&&current();});
+    auto secure=[&](std::string_view plain,std::string& result){std::string encrypted,reply;return current()&&client.encrypt(plain,encrypted)&&gatt_client_exchange(true,encrypted,reply)&&current()&&client.decrypt(reply,result);};
+    std::string response,failure;Json identity_json;JsonError err;Peer peer;bool networked=false;uint64_t bootstrap_profile=0;
+    good=good&&secure("{\"phase\":\"identify\"}",response);
+    if(good){
+        const bool parsed=parse_json(response,identity_json,err);
+        const bool supported=parsed&&json_uint(identity_json.get("bootstrap_profile"),bootstrap_profile,2,2);
+        if(!supported)failure="Update this Amity before adding it so its network name can be set.";
+        good=supported&&closed(identity_json,{"phase","bootstrap_profile","octopus_id","leaf","networked"})&&id(identity_json.get("octopus_id"),peer.id)&&peer.id.str()==client.peer_id()&&identity_json.get("leaf")->type==Json::Type::string&&unhex(identity_json.get("leaf")->string,peer.der,1024)&&certificate(peer.der,peer.id,peer.pin)&&json_bool(identity_json.get("networked"),networked);
+    }
+    Group current_group;Identity local;
+    {std::lock_guard<std::mutex> guard(lock);current_group=group;local=identity;if(good&&admission.view.scan_id==scan){admission.view.candidate_id=peer.id;if(hostnames.lookup(peer.id).empty()&&hostnames.entries().size()>=HostnameRegistry::capacity)good=false;}}
+    const auto join=random_id<model::JoinId>();std::string proposal,digest;
+    if(good){
+        const auto host=host_ip();good=current()&&!host.empty()&&current_group.role==Group::coordinator&&current_group.peers.size()<maximum_roster_peers&&current_group.revision<UINT64_MAX;
+        for(const auto& old:current_group.peers)if(old.id==peer.id||old.pin==peer.pin)good=false;
+        if(good){
+            proposal=proposal_json(join,current_group.consortium,local.id,peer.id,current_group.epoch,current_group.revision+1,local.der,peer.der,host,hostname);digest=sha256(proposal);
+            current_group.join_id=join;current_group.joining_id=peer.id;current_group.join_digest=digest;current_group.join_hostname=hostname;current_group.join_revision=current_group.revision+1;current_group.peers.push_back(peer);
+            std::lock_guard<std::mutex> guard(lock);
+            good=current()&&!proposal.empty()&&admission.view.scan_id==scan&&group.role==Group::coordinator&&!group.join_id&&group.revision+1==current_group.join_revision&&save_group(current_group)==ESP_OK;
+            if(good)group=current_group;
+        }
+    }
+    if(good){std::string quoted;quoted.reserve(proposal.size()+128);for(char c:proposal){if(c=='"'||c=='\\')quoted+='\\';quoted+=c;}good=secure("{\"phase\":\"prepare\",\"proposal\":\""+quoted+"\",\"digest\":\""+digest+"\"}",response);}
+    if(good){
+        Json prepared;good=parse_json(response,prepared,err)&&closed(prepared,{"phase","join_id","digest","hostname"})&&prepared.get("phase")->type==Json::Type::string&&prepared.get("phase")->string=="prepared"&&prepared.get("join_id")->type==Json::Type::string&&prepared.get("join_id")->string==join.str()&&prepared.get("digest")->type==Json::Type::string&&prepared.get("digest")->string==digest&&prepared.get("hostname")->type==Json::Type::string&&prepared.get("hostname")->string==hostname;
+        if(good){std::lock_guard<std::mutex> guard(lock);good=remember_hostname(peer.id,hostname)==Error::none;}
+    }
+    if(good&&!networked){
+        RuntimeNetworkHooks network_hooks;{std::lock_guard<std::mutex> guard(lock);network_hooks=network;status.phase="connecting_wifi";}
+        std::string ssid,password;good=network_hooks.export_credentials&&network_hooks.export_credentials(ssid,password)&&!ssid.empty()&&ssid.size()<=32&&password.size()<=64;
+        if(good)good=secure("{\"phase\":\"wifi\",\"join_id\":\""+current_group.join_id.str()+"\",\"digest\":\""+digest+"\",\"ssid\":\""+hex(ssid)+"\",\"password\":\""+hex(password)+"\"}",response);
+        mbedtls_platform_zeroize(password.data(),password.size());
+    }
+    if(!good){admission_failed(scan,failure.empty()?"Adding this Amity was interrupted. Check its setup window, firmware and connection, then try again.":failure);return;}
+    {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id==scan){admission.view.phase="finishing";admission.deadline=0;}status.phase="finishing_enrollment";}
 }
 void invite_worker(void *arg){invite_worker_work(arg);invitation_running=false;vTaskDeleteWithCaps(nullptr);}
-void usb_worker(void*){char line[1100];while(true){if(!fgets(line,sizeof(line),stdin)){vTaskDelay(pdMS_TO_TICKS(100));clearerr(stdin);continue;}std::string command(line);std::fill(std::begin(line),std::end(line),0);while(!command.empty()&&(command.back()=='\n'||command.back()=='\r'))command.pop_back();if(command=="AMITY CONSORTIUM ID"){std::lock_guard<std::mutex> guard(lock);printf("AMITY CONSORTIUM ID %s\n",identity.id.str().c_str());}else if(command.rfind("AMITY CONSORTIUM PROVISION ",0)==0){auto text=command.substr(27);auto at=text.find(':');auto result=at==std::string::npos?ESP_ERR_INVALID_ARG:runtime_install_bootstrap(text.substr(0,at),text.substr(at+1));std::fill(text.begin(),text.end(),0);printf("AMITY CONSORTIUM PROVISION %s\n",result==ESP_OK?"OK":"FAILED");}else if(command.rfind("AMITY CONSORTIUM RECLAIM ",0)==0){auto confirmed=model::OctopusId::parse(command.substr(25));auto result=confirmed?runtime_reclaim_membership(*confirmed):ESP_ERR_INVALID_ARG;printf("AMITY CONSORTIUM RECLAIM %s\n",result==ESP_OK?"OK REBOOTING":"FAILED");fflush(stdout);if(result==ESP_OK){vTaskDelay(pdMS_TO_TICKS(100));esp_restart();}}else if(command.rfind("AMITY CONSORTIUM ROTATE ",0)==0){auto value=command.substr(24);auto space=value.find(' ');auto colon=value.find(':',space==std::string::npos?0:space+1);auto confirmed=space==std::string::npos?std::optional<model::OctopusId>{}:model::OctopusId::parse(value.substr(0,space));auto result=!confirmed||colon==std::string::npos?ESP_ERR_INVALID_ARG:runtime_rotate_bootstrap(*confirmed,value.substr(space+1,colon-space-1),value.substr(colon+1));std::fill(value.begin(),value.end(),0);printf("AMITY CONSORTIUM ROTATE %s\n",result==ESP_OK?"OK":"FAILED");}else if(command=="AMITY CONSORTIUM SELFTEST")printf("AMITY CONSORTIUM SELFTEST %s\n",runtime_crypto_self_test()==ESP_OK?"OK":"FAILED");std::fill(command.begin(),command.end(),0);}}
+void usb_worker(void*){
+    char line[128];while(true){
+        if(!fgets(line,sizeof(line),stdin)){vTaskDelay(pdMS_TO_TICKS(100));clearerr(stdin);continue;}
+        std::string command(line);std::fill(std::begin(line),std::end(line),0);
+        while(!command.empty()&&(command.back()=='\n'||command.back()=='\r'))command.pop_back();
+        if(command=="AMITY CONSORTIUM ID"){std::lock_guard<std::mutex> guard(lock);printf("AMITY CONSORTIUM ID %s\n",identity.id.str().c_str());}
+        else if(command.rfind("AMITY CONSORTIUM RECLAIM ",0)==0){
+            auto confirmed=model::OctopusId::parse(command.substr(25));auto result=confirmed?runtime_reclaim_membership(*confirmed):ESP_ERR_INVALID_ARG;
+            printf("AMITY CONSORTIUM RECLAIM %s\n",result==ESP_OK?"OK REBOOTING":"FAILED");fflush(stdout);
+            if(result==ESP_OK){vTaskDelay(pdMS_TO_TICKS(100));esp_restart();}
+        }else if(command=="AMITY CONSORTIUM SELFTEST")printf("AMITY CONSORTIUM SELFTEST %s\n",runtime_crypto_self_test()==ESP_OK?"OK":"FAILED");
+        std::fill(command.begin(),command.end(),0);
+    }
+}
 esp_err_t recovery_usb(model::OctopusId local,esp_err_t result,const char *reason){
     ble_remote_set_controller_enabled(false);identity.id=local;recovery_console=true;status.initialized=true;status.authority_ready=false;status.coordinator=false;status.member=true;status.credential_ready=false;status.phase="recovery_required";status.last_error=reason;
     if(xTaskCreateWithCaps(usb_worker,"group_recovery",12288,nullptr,1,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
@@ -683,10 +752,13 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     if(psa_crypto_init()!=PSA_SUCCESS)return recovery_usb(octopus,ESP_FAIL,"Crypto initialization failed; physical recovery only");
     auto result=load_group(group);if(result!=ESP_OK)return recovery_usb(octopus,result,"Membership journal needs physical recovery");
     RuntimeStartup startup;if(runtime_read_startup(octopus,startup)!=ESP_OK)return recovery_usb(octopus,ESP_ERR_INVALID_STATE,"Membership authority journal needs physical recovery");
-    result=platform::load_identity(octopus,identity);if(result!=ESP_OK){return recovery_usb(octopus,result,"Operational credential journal needs physical recovery");}singleton=consortium;boot=current_boot;configuration=config;std::string bootstrap;auto e=read_record("amity_origin","bootstrap",bootstrap,1024);if(e==ESP_OK){BootstrapRecord record;if(decode_bootstrap_record(bootstrap,record)&&unhex(record.salt_hex,salt,32)&&unhex(record.verifier_hex,verifier,384))status.bootstrap_ready=true;else return recovery_usb(octopus,ESP_ERR_INVALID_STATE,"Bootstrap verifier needs physical recovery");}else if(e!=ESP_ERR_NVS_NOT_FOUND)return e;
+    result=platform::load_identity(octopus,identity);if(result!=ESP_OK){return recovery_usb(octopus,result,"Operational credential journal needs physical recovery");}singleton=consortium;boot=current_boot;configuration=config;
+    // The former separate Add credential has no role in either admission mode.
+    // Its removal must never erase origin identity or factory Matter credentials.
+    if(erase_record("amity_origin","bootstrap")!=ESP_OK)ESP_LOGW("consortium","Could not discard an unused setup verifier");
     std::string name_record;const auto name_result=read_record("amity_group","hostnames",name_record,8192);if(name_result!=ESP_ERR_NVS_NOT_FOUND&&(name_result!=ESP_OK||!hostnames.restore(name_record))){hostnames={};status.last_error="Saved device names are unavailable. Names will refresh when devices reconnect.";}
-    status.crypto_ready=security2_self_test();
-    if(!status.crypto_ready){error("Pinned Security2 proof/GCM interoperability self-test failed");return ESP_FAIL;}
+    status.crypto_ready=admission_crypto_self_test();
+    if(!status.crypto_ready){error("Admission key exchange/encryption self-test failed");return ESP_FAIL;}
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
     if(group.role==Group::retired){status.member=false;status.phase="retired";if(group.join_id&&group.mutation_id&&group.mutation_digest==group.join_digest){status.phase="enrollment_aborted";status.last_error="Enrollment cancelled; this Amity remains passive. Use physical reclaim to operate independently.";}}
@@ -714,7 +786,6 @@ RuntimeStatus runtime_status(){
     }
     return out;
 }
-std::string runtime_enrollment_error(model::OctopusId candidate){std::lock_guard<std::mutex> guard(lock);for(const auto& entry:enrollment_errors)if(entry.first==candidate)return entry.second;return {};}
 esp_err_t runtime_claim_original_controller(){
     std::lock_guard<std::mutex> guard(lock);
     if(!status.initialized||!status.credential_ready||!status.crypto_ready)return ESP_ERR_INVALID_STATE;
@@ -745,27 +816,67 @@ std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootI
 }
 
 esp_err_t runtime_register_gatt(){return gatt_register();}
-esp_err_t runtime_open_enrollment(uint64_t generation){std::lock_guard<std::mutex> guard(lock);if(!status.initialized||!status.bootstrap_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;auto e=gatt_server_open(generation,salt,verifier,bootstrap_request);if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+180000;status.enrollment_open=true;status.phase="enrollment_open";}return e;}
+esp_err_t runtime_open_enrollment(uint64_t generation){
+    std::lock_guard<std::mutex> guard(lock);
+    if(!status.initialized||!status.crypto_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;
+    const auto e=gatt_server_open(generation,identity.id,bootstrap_request);
+    if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+EnrollmentWindow::duration_ms;status.enrollment_open=true;status.phase="enrollment_open";}
+    return e;
+}
 void runtime_close_enrollment(){uint64_t generation;{std::lock_guard<std::mutex> guard(lock);generation=candidate_generation;candidate_generation=candidate_deadline=0;status.enrollment_open=false;if(group.role==Group::unclaimed&&!candidate_passive)status.phase="awaiting_setup";}gatt_server_close();defer_radio_release(generation);}
 bool runtime_cancel_radio_workflows(){
     invitation_cancelled=true;
-    relay_cancel_all();
-    runtime_close_enrollment();
-    gatt_client_disconnect();
-    return !invitation_running&&!relay_running&&gatt_quiescent();
+    {std::lock_guard<std::mutex> guard(lock);
+        if(group.join_id&&group.joining_id==admission.view.candidate_id){admission.view.phase="finishing";admission.view.error="Setup could not be confirmed yet. Check the Amity devices list before trying again.";}
+        else if(admission.view.phase=="scanning"||admission.view.phase=="found"||admission.view.phase=="connecting"){admission.view.phase="cancelled";admission.view.error="Adding this Amity was cancelled.";}
+        admission.pin=0;
+    }
+    runtime_close_enrollment();gatt_client_disconnect();
+    return !invitation_running&&gatt_quiescent();
 }
-esp_err_t runtime_add_octopus(const std::string &code,const std::string &hostname){
-    if(!valid_hostname(hostname))return ESP_ERR_INVALID_ARG;
-    if(code.size()!=105||code.rfind("amityc1:",0)!=0||code[40]!=':')return ESP_ERR_INVALID_ARG;
-    const auto candidate=model::OctopusId::parse(std::string_view(code).substr(8,32));if(!candidate)return ESP_ERR_INVALID_ARG;
-    std::string decoded;struct Wipe{std::string& value;~Wipe(){mbedtls_platform_zeroize(value.data(),value.size());}} wipe{decoded};
-    if(!unhex(std::string_view(code).substr(41),decoded,32)||decoded.size()!=32)return ESP_ERR_INVALID_ARG;
-    mbedtls_platform_zeroize(decoded.data(),decoded.size());decoded.clear();
-    {std::lock_guard<std::mutex> guard(lock);if(group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!radio.reserve)return ESP_ERR_INVALID_STATE;for(const auto& peer:group.peers){if(peer.id==*candidate)return ESP_ERR_INVALID_STATE;if(hostnames.lookup(peer.id)==hostname)return ESP_ERR_INVALID_ARG;}if((hostnames.lookup(*candidate).empty()&&hostnames.entries().size()>=HostnameRegistry::capacity)||!network.get_hostname||network.get_hostname()==hostname)return ESP_ERR_INVALID_ARG;}
+RuntimeAdmissionStatus runtime_admission_status(){
+    std::lock_guard<std::mutex> guard(lock);auto result=admission.view;
+    if(result.phase=="finishing"&&result.candidate_id){
+        for(const auto& link:links)if(link->peer==result.candidate_id&&!link->cancelled&&link->ready){
+            std::lock_guard<std::mutex> snapshot(link->mutex);
+            if(link->status.ready&&link->status.hostname==admission.hostname){result.phase="complete";result.error.clear();}
+        }
+    }
+    return result;
+}
+esp_err_t runtime_scan_admission(model::MessageId scan){
+    if(!scan)return ESP_ERR_INVALID_ARG;
+    std::lock_guard<std::mutex> guard(lock);
+    if(group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!radio.reserve||!status.crypto_ready)return ESP_ERR_INVALID_STATE;
     if(invitation_running.exchange(true))return ESP_ERR_INVALID_STATE;
-    {std::lock_guard<std::mutex> guard(lock);status.synchronized=false;status.last_error.clear();status.phase="finding_octopus";enrollment_errors.erase(std::remove_if(enrollment_errors.begin(),enrollment_errors.end(),[&](const auto& entry){return entry.first==*candidate;}),enrollment_errors.end());}
-    invitation_cancelled=false;auto copy=new InviteRequest{code,hostname};
-    if(xTaskCreateWithCaps(invite_worker,"group_join",16384,copy,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){mbedtls_platform_zeroize(copy->code.data(),copy->code.size());delete copy;invitation_running=false;return ESP_ERR_NO_MEM;}
+    admission={};admission.view.scan_id=scan;admission.view.phase="scanning";admission.view.requires_setup_code=configured_admission_mode()==AdmissionMode::setup_code;
+    invitation_cancelled=false;status.last_error.clear();
+    auto* request=new InviteRequest{scan};
+    if(xTaskCreateWithCaps(invite_worker,"group_join",16384,request,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS){delete request;invitation_running=false;admission.view.phase="failed";admission.view.error="Setup could not start.";return ESP_ERR_NO_MEM;}
+    return ESP_OK;
+}
+esp_err_t runtime_cancel_admission(model::MessageId scan){
+    {std::lock_guard<std::mutex> guard(lock);
+        if(!scan||admission.view.scan_id!=scan)return ESP_ERR_INVALID_STATE;
+        if(admission.view.phase=="cancelled")return ESP_OK;
+        // A prepared enrollment is reconciled by its durable transaction. It
+        // cannot be undone by closing the browser or by clearing radio state.
+        if(group.join_id||admission.view.phase=="finishing"||admission.view.phase=="complete")return ESP_ERR_INVALID_STATE;
+        invitation_cancelled=true;admission.pin=0;admission.view.phase="cancelled";admission.view.error="Adding this Amity was cancelled.";
+    }
+    gatt_client_disconnect();return ESP_OK;
+}
+esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,const std::string& hostname,const std::string& setup_code){
+    if(!scan||token.empty()||token.size()>128||!valid_hostname(hostname))return ESP_ERR_INVALID_ARG;
+    uint32_t pin=0;
+    if(configured_admission_mode()==AdmissionMode::setup_code){if(!parse_admission_setup_code(setup_code,pin))return ESP_ERR_INVALID_ARG;}
+    else if(!setup_code.empty())return ESP_ERR_INVALID_ARG;
+    std::lock_guard<std::mutex> guard(lock);
+    if(group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!invitation_running||invitation_cancelled||admission.view.scan_id!=scan||admission.view.phase!="found"||!admission.deadline||now_ms()>=admission.deadline)return ESP_ERR_INVALID_STATE;
+    if(std::none_of(admission.view.candidates.begin(),admission.view.candidates.end(),[&](const auto& item){return item.token==token;}))return ESP_ERR_INVALID_ARG;
+    if(!network.get_hostname||network.get_hostname()==hostname)return ESP_ERR_INVALID_ARG;
+    for(const auto& peer:group.peers)if(hostnames.lookup(peer.id)==hostname)return ESP_ERR_INVALID_ARG;
+    admission.selected_token=token;admission.hostname=hostname;admission.pin=pin;admission.submitted=true;admission.view.phase="connecting";
     return ESP_OK;
 }
 esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,uint64_t expected_revision,std::optional<model::BootId> expected_target_boot){
@@ -966,17 +1077,6 @@ std::vector<RuntimePeerStatus> runtime_peers(){
     return out;
 }
 std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames(){std::lock_guard<std::mutex> guard(lock);return hostnames.entries();}
-esp_err_t runtime_crypto_self_test(){return security2_self_test()&&config_store::production_storage_self_test()?ESP_OK:ESP_FAIL;}
-esp_err_t runtime_rotate_bootstrap(model::OctopusId confirmed,const std::string &salt_hex,const std::string &verifier_hex){
-    {std::lock_guard<std::mutex> guard(lock);if(!status.initialized||!status.credential_ready||!status.crypto_ready||confirmed!=identity.id||(group.role!=Group::unclaimed&&group.role!=Group::coordinator&&group.role!=Group::member)||(group.role==Group::coordinator&&group.join_id))return ESP_ERR_INVALID_STATE;}
-    if(!runtime_cancel_radio_workflows())return ESP_ERR_INVALID_STATE;
-    std::lock_guard<std::mutex> guard(lock);if((group.role!=Group::unclaimed&&group.role!=Group::coordinator&&group.role!=Group::member)||confirmed!=identity.id)return ESP_ERR_INVALID_STATE;
-    struct Store{BootstrapReadResult read(std::string &bytes){const auto result=read_record("amity_origin","bootstrap",bytes,1024);return result==ESP_OK?BootstrapReadResult::found:result==ESP_ERR_NVS_NOT_FOUND?BootstrapReadResult::missing:BootstrapReadResult::error;}bool write(std::string_view bytes){return write_record("amity_origin","bootstrap",bytes)==ESP_OK;}} store;
-    BootstrapRecord committed;const auto rotated=rotate_bootstrap_record(store,salt_hex,verifier_hex,committed);
-    if(rotated!=Error::none){if(rotated!=Error::unknown_outcome&&rotated!=Error::storage_failure)return ESP_ERR_INVALID_ARG;status.bootstrap_ready=false;salt.clear();verifier.clear();status.last_error="Bootstrap rotation was not confirmed; enrollment stays closed until physical retry";return ESP_FAIL;}
-    if(!unhex(committed.salt_hex,salt,32)||!unhex(committed.verifier_hex,verifier,384)){status.bootstrap_ready=false;return ESP_FAIL;}
-    status.bootstrap_ready=true;return ESP_OK;
-}
-esp_err_t runtime_install_bootstrap(const std::string &salt_hex,const std::string &verifier_hex){std::string s,v;if(salt_hex.size()!=64||verifier_hex.size()!=768||!unhex(salt_hex,s,32)||!unhex(verifier_hex,v,384))return ESP_ERR_INVALID_ARG;std::lock_guard<std::mutex> guard(lock);if(!status.initialized||!status.credential_ready||!status.crypto_ready||group.role!=Group::unclaimed||status.bootstrap_ready)return ESP_ERR_INVALID_STATE;auto e=write_record("amity_origin","bootstrap",salt_hex+":"+verifier_hex);if(e==ESP_OK){salt=std::move(s);verifier=std::move(v);status.bootstrap_ready=true;}return e;}
+esp_err_t runtime_crypto_self_test(){return admission_crypto_self_test()&&config_store::production_storage_self_test()?ESP_OK:ESP_FAIL;}
 } // namespace
 #endif

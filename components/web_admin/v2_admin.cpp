@@ -39,7 +39,7 @@ bool configuration_passive=false;
 std::optional<config_store::ConfigurationV2> deferred_migration;
 uint64_t deferred_epoch=1;
 std::vector<std::string> migration_tasks;
-struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};std::string name;bool rebooting=false;std::string reset;};
+struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;};
 bool operation_pending(const Tracked& operation){return operation.status=="admitted"||operation.status=="configuring"||operation.status=="preparing"||operation.status=="activating";}
 std::vector<Tracked> operations;
 std::string string(cJSON* root,const char* key){auto* v=cJSON_GetObjectItemCaseSensitive(root,key);return cJSON_IsString(v)?v->valuestring:"";}
@@ -93,6 +93,39 @@ bool parse_port_value(cJSON* value,m::CecPortRef& port){
     if(!group||!owner||!cJSON_IsNumber(tentacle)||tentacle->valuedouble!=tentacle->valueint||tentacle->valueint<0||static_cast<unsigned>(tentacle->valueint)>amity::last_tentacle_id||(side!="front"&&side!="back"))return false;
     port={*group,*owner,static_cast<uint8_t>(tentacle->valueint),side=="front"?m::Side::front:m::Side::back};return port.valid();
 }
+struct AdmissionSelection {
+    m::MessageId scan_id;
+    std::string candidate_token,name,setup_code;
+};
+bool admission_selection(cJSON* root,bool requires_code,AdmissionSelection& out,std::string& message){
+    const auto fail=[&](const char* reason){message=reason;return false;};
+    if(!object_fields(root,{"request_id","scan_id","candidate_token","name"},{"setup_code"}))return fail("Choose an Amity from the current search and give it a name.");
+    AdmissionSelection value;SensitiveString clear_code{value.setup_code};
+    for(const auto* key:{"scan_id","candidate_token","name"})if(!cJSON_IsString(cJSON_GetObjectItemCaseSensitive(root,key)))return fail("Choose an Amity from the current search and give it a name.");
+    auto* code=cJSON_GetObjectItemCaseSensitive(root,"setup_code");
+    if(code&&!cJSON_IsString(code))return fail("The Matter setup code must be text.");
+    const auto scan=m::MessageId::parse(string(root,"scan_id"));
+    value.candidate_token=string(root,"candidate_token");value.name=string(root,"name");value.setup_code=code?string(root,"setup_code"):std::string{};
+    if(!scan||value.candidate_token.empty()||value.candidate_token.size()>128||std::any_of(value.candidate_token.begin(),value.candidate_token.end(),[](unsigned char byte){return byte<32||byte==127;}))return fail("Choose an Amity from the current search.");
+    if(value.setup_code.size()>256)return fail("The Matter setup code is too long.");
+    if(!requires_code&&!value.setup_code.empty())return fail("A setup code is not used when adding this Amity.");
+    if(requires_code&&value.setup_code.empty())return fail("Enter the Matter setup code printed on the added Amity.");
+    const auto first=value.name.find_first_not_of(" \t\r\n");
+    value.name=first==std::string::npos?std::string{}:value.name.substr(first,value.name.find_last_not_of(" \t\r\n")-first+1);
+    if(!device_settings::normalize_hostname(value.name))return fail("Use a name of 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.");
+    value.scan_id=*scan;out=value;message.clear();return true;
+}
+esp_err_t admission_response(httpd_req_t* req){
+    const auto state=amity::consortium::runtime_admission_status();
+    Json result(cJSON_CreateObject(),cJSON_Delete);
+    if(state.scan_id)cJSON_AddStringToObject(result.get(),"scan_id",state.scan_id.str().c_str());else cJSON_AddNullToObject(result.get(),"scan_id");
+    cJSON_AddStringToObject(result.get(),"phase",state.phase.c_str());cJSON_AddStringToObject(result.get(),"error",state.error.c_str());
+    cJSON_AddBoolToObject(result.get(),"requires_setup_code",state.requires_setup_code);
+    if(state.candidate_id)cJSON_AddStringToObject(result.get(),"candidate_id",state.candidate_id.str().c_str());else cJSON_AddNullToObject(result.get(),"candidate_id");
+    auto* candidates=cJSON_AddArrayToObject(result.get(),"candidates");
+    for(const auto& candidate:state.candidates){auto* item=cJSON_CreateObject();cJSON_AddItemToArray(candidates,item);cJSON_AddStringToObject(item,"token",candidate.token.c_str());cJSON_AddStringToObject(item,"label",candidate.label.c_str());}
+    return send(req,result.get());
+}
 std::optional<std::string> device_settings_target(const std::string& path){
     const std::string prefix="/api/v2/devices/",suffix="/settings";
     if(path.size()!=prefix.size()+32+suffix.size()||path.compare(0,prefix.size(),prefix)||path.compare(path.size()-suffix.size(),suffix.size(),suffix))return {};
@@ -104,7 +137,9 @@ std::optional<std::vector<std::string>> request_fields(const std::string& path){
     std::vector<std::string> allowed{"request_id"};
     if(path=="/api/v2/config"||path=="/api/v2/config/validate")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","configuration"});
     else if(path=="/api/v2/replacements/preview"||path=="/api/v2/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
-    else if(path=="/api/v2/membership/add")allowed.insert(allowed.end(),{"setup_code","name"});
+    else if(path=="/api/v2/membership/scan"){}
+    else if(path=="/api/v2/membership/cancel")allowed.push_back("scan_id");
+    else if(path=="/api/v2/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","setup_code","name"});
     else if(path=="/api/v2/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id"});
     else if(path=="/api/v2/updates/validate")allowed.insert(allowed.end(),{"manifest","signature"});
     else if(path=="/api/v2/updates/cohort")allowed.insert(allowed.end(),{"manifest","signature","targets"});
@@ -150,14 +185,22 @@ void update_operation(Tracked& operation){
         return;
     }
     if(operation.path=="/api/v2/membership/add"){
-        const auto candidate_error=amity::consortium::runtime_enrollment_error(operation.candidate);
-        if(!candidate_error.empty()){operation.status="failed";operation.error=candidate_error;return;}
-        if(!active||!operation.candidate)return;
+        const auto state=amity::consortium::runtime_admission_status();
+        if(state.scan_id!=operation.scan_id){
+            const auto peers=amity::consortium::runtime_peers();
+            const auto peer=std::find_if(peers.begin(),peers.end(),[&](const auto& peer){return operation.candidate&&peer.id==operation.candidate&&peer.enrolled&&peer.ready&&!peer.provisional&&peer.hostname==operation.name;});
+            operation.status=peer!=peers.end()?"complete":"unknown";
+            operation.error=operation.status=="unknown"?"The search changed before the result was confirmed. Check the Amity devices list before trying again.":std::string{};return;
+        }
+        if(state.candidate_id)operation.candidate=state.candidate_id;
+        if(state.phase=="failed"||state.phase=="cancelled"){operation.status=state.phase;operation.error=state.error;return;}
+        if(state.phase!="complete")return;
         const auto peers=amity::consortium::runtime_peers();
-        const auto peer=std::find_if(peers.begin(),peers.end(),[&](const auto& peer){return peer.id==operation.candidate&&peer.enrolled&&peer.ready&&!peer.provisional;});
-        if(peer==peers.end())return;
-        if(peer->hostname!=operation.name){operation.status="failed";operation.error="The added Amity did not confirm its requested name.";return;}
-        operation.status="complete";
+        const auto peer=std::find_if(peers.begin(),peers.end(),[&](const auto& peer){return operation.candidate&&peer.id==operation.candidate&&peer.enrolled&&peer.ready&&!peer.provisional;});
+        if(peer!=peers.end()){
+            if(peer->hostname!=operation.name){operation.status="failed";operation.error="The added Amity did not confirm its requested name.";return;}
+            operation.status="complete";return;
+        }
     }
 }
 esp_err_t operation_response(httpd_req_t* req,Tracked& operation){
@@ -218,7 +261,6 @@ esp_err_t snapshot(httpd_req_t* req){
     cJSON_AddNumberToObject(runtime,"max_tick_gap_us",timing.max_tick_gap_us);cJSON_AddNumberToObject(runtime,"max_isr_us",timing.max_isr_us);
     auto* membership=cJSON_AddObjectToObject(result.get(),"membership");
     cJSON_AddStringToObject(membership,"membership_revision",m::format_uint64(group.membership_revision).c_str());
-    cJSON_AddBoolToObject(membership,"bootstrap_ready",group.bootstrap_ready);
     cJSON_AddBoolToObject(membership,"crypto_ready",group.crypto_ready);
     cJSON_AddBoolToObject(membership,"enrollment_open",group.enrollment_open);
     cJSON_AddBoolToObject(membership,"coordinator",group.coordinator);
@@ -350,6 +392,7 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
             return true;
         }
         if(path=="/api/v2/system"){result=snapshot(req);return true;}
+        if(path=="/api/v2/membership/admission"){result=admission_response(req);return true;}
         if(path=="/api/v2/config"){result=active?web::json(req,active_v2_json()):error(req,"migration_pending","Equipment configuration needs recovery.","409 Conflict");return true;}
         if(path=="/api/v2/updates"){result=web::json(req,system_services::updates::status_json());return true;}
         if(path=="/api/v2/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}
@@ -475,28 +518,33 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         operation.status="configuring";
         finish();return true;
     }
-    if(path=="/api/v2/membership/add"){
-        // Setup secrets live only in this bounded request and the secure crypto
-        // workflow. The operation ledger retains a digest, never the raw code.
-        auto code=string(root.get(),"setup_code");
-        SensitiveString clear_code{code};
-        auto name=string(root.get(),"name");
-        const auto first=name.find_first_not_of(" \t\r\n");
-        name=first==std::string::npos?std::string{}:name.substr(first,name.find_last_not_of(" \t\r\n")-first+1);
-        if(!device_settings::normalize_hostname(name)){result=error(req,"invalid_name","Use a name of 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.");return true;}
-        if(name==device_settings::hostname()){result=error(req,"name_in_use","That name belongs to this Amity. Choose another name.","409 Conflict");return true;}
-        for(const auto& peer:amity::consortium::runtime_peers())if((peer.enrolled||peer.provisional)&&peer.hostname==name){result=error(req,"name_in_use","That name is already used by an added Amity. Choose another name.","409 Conflict");return true;}
-        const bool valid=code.size()==105&&code.rfind("amityc1:",0)==0&&code[40]==':'&&m::OctopusId::parse(std::string_view(code).substr(8,32))&&std::all_of(code.begin()+41,code.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');});
-        auto e=ESP_ERR_INVALID_ARG;
-        if(valid){
-            operation.candidate=*m::OctopusId::parse(std::string_view(code).substr(8,32));
-            const auto membership=amity::consortium::runtime_status();
-            operation.name=name;
-            e=membership.coordinator&&membership.authority_ready?ESP_OK:ESP_ERR_INVALID_STATE;
-            if(e==ESP_OK)e=amity::consortium::runtime_add_octopus(code,name);
+    if(path=="/api/v2/membership/scan"){
+        const auto e=amity::consortium::runtime_scan_admission(*m::MessageId::parse(id));
+        if(e!=ESP_OK){result=error(req,"scan_unavailable","The search could not start. Close this window and try again.","409 Conflict",true);return true;}
+        finish();return true;
+    }
+    if(path=="/api/v2/membership/cancel"){
+        const auto scan=m::MessageId::parse(string(root.get(),"scan_id"));
+        if(!scan){result=error(req,"invalid_scan","Choose the current search.");return true;}
+        const auto e=amity::consortium::runtime_cancel_admission(*scan);
+        if(e!=ESP_OK){
+            const auto state=amity::consortium::runtime_admission_status();
+            const bool finishing=state.scan_id==*scan&&(state.phase=="finishing"||state.phase=="complete");
+            result=error(req,finishing?"addition_finishing":"stale_scan",finishing?"This Amity is finishing setup. Check the Amity devices list shortly.":"This search is no longer active.","409 Conflict");return true;
         }
-        if(e!=ESP_OK){result=error(req,"enrollment_unavailable",e==ESP_ERR_INVALID_ARG?"Use the Add to Amity code on this board. A home-app code cannot add an Amity.":"Adding this Amity could not start. Check its physical setup window and the current radio operation.","409 Conflict",true);return true;}
-        operation.status="admitted";finish();return true;
+        finish();return true;
+    }
+    if(path=="/api/v2/membership/add"){
+        AdmissionSelection selection;std::string message;
+        const auto state=amity::consortium::runtime_admission_status();
+        if(!admission_selection(root.get(),state.requires_setup_code,selection,message)){result=error(req,"invalid_addition",message);return true;}
+        SensitiveString clear_code{selection.setup_code};
+        if(state.scan_id!=selection.scan_id){result=error(req,"stale_scan","The search changed. Close this window and try again.","409 Conflict");return true;}
+        if(selection.name==device_settings::hostname()){result=error(req,"name_in_use","That name belongs to this Amity. Choose another name.","409 Conflict");return true;}
+        for(const auto& peer:amity::consortium::runtime_peers())if((peer.enrolled||peer.provisional)&&peer.hostname==selection.name){result=error(req,"name_in_use","That name is already used by an added Amity. Choose another name.","409 Conflict");return true;}
+        const auto e=amity::consortium::runtime_add_octopus(selection.scan_id,selection.candidate_token,selection.name,selection.setup_code);
+        if(e!=ESP_OK){result=error(req,"enrollment_unavailable","Adding this Amity could not start. Check the selected device and its setup window, then try again.","409 Conflict",true);return true;}
+        operation.scan_id=selection.scan_id;operation.name=selection.name;operation.status="admitted";finish();return true;
     }
     if(path=="/api/v2/membership/remove"){
         const auto owner=m::OctopusId::parse(string(root.get(),"octopus_id"));

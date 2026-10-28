@@ -24,6 +24,31 @@ intent, and fence stale or unauthorized distributed work. Do not introduce new
 normal-operation timing, timeouts, cadence, or recovery behavior without an
 explicit user request.
 
+## Adding an Amity amendment — 27 October 2026
+
+The accepted workflow is **Amity devices → Add** on the original main, which
+scans directly for nearby unclaimed boards. The user holds and releases the
+candidate's FW RESET button after at least three and before ten seconds,
+chooses the candidate if several are found, enters its name, and adds it.
+Keep the existing short-press Matter setup and ten-second factory reset rules.
+A committed controller/member cannot become an unclaimed candidate by rebooting.
+
+The default admission profile uses fresh ephemeral key exchange and AEAD under
+that physical window. `CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE`, default off,
+selects the stricter profile: authenticate with the candidate's existing printed
+Matter manual/QR setup code using PAKE to authenticate fresh Amity-specific
+session keys.
+Both ends must require the same profile and reject a mismatch without downgrade
+or fallback. This is not full Matter commissioning, does not create a fabric,
+and cannot change role through the Matter stack. Operational admission still
+commits the headless member role through the existing membership transaction.
+
+Do not introduce or retain a separate Add secret, Add-code provisioning/rotation
+workflow or stored bootstrap verifier. Preserve stable origin IDs and the
+independent factory Matter/admin credentials. Discovery is direct from the main;
+there is no admission relay through another member. Do not put internal protocol
+or build-profile terminology into the ordinary user flow.
+
 ## Qualified lookup amendment — 27 October 2026
 
 The user explicitly requires the persistent equipment selector to be **Amity

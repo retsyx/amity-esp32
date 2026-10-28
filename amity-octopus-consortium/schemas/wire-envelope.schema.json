@@ -35,10 +35,6 @@
       "enum": [
         "heartbeat",
         "execution_lease",
-        "relay_reserve",
-        "relay_record",
-        "relay_close",
-        "relay_result",
         "enrollment_control",
         "membership_event",
         "membership_result",
@@ -111,70 +107,6 @@
         "properties": {
           "payload": {
             "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/Lease"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "relay_reserve"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayReserve"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "relay_record"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayRecord"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "relay_close"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayClose"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "relay_result"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/RelayResult"
           }
         }
       }
