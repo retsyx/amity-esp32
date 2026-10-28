@@ -171,7 +171,7 @@
       "limitation": "Actual SDK SRP interoperability and CHIP manual/QR/check-digit self-tests compile into firmware but have not executed on hardware."
     },
     "physical_admission": "Not run on actual ESP32 radio; no new physical deployment claimed",
-    "device_srp_selftest": "Compiled into firmware; not executed on an ESP32 in this admission task",
+    "device_srp_selftest": "PASS on all four ESP32-S3 DUTs after installing 0.1.83: actual SDK admission_crypto_self_test, including both profiles, SRP and Matter manual/QR parser checks, plus production-storage self-test.",
     "runtime_workflow": {
       "result": "PASS",
       "log": "test-results/admission-2026-10-27/admission-workflow-tests.log",
@@ -187,5 +187,18 @@
       "log": "test-results/admission-2026-10-27/admission-fragment-tests.log",
       "scope": "Actual framing/client exchange paths across nine ATT MTUs with host seams"
     }
+  },
+  "latest_deployment": {
+    "date": "2026-10-27",
+    "firmware_version": "0.1.83",
+    "matter_software_version": 84,
+    "device_count": 4,
+    "hardware_profile": "esp32s3-development-4t-v1",
+    "normal_admission": true,
+    "result": "PASS",
+    "report": "test-results/admission-0.1.83-deployment-2026-10-27/deployment.json",
+    "checks": "Exact MAC/application/boot identity; all non-application partitions and OTA selection unchanged before reboot; preserved Matter/admin credentials and origin IDs; SDK admission security self-test passed on every board.",
+    "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
+    "radio_enrollment_exercised": false
   }
 }
