@@ -116,6 +116,33 @@ void remote_disconnect(void *) {
     Input reset{};reset.type=InputType::Reset;
     if(xQueueSend(input_queue,&reset,0)!=pdTRUE)input_lost.store(true);
 }
+esp_err_t open_boot_matter_setup() {
+    if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;
+    const auto group=amity::consortium::runtime_status();
+    // Current Matter fabrics determine whether setup is needed. A retained
+    // original keeps its role; an already enrolled headless member never opens
+    // Matter. Neither a button nor saved activity configuration gates boot setup.
+    if(!group.initialized||group.member||
+       !((group.coordinator&&group.authority_ready)||amity::consortium::runtime_original_setup_eligible()))return ESP_ERR_INVALID_STATE;
+    amity_matter_status_t matter{};
+    const auto read=amity_matter_get_status(&matter);
+    if(read!=ESP_OK)return read;
+    if(matter.fabric_count)return ESP_ERR_INVALID_STATE;
+    return amity_matter_open_commissioning(300);
+}
+void start_boot_matter_setup() {
+    esp_err_t result=ESP_ERR_INVALID_STATE;
+    // Shared-radio cancellation can finish asynchronously. Retry only this
+    // startup request, rechecking role and fabrics each time; expiry does not
+    // create a periodic commissioning loop.
+    for(unsigned attempt=0;attempt<50;++attempt){
+        result=open_boot_matter_setup();
+        if(result==ESP_OK){ESP_LOGI("amity","Matter setup opened automatically; no Matter pairing is saved");return;}
+        if(result==ESP_ERR_INVALID_STATE)return;
+        if(attempt+1<50)vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    ESP_LOGE("amity","Could not open Matter setup automatically: %s",esp_err_to_name(result));
+}
 void setup_button(bool consortium_setup,void*) {
     if(!system_services::firmware_ready())return;
     const auto group=amity::consortium::runtime_status();
@@ -513,6 +540,9 @@ extern "C" void app_main() {
     if(group_start==ESP_OK&&migrated==ESP_OK){
         const auto synchronization=amity::start_configuration_synchronization(hub);
         if(synchronization!=ESP_OK)ESP_LOGE("amity","Consortium synchronization could not start; peers remain fenced");
+    }
+    if(group_start==ESP_OK&&migrated==ESP_OK){
+        start_boot_matter_setup();
     }
     if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,"await_setup",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     if(original_interfaces_enabled.load())ESP_LOGI("amity","Ready. Administration: https://%s.local (or the DHCP address)",device_settings::hostname());

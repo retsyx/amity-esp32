@@ -10,6 +10,8 @@ There is no separate Add secret, stored bootstrap verifier or USB Add-code provi
 
 ## Physical workflow
 
+At boot, automatically open the bounded Matter setup window when the current fabric count is zero and the board is either unclaimed or the proven original main with retained authority. This includes factory-reset and still-unclaimed reboots and requires no FW RESET GPIO. It is a permanent user requirement, with no commissioning-history latch or saved-activity/configuration gate. A main whose last fabric was removed keeps its main role/UI and reopens setup at boot. Boards with a fabric, and headless/prepared/retired/recovery roles without one, do not open it automatically. The original main also retains explicit Matter pairing controls.
+
 On the original main, open **Amity devices → Add** to scan directly for nearby unclaimed boards. Hold the candidate's **FW RESET** for at least three seconds and release before ten seconds. Choose the candidate if several are found, enter a valid unique **Name**, then add it. The candidate must remain within the existing bounded physical setup window. A ten-second hold retains its factory-reset meaning; the shorter setup action must not fire first.
 
 Normalize names to lowercase after trimming surrounding whitespace: 1–32 letters, digits or hyphens, with no leading/trailing hyphen. Bind the selected candidate ID and proposed hostname into admission before applying credentials or membership. A hostname is metadata, never authority or equipment identity. Do not turn old cosmetic labels into hostnames during migration.

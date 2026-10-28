@@ -46,6 +46,5 @@ RadioResult RadioArbiter::external_matter_will_open(uint64_t now,uint32_t durati
     if(owner_==RadioMode::operational&&!remote_reconnect_)return request(RadioMode::matter_induction,now,duration,false);
     return transition(RadioMode::matter_induction,now,duration);
 }
-bool initial_matter_eligible(const SetupEligibility &e){return e.fresh_unconfigured_singleton&&!e.active_membership&&!e.prepared_join&&!e.operational_configuration&&!e.retired&&!e.recovery_required&&e.physical_authorization_supported&&e.radio_available;}
 bool consortium_setup_eligible(const SetupEligibility &e){return !e.active_membership&&!e.prepared_join&&!e.retired&&!e.recovery_required&&e.physical_authorization_supported&&e.radio_available;}
 } // namespace amity::consortium

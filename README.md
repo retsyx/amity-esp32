@@ -113,7 +113,9 @@ If the `esptool` command is unavailable, use `python3 -m esptool` on macOS/Linux
 
 When installation finishes, leave the board powered on, or connect it to its USB-C power supply.
 
-For first-board Matter setup on a fresh, unconfigured board, press and release **FW RESET before three seconds**. Setup stays closed after a normal reboot. To add an unclaimed board to an existing system, open **Amity devices → Add** on the main, hold the new board’s **FW RESET** for at least three seconds, and release before ten seconds. Choose it if several boards appear, enter its name, and add it. Holding for ten seconds performs factory reset.
+Matter setup opens automatically at boot on a fresh board or original main with no current Matter pairings; no button press is required. This includes factory-reset and unclaimed reboots. A main whose last Matter pairing was removed keeps its main role and opens setup again at boot. Boards with a current Matter pairing and added Amity devices do not reopen setup on reboot.
+
+To add an unclaimed board to an existing system, open **Amity devices → Add** on the main, hold the new board’s **FW RESET** for at least three seconds, and release before ten seconds. Choose it if several boards appear, enter its name, and add it. Holding for ten seconds performs factory reset.
 
 Adding devices requires updated firmware on both boards. Normal setup needs no code. If Amity asks for one, use the new board's existing Matter manual code or QR payload. Existing Matter setup cards remain valid. Adding a device does not enroll it in a Matter home.
 
@@ -134,8 +136,8 @@ On hardware with several HDMI adapters, unused connections can stay empty. Adapt
 
 Matter pairing supplies Amity with its Wi-Fi settings. Complete this step even if you intend to use HomeKit for everyday control.
 
-1. On a fresh first board with no home pairing or configured equipment, press **FW RESET** and release before three seconds to open Matter setup. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`, or enter the manual pairing code from `amity-pairing.txt`. Add another board through **Amity devices → Add** on the original controller instead.
-2. Follow the app's prompts to connect Amity to your 2.4 GHz Wi-Fi network. If its first setup window expires, use the same short press to reopen it while the board remains eligible. Holding FW RESET for ten seconds performs a factory reset.
+1. Power on the board you want to use as the main. A fresh board or original main with no current Matter pairings automatically opens Matter setup. In your Matter home app, add a device and scan the QR code in `amity-pairing.png`, or enter the manual pairing code from `amity-pairing.txt`. Add another board through **Amity devices → Add** on the original controller instead.
+2. Follow the app's prompts to connect Amity to your 2.4 GHz Wi-Fi network. If its setup window expires, restart it to reopen setup while it still has no Matter pairings. A short FW RESET press also reopens initial setup on an unclaimed board. Holding FW RESET for ten seconds performs a factory reset.
 3. On a phone or computer connected to the same network, open the administration address on the setup card. For the example above, it is `https://living-room.local`. The default hostname gives `https://amity.local`.
 4. The browser will show a certificate warning because Amity creates its own certificate for encryption. Open the warning's details and accept the certificate to continue.
 5. Log in with the generated admin password. If you prepared the image without an initial password, create one when prompted.
@@ -286,7 +288,7 @@ If you cannot access the administration page, you can also reinstall the saved U
 
 * **The computer does not see Amity:** use a USB data cable, and check that you selected the board's serial port.
 * **The setup tool does not start:** check that you downloaded the archive for your OS and processor. On macOS/Linux, 'Permission denied' may require `chmod +x amity-provision`. These development executables are unsigned, so your OS may require approval to run them.
-* **Initial Matter pairing fails:** check the antenna connection and the phone's Bluetooth setting. On a fresh, unconfigured board, press and release FW RESET before three seconds to open the bounded first-board Matter setup window, and check that the controller accepts development Matter devices. Reboot alone does not open setup.
+* **Initial Matter pairing fails:** check the antenna connection and the phone's Bluetooth setting. A fresh board or original main with no current Matter pairings automatically opens its bounded setup window at boot; restart it if that window expired, and check that the controller accepts development Matter devices. An existing main can also reopen pairing through **Matter → Start pairing**. Added Amity devices stay headless and do not open Matter setup on reboot.
 * **The browser cannot find Amity:** use the address on the setup card from the same network, or use the IP address shown by your router.
 * **Equipment is missing or on the wrong input:** check HDMI connections and HDMI-CEC settings, scan again, and review the activity's device selections. If the activity is already running, try 'Repair'.
 * **The paired remote does not respond:** wake it, move it closer to Amity, and check 'Advanced' → 'Diagnostics'.

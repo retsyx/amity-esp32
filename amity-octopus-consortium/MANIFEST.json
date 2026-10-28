@@ -38,13 +38,13 @@
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 5912,
-      "sha256": "d55d69eacdef6932c64a8cbb448ff9991193422796a426a25badc2378d613ac4"
+      "size_bytes": 6557,
+      "sha256": "90b6b8aaedec81bf1741f600c8c1c06def1436ace0fc18bda46823a8789649dd"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
-      "size_bytes": 4724,
-      "sha256": "9b35f096f7e5e5755ad2f7ffb5ec730f741e80abccef22a65e3314553bf489aa"
+      "size_bytes": 6262,
+      "sha256": "7b1d579d89a97f76c19ec9e54d82e27bcf830656b998edf69468f9c1b2709ded"
     },
     {
       "path": "11-config-storage-and-migration.md",
@@ -78,13 +78,13 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 25008,
-      "sha256": "4f3d10e985d5ca36997163f284813fb7a6c997c3c4b2526bf1f13069a9ffbab2"
+      "size_bytes": 25978,
+      "sha256": "07f151466604ca392f381a1113f4f0929914bdefdad7c4f9f7a2ecc1d305b0b7"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 7721,
-      "sha256": "2bab7995e1a61653f989b5373dbd518da6466a7c8b0c27ac4cb84acc0e0d4181"
+      "size_bytes": 8684,
+      "sha256": "e8262c74235f4c48f07894ace86bd993fe0cc5d05cd7e04b69855a3d9103c4b2"
     },
     {
       "path": "README.md",

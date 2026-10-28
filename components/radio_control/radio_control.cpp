@@ -9,6 +9,10 @@
 #include <lib/core/CHIPError.h>
 #include <esp_matter.h>
 #include <app/server/Server.h>
+#include <platform/ConnectivityManager.h>
+extern "C" {
+#include "host/ble_gap.h"
+}
 namespace amity::radio {
 namespace {
 using namespace consortium;
@@ -83,14 +87,59 @@ RadioReservation status(){if(!mutex)return {};Lock lock;return arbiter.reservati
 esp_err_t reserve_consortium(bool inviter,uint64_t& generation){
     generation=0;
     if(!mutex)return ESP_ERR_INVALID_STATE;
-    if(fail_safe_armed())return ESP_ERR_INVALID_STATE;
+    uint64_t handoff_generation=0;
+    {
+        // SDK callbacks use CHIP -> radio ordering. Do not hold the radio
+        // mutex while closing the SDK window or waiting for GAP cleanup.
+        esp_matter::lock::ScopedChipStackLock chip_lock(portMAX_DELAY);
+        auto& server=chip::Server::GetInstance();
+        if(server.GetFailSafeContext().IsFailSafeArmed())return ESP_ERR_INVALID_STATE;
+        RadioReservation matter;
+        {
+            Lock lock;
+            matter=arbiter.reservation();
+            if(matter.owner==RadioMode::matter_induction&&matter_active)return ESP_ERR_INVALID_STATE;
+        }
+        if(matter.owner==RadioMode::matter_induction){
+            // The SDK connection count also covers a BLE connection whose
+            // application-level Matter event has not reached us yet.
+            if(chip::DeviceLayer::ConnectivityMgr().NumBLEConnections()!=0)return ESP_ERR_INVALID_STATE;
+            auto& window=server.GetCommissioningWindowManager();
+            if(window.IsCommissioningWindowOpen())window.CloseCommissioningWindow();
+            Lock lock;
+            const auto current=arbiter.reservation();
+            if(current.owner!=RadioMode::matter_induction||current.generation!=matter.generation||matter_active)
+                return ESP_ERR_INVALID_STATE;
+            if(arbiter.release(matter.generation,now())!=RadioResult::cancelling)return ESP_ERR_INVALID_STATE;
+            handoff_generation=arbiter.reservation().generation;
+        }
+    }
+    // Share the original fifty-check/five-second cancellation budget between
+    // the idle Matter handoff and the requested Amity radio workflow.
+    unsigned checks=0;
+    const auto wait_cleanup=[&](uint64_t expected,bool matter_handoff){
+        while(checks++<50){
+            {
+                Lock lock;
+                if(arbiter.reservation().generation!=expected)return ESP_ERR_INVALID_STATE;
+            }
+            const auto e=matter_handoff&&ble_gap_adv_active()?ESP_ERR_TIMEOUT:finish_cancellation(expected);
+            if(e==ESP_OK)return ESP_OK;
+            if(e!=ESP_ERR_TIMEOUT)return e;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        return ESP_ERR_TIMEOUT;
+    };
+    if(handoff_generation){
+        const auto e=wait_cleanup(handoff_generation,true);
+        if(e!=ESP_OK){release(handoff_generation);return e;}
+    }
     RadioResult result;
     {Lock lock;result=arbiter.request(inviter?RadioMode::consortium_inviter:RadioMode::consortium_candidate,now(),RadioArbiter::enrollment_ms,false);if(result==RadioResult::granted||result==RadioResult::cancelling)generation=arbiter.reservation().generation;}
     if(result!=RadioResult::granted&&result!=RadioResult::cancelling)return ESP_ERR_INVALID_STATE;
-    // GAP cancellation is asynchronous. Do not advertise until the controller
-    // has acknowledged it; this worker path has a bounded five-second budget.
-    for(unsigned i=0;i<50;++i){const auto e=finish_cancellation(generation);if(e==ESP_OK)return ESP_OK;if(e!=ESP_ERR_TIMEOUT){release(generation);generation=0;return e;}vTaskDelay(pdMS_TO_TICKS(100));}
-    release(generation);generation=0;return ESP_ERR_TIMEOUT;
+    const auto e=wait_cleanup(generation,false);
+    if(e!=ESP_OK){release(generation);generation=0;}
+    return e;
 }
 void release(uint64_t generation){if(!mutex)return;Lock lock;arbiter.release(generation,now());}
 }

@@ -111,6 +111,8 @@ python3 "$root/tests/consortium_settings_test.py"
 python3 "$root/tests/consortium_removal_test.py"
 python3 "$root/tests/controller_integration_test.py"
 python3 "$root/tests/controller_startup_test.py"
+python3 "$root/tests/matter_auto_commissioning_test.py"
+python3 "$root/tests/radio_matter_handoff_test.py"
 python3 "$root/tests/apple_fabric_lifecycle_test.py"
 
 sh "$root/tests/system_configuration_test.sh"

@@ -36,10 +36,8 @@ private:
     std::optional<uint16_t> setup_handle_;
 };
 struct SetupEligibility {
-    bool fresh_unconfigured_singleton=false;
-    bool active_membership=false,prepared_join=false,operational_configuration=false,retired=false,recovery_required=false;
+    bool active_membership=false,prepared_join=false,retired=false,recovery_required=false;
     bool physical_authorization_supported=false,radio_available=false;
 };
-bool initial_matter_eligible(const SetupEligibility &);
 bool consortium_setup_eligible(const SetupEligibility &);
 } // namespace amity::consortium

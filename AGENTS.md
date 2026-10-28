@@ -24,13 +24,42 @@ intent, and fence stale or unauthorized distributed work. Do not introduce new
 normal-operation timing, timeouts, cadence, or recovery behavior without an
 explicit user request.
 
+## Automatic Matter setup at boot — 28 October 2026
+
+Matter commissioning must open automatically at boot when the current Matter
+fabric count is zero and the board is either unclaimed or the proven original
+main with retained authority. This is a permanent user requirement. Do not
+remove it, hide it behind a build option, or replace it with a button press
+without a new explicit user request. No FW RESET GPIO is required. Unclaimed
+reboots and factory-reset boots open the bounded setup window again.
+
+Use current fabric count, not a has-ever-been-commissioned latch or the presence
+of saved activities/configuration. A proven original main whose last fabric was
+removed also opens setup at its next boot while keeping the same immutable main
+role, UI and authority. A board with a current Matter fabric must not open setup
+merely because it reboots.
+
+Resolve stored identity and role before the decision. Amity members are already
+enrolled and remain headless even without a Matter fabric; prepared, retired
+and recovery roles must not automatically open Matter setup. Use the existing
+shared host and setup arbiter. Preserve optional manual reopening, the
+three-to-below-ten-second Amity Add gesture and the ten-second factory-reset
+gesture. Regression evidence must exercise the actual boot path, not merely an
+unused eligibility helper.
+
+Setup cards retain only the original provisioner's native Amity/Matter QR,
+manual code, hostname and Initial password image, plus the user-authorized USB
+MAC and bench labels. Do not add setup instructions or change credentials/QR
+images when updating cards.
+
 ## Adding an Amity amendment — 27 October 2026
 
 The accepted workflow is **Amity devices → Add** on the original main, which
 scans directly for nearby unclaimed boards. The user holds and releases the
 candidate's FW RESET button after at least three and before ten seconds,
 chooses the candidate if several are found, enters its name, and adds it.
-Keep the existing short-press Matter setup and ten-second factory reset rules.
+Keep manual Matter reopening and the ten-second factory reset rule; boot
+Matter setup opens automatically as required above.
 A committed controller/member cannot become an unclaimed candidate by rebooting.
 
 The default admission profile uses fresh ephemeral key exchange and AEAD under

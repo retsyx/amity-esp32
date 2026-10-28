@@ -1,7 +1,7 @@
 {
-  "status": "Qualified owner lookup preserves original Amity behavior. Direct physical-window admission replaces separate Add-secret provisioning; current admission evidence is recorded separately below.",
-  "audit_date": "2026-10-27",
-  "firmware_version": "0.1.83",
+  "status": "Permanent automatic zero-fabric Matter boot setup passes host/native tests and all four 0.1.84 device upgrades; amity-dut also completed actual Home/Matter setup and started as the original main.",
+  "audit_date": "2026-10-28",
+  "firmware_version": "0.1.84",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -118,7 +118,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 84,
+  "matter_software_version": 85,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -168,9 +168,9 @@
       "scope": "Actual admission_crypto.cpp with real OpenSSL-backed PSA P-256 ECDH, HKDF-SHA256 and AES-256-GCM in both compiled profiles; strict transcript binding uses explicit mock Security2/protocomm and CHIP-parser seams. Tests cover normal confirmation, strict binding, mode mismatch, wrong-PIN seam and direction/sequence/replay/cross-session/header/cipher/tag/transcript tampering.",
       "log": "test-results/admission-2026-10-27/admission-crypto-tests.log",
       "command": "python3 tests/consortium_admission_crypto_test.py",
-      "limitation": "Actual SDK SRP interoperability and CHIP manual/QR/check-digit self-tests compile into firmware but have not executed on hardware."
+      "limitation": "These host tests use the explicit mock Security2/protocomm and CHIP-parser seams above; later 0.1.83 SDK device-self-test evidence is recorded separately."
     },
-    "physical_admission": "Not run on actual ESP32 radio; no new physical deployment claimed",
+    "physical_admission": "Actual radio enrollment was not exercised; the separate 0.1.83 flash/device-self-test evidence is in latest_deployment.",
     "device_srp_selftest": "PASS on all four ESP32-S3 DUTs after installing 0.1.83: actual SDK admission_crypto_self_test, including both profiles, SRP and Matter manual/QR parser checks, plus production-storage self-test.",
     "runtime_workflow": {
       "result": "PASS",
@@ -186,19 +186,115 @@
       "result": "PASS",
       "log": "test-results/admission-2026-10-27/admission-fragment-tests.log",
       "scope": "Actual framing/client exchange paths across nine ATT MTUs with host seams"
-    }
+    },
+    "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
-    "date": "2026-10-27",
-    "firmware_version": "0.1.83",
-    "matter_software_version": 84,
+    "date": "2026-10-28",
+    "firmware_version": "0.1.84",
+    "matter_software_version": 85,
     "device_count": 4,
     "hardware_profile": "esp32s3-development-4t-v1",
     "normal_admission": true,
     "result": "PASS",
-    "report": "test-results/admission-0.1.83-deployment-2026-10-27/deployment.json",
-    "checks": "Exact MAC/application/boot identity; all non-application partitions and OTA selection unchanged before reboot; preserved Matter/admin credentials and origin IDs; SDK admission security self-test passed on every board.",
+    "report": "test-results/matter-auto-boot-2026-10-28/deployment.json",
+    "checks": "Exact image/version/profile on all four; factory credentials, origin IDs and non-application flash preserved; automatic Matter setup window, SDK window-open event, CHIPoBLE advertising and SDK security self-test passed on every board.",
     "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
+    "setup_cards_unchanged": true,
+    "actual_home_setup": "amity-dut completed Matter commissioning and original-main startup; other three retain unclaimed-boot advertising evidence.",
     "radio_enrollment_exercised": false
-  }
+  },
+  "matter_auto_boot_validation": {
+    "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
+    "boot_regression": {
+      "result": "PASS",
+      "log": "test-results/matter-auto-boot-2026-10-28/boot-regression.log",
+      "scope": "Actual app_main invocation; fresh, configured and proven-original zero-fabric boots; no button/IP gate; current-fabric/headless/recovery safety; bounded live-state retries and optional physical reopening"
+    },
+    "radio_handoff": {
+      "result": "PASS",
+      "log": "test-results/matter-auto-boot-2026-10-28/radio-handoff.log",
+      "scope": "Actual radio reservation paths with host seams: explicit Add may hand off idle Matter; active BLE/PASE/fail-safe denied, actual advertising cleanup, exact close/cleanup generation fences and shared five-second bound"
+    },
+    "contracts": {
+      "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "checks": {
+        "manifest_entries_checked": 34,
+        "schemas_checked": 6,
+        "positive_schema_vectors": 17,
+        "negative_schema_vectors": 59,
+        "configured_selectors_checked": 4,
+        "current_wire_kinds_checked": 19,
+        "markdown_files_checked": 20,
+        "local_links_checked": 119,
+        "firmware_or_hardware_tests_run": false
+      }
+    },
+    "host_runner": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/matter-auto-boot-2026-10-28/host-tests.log",
+      "scope": "Full retained host runner including actual boot/radio tests and 29 passive harness checks"
+    },
+    "native_normal": {
+      "result": "PASS",
+      "firmware_version": "0.1.84",
+      "matter_software_version": 85,
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "hardware_mapping_sha256": "1b756583cfd9c09b5ceb9db4573bc4bc6a3808d2799453e8f3749a24e2564f6e",
+      "normal_admission": true,
+      "log": "test-results/matter-auto-boot-2026-10-28/build.log",
+      "artifact_verification": "test-results/matter-auto-boot-2026-10-28/firmware-verification.json",
+      "image": "build-4t-clean/amity.bin",
+      "image_bytes": 2429632,
+      "image_sha256": "e2e60673043121ed62f6f0a6a06cc4472f9e232a7ff19458d6cc8b8f9c95fc0f"
+    },
+    "deployment": {
+      "result": "PASS",
+      "date": "2026-10-28",
+      "firmware_version": "0.1.84",
+      "matter_software_version": 85,
+      "device_count": 4,
+      "report": "test-results/matter-auto-boot-2026-10-28/deployment.json",
+      "scope": "Every board passed exact application/version/boot/profile checks, preserved factory credentials/origin/non-application flash, automatic Matter window opening, SDK window-open event, actual CHIPoBLE advertising start and SDK crypto self-test.",
+      "cards_unchanged": true
+    },
+    "setup_cards": "Unchanged native provisioner images/credentials with USB MAC and bench labels only; no instructions added",
+    "permanency_guard": {
+      "result": "PASS",
+      "report": "test-results/matter-auto-boot-2026-10-28/guard-mutation-check.json",
+      "checks": {
+        "boot_call_removed": "rejected",
+        "button_gate_added": "rejected",
+        "button_build_gate_added": "rejected"
+      }
+    },
+    "home_verification": {
+      "result": "PASS",
+      "bench_label": "amity-dut",
+      "report": "test-results/matter-auto-boot-2026-10-28/deployment.json",
+      "private_log": "serial.log",
+      "user_confirmed_home_found_accessory": true,
+      "device_commissioning_complete": true,
+      "original_main_started": true,
+      "panic_observed": false,
+      "scope": "Actual Home discovery and complete Matter/Wi-Fi commitment on amity-dut only; the other three boards have unclaimed-boot/advertising evidence, not completed Home pairing."
+    }
+  },
+  "deployment_history": [
+    {
+      "date": "2026-10-27",
+      "firmware_version": "0.1.83",
+      "matter_software_version": 84,
+      "device_count": 4,
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "normal_admission": true,
+      "result": "PASS",
+      "report": "test-results/admission-0.1.83-deployment-2026-10-27/deployment.json",
+      "checks": "Exact MAC/application/boot identity; all non-application partitions and OTA selection unchanged before reboot; preserved Matter/admin credentials and origin IDs; SDK admission security self-test passed on every board.",
+      "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
+      "radio_enrollment_exercised": false
+    }
+  ]
 }
