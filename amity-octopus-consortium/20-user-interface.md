@@ -63,6 +63,12 @@ Actuator replacement requires old-hardware isolation/revocation, fresh device id
 
 If the main fails, support user-managed replacement through the existing **Advanced → Upload/Restore** control on freshly Matter-BLE-enrolled replacement hardware. Confirm that the old main is offline/isolated; restore portable activity/device IDs, names/order and valid saved choices without executing activity. The replacement establishes new main authority, the sole remote/home integrations are paired again, and each old headless member receives the existing ≥10-second physical factory reset and is re-added through its 3-to-below-10-second enrollment window, retaining its origin identity and factory Matter/admin credentials but using fresh operational keys and no old roster trust. No new wizard, automatic failover, planned transfer or credential cloning is added. [Manual recovery](21-original-controller-policy.md#manual-main-replacement-from-a-configuration-backup).
 
+After an Advanced hostname change, the page periodically checks the new
+address and opens it automatically once the same Amity has restarted and is
+ready. Keep a link available for browsers that require certificate approval
+at the new address; the user need not guess when to refresh. Preserve the
+existing warning for unsaved activity edits.
+
 ## Per-device HDMI-adapter settings amendment — 20 October 2026
 
 Each named device row, including the main, offers **Settings** in its title row. Read settings through the original main; added devices do not gain an HTTP server or UI. Opening or refreshing the dialog only reads metadata: no Scan HDMI, CEC probe, wake, route, identity claim, persistence or restart. Unknown legacy names, offline owners and unsupported firmware are shown honestly and cannot be edited.

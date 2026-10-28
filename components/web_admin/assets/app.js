@@ -15,6 +15,7 @@ function customerText(value){return String(value??'').replace(/\boctopuses\b/gi,
 const $=id=>document.getElementById(id);
 let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,editingRecommendation=null,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false;
 let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
+let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
 let matterState={fabrics:[]};
 const firmwareUpdateKey='amityFirmwareUpdate',firmwareResultKey='amityFirmwareUpdateResult';
@@ -28,7 +29,7 @@ function updateActivityButtons(){
  if(locked)endActivityDrag(true);updateActivityState();
 }
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
-function reportError(error){if(!firmwareUpdating&&!error.silent)message(error.message,true);}
+function reportError(error){if(!firmwareUpdating&&!hostnameReconnect&&!error.silent)message(error.message,true);}
 function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
 async function request(path,data,raw=false){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
@@ -37,7 +38,7 @@ async function request(path,data,raw=false){
  if(mapped.path!==path&&response.status===404)response=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:typeof data==='string'?data:JSON.stringify(data)});
  else if(response.ok&&mapped.decode)response=await mapped.decode(response);
 
- if(response.status===401&&path!=='login'){if(!firmwareUpdating){await showWelcome();message('');}throw Object.assign(Error(),{silent:true});}
+ if(response.status===401&&path!=='login'){if(!firmwareUpdating&&!hostnameReconnect){await showWelcome();if(!hostnameReconnect)message('');}throw Object.assign(Error(),{silent:true});}
  if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(customerText(e.error||e.message||'Request failed'));error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
  return raw?response:response.json();
 }
@@ -346,8 +347,8 @@ async function refreshHomekit(){
  if(!token||homekitPolling||firmwareUpdating)return;
  homekitPolling=true;try{const state=await request('homekit');if(token&&!firmwareUpdating)renderHomekit(state);}finally{homekitPolling=false;}
 }
-async function refresh(){if(!token||polling||firmwareUpdating)return;polling=true;try{
- const latest=await request('status');if(firmwareUpdating)return;
+async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
+ const latest=await request('status');if(firmwareUpdating||hostnameReconnect)return;
  state=latest;if(state.activity_error)message(state.activity_error,true);renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);$('connection').textContent=state.discovering?'Scanning HDMI…':'';
  renderDiagnostics();
  renderDeviceNames();
@@ -364,8 +365,8 @@ async function refresh(){if(!token||polling||firmwareUpdating)return;polling=tru
  }finally{polling=false;updateActivityButtons();}}
 async function enter(){const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
- if(firmwareUpdating)return;
- const setup=await request('setup');renderHostname(setup.hostname);showLogin();
+ if(firmwareUpdating||hostnameReconnect)return;
+ const setup=await request('setup');if(hostnameReconnect)return;renderHostname(setup.hostname);showLogin();
  if(setup.required){$('login').hidden=true;$('onboarding').hidden=false;}
 }
 $('setupForm').addEventListener('submit',run(async e=>{
@@ -549,14 +550,59 @@ $('firmware').addEventListener('change',run(async e=>{
  }finally{input.disabled=false;input.value='';if(!firmwareUpdating)progress.hidden=true;}
 }));
 $('reboot').addEventListener('click',run(async()=>{if(confirm('Restart Amity?')){await request('reboot',{});showLogin();message('Restarting Amity.');}}));
+function stopHostnameReconnect(){
+ const flow=hostnameReconnect;hostnameReconnect=null;
+ if(!flow)return;
+ clearTimeout(flow.timer);clearTimeout(flow.timeout);flow.abort?.abort();
+}
+function hostnameReady(health,flow){
+ return !!health&&health.device_id===flow.deviceId&&health.hostname===flow.hostname&&
+  typeof health.boot_id==='string'&&health.boot_id.length>0&&health.boot_id!==flow.previousBootId&&health.ready===true;
+}
+async function probeHostnameReconnect(flow){
+ if(hostnameReconnect!==flow)return;
+ if(Date.now()-flow.startedAt>=120000){
+  message('Still reconnecting. Check Amity’s power and Wi-Fi, or open the new address below if your browser requires certificate approval.');
+ }
+ const abort=new AbortController();flow.abort=abort;
+ flow.timeout=setTimeout(()=>abort.abort(),2000);
+ try{
+  // This is public health only: never send the old origin's login token or
+  // cookies to another hostname, or accept an opaque/redirected response.
+  const response=await fetch(flow.origin+'/api/ready',{mode:'cors',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:abort.signal});
+  if(response.ok&&response.type!=='opaque'){
+   const health=await response.json();
+   if(hostnameReconnect===flow&&hostnameReady(health,flow)){
+    stopHostnameReconnect();message('Amity is ready. Opening its new address…');location.replace(flow.origin);return;
+   }
+  }
+ }catch{
+  // Browsers report DNS, offline, CORS and certificate failures alike. Keep
+  // checking and leave the new address available for certificate approval.
+ }finally{
+  clearTimeout(flow.timeout);flow.timeout=null;
+  if(flow.abort===abort)flow.abort=null;
+ }
+ if(hostnameReconnect===flow)flow.timer=setTimeout(()=>{flow.timer=null;probeHostnameReconnect(flow);},2000);
+}
+function startHostnameReconnect({hostname,previousBootId,deviceId}){
+ stopHostnameReconnect();
+ if(typeof hostname!=='string'||!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(hostname)||
+    typeof previousBootId!=='string'||!previousBootId||typeof deviceId!=='string'||!deviceId)
+  throw Error('Could not read Amity’s reconnect details. Open its new address to reconnect.');
+ const flow={origin:`https://${hostname}.local`,hostname,previousBootId,deviceId,startedAt:Date.now(),timer:null,timeout:null,abort:null};
+ hostnameReconnect=flow;renderHostname(hostname);showLogin();$('login').hidden=true;
+ const link=$('hostnameLink');link.href=flow.origin;link.textContent=`Open ${hostname}.local`;link.hidden=false;
+ message(`Reconnecting to ${hostname}.local… If your browser requires certificate approval, open the link below.`);
+ probeHostnameReconnect(flow);
+}
+window.addEventListener('pagehide',stopHostnameReconnect);
 $('hostname').addEventListener('input',()=>{$('hostname').dataset.edited='true';});
 $('changeHostname').addEventListener('submit',run(async e=>{
  e.preventDefault();const submit=e.target.querySelector('button');if(submit.disabled)return;submit.disabled=true;
  try{
   const r=await request('hostname',{hostname:$('hostname').value});delete $('hostname').dataset.edited;
-  renderHostname(r.hostname);showLogin();$('login').hidden=true;
-  const link=$('hostnameLink');link.href=`https://${r.hostname}.local`;link.textContent=`Open ${r.hostname}.local`;link.hidden=false;
-  message('Hostname saved. Restarting. Use the link below when the device is ready.');
+  startHostnameReconnect({hostname:r.hostname,previousBootId:r.previous_boot_id,deviceId:r.device_id});
  }finally{submit.disabled=false;}
 }));
 $('factoryReset').addEventListener('click',run(async()=>{

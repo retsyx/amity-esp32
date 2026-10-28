@@ -162,6 +162,17 @@ esp_err_t api(httpd_req_t *req) {
     if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
     if(req->method==HTTP_GET&&req->content_len)return web::error(req,"GET requests cannot have a body");
     std::string path=req->uri;
+    if(path=="/api/ready"&&req->method==HTTP_GET) {
+        // Only this read-only, credential-free health response is available
+        // across origins while the browser follows a changed hostname.
+        httpd_resp_set_hdr(req,"Access-Control-Allow-Origin","*");
+        Json root(cJSON_CreateObject(),cJSON_Delete);
+        cJSON_AddStringToObject(root.get(),"device_id",hub->octopus_id().str().c_str());
+        cJSON_AddStringToObject(root.get(),"boot_id",system_services::boot_id());
+        cJSON_AddStringToObject(root.get(),"hostname",device_settings::hostname());
+        cJSON_AddBoolToObject(root.get(),"ready",system_services::firmware_ready());
+        return send(req,root.get());
+    }
     if(path=="/api/setup") {
         if(req->method==HTTP_GET) {
             Json root(cJSON_CreateObject(),cJSON_Delete);
@@ -275,7 +286,12 @@ esp_err_t api(httpd_req_t *req) {
             if(!device_settings::normalize_hostname(name))return web::error(req,"Use 1–32 letters, digits or hyphens, without a leading or trailing hyphen.");
             e=device_settings::save_hostname(name);
             if(e!=ESP_OK)return web::error(req,"Could not save hostname.","500 Internal Server Error");
-            auto response=web::json(req,std::string("{\"hostname\":\"")+name+"\",\"rebooting\":true}");
+            Json response_body(cJSON_CreateObject(),cJSON_Delete);
+            cJSON_AddStringToObject(response_body.get(),"hostname",name.c_str());
+            cJSON_AddBoolToObject(response_body.get(),"rebooting",true);
+            cJSON_AddStringToObject(response_body.get(),"previous_boot_id",system_services::boot_id());
+            cJSON_AddStringToObject(response_body.get(),"device_id",hub->octopus_id().str().c_str());
+            auto response=send(req,response_body.get());
             system_services::reboot_later();return response;
         }
         else if(path=="/api/factory-reset") {
@@ -310,7 +326,7 @@ esp_err_t asset(httpd_req_t *req) {
     if(!strcmp(req->uri,"/system.js")){begin=system_js_start;end=system_js_end;mime="text/javascript";}
     httpd_resp_set_type(req,mime);httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
     httpd_resp_set_hdr(req,"Cache-Control","no-cache");
-    httpd_resp_set_hdr(req,"Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    httpd_resp_set_hdr(req,"Content-Security-Policy","default-src 'self'; connect-src 'self' https://*.local; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
     return httpd_resp_send(req,reinterpret_cast<const char *>(begin),end-begin);
 }
 }

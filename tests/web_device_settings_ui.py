@@ -15,12 +15,13 @@ import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
+from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 ROOT=Path(__file__).resolve().parents[1]
 MAIN,MEMBER=(f'{n:032x}' for n in (1,2))
-BOOT,REMOTE_BOOT='a'*32,'b'*32
-fixture=dict(hostname='amity-dut',determined=None,calls=[],gets=[],fail=False,
+BOOT,REMOTE_BOOT,RENAMED_BOOT='a'*32,'b'*32,'c'*32
+fixture=dict(hostname='amity-dut',boot_id=BOOT,hostname_probes=0,hostname_ready=False,early_navigation=False,determined=None,calls=[],gets=[],fail=False,
              settings_fail=False,settings_outcome='applied',settings_http500=False,remote_status='ready',named=True,operations={},next_id=100)
 editor=dict(version=1,activities=[],device_choices=[],quirks=[],expected_config_revision='1',expected_presentation_revision='1')
 configuration=dict(version=2,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],zones=[],
@@ -36,12 +37,15 @@ settings={MAIN:dict(boot_id=BOOT,settings_revision='1',adapters=[adapter(0)]),
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT/'components/web_admin/assets'),**kwargs)
     def log_message(self,*args):pass
-    def reply(self,data,status=200):
-        data=json.dumps(data).encode();self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+    def reply(self,data,status=200,headers=None):
+        data=json.dumps(data).encode();self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)))
+        for name,value in (headers or {}).items():self.send_header(name,value)
+        self.end_headers();self.wfile.write(data)
     def do_GET(self):
         fixture['gets'].append(self.path)
+        if self.path=='/api/ready':return self.reply(dict(device_id=MAIN,boot_id=fixture['boot_id'],hostname=fixture['hostname'],ready=True),headers={'Access-Control-Allow-Origin':'*','Cache-Control':'no-store'})
         status=dict(version='0.1.73',hostname=fixture['hostname'],front_physical_address='1.0.0.0',determined_front_physical_address=fixture['determined'],
-                    hardware='Amity',ready=True,current_activity=-1,front_address=4,back_address=0,devices=[],device_choices=[],expected_boot_id=BOOT,expected_state_revision='1')
+                    hardware='Amity',ready=True,current_activity=-1,front_address=4,back_address=0,devices=[],device_choices=[],expected_boot_id=fixture['boot_id'],expected_state_revision='1')
         system=dict(octopus_id=MAIN,hostname=fixture['hostname'],named_devices=[dict(octopus_id=MAIN,hostname=fixture['hostname'])],
                     membership=dict(peers=[dict(octopus_id=MEMBER,enrolled=True,ready=fixture['remote_status']=='ready')]))
         if fixture['named']:system['named_devices'].append(dict(octopus_id=MEMBER,hostname='amity-bedroom'))
@@ -62,7 +66,10 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path=='/api/login':return self.reply(dict(token='fixture-session'))
         fixture['calls'].append((self.path,deepcopy(data)))
         if fixture['fail']:return self.reply(dict(error='Save failed'),500)
-        if self.path=='/api/hostname':fixture['hostname']=data['hostname'].lower();return self.reply(dict(hostname=fixture['hostname'],rebooting=True))
+        if self.path=='/api/hostname':
+            previous=fixture['boot_id'];fixture['hostname']=data['hostname'].lower();fixture['boot_id']=RENAMED_BOOT;settings[MAIN]['boot_id']=RENAMED_BOOT
+            fixture['hostname_probes']=0;fixture['hostname_ready']=fixture['early_navigation']=False
+            return self.reply(dict(hostname=fixture['hostname'],rebooting=True,previous_boot_id=previous,device_id=MAIN))
         if self.path.startswith('/api/v2/devices/') and self.path.endswith('/settings'):
             owner=self.path.split('/')[4];current=settings[owner]
             if fixture['settings_fail']:return self.reply(dict(stage='failed',message='Stop activities before saving.',rebooting=False))
@@ -90,6 +97,25 @@ def main():
     try:
         with sync_playwright() as p:
             browser=p.chromium.launch(headless=True);page=browser.new_page(viewport=dict(width=430,height=900));errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+            def renamed_origin(route):
+                # Interception qualifies browser CORS/readiness/navigation logic,
+                # not an actual mDNS lookup, restart or TLS certificate approval.
+                request=route.request;path=urlsplit(request.url).path
+                if path=='/api/ready':
+                    assert request.method=='GET' and 'authorization' not in request.headers and 'cookie' not in request.headers
+                    fixture['hostname_probes']+=1;probe=fixture['hostname_probes']
+                    if probe==1:return route.abort('namenotresolved')
+                    health=dict(device_id=MAIN,boot_id=RENAMED_BOOT,hostname='living-room',ready=True)
+                    if probe==2:health['boot_id']=BOOT
+                    elif probe==3:health['hostname']='different-amity'
+                    elif probe==4:health['ready']=False
+                    else:fixture['hostname_ready']=True
+                    return route.fulfill(status=200,content_type='application/json',headers={'Access-Control-Allow-Origin':'*','Cache-Control':'no-store'},body=json.dumps(health))
+                if path=='/':
+                    fixture['early_navigation']=not fixture['hostname_ready']
+                    return route.fulfill(status=200,content_type='text/html',body='<title>living-room</title><h1>living-room</h1>')
+                return route.abort('blockedbyclient')
+            page.route('https://living-room.local/**',renamed_origin)
             def enter():
                 page.goto(f'http://127.0.0.1:{server.server_port}/');page.locator('#password').fill('test');page.locator('#password').press('Enter');expect(page.locator('#admin')).to_be_visible();page.locator('[data-tab=advanced]').click()
             def manage():
@@ -105,7 +131,10 @@ def main():
             enter();expect(page.locator('#hostname')).to_have_value('amity-dut')
             page.locator('#hostname').fill('Living-Room');page.wait_for_function('() => !polling');page.evaluate('() => refresh()');expect(page.locator('#hostname')).to_have_value('Living-Room');passed('polling preserves edited hostname')
             fixture['fail']=True;page.locator('#changeHostname button').click();expect(page.locator('#message')).to_have_text('Save failed');expect(page.locator('#admin')).to_be_visible();passed('failed hostname save stays editable')
-            fixture['fail']=False;page.locator('#changeHostname button').click();expect(page.locator('#hostnameLink')).to_be_visible();expect(page.locator('#hostnameLink')).to_have_attribute('href','https://living-room.local');expect(page.locator('h1')).to_have_text('living-room');expect(page.locator('#admin')).to_be_hidden();passed('successful hostname change gives new URL and ends old session')
+            fixture['fail']=False;page.locator('#changeHostname button').click();expect(page.locator('#hostnameLink')).to_be_visible();expect(page.locator('#hostnameLink')).to_have_attribute('href','https://living-room.local');expect(page.locator('h1')).to_have_text('living-room');expect(page.locator('#admin')).to_be_hidden()
+            expect(page).to_have_url('https://living-room.local/',timeout=20000)
+            assert fixture['hostname_probes']>=5 and fixture['hostname_ready'] and not fixture['early_navigation']
+            passed('hostname change clears the old session, retries DNS and rejects old-boot/wrong-host/not-ready probes before automatically opening the new origin')
             enter();expect(page.locator('#frontPhysicalAddress')).to_have_count(0);expect(page.locator('#changeFrontPhysicalAddress')).to_have_count(0)
             expect(page.locator('#diagnostics')).to_contain_text('Firmware 0.1.73');expect(page.locator('#diagnostics')).to_contain_text('Remote: Disconnected')
             expect(page.locator('#advanced')).not_to_contain_text('Front physical address');passed('global address control moved out of Advanced; firmware and remote diagnostics retained')
