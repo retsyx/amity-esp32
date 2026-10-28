@@ -121,8 +121,13 @@ int main(int argc, char **argv) {
     const bool guided=scenario.rfind("setup-",0)==0;
     if(guided)device_settings::set_setup_button_handler(setup);
     if(scenario=="setup-short")edges={{100,0},{500,1}};
-    else if(scenario=="setup-three-seconds")edges={{100,0},{3150,1}};
+    else if(scenario=="setup-before-three-seconds")edges={{100,0},{3099,1}};
+    else if(scenario=="setup-three-seconds")edges={{100,0},{3100,1}};
+    else if(scenario=="setup-release-bounce")edges={{100,0},{3100,1},{3120,0},{3140,1}};
+    else if(scenario=="setup-press-bounce-short")edges={{100,0},{110,1},{120,0},{3119,1}};
+    else if(scenario=="setup-press-bounce-three-seconds")edges={{100,0},{110,1},{120,0},{3120,1}};
     else if(scenario=="setup-before-reset")edges={{100,0},{10149,1}};
+    else if(scenario=="setup-reset-release")edges={{100,0},{10150,1}};
     else if(scenario=="setup-long")edges={{100,0}};
     else if(scenario=="setup-boot-held"){level=0;edges={{100,1},{200,0},{600,1}};}
     else if (scenario == "boot-held") level = 0;
@@ -151,11 +156,13 @@ int main(int argc, char **argv) {
         catch (const Stopped &) {}
         catch (const Restarted &) {}
         const bool resets = scenario == "hold" || scenario == "boot-release-hold" ||
-                            scenario == "latched-edge" || scenario == "retry" || scenario=="setup-long";
+                            scenario == "latched-edge" || scenario == "retry" || scenario=="setup-long" || scenario=="setup-reset-release";
         assert(restarts == unsigned(resets));
         assert(schedules == (retry ? 2U : unsigned(resets)));
-        assert(initial_setups==unsigned(scenario=="setup-short"||scenario=="setup-boot-held"));
-        assert(consortium_setups==unsigned(scenario=="setup-three-seconds"||scenario=="setup-before-reset"));
+        assert(initial_setups==unsigned(scenario=="setup-short"||scenario=="setup-boot-held"||scenario=="setup-before-three-seconds"||scenario=="setup-press-bounce-short"));
+        assert(consortium_setups==unsigned(scenario=="setup-three-seconds"||scenario=="setup-release-bounce"||scenario=="setup-press-bounce-three-seconds"||scenario=="setup-before-reset"));
+        if (scenario == "setup-long") assert(now == 10150);
+        if (scenario == "setup-reset-release") assert(now == 10200);
         if (scenario == "hold") assert(now == 10150);
         if (scenario == "boot-release-hold") assert(now == 10250);
         if (scenario == "latched-edge") assert(now == 10100);

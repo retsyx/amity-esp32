@@ -14,7 +14,7 @@ public:
         if(now-changed_at_<debounce_ms)return SetupGesture::none;
         if(candidate_!=stable_){
             stable_=candidate_;
-            if(stable_){pressed_at_=now;fired_=false;}
+            if(stable_){press_edge_at_=changed_at_;pressed_at_=now;fired_=false;}
             else {
                 const bool act=armed_&&!fired_;armed_=true;
                 if(!act)return SetupGesture::none;
@@ -23,7 +23,10 @@ public:
                 const auto elapsed=changed_at_>=pressed_at_?changed_at_-pressed_at_:0;
                 fired_=true;
                 if(elapsed>=reset_ms)return SetupGesture::factory_reset;
-                return elapsed>=consortium_ms?SetupGesture::consortium:SetupGesture::initial_matter;
+                // Add counts the accepted physical hold, including its press
+                // debounce. Keep the existing factory-reset clock above.
+                const auto setup_elapsed=changed_at_>=press_edge_at_?changed_at_-press_edge_at_:0;
+                return setup_elapsed>=consortium_ms?SetupGesture::consortium:SetupGesture::initial_matter;
             }
         }
         if(stable_&&candidate_&&armed_&&!fired_&&now-pressed_at_>=reset_ms){fired_=true;return SetupGesture::factory_reset;}
@@ -38,6 +41,6 @@ public:
     }
 private:
     bool initialized_=false,candidate_=false,stable_=false,armed_=false,fired_=false;
-    uint64_t changed_at_=0,pressed_at_=0,last_now_=0;
+    uint64_t changed_at_=0,press_edge_at_=0,pressed_at_=0,last_now_=0;
 };
 } // namespace device_settings

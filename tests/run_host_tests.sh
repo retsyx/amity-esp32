@@ -32,8 +32,9 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/amity_system/include" -I"$root/components/device_settings/include" "$root/components/device_settings/reset_button.cpp" \
   "$root/tests/reset_button_interrupt_test.cpp" -o "$out/reset_button_interrupt_test"
 for scenario in idle boot-held hold short cancel boot-release-hold latched-edge retry \
-  allocation-failure shared-service-failure handler-failure setup-short setup-three-seconds \
-  setup-before-reset setup-long setup-boot-held; do
+  allocation-failure shared-service-failure handler-failure setup-short setup-before-three-seconds \
+  setup-three-seconds setup-release-bounce setup-press-bounce-short setup-press-bounce-three-seconds \
+  setup-before-reset setup-reset-release setup-long setup-boot-held; do
   "$out/reset_button_interrupt_test" "$scenario"
 done
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \

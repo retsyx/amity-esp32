@@ -9,20 +9,6 @@ The harness testbed is a Raspberry Pi 5 without a USB console.
 
 ## DUTs
 
-All four DUTs run four-tentacle Amity 0.1.84 with normal encrypted admission,
-installed on 28 October 2026. This application-only update preserved their
-settings, factory Matter/admin credentials and device IDs from the earlier
-clean 0.1.82 installation. `amity-dut` currently uses hostname `amity-dut`;
-the other three retain the default hostname `amity`.
-The names below are physical bench labels; use the USB MAC to match each board
-to its setup card and device ID.
-
-Uncommissioned boards now open Matter setup automatically at boot for five
-minutes, without a setup button. A board with a Matter fabric does not reopen
-it on reboot. Already enrolled headless Amity members remain excluded.
-`amity-dut` completed Apple Home Matter commissioning on 28 October and started
-its original-main services; the other DUTs remain available for initial setup.
-
 | Bench label | ESP32-S3 MAC / USB serial | Amity device ID |
 |---|---|---|
 | amity-dut | 68:EE:8F:50:2B:44 | dfcddb1bb98d70eca83cd015db66a2ad |
@@ -30,13 +16,24 @@ its original-main services; the other DUTs remain available for initial setup.
 | amity-dut-3 | 44:B1:76:AE:C2:AC | fad293fe0f3b513a10e027a20cb3b7c8 |
 | amity-dut-4 | 44:B1:76:AE:CF:64 | e453c2c503e55e5f6fe6ab7976c6f1d0 |
 
+## Setup/reset GPIO wiring
+
+| Bench label | DUT GPIO (XIAO pin) | Harness GPIO (BCM/RP1) | Pi physical header pin |
+|---|---|---:|---:|
+| amity-dut | 4 (D3) | 4 | 7 |
+| amity-dut-2 | 4 (D3) | 18 | 12 |
+| amity-dut-3 | 4 (D3) | 19 | 35 |
+| amity-dut-4 | 4 (D3) | 11 | 23 |
+
+The Pi setup script configures these four GPIOs as inputs with pulls disabled,
+releasing each DUT's active-low setup/reset input. It installs and enables
+`amity-setup-gpios.service` to repeat that initialization at boot. Rerunning
+setup reapplies the idle state; it does not press a button or reset a DUT.
+
 ## HDMI-CEC harness GPIO mapping
 
-Harness GPIO numbers are BCM/RP1 line offsets. DUT GPIO numbers are ESP32-S3
-GPIO numbers, rather than XIAO D-pin labels.
-
 | Device | Device Tentacle # | Tentacle Front/Back | DUT GPIO | Harness GPIO |
-|---|---|---|---|---|
+|---|---:|---|---:|---:|
 | amity-dut   | 0 | front | 1 | 23 |
 | amity-dut   | 0 | back | 2 | 24 |
 | amity-dut-2 | 0 | front | 1 | 17 |
@@ -85,6 +82,44 @@ restart on failure and start automatically with the harness. They select the
 stable `cec-gpio` / `cec@<GPIO>` adapter identity, since `/dev/cecN` numbering
 can change after a reboot or driver rebind.
 
+### Recreate the virtual devices on the Pi
+
+Run [`tools/cec-harness/setup.sh`](tools/cec-harness/setup.sh) on `test2` with
+sudo. It uses the existing GPIO CEC adapters; it recreates the virtual TVs and
+players from `devices.tsv`. It installs the follower services, enables them
+for boot, restarts all 14 devices and verifies their names, addresses and
+running processes. It also installs and runs the setup/reset GPIO initialization
+described above. It requires systemd, `cec-ctl` and `cec-follower`
+(`v4l-utils`), and `pinctrl` (`raspi-utils`), which are already installed on
+`test2`.
+
+To copy the scripts from this checkout and run them on the Pi:
+
+```sh
+# On the development computer, from the amity-esp32 checkout:
+scp -r tools/cec-harness pi@test2.local:~/
+ssh pi@test2.local
+
+# On the Pi:
+sudo ~/cec-harness/setup.sh
+```
+
+After installation, the same operation is available directly on the Pi,
+without the source checkout:
+
+```sh
+sudo /usr/local/sbin/amity-cec-harness-setup
+```
+
+The services automatically recreate the virtual devices after a power cycle;
+normally no manual command is needed. Rerun the command above to restore the
+configuration after a test changes it or to restart all virtual devices.
+Rerunning is safe and returns them to their initial standby state. The script
+reports success only when every configured follower is running with the
+expected CEC identity. DUT settings are unaffected.
+Both the source script and the installed command were run successfully on
+`test2`, recreating and verifying all 14 virtual devices.
+
 The source profiles, wrapper and service template are in
 [`tools/cec-harness`](tools/cec-harness). On `test2`, they are installed as
 `/usr/local/share/amity-cec-harness/devices.tsv`,
@@ -112,37 +147,5 @@ DUT discovery and follower power-response checks remain unverified. No DUT
 settings were changed.
 [Deployment report](test-results/cec-virtual-devices-2026-10-28/deployment.json).
 
-## Electrical verification — 27 October 2026
 
-The table above was measured directly with open-drain GPIO low/release tests:
-three cycles in each direction for all 14 wires, 84 cycles total. Every pulse
-reached exactly one corresponding line; the other 13 tested lines remained
-high. The original table matched the first three DUTs
 
-The test temporarily paused both ESP32 cores through USB JTAG and released the
-Pi's CEC GPIO drivers. It restored the GPIO registers and original Pi driver
-assignments/settings, then restarted the DUT firmware without writing flash.
-Detailed expected/measured mappings and raw samples are saved in
-[the verification report](test-results/gpio-mapping-2026-10-27/VERIFICATION.md).
-
-## Current setup cards
-
-The four-tentacle build uses front/back GPIO pairs `1/2`, `5/6`, `7/8`,
-and `9/44`, with setup/reset on GPIO4.
-
-[View or print the four setup cards](test-results/admission-0.1.83-deployment-2026-10-27/index.html)
-or [download the private card archive](test-results/admission-0.1.83-deployment-2026-10-27/amity-0.1.83-setup-cards.zip).
-The cards include private credentials and are labelled by USB MAC.
-
-Normal Add needs no setup code: open **Amity devices → Add** on the main,
-hold the new board's **FW RESET** for three seconds and release before ten,
-then choose it, enter a name and add it. The Matter QR/manual code remains
-available for first-main setup and the optional code-verified build.
-
-All four updates passed exact image/boot identity, retained-card/device-ID and
-actual SDK admission security checks. Each boot opened its Matter window and
-reported CHIPoBLE advertising started. Flash ranges outside the selected
-application partition and the OTA selection metadata were verified unchanged
-before reboot. Home discovery and completed commissioning were observed on
-`amity-dut`; this does not claim Home commissioning on the other three.
-[Deployment verification](test-results/matter-auto-boot-2026-10-28/deployment.json).

@@ -211,7 +211,7 @@ window.amityInterface=(()=>{
   name.input.required=true;name.input.maxLength=32;name.input.pattern='[A-Za-z0-9]((?:[A-Za-z0-9]|-){0,30}[A-Za-z0-9])?';name.input.title='Use 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.';name.input.autocomplete='off';name.input.spellcheck=false;
   code.input.type='password';code.input.maxLength=256;code.input.autocomplete='off';code.input.spellcheck=false;code.input.placeholder='Printed Matter setup code';code.input.title='Enter the printed Matter setup code or the text from its Matter QR code.';
   name.label.hidden=code.label.hidden=true;found.hidden=true;
-  d.append(text('On the Amity you want to add, hold FW RESET for 3 seconds, then release it before 10 seconds. Keep it powered on and nearby.'),status,found,selection,name.label,code.label);
+  d.append(text('Hold the Reset button on the new Amity for 3 seconds. Keep it powered on and nearby.'),status,found,selection,name.label,code.label);
   let closed=false,timer=null,polling=false,candidates=[],selected='',requiresCode=false,adding=false,admitted=false,finished=false,ended=false,operationId=null,phase='scanning';
   const live=()=>!closed&&openDialog===d&&d.isConnected;
   const controls=()=>{

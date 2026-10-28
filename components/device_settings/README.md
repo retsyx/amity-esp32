@@ -78,6 +78,16 @@ it retains a 3 KiB stack to perform NVS writes and restart outside the ISR.
 `tests/reset_button_interrupt_test.cpp` drives the GPIO ISR and worker through
 virtual edges and timeouts, including an edge arriving immediately before the
 worker blocks, boot holds, cancellation, failed-reset retry and startup cleanup.
+The released Add gesture measures its three-second hold from the accepted
+press edge to the accepted release edge; the 50 ms press debounce does not
+subtract from that hold. Previously, exactly three seconds was classified as
+a short Matter setup press, preventing the candidate from advertising for Add.
+The production ISR/worker regression cases cover a raw 3000 ms hold, a 2999 ms
+hold, press and release bounce, and the unchanged debounced ten-second reset
+deadline and release boundary. This corrects only the Add threshold; boot setup,
+button interlocks, factory-reset timing and the owner-local CEC algorithms are
+unchanged. The admission radio and role checks still decide whether to open
+the candidate window.
 
 With button hardware available, verify GPIO4 is high when released and low when
 pressed, short presses preserve settings, and a released-then-held ten-second
