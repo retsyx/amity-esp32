@@ -1,0 +1,15 @@
+# GPIO role physical-address OSD-name
+23 tv 0.0.0.0 DUT1-TV
+24 playback 1.0.0.0 DUT1-Player
+17 tv 0.0.0.0 DUT2-TV
+27 playback 1.0.0.0 DUT2-Player
+22 tv 0.0.0.0 DUT3-TV
+25 playback 1.0.0.0 DUT3-Player
+12 tv 0.0.0.0 DUT4-A0-TV
+13 playback 1.0.0.0 DUT4-A0-Player
+5 tv 0.0.0.0 DUT4-A1-TV
+6 playback 1.0.0.0 DUT4-A1-Player
+20 tv 0.0.0.0 DUT4-A2-TV
+21 playback 1.0.0.0 DUT4-A2-Player
+16 tv 0.0.0.0 DUT4-A3-TV
+26 playback 1.0.0.0 DUT4-A3-Player
