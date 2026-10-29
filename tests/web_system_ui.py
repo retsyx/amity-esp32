@@ -25,9 +25,9 @@ def main():
     aid, second, controller, member = (f'{n:032x}' for n in (7, 8, 2, 3))
     def choice(value, title, location, roles):
         return dict(value='component:'+f'{value:032x}', title=title, location=location, roles=roles)
-    choices = [choice(10, 'Display', 'amity-living-room · HDMI adapter 1', ['display', 'audio']),
-               choice(11, 'Apple TV', 'amity-living-room · HDMI adapter 1', ['source']),
-               choice(12, 'Apple TV', 'amity-bedroom · HDMI adapter 4', ['source'])]
+    choices = [choice(10, 'Display', 'amity-living-room', ['display', 'audio']),
+               choice(11, 'Apple TV', 'amity-living-room', ['source']),
+               choice(12, 'Apple TV', 'amity-bedroom · Adapter 4', ['source'])]
     activities = [dict(activity_id=aid, name='Watch TV', display=choices[0]['value'], source=choices[1]['value'], audio=choices[0]['value']),
                   dict(activity_id=second, name='Bedroom source', display=choices[0]['value'], source=choices[2]['value'], audio=choices[0]['value'])]
     editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1', activities=activities, device_choices=choices, quirks=[])
@@ -197,16 +197,20 @@ def main():
             passed('Start uses stable identity and waits through stopping before completion')
             page.locator('#discover').click()
             expect(page.locator('#deviceList .device')).to_have_count(3)
-            expect(page.locator('#deviceList')).to_contain_text('amity-living-room · HDMI adapter 1')
-            expect(page.locator('#deviceList')).to_contain_text('amity-bedroom · HDMI adapter 4')
+            expect(page.locator('#deviceList')).to_contain_text('amity-living-room')
+            expect(page.locator('#deviceList')).to_contain_text('amity-bedroom · Adapter 4')
+            assert sorted(page.locator('#deviceList .device-location').all_text_contents()) == [
+                'amity-bedroom · Adapter 4', 'amity-living-room', 'amity-living-room']
+            expect(page.locator('#deviceList')).not_to_contain_text('amity-living-room · Adapter')
+            assert not re.search(r'HDMI adapter|screen connection|source connection', page.locator('#deviceList').inner_text(), re.I)
             assert not re.search(r'\b(octopus|tentacle|consortium)\b', page.locator('body').inner_text(), re.I)
             page.screenshot(path=str(ROOT/'test-results/controller-locations-ui-0.1.73.png'), full_page=True)
-            passed('duplicate equipment names carry canonical owning hostnames and stable adapter numbers')
+            passed('equipment labels keep owning hostnames and show adapter numbers only for owners with multiple adapters')
             page.locator('#activityList article').first.get_by_role('button', name='Edit', exact=True).click()
             labels = page.locator('#activityFields label').all_text_contents()
             assert [x.split('\n')[0] for x in labels] == ['Name', 'Display', 'Source', 'Audio', 'Switch Device', 'Input']
             source = page.locator('#activityFields input').nth(2)
-            source.fill('Apple TV · amity-bedroom · HDMI adapter 4')
+            source.fill('Apple TV · amity-bedroom · Adapter 4')
             page.locator('#activityForm button[type=submit]').click()
             count = len([1 for p, _ in fixture['posts'] if p.endswith('/activity')])
             page.locator('#saveActivities').click()
@@ -224,7 +228,7 @@ def main():
             assert [b for p, b in fixture['posts'] if p.endswith('/activity')][-1]['activity_id'] == aid
             passed('Save and start retains the original control and stable activity identity')
             page.locator('#addActivity').click()
-            for index, value in enumerate(['New source', 'Display · amity-living-room · HDMI adapter 1', 'Apple TV · amity-bedroom · HDMI adapter 4', 'Display · amity-living-room · HDMI adapter 1']):
+            for index, value in enumerate(['New source', 'Display · amity-living-room', 'Apple TV · amity-bedroom · Adapter 4', 'Display · amity-living-room']):
                 page.locator('#activityFields input').nth(index).fill(value)
             page.locator('#activityForm button[type=submit]').click()
             page.locator('#saveActivities').click()
@@ -326,7 +330,7 @@ def main():
             fixture['admission']['requires_setup_code'] = True
             page.locator('#addAmity').click()
             dialog = page.locator('dialog:visible')
-            expect(dialog).to_contain_text('FW RESET for 3 seconds')
+            expect(dialog).to_contain_text('Hold the Reset button on the new Amity for 3 seconds.')
             expect(dialog.get_by_label('Matter setup code')).to_be_visible()
             secret = '1234-567-8901'
             name = dialog.get_by_label('Name', exact=True)
@@ -346,9 +350,11 @@ def main():
                 with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/add')):
                     dialog.get_by_role('button', name='Add', exact=True).click()
                 expect(page.locator('#message')).to_have_text('The setup code could not be verified')
-                expect(dialog.get_by_role('button', name='Add', exact=True)).to_be_enabled()
+                expect(dialog.get_by_role('button', name='Add', exact=True)).to_be_disabled()
                 assert [body for path, body in fixture['posts'] if path == '/api/v2/membership/add'][-1]['name'] == canonical
                 expect(dialog.get_by_label('Matter setup code')).to_have_value('')
+                dialog.get_by_label('Matter setup code').fill(secret)
+                expect(dialog.get_by_role('button', name='Add', exact=True)).to_be_enabled()
             assert secret not in page.evaluate('JSON.stringify({...localStorage,...sessionStorage})')
             with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/cancel')):
                 dialog.get_by_role('button', name='Cancel').click()
@@ -464,6 +470,64 @@ def main():
             assert len(restored) == 1 and restored[0]['configuration'] == backup
             assert not [p for p, _ in fixture['posts'] if p in ('/api/restore', '/api/v2/config')]
             passed('existing Advanced restore confirms old-main isolation and submits guarded portable recovery without playback')
+
+            # Fresh pages cover both compiled adapter capacities on a lone
+            # main, including initial hydration, scan and editor choices.
+            saved_editor, saved_status = deepcopy(editor), deepcopy(status)
+            saved_boards = deepcopy(fixture['config']['octopuses'])
+            saved_system = deepcopy(system)
+            lone = None
+            try:
+                system['named_devices'] = [dict(octopus_id=controller, hostname='amity-living-room')]
+                system['membership']['peers'] = []
+                for capacity, location in ((1, ''), (4, 'Adapter 1')):
+                    fixture['config']['octopuses'] = [dict(b, supported_tentacles=capacity)
+                                                      for b in saved_boards if b['octopus_id'] == controller]
+                    local_choices = [dict(c, location=location) for c in choices[:2]]
+                    editor['device_choices'] = local_choices
+                    editor['activities'] = [dict(activity_id=aid, name='Watch TV', display=local_choices[0]['value'],
+                                                 source=local_choices[1]['value'], audio=local_choices[0]['value'])]
+                    status['device_choices'] = local_choices
+                    status['devices'] = [dict(device, location=location) for device in saved_status['devices'][:2]]
+                    status['current_activity'] = -1
+                    lone = browser.new_page(viewport=dict(width=430, height=900))
+                    lone.on('pageerror', lambda error: errors.append(str(error)))
+                    lone.goto(f'http://127.0.0.1:{server.server_port}/')
+                    lone.locator('#password').fill('fixture')
+                    lone.locator('#password').press('Enter')
+                    expect(lone.locator('#admin')).to_be_visible()
+                    lone.locator('#discover').click()
+                    expect(lone.locator('#deviceList .device')).to_have_count(2)
+                    if capacity == 1:
+                        expect(lone.locator('#deviceList .device-location')).to_have_count(0)
+                        expect(lone.locator('#deviceList')).not_to_contain_text('Adapter')
+                        screenshot = 'controller-lone-main-locations-ui-0.1.73.png'
+                    else:
+                        expect(lone.locator('#deviceList .device-location')).to_have_text(['Adapter 1', 'Adapter 1'])
+                        screenshot = 'controller-lone-main-multi-adapter-locations-ui-0.1.73.png'
+                    expect(lone.locator('#deviceList')).not_to_contain_text('amity-living-room')
+                    assert not re.search(r'HDMI adapter|screen connection|source connection', lone.locator('#deviceList').inner_text(), re.I)
+                    lone.screenshot(path=str(ROOT/'test-results'/screenshot), full_page=True)
+                    lone.locator('#activityList article').first.get_by_role('button', name='Edit', exact=True).click()
+                    suffix = f' · {location}' if location else ''
+                    expect(lone.locator('#activityFields input').nth(1)).to_have_value('Display' + suffix)
+                    expect(lone.locator('#activityFields input').nth(2)).to_have_value('Apple TV' + suffix)
+                    expect(lone.locator('#sourceDeviceNames option')).to_have_attribute('value', 'Apple TV' + suffix)
+                    lone.locator('#cancelActivity').click()
+                    passed('a lone main with one adapter uses plain equipment names without location labels' if capacity == 1
+                           else 'a lone main with multiple adapters keeps Adapter 1 in equipment rows, editor fields and device choices')
+                    lone.close()
+                    lone = None
+            finally:
+                if lone is not None:
+                    lone.close()
+                editor.clear()
+                editor.update(saved_editor)
+                status.clear()
+                status.update(saved_status)
+                fixture['config']['octopuses'] = saved_boards
+                system.clear()
+                system.update(saved_system)
             assert not errors, errors
             passed('no browser script errors')
             browser.close()

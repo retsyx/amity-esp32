@@ -2,14 +2,18 @@
 // Preserve the original interface. This adapter carries scoped identities and
 // revisions privately; only friendly attachment locations enter the controls.
 window.amityInterface=(()=>{
- let enabled=false,choices=[],configuration=null,system=null,openDialog=null;
+ let enabled=false,choices=[],configuration=null,system=null,openDialog=null,originalSelections=new Map();
  const roles=['display','source','audio','switch'];
  const identifier=()=>crypto.randomUUID().replaceAll('-','');
  const attachment=c=>[c.title,c.location].filter(Boolean).join(' · ');
  function choiceFor(role,value){return choices.find(c=>(c.roles||[]).includes(role)&&c.value===value);}
  function visible(role,value){if(!value)return '';const c=choiceFor(role,value);return c?attachment(c):value;}
- function reference(role,value){
+ function selections(document){return new Map((document.activities||[]).filter(a=>a.activity_id).map(a=>[a.activity_id,Object.fromEntries(roles.map(role=>{const value=role==='switch'?a.switch?.device:a[role];return [role,{value,visible:visible(role,value)}];}))]));}
+ function reference(role,value,previous){
   if(!value)return '';
+  // Equal display text can represent different CEC sides. An unchanged field
+  // keeps its saved selector; a new ambiguous choice still needs resolution.
+  if(previous&&value===previous.visible){const retained=choiceFor(role,previous.value);if(retained)return retained.value;throw Error('Choose '+role+' from the device list, including its location.');}
   const matches=choices.filter(c=>(c.roles||[]).includes(role)&&(attachment(c)===value||c.value===value));
   if(matches.length===1)return matches[0].value;
   const titles=choices.filter(c=>(c.roles||[]).includes(role)&&c.title===value);
@@ -18,13 +22,16 @@ window.amityInterface=(()=>{
  }
  function project(document){
   choices=document.device_choices||choices;
+  const next=selections(document);
+  for(const [id,current] of next){const previous=originalSelections.get(id);if(previous&&roles.some(role=>previous[role].visible===current[role].visible&&previous[role].value!==current[role].value))throw Error('Activities changed in another session. Reload the page before continuing.');}
+  originalSelections=next;
   const result=structuredClone(document);
   result.activities=(result.activities||[]).map(a=>{for(const role of roles){if(role==='switch'){if(a.switch)a.switch.device=visible(role,a.switch.device);}else a[role]=visible(role,a[role]);}return a;});
   return result;
  }
- function submit(document){
+ function submit(document,preserve=true){
   return {version:1,request_id:identifier(),expected_config_revision:document.expected_config_revision,expected_presentation_revision:document.expected_presentation_revision,
-   activities:(document.activities||[]).map(a=>{const row={name:a.name,display:reference('display',a.display),source:reference('source',a.source),audio:reference('audio',a.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device),input:a.switch.input};return row;}),quirks:document.quirks||[]};
+   activities:(document.activities||[]).map(a=>{const previous=preserve?originalSelections.get(a.activity_id):null;const row={name:a.name,display:reference('display',a.display,previous?.display),source:reference('source',a.source,previous?.source),audio:reference('audio',a.audio,previous?.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device,previous?.switch),input:a.switch.input};return row;}),quirks:document.quirks||[]};
  }
  function response(value,original){return new Response(JSON.stringify(value),{status:original.status,headers:original.headers});}
  async function wait(original){
@@ -39,6 +46,7 @@ window.amityInterface=(()=>{
   }
   throw Error('Amity is still applying the change. Check its status before trying again.');
  }
+ async function saved(original,submitted){const completed=await wait(original),result=await completed.clone().json();if(result.stage==='applied'||result.saved===true)originalSelections=selections(submitted);return completed;}
  function route(path,data){
   if(path==='config'&&data===undefined)return {path:'v2/activity-editor',decode:async original=>{
    const document=await original.json();
@@ -46,7 +54,7 @@ window.amityInterface=(()=>{
    enabled=true;return response(project(document),original);
   }};
   if(!enabled)return {path,data};
-  if(path==='config')return {path:'v2/activity-editor',data:submit(typeof data==='string'?JSON.parse(data):data),decode:wait};
+  if(path==='config'){const submitted=submit(typeof data==='string'?JSON.parse(data):data);return {path:'v2/activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
   if(path==='status')return {path:'v2/activity-editor/status',decode:async original=>{
    const value=await original.json();
    if(Array.isArray(value.device_choices))choices=value.device_choices;
@@ -59,12 +67,12 @@ window.amityInterface=(()=>{
   if(path==='backup')return {path:'v2/config'};
   if(path==='restore'){
    const document=typeof data==='string'?JSON.parse(data):data,imported=document.configuration||document;
-   if(imported.version===1)return {path:'v2/activity-editor',data:submit({...imported,expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision}),decode:wait};
-   return {path:'v2/activity-editor/restore',data:{request_id:identifier(),expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision,expected_boot_id:document.expected_boot_id,confirm:true,previous_controller_isolated:true,configuration:imported},decode:wait};
+   if(imported.version===1){const submitted=submit({...imported,expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision},false);return {path:'v2/activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
+   const submitted={request_id:identifier(),expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision,expected_boot_id:document.expected_boot_id,confirm:true,previous_controller_isolated:true,configuration:imported};return {path:'v2/activity-editor/restore',data:submitted,decode:original=>saved(original,submitted)};
   }
   return {path,data};
  }
- function close(){enabled=false;configuration=null;system=null;choices=[];openDialog?.close();openDialog?.remove();openDialog=null;}
+ function close(){enabled=false;configuration=null;system=null;choices=[];originalSelections.clear();openDialog?.close();openDialog?.remove();openDialog=null;}
  function dialog(title){
   openDialog?.close();openDialog?.remove();const d=document.createElement('dialog');openDialog=d;const heading=document.createElement('h3');heading.textContent=title;d.append(heading);document.body.append(d);d.showModal();d.addEventListener('close',()=>{if(openDialog===d)openDialog=null;d.remove();});return d;
  }

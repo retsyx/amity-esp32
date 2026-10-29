@@ -54,7 +54,7 @@ function fixture(options={}){
  return {context,document,state,posts,messages,errors,held,dialog,label,input,button,click,fill,tick,open:async()=>{await click(addButton);return dialog();},setStage:value=>operationStage=value,releaseScanStart:()=>{for(const resolve of heldScans.splice(0))resolve();},releaseStatus:()=>{holdStatus=false;for(const resolve of held.splice(0))resolve();}};
 }
 (async()=>{
- const normal=fixture();await normal.open();assert.match(normal.dialog().textContent,/FW RESET for 3 seconds/);assert.match(normal.dialog().textContent,/before 10 seconds/);
+ const normal=fixture();await normal.open();assert.match(normal.dialog().textContent,/Hold the Reset button on the new Amity for 3 seconds\./);
  const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'v2/membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Matter setup code').hidden,true);assert.equal(normal.label('Name').hidden,false);
  for(const bad of ['', 'bad name','-bad','bad-','café']){await normal.fill(normal.input('Name'),bad);await normal.click(normal.button('Add'));assert.equal(normal.posts.filter(([path])=>path.endsWith('/add')).length,0);}
  await normal.fill(normal.input('Name'),'  AMITY-OFFICE  ');await normal.click(normal.button('Add'));

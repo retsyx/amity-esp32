@@ -13,6 +13,7 @@
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "device_settings.hpp"
+#include <algorithm>
 #include <memory>
 #include <set>
 #include <cstring>
@@ -77,7 +78,11 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
     if(req->method!=HTTP_GET&&!control.accepts_local_input()){result=reject(req,"Activity control is unavailable while this Amity is passive or updating","503 Service Unavailable");return true;}
     ae::OwnerHostnames hostnames;for(const auto& name:amity::consortium::runtime_known_hostnames())hostnames[name.first]=name.second;
     hostnames[control.octopus_id()]=device_settings::hostname();
-    const auto state=control.execution_snapshot();const auto native=observations(control);const auto choices=ae::choices(*config,native,hostnames);
+    const auto peers=amity::consortium::runtime_peers();
+    ae::OwnerCapacities capacities{{control.octopus_id(),control.supported_tentacles()}};
+    for(const auto& peer:peers)if(peer.boot_id)capacities[peer.id]=peer.supported_tentacles;
+    const bool has_added_amities=std::any_of(peers.begin(),peers.end(),[&](const auto& peer){return peer.id!=control.octopus_id()&&peer.enrolled;});
+    const auto state=control.execution_snapshot();const auto native=observations(control);const auto choices=ae::choices(*config,native,hostnames,has_added_amities,capacities);
     if(req->method==HTTP_GET&&path==prefix){
         Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddNumberToObject(root.get(),"version",1);decimal(root.get(),"expected_config_revision",config->config_revision);decimal(root.get(),"expected_presentation_revision",config->presentation_revision);cJSON_AddItemToObject(root.get(),"device_choices",encode_choices(choices));auto* rows=cJSON_AddArrayToObject(root.get(),"activities");
         for(const auto& id:ae::projected_activities(*config))for(const auto& a:config->activities)if(a.activity_id==id){auto* row=cJSON_CreateObject();cJSON_AddItemToArray(rows,row);cJSON_AddStringToObject(row,"activity_id",a.activity_id.str().c_str());cJSON_AddStringToObject(row,"name",a.label.c_str());for(const auto& ref:std::vector<std::pair<const char*,std::optional<m::ComponentId>>>{{"display",a.display},{"source",a.source},{"audio",a.audio}})cJSON_AddStringToObject(row,ref.first,ae::component_value(ref.second).c_str());if(a.switch_device){auto* sw=cJSON_AddObjectToObject(row,"switch");cJSON_AddStringToObject(sw,"device",ae::component_value(a.switch_device).c_str());cJSON_AddNumberToObject(sw,"input",a.switch_input);}}

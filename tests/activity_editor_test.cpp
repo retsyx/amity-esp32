@@ -11,14 +11,49 @@ int main(){
     const auto choices=ae::choices(avr,{},{{*avr.controller_octopus_id,"amity-main"}});ConfigurationV2 edited;
     std::vector<ae::Row> rows;for(const auto& a:avr.activities)rows.push_back(row(a));assert(ae::edit(avr,rows,choices,random_source(),edited,unresolved,error)&&unresolved.empty());
     assert(edited.activities[1].switch_input==6&&edited.activities[1].switch_device==avr.activities[1].switch_device&&edited.activities[1].audio==avr.activities[1].audio);
-    for(const auto& choice:choices){assert(choice.location.rfind("amity-main · HDMI adapter 1",0)==0&&!choice.observation);}
+    for(const auto& choice:choices){assert(choice.location.empty()&&!choice.observation);}
+    // Equipment labels omit side and the lone main's hostname. Enrolled
+    // members, including offline ones, make owner names useful on every row.
+    const auto grouped=ae::choices(avr,{},{{*avr.controller_octopus_id,"amity-main"}},true);
+    for(size_t n=0;n<choices.size();++n){
+        assert(grouped[n].location=="amity-main");
+        assert(grouped[n].value==choices[n].value&&grouped[n].native_name==choices[n].native_name);
+    }
+    auto solo=empty_configuration();
+    std::vector<model::CecObservation> discovered;
+    for(auto side:{model::Side::front,model::Side::back}){
+        model::CecObservation o;o.endpoint={{solo.consortium_id,*solo.controller_octopus_id,0,side},4};
+        o.osd_name="Player";o.device_type=4;discovered.push_back(o);
+    }
+    const auto found=ae::choices(solo,discovered,{{*solo.controller_octopus_id,"amity-main"}});
+    assert(found.size()==2&&found[0].location.empty()&&found[1].location.empty());
+    assert(found[0].value!=found[1].value&&found[0].native_name->port.side!=found[1].native_name->port.side);
+    // Capacity is the owner's compiled maximum, independent of populated
+    // connectors. A current one-adapter build overrides retained capacity 4.
+    solo.octopuses[0].supported_tentacles=4;
+    const ae::OwnerHostnames solo_names{{*solo.controller_octopus_id,"amity-main"}};
+    const auto multiple=ae::choices(solo,discovered,solo_names);
+    const auto recompiled=ae::choices(solo,discovered,solo_names,false,{{*solo.controller_octopus_id,1}});
+    const auto named_single=ae::choices(solo,discovered,solo_names,true,{{*solo.controller_octopus_id,1}});
+    for(size_t n=0;n<multiple.size();++n){
+        assert(multiple[n].location=="Adapter 1"&&recompiled[n].location.empty()&&named_single[n].location=="amity-main");
+        assert(multiple[n].value==recompiled[n].value&&multiple[n].native_name==recompiled[n].native_name);
+    }
     const auto first=avr.activities[0].activity_id,second=avr.activities[1].activity_id;
     auto ordered=rows;std::reverse(ordered.begin(),ordered.end());ordered[0].name="Renamed Wii";assert(ae::edit(avr,ordered,choices,random_source(),edited,unresolved,error));assert(edited.activity_order==std::vector<model::ActivityId>({second,first}));assert(edited.external_slots[0].activity_id==first&&edited.external_slots[1].activity_id==second);
     assert(ae::edit(avr,{rows[1]},choices,random_source(),edited,unresolved,error)&&edited.activities.size()==1&&edited.external_slots[0].tombstone&&edited.activities[0].activity_id==second);
     auto invalid=rows[0];invalid.source="component:"+id<model::ComponentId>(999).str();assert(!ae::edit(avr,{invalid},choices,random_source(),edited,unresolved,error));assert(!ae::edit(avr,{rows[0],rows[0]},choices,random_source(),edited,unresolved,error));
     // A saved scoped name remains selected when its owner is unreachable.
     auto remote=avr;const auto member=id<model::OctopusId>(70);remote.octopuses.push_back({member,"Old friendly label","",true,4});for(auto& x:remote.components)if(x.record.component_id==remote.activities[1].audio)for(auto& n:x.record.qualified_names){n.port.octopus_id=member;n.port.tentacle_id=3;}
-    const auto offline=ae::choices(remote,{},{{member,"amity-den"}});const auto receiver=std::find_if(offline.begin(),offline.end(),[&](const auto& choice){return choice.component_id==remote.activities[1].audio;});assert(receiver!=offline.end()&&receiver->location.find("amity-den · HDMI adapter 4")!=std::string::npos&&!receiver->observation);assert(ae::edit(remote,rows,offline,random_source(),edited,unresolved,error)&&unresolved.empty());assert(serialize_configuration_v2(edited).find("domains")==std::string::npos);
+    const ae::OwnerHostnames names{{*remote.controller_octopus_id,"amity-main"},{member,"amity-den"}};
+    const auto offline=ae::choices(remote,{},names,true);const auto receiver=std::find_if(offline.begin(),offline.end(),[&](const auto& choice){return choice.component_id==remote.activities[1].audio;});assert(receiver!=offline.end()&&receiver->location=="amity-den · Adapter 4"&&!receiver->observation);assert(ae::edit(remote,rows,offline,random_source(),edited,unresolved,error)&&unresolved.empty());assert(serialize_configuration_v2(edited).find("domains")==std::string::npos);
+    // Removed owners stay identified on retained selections, but do not make
+    // the remaining main's equipment display a redundant hostname.
+    const auto retained=ae::choices(remote,{},names,false);
+    for(const auto& choice:retained){
+        const bool local=choice.native_name->port.octopus_id==*remote.controller_octopus_id;
+        assert(choice.location==(local?"":"amity-den · Adapter 4"));
+    }
     // New exact selectors may be saved without requiring a current presence
     // observation. Equal names on different owners retain distinct targets.
     auto empty=empty_configuration();empty.octopuses.push_back({member,"amity-den","amity-den",false,4});std::vector<ae::Choice> exact;

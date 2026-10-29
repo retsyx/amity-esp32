@@ -23,10 +23,15 @@ std::string kind(uint8_t type) {
     if(type==6||type==7)return "switch";
     return "placeholder";
 }
-std::string location(const OwnerHostnames& names,const m::QualifiedDeviceName& name) {
+std::string location(const cs::ConfigurationV2& config,const OwnerHostnames& names,const m::QualifiedDeviceName& name,bool has_added_amities,const OwnerCapacities& capacities) {
+    const auto current=capacities.find(name.port.octopus_id);
+    const auto retained=std::find_if(config.octopuses.begin(),config.octopuses.end(),[&](const auto& owner){return owner.octopus_id==name.port.octopus_id;});
+    const auto capacity=current!=capacities.end()?current->second:(retained!=config.octopuses.end()?retained->supported_tentacles:0);
+    const std::string adapter=capacity==1&&name.port.tentacle_id==0?"":"Adapter "+std::to_string(name.port.tentacle_id+1);
+    if(!has_added_amities&&config.controller_octopus_id==name.port.octopus_id)return adapter;
     const auto owner=names.find(name.port.octopus_id);
     const std::string hostname=owner==names.end()||owner->second.empty()?"Name unavailable":owner->second;
-    return hostname+" · HDMI adapter "+std::to_string(name.port.tentacle_id+1)+(name.port.side==m::Side::front?" · screen connection":" · source connection");
+    return adapter.empty()?hostname:hostname+" · "+adapter;
 }
 const m::CecObservation* observed(const std::vector<m::CecObservation>& observations,const m::QualifiedDeviceName& name) {
     const m::CecObservation* match=nullptr;
@@ -88,14 +93,14 @@ bool parse_submission(const std::string& body,const cs::ConfigurationV2& config,
     }
     out=std::move(value);error.clear();return true;
 }
-std::vector<Choice> choices(const cs::ConfigurationV2& config,const std::vector<m::CecObservation>& observations,const OwnerHostnames& names) {
+std::vector<Choice> choices(const cs::ConfigurationV2& config,const std::vector<m::CecObservation>& observations,const OwnerHostnames& names,bool has_added_amities,const OwnerCapacities& capacities) {
     std::vector<Choice> out;
     for(const auto& c:config.components){
         Choice choice;choice.value=component_value(c.record.component_id);choice.component_id=c.record.component_id;
         choice.title=!c.record.label.empty()?c.record.label:(!c.generated_label.empty()?c.generated_label:(!c.record.qualified_names.empty()?c.record.qualified_names[0].osd_name:"Not identified yet"));
         choice.roles=roles(c.kind);
         if(!c.record.qualified_names.empty()){
-            choice.native_name=c.record.qualified_names[0];choice.location=location(names,*choice.native_name);
+            choice.native_name=c.record.qualified_names[0];choice.location=location(config,names,*choice.native_name,has_added_amities,capacities);
             if(const auto* o=observed(observations,*choice.native_name))choice.observation=*o;
         }else choice.location="Connection needs assignment";
         // Existing unresolved fields remain editable without silently removing
@@ -113,7 +118,7 @@ std::vector<Choice> choices(const cs::ConfigurationV2& config,const std::vector<
         const auto key=m::name_json(name);
         if(!seen.insert(key).second||std::any_of(config.components.begin(),config.components.end(),[&](const auto& c){return contains(c.record.qualified_names,name);}))continue;
         if(std::none_of(config.octopuses.begin(),config.octopuses.end(),[&](const auto& b){return b.octopus_id==name.port.octopus_id&&name.port.tentacle_id<b.supported_tentacles;}))continue;
-        Choice choice;choice.value="native:"+cs::sha256_hex(key);choice.title=name.osd_name;choice.location=location(names,name);choice.roles=roles(kind(o.device_type));choice.native_name=name;choice.observation=o;
+        Choice choice;choice.value="native:"+cs::sha256_hex(key);choice.title=name.osd_name;choice.location=location(config,names,name,has_added_amities,capacities);choice.roles=roles(kind(o.device_type));choice.native_name=name;choice.observation=o;
         if(!choice.roles.empty())out.push_back(std::move(choice));
     }
     return out;
