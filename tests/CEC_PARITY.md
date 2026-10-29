@@ -188,18 +188,15 @@ Validation:
   and exclusion of Atomic Power+direction/Select combinations. Rejected actions
   preserve ordinary input; admitted actions quarantine new presses in the same
   release-first report batch.
-- `python3 tests/cec_front_physical_hardware.py --url https://amity-dut.local
-  --credentials PRIVATE_CREDENTIALS_JSON --host PI_SSH_HOST` exercises discovery,
-  rescan pinning, reevaluation on reboot, and no-responder fallback against the
-  isolated two-bus fixture. `--firmware build/amity.bin` installs the image by
-  OTA first. The fixture adapters must be front `/dev/cec0`, back `/dev/cec1`
-  (or supplied explicitly); the script leaves the synthetic TV/source at
-  `1.0.0.0` and reboots the DUT to rediscover it. It preserves activities and
-  the configured default. Use `--restore-physical` for another fixture address.
+- The [Python functional harness](../cec-harness/README.md) runs one HDMI scan
+  against `amity-dut` with a dynamically created TV, AVR and playback device.
+  It verifies fresh physical discovery exchanges and the resulting equipment
+  names, types, logical addresses and physical addresses through the existing
+  authenticated UI controls. This scenario does not qualify reboot address
+  selection, no-responder fallback, full raw-byte response coverage, concurrent
+  bus behavior, or local/remote activity and input parity. Those behaviors
+  require separate physical evidence; host simulation alone cannot establish
+  them. Generated physical evidence belongs under `test-results/`.
 - All four CEC/hub implementation files compile with the project's ESP-IDF
   6.1 ESP32-S3 command lines. Object inspection confirmed ISR code and its
   literal pools are in IRAM and ISR state is in internal RAM.
-- `cec_hardware.py` performs exact raw-byte reply checks and concurrent
-  requests on both fixture buses. A passing host simulation is not a
-  substitute for that hardware result; generated results live under
-  `test-results/`.

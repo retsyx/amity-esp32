@@ -210,3 +210,41 @@ tests. Verify behavior parity for unaffected local operation and the equivalent
 distributed path. Record necessary distributed adaptations and evidence in the
 owning design document; a conflicting older design proposal or test does not
 authorize changing the original behavior.
+
+## Functional test framework
+
+Harness code and bench wiring live in `cec-harness/`. The Python functional
+framework MUST interact with DUT state through the same authenticated HTTP
+endpoints used by the shipping Amity UI. Do not add firmware endpoints,
+test-only commands, authentication bypasses or other DUT control surfaces for
+functional tests. Extend the harness around the existing UI capabilities.
+
+`cec-harness/TEST-HARNESS.md` is the source of truth for physical bench wiring.
+Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
+persist virtual home-theater profiles. Each functional scenario owns its
+components and releases their CEC addresses when it ends. The initial framework
+has exactly one functional scenario: an HDMI scan on `amity-dut` with a TV,
+AVR and playback device. Host-only framework unit tests are separate.
+Do not retain the previous harness implementation in an archived directory.
+
+Keep functional test bodies limited to equipment, topology and behavior:
+construct named DUTs/components, enter `TestBed`, then call operations such as
+`dut.scan_hdmi().assert_contains(...)`. Named DUT construction parses wiring
+implicitly. Shared `config.py`, `testbed.py`, `runner.py` and `discovery.py`
+handle runtime options, per-DUT credentials/URLs/TLS, authentication, identity
+checks, cleanup, UI operations, fresh-wire evidence and reports. Do not put
+wiring parsers, credentials, CLI/report helpers or protocol handlers into a
+functional scenario. `TestBed` supports multiple DUTs through the same resource
+interface and always attempts cleanup; component `handle()` implementations
+remain in the common framework.
+
+Components sharing a physical harness GPIO also share one virtual CEC bus.
+Route directed virtual messages and replies within that bus, with powered ACK,
+Off NACK and no Off RX/hooks; polls report presence without RX handling. Keep
+separate GPIOs isolated even when components share topology parent links.
+Broadcast to virtual peers and the physical DUT wire independently, once each;
+report the actual wire result once. Mark TX/RX evidence as virtual or wire;
+virtual records have no wire timestamp and cannot prove DUT behavior. Hooks
+and nested replies remain synchronous, bounded at 32 nested deliveries to reject
+echo loops, with no additional queue or delay. Physical Linux backend limits
+must not disable virtual component-to-component communication.

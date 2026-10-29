@@ -90,8 +90,12 @@ API, and `sh tests/system_hold_test.sh` for the executor policy.
 immediate admission during an outstanding ACK, individual completion results,
 FIFO capacity/reuse and independent buses. The hub tests cover independent
 held keys, recipient release, failure cleanup and activity settling without
-blocking command admission. After flashing the complete firmware,
-`python3 tests/cec_hardware.py --host pi@10.0.1.119` uses the Linux GPIO
-fixture to identify the front/back mapping and test both buses concurrently.
-The hardware test intentionally leaves `HarnessTV` and `HarnessSource`
-configured for web discovery and activity tests. `--inspect` is read-only.
+blocking command admission. After flashing the complete firmware, the
+[Python functional harness](../../cec-harness/README.md) runs one HDMI scan
+against `amity-dut` with a dynamically created TV, AVR and playback device.
+It uses the existing authenticated UI controls, verifies fresh CEC discovery
+traffic and the resulting equipment identities, and clears the virtual device
+addresses on exit. Physical wiring is maintained in
+[`cec-harness/TEST-HARNESS.md`](../../cec-harness/TEST-HARNESS.md).
+This scan qualifies discovery and fixture cleanup; complete CEC transmission,
+activity and remote-input parity require their own physical evidence.

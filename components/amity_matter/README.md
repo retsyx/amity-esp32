@@ -109,25 +109,17 @@ Amity configuration. Commissioning windows are explicitly opened for 180–900
 seconds. The component does not open a new window automatically when a fabric is
 removed.
 
-`tests/matter_commission.py` provisions a device using a private WiFi JSON file
-and the local onboarding payload. `tests/matter_hardware.py` verifies endpoint
-types, cluster lists, observable attributes and unsupported-command responses
-with a real `chip-tool` controller. Keep its controller storage directory between
-runs to verify reboot and OTA persistence. `--exercise-controls` additionally
-sends commands to the currently configured activity and should be paired with a
-CEC bus capture when checking the physical output.
+Physical Matter qualification requires an independent Matter commissioner and
+operational controller. It must verify endpoint types, cluster lists,
+observable attributes, unsupported-command responses, and retained fabrics
+across reboot and OTA. Pair control commands with CEC bus captures when checking
+their physical output. A successful BLE setup exchange alone does not establish
+a persistent fabric or operational Wi-Fi connectivity. Keep controller output
+private because SDK diagnostics can contain onboarding and network credentials.
 
-`tests/matter_pi_controller.py` provides the same checks through the official
-CHIP Python API when the host's Bluetooth controller is unreliable. Its optional
-commissioning credentials file must have mode 600; omit `--credentials` on later
-runs to reuse the established fabric. Run it in the documented private mount
-namespace with dependencies and storage beneath the harness's `esp32` directory.
-`--pase-only` checks the clusters over BLE before WiFi provisioning; it does not
-establish a persistent fabric or verify operational WiFi connectivity.
-Keep all native controller output private because SDK diagnostics can contain
-onboarding and network credentials.
-The pinned dependency setup and private invocation are documented in
-[`tests/matter_pi.md`](../../tests/matter_pi.md).
+The [Python functional harness](../../cec-harness/README.md) owns current bench
+test infrastructure. Its single HDMI scan scenario does not commission Matter
+or qualify Matter clusters, operational sessions or fabric persistence.
 
 `tests/controller_integration_test.py` compiles actual lifecycle bodies against
 an instrumented SDK under ASan/UBSan: checked enrollment, prestart/live revocation,

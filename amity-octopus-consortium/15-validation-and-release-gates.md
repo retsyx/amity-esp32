@@ -40,6 +40,52 @@ Host/ASan/UBSan tests establish software behavior within their fixtures. Separat
 
 Preserve existing production gates for secure boot/storage, release signing, provisioning/recovery and ecosystem pairing retention. Current four-adapter profile and three-device software limits are not measured product-capacity promises.
 
+## Functional test framework
+
+The configurable Python framework is in [`cec-harness/`](../cec-harness/README.md).
+It parses the physical DUT/tentacle/side GPIO assignments from
+[`TEST-HARNESS.md`](../cec-harness/TEST-HARNESS.md), creates virtual components for
+each scenario and clears their CEC addresses on exit. The former fixed virtual
+theater profiles, boot-time follower setup and previous hardware scripts have
+been removed.
+
+Functional files declare equipment, topology and behavior only. The initial
+13-line test constructs `DUT("amity-dut")`, a TV, AVR and player, then uses
+`with TestBed(...): dut.scan_hdmi().assert_contains(...)`. DUT construction
+implicitly reads the wiring document. Shared configuration, test-bed, runner
+and discovery modules own CLI options, per-DUT credentials/URLs/TLS,
+authentication and identity checks, cleanup, UI operations, evidence capture
+and scan assertions. The resource interface supports multiple DUTs without
+adding another functional scenario. Component protocol `handle()` methods
+remain in the common framework. Generic private reports contain `test`,
+`passed` and a `testbeds` list; tests contain no reporting helpers.
+
+Functional DUT state access MUST use the existing authenticated shipping UI
+HTTP routes. Do not add firmware APIs, test-only commands or authentication
+bypasses for functional testing. GPIO button control uses the existing physical
+input; virtual component power, hooks and CEC emulation live on the harness.
+This adaptation changes no DUT discovery, activity, input or CEC policy.
+
+Each isolated GPIO is a virtual CEC bus as well as a physical DUT wire.
+Directed component exchanges and replies route synchronously within that bus;
+powered targets ACK, Off targets NACK without RX/hooks, and polls report
+presence without RX handling. Self-directed traffic does not ACK. Different
+GPIOs remain isolated regardless of topology parent links. Broadcast delivery
+to virtual peers and transmission to the DUT wire are independent; return the
+actual wire result and call `after_tx` once. Hooks may send nested replies,
+with a 32-level delivery bound rejecting echo loops and no added queue or delay.
+Physical Linux adapter restrictions apply to the wire backend, not to virtual
+component communication. TX/RX records distinguish `virtual` and `wire`;
+virtual records have `wire_timestamp_ns=0` and cannot establish DUT behavior.
+
+The initial framework contains exactly one functional scenario: `amity-dut`
+scans a TV, AVR and playback device. It requires fresh wire identity exchanges
+and matching UI names/types/addresses. Wire captures identify the actual DUT
+initiators; legacy aggregate UI address fields are not owner-local addressing
+evidence. This scan passed on firmware `0.1.84` on 28 October 2026; the framework
+README records the evidence location and scope. It does not replace the broader
+behavioral comparison or physical qualification gates above.
+
 ## Evidence record
 
 Record exact source commit, build/configuration identity, SDK/dependency pins, test commands/results and artifact hashes. Label historical graph-model tests as historical; do not use them to claim the new selector model is tested. Update [VALIDATION.md](VALIDATION.md) and `IMPLEMENTATION_STATUS.json` only with checks actually run. The current task's final result must distinguish software/build evidence from physical device testing.

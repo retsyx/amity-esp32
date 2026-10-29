@@ -64,10 +64,14 @@ PSRAM; task stacks remain internal. Startup of a saved HomeKit configuration mus
 succeed before firmware boot health is confirmed.
 
 `tests/web_homekit_ui.py` covers the tab, progress, QR visibility and removal with
-a browser fixture. `tests/homekit_hardware.py` uses an isolated `aiohomekit==3.2.20`
-controller to verify SRP, encrypted sessions, service links, writes, notifications,
-controller removal and reboot persistence on the authorized DUT. This protocol
-test does not automate Apple's Home app.
+a browser fixture. Physical HomeKit qualification requires an independent
+controller to verify SRP, encrypted sessions, service links, writes,
+notifications, controller removal and reboot persistence on the DUT. Apple's
+Home app retention remains a separate qualification.
+
+The [Python functional harness](../../cec-harness/README.md) owns current bench
+test infrastructure. Its single HDMI scan scenario does not qualify HomeKit
+pairing, encrypted control or persistence.
 
 `tests/controller_integration_test.py` executes actual start/stop/helper bodies
 under ASan/UBSan with listener, pairing-store and lock instrumentation, covering
