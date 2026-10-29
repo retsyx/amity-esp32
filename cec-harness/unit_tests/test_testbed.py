@@ -219,6 +219,54 @@ class TestBedLifetimeTests(unittest.TestCase):
         self.assertIsNone(first._testbed)
         self.assertIsNone(second._testbed)
 
+    def test_owned_ui_cleanup_runs_lifo_before_cec_and_logout_on_failure(self):
+        dut = UnitDUT("first-board", self.log)
+        bed = TestBed(dut, session_factory=self.factory())
+
+        def cleanup(label):
+            self.assertIsNotNone(dut._token)
+            self.assertIs(dut._testbed, bed)
+            self.assertFalse(bed._closed)
+            self.log.append((label, "cleanup"))
+
+        with self.assertRaisesRegex(AssertionError, "scenario failure"):
+            with bed:
+                bed.add_cleanup(lambda: cleanup("first"))
+                bed.add_cleanup(lambda: cleanup("second"))
+                raise AssertionError("scenario failure")
+        self.assertEqual(self.log[-4:], [("second", "cleanup"), ("first", "cleanup"),
+                                        ("session", "close"), (dut.name, "logout")])
+        self.assertEqual(bed.report["cleanup_errors"], [])
+
+    def test_ui_cleanup_failure_does_not_skip_other_cleanup_or_cec_release(self):
+        dut = UnitDUT("first-board", self.log)
+        bed = TestBed(dut, session_factory=self.factory())
+
+        def broken():
+            self.log.append(("broken", "cleanup"))
+            raise LookupError("synthetic UI cleanup failure")
+
+        with self.assertRaises(TestBedCleanupError):
+            with bed:
+                bed.add_cleanup(lambda: self.log.append(("other", "cleanup")))
+                bed.add_cleanup(broken)
+        self.assertEqual(self.log[-4:], [("broken", "cleanup"), ("other", "cleanup"),
+                                        ("session", "close"), (dut.name, "logout")])
+        self.assertEqual(bed.report["cleanup_errors"], ["LookupError"])
+        self.assertFalse(bed.report["passed"])
+        self.assertIsNone(dut._testbed)
+
+    def test_cleanup_registration_requires_active_test_bed(self):
+        dut = UnitDUT("first-board", self.log)
+        bed = TestBed(dut, session_factory=self.factory())
+        with self.assertRaises(RuntimeError):
+            bed.add_cleanup(lambda: None)
+        with bed:
+            with self.assertRaises(TypeError):
+                bed.add_cleanup(None)
+        with self.assertRaises(RuntimeError):
+            bed.add_cleanup(lambda: None)
+
     def test_body_exception_propagates_after_cleanup_and_worker_failure_cannot_pass(self):
         dut = UnitDUT("first-board", self.log)
         bed = TestBed(dut, session_factory=self.factory())
@@ -254,6 +302,22 @@ class TestBedLifetimeTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_", repr(report))
         report["scans"][0]["devices"][0]["title"] = "tampered"
         self.assertEqual(bed.report["scans"][0]["devices"][0]["title"], "Unit TV")
+
+    def test_activity_reports_exclude_secrets_and_prior_bed_operations(self):
+        dut = UnitDUT("first-board", self.log)
+        dut.activity_operations = [{"phase": "prior", "name": "another run"}]
+        bed = TestBed(dut, session_factory=self.factory())
+        with bed:
+            dut.activity_operations.append({
+                "phase": "start", "activity_id": "a" * 32, "password": "PRIVATE_PASSWORD",
+                "operation": {"stage": "complete", "token": "PRIVATE_TOKEN"},
+                "state": {"current_activity": 0, "Authorization": "PRIVATE_TOKEN"}})
+        report = bed.report
+        self.assertEqual(len(report["activities"]), 1)
+        self.assertEqual(report["activities"][0]["state"], {"current_activity": 0})
+        self.assertNotIn("PRIVATE_", repr(report))
+        report["activities"][0]["operation"]["stage"] = "tampered"
+        self.assertEqual(bed.report["activities"][0]["operation"]["stage"], "complete")
 
 
 if __name__ == "__main__":

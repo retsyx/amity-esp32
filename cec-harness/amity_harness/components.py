@@ -2,9 +2,14 @@
 
 from dataclasses import dataclass
 from contextlib import nullcontext
+from collections import deque
 from enum import Enum
+import math
+import threading
+import time
 
 from .cec import CecError, Frame
+from .config import current_config
 from .connections import TentacleEndpoint, hdmi_port
 from .topology import CecAddress
 
@@ -13,6 +18,10 @@ class PowerState(str, Enum):
     ON = "on"
     STANDBY = "standby"
     OFF = "off"
+
+
+_POWER_COMMANDS = frozenset(("standby", "image_view_on", "text_view_on",
+                             "power_on_function", "power_off_function", "power_toggle"))
 
 
 @dataclass
@@ -95,6 +104,13 @@ class Component:
         self._session = None
         self._active_since_ns = 0
         self.pressed_key = None
+        self._power_revision = 0
+        self._power_calls = 0
+        self._power_condition = threading.Condition()
+        self._power_history = deque(maxlen=256)
+        self._power_checks = deque(maxlen=256)
+        runtime = getattr(self.dut, "_runtime", None) or current_config()
+        self._power_timeout = runtime.timeout
 
     @property
     def attachment(self):
@@ -132,16 +148,119 @@ class Component:
     def power(self):
         return self._power
 
+    @property
+    def power_events(self):
+        """Bounded snapshots of successfully handled, recognized power frames.
+
+        Entries retain the original received payload/clock and distinguish wire
+        from virtual transport. ``applied`` is false if a hook changed the
+        payload, the handler did not invoke power control, or later hook work
+        overrode the handler's resulting state. Local setters are not commands.
+        """
+        with self._power_condition:
+            return tuple(dict(event) for _, event in self._power_history)
+
+    @property
+    def power_assertions(self):
+        with self._power_condition:
+            return tuple(dict(assertion) for assertion in self._power_checks)
+
+    def checkpoint(self):
+        """Mark a local monotonic boundary before an action is submitted."""
+        return time.monotonic_ns()
+
+    def assert_power(self, power):
+        """Assert current model state only, for example initial Standby."""
+        power = PowerState(power)
+        with self._power_condition:
+            if self.power != power:
+                raise AssertionError(f"{self.name} is {self.power.value}, expected {power.value}")
+            self._power_checks.append({"kind": "state", "power": power.value,
+                                       "timestamp_ns": time.monotonic_ns()})
+        return self
+
+    def wait_for_power(self, power, *, since, timeout=None, command=None):
+        """Require a fresh physical DUT power command and its resulting state.
+
+        ``since`` is an activity action boundary or a checkpoint() integer.
+        Actual kernel wire time establishes freshness, never a hook's rewritten
+        timestamp. A valid command in the same power state still counts. Local
+        setters, virtual peer traffic and unrelated wake-up side effects do not.
+        ``command='standby'`` specifically requires Standby opcode 0x36 rather
+        than another command that also leaves the component in Standby.
+        """
+        power = PowerState(power)
+        if command is not None and (not isinstance(command, str) or command not in _POWER_COMMANDS):
+            raise ValueError("Unknown component power command")
+        if power == PowerState.OFF:
+            raise ValueError("Off has no CEC power command; use assert_power for an unpowered component")
+        timeout = self._power_timeout if timeout is None else timeout
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Power assertion timeout must be a positive finite number")
+        session = self._session
+        if session is None:
+            raise AssertionError("Power command assertions need an active CEC session")
+        if isinstance(since, int) and not isinstance(since, bool):
+            started = since
+            scan = getattr(self.dut, "last_scan", None)
+            initiators = getattr(scan, "initiators", {})
+            if getattr(scan, "_session", session) is not session:
+                raise AssertionError("The DUT identity scan belongs to a different CEC session")
+        else:
+            started = getattr(since, "started_ns", getattr(since, "started", None))
+            if getattr(since, "dut", None) is not self.dut or getattr(since, "session", None) is not session:
+                raise AssertionError("The action boundary belongs to a different DUT or CEC session")
+            initiators = getattr(since, "initiators", {})
+        if isinstance(started, bool) or not isinstance(started, int) or started <= 0:
+            raise ValueError("A power assertion needs a valid monotonic action boundary")
+        source = initiators.get(self.gpio) if hasattr(initiators, "get") else None
+        occupied = {component.address.logical for component in session.components if component.gpio == self.gpio}
+        if isinstance(source, bool) or not isinstance(source, int) or not 0 <= source < 15 or source in occupied:
+            raise AssertionError("A power assertion needs the DUT initiator verified by its HDMI scan")
+        deadline = time.monotonic() + timeout
+        while True:
+            session.assert_healthy()
+            stopped = getattr(session, "_stop", None)
+            if self._session is not session or stopped is not None and stopped.is_set():
+                raise AssertionError("The CEC session ended before the requested power command was confirmed")
+            with self._power_condition:
+                matching = next((event for owner, event in reversed(self._power_history)
+                                 if owner is session and event["transport"] == "wire"
+                                 and event["source"] == source and event["applied"]
+                                 and (command is None or event["command"] == command)
+                                 and event["wire_timestamp_ns"] >= started
+                                 and event["processed_monotonic_ns"] >= started
+                                 and event["requested_power"] == power.value
+                                 and event["after"] == power.value
+                                 and event["state_revision"] == self._power_revision), None)
+                if self.power == power and matching is not None:
+                    self._power_checks.append({"kind": "wire_command", "power": power.value,
+                                               "timestamp_ns": time.monotonic_ns(),
+                                               "since_monotonic_ns": started,
+                                               "frame": matching["frame"], "source": source,
+                                               "wire_timestamp_ns": matching["wire_timestamp_ns"],
+                                               "command": matching["command"]})
+                    return self
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"{self.name} did not handle a fresh DUT {power.value} command and remain {power.value}")
+                # Wake on evidence; periodically check responder health even if
+                # a failing worker produces no further component callbacks.
+                self._power_condition.wait(min(remaining, 0.05))
+
     def set_power(self, power):
         power = PowerState(power)
         # Serialize the entire power change with responder handling, including
         # the state update before the kernel's ACK mask is reconfigured.
         session = self._session
         with session._lock if session is not None else nullcontext():
+            self._power_calls += 1
             previous = self._power
             if power == previous:
                 return
+            previous_revision = self._power_revision
             self._power = power
+            self._power_revision += 1
             if power != PowerState.ON:
                 self.pressed_key = None
             try:
@@ -149,6 +268,7 @@ class Component:
                     session.power_changed(self, previous)
             except BaseException:
                 self._power = previous
+                self._power_revision = previous_revision
                 raise
 
     def power_on(self):
@@ -196,6 +316,7 @@ class Component:
         if frame.timestamp_ns and frame.timestamp_ns < self._active_since_ns:
             return
         original = frame
+        power_before = self.power
         if self.hooks.before_rx is not None:
             frame = self.hooks.before_rx(self, frame)
             if self.power == PowerState.OFF:
@@ -214,9 +335,57 @@ class Component:
                          "handled_timestamp_ns": frame.timestamp_ns}
                         if frame != original else {})
             self._session._record(self, "rx", original, transport=transport, **handling)
+        power_calls = self._power_calls
         self.handle(frame)
+        handled_power = self.power
+        handled_revision = self._power_revision
+        controlled_power = self._power_calls != power_calls
         if self.hooks.after_rx is not None:
             self.hooks.after_rx(self, frame)
+        self._retain_power_command(original, frame, transport, power_before,
+                                   controlled_power, handled_power, handled_revision)
+
+    def _power_command(self, frame, before):
+        """Recognize explicit commands supported by these component models."""
+        if frame.source == 15:
+            return None
+        if frame.opcode == 0x36 and not frame.operands:
+            return "standby", PowerState.STANDBY
+        if frame.destination != self.address.logical:
+            return None
+        if isinstance(self, TvComponent) and frame.opcode in (0x04, 0x0d) and not frame.operands:
+            return ("image_view_on" if frame.opcode == 0x04 else "text_view_on"), PowerState.ON
+        if frame.opcode == 0x44 and len(frame.operands) == 1:
+            key = frame.operands[0]
+            if key == 0x6d:
+                return "power_on_function", PowerState.ON
+            if key == 0x6c:
+                return "power_off_function", PowerState.STANDBY
+            if key in (0x40, 0x6b):
+                target = PowerState.STANDBY if before == PowerState.ON else PowerState.ON
+                return "power_toggle", target
+        return None
+
+    def _retain_power_command(self, original, handled, transport, before,
+                              controlled_power, handled_power, handled_revision):
+        command = self._power_command(original, before)
+        if command is None:
+            return
+        name, requested = command
+        changed_payload = original.raw != handled.raw
+        applied = (controlled_power and not changed_payload and handled_power == requested
+                   and self.power == requested and handled_revision == self._power_revision)
+        event = {"command": name, "requested_power": requested.value,
+                 "frame": original.raw.hex(":"), "source": original.source,
+                 "destination": original.destination, "transport": transport,
+                 "wire_timestamp_ns": original.timestamp_ns if transport == "wire" else 0,
+                 "processed_monotonic_ns": time.monotonic_ns(),
+                 "before": before.value, "after": self.power.value,
+                 "state_changed": before != self.power, "state_revision": self._power_revision,
+                 "payload_modified": changed_payload, "applied": applied}
+        with self._power_condition:
+            self._power_history.append((self._session, event))
+            self._power_condition.notify_all()
 
     def handle(self, frame):
         """Handle standard discovery/power messages; override for extra behavior."""

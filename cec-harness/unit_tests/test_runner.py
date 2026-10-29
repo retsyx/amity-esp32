@@ -1,6 +1,6 @@
 """Generic functional runner configuration, cleanup and private evidence."""
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -82,6 +82,31 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue(json.loads(output.read_text())["passed"])
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_named_scenarios_and_suite_report_keep_failure_evidence(self):
+        called = []
+
+        def scan():
+            called.append("scan")
+
+        def activity():
+            called.append("activity")
+            raise AssertionError("missing physical standby command")
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "result.json"
+            options = ["--credentials", "/private/credentials.json", "--output", str(output)]
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main({"hdmi_scan": scan, "activity": activity}, options), 0)
+            self.assertEqual(called, ["scan"])
+            called.clear()
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(main({"hdmi_scan": scan, "activity": activity}, [*options, "--test", "all"]), 1)
+            report = json.loads(output.read_text())
+            self.assertEqual(called, ["scan", "activity"])
+            self.assertFalse(report["passed"])
+            self.assertTrue(report["tests"][0]["passed"])
+            self.assertIn("physical standby command", report["tests"][1]["error"])
 
 
 if __name__ == "__main__":

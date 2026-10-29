@@ -48,7 +48,12 @@ def _named_options(parser, values, description, convert=str):
 
 def main(test, argv=None):
     """Run one registered scenario with the same CLI across functional tests."""
-    parser = argparse.ArgumentParser(description=test.__doc__)
+    tests = {test.__name__: test} if callable(test) else dict(test)
+    if not tests or any(not isinstance(name, str) or not callable(scenario) for name, scenario in tests.items()):
+        raise ValueError("Provide named functional tests")
+    parser = argparse.ArgumentParser(description="Run Amity functional tests using the CEC harness")
+    parser.add_argument("--test", choices=[*tests, "all"], default=next(iter(tests)),
+                        help="scenario to run; defaults to the first registered test")
     parser.add_argument("--credentials", type=Path, help="private JSON with an existing DUT admin_password")
     parser.add_argument("--dut-credentials", action="append", default=[], metavar="DUT=PATH",
                         help="per-DUT private credentials; repeat for multiple DUTs")
@@ -81,13 +86,17 @@ def main(test, argv=None):
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, session_factory=session_factory)
-    report = run_test(test, config)
+    selected = tests if args.test == "all" else {args.test: tests[args.test]}
+    reports = [run_test(scenario, config) for scenario in selected.values()]
+    report = (reports[0] if len(reports) == 1 else
+              {"passed": all(result["passed"] for result in reports), "tests": reports})
     if args.output:
         _write_report(args.output, report)
-    if report["passed"]:
-        print(f"PASS: {test.__name__}")
-        return 0
-    print("FAIL: " + report.get("error", test.__name__), file=sys.stderr)
-    if args.output:
+    for result in reports:
+        if result["passed"]:
+            print(f"PASS: {result['test']}")
+        else:
+            print("FAIL: " + result.get("error", result["test"]), file=sys.stderr)
+    if not report["passed"] and args.output:
         print(f"Evidence: {args.output}", file=sys.stderr)
-    return 1
+    return 0 if report["passed"] else 1

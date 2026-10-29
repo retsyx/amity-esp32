@@ -25,13 +25,22 @@ _DEVICE_FIELDS = frozenset(("name", "title", "location", "bus", "address",
                             "physical_address", "type", "vendor_id"))
 _STATE_FIELDS = frozenset(("ready", "expected_boot_id", "discovery_generation", "discovering",
                            "front_address", "back_address", "tx_errors", "rx_dropped",
-                           "front_physical_address", "determined_front_physical_address"))
+                           "front_physical_address", "determined_front_physical_address",
+                           "current_activity", "activity_settling", "activity_error", "expected_state_revision"))
 _TRAFFIC_FIELDS = frozenset(("timestamp", "direction", "component", "gpio", "frame", "source",
                              "destination", "opcode", "transport", "wire_timestamp_ns", "status",
                              "ok", "recipient", "recipients", "dropped", "handled_frame",
                              "handled_timestamp_ns"))
 _OPERATION_FIELDS = frozenset(("operation_id", "stage", "status", "saved", "unresolved"))
 _PORT_FIELDS = frozenset(("consortium_id", "octopus_id", "tentacle_id", "side"))
+_POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "destination", "transport",
+                           "wire_timestamp_ns", "processed_monotonic_ns", "before", "after",
+                           "state_changed", "state_revision", "payload_modified", "applied"))
+_POWER_ASSERTION_FIELDS = frozenset(("kind", "power", "timestamp_ns", "since_monotonic_ns", "frame",
+                                     "source", "wire_timestamp_ns", "command"))
+_ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
+                              "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
+                              "removed_activity", "removed_equipment", "retained_equipment"))
 
 
 def _select(value, fields):
@@ -40,6 +49,14 @@ def _select(value, fields):
 
 def _traffic(records):
     return [_select(record, _TRAFFIC_FIELDS) for record in records]
+
+
+def _activity_report(dut, record):
+    result = {"dut": dut.name, **_select(record, _ACTIVITY_FIELDS)}
+    for key, fields in (("operation", _OPERATION_FIELDS | {"partial"}), ("state", _STATE_FIELDS)):
+        if isinstance(record.get(key), dict):
+            result[key] = _select(record[key], fields)
+    return result
 
 
 def _scan_report(dut, scan):
@@ -82,9 +99,12 @@ class TestBed:
         self._started = self._entered = self._finished = self._closed = False
         self._session_entered = False
         self._owned = []
+        self._cleanups = []
+        self._closing = False
         self._cleanup_errors = []
         self._failure = None
         self._initial_scans = {}
+        self._initial_activity_counts = {}
         if not resources:
             raise ValueError("A test bed needs at least one DUT or component")
         explicit, duts, components = set(), [], []
@@ -122,6 +142,7 @@ class TestBed:
                 _owners[dut.identity.device_id] = self
                 self._owned.append(dut)
                 self._initial_scans[id(dut)] = getattr(dut, "last_scan", None)
+                self._initial_activity_counts[id(dut)] = len(getattr(dut, "activity_operations", ()))
 
     def __enter__(self):
         if self._started:
@@ -147,12 +168,25 @@ class TestBed:
                 raise TestBedCleanupError(errors) from exc
             raise
 
+    def add_cleanup(self, callback):
+        """Release test-owned UI resources before CEC responders and logout."""
+        if not callable(callback):
+            raise TypeError("A cleanup must be callable")
+        if not self._entered or self._closed or self._closing:
+            raise RuntimeError("Register cleanups inside an active TestBed")
+        self._cleanups.append(callback)
+
     def _cleanup(self, exc_type, exc, traceback):
-        if self._closed:
+        if self._closed or self._closing:
             return []
-        self._closed = True
+        self._closing = True
         errors = []
         try:
+            while self._cleanups:
+                try:
+                    self._cleanups.pop()()
+                except BaseException as error:
+                    errors.append(error)
             if self.session is not None:
                 try:
                     if self._session_entered:
@@ -168,6 +202,8 @@ class TestBed:
                     except BaseException as error:
                         errors.append(error)
         finally:
+            self._closed = True
+            self._closing = False
             with _ownership_lock:
                 for dut in self._owned:
                     if getattr(dut, "_testbed", None) is self:
@@ -214,6 +250,9 @@ class TestBed:
             if component.address is not None:
                 row["logical_address"] = component.address.logical
                 row["physical_address"] = format_physical_address(component.address.physical)
+            row["power"] = component.power.value
+            row["power_events"] = [_select(event, _POWER_FIELDS) for event in component.power_events]
+            row["power_assertions"] = [_select(event, _POWER_ASSERTION_FIELDS) for event in component.power_assertions]
             components.append(row)
         scans = []
         for dut in self._owned:
@@ -224,6 +263,8 @@ class TestBed:
                   "entered": self._entered,
                   "duts": [{"name": dut.name, "device_id": dut.identity.device_id} for dut in self.duts],
                   "components": components, "scans": scans,
+                  "activities": [_activity_report(dut, record) for dut in self._owned
+                                 for record in getattr(dut, "activity_operations", ())[self._initial_activity_counts[id(dut)]:]],
                   "cec": _traffic(self.session.records if self.session is not None else ()),
                   "cleanup_errors": list(self._cleanup_errors)}
         if self._failure is not None:

@@ -11,6 +11,7 @@ from .cec import CecError, CecSession, Frame, LinuxCecBackend, TxResult
 from .config import RunConfig, use_config
 from .testbed import TestBed
 from .discovery import ScanResult
+from .activity import Activity, ActivityAction, ActivityCleanupError, ActivityConflict
 
 __all__ = [
     "AmityHTTPError", "DUT", "PinctrlGPIO", "Wiring", "CecAddress",
@@ -18,4 +19,5 @@ __all__ = [
     "AvrComponent", "PlaybackComponent", "PowerState", "Hooks", "CecSession",
     "CecError", "Frame", "LinuxCecBackend", "TxResult",
     "RunConfig", "use_config", "TestBed", "ScanResult", "Tentacle", "TentacleEndpoint",
+    "Activity", "ActivityAction", "ActivityCleanupError", "ActivityConflict",
 ]

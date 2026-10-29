@@ -21,7 +21,9 @@ membership behavior remains unchanged.
   assignment, CEC transport and component emulation. Shared `config.py`,
   `testbed.py`, `runner.py` and `discovery.py` own runtime configuration,
   resource/authentication lifetime, CLI/reporting and scan evidence/assertions.
-- `functional_tests/hdmi_scan.py`: the one functional test built on this framework.
+- `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
+- `functional_tests/activity.py`: creates an activity from that scan, starts it,
+  then verifies standby using physical component power commands.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -33,13 +35,16 @@ connections, not simulated equipment.
 
 The complete scenario is in `functional_tests/hdmi_scan.py`:
 
-```python
-"""One Amity discovers a TV, AVR and playback device."""
+`hdmi_scan.py` owns the reusable `scanned_devices()` context. Its setup and
+assertions are:
 
+```python
+from contextlib import contextmanager
 from amity_harness import DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent
 
 
-def test_hdmi_scan():
+@contextmanager
+def scanned_devices():
     dut = DUT("amity-dut")
     tentacle = dut.tentacle(0)
     tv = TvComponent(tentacle.front, "Scan TV")
@@ -53,6 +58,12 @@ def test_hdmi_scan():
         scan.assert_on(tv, tentacle.front)
         scan.assert_on(avr, tentacle.back)
         scan.assert_on(player, tentacle.back)
+        yield dut, tv, avr, player
+
+
+def test_hdmi_scan():
+    with scanned_devices():
+        pass
 ```
 
 A functional test contains its equipment and behavior. Wiring parsing,
@@ -64,7 +75,8 @@ their existing `handle()` protocol behavior.
 DUT. It supports several DUTs and configurations through the same interface;
 this does not add another functional scenario. On entry it authenticates the
 DUTs, checks their documented identities and opens their component session.
-Exit attempts CEC cleanup and logout on success, assertion failure or exception.
+Exit attempts registered UI resource cleanup, CEC cleanup and logout on success,
+assertion failure or exception, in that order.
 `DUT.scan_hdmi()` uses the existing UI scan operations and returns a
 `ScanResult`; `assert_contains()` checks the requested component identities and
 fresh physical exchanges through the common discovery implementation.
@@ -74,6 +86,49 @@ number and front/back side using the existing UI's qualified equipment
 observations. It does not infer the reported connection from the fixture's
 attachment or parse a display label. The initial scenario requires exactly
 these three devices: TV on tentacle 0/front, AVR and player on tentacle 0/back.
+
+`activity.py` extends this same scan and its assertions:
+
+```python
+from amity_harness import PowerState
+from functional_tests.hdmi_scan import scanned_devices
+
+
+def test_activity():
+    with scanned_devices() as (dut, tv, avr, player):
+        components = (tv, avr, player)
+        with dut.create_activity("Functional activity", display=tv, source=player, audio=avr) as activity:
+            for component in components:
+                component.assert_power(PowerState.STANDBY)
+
+            started = activity.start()
+            for component in components:
+                component.wait_for_power(PowerState.ON, since=started)
+
+            stopped = activity.standby()
+            for component in components:
+                component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+```
+
+`DUT.create_activity()` uses the exact scanned selections and the shipping UI's
+authenticated activity editor. It retains existing activities and power quirks.
+The activity context attempts to remove its test-owned activity on exit,
+including after an assertion fails, before the component responders and HTTP
+session close. A DUT restart or conflicting user activity can prevent safe
+cleanup; the run fails and reports retained test-owned identities. The client
+does not silently authenticate again and continue an action across a reboot.
+Shared helpers own revision checks, asynchronous operation completion and
+cleanup; functional files contain no HTTP or polling boilerplate.
+
+`assert_power()` checks current state. `wait_for_power(..., since=action)` also
+requires a valid physical command received from that DUT after the action began.
+Virtual messages, old traffic, dropped/rewritten commands and local power
+setters cannot satisfy the command check. Power On must be explicit; merely
+being awakened by input routing does not pass. `command="standby"` specifically
+requires the CEC Standby opcode rather than another command that changes power.
+CEC Standby leaves the component
+in `PowerState.STANDBY`. `PowerState.OFF` models disconnected power and has no
+CEC traffic. Private reports retain the power commands and assertion evidence.
 
 ## DUTs and wiring
 
@@ -204,7 +259,7 @@ follower processes are needed. The bench's GPIO adapters support four logical
 addresses, with CEC 2.0 restrictions checked by the driver; the scan uses two on
 the back wire.
 
-## Run the single HDMI scan test
+## Run functional tests
 
 Requires Linux/Pi, Python 3.10 or newer, the existing `cec-gpio` adapters and
 permission to open `/dev/cec*` (normally membership in `video`). GPIO button
@@ -219,6 +274,11 @@ python3 cec-harness/run.py \
   --credentials /private/path/amity-dut.json --insecure \
   --output test-results/functional/hdmi-scan-framework.json
 ```
+
+The default remains `hdmi_scan`. Select `--test activity` for the scan plus
+activity lifecycle, or `--test all` for both registered scenarios. The same
+credentials, TLS, SSH and output options apply. A multi-test report has
+`passed` and `tests`; each entry keeps the ordinary single-test report format.
 
 The test uses only `amity-dut`, one TV on tentacle 0/front, one AVR on
 tentacle 0/back, and a playback device on AVR input 1. The player shares the

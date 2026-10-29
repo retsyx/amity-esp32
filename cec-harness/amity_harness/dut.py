@@ -70,6 +70,7 @@ class DUT:
         self._runtime = current_config()
         self._testbed = None
         self.last_scan = None
+        self.activity_operations = []
         if wiring is None:
             wiring = (Wiring.from_markdown(self._runtime.wiring_path)
                       if self._runtime.wiring_path is not None else Wiring.from_markdown())
@@ -195,6 +196,11 @@ class DUT:
         from .discovery import scan_hdmi
         return scan_hdmi(self, self._testbed.session,
                          timeout=self._runtime.timeout if timeout is None else timeout)
+
+    def create_activity(self, name, *, display, source, audio=None, timeout=None):
+        """Create an owned temporary activity through the existing UI APIs."""
+        from .activity import Activity
+        return Activity(self, name, display=display, source=source, audio=audio, timeout=timeout).create()
 
     def logout(self):
         try:

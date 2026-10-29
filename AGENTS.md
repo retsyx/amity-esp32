@@ -223,8 +223,9 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The initial framework
-has exactly one functional scenario: an HDMI scan on `amity-dut` with a TV,
-AVR and playback device. Host-only framework unit tests are separate.
+has two functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
+playback device, and `activity.py`, which reuses that scan to create, start and
+standby an activity. Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 
 Keep functional test bodies limited to equipment, topology and behavior:
@@ -251,6 +252,16 @@ TV on tentacle 0/front and AVR/playback on tentacle 0/back using actual typed
 owner/adapter/side observations from existing UI APIs. Fixture attachments,
 matching names, counts or human-readable location strings alone do not prove
 that the DUT reported the correct connections.
+
+The activity test must first assert all three components are in Standby.
+Starting the saved activity must deliver a fresh physical DUT-origin power-on
+command to every component and leave all three On. Returning to standby must
+deliver a fresh CEC Standby command to every component and leave all three in
+Standby. Local state setters, stale traffic and virtual peer messages cannot
+satisfy those command assertions. `Off` means electrically unpowered with no
+CEC traffic; ordinary CEC Standby retains the powered CEC responder. Reuse the
+existing authenticated UI activity operations and clean up test-owned activity
+configuration before closing component responders and logging out.
 
 Components sharing a physical harness GPIO also share one virtual CEC bus.
 Route directed virtual messages and replies within that bus, with powered ACK,

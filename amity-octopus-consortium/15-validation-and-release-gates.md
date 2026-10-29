@@ -90,14 +90,48 @@ Physical Linux adapter restrictions apply to the wire backend, not to virtual
 component communication. TX/RX records distinguish `virtual` and `wire`;
 virtual records have `wire_timestamp_ns=0` and cannot establish DUT behavior.
 
-The initial framework contains exactly one functional scenario: `amity-dut`
-scans a TV, AVR and playback device. It requires fresh wire identity exchanges
+The framework contains two functional scenarios. `hdmi_scan.py` has `amity-dut`
+scan a TV, AVR and playback device. It requires fresh wire identity exchanges
 and matching UI names/types/addresses. Wire captures identify the actual DUT
 initiators; legacy aggregate UI address fields are not owner-local addressing
 evidence. The exact-set and typed-port scan assertions passed on firmware
 `0.1.84` on 28 October 2026; private evidence is in
 `test-results/functional/hdmi-scan-exact-ports.json`. This does not replace the broader
 behavioral comparison or physical qualification gates above.
+
+`activity.py` reuses that topology and all exact scan assertions. It creates a
+temporary activity through the existing authenticated UI editor, checks that
+all components remain in Standby before Start, then requires a fresh physical
+DUT-origin power-on command and On state for each component. Standby must send
+a fresh CEC Standby command to each component and leave all three in Standby.
+Off remains the separate no-power/no-CEC model. Local state assignments,
+virtual exchanges, stale frames and UI admission alone cannot establish those
+effects. Registered cleanup runs before CEC closure/logout and removes only
+test-owned configuration while preserving other activities and normal history.
+No firmware API or original activity/CEC behavior changes are authorized by
+this scenario. The runner selects `hdmi_scan`, `activity` or `all`.
+
+Validation on 28 October 2026: all 161 framework unit checks pass. On the
+`test2` harness against `amity-dut` firmware `0.1.85`, the standalone scan passes,
+and the activity test confirms initial Standby plus fresh physical power-on
+commands and On state for all three components. Returning to Standby exposes
+a reproducible firmware failure: the `amity_hub` task overflows its stack and
+the DUT restarts before the components receive CEC Standby. The new test
+therefore fails at this step; its assertions have not been relaxed. Private
+evidence is in `test-results/functional/activity-suite-0.1.85.json`,
+`activity-0.1.85-uart.json` and `activity-dut-uart.log` under the same directory.
+After the old-boot credentials correctly failed cleanup, fresh authenticated
+recovery removed only the confirmed test-owned activity/equipment and preserved
+the original two equipment records and activity list. All 14 GPIO CEC adapters
+were verified to have zero logical-address claims. This establishes the test's
+ability to detect the failure, not successful firmware standby qualification.
+An isolated Xtensa compile with the current firmware flags and stack-usage
+reporting accounts for at least 6,304 bytes along the nested Standby ownership
+dispatch path before final transmission/runtime overhead, exceeding the
+task's current 6,144-byte allocation. Object call relocations retain these
+frames; no recursive cycle was found. Resource provisioning for that ownership
+layer remains unresolved; changing the original CEC policy is not required to
+explain or address this failure.
 
 ## Evidence record
 
