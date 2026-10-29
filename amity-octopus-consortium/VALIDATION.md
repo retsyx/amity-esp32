@@ -41,6 +41,44 @@ Build evidence is `test-results/audit-fixes-2026-10-28/build.log`. This image ha
 been deployed, and the strengthened scan assertions have not run on the physical
 bench. Earlier physical results remain separate evidence.
 
+## amity-dut update and reset — 29 October 2026
+
+The subsequent build from committed source `2d148ca` passed with the pinned SDK
+and was installed on `amity-dut` through the existing authenticated firmware
+endpoint. Version `0.1.88` and ELF identity
+`c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e` booted
+successfully. The saved `0.1.86` configuration still contained the removed empty
+`quirks` field, which the new reader rejects; the initial boot therefore retained
+storage with activity control passive. A healthy image alone did not establish
+successful configuration startup.
+
+The user authorized a factory reset. The existing harness helper parsed the
+documented reset wiring, held only this DUT's FW RESET for 10.2 seconds, and
+released it to input with pulls disabled. The user then confirmed Matter
+re-enrollment. Authenticated verification confirmed the same stable device ID,
+the expected version/ELF, ready original-main authority and UI, working factory
+initial password, two Matter fabrics and an empty new configuration. Boot ID is
+`85adbb9ed72b69033230ba8784237cb0`. Factory credentials were retained; old
+configuration and pairings were explicitly reset. The user restored hostname
+`amity-dut`. Read-only checks after that restart verified boot
+`adf4abfb5b747b0b0cf5ef5aa03e393f`, the same expected image, ready main/UI,
+unchanged fresh configuration, working factory password, two fabrics and a closed
+commissioning window.
+
+Private evidence is in `test-results/audit-deployment-0.1.88/`, including
+`build.log`, `deployment.json`, `new-boot-diagnostics.json`,
+`factory-reset-action.json`, `factory-reset-uart.log`, `after-reset.json` and
+`after-hostname.json`.
+No other DUT was updated. This verifies image, reset and main/UI readiness;
+physical CEC/AV/key behavior, multi-adapter timing and Amity admission remain
+separate qualification work.
+
+Current credential records are consolidated in the ignored private
+`test-results/credentials/` directory. Cleanup removed 89 older or duplicate
+credential carriers and redacted superseded credentials in 13 historical
+evidence files. The four current records and latest original provisioner cards
+were preserved; no setup-card QR, password image or instructions were changed.
+
 ## Standby stack fix — 28 October 2026
 
 The activity functional test committed at `c4833a1` exposed a firmware failure on `amity-dut` running 0.1.85: start completed and the TV, AVR and player each received a real DUT power-on command, then standby caused an `amity_hub` task stack overflow and software CPU reset. The original failure report is `test-results/functional/activity-suite-0.1.85.json`; the detected overflow is in `test-results/functional/activity-dut-uart.log`. Target-compiled stack analysis found a standby call-chain subtotal above 6,304 bytes before downstream owner-send/runtime overhead, exceeding the 6,144-byte allocation. No recursive callback cycle was found.

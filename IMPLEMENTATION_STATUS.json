@@ -1,6 +1,6 @@
 {
-  "status": "Four audit fixes cover late radio cleanup, rejected local hold tokens, one physical gesture clock and exact scan identity evidence. Full host tests and native 0.1.88 build pass; this working-tree image includes the existing reference/task-stack changes and has not been deployed.",
-  "audit_date": "2026-10-28",
+  "status": "Four audit fixes are committed and amity-dut runs verified 0.1.88. User-authorized factory reset cleared incompatible 0.1.86 configuration, and the user re-enrolled it in Matter. New main/UI readiness and retained factory login are verified; other three DUTs were not updated. hw/case remains untracked.",
+  "audit_date": "2026-10-29",
   "firmware_version": "0.1.88",
   "branch": "consort",
   "source_baseline": {
@@ -190,28 +190,34 @@
     "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
-    "date": "2026-10-28",
-    "firmware_version": "0.1.86",
-    "matter_software_version": 87,
+    "date": "2026-10-29",
+    "firmware_version": "0.1.88",
+    "matter_software_version": 89,
     "device_count": 1,
     "bench_labels": [
       "amity-dut"
     ],
     "hardware_profile": "esp32s3-development-4t-v1",
-    "normal_admission": true,
     "result": "PASS",
-    "report": "test-results/standby-stack-fix-0.1.86/after-update.json",
-    "running_elf_sha256": "6cd6bb5195da40c2174aefc7d5b86993b5966cd556fc4e8f3a96844c34a32997",
-    "healthy_boot_id": "0c508459411bbdbf06b380cf41f7f46b",
-    "configuration_preserved": true,
-    "checks": "Existing authenticated application update; exact running version/ELF and healthy boot verified. The four-tentacle profile and existing configuration were preserved. The physical scan/activity suite and two additional activity cycles passed on the same boot; no upgrade of the other three boards is claimed.",
-    "functional_reports": [
-      "test-results/standby-stack-fix-0.1.86/functional-suite.json",
-      "test-results/standby-stack-fix-0.1.86/activity-cycle-2.json",
-      "test-results/standby-stack-fix-0.1.86/activity-cycle-3.json"
-    ],
-    "radio_enrollment_exercised": false,
-    "final_verification": "test-results/standby-stack-fix-0.1.86/verified.json"
+    "report": "test-results/audit-deployment-0.1.88/deployment.json",
+    "running_elf_sha256": "c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e",
+    "image_sha256": "22b9476fcd45cab52c4cf3d0da372839aacc9c6a34a6bb7daee433609876a393",
+    "healthy_boot_id": "adf4abfb5b747b0b0cf5ef5aa03e393f",
+    "source_commit": "2d148ca212a76b1f518aff6ec87dcd2e0376f37a",
+    "source_dirty": true,
+    "configuration_preserved": false,
+    "factory_reset_authorized_by_user": true,
+    "reset_reason": "Previous 0.1.86 stored an obsolete empty configuration field; user authorized factory reset instead of firmware migration",
+    "recommissioned_by_user": true,
+    "factory_credentials_retained": true,
+    "current_admin_factory_password_verified": true,
+    "checks": "Authenticated shipping firmware endpoint; exact version/ELF and stable device identity verified. Physical FW RESET 10.2s via parsed bench wiring, pin released, user-confirmed Matter re-enrollment, then exact version/ELF, ready coordinator authority, current factory admin login, two fabrics and empty new configuration verified. User restored hostname to amity-dut; after its reboot, exact image, normal UI, retained factory login, unchanged fresh configuration, two fabrics and closed automatic commissioning window were verified.",
+    "qualification_scope": "Image/boot/main/UI readiness and fresh reset state only; no CEC/AV/remote/radio admission behavior qualification",
+    "other_duts_updated": false,
+    "functional_or_av_qualification": false,
+    "hostname": "amity-dut",
+    "current_fabrics_no_automatic_setup": true,
+    "final_verification": "test-results/audit-deployment-0.1.88/after-hostname.json"
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -319,6 +325,30 @@
       "setup_cards_unchanged": true,
       "actual_home_setup": "amity-dut completed Matter commissioning and original-main startup; other three retain unclaimed-boot advertising evidence.",
       "radio_enrollment_exercised": false
+    },
+    {
+      "date": "2026-10-28",
+      "firmware_version": "0.1.86",
+      "matter_software_version": 87,
+      "device_count": 1,
+      "bench_labels": [
+        "amity-dut"
+      ],
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "normal_admission": true,
+      "result": "PASS",
+      "report": "test-results/standby-stack-fix-0.1.86/after-update.json",
+      "running_elf_sha256": "6cd6bb5195da40c2174aefc7d5b86993b5966cd556fc4e8f3a96844c34a32997",
+      "healthy_boot_id": "0c508459411bbdbf06b380cf41f7f46b",
+      "configuration_preserved": true,
+      "checks": "Existing authenticated application update; exact running version/ELF and healthy boot verified. The four-tentacle profile and existing configuration were preserved. The physical scan/activity suite and two additional activity cycles passed on the same boot; no upgrade of the other three boards is claimed.",
+      "functional_reports": [
+        "test-results/standby-stack-fix-0.1.86/functional-suite.json",
+        "test-results/standby-stack-fix-0.1.86/activity-cycle-2.json",
+        "test-results/standby-stack-fix-0.1.86/activity-cycle-3.json"
+      ],
+      "radio_enrollment_exercised": false,
+      "final_verification": "test-results/standby-stack-fix-0.1.86/verified.json"
     }
   ],
   "standby_stack_fix_validation": {
@@ -531,6 +561,33 @@
       "layout_checks": 35,
       "scope": "Existing working-tree four-adapter profile, including prior reference/task-stack changes"
     },
-    "deployment": "Not deployed; no new physical radio, remote, CEC or strengthened scan qualification claimed"
+    "deployment": "The earlier working-tree build above was not installed. A later committed-source 0.1.88 build was deployed, reset with user authorization and recommissioned; see latest_deployment and audit_fix_deployment_validation."
+  },
+  "audit_fix_deployment_validation": {
+    "build": {
+      "result": "PASS",
+      "command": "idf.py build provisioning-package (pinned SDK Python 3.14)",
+      "log": "test-results/audit-deployment-0.1.88/build.log",
+      "source_commit": "2d148ca212a76b1f518aff6ec87dcd2e0376f37a",
+      "source_dirty": true,
+      "note": "Firmware source committed; hw/case remains untracked and was not checked in"
+    },
+    "initial_update": {
+      "image_booted": true,
+      "local_boot_health": true,
+      "activity_configuration_available": false,
+      "cause": "Removed top-level quirks field was still present as an empty array in previous saved schema3 configuration",
+      "diagnostics": "test-results/audit-deployment-0.1.88/new-boot-diagnostics.json"
+    },
+    "resolution": {
+      "user_authorized_factory_reset": true,
+      "user_confirmed_matter_reenrollment": true,
+      "report": "test-results/audit-deployment-0.1.88/after-reset.json",
+      "factory_reset_action": "test-results/audit-deployment-0.1.88/factory-reset-action.json",
+      "uart_capture": "test-results/audit-deployment-0.1.88/factory-reset-uart.log",
+      "final_result": "PASS: correct image, stable origin ID, ready original controller/UI and factory admin login",
+      "post_hostname_verification": "test-results/audit-deployment-0.1.88/after-hostname.json"
+    },
+    "limitations": "No new physical CEC activity, key, AVR, multi-adapter timing, remote or Amity admission qualification"
   }
 }
