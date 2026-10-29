@@ -111,8 +111,18 @@ int run_tests(){
         during_wait=select;run();assert(discoveries==2&&reservations==1&&releases==1&&wifi_exports==1&&encrypted_exchanges==3&&saves==1);
         assert(admission.view.phase=="finishing"&&admission.pin==0&&group.joining_id==ident<model::OctopusId>(3)&&hostnames.lookup(group.joining_id)=="room");
         assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE);
-        auto link=std::make_shared<Active>();link->peer=group.joining_id;link->ready=link->status.ready=true;link->status.hostname="wrong";links={link};assert(runtime_admission_status().phase=="finishing");
-        link->status.hostname="room";assert(runtime_admission_status().phase=="complete");
+        auto link=std::make_shared<Active>();links={link};admission.view.error="The result was not confirmed yet.";
+        for(unsigned failure=0;failure<5;++failure){
+            link->peer=group.joining_id;link->ready=link->status.ready=true;link->cancelled=false;link->status.hostname="room";
+            switch(failure){case 0:link->peer=ident<model::OctopusId>(99);break;case 1:link->ready=false;break;case 2:link->status.ready=false;break;case 3:link->cancelled=true;break;case 4:link->status.hostname="wrong";break;}
+            const auto pending=runtime_admission_status();assert(pending.phase=="finishing"&&!pending.error.empty()&&admission.view.phase=="finishing");
+        }
+        link->status.hostname="room";assert(runtime_admission_status().phase=="complete"&&admission.view.phase=="complete"&&admission.view.error.empty());
+        const auto completed=runtime_admission_status();
+        link->cancelled=true;link->ready=link->status.ready=false;links.clear();group.peers.clear();group.join_id={};group.joining_id={};group.join_digest.clear();group.join_hostname.clear();group.join_revision=0;
+        const auto removed=runtime_admission_status();assert(removed.phase=="complete"&&removed.error.empty()&&removed.candidate_id==completed.candidate_id&&removed.scan_id==completed.scan_id);
+        assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_OK);
+        const auto next=runtime_admission_status();assert(next.phase=="scanning"&&next.scan_id==ident<model::MessageId>(2)&&!next.candidate_id&&next.error.empty());
         std::cout<<"PASS actual "<<(mode==AdmissionMode::button?"normal":"code-verified")<<" discovery-before-button, exact selection/name, encrypted setup, membership and readiness\n";
     }
     reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);assert(runtime_cancel_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE);assert(!invitation_cancelled);
@@ -126,10 +136,11 @@ int run_tests(){
         assert(saves==1&&group.join_id&&admission.view.phase=="finishing"&&!admission.view.error.empty());
         auto link=std::make_shared<Active>();link->peer=group.joining_id;link->ready=link->status.ready=true;link->status.hostname="room";links={link};
         assert(runtime_admission_status().phase=="complete"&&runtime_admission_status().error.empty());
+        links.clear();assert(runtime_admission_status().phase=="complete"&&admission.view.error.empty());
     }
     reset();spawn_ok=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_NO_MEM);assert(!invitation_running&&admission.view.phase=="failed");
     reset();group.role=Group::member;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE&&!invitation_running);
-    std::cout<<"PASS actual stale IDs/tokens, invalid inputs, pre-scan/found cancellation, timeout, identity mismatch, configured network preservation and task/role rejection\n";
+    std::cout<<"PASS actual stale IDs/tokens, invalid inputs, pre-scan/found cancellation, timeout, identity mismatch, configured network preservation and task/role rejection; exact readiness latches transient completion across removal until a new scan\n";
     return 0;
 }
 }

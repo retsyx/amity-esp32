@@ -241,7 +241,11 @@ bool enroll_lan(Active &active,bool server){
             // The old singleton SystemControl identity remains fenced. Let the
             // durable LAN acknowledgement leave TCP, then rebuild from the new
             // group ID/member role before accepting any configuration slice.
-            runtime_close_enrollment();vTaskDelay(pdMS_TO_TICKS(500));esp_restart();return false;
+            runtime_close_enrollment();vTaskDelay(pdMS_TO_TICKS(500));
+            // This link task has a PSRAM stack. Restart disables the flash
+            // cache, so use the existing internal-stack broker and fail closed
+            // if it cannot accept the handoff.
+            config_store::with_internal_flash_stack([]{esp_restart();});return false;
         }
     }
     if(!server)runtime_close_enrollment();
@@ -297,14 +301,20 @@ bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
         const auto now=now_ms();if(now>=deadline)return false;const auto admitted=active.session.admit(envelope,now,now);
         if(admitted==Error::none)return true;
         // Frames admitted by the old ready state can already be on TCP when its
-        // authority is fenced. Drain only exact-scope lease/heartbeat traffic;
-        // no work or lease is admitted by this restricted transaction channel.
+        // authority is fenced. Discard exact-scope lease/heartbeat traffic and
+        // settings replies already in flight, without applying them. Management
+        // admission retains the same capability and replay checks; restore the
+        // lifecycle restriction before receiving anything else.
         const auto &scope=active.session.scope();
         if(admitted!=Error::unauthorized_role||
-           (envelope.kind!=Kind::heartbeat&&envelope.kind!=Kind::execution_lease)||
+           (envelope.kind!=Kind::heartbeat&&envelope.kind!=Kind::execution_lease&&envelope.kind!=Kind::settings_result)||
            envelope.consortium_id!=scope.consortium_id||envelope.origin_octopus_id!=scope.peer_id||envelope.destination_octopus_id!=scope.local_id||
            envelope.origin_boot_id!=scope.peer_boot_id||envelope.destination_boot_id!=scope.local_boot_id||
            envelope.coordinator_epoch!=scope.epoch||envelope.config_revision!=scope.config_revision)return false;
+        active.session.restrict_management();
+        const auto discarded=active.session.admit(envelope,now,now);
+        active.session.restrict_lifecycle();
+        if(discarded!=Error::none)return false;
     }
     return false;
 }
@@ -835,14 +845,18 @@ bool runtime_cancel_radio_workflows(){
     return !invitation_running&&gatt_quiescent();
 }
 RuntimeAdmissionStatus runtime_admission_status(){
-    std::lock_guard<std::mutex> guard(lock);auto result=admission.view;
-    if(result.phase=="finishing"&&result.candidate_id){
-        for(const auto& link:links)if(link->peer==result.candidate_id&&!link->cancelled&&link->ready){
+    std::lock_guard<std::mutex> guard(lock);
+    if(admission.view.phase=="finishing"&&admission.view.candidate_id){
+        for(const auto& link:links)if(link->peer==admission.view.candidate_id&&!link->cancelled&&link->ready){
             std::lock_guard<std::mutex> snapshot(link->mutex);
-            if(link->status.ready&&link->status.hostname==admission.hostname){result.phase="complete";result.error.clear();}
+            if(link->status.ready&&link->status.hostname==admission.hostname){
+                // Completion describes this Add operation, not the continued
+                // presence of its member. A new scan replaces the view.
+                admission.view.phase="complete";admission.view.error.clear();break;
+            }
         }
     }
-    return result;
+    return admission.view;
 }
 esp_err_t runtime_scan_admission(model::MessageId scan){
     if(!scan)return ESP_ERR_INVALID_ARG;

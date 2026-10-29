@@ -254,6 +254,33 @@ class AddedAmity:
         self._created = True
         record.update(candidate_id=self.device_id, boot=self.boot)
 
+    def _connected_snapshot(self, *, deadline):
+        system = self._system()
+        peer = self._preserved_members(system, added=True)[self.device_id]
+        if peer.get("hostname") != self.name:
+            raise MembershipConflict("The added Amity did not retain its requested name")
+        config = self._config(deadline=deadline)
+        boards = [b for b in config["octopuses"] if b.get("octopus_id") == self.device_id]
+        names = [n for n in system.get("named_devices", []) if n.get("octopus_id") == self.device_id]
+        ready = (peer.get("enrolled") is True and peer.get("ready") is True and _identifier(peer.get("boot_id"))
+                 and len(names) == 1 and names[0].get("hostname") == self.name and len(boards) == 1
+                 and type(peer.get("supported_tentacles")) is int and peer["supported_tentacles"] > 0
+                 and type(boards[0].get("supported_tentacles")) is int
+                 and boards[0].get("supported_tentacles") == peer["supported_tentacles"]
+                 and system.get("configuration_pending") is False
+                 and system.get("applied_config_revision") == config.get("config_revision")
+                 and system.get("applied_presentation_revision") == config.get("presentation_revision"))
+        return system, peer, ready
+
+    @staticmethod
+    def _settings_match(settings, peer):
+        body = settings.get("settings") or {}
+        adapters = body.get("adapters", [])
+        return (settings.get("status") == "ready" and settings.get("error") == ""
+                and body.get("boot_id") == peer["boot_id"] and isinstance(adapters, list)
+                and all(isinstance(a, dict) and type(a.get("tentacle_id")) is int for a in adapters)
+                and sorted(a.get("tentacle_id") for a in adapters) == list(range(peer["supported_tentacles"])))
+
     def assert_connected(self, *, timeout=None):
         if not self._created or self._closed:
             raise RuntimeError("This test has no added Amity to verify")
@@ -263,36 +290,25 @@ class AddedAmity:
         record = self._record("assert_connected", boot=self.boot)
         try:
             while True:
-                system = self._system()
-                active = self._preserved_members(system, added=True)
-                peer = active[self.device_id]
-                if peer.get("hostname") != self.name:
-                    raise MembershipConflict("The added Amity did not retain its requested name")
-                config = self._config(deadline=deadline)
-                boards = [b for b in config["octopuses"] if b.get("octopus_id") == self.device_id]
-                names = [n for n in system.get("named_devices", []) if n.get("octopus_id") == self.device_id]
-                ready = (peer.get("enrolled") is True and peer.get("ready") is True and _identifier(peer.get("boot_id"))
-                         and len(names) == 1 and names[0].get("hostname") == self.name and len(boards) == 1
-                         and type(peer.get("supported_tentacles")) is int and peer["supported_tentacles"] > 0
-                         and type(boards[0].get("supported_tentacles")) is int
-                         and boards[0].get("supported_tentacles") == peer["supported_tentacles"]
-                         and system.get("configuration_pending") is False
-                         and system.get("applied_config_revision") == config.get("config_revision")
-                         and system.get("applied_presentation_revision") == config.get("presentation_revision"))
+                _, peer, ready = self._connected_snapshot(deadline=deadline)
                 if ready:
-                    settings = self._request("/api/v2/devices/" + self.device_id + "/settings", deadline=deadline)
-                    body = settings.get("settings") or {}
-                    adapters = body.get("adapters", [])
-                    if (settings.get("status") == "ready" and settings.get("error") == ""
-                            and body.get("boot_id") == peer["boot_id"] and isinstance(adapters, list)
-                            and all(isinstance(a, dict) and type(a.get("tentacle_id")) is int for a in adapters)
-                            and sorted(a.get("tentacle_id") for a in adapters) == list(range(peer["supported_tentacles"]))):
-                        if self.member_boot is not None and peer["boot_id"] != self.member_boot:
-                            raise MembershipConflict("The added Amity restarted during verification")
-                        self.member_boot = peer["boot_id"]
-                        record.update(member_boot=self.member_boot,
-                                      membership_revision=system["membership"].get("membership_revision"))
-                        return self
+                    if self.member_boot is not None and peer["boot_id"] != self.member_boot:
+                        raise MembershipConflict("The added Amity restarted during verification")
+                    # Poll this shipping endpoint directly: its two-second
+                    # cache can expire while unrelated TLS requests run.
+                    while True:
+                        settings = self._request("/api/v2/devices/" + self.device_id + "/settings", deadline=deadline)
+                        if self._settings_match(settings, peer):
+                            system, confirmed, current = self._connected_snapshot(deadline=deadline)
+                            if confirmed.get("boot_id") != peer["boot_id"]:
+                                raise MembershipConflict("The added Amity restarted during verification")
+                            if current and self._settings_match(settings, confirmed):
+                                self.member_boot = confirmed["boot_id"]
+                                record.update(member_boot=self.member_boot,
+                                              membership_revision=system["membership"].get("membership_revision"))
+                                return self
+                            break
+                        time.sleep(min(0.25, self._remaining(deadline)))
                 time.sleep(min(0.25, self._remaining(deadline)))
         except BaseException as error:
             record["error_type"] = type(error).__name__

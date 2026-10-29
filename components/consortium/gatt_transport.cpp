@@ -18,6 +18,7 @@ extern "C" {
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_adv.h"
+#include "host/ble_l2cap.h"
 #include "os/os_mbuf.h"
 }
 #include <atomic>
@@ -141,7 +142,7 @@ ble_addr_t candidate_address{};
 struct Discovered {RuntimeAdmissionCandidate public_value;ble_addr_t address;};
 std::vector<Discovered> discovered;
 uint32_t client_callback_cookie=0;
-bool client_workflow=false,client_discovery_waiting=false;
+bool client_workflow=false,client_discovery_waiting=false,client_mtu_ready=false,client_mtu_waiting=false;
 std::atomic_bool client_stopping{true};
 std::atomic_int client_error{0};
 std::string client_response;
@@ -162,9 +163,19 @@ int client_gap(ble_gap_event *event,void *token){std::lock_guard<std::mutex> gua
         if(fields.name&&fields.name_len==8&&fields.name[0]=='A'&&fields.name[1]=='-'&&std::all_of(fields.name+2,fields.name+8,[](uint8_t c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');}))label+=" "+std::string(reinterpret_cast<const char*>(fields.name+2),6);
         discovered.push_back({{random_hex(16),label},event->disc.addr});
     }else if(event->type==BLE_GAP_EVENT_DISC_COMPLETE&&client_discovery_waiting){client_discovery_waiting=false;complete(0);}
-    else if(event->type==BLE_GAP_EVENT_CONNECT){if(!event->connect.status)client_connection=event->connect.conn_handle;complete(event->connect.status);}
-    else if(event->type==BLE_GAP_EVENT_DISCONNECT&&client_connection==event->disconnect.conn.conn_handle){client_connection=BLE_HS_CONN_HANDLE_NONE;client_stopping=true;complete(BLE_HS_ENOTCONN);}
+    else if(event->type==BLE_GAP_EVENT_CONNECT){if(!event->connect.status){client_connection=event->connect.conn_handle;client_mtu_ready=client_mtu_waiting=false;}complete(event->connect.status);}
+    else if(event->type==BLE_GAP_EVENT_MTU&&!client_stopping&&client_connection!=BLE_HS_CONN_HANDLE_NONE&&event->mtu.conn_handle==client_connection&&event->mtu.channel_id==BLE_L2CAP_CID_ATT&&event->mtu.value>=BLE_ATT_MTU_DFLT){
+        client_mtu_ready=true;
+        if(client_mtu_waiting){client_mtu_waiting=false;complete(0);}
+    }
+    else if(event->type==BLE_GAP_EVENT_DISCONNECT&&client_connection==event->disconnect.conn.conn_handle){client_connection=BLE_HS_CONN_HANDLE_NONE;client_mtu_ready=client_mtu_waiting=false;client_stopping=true;complete(BLE_HS_ENOTCONN);}
     return 0;
+}
+int on_mtu(uint16_t connection,const ble_gatt_error *error,uint16_t mtu,void *token){
+    std::lock_guard<std::mutex> guard(client_mutex);
+    if(!current(token)||client_stopping||connection==BLE_HS_CONN_HANDLE_NONE||connection!=client_connection)return BLE_HS_EDONE;
+    const int status=!error?BLE_HS_EINVAL:error->status?error->status:mtu<BLE_ATT_MTU_DFLT?BLE_HS_EINVAL:0;
+    client_mtu_ready=status==0;client_mtu_waiting=false;complete(status);return 0;
 }
 int on_service(uint16_t,const ble_gatt_error *error,const ble_gatt_svc *service,void *token){std::lock_guard<std::mutex> guard(client_mutex);if(!current(token))return BLE_HS_EDONE;if(!error->status&&service){client_service_start=service->start_handle;client_service_end=service->end_handle;}else complete(error->status==BLE_HS_EDONE?0:error->status);return 0;}
 int on_characteristic(uint16_t,const ble_gatt_error *error,const ble_gatt_chr *characteristic,void *token){std::lock_guard<std::mutex> guard(client_mutex);if(!current(token))return BLE_HS_EDONE;if(!error->status&&characteristic)client_attribute=characteristic->val_handle;else complete(error->status==BLE_HS_EDONE?0:error->status);return 0;}
@@ -226,6 +237,18 @@ esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
     }
     ble_gap_conn_params connect{};connect.scan_itvl=0x10;connect.scan_window=0x10;connect.itvl_min=24;connect.itvl_max=40;connect.supervision_timeout=400;
     if(ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,&connect,client_gap,token)||!wait(11000))return ESP_FAIL;
+    // Preferred MTU is not negotiated automatically. At the default 23 bytes,
+    // real certificate proposals can exceed the bounded record assembly time.
+    clear_done();const auto mtu_status=ble_gattc_exchange_mtu(client_connection,on_mtu,token);
+    if(mtu_status==BLE_HS_EALREADY){
+        // NimBLE reports EALREADY once a request was sent, even while its reply
+        // is pending. Use the exact connection's ATT event, not that status, as
+        // proof of completion (including peers which negotiate only 23 bytes).
+        std::lock_guard<std::mutex> guard(client_mutex);
+        if(!current(token)||client_stopping||client_connection==BLE_HS_CONN_HANDLE_NONE)return ESP_FAIL;
+        if(client_mtu_ready)complete(0);else client_mtu_waiting=true;
+    }else if(mtu_status)return ESP_FAIL;
+    if(!wait(5000))return ESP_FAIL;
     clear_done();if(ble_gattc_disc_svc_by_uuid(client_connection,&service_uuid.u,on_service,token)||!wait(5000)||!client_service_start)return ESP_FAIL;
     clear_done();if(ble_gattc_disc_chrs_by_uuid(client_connection,client_service_start,client_service_end,&record_uuid.u,on_characteristic,token)||!wait(5000)||!client_attribute)return ESP_FAIL;
     return ESP_OK;
@@ -255,7 +278,7 @@ bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &r
     }
     return false;
 }
-void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);if(!client_workflow)return;client_stopping=true;client_workflow=false;client_discovery_waiting=false;discovered.clear();ble_gap_disc_cancel();ble_gap_conn_cancel();if(client_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}client_connection=BLE_HS_CONN_HANDLE_NONE;if(client_callback_cookie<UINT32_MAX)++client_callback_cookie;complete(BLE_HS_ENOTCONN);}
+void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);if(!client_workflow)return;client_stopping=true;client_workflow=false;client_discovery_waiting=false;client_mtu_ready=client_mtu_waiting=false;discovered.clear();ble_gap_disc_cancel();ble_gap_conn_cancel();if(client_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}client_connection=BLE_HS_CONN_HANDLE_NONE;if(client_callback_cookie<UINT32_MAX)++client_callback_cookie;complete(BLE_HS_ENOTCONN);}
 bool gatt_candidate_transport_idle(){std::lock_guard<std::mutex> guard(state_mutex);return server_connection==BLE_HS_CONN_HANDLE_NONE&&!processing_record&&!outstanding_work;}
 bool gatt_quiescent(){
     if(ble_gap_adv_active()||ble_gap_disc_active()||ble_gap_conn_active()||processing_record||outstanding_work||channel_live)return false;

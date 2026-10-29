@@ -38,9 +38,9 @@ bool send(Active &,Kind kind,std::string_view,uint32_t){return kind==Kind::membe
 void check(bool value,const char *message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned n){char text[33];std::snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 LinkScope scope(uint64_t config=7){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(3),ident<m::BootId>(5),ident<m::BootId>(6),1,config};}
-void start(Active &active,uint64_t config=7){
+void start(Active &active,uint64_t config=7,uint32_t capabilities=known_capabilities){
     active.removal_request=ident<m::MessageId>(1000);active.removal_until=clock_ms+2000;configuration=config;
-    const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=sc.epoch;hello.config_revision=sc.config_revision;hello.required_capabilities=known_capabilities;
+    const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=sc.epoch;hello.config_revision=sc.config_revision;hello.required_capabilities=capabilities;
     check(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none,"authenticate failed");
     check(active.session.hello(hello,known_capabilities)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
 }
@@ -50,6 +50,8 @@ const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"
 const std::string requested="{\"mutation_id\":\"00000000000000000000000000000020\",\"proposal_digest\":\""+std::string(64,'a')+"\",\"phase\":\"factory_reset\",\"membership_revision\":\"2\",\"expected_boot_id\":\"00000000000000000000000000000006\"}";
 std::string acknowledgement(bool correct=true){auto payload=requested;if(!correct)payload.replace(payload.find(std::string(64,'a')),64,std::string(64,'b'));payload.pop_back();return packet(envelope(Kind::membership_result,20),payload+",\"result\":\"reset_scheduled\"}");}
 std::string lease(Kind kind,unsigned message){const auto base="{\"lease_id\":\"00000000000000000000000000000021\",\"link_id\":\"00000000000000000000000000000001\",\"class\":\"control\",\"validity_ms\":5000}";return packet(envelope(kind,message),base);}
+const std::string settings_payload="{\"request_id\":\"00000000000000000000000000000100\",\"operation\":\"read\",\"stage\":\"applied\",\"error\":\"\",\"snapshot\":{\"boot_id\":\"00000000000000000000000000000006\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":0,\"name\":\"HDMI adapter 1\",\"configured\":true,\"presence\":\"present\",\"presence_generation\":\"1\",\"default_front_physical_address\":\"1.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]},\"rebooting\":false}";
+std::string settings_reply(unsigned message=70){return packet(envelope(Kind::settings_result,message),settings_payload);}
 '''
 SUITE = r'''
 void heartbeat_tests(){
@@ -77,7 +79,40 @@ void retirement_tests(){
     {Active active;start(active);active.retirement_payload=requested;check(!finish_retirement(active)&&active.transport.largest_timeout<=2000,"absent ACK did not time out bounded");}
     std::cout<<"PASS actual retirement:32-frame/2s drain, no lease grants, exact ACK digest, foreign-scope and missing-ACK rejection\n";
 }
-int main(){try{heartbeat_tests();retirement_tests();return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
+void settings_retirement_tests(){
+    {Active active;start(active);active.retirement_payload=requested;Envelope reply;
+     check(parse_envelope(settings_reply(),reply)==Error::none&&active.session.admit(reply,clock_ms,clock_ms,false)==Error::none,"fixture is not a valid ready-session settings reply");
+     active.transport.frames={settings_reply(),acknowledgement()};
+     check(finish_retirement(active)&&active.transport.next==2,"in-flight settings reply hid the matching reset ACK");
+     check(active.session.state()==ConnectionState::restricted&&!active.ready&&!active.status.ready&&active.queue.empty(),"drained settings reply restored work authority");
+     check(active.session.execution_leases().live(LeaseClass::control,clock_ms)==0,"drained settings reply granted a lease");
+     check(active.transport.largest_timeout<=2000,"settings reply drain extended the removal deadline");
+     check(!dispatch_heartbeat(active,envelope(Kind::heartbeat,80)),"settings reply left the session in management mode");}
+    for(unsigned failure=0;failure<7;++failure){Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::settings_result,71);
+     switch(failure){case 0:foreign.origin_boot_id=ident<m::BootId>(99);break;case 1:foreign.destination_boot_id=ident<m::BootId>(99);break;case 2:foreign.origin_octopus_id=ident<m::OctopusId>(99);break;case 3:foreign.destination_octopus_id=ident<m::OctopusId>(99);break;case 4:foreign.consortium_id=ident<m::ConsortiumId>(99);break;case 5:foreign.coordinator_epoch=2;break;case 6:foreign.config_revision=8;break;}
+     active.transport.frames={packet(foreign,settings_payload),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==1,"foreign settings reply was drained or acknowledged");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={settings_reply()};
+     check(!finish_retirement(active)&&active.transport.largest_timeout<=2000,"settings reply counted as a reset ACK");}
+    {Active active;start(active);active.retirement_payload=requested;Envelope seen;
+     check(parse_envelope(settings_reply(),seen)==Error::none&&active.session.admit(seen,clock_ms,clock_ms)==Error::none,"could not record a prior settings reply");
+     active.transport.frames={settings_reply(),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==1,"previously received settings reply bypassed replay checks");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={settings_reply(),settings_reply(),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==2,"replayed settings reply bypassed drain replay checks");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={settings_reply(20),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==2,"ACK reused a drained reply message ID");}
+    {Active active;start(active,7,known_capabilities&~per_adapter_settings);active.retirement_payload=requested;active.transport.frames={settings_reply(),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==1&&active.session.state()==ConnectionState::restricted,"settings drain ignored negotiated capability or retained management permission");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::settings_read,72),"{\"request_id\":\"00000000000000000000000000000100\"}"),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==1,"settings work was admitted during retirement");}
+    {Active active;start(active);active.retirement_payload=requested;auto malformed=settings_payload;malformed.replace(malformed.find("\"applied\""),9,"\"failed\"");active.transport.frames={packet(envelope(Kind::settings_result,73),malformed),acknowledgement()};
+     check(!finish_retirement(active)&&active.transport.next==1,"malformed settings reply was drained");}
+    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(settings_reply(200+i));active.transport.frames.push_back(acknowledgement());
+     check(!finish_retirement(active)&&active.transport.next==32,"settings reply drain exceeded32 frames");}
+    std::cout<<"PASS actual retirement behind settings replies: exact ACK required; scope/capability/replay/32-frame/2s fences retained; no settings work or lease authority\n";
+}
+int main(){try{heartbeat_tests();retirement_tests();settings_retirement_tests();return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
 '''
 
 

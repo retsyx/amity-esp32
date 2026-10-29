@@ -1,7 +1,7 @@
 {
-  "status": "All four DUTs are verified on the exact latest 0.1.88 image: the three remaining boards were updated from 0.1.84, preserving provisioning and origin identity; the already-current main was checked without restarting and retains its configuration and two Matter fabrics. The Add Amity framework has 238 passing unit tests; its earlier physical discovery failure on 0.1.84 remains recorded, and Add/Remove has not been rerun on the updated candidate.",
+  "status": "PASS: the unchanged original Add Amity functional scenario passed twice consecutively on main 0.1.94/software 95 and candidate 0.1.93. Each run completed Add, exact connected/settings checks and acknowledged scheduled removal/reset, then observed unclaimed Ready/automatic Matter setup without panic; stack margins were 3968/3976 bytes. Final HTTP checks retain the same main boot/group/authority, exact configuration and two Matter fabrics. Native builds pass all 35 layouts and the verified full host runner exits 0 including 240 framework unit tests. Earlier failures remain preserved. This qualifies the exercised normal-profile membership/removal path, not CEC/AV or all-board interoperability.",
   "audit_date": "2026-10-29",
-  "firmware_version": "0.1.88",
+  "firmware_version": "0.1.94",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -118,7 +118,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 89,
+  "matter_software_version": 95,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -191,76 +191,51 @@
   },
   "latest_deployment": {
     "date": "2026-10-29",
-    "firmware_version": "0.1.88",
-    "matter_software_version": 89,
-    "device_count": 3,
-    "updated_device_count": 3,
-    "verified_device_count": 4,
+    "firmware_version": "0.1.94",
+    "matter_software_version": 95,
+    "device_count": 1,
+    "updated_device_count": 1,
     "bench_labels": [
-      "amity-dut-2",
-      "amity-dut-3",
-      "amity-dut-4"
+      "amity-dut"
     ],
     "hardware_profile": "esp32s3-development-4t-v1",
     "result": "PASS",
-    "report": "test-results/firmware-update-2026-10-29/deployment.json",
-    "device_reports": {
-      "amity-dut-2": "test-results/firmware-update-2026-10-29/44b176aec5e0/deployment.json",
-      "amity-dut-3": "test-results/firmware-update-2026-10-29/44b176aec2ac/deployment.json",
-      "amity-dut-4": "test-results/firmware-update-2026-10-29/44b176aecf64/deployment.json"
-    },
-    "running_elf_sha256": "c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e",
-    "image_sha256": "22b9476fcd45cab52c4cf3d0da372839aacc9c6a34a6bb7daee433609876a393",
-    "image_bytes": 2418752,
-    "source_commit": "2d148ca212a76b1f518aff6ec87dcd2e0376f37a",
+    "report": "test-results/add-amity-debug-2026-10-29/main-0.1.94-deployment.json",
+    "image_sha256": "4baf834b5227114602811392427669ab5e1a7977b5d4b7f260b0c75ba548be4b",
+    "running_elf_sha256": "af74c59554e7d9dce73e0888ce1767d9bd1a2b8f26b24598cc6695da867655d2",
+    "image_bytes": 2420048,
+    "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
     "source_dirty": true,
-    "previous_firmware_version": "0.1.84",
-    "transport": "USB application-slot update without full-flash erase",
-    "updated_boot_roles": {
-      "amity-dut-2": "unclaimed",
-      "amity-dut-3": "unclaimed",
-      "amity-dut-4": "unclaimed"
-    },
+    "previous_firmware_version": "0.1.92",
+    "transport": "Existing authenticated POST /api/firmware",
+    "main_usb_opened": false,
     "factory_reset_performed": false,
+    "boot_id": "06be5911aab8027ffc5a806b20b5f48e",
+    "previous_boot_id": "b68692e6e79ddde602397632900d7cf4",
     "checks": {
-      "all_four_on_exact_latest_image": true,
-      "three_updates_passed": true,
-      "main_current_and_unchanged": true,
-      "factory_credentials_and_origin_ids_retained": true,
-      "non_application_flash_preserved_before_restart": true,
-      "ota_metadata_preserved_before_restart": true,
-      "no_factory_reset": true,
-      "unclaimed_boards_automatic_matter_setup": true,
-      "setup_cards_unchanged": true
+      "exact_version": true,
+      "exact_elf": true,
+      "ready": true,
+      "same_identity": true,
+      "same_group": true,
+      "new_boot": true,
+      "original_main_authority": true,
+      "configuration_unchanged": true,
+      "matter_fabrics_unchanged": true,
+      "homekit_pairing_unchanged": true,
+      "hardware_capabilities_unchanged": true,
+      "local_update_healthy": true,
+      "no_peers": true
     },
-    "verified_current": {
-      "bench_label": "amity-dut",
-      "version": "0.1.88",
-      "update_skipped": true,
-      "serial_opened": false,
-      "restarted": false,
-      "boot_id": "8e4c9c5a830fd54c91bfec619a41c588",
-      "current_matter_fabric_count": 2,
-      "report": "test-results/firmware-update-2026-10-29/amity-dut-postcheck-20261029T204300Z.json",
-      "checks": {
-        "identity_matches_inventory": true,
-        "exact_latest_build_running": true,
-        "same_main_boot": true,
-        "ready": true,
-        "configuration_unchanged": true,
-        "matter_fabrics_unchanged": true,
-        "matter_fabric_count_positive": true,
-        "no_peers": true,
-        "membership_revision_unchanged": true,
-        "original_main_authority": true,
-        "hardware_capabilities_unchanged": true,
-        "saved_activities_and_equipment_empty": true
-      },
-      "passed": true
+    "known_other_dut_versions": {
+      "amity-dut-2": "0.1.93",
+      "amity-dut-3": "0.1.88",
+      "amity-dut-4": "0.1.88"
     },
-    "qualification_scope": "Exact-image update, startup/role, factory credentials, origin identity, automatic Matter setup and SDK admission self-test on the three updated boards; authenticated read-only current-image and preserved state verification on main. No new Add/Remove, CEC/AV, remote/radio admission or fw_reset overflow-fix qualification.",
-    "functional_or_av_qualification": false,
-    "fw_reset_overflow_fix_qualification": false
+    "qualification_scope": "Exact main 0.1.94 OTA and 13 preservation checks, followed by two unchanged original normal-profile Add/connected/settings/acknowledged-removal-reset passes against candidate 0.1.93 and final main-state preservation. Other boards remain 0.1.88; no new CEC/AV or strict-profile qualification.",
+    "functional_membership_qualification": true,
+    "cec_or_av_qualification": false,
+    "functional_membership_report": "test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json"
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -422,6 +397,125 @@
       "hostname": "amity-dut",
       "current_fabrics_no_automatic_setup": true,
       "final_verification": "test-results/audit-deployment-0.1.88/after-hostname.json"
+    },
+    {
+      "date": "2026-10-29",
+      "firmware_version": "0.1.88",
+      "matter_software_version": 89,
+      "device_count": 3,
+      "updated_device_count": 3,
+      "verified_device_count": 4,
+      "bench_labels": [
+        "amity-dut-2",
+        "amity-dut-3",
+        "amity-dut-4"
+      ],
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "result": "PASS",
+      "report": "test-results/firmware-update-2026-10-29/deployment.json",
+      "device_reports": {
+        "amity-dut-2": "test-results/firmware-update-2026-10-29/44b176aec5e0/deployment.json",
+        "amity-dut-3": "test-results/firmware-update-2026-10-29/44b176aec2ac/deployment.json",
+        "amity-dut-4": "test-results/firmware-update-2026-10-29/44b176aecf64/deployment.json"
+      },
+      "running_elf_sha256": "c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e",
+      "image_sha256": "22b9476fcd45cab52c4cf3d0da372839aacc9c6a34a6bb7daee433609876a393",
+      "image_bytes": 2418752,
+      "source_commit": "2d148ca212a76b1f518aff6ec87dcd2e0376f37a",
+      "source_dirty": true,
+      "previous_firmware_version": "0.1.84",
+      "transport": "USB application-slot update without full-flash erase",
+      "updated_boot_roles": {
+        "amity-dut-2": "unclaimed",
+        "amity-dut-3": "unclaimed",
+        "amity-dut-4": "unclaimed"
+      },
+      "factory_reset_performed": false,
+      "checks": {
+        "all_four_on_exact_latest_image": true,
+        "three_updates_passed": true,
+        "main_current_and_unchanged": true,
+        "factory_credentials_and_origin_ids_retained": true,
+        "non_application_flash_preserved_before_restart": true,
+        "ota_metadata_preserved_before_restart": true,
+        "no_factory_reset": true,
+        "unclaimed_boards_automatic_matter_setup": true,
+        "setup_cards_unchanged": true
+      },
+      "verified_current": {
+        "bench_label": "amity-dut",
+        "version": "0.1.88",
+        "update_skipped": true,
+        "serial_opened": false,
+        "restarted": false,
+        "boot_id": "8e4c9c5a830fd54c91bfec619a41c588",
+        "current_matter_fabric_count": 2,
+        "report": "test-results/firmware-update-2026-10-29/amity-dut-postcheck-20261029T204300Z.json",
+        "checks": {
+          "identity_matches_inventory": true,
+          "exact_latest_build_running": true,
+          "same_main_boot": true,
+          "ready": true,
+          "configuration_unchanged": true,
+          "matter_fabrics_unchanged": true,
+          "matter_fabric_count_positive": true,
+          "no_peers": true,
+          "membership_revision_unchanged": true,
+          "original_main_authority": true,
+          "hardware_capabilities_unchanged": true,
+          "saved_activities_and_equipment_empty": true
+        },
+        "passed": true
+      },
+      "qualification_scope": "Exact-image update, startup/role, factory credentials, origin identity, automatic Matter setup and SDK admission self-test on the three updated boards; authenticated read-only current-image and preserved state verification on main. No new Add/Remove, CEC/AV, remote/radio admission or fw_reset overflow-fix qualification.",
+      "functional_or_av_qualification": false,
+      "fw_reset_overflow_fix_qualification": false
+    },
+    {
+      "date": "2026-10-29",
+      "firmware_version": "0.1.92",
+      "matter_software_version": 93,
+      "device_count": 1,
+      "updated_device_count": 1,
+      "bench_labels": [
+        "amity-dut"
+      ],
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "result": "PASS",
+      "report": "test-results/add-amity-debug-2026-10-29/main-0.1.92-deployment.json",
+      "image_sha256": "0bd2bc66d7488314377b13de95fe80b6405e58bd979f3b1e6166f157c368cc4e",
+      "running_elf_sha256": "8c6dee1f0960ad0480179f341e2181cfa95de1414e2eb9fc1253ea2bea497461",
+      "image_bytes": 2419808,
+      "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
+      "source_dirty": true,
+      "previous_firmware_version": "0.1.90",
+      "transport": "Existing authenticated POST /api/firmware",
+      "main_usb_opened": false,
+      "factory_reset_performed": false,
+      "boot_id": "b68692e6e79ddde602397632900d7cf4",
+      "previous_boot_id": "9c3f86734ede84c0fe5d28c5945199d8",
+      "checks": {
+        "exact_version": true,
+        "exact_elf": true,
+        "ready": true,
+        "same_identity": true,
+        "same_group": true,
+        "new_boot": true,
+        "original_main_authority": true,
+        "configuration_unchanged": true,
+        "matter_fabrics_unchanged": true,
+        "homekit_pairing_unchanged": true,
+        "hardware_capabilities_unchanged": true,
+        "local_update_healthy": true,
+        "no_peers": true
+      },
+      "known_other_dut_versions": {
+        "amity-dut-2": "0.1.91",
+        "amity-dut-3": "0.1.88",
+        "amity-dut-4": "0.1.88"
+      },
+      "qualification_scope": "Exact main image/boot and 13 preservation checks through authorized OTA; candidate 0.1.91 deployment and earlier reset recovery recorded separately. Subsequent original Add/connected/settings assertions pass but functional Remove/reset remains FAIL.",
+      "functional_or_av_qualification": false
     }
   ],
   "standby_stack_fix_validation": {
@@ -753,6 +847,431 @@
     "matter_after": "test-results/functional/add-amity-main-matter-after.json",
     "pin_after": "test-results/functional/add-amity-reset-pin-after.json",
     "firmware_changed": false,
-    "new_firmware_apis": false
+    "new_firmware_apis": false,
+    "latest_physical": {
+      "result": "PASS",
+      "main_firmware": "0.1.94",
+      "candidate_firmware": "0.1.93",
+      "test": "cec-harness/functional_tests/add_amity.py",
+      "required_consecutive_runs": 2,
+      "reports": [
+        "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94.json",
+        "test-results/add-amity-debug-2026-10-29/add-amity-repeat-main94-candidate93.json"
+      ],
+      "instrumented_report": "test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json",
+      "main_before": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94-before.json",
+      "main_after": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94-after.json",
+      "qualification": "Two consecutive unchanged original normal-profile runs passed Add, exact connected/settings checks and acknowledged scheduled reset/removal, with observed unclaimed automatic Matter setup and no candidate panic. Final main boot/group/authority, exact configuration and two fabrics are preserved. Scope is this two-board normal-profile path; no new CEC/AV or strict-profile qualification.",
+      "completed_consecutive_runs": 2,
+      "runs": [
+        {
+          "result": "PASS",
+          "report": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94.json",
+          "add_operation": "complete",
+          "connected_assertions": 2,
+          "member_boot": "b094b5842075b96eb0328153f45693ac",
+          "remove_operation": "complete",
+          "reset_acknowledgment": "scheduled",
+          "retained_member": false,
+          "cleanup_errors": [],
+          "candidate_unclaimed_ready_after_removal": true,
+          "automatic_matter_setup_after_removal": true,
+          "candidate_panic_observed": false,
+          "minimum_stack_free_bytes": 3968
+        },
+        {
+          "result": "PASS",
+          "report": "test-results/add-amity-debug-2026-10-29/add-amity-repeat-main94-candidate93.json",
+          "add_operation": "complete",
+          "connected_assertions": 2,
+          "member_boot": "905a206ad44cf00b82c9408ef2d58e83",
+          "remove_operation": "complete",
+          "reset_acknowledgment": "scheduled",
+          "retained_member": false,
+          "cleanup_errors": [],
+          "candidate_unclaimed_ready_after_removal": true,
+          "automatic_matter_setup_after_removal": true,
+          "candidate_panic_observed": false,
+          "minimum_stack_free_bytes": 3976
+        }
+      ],
+      "main_preservation": {
+        "result": "PASS",
+        "report": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94-after.json",
+        "checks": {
+          "expected_identity": true,
+          "exact_latest_firmware": true,
+          "main_ready": true,
+          "authority_preserved": true,
+          "idle": true,
+          "same_main_boot": true,
+          "same_group": true,
+          "activities_preserved": true,
+          "equipment_preserved": true,
+          "matter_fabrics_preserved": true,
+          "no_added_candidate": true
+        },
+        "configuration_exactly_unchanged": true,
+        "current_matter_fabric_count": 2,
+        "main_boot": "06be5911aab8027ffc5a806b20b5f48e",
+        "main_usb_opened": false,
+        "logged_out": true
+      }
+    },
+    "physical_history": [
+      {
+        "date": "2026-10-29",
+        "result": "FAIL",
+        "main_firmware": "0.1.88",
+        "candidate_firmware": "0.1.88",
+        "stage": "discover_candidate",
+        "report": "test-results/functional/add-amity-latest-0.1.88-2026-10-29.json",
+        "successful_scanning_polls": 40,
+        "elapsed_seconds": 90.022489667,
+        "failure": "No candidate was found before the operation deadline. The final request started 89.778 seconds into the 90-second budget and surfaced the remaining 244.664 ms as a TLS handshake timeout; earlier admission requests succeeded.",
+        "failure_classification": "Discovery deadline exhaustion; not evidence of sustained HTTPS failure",
+        "candidate_crash_confirmed": false,
+        "candidate_failure_cause": "Not established by this HTTP/GPIO run; no UART was opened",
+        "add_submitted": false,
+        "remove_submitted": false,
+        "scan_cancelled": true,
+        "cleanup_errors": [],
+        "gpio_hold_seconds": 3.5,
+        "gpio_released": true,
+        "pin_after": "test-results/functional/add-amity-latest-0.1.88-2026-10-29-pin-after.json",
+        "pin_after_state": "Input, pulls disabled, high; pin selected from TEST-HARNESS.md",
+        "main_before": "test-results/functional/add-amity-latest-0.1.88-2026-10-29-before.json",
+        "main_after": "test-results/functional/add-amity-latest-0.1.88-2026-10-29-after.json",
+        "main_preservation_checks": "PASS",
+        "main_boot_before": "8e4c9c5a830fd54c91bfec619a41c588",
+        "main_boot_after": "8e4c9c5a830fd54c91bfec619a41c588",
+        "main_configuration_exactly_unchanged": true,
+        "main_identity_group_authority_retained": true,
+        "main_current_matter_fabrics": 2,
+        "candidate_retained_as_active_member": false,
+        "connected_membership_qualified": false,
+        "reset_on_removal_qualified": false,
+        "firmware_changed_during_run": false
+      }
+    ]
+  },
+  "add_amity_stack_fix_validation": {
+    "date": "2026-10-29",
+    "firmware_version": "0.1.89",
+    "matter_software_version": 90,
+    "baseline": "98e64a6 used the 3072-byte task only for reset sampling/factory-reset scheduling; the later setup handler synchronously added radio/CHIP/DNS-SD calls. Gesture recognition, callback task, radio budgets and call ordering remain unchanged.",
+    "observed_failure": "The retained 0.1.84 candidate UART reaches Closing pairing window and Updating services using commissioning mode 0 immediately before a detected fw_reset task stack overflow. The latest 0.1.88 discovery failure does not itself establish a candidate overflow.",
+    "stack_analysis": {
+      "report": "test-results/add-amity-debug-2026-10-29/stack-analysis/report.json",
+      "method": "Exact target compiler flags with -fstack-usage on temporary preprocessed snapshots; SDK frame sizes from the matching ELF entry instructions. Original build outputs were not changed by this analysis.",
+      "analyzed_firmware_version": "0.1.88",
+      "analyzed_elf_sha256": "c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e",
+      "old_task_bytes": 3072,
+      "old_add_chain_subtotal_bytes": 3408,
+      "split_probe_manual_chain_subtotal_bytes": 3792,
+      "current_manual_chain_subtotal_bytes": 3808,
+      "additional_publish_to_mdns_subtotal_bytes": 560,
+      "setup_callback_frame_before_bytes": 1456,
+      "setup_callback_split_probe_frame_bytes": 144,
+      "setup_callback_current_frame_bytes": 160,
+      "setup_callback_current_reduction_bytes": 1296,
+      "manual_matter_helper_frame_bytes": 1360,
+      "matter_status_object_bytes": 1056,
+      "limitation": "Reachable static subtotals, not exhaustive peaks; downstream allocation, logging, RTOS and interrupt overhead remain outside these counts. Later target gesture margin is recorded separately."
+    },
+    "changes": [
+      "Move the full manual-Matter status/configuration branch to a noinline helper, retaining the same eligibility checks and synchronous callback/task ownership.",
+      "Increase the single fw_reset task stack from 3072 to 6144 bytes: 3072 additional internal RAM bytes; do not change gesture thresholds, ordering, priority or cadence.",
+      "Log Add radio-reservation/window failures and the post-callback task stack high-water margin in bytes."
+    ],
+    "focused_host": {
+      "result": "PASS",
+      "checks": [
+        "tests/controller_startup_test.py",
+        "tests/matter_auto_commissioning_test.py",
+        "tests/reset_button_interrupt_test.cpp: 22 interrupt scenarios with sanitizers",
+        "tests/radio_matter_handoff_test.py: 10 handoff cases"
+      ],
+      "radio_log": "test-results/add-amity-debug-2026-10-29/radio-matter-handoff-tests.log"
+    },
+    "native_build": {
+      "initial_result": "PASS before adding the final stack-margin diagnostic",
+      "final_result": "PASS",
+      "log": "test-results/add-amity-debug-2026-10-29/build-final-0.1.89.log",
+      "image_sha256": "fd161de9bfc6dd4b67b4c7671f662fbcc5d99fc8873edc7e378f57f351b41fa1",
+      "image_elf_sha256": "97d7413a7b0469f08c3b3370563a65ae8018d86db36b7fa6c025cc33a60f4899",
+      "layout_checks": 35,
+      "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
+      "source_dirty": true
+    },
+    "target_deployed": true,
+    "physical_fix_qualified": true,
+    "target_stack_margin_measured": true,
+    "target_gesture_evidence": {
+      "firmware_version": "0.1.89",
+      "result": "PASS for the exercised 3.5-second Add gesture only",
+      "minimum_stack_free_bytes": 3968,
+      "log": "test-results/add-amity-debug-2026-10-29/44b176aec5e0/functional-uart.log",
+      "report": "test-results/add-amity-debug-2026-10-29/add-amity-main90-instrumented.json",
+      "overall_functional_result": "FAIL",
+      "limitation": "A positive margin on this exercised path does not establish every SDK stack peak or successful connected membership/removal."
+    },
+    "qualification_scope": "Two actual original normal-profile Add/connected/settings/removal-reset runs pass on main 0.1.94/candidate 0.1.93; minimum free fw_reset stack is 3968/3976 bytes. This does not establish every possible SDK stack peak."
+  },
+  "add_amity_debug_validation": {
+    "date": "2026-10-29",
+    "firmware_version": "0.1.94",
+    "matter_software_version": 95,
+    "api_policy": "Existing shipping authenticated UI scan/add/operation/settings/remove APIs only; no new firmware API or weaker assertion.",
+    "changes": [
+      {
+        "path": "components/device_settings/reset_button.cpp and main/main.cpp",
+        "change": "Keep the existing synchronous callback/task and gestures; move the manual Matter branch to a noinline helper and raise fw_reset stack from 3072 to 6144 bytes. Log setup failure and post-callback minimum free bytes.",
+        "measured_gesture_free_bytes": 3968,
+        "exercised_candidate_version": "0.1.89"
+      },
+      {
+        "path": "components/consortium/gatt_transport.cpp",
+        "change": "Explicitly complete ATT MTU negotiation for the current connection/generation before GATT discovery. The default MTU produced 195 ten-byte fragments for the observed proposal; retain the 30-second assembly deadline and bounded GATT waits.",
+        "main_version": "0.1.90"
+      },
+      {
+        "path": "components/amity_matter/consortium_network.cpp",
+        "change": "Wait for usable IPv4 after the association callback inside one total 35-second deadline starting before the driver request; retain existing rollback without a second timeout or retry.",
+        "candidate_version": "0.1.91"
+      },
+      {
+        "path": "cec-harness/amity_harness/membership.py",
+        "change": "Poll the existing two-second device-settings cache directly, then recheck main boot/authority, existing saved activity/equipment/settings records, membership/name/capacity and member boot before success. Keep the original overall deadline."
+      },
+      {
+        "path": "components/consortium/runtime.cpp",
+        "change": "During retirement, discard only exact-scope management-capability/TTL/replay-valid settings_result, heartbeat and execution_lease already in flight; immediately restore lifecycle restriction. Keep the deadline and 32-frame receive bound; apply no discarded data.",
+        "main_version": "0.1.92"
+      },
+      {
+        "path": "components/consortium/runtime.cpp",
+        "change": "Perform the same prepared-member restart through the existing internal-flash-stack broker after the same durable acknowledgment and 500 ms handoff. Shutdown diagnostics can write NVS; do not run esp_restart on the PSRAM group_link stack.",
+        "candidate_version": "0.1.93"
+      },
+      {
+        "path": "main/main.cpp",
+        "change": "Serialize owned administration mDNS registration/refresh/removal, remove only when actually registered, and remove before Matter can destroy the shared responder. Headless members do not remove an unregistered service.",
+        "candidate_version": "0.1.93"
+      },
+      {
+        "path": "components/consortium/runtime.cpp",
+        "change": "Latch Add completion only after exact selected-peer ready/hostname proof in the existing transient admission view. Later removal cannot revert a completed Add to finishing; a new scan replaces the view. No durable approval, liveness permission or new API.",
+        "main_version": "0.1.94"
+      }
+    ],
+    "framework_host": {
+      "result": "PASS",
+      "tests": 240,
+      "log": "test-results/add-amity-debug-2026-10-29/verified-host-tests.log"
+    },
+    "full_host": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/add-amity-debug-2026-10-29/verified-host-tests.log",
+      "framework_tests": 240
+    },
+    "native_build": {
+      "result": "PASS",
+      "firmware_version": "0.1.94",
+      "matter_software_version": 95,
+      "log": "test-results/add-amity-debug-2026-10-29/build-0.1.94.log",
+      "image_bytes": 2420048,
+      "image_sha256": "4baf834b5227114602811392427669ab5e1a7977b5d4b7f260b0c75ba548be4b",
+      "image_elf_sha256": "af74c59554e7d9dce73e0888ce1767d9bd1a2b8f26b24598cc6695da867655d2",
+      "layout_checks": 35,
+      "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
+      "source_dirty": true
+    },
+    "intermediate_deployments": {
+      "main_0_1_90": "test-results/add-amity-debug-2026-10-29/main-0.1.90-deployment.json",
+      "candidate_0_1_91": "test-results/add-amity-debug-2026-10-29/candidate-0.1.91-44b176aec5e0/deployment.json",
+      "main_0_1_92": "test-results/add-amity-debug-2026-10-29/main-0.1.92-deployment.json"
+    },
+    "retained_failed_functional_reports": [
+      "test-results/add-amity-debug-2026-10-29/add-amity-0.1.89.json",
+      "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.90.json",
+      "test-results/add-amity-debug-2026-10-29/original-add-recovery.json",
+      "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.92.json"
+    ],
+    "candidate_recovery": {
+      "result": "PASS",
+      "firmware_version": "0.1.93",
+      "report": "test-results/add-amity-debug-2026-10-29/candidate93-removal-reset-cleanup.json",
+      "scope": "Separately authorized physical reset after the earlier failed Remove restored ready unclaimed startup and automatic Matter setup without panic; not functional scheduled-reset acknowledgment qualification."
+    },
+    "final_physical": {
+      "result": "PASS",
+      "main_firmware": "0.1.94",
+      "candidate_firmware": "0.1.93",
+      "test": "cec-harness/functional_tests/add_amity.py",
+      "required_consecutive_runs": 2,
+      "reports": [
+        "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94.json",
+        "test-results/add-amity-debug-2026-10-29/add-amity-repeat-main94-candidate93.json"
+      ],
+      "instrumented_report": "test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json",
+      "main_before": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94-before.json",
+      "main_after": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94-after.json",
+      "qualification": "Two consecutive unchanged original normal-profile runs passed Add, exact connected/settings checks and acknowledged scheduled reset/removal, with observed unclaimed automatic Matter setup and no candidate panic. Final main boot/group/authority, exact configuration and two fabrics are preserved. Scope is this two-board normal-profile path; no new CEC/AV or strict-profile qualification.",
+      "completed_consecutive_runs": 2,
+      "runs": [
+        {
+          "result": "PASS",
+          "report": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94.json",
+          "add_operation": "complete",
+          "connected_assertions": 2,
+          "member_boot": "b094b5842075b96eb0328153f45693ac",
+          "remove_operation": "complete",
+          "reset_acknowledgment": "scheduled",
+          "retained_member": false,
+          "cleanup_errors": [],
+          "candidate_unclaimed_ready_after_removal": true,
+          "automatic_matter_setup_after_removal": true,
+          "candidate_panic_observed": false,
+          "minimum_stack_free_bytes": 3968
+        },
+        {
+          "result": "PASS",
+          "report": "test-results/add-amity-debug-2026-10-29/add-amity-repeat-main94-candidate93.json",
+          "add_operation": "complete",
+          "connected_assertions": 2,
+          "member_boot": "905a206ad44cf00b82c9408ef2d58e83",
+          "remove_operation": "complete",
+          "reset_acknowledgment": "scheduled",
+          "retained_member": false,
+          "cleanup_errors": [],
+          "candidate_unclaimed_ready_after_removal": true,
+          "automatic_matter_setup_after_removal": true,
+          "candidate_panic_observed": false,
+          "minimum_stack_free_bytes": 3976
+        }
+      ],
+      "main_preservation": {
+        "result": "PASS",
+        "report": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.94-after.json",
+        "checks": {
+          "expected_identity": true,
+          "exact_latest_firmware": true,
+          "main_ready": true,
+          "authority_preserved": true,
+          "idle": true,
+          "same_main_boot": true,
+          "same_group": true,
+          "activities_preserved": true,
+          "equipment_preserved": true,
+          "matter_fabrics_preserved": true,
+          "no_added_candidate": true
+        },
+        "configuration_exactly_unchanged": true,
+        "current_matter_fabric_count": 2,
+        "main_boot": "06be5911aab8027ffc5a806b20b5f48e",
+        "main_usb_opened": false,
+        "logged_out": true
+      }
+    },
+    "final_main_deployment": {
+      "result": "PASS",
+      "firmware_version": "0.1.94",
+      "report": "test-results/add-amity-debug-2026-10-29/main-0.1.94-deployment.json",
+      "route": "Existing authenticated POST /api/firmware",
+      "main_usb_opened": false,
+      "preservation_checks": 13,
+      "scope": "Exact 0.1.94 image/ELF, expected OTA boot, original authority and exact configuration/two Matter fabrics/HomeKit/hardware preservation. Two subsequent unchanged original functional Add/Remove runs pass, with final main preservation confirmed."
+    },
+    "candidate_panic_analysis": {
+      "report": "test-results/add-amity-debug-2026-10-29/candidate91-unique-byte-mapping.json",
+      "earlier_selected_frame_report": "test-results/add-amity-debug-2026-10-29/candidate91-panic-analysis.json",
+      "method": "Unique 24-byte instruction windows from the 0.1.91 application compared to archived symbol-bearing firmware-0.1.92/amity.elf, plus source call-chain analysis; not full symbolication with the unavailable original 0.1.91 ELF.",
+      "identified_paths": [
+        "esp_restart shutdown diagnostics.checkpoint_hours NVS write from PSRAM-backed group_link",
+        "Headless main lifecycle mDNS removal with no registered responder"
+      ]
+    },
+    "native_build_history": [
+      {
+        "result": "PASS",
+        "firmware_version": "0.1.92",
+        "matter_software_version": 93,
+        "log": "test-results/add-amity-debug-2026-10-29/build-0.1.92.log",
+        "image_bytes": 2419808,
+        "image_sha256": "0bd2bc66d7488314377b13de95fe80b6405e58bd979f3b1e6166f157c368cc4e",
+        "image_elf_sha256": "8c6dee1f0960ad0480179f341e2181cfa95de1414e2eb9fc1253ea2bea497461",
+        "layout_checks": 35,
+        "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
+        "source_dirty": true
+      },
+      {
+        "result": "PASS",
+        "firmware_version": "0.1.93",
+        "matter_software_version": 94,
+        "log": "test-results/add-amity-debug-2026-10-29/build-0.1.93.log",
+        "image_bytes": 2420032,
+        "image_sha256": "b76e365410f45bef9282f9ebaad94822b926a384dba6ce02e5a8c6ae639259eb",
+        "image_elf_sha256": "c7dccbb80d8c7cd4d795df53e2f52de0979f074701c33bccbac43878be674bc8",
+        "layout_checks": 35,
+        "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
+        "source_dirty": true
+      }
+    ],
+    "full_host_history": [
+      {
+        "result": "PASS (exit 0)",
+        "log": "test-results/add-amity-debug-2026-10-29/full-host-tests.log",
+        "framework_tests": 240
+      },
+      {
+        "result": "PASS (exit 0)",
+        "log": "test-results/add-amity-debug-2026-10-29/final-host-tests.log",
+        "framework_tests": 240
+      }
+    ],
+    "physical_history": [
+      {
+        "result": "FAIL",
+        "main_firmware": "0.1.92",
+        "candidate_firmware": "0.1.91",
+        "test": "cec-harness/functional_tests/add_amity.py",
+        "report": "test-results/add-amity-debug-2026-10-29/add-amity-main-0.1.92.json",
+        "instrumented_report": "test-results/add-amity-debug-2026-10-29/add-amity-main92-instrumented.json",
+        "qualification": "Add and existing exact connected-member/settings assertions passed; scheduled reset acknowledgment and candidate unclaimed recovery did not. Overall original functional test remains FAIL. End-of-run main postcheck pending.",
+        "stage": "cleanup_remove_reset",
+        "add_operation": "complete",
+        "connected_member_and_settings_assertions": "PASS",
+        "remove_operation": "complete",
+        "reset_acknowledgment": "unconfirmed",
+        "cleanup_errors": [
+          "MembershipCleanupError"
+        ],
+        "candidate_unclaimed_ready_after_removal": false,
+        "candidate_panic_observed": true,
+        "candidate_uart": "test-results/add-amity-debug-2026-10-29/candidate-during-main92-test.log",
+        "candidate_observed_assertions": [
+          "spi_flash_disable_interrupts_caches_and_other_cpu: esp_task_stack_is_sane_cache_disabled()",
+          "xQueueSemaphoreTake: (( pxQueue ))"
+        ]
+      }
+    ],
+    "candidate_recovery_history": [
+      {
+        "result": "PASS",
+        "report": "test-results/add-amity-debug-2026-10-29/candidate-removal-reset-after-recovery.json",
+        "scope": "Separately authorized physical reset restored clean unclaimed startup and automatic Matter setup after a failed Remove; not a passing functional removal acknowledgment."
+      }
+    ],
+    "candidate_deployment": {
+      "result": "PASS",
+      "firmware_version": "0.1.93",
+      "report": "test-results/add-amity-debug-2026-10-29/candidate-0.1.93-44b176aec5e0/deployment.json",
+      "checks": 16,
+      "image_sha256": "b76e365410f45bef9282f9ebaad94822b926a384dba6ce02e5a8c6ae639259eb",
+      "image_elf_sha256": "c7dccbb80d8c7cd4d795df53e2f52de0979f074701c33bccbac43878be674bc8",
+      "factory_credentials_origin_and_protected_flash_retained": true
+    }
   }
 }

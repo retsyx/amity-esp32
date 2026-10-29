@@ -118,6 +118,166 @@ two current Matter fabrics. Reports are under `test-results/functional/`:
 no blanket request retry, weaker assertion, new firmware API or firmware change
 was introduced to turn either result into a pass.
 
+## Add discovery rerun and pending stack fix — 29 October 2026
+
+After all four boards were verified on 0.1.88, `add_amity.py` still found no
+candidate: 40 admission polls returned `scanning` before the 90-second deadline.
+The final short-deadline request surfaced a TLS handshake timeout; this is not
+evidence of sustained HTTPS failure. No Add or Remove was submitted. Cancel
+completed, the parsed GPIO was released to input with pulls disabled, and
+postchecks confirmed the main's same boot, exact configuration, authority and
+two Matter fabrics. Evidence is
+`test-results/functional/add-amity-latest-0.1.88-2026-10-29.json` and its
+`-before.json`, `-after.json` and `-pin-after.json` companions. This run did not
+capture a candidate crash or establish why it was absent.
+
+Target compiler analysis identified a concrete stack defect consistent with the
+earlier 0.1.84 UART overflow: the synchronous Add handoff closes the Matter window
+and refreshes DNS-SD, with a reachable 3,408-byte subtotal on a 3,072-byte task.
+The temporary split probe's manual-Matter chain totals 3,792 bytes; the current
+source with diagnostics totals 3,808, and publishing adds another 560 before
+further allocator/logging/RTOS overhead. These are incomplete static subtotals,
+not measured runtime stack margins. Private compiler records are in
+`test-results/add-amity-debug-2026-10-29/stack-analysis/`.
+
+Prepared firmware 0.1.89 (Matter software 90) separates manual Matter setup into
+a `noinline` helper, reducing the actual Add callback frame from 1,456 to 160
+bytes, and increases `fw_reset` from 3,072 to 6,144 bytes: 3,072 additional
+internal-RAM bytes once. It adds reservation/window failure and post-callback
+stack-margin diagnostics. Gesture thresholds, callback/task ownership, radio
+budgets and call order are preserved. Focused startup/automatic-Matter checks,
+22 interrupt scenarios and 10 radio-handoff cases pass. The final native build
+and all 35 public-record layout checks pass; its log is
+`test-results/add-amity-debug-2026-10-29/build-final-0.1.89.log`. At that stage
+this source had not been deployed or physically qualified; the verified deployment was 0.1.88.
+The failed Add runs remain failures. Later gesture and debug evidence follows;
+connected-member and acknowledged removal/reset qualification remains separate.
+
+## Add debugging and continued Remove failure — 29 October 2026
+
+The candidate's exact 0.1.89 image was deployed and its actual 3.5-second setup
+gesture opened Add with 3,968 bytes of minimum free `fw_reset` stack. The
+functional attempt still failed. This establishes an exercised gesture/stack
+margin, not a completed Add/Remove result or a bound on every SDK stack peak.
+Evidence includes `44b176aec5e0/deployment.json`, `functional-uart.log` in that
+subdirectory, and `add-amity-main90-instrumented.json` under
+`test-results/add-amity-debug-2026-10-29/`.
+
+Further diagnosis isolated four additional paths. Main 0.1.90 negotiates ATT
+MTU explicitly before GATT service/record exchange; the previous default MTU
+fragmented the real proposal into 195 ten-byte payloads and exceeded the
+unchanged 30-second assembly deadline. Candidate 0.1.91 waits for usable IPv4
+within the original single 35-second network budget: the SDK success callback
+arrived at association before DHCP, so the prior immediate IP test rolled back
+a connection that was still progressing.
+
+The framework's connected-member assertion now polls the shipping device-settings
+endpoint directly while its two-second response cache is live. It then repeats
+main boot/authority, existing saved activity/equipment/settings records,
+membership/name/capacity and member-boot checks. All 240 framework unit tests pass; no assertion, cache TTL,
+operation deadline or firmware API was weakened or extended.
+
+The subsequent Remove failure exposed an in-flight settings reply before its
+retirement acknowledgment. Main 0.1.92 admits that envelope only for discard
+under the same management capability/TTL/replay and exact peer/group/boot/
+epoch/configuration checks, immediately restores lifecycle restriction, and
+keeps the existing deadline and 32-frame receive bound. Nothing in the discarded
+reply is applied. The separately authorized candidate reset restored clean
+unclaimed startup and automatic Matter setup after the failed removal; those
+recovery checks do not qualify the functional Remove/reset acknowledgment.
+
+The final 0.1.92 native build passes all 35 public-record layout checks, and
+`sh tests/run_host_tests.sh` exits 0 including all 240 framework unit tests.
+Logs are `build-0.1.92.log` and `full-host-tests.log` in the debug directory.
+The 2,419,808-byte image SHA-256 is
+`0bd2bc66d7488314377b13de95fe80b6405e58bd979f3b1e6166f157c368cc4e`, with ELF
+identity `8c6dee1f0960ad0480179f341e2181cfa95de1414e2eb9fc1253ea2bea497461`.
+
+Main OTA to the exact final 0.1.92 image passed all 13 deployment/preservation
+checks without opening main USB. It retained the original authority, full
+saved configuration, two Matter fabrics, HomeKit pairing and hardware
+capabilities; the OTA caused the expected new boot. The report is
+`main-0.1.92-deployment.json`, with `main-0.1.92-before-update.json` and
+`main-0.1.92-after-update.json` in the debug directory. Candidate 0.1.91 was
+recovered to clean unclaimed startup before another attempt.
+
+The fresh unchanged `add_amity.py` test on main 0.1.92/candidate 0.1.91 completes
+Add and passes the exact connected-member/settings assertion twice. Remove
+reaches operation `complete` but reset `unconfirmed`, so cleanup raises
+`MembershipCleanupError` and the overall test remains FAIL. Candidate UART
+records `esp_task_stack_is_sane_cache_disabled()` during flash handling, then
+a later `xQueueSemaphoreTake` assertion; unclaimed startup and automatic Matter
+setup after removal were not confirmed. The report is
+`add-amity-main-0.1.92.json`, with `add-amity-main92-instrumented.json` and
+`candidate-during-main92-test.log` in the same directory. End-of-run main
+preservation checks were separate from that failed cleanup. The subsequent
+source/instruction analysis below identifies the two candidate paths; the
+original failed result is retained.
+
+Intermediate failed reports remain failures, including `add-amity-0.1.89.json`,
+`add-amity-main-0.1.90.json` and `original-add-recovery.json`. No new firmware API,
+weaker reset acknowledgment criterion or CEC policy is introduced.
+
+## Candidate restart/lifetime fixes and repeated physical PASS
+
+Selected unchanged instruction windows from the 0.1.91 application, compared
+with the archived symbol-bearing 0.1.92 ELF, corroborate the shutdown path:
+`esp_restart` invoked the diagnostics `checkpoint_hours` NVS write from the
+PSRAM-backed `group_link` task. The other captured assertion maps to the main
+lifecycle callback removing administration mDNS from a headless board with no
+responder. This is selected-frame/source corroboration, not full symbolication
+with the unavailable original 0.1.91 ELF. The stronger unique 24-byte-window mapping is
+`candidate91-unique-byte-mapping.json`; the earlier selected-frame record remains
+`candidate91-panic-analysis.json` in the debug directory.
+
+Candidate 0.1.93 moves the same prepared-member restart through the existing
+internal-flash-stack broker after the same acknowledgment and 500 ms delay.
+Administration mDNS registration/refresh/removal is serialized; removal is
+limited to an actually registered owned service and happens before Matter can
+free the shared responder. It changes no activity, button or BLE algorithm.
+The native build and `final-host-tests.log` pass, including all 240 framework
+unit tests. Its application SHA-256 is
+`b76e365410f45bef9282f9ebaad94822b926a384dba6ce02e5a8c6ae639259eb`, ELF
+`c7dccbb80d8c7cd4d795df53e2f52de0979f074701c33bccbac43878be674bc8`.
+
+The candidate's app-only 0.1.93 deployment passed all 16 checks, retaining factory
+credentials/origin and protected non-application flash. The separately authorized
+reset after the earlier failed Remove restored ready unclaimed startup and
+automatic Matter setup without a panic (`candidate93-removal-reset-cleanup.json`).
+That recovery remains separate from a passing functional removal acknowledgment.
+
+Main 0.1.94 also latches the existing Add operation's completion in its transient
+view after exact ready-peer/hostname proof. A later Remove cannot turn that
+completed Add back into `finishing`; a new scan replaces the view. This is
+operation reporting, not an availability permission, persistent journal or new
+firmware API. Native 0.1.94 passes all 35 public-record layout checks. Its image
+SHA-256 is `4baf834b5227114602811392427669ab5e1a7977b5d4b7f260b0c75ba548be4b`,
+ELF `af74c59554e7d9dce73e0888ce1767d9bd1a2b8f26b24598cc6695da867655d2`.
+The exact main OTA passed all 13 preservation checks without main USB access;
+`main-0.1.94-deployment.json` and its before/after snapshots retain the original
+main's configuration, two Matter fabrics, authority, HomeKit and capabilities.
+
+The final `verified-host-tests.log` exits 0, including all 240 framework unit
+tests. Both consecutive unchanged original `add_amity.py` runs on main 0.1.94/
+candidate 0.1.93 pass. Each completes Add, proves the same member boot in both
+connected/settings assertions, and completes cleanup once with reset `scheduled`,
+no retained member and no cleanup errors. Candidate UART confirms unclaimed Ready
+and automatic Matter setup after both resets, with no observed panic or Backtrace;
+minimum free setup-task stack is 3,968 then 3,976 bytes. No main reboot or USB
+access occurs between the runs. Reports are `add-amity-main-0.1.94.json`,
+`add-amity-repeat-main94-candidate93.json` and `add-amity-main94-instrumented.json`.
+
+Final authenticated HTTP checks in `add-amity-main-0.1.94-after.json` pass all
+11 checks: same main boot `06be5911aab8027ffc5a806b20b5f48e`, group/identity and
+original authority, exact saved configuration, unchanged two Matter fabrics,
+ready idle state and no added candidate. Saved activities/equipment are empty
+in this physical baseline and remain unchanged. The session logs out. Other
+boards `amity-dut-3`/`amity-dut-4` remain on 0.1.88. This qualifies the exercised
+two-board normal-profile Add/connected/settings/acknowledged-removal-reset path,
+not CEC/AV behavior, the strict setup-code profile or all-board interoperability.
+No API, assertion, transaction deadline or CEC policy is weakened. Prior
+failures, including the 0.1.92/0.1.91 Remove failure, remain failures.
+
 ## Source theft functional test — 29 October 2026
 
 The new `source_theft.py` configures a saved activity for each of two playback

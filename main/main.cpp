@@ -17,6 +17,7 @@
 #include "swipe_sequence.hpp"
 #include <atomic>
 #include <algorithm>
+#include <mutex>
 #include "ble_remote.h"
 #include "config_store.hpp"
 #include "system_identity.hpp"
@@ -58,6 +59,8 @@ struct Input {
 };
 std::atomic_bool input_lost{false};
 std::atomic_bool original_interfaces_enabled{false};
+std::mutex admin_mdns_mutex;
+bool admin_mdns_registered=false;
 QueueHandle_t input_queue;
 void startup_memory(const char* phase){
     ESP_LOGI("startup_memory","%s: internal=%u largest=%u psram=%u",phase,
@@ -66,6 +69,7 @@ void startup_memory(const char* phase){
         unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)));
 }
 void refresh_admin_mdns() {
+    std::lock_guard<std::mutex> guard(admin_mdns_mutex);
     if(!original_interfaces_enabled.load())return;
     // Matter owns the responder's global hostname. Keep the admin hostname as a
     // delegated alias so a Matter republish cannot rename the HTTPS endpoint.
@@ -143,6 +147,15 @@ void start_boot_matter_setup() {
     }
     ESP_LOGE("amity","Could not open Matter setup automatically: %s",esp_err_to_name(result));
 }
+// Keep the full Matter fabric/status buffer and activity snapshot off the Add
+// gesture's stack, including when the compiler optimizes these one-call helpers.
+[[gnu::noinline]] void setup_matter(const amity::consortium::RuntimeStatus &group) {
+    amity_matter_status_t matter{};const auto config=hub.active_configuration();
+    const bool configured=config?(!config->activities.empty()||!config->components.empty()):!hub.snapshot().activities.empty();
+    if(amity::consortium::runtime_original_setup_eligible()&&!group.member&&!group.coordinator&&!configured&&
+       amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count==0)
+        amity_matter_open_commissioning(300);
+}
 void setup_button(bool consortium_setup,void*) {
     if(!system_services::firmware_ready())return;
     const auto group=amity::consortium::runtime_status();
@@ -150,15 +163,18 @@ void setup_button(bool consortium_setup,void*) {
     if(consortium_setup){
         uint64_t generation=0;
         const auto admitted=amity::radio::reserve_consortium(false,generation);
-        if(admitted!=ESP_OK)return;
-        if(amity::consortium::runtime_open_enrollment(generation)!=ESP_OK)amity::radio::release(generation);
-    }else {
-        amity_matter_status_t matter{};const auto config=hub.active_configuration();
-        const bool configured=config?(!config->activities.empty()||!config->components.empty()):!hub.snapshot().activities.empty();
-        if(amity::consortium::runtime_original_setup_eligible()&&!group.member&&!group.coordinator&&!configured&&
-           amity_matter_get_status(&matter)==ESP_OK&&matter.fabric_count==0)
-            amity_matter_open_commissioning(300);
-    }
+        if(admitted!=ESP_OK){
+            ESP_LOGW("amity","Could not reserve radio for Add Amity: %s",esp_err_to_name(admitted));
+            return;
+        }
+        const auto opened=amity::consortium::runtime_open_enrollment(generation);
+        if(opened!=ESP_OK){
+            amity::radio::release(generation);
+            ESP_LOGW("amity","Could not open Add Amity window: %s",esp_err_to_name(opened));
+        }else ESP_LOGI("amity","Add Amity window opened");
+    }else setup_matter(group);
+    ESP_LOGI("amity","Setup button handled; minimum stack free: %u bytes",
+             unsigned(uxTaskGetStackHighWaterMark(nullptr)));
 }
 esp_err_t power(bool on,void *) {
     if(!on)return hub.request_activity(-1);
@@ -314,10 +330,31 @@ void input_task(void *) {
     }
 }
 
-void start_original_interfaces() {
+esp_err_t retire_original_interfaces() {
+    original_interfaces_enabled.store(false);
+    const auto fenced=hub.retire_membership();
+    const auto web=web_admin::stop();
+    {
+        // Drain an in-flight publication/refresh before Matter can free the
+        // shared responder. Headless members never registered this service.
+        std::lock_guard<std::mutex> guard(admin_mdns_mutex);
+        if(admin_mdns_registered){
+            admin_mdns_registered=false;
+            const auto removed=mdns_service_remove_for_host("Amity Home Theater","_https","_tcp",device_settings::hostname());
+            if(removed!=ESP_OK)ESP_LOGW("amity","Administration mDNS removal: %s",esp_err_to_name(removed));
+        }
+    }
+    const auto matter=amity_matter_set_controller_enabled(false);
+    const auto home=amity_homekit::stop();
+    if(fenced!=ESP_OK)return fenced;
+    if(web!=ESP_OK)return web;
+    if(matter!=ESP_OK)return matter;
+    return home;
+}
+void start_admin_mdns() {
+    std::lock_guard<std::mutex> guard(admin_mdns_mutex);
     if(!original_interfaces_enabled.load())return;
     const auto octopus_id=hub.octopus_id();
-    const amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,nullptr};
     // CONFIG_USE_MINIMAL_MDNS=n makes Matter and HTTPS share this responder.
     ESP_ERROR_CHECK(mdns_init());
     char responder_hostname[65]{};
@@ -329,13 +366,19 @@ void start_original_interfaces() {
     // mDNS hostname changes are queued, even when initialization succeeds.
     // Wait for the responder to process them before registering the alias's
     // service; a startup timing difference must not cause an OTA rollback.
-    esp_err_t admin_mdns=ESP_OK;
+    esp_err_t admin_mdns=ESP_ERR_INVALID_STATE;
     if(original_interfaces_enabled.load())admin_mdns=ESP_ERR_INVALID_ARG;
     for(unsigned attempt=0;attempt<100&&admin_mdns==ESP_ERR_INVALID_ARG&&original_interfaces_enabled.load();++attempt){
         admin_mdns=mdns_service_add_for_host("Amity Home Theater","_https","_tcp",device_settings::hostname(),443,nullptr,0);
         if(admin_mdns==ESP_ERR_INVALID_ARG)vTaskDelay(pdMS_TO_TICKS(20));
     }
-    if(admin_mdns!=ESP_OK)ESP_LOGW("amity","Administration discovery is pending; use the DHCP address");
+    if(admin_mdns==ESP_OK)admin_mdns_registered=true;
+    else if(original_interfaces_enabled.load())ESP_LOGW("amity","Administration discovery is pending; use the DHCP address");
+}
+void start_original_interfaces() {
+    if(!original_interfaces_enabled.load())return;
+    const amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,nullptr};
+    start_admin_mdns();
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,ESP_EVENT_ANY_ID,[](void *,esp_event_base_t,int32_t id,void *data){
         if(id==IP_EVENT_STA_GOT_IP) {
             auto *event=static_cast<ip_event_got_ip_t *>(data);
@@ -470,18 +513,7 @@ extern "C" void app_main() {
         ESP_ERROR_CHECK(web_admin::load(hub,true));
     }
     if(membership.role==amity::consortium::RuntimeStartup::retired)ESP_ERROR_CHECK(hub.retire_membership());
-    amity::consortium::runtime_lifecycle_hooks({[]{
-        original_interfaces_enabled.store(false);
-        const auto fenced=hub.retire_membership();
-        const auto web=web_admin::stop();
-        const auto matter=amity_matter_set_controller_enabled(false);
-        const auto home=amity_homekit::stop();
-        mdns_service_remove_for_host("Amity Home Theater","_https","_tcp",device_settings::hostname());
-        if(fenced!=ESP_OK)return fenced;
-        if(web!=ESP_OK)return web;
-        if(matter!=ESP_OK)return matter;
-        return home;
-    },[](amity::system::OctopusId owner){amity::forget_owner(owner);},
+    amity::consortium::runtime_lifecycle_hooks({retire_original_interfaces,[](amity::system::OctopusId owner){amity::forget_owner(owner);},
     [](amity::system::OctopusId coordinator){return system_services::prepare_removed_device_reset(hub,coordinator);},
     system_services::removed_device_reset_response_attempted});
     system_services::updates::maintenance_hooks([]{

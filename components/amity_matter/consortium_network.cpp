@@ -6,6 +6,7 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_matter.h"
 #include "platform/ESP32/NetworkCommissioningDriver.h"
 #include "platform/KeyValueStoreManager.h"
@@ -13,6 +14,8 @@
 #include "esp_memory_utils.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <mbedtls/platform_util.h>
@@ -55,11 +58,22 @@ esp_err_t stage_connect(const std::string& ssid,const std::string& password){
     if(xSemaphoreTake(transaction,0)!=pdTRUE)return ESP_ERR_INVALID_STATE;
     if(staged||pending.load()||usable_ip()){xSemaphoreGive(transaction);return ESP_ERR_INVALID_STATE;}
     while(xSemaphoreTake(completed,0)==pdTRUE){}callback.success.store(false);pending.store(true);
+    const auto deadline=esp_timer_get_time()+35000000;
+    const auto remaining_ms=[&]{return std::max<int64_t>(0,(deadline-esp_timer_get_time())/1000);};
     const auto admitted=driver_call([&]{auto& driver=nc::ESPWiFiDriver::GetInstance();if(!remove_other(driver,ssid))return ESP_ERR_INVALID_STATE;char debug[128];chip::MutableCharSpan text(debug);uint8_t index=0;
         if(driver.AddOrUpdateNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),chip::ByteSpan(reinterpret_cast<const uint8_t*>(password.data()),password.size()),text,index)!=nc::Status::kSuccess||index!=0)return ESP_ERR_INVALID_STATE;
         driver.ConnectNetwork(chip::ByteSpan(reinterpret_cast<const uint8_t*>(ssid.data()),ssid.size()),&callback);return ESP_OK;});
     if(admitted!=ESP_OK){pending.store(false);xSemaphoreGive(transaction);return admitted;}
-    const bool finished=xSemaphoreTake(completed,pdMS_TO_TICKS(35000))==pdTRUE;const bool success=finished&&callback.success.load()&&usable_ip();
+    const bool finished=xSemaphoreTake(completed,pdMS_TO_TICKS(remaining_ms()))==pdTRUE;
+    // The SDK reports success at association, before DHCP. Keep the same total
+    // connection budget while awaiting the IPv4 address required by admission.
+    bool success=false;
+    while(finished&&callback.success.load()&&esp_timer_get_time()<deadline){
+        if(usable_ip()){success=true;break;}
+        const auto ticks=pdMS_TO_TICKS(std::min<int64_t>(100,remaining_ms()));
+        if(!ticks)break;
+        vTaskDelay(ticks);
+    }
     staged=success;if(!success)driver_call([]{return nc::ESPWiFiDriver::GetInstance().RevertConfiguration()==CHIP_NO_ERROR?ESP_OK:ESP_FAIL;});
     xSemaphoreGive(transaction);return success?ESP_OK:ESP_ERR_TIMEOUT;
 }

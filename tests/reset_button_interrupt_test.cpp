@@ -79,7 +79,7 @@ esp_err_t gpio_isr_handler_remove(gpio_num_t gpio) {
 }
 BaseType_t xTaskCreate(TaskFunction_t function, const char *, uint32_t stack, void *,
                        unsigned, TaskHandle_t *task) {
-    assert(stack == 3072 && !in_isr);
+    assert(stack == 6144 && !in_isr);
     if (allocation_failure) return pdFALSE;
     worker = function; *task = &task_token; return pdPASS;
 }

@@ -197,7 +197,13 @@ profile uses no setup code.
 `member.assert_connected()` verifies the candidate's full inventory device ID,
 assigned name, ready membership, configuration entry and device settings. It
 also checks that the original main, its authority and its saved activities
-remain intact. On exit, the helper removes only the new member that this scope
+remain intact. Once the peer and saved configuration are ready, the helper
+polls the existing device-settings endpoint directly so unrelated TLS requests
+do not outlive its two-second response cache. After a matching settings reply,
+it rechecks the main boot/authority, existing saved activity/equipment/settings
+records, membership, member boot and name before passing. This uses the same APIs and overall operation
+deadline; it changes neither the firmware cache lifetime nor assertion criteria.
+On exit, the helper removes only the new member that this scope
 successfully identified, using the existing Remove action with reviewed
 membership revision and target boot. Cleanup requires acknowledgment that the
 candidate's reset was scheduled; this deliberately resets the added board.
@@ -220,9 +226,45 @@ Opening the diagnostic serial ports also caused unintended
 These reboots were separate from the candidate's `fw_reset` stack overflow.
 The main's saved configuration and controller identity were preserved, and its
 existing UI reports two current Matter fabrics after the diagnostic reboot.
-The main runs 0.1.88. An admission-only pass with these mixed versions would
-not qualify distributed power commands, whose message format changed between
-those versions.
+The main ran 0.1.88 in those initial attempts. An admission-only pass with
+those mixed versions would not qualify distributed power commands, whose
+message format changed between those versions.
+
+Subsequent debugging exercised the candidate's setup-stack fix on 0.1.89,
+including a 3.5-second gesture with 3,968 bytes of minimum free task stack.
+Further failures exposed missing ATT MTU negotiation on the main, rollback
+before candidate DHCP completed, settings polling that missed the existing
+two-second response cache, and an in-flight settings reply ahead of the removal
+acknowledgment. The current 0.1.92 source addresses those paths without new
+firmware APIs or extended transaction deadlines. All 240 framework unit tests
+pass within the completed full host runner, and the final 0.1.92 native build
+passes all 35 public-record layout checks. The original test on main 0.1.92
+and candidate 0.1.91 completes Add and the exact connected-member/settings
+assertions, but still fails cleanup: Remove reports reset `unconfirmed`, and
+the candidate logs flash-cache stack-safety and later semaphore assertions.
+Its unclaimed recovery and removal/reset acknowledgment are not qualified.
+Earlier failed runs remain failures. Current private debug evidence is under
+`test-results/add-amity-debug-2026-10-29/`.
+
+Further candidate diagnosis traced those assertions to a restart shutdown hook
+writing NVS from a PSRAM stack and administration mDNS removal on a headless
+board with no registered responder. Candidate 0.1.93 uses the existing internal
+flash-stack broker for the same restart and guards the owned mDNS service's
+lifetime. Main 0.1.94 also keeps a completed Add operation complete after later
+removal; the completion is recorded only after exact ready-member/name proof,
+and connected-member/settings checks still require current evidence. Native
+builds and the final verified full host runner pass, including all 240 framework
+unit tests. Both consecutive unchanged physical tests on main 0.1.94/candidate
+0.1.93 pass Add, connected/settings checks and cleanup with reset `scheduled`,
+no retained member and no cleanup errors. The candidate returns to unclaimed
+Ready and automatic Matter setup after both resets without panic; minimum free
+setup-task stack is 3,968/3,976 bytes. Final HTTP checks preserve the same main
+boot/authority, exact configuration and two Matter fabrics. Main USB is untouched.
+Evidence is `add-amity-main-0.1.94.json`, `add-amity-repeat-main94-candidate93.json`,
+`add-amity-main94-instrumented.json` and `add-amity-main-0.1.94-after.json` in the
+debug directory. This qualifies this pair's normal-profile Add/removal path,
+not CEC/AV or the strict setup-code profile. Boards 3/4 remain on 0.1.88, and
+the earlier failed runs are preserved.
 
 ## DUTs and wiring
 

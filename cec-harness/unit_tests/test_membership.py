@@ -586,6 +586,69 @@ class MembershipTests(unittest.TestCase):
                 with self.assertRaises((AssertionError, MembershipConflict, TimeoutError)):
                     member.assert_connected()
 
+    def test_connected_settings_poll_survives_slow_tls_without_expiring_the_two_second_cache(self):
+        f = Fixture()
+        member = f.added().create()
+        f.calls.clear()
+        original_request = f.request
+        clock, cache_received, polls = [0.0], [None], []
+        settings_path = "/api/v2/devices/" + f.candidate.identity.device_id + "/settings"
+
+        def request(path, data=None, **kwargs):
+            # Each TLS connection takes a second. A shipping settings GET
+            # queues an asynchronous reply, then exposes it for two seconds.
+            clock[0] += 1
+            response = original_request(path, data, **kwargs)
+            if path == settings_path:
+                polls.append(clock[0])
+                if cache_received[0] is None or clock[0] - cache_received[0] >= 2:
+                    cache_received[0] = clock[0] + 0.1
+                    response.update(status="reading", error="")
+            return response
+
+        f.request = f.main.request = request
+        with patch("amity_harness.membership.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("amity_harness.membership.time.monotonic_ns", side_effect=lambda: int(clock[0] * 1e9)), \
+                patch("amity_harness.membership.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            self.assertIs(member.assert_connected(timeout=20), member)
+        # The original system/config/settings loop always missed the reply's
+        # freshness window; direct settings polling reads it and then fences
+        # the main, full configuration and member identity again.
+        self.assertEqual([path for path, _ in f.calls],
+                         ["/api/v2/system", "/api/v2/config", settings_path, settings_path,
+                          "/api/v2/system", "/api/v2/config"])
+        self.assertEqual(len(polls), 2)
+        self.assertLess(polls[1] - polls[0], 2)
+        self.assertEqual(member.member_boot, f.member_boot)
+
+    def test_connected_settings_success_is_rechecked_against_current_boot_authority_and_configuration(self):
+        for change in ("main_boot", "authority", "member_boot", "saved_activity", "membership"):
+            with self.subTest(change=change):
+                f = Fixture()
+                member = f.added().create()
+                original_request = f.request
+
+                def request(path, data=None, **kwargs):
+                    response = original_request(path, data, **kwargs)
+                    if path.endswith("/settings"):
+                        target = next(p for p in f.system["membership"]["peers"]
+                                      if p["octopus_id"] == f.candidate.identity.device_id)
+                        if change == "main_boot":
+                            f.system["boot_id"] = "9" * 32
+                        elif change == "authority":
+                            f.system["membership"]["authority_ready"] = False
+                        elif change == "member_boot":
+                            target["boot_id"] = "9" * 32
+                        elif change == "saved_activity":
+                            f.config["activities"][0]["label"] = "Concurrent edit"
+                        else:
+                            f.system["membership"]["peers"] = [target]
+                    return response
+
+                f.request = f.main.request = request
+                with self.assertRaises(MembershipConflict):
+                    member.assert_connected()
+
     def test_connected_assertion_requires_exact_names_configuration_and_live_settings(self):
         for change in ("hostname", "named_devices", "owner", "capacity", "owner_capacity",
                        "settings_offline", "settings_boot", "settings_boolean_id", "settings_duplicate_ids"):

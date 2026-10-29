@@ -38,8 +38,8 @@
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 7280,
-      "sha256": "b7d6a51a84034b09781b735fe4ce4e118491be00e0eba632af8e8667391cbfe9"
+      "size_bytes": 10653,
+      "sha256": "5835acbdbf1aecd725bff10d72e6e524af145252ff13022c648ccebe680a2460"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
@@ -68,8 +68,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 18286,
-      "sha256": "11a5cd477e8b86fb5aebad24475318711069ca8ad4087eb82e337c5b80b5cdbf"
+      "size_bytes": 23912,
+      "sha256": "3c11f54bdb1c148b7e27a5a0435d28438ee5861119b3fdb05aacfcc14197580a"
     },
     {
       "path": "19-source-baseline.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 17257,
-      "sha256": "da91d7ddaac2f2ec042e93c8f52765417cd72f3bc645074821f148050a598ac9"
+      "size_bytes": 27763,
+      "sha256": "a1743889b3b2e0683a2a544b5be070d1c25c35a1a0256e3fd0c55bdef5decbda"
     },
     {
       "path": "examples/README.md",

@@ -225,7 +225,90 @@ with two current Matter fabrics confirmed through the existing UI. Evidence:
 `test-results/functional/add-amity-2026-10-29.json`,
 `add-amity-retry-2026-10-29.json`, `add-amity-retry-amity-dut-2-uart.log`,
 `add-amity-after-2026-10-29.json` and `add-amity-main-matter-after.json` in that
-directory. No firmware or assertion criteria were changed to hide this result.
+directory. Those attempts changed neither firmware nor assertion criteria to hide the result.
+
+The 0.1.88 rerun also failed discovery: 40 successful admission polls remained
+`scanning` until the 90-second deadline; the final short-deadline HTTPS request
+reported a handshake timeout. No Add/Remove was submitted. Cancel, parsed-pin
+release and exact main boot/configuration/authority/two-fabric preservation
+checks passed. Target analysis identifies a setup-button stack defect, and the
+prepared 0.1.89 source separated manual Matter setup and increased that task to
+6 KiB without changing gestures or radio ordering. At that stage it had not
+been deployed or qualified; later debug results below retain the failed runs
+and distinguish gesture evidence from completed membership/removal. Current
+evidence and the retained earlier failure are recorded in `VALIDATION.md` and
+`IMPLEMENTATION_STATUS.json`.
+
+### Add debug corrections — 29 October 2026
+
+Candidate 0.1.89 subsequently opened its Add window without the observed stack
+overflow; the actual 3.5-second gesture left 3,968 bytes of minimum free task
+stack. That measured one exercised setup path, not every possible SDK stack
+peak. The original functional attempt still failed. Main 0.1.90 explicitly
+negotiates ATT MTU before record transfer: the default 23-byte MTU had left only
+ten payload bytes per fragment, requiring 195 fragments for the observed
+proposal and exceeding the unchanged 30-second assembly limit.
+
+Candidate 0.1.91 keeps the existing 35-second network budget across the driver
+request, association callback and usable IPv4/DHCP wait. The earlier callback
+reported association before an IP address and triggered rollback. Framework
+verification now polls the existing device-settings endpoint directly while its
+two-second reply cache is live, then repeats the full boot/authority/config/
+membership/name checks. Its overall deadline and required assertions remain
+unchanged; all 240 framework unit tests pass.
+
+The remaining physical Remove attempt failed with a settings reply already in
+flight ahead of the retirement acknowledgment. Main 0.1.92 discards only
+exact-scope, capability/TTL/replay-valid settings results (as well as permitted
+heartbeat/lease traffic) within the existing lifecycle deadline and 32-frame
+bound. It restores lifecycle restriction immediately and never applies those
+replies. Dedicated candidate reset/recovery succeeded after that failed attempt;
+it is not a passing functional Remove acknowledgment.
+
+The final 0.1.92 native build passes all 35 public-record layout checks, and
+`tests/run_host_tests.sh` exits 0 including all 240 framework unit tests. Logs
+are `build-0.1.92.log` and `full-host-tests.log` in the debug directory. The
+main OTA to the final image passes all 13 exact-image/preservation checks
+without main USB access. The unchanged original test on main 0.1.92/candidate
+0.1.91 completes Add and exact connected-member/settings checks, but remains
+FAIL during Remove: the operation completes with reset `unconfirmed`, and the
+candidate logs flash-cache stack-safety and later semaphore assertions. It does
+not return to proven unclaimed startup; scheduled reset acknowledgment remains
+unqualified. The report is `add-amity-main-0.1.92.json` with
+`add-amity-main92-instrumented.json` and `candidate-during-main92-test.log` in
+the same directory. No new firmware API, weaker assertion, CEC policy or longer
+transaction deadline was introduced.
+Private intermediate failures, compiler records, deployment checks and candidate
+reset recovery are retained under `test-results/add-amity-debug-2026-10-29/`.
+
+The captured 0.1.91 assertions were then traced through matching instruction
+windows and source: `esp_restart` reached the diagnostics NVS shutdown write on
+the PSRAM link stack, and headless retirement attempted mDNS removal without a
+registered responder. Candidate 0.1.93 uses the existing internal-flash-stack
+broker after the unchanged acknowledgment/500 ms restart delay, and guards owned
+administration mDNS lifetime before Matter shutdown. Its app-only deployment and
+separate reset recovery pass; neither is a functional Remove result.
+
+Main 0.1.94 retains Add completion in the existing transient operation view only
+after the exact selected peer proves ready and correctly named. Later removal
+does not undo that finished result; current liveness still requires live checks.
+The 0.1.93 native/full-host and 0.1.94 native 35-layout checks pass, and the exact
+0.1.94 main OTA preserves its configuration, two fabrics, authority, HomeKit and
+capabilities. The final `verified-host-tests.log` exits 0 including 240 framework
+unit tests. Both consecutive unchanged original 0.1.94/0.1.93 functional runs
+pass Add, both same-boot connected/settings assertions, and cleanup once with
+reset `scheduled`, no retained member and no cleanup errors. Candidate UART
+shows unclaimed Ready and automatic Matter setup after each reset, no panic or
+Backtrace, and minimum free setup-task stack of 3,968/3,976 bytes. Final main
+HTTP checks preserve the same boot, group/authority, exact configuration and two
+fabrics, with ready idle state and no candidate. Reports are
+`add-amity-main-0.1.94.json`, `add-amity-repeat-main94-candidate93.json`,
+`add-amity-main94-instrumented.json` and `add-amity-main-0.1.94-after.json` in the
+debug directory. Main USB was not opened. This is normal-profile Add/removal
+qualification for this pair; other boards remain 0.1.88 and no CEC/AV or strict
+setup-code profile qualification is claimed. No new
+firmware API, weaker assertion, longer transaction deadline or CEC policy is
+introduced. All prior failed reports remain separate failure evidence.
 
 ## Evidence record
 

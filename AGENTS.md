@@ -284,12 +284,20 @@ ownership or a missing reset acknowledgment fails cleanup and must be reported.
 An Add-only result with mixed firmware versions does not qualify distributed
 power behavior; do not invent a global firmware-version equality gate.
 
-Physical qualification on 29 October 2026 failed when the candidate's
-0.1.84 `fw_reset` task overflowed during the 3.5-second gesture. The candidate
-was not discovered; Add and Remove were not submitted, and scan cancellation
-completed. All 238 framework unit tests passed. Connected membership and the
-removal/reset acknowledgment remain physically unqualified; no firmware change
-or weaker existing-API assertion was introduced for this result.
+The initial physical qualification on 29 October 2026 failed when the
+candidate's 0.1.84 `fw_reset` task overflowed during the 3.5-second gesture;
+the candidate was not discovered, Add/Remove were not submitted, and scan
+cancellation completed. Preserve that and the later failed debug reports as
+historical failures. After the documented fixes, two consecutive unchanged
+original tests pass on main 0.1.94/candidate 0.1.93: Add, exact connected/settings
+checks and scheduled-reset removal, with no retained member or cleanup errors.
+The candidate returns to unclaimed Ready/automatic Matter setup without panic,
+and final HTTP checks retain the main boot/authority, exact configuration and
+two Matter fabrics. The full host runner passes all 240 framework unit tests.
+Evidence is `test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json`
+and its two functional reports and final main snapshot. This qualifies that
+pair's normal-profile Add/removal path, not CEC/AV or the strict setup-code
+profile; boards 3/4 remain on 0.1.88. No API or assertion criterion was weakened.
 
 Components sharing a physical harness GPIO also share one virtual CEC bus.
 Route directed virtual messages and replies within that bus, with powered ACK,

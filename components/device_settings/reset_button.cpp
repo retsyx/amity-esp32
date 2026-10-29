@@ -100,7 +100,9 @@ esp_err_t start_reset_button(int gpio) {
         if (owns_service) gpio_uninstall_isr_service();
         return result;
     };
-    if (xTaskCreate(button_task, "fw_reset", 3072, nullptr, 2, &task) != pdPASS)
+    // Setup can synchronously close Matter commissioning and refresh DNS-SD.
+    // Its SDK call chain exceeds 3 KiB even though button sampling is small.
+    if (xTaskCreate(button_task, "fw_reset", 6144, nullptr, 2, &task) != pdPASS)
         return cleanup(ESP_ERR_NO_MEM);
     err = gpio_set_intr_type(button_gpio, GPIO_INTR_ANYEDGE);
     if (err != ESP_OK) return cleanup(err);

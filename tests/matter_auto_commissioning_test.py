@@ -40,7 +40,7 @@ def production_parts(source):
         return source[start:closing_brace(masked, opening) + 1]
     helpers = '\n'.join(function(signature) for signature in (
         'esp_err_t open_boot_matter_setup()', 'void start_boot_matter_setup()',
-        'void setup_button('))
+        '[[gnu::noinline]] void setup_matter(', 'void setup_button('))
     main = function('extern "C" void app_main()')
     main_masked = masked_cpp(main)
     call = 'start_boot_matter_setup();'
