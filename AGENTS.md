@@ -297,7 +297,12 @@ two Matter fabrics. The full host runner passes all 240 framework unit tests.
 Evidence is `test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json`
 and its two functional reports and final main snapshot. This qualifies that
 pair's normal-profile Add/removal path, not CEC/AV or the strict setup-code
-profile; boards 3/4 remain on 0.1.88. No API or assertion criterion was weakened.
+profile. At that functional-run checkpoint boards 3/4 were on 0.1.88.
+A subsequent application-only update puts all four DUTs on the exact 0.1.94
+image, with main skipped and verified unchanged; it does not rerun or extend
+the earlier main-0.1.94/candidate-0.1.93 functional qualification. Deployment
+evidence is `test-results/all-dut-update-2026-10-29/deployment.json`. No API
+or assertion criterion was weakened.
 
 Components sharing a physical harness GPIO also share one virtual CEC bus.
 Route directed virtual messages and replies within that bus, with powered ACK,

@@ -1,5 +1,5 @@
 {
-  "status": "PASS: the unchanged original Add Amity functional scenario passed twice consecutively on main 0.1.94/software 95 and candidate 0.1.93. Each run completed Add, exact connected/settings checks and acknowledged scheduled removal/reset, then observed unclaimed Ready/automatic Matter setup without panic; stack margins were 3968/3976 bytes. Final HTTP checks retain the same main boot/group/authority, exact configuration and two Matter fabrics. Native builds pass all 35 layouts and the verified full host runner exits 0 including 240 framework unit tests. Earlier failures remain preserved. This qualifies the exercised normal-profile membership/removal path, not CEC/AV or all-board interoperability.",
+  "status": "PASS: all four bench DUTs now run the exact 0.1.94/software 95 image. Boards 2/3/4 passed all 18 application-only update/startup checks each; the already-current main was skipped and passed 12 preflight/14 final read-only checks, retaining its boot, authority, exact configuration and two Matter fabrics. The earlier unchanged original Add Amity scenario passed twice on main 0.1.94/candidate 0.1.93 with connected/settings checks and scheduled removal/reset; it was not rerun after the candidate update to 0.1.94. Native builds and the verified full host runner pass, including 240 framework unit tests. Prior failures remain preserved. No new CEC/AV, strict-profile or all-board interoperability qualification is claimed.",
   "audit_date": "2026-10-29",
   "firmware_version": "0.1.94",
   "branch": "consort",
@@ -170,7 +170,7 @@
       "command": "python3 tests/consortium_admission_crypto_test.py",
       "limitation": "These host tests use the explicit mock Security2/protocomm and CHIP-parser seams above; later 0.1.83 SDK device-self-test evidence is recorded separately."
     },
-    "physical_admission": "Actual radio enrollment was not exercised; the separate 0.1.83 flash/device-self-test evidence is in latest_deployment.",
+    "physical_admission": "Actual radio enrollment was not exercised; the separate 0.1.83 flash/device-self-test evidence is retained in deployment_history.",
     "device_srp_selftest": "PASS on all four ESP32-S3 DUTs after installing 0.1.83: actual SDK admission_crypto_self_test, including both profiles, SRP and Matter manual/QR parser checks, plus production-storage self-test.",
     "runtime_workflow": {
       "result": "PASS",
@@ -193,49 +193,111 @@
     "date": "2026-10-29",
     "firmware_version": "0.1.94",
     "matter_software_version": 95,
-    "device_count": 1,
-    "updated_device_count": 1,
-    "bench_labels": [
-      "amity-dut"
-    ],
+    "device_count": 4,
+    "updated_device_count": 3,
     "hardware_profile": "esp32s3-development-4t-v1",
     "result": "PASS",
-    "report": "test-results/add-amity-debug-2026-10-29/main-0.1.94-deployment.json",
     "image_sha256": "4baf834b5227114602811392427669ab5e1a7977b5d4b7f260b0c75ba548be4b",
     "running_elf_sha256": "af74c59554e7d9dce73e0888ce1767d9bd1a2b8f26b24598cc6695da867655d2",
     "image_bytes": 2420048,
     "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
     "source_dirty": true,
-    "previous_firmware_version": "0.1.92",
-    "transport": "Existing authenticated POST /api/firmware",
-    "main_usb_opened": false,
+    "code_changes_committed_as": "a2987b82d557fce4bbbf68c534f1237560e20dec",
+    "artifact_provenance": "Existing tested artifact built before the code-fix commit; original manifest source commit and dirty flag retained.",
+    "verified_device_count": 4,
+    "bench_labels": [
+      "amity-dut",
+      "amity-dut-2",
+      "amity-dut-3",
+      "amity-dut-4"
+    ],
+    "report": "test-results/all-dut-update-2026-10-29/deployment.json",
+    "transport": "USB application-only updates on boards 2/3/4; existing authenticated HTTP read-only verification on main",
     "factory_reset_performed": false,
-    "boot_id": "06be5911aab8027ffc5a806b20b5f48e",
-    "previous_boot_id": "b68692e6e79ddde602397632900d7cf4",
+    "flash_erased": false,
+    "updated_devices": [
+      {
+        "bench_label": "amity-dut-2",
+        "device_id": "7468ba8afeb9ffad49eb57b3ba0a3288",
+        "previous_firmware_version": "0.1.93",
+        "firmware_version": "0.1.94",
+        "boot_role": "unclaimed",
+        "checks_passed": 18,
+        "report": "test-results/all-dut-update-2026-10-29/44b176aec5e0/deployment.json",
+        "result": "PASS"
+      },
+      {
+        "bench_label": "amity-dut-3",
+        "device_id": "fad293fe0f3b513a10e027a20cb3b7c8",
+        "previous_firmware_version": "0.1.88",
+        "firmware_version": "0.1.94",
+        "boot_role": "unclaimed",
+        "checks_passed": 18,
+        "report": "test-results/all-dut-update-2026-10-29/44b176aec2ac/deployment.json",
+        "result": "PASS"
+      },
+      {
+        "bench_label": "amity-dut-4",
+        "device_id": "e453c2c503e55e5f6fe6ab7976c6f1d0",
+        "previous_firmware_version": "0.1.88",
+        "firmware_version": "0.1.94",
+        "boot_role": "unclaimed",
+        "checks_passed": 18,
+        "report": "test-results/all-dut-update-2026-10-29/44b176aecf64/deployment.json",
+        "result": "PASS"
+      }
+    ],
     "checks": {
-      "exact_version": true,
-      "exact_elf": true,
-      "ready": true,
-      "same_identity": true,
-      "same_group": true,
-      "new_boot": true,
-      "original_main_authority": true,
-      "configuration_unchanged": true,
-      "matter_fabrics_unchanged": true,
-      "homekit_pairing_unchanged": true,
-      "hardware_capabilities_unchanged": true,
-      "local_update_healthy": true,
-      "no_peers": true
+      "all_four_on_exact_latest_image": true,
+      "three_updates_passed_all_18_checks": true,
+      "factory_credentials_and_origin_ids_retained": true,
+      "non_application_flash_preserved_before_restart": true,
+      "ota_metadata_preserved_before_restart": true,
+      "no_factory_reset_or_full_flash_erase": true,
+      "unclaimed_boards_automatic_matter_setup": true,
+      "main_current_and_unchanged": true,
+      "setup_cards_unchanged": true
     },
-    "known_other_dut_versions": {
-      "amity-dut-2": "0.1.93",
-      "amity-dut-3": "0.1.88",
-      "amity-dut-4": "0.1.88"
+    "verified_current": {
+      "bench_label": "amity-dut",
+      "firmware_version": "0.1.94",
+      "update_skipped": true,
+      "serial_opened": false,
+      "restarted": false,
+      "boot_id": "06be5911aab8027ffc5a806b20b5f48e",
+      "current_matter_fabric_count": 2,
+      "preflight": "test-results/all-dut-update-2026-10-29/main-preflight.json",
+      "preflight_checks_passed": 12,
+      "report": "test-results/all-dut-update-2026-10-29/main-postcheck.json",
+      "checks": {
+        "expected_identity": true,
+        "exact_latest_firmware": true,
+        "same_main_boot": true,
+        "ready": true,
+        "original_main_authority": true,
+        "same_group": true,
+        "configuration_exactly_unchanged": true,
+        "matter_fabrics_preserved": true,
+        "two_current_matter_fabrics": true,
+        "no_peer_records": true,
+        "membership_revision_unchanged": true,
+        "idle": true,
+        "no_pending_configuration": true,
+        "hardware_capabilities_unchanged": true
+      },
+      "logged_out": true,
+      "passed": true
     },
-    "qualification_scope": "Exact main 0.1.94 OTA and 13 preservation checks, followed by two unchanged original normal-profile Add/connected/settings/acknowledged-removal-reset passes against candidate 0.1.93 and final main-state preservation. Other boards remain 0.1.88; no new CEC/AV or strict-profile qualification.",
-    "functional_membership_qualification": true,
-    "cec_or_av_qualification": false,
-    "functional_membership_report": "test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json"
+    "qualification_scope": "Exact-image, application-only update and startup/role qualification on boards 2/3/4; authenticated read-only exact-image and unchanged main-state verification. Non-application flash and OTA metadata equality was checked before reboot, not after normal boot writes. No new functional Add, CEC/AV, strict-profile admission or all-board interoperability qualification.",
+    "functional_tests_rerun": false,
+    "prior_functional_qualification": {
+      "report": "test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json",
+      "main_version": "0.1.94",
+      "candidate_version": "0.1.93",
+      "consecutive_passes": 2,
+      "scope": "Unchanged normal-profile Add/connected/settings/acknowledged-removal-reset scenario."
+    },
+    "cec_or_av_qualification": false
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -516,6 +578,54 @@
       },
       "qualification_scope": "Exact main image/boot and 13 preservation checks through authorized OTA; candidate 0.1.91 deployment and earlier reset recovery recorded separately. Subsequent original Add/connected/settings assertions pass but functional Remove/reset remains FAIL.",
       "functional_or_av_qualification": false
+    },
+    {
+      "date": "2026-10-29",
+      "firmware_version": "0.1.94",
+      "matter_software_version": 95,
+      "device_count": 1,
+      "updated_device_count": 1,
+      "bench_labels": [
+        "amity-dut"
+      ],
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "result": "PASS",
+      "report": "test-results/add-amity-debug-2026-10-29/main-0.1.94-deployment.json",
+      "image_sha256": "4baf834b5227114602811392427669ab5e1a7977b5d4b7f260b0c75ba548be4b",
+      "running_elf_sha256": "af74c59554e7d9dce73e0888ce1767d9bd1a2b8f26b24598cc6695da867655d2",
+      "image_bytes": 2420048,
+      "source_commit": "12b39e1c4d5feeec0998c0501f7ec539c6a0a4cf",
+      "source_dirty": true,
+      "previous_firmware_version": "0.1.92",
+      "transport": "Existing authenticated POST /api/firmware",
+      "main_usb_opened": false,
+      "factory_reset_performed": false,
+      "boot_id": "06be5911aab8027ffc5a806b20b5f48e",
+      "previous_boot_id": "b68692e6e79ddde602397632900d7cf4",
+      "checks": {
+        "exact_version": true,
+        "exact_elf": true,
+        "ready": true,
+        "same_identity": true,
+        "same_group": true,
+        "new_boot": true,
+        "original_main_authority": true,
+        "configuration_unchanged": true,
+        "matter_fabrics_unchanged": true,
+        "homekit_pairing_unchanged": true,
+        "hardware_capabilities_unchanged": true,
+        "local_update_healthy": true,
+        "no_peers": true
+      },
+      "known_other_dut_versions": {
+        "amity-dut-2": "0.1.93",
+        "amity-dut-3": "0.1.88",
+        "amity-dut-4": "0.1.88"
+      },
+      "qualification_scope": "Exact main 0.1.94 OTA and 13 preservation checks, followed by two unchanged original normal-profile Add/connected/settings/acknowledged-removal-reset passes against candidate 0.1.93 and final main-state preservation. Other boards remain 0.1.88; no new CEC/AV or strict-profile qualification.",
+      "functional_membership_qualification": true,
+      "cec_or_av_qualification": false,
+      "functional_membership_report": "test-results/add-amity-debug-2026-10-29/add-amity-main94-instrumented.json"
     }
   ],
   "standby_stack_fix_validation": {
@@ -728,7 +838,7 @@
       "layout_checks": 35,
       "scope": "Existing working-tree four-adapter profile, including prior reference/task-stack changes"
     },
-    "deployment": "The earlier working-tree build above was not installed. A later committed-source 0.1.88 build was deployed to the main, reset with user authorization and recommissioned; see deployment_history and audit_fix_deployment_validation. The same exact image was subsequently installed on the three other DUTs; see latest_deployment."
+    "deployment": "The earlier working-tree build above was not installed. A later committed-source 0.1.88 build was deployed to the main, reset with user authorization and recommissioned; see deployment_history and audit_fix_deployment_validation. The same exact image was subsequently installed on the three other DUTs; see deployment_history. The later all-board 0.1.94 update is in latest_deployment."
   },
   "audit_fix_deployment_validation": {
     "build": {

@@ -271,12 +271,40 @@ Final authenticated HTTP checks in `add-amity-main-0.1.94-after.json` pass all
 11 checks: same main boot `06be5911aab8027ffc5a806b20b5f48e`, group/identity and
 original authority, exact saved configuration, unchanged two Matter fabrics,
 ready idle state and no added candidate. Saved activities/equipment are empty
-in this physical baseline and remain unchanged. The session logs out. Other
-boards `amity-dut-3`/`amity-dut-4` remain on 0.1.88. This qualifies the exercised
+in this physical baseline and remain unchanged. The session logs out. At this
+functional-run checkpoint, `amity-dut-3`/`amity-dut-4` were still on 0.1.88. This qualifies the exercised
 two-board normal-profile Add/connected/settings/acknowledged-removal-reset path,
 not CEC/AV behavior, the strict setup-code profile or all-board interoperability.
 No API, assertion, transaction deadline or CEC policy is weakened. Prior
 failures, including the 0.1.92/0.1.91 Remove failure, remain failures.
+
+## All four DUTs on 0.1.94 — 29 October 2026
+
+The later application-only USB updates of `amity-dut-2`, `amity-dut-3` and
+`amity-dut-4` each pass all 18 checks. All four boards now run exact firmware
+0.1.94/Matter software 95, application SHA-256
+`4baf834b5227114602811392427669ab5e1a7977b5d4b7f260b0c75ba548be4b` and
+ELF `af74c59554e7d9dce73e0888ce1767d9bd1a2b8f26b24598cc6695da867655d2`.
+Factory credentials, origin identities, partition layout, non-application flash
+and OTA metadata were preserved; flash-range equality was checked before reboot,
+not after normal boot writes. No full-flash erase or factory reset was used.
+Each updated board boots unclaimed Ready with automatic Matter setup and the
+SDK admission self-test passing, without observed panic. Setup cards are unchanged.
+
+The already-current main was skipped. Its authenticated read-only preflight
+passes 12 checks and final postcheck passes 14, retaining the same boot, original
+authority, exact configuration, two Matter fabrics, capabilities and empty peer
+list. No main USB access, restart or mutation occurs; the HTTP session logs out.
+Aggregate and per-board evidence is in
+`test-results/all-dut-update-2026-10-29/deployment.json`, with
+`main-preflight.json` and `main-postcheck.json` in that directory.
+
+This is the existing tested artifact built from source commit `12b39e1` with
+`source_dirty=true`; its fixes were subsequently committed as `a2987b8`. Artifact
+provenance is retained. These updates qualify image/startup and preservation;
+the earlier two Add/removal passes remain main-0.1.94/candidate-0.1.93 evidence.
+The functional test was not rerun on 0.1.94/0.1.94, and no new CEC/AV,
+strict-profile or all-board interoperability result is claimed.
 
 ## Source theft functional test — 29 October 2026
 
