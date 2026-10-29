@@ -998,7 +998,6 @@ struct HubService::Impl : Transport {
             if(retained){intent.token=retained->token;return true;}
             intent.token=system::HoldToken::generate(secure_random).value_or(system::HoldToken{});
             if(!intent.token)return false;
-            retained=intent;
         }else if(intent.kind==K::key_down){
             intent.token=system::HoldToken::generate(secure_random).value_or(system::HoldToken{});
             if(!intent.token)return false;
@@ -1006,6 +1005,13 @@ struct HubService::Impl : Transport {
             auto& retained=sent_keys[intent.key];if(!retained)return true;
             const auto sequence=intent.sequence;intent=*retained;intent.sequence=sequence;intent.kind=K::key_up;retained.reset();
         }
+        const auto dispatched=[&](bool admitted,std::optional<bool> present={}){
+            // Only consumed downs have a matching coordinator hold/up. A
+            // rejected local request must not leave a token that suppresses
+            // the next physical press after its adapter or authority returns.
+            if(admitted&&intent.kind==K::key_down&&intent.repeat)sent_keys[intent.key]=intent;
+            return system::OwnedDispatchResult{admitted,present,intent.sequence};
+        };
         if(intent.target.port.octopus_id==octopus){
             auto* engine=adapter(intent.target.port.tentacle_id);if(!engine)return false;
             if(intent.kind==K::key_up)for(auto& pending:deferred)
@@ -1020,7 +1026,7 @@ struct HubService::Impl : Transport {
                 const bool admitted=submit(request)==ESP_OK;
                 if(admitted&&intent.kind==K::source_input)input_setups.push_back({intent.sequence,intent.setup_generation});
                 if(admitted&&intent.setup_generation)expect_setup(intent);
-                return {admitted,{},intent.sequence};
+                return dispatched(admitted);
             }
             const auto result=engine->execute_owned(intent,auth,false,true);
             // Original public input admission is asynchronous. A consumed down
@@ -1028,13 +1034,12 @@ struct HubService::Impl : Transport {
             const bool admitted=result.code==system::AdmissionCode::accepted||result.code==system::AdmissionCode::overloaded||result.code==system::AdmissionCode::unresolved;
             const auto present=result.source_present;
             if(admitted&&intent.setup_generation)expect_setup(intent);
-            return {admitted,present,intent.sequence};
+            return dispatched(admitted,present);
         }
         const bool admitted=owned_sender&&owned_sender(intent);
-        if(!admitted&&intent.kind==K::key_down&&intent.repeat)sent_keys[intent.key].reset();
         if(admitted&&intent.setup_generation)expect_setup(intent);
         if(admitted&&intent.kind==K::source_input)input_setups.push_back({intent.sequence,intent.setup_generation});
-        return {admitted,{},intent.sequence};
+        return dispatched(admitted);
     }
     void expect_setup(const system::OwnedIntent& intent){
         auto found=std::find_if(setup_owners.begin(),setup_owners.end(),[&](const auto& owner){return owner.owner==intent.target.port.octopus_id&&owner.adapter==intent.target.port.tentacle_id;});

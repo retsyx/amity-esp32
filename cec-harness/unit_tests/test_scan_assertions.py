@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import AvrComponent, DUT, PlaybackComponent, TvComponent, assign_addresses
+from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, TvComponent, assign_addresses
 from amity_harness.discovery import ScanResult
 
 
@@ -42,11 +42,16 @@ class ScanAssertionTests(unittest.TestCase):
             initiator = 4 if component.direction == "front" else 0
             for query, response, timestamp in ((0x46, 0x47, 11.0), (0x83, 0x84, 12.0)):
                 common = {"component": component.name, "gpio": component.gpio, "transport": "wire"}
+                destination = initiator if response == 0x47 else 15
+                operands = (component.name.encode("ascii") if response == 0x47 else
+                            component.address.physical.to_bytes(2, "big") + bytes([component.device_type]))
                 records.append({**common, "direction": "rx", "source": initiator,
                                 "destination": component.address.logical, "opcode": query,
+                                "frame": Frame(initiator, component.address.logical, query).raw.hex(":"),
                                 "timestamp": timestamp, "wire_timestamp_ns": int(timestamp * 1e9)})
                 records.append({**common, "direction": "tx", "source": component.address.logical,
-                                "destination": initiator if response == 0x47 else 15, "opcode": response,
+                                "destination": destination, "opcode": response,
+                                "frame": Frame(component.address.logical, destination, response, operands).raw.hex(":"),
                                 "timestamp": timestamp + .1, "wire_timestamp_ns": int((timestamp + .1) * 1e9), "ok": True})
         self.system = {"octopus_id": self.dut.identity.device_id, "consortium_id": self.group,
                        "boot_id": self.boot, "observations": observations, "private": "must not enter locations"}
@@ -83,6 +88,22 @@ class ScanAssertionTests(unittest.TestCase):
         self.assertFalse(self.requests)  # Native observations need no config read.
         self.result.assert_on(self.tv, self.tv.endpoint)
         self.assertEqual(len(self.result.locations), 3)
+
+    def test_cached_matching_ui_cannot_hide_changed_wire_identity_replies(self):
+        original = deepcopy(self.result.records)
+        for opcode, operands in ((0x47, b"Wrong AVR"), (0x84, b"\x20\x00\x05"),
+                                 (0x84, b"\x10\x00\x04")):
+            records = deepcopy(original)
+            for record in records:
+                if (record["component"] == self.avr.name and record["direction"] == "tx"
+                        and record["opcode"] == opcode):
+                    record["frame"] = Frame(record["source"], record["destination"], opcode, operands).raw.hex(":")
+            self.result.records = records
+            for assertion in (lambda: self.result.assert_contains(self.avr),
+                              lambda: self.result.assert_contains_only(*self.components),
+                              lambda: self.result.assert_on(self.avr, self.avr.endpoint)):
+                with self.subTest(opcode=opcode, operands=operands), self.assertRaises(AssertionError):
+                    assertion()
 
     def test_exact_set_rejects_extra_rows_including_other_owners(self):
         extra = deepcopy(self.rows[0])

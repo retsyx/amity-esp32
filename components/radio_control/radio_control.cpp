@@ -37,8 +37,15 @@ esp_err_t finish_cancellation(uint64_t generation) {
     // completion callback, so no radio->remote->radio mutex cycle is possible.
     const auto cancelled=ble_remote_pause_background(true);
     if(cancelled!=ESP_OK)return cancelled;
+    // A caller can exhaust its bounded handoff wait while the SDK is still
+    // stopping advertising. The worker must prove that GAP cleanup too before
+    // releasing the transition; query GAP outside the arbiter mutex.
+    const bool advertising=ble_gap_adv_active();
     Lock lock;
-    if(arbiter.cancellation_pending())return arbiter.cleanup_complete(generation,now())==RadioResult::granted?ESP_OK:ESP_ERR_INVALID_STATE;
+    if(arbiter.cancellation_pending()){
+        if(advertising)return ESP_ERR_TIMEOUT;
+        return arbiter.cleanup_complete(generation,now())==RadioResult::granted?ESP_OK:ESP_ERR_INVALID_STATE;
+    }
     return ESP_OK;
 }
 void worker(void*) {

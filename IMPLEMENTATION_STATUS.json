@@ -1,7 +1,7 @@
 {
-  "status": "Standard CEC power handling only; runtime, transport, configuration, UI and harness override support removed. Full host regression, affected browser suites and contract validation pass. The native 0.1.87 working-tree build also includes the separately pending task-stack capacity fix. This power-handling change has not been deployed.",
+  "status": "Four audit fixes cover late radio cleanup, rejected local hold tokens, one physical gesture clock and exact scan identity evidence. Full host tests and native 0.1.88 build pass; this working-tree image includes the existing reference/task-stack changes and has not been deployed.",
   "audit_date": "2026-10-28",
-  "firmware_version": "0.1.87",
+  "firmware_version": "0.1.88",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -343,5 +343,37 @@
       "owned_intent_target_bytes": 392
     },
     "deployment": "Not deployed; earlier physical evidence does not qualify this changed configuration/transport format."
+  },
+  "audit_fixes_validation": {
+    "date": "2026-10-28",
+    "findings_fixed": [
+      "Late exact-generation radio cleanup returns to operational without granting expired setup; actual GAP advertising shutdown remains required",
+      "Rejected local key-down does not retain a hold token; first fresh press after adapter return reaches the owner, while consumed TX failures remain suppressed until up",
+      "Add and factory reset share the accepted physical press-edge clock with 3-to-below-10-second Add and 10-second reset boundaries",
+      "Scan evidence validates exact actual wire query and OSD-name/physical-address/device-type reply bytes independently of matching cached UI observations"
+    ],
+    "host": {
+      "command": "sh tests/run_host_tests.sh",
+      "result": "PASS (exit 0)",
+      "log": "test-results/audit-fixes-2026-10-28/host-tests.log",
+      "harness_unit_tests": 165,
+      "coverage": "Actual radio worker/cleanup and late advertising, exact generation fences, qualified local detach/reject/up/reconnect/first-down, failed-TX unchanged-down/up lifecycle, common gesture-clock boundaries and GPIO task, cached-UI/raw-wire identity and real TX-hook regressions"
+    },
+    "native_build": {
+      "command": "idf.py build provisioning-package (tools/env.sh, pinned SDK Python 3.14)",
+      "result": "PASS (exit 0)",
+      "log": "test-results/audit-fixes-2026-10-28/build.log",
+      "firmware_version": "0.1.88",
+      "matter_software_version": 89,
+      "image_bytes": 2418752,
+      "image_sha256": "3054b98afccb451c2926e29088e7297775a8293b915f82ae1a9319b4161e5688",
+      "image_elf_sha256": "3c17f9bfc32283ea4812501040bf9091fd360c9ae8b1be0238524f8695aa6cc8",
+      "hardware_profiles": [
+        "esp32s3-development-4t-v1"
+      ],
+      "layout_checks": 35,
+      "scope": "Existing working-tree four-adapter profile, including prior reference/task-stack changes"
+    },
+    "deployment": "Not deployed; no new physical radio, remote, CEC or strengthened scan qualification claimed"
   }
 }

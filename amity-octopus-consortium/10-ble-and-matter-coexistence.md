@@ -36,6 +36,14 @@ Keep the existing one-workflow radio reservation, local deadline, in-memory gene
 
 To support Add while boot Matter setup is idle, an explicit candidate or main Add request may close that window. Active Matter BLE/PASE or an armed fail-safe blocks the handoff. Wait for actual GAP advertising shutdown and owner cleanup within the existing shared five-second budget; preserve exact generation fences so delayed close/cleanup callbacks cannot release the new owner.
 
+If the bounded wait expires, keep the radio fenced until the owner and GAP
+advertising have actually finished cleanup. Confirmed cleanup after that deadline
+returns the radio to ordinary operation and permits remote reconnect, while the
+expired setup request still reports timeout. It cannot gain setup authority late;
+a new request needs a fresh generation. `tests/radio_matter_handoff_test.py`
+executes the actual owner worker and cleanup function with delayed cleanup and
+advertising shutdown, checking recovery, fresh requests and stale callbacks.
+
 Do not add normal-operation timeouts, repeat cadence or radio recovery merely to accommodate distribution. Enrollment/setup deadlines remain their existing separate contracts. No periodic per-button lease renewal or transmitted press stream is added. The owner repeats a held key using its original completion-paced local handling.
 
 ## Wi-Fi and persistence

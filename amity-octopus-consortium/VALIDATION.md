@@ -15,6 +15,32 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Audit fixes — 28 October 2026
+
+Firmware `0.1.88` fixes four audited cases: confirmed radio cleanup after a timeout
+returns to ordinary operation without reviving expired setup; a rejected local
+key-down leaves no token that can swallow a press after adapter return; Add and
+reset use one accepted physical press-edge clock; scan evidence validates the
+actual OSD-name and physical-address/device-type reply bytes. The owning activity,
+membership, radio and functional-test documents record those contracts.
+
+`sh tests/run_host_tests.sh` exited 0, including the new radio-worker, qualified
+local-key/reconnect and GPIO gesture regressions and all 165 harness unit tests.
+The log is `test-results/audit-fixes-2026-10-28/host-tests.log`. Independent focused
+CEC/owner, consortium, radio and harness suites also passed. The new scan negatives
+reject matching cached UI state paired with rewritten identity replies.
+
+The pinned SDK `idf.py build provisioning-package` passed for the existing
+four-adapter profile, including all 35 public-record layout checks. This build
+also includes the separately pending reference and 12 KiB task-stack changes;
+its image hashes describe that combined working tree. The image is
+2,418,752 bytes (`0x24e840`), leaving 39% of its OTA slot free; its SHA-256 is
+`3054b98afccb451c2926e29088e7297775a8293b915f82ae1a9319b4161e5688` and ELF identity is
+`3c17f9bfc32283ea4812501040bf9091fd360c9ae8b1be0238524f8695aa6cc8`.
+Build evidence is `test-results/audit-fixes-2026-10-28/build.log`. This image has not
+been deployed, and the strengthened scan assertions have not run on the physical
+bench. Earlier physical results remain separate evidence.
+
 ## Direct admission revision — 27 October 2026
 
 The current contracts pass with `.cache/contracts-python/bin/python`: 34 manifest files, 6 schemas, 17 positive and 59 negative vectors, 4 configured selectors, 19 current wire kinds and 119 local links. Retired relay kinds are rejected.

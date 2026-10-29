@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import CecAddress
+from amity_harness import CecAddress, Frame
 from amity_harness.discovery import _fresh_discovery, _matching_devices, _wire_initiators
 
 
@@ -26,13 +26,18 @@ class ScanEvidenceTests(unittest.TestCase):
         for index, (query, response) in enumerate(((0x46, 0x47), (0x83, 0x84))):
             timestamp = 11.0 + index
             common = {"component": component.name, "gpio": component.gpio}
+            destination = initiator if response == 0x47 else 15
+            operands = (component.name.encode("ascii") if response == 0x47 else
+                        component.address.physical.to_bytes(2, "big") + bytes([component.device_type]))
             records.append({**common, "timestamp": timestamp, "direction": "rx",
                             "opcode": query, "source": initiator,
                             "destination": component.address.logical,
+                            "frame": Frame(initiator, component.address.logical, query).raw.hex(":"),
                             "wire_timestamp_ns": int(timestamp * 1_000_000_000)})
             records.append({**common, "timestamp": timestamp + 0.1, "direction": "tx",
                             "opcode": response, "source": component.address.logical,
-                            "destination": initiator if response == 0x47 else 15, "ok": True,
+                            "destination": destination, "ok": True,
+                            "frame": Frame(component.address.logical, destination, response, operands).raw.hex(":"),
                             "wire_timestamp_ns": int((timestamp + 0.1) * 1_000_000_000)})
         return records
 
@@ -44,6 +49,30 @@ class ScanEvidenceTests(unittest.TestCase):
         for index in range(len(self.records)):
             with self.subTest(missing=index):
                 self.assertFalse(self.fresh(self.records[:index] + self.records[index + 1:]))
+
+    def test_identity_reply_requires_exact_wire_name_address_type_and_frame_shape(self):
+        for index, payloads in ((1, (b"Wrong TV", b"", self.component.name.encode("ascii") + b"\0")),
+                                (3, (b"\x10\x00\x00", b"\x00\x00\x04", b"\x00\x00", b"\x00\x00\x00\x00"))):
+            for operands in payloads:
+                records = deepcopy(self.records)
+                record = records[index]
+                record["frame"] = Frame(record["source"], record["destination"], record["opcode"], operands).raw.hex(":")
+                with self.subTest(index=index, operands=operands):
+                    self.assertFalse(self.fresh(records))
+        for index in (1, 3):
+            for raw in (None, "invalid", "", "00", "44:47:54:56"):
+                records = deepcopy(self.records)
+                records[index]["frame"] = raw
+                with self.subTest(index=index, raw=raw):
+                    self.assertFalse(self.fresh(records))
+
+    def test_identity_query_requires_original_wire_header_opcode_and_no_operands(self):
+        for index in (0, 2):
+            for raw in (None, "invalid", "", "00", "40:8f", self.records[index]["frame"] + ":00"):
+                records = deepcopy(self.records)
+                records[index]["frame"] = raw
+                with self.subTest(index=index, raw=raw):
+                    self.assertFalse(self.fresh(records))
 
     def test_cached_or_late_delivered_prescan_requests_do_not_pass(self):
         old = deepcopy(self.records)
@@ -117,7 +146,8 @@ class ScanEvidenceTests(unittest.TestCase):
         self.assertFalse(_fresh_discovery(records, self.component, state["front_address"], self.started_ns))
 
     def test_ambiguous_wire_source_is_rejected(self):
-        other_query = {**self.records[0], "source": 8}
+        other_query = {**self.records[0], "source": 8,
+                       "frame": Frame(8, self.component.address.logical, 0x46).raw.hex(":")}
         self.assertEqual(_wire_initiators(self.records + [other_query], [self.component], self.started_ns), {})
 
     def test_initiator_cannot_be_inferred_without_fresh_directed_query(self):
@@ -132,6 +162,8 @@ class ScanEvidenceTests(unittest.TestCase):
             "unregistered source": [{**record, "source": 15} for record in self.records],
             "wrong target": [{**record, "destination": 5} for record in self.records],
             "other wire": [{**record, "gpio": 24} for record in self.records],
+            "missing wire bytes": [{**record, "frame": None} for record in self.records],
+            "query operands": [{**record, "frame": record["frame"] + ":00"} for record in self.records],
         }
         for label, records in cases.items():
             with self.subTest(label=label):

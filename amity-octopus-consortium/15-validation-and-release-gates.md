@@ -94,7 +94,13 @@ The framework contains two functional scenarios. `hdmi_scan.py` has `amity-dut`
 scan a TV, AVR and playback device. It requires fresh wire identity exchanges
 and matching UI names/types/addresses. Wire captures identify the actual DUT
 initiators; legacy aggregate UI address fields are not owner-local addressing
-evidence. The exact-set and typed-port scan assertions passed on firmware
+evidence. Freshness compares the actual wire bytes: operand-free name/address
+queries, the expected OSD-name reply, and the expected physical-address/device-type
+reply. Cached matching UI rows cannot substitute for those identity operands.
+Host regressions keep matching UI observations while rewriting reply identities
+and require the complete scan assertions to reject them, including a real session
+TX hook. The strengthened assertions have not been rerun on the physical bench.
+The earlier exact-set and typed-port scan assertions passed on firmware
 `0.1.84` on 28 October 2026; private evidence is in
 `test-results/functional/hdmi-scan-exact-ports.json`. This does not replace the broader
 behavioral comparison or physical qualification gates above.

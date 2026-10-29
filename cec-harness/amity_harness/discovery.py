@@ -14,6 +14,7 @@ import re
 import time
 
 from .connections import TentacleEndpoint
+from .cec import Frame
 
 
 _PORT_KEYS = ("consortium_id", "octopus_id", "tentacle_id", "side")
@@ -163,7 +164,7 @@ def _matching_devices(state, components):
 
 
 def _fresh_discovery(records, component, initiator, started_ns):
-    """Pair actual DUT identity requests with successful component responses."""
+    """Pair actual DUT queries with wire replies containing the expected identity."""
     traffic = [record for record in records
                if record["component"] == component.name
                and record["gpio"] == component.gpio
@@ -171,16 +172,26 @@ def _fresh_discovery(records, component, initiator, started_ns):
                and record["timestamp"] * 1_000_000_000 >= started_ns
                and not record.get("dropped", False)]
     for query, response in ((0x46, 0x47), (0x83, 0x84)):
+        request_frame = Frame(initiator, component.address.logical, query).raw.hex(":")
+        operands = (component.name.encode("ascii") if response == 0x47 else
+                    component.address.physical.to_bytes(2, "big") + bytes([component.device_type]))
+        response_frame = Frame(component.address.logical, initiator if response == 0x47 else 15,
+                               response, operands).raw.hex(":")
+        # Records contain the actual wire bytes, including hook rewrites.
+        # Opcodes and cached UI observations alone cannot prove that the DUT
+        # discovered this current name, physical address and device type.
         requests = [record for record in traffic
                     if record["direction"] == "rx" and record["opcode"] == query
                     and record["source"] == initiator
                     and record["destination"] == component.address.logical
+                    and record.get("frame") == request_frame
                     and record.get("wire_timestamp_ns", started_ns) >= started_ns]
         if not any(reply["direction"] == "tx" and reply["opcode"] == response
                    and reply["source"] == component.address.logical
                    and reply.get("ok")
                    and reply["timestamp"] >= request["timestamp"]
                    and reply["destination"] == (initiator if response == 0x47 else 15)
+                   and reply.get("frame") == response_frame
                    for request in requests for reply in traffic):
             return False
     return True
@@ -207,7 +218,9 @@ def _wire_initiators(records, components, started_ns):
                 and record["timestamp"] * 1_000_000_000 >= started_ns
                 and record["destination"] in occupants[gpio]
                 and 0 <= record["source"] < 15
-                and record["source"] not in occupants[gpio]):
+                and record["source"] not in occupants[gpio]
+                and record.get("frame") == Frame(record["source"], record["destination"],
+                                                  record["opcode"]).raw.hex(":")):
             sources[gpio].add(record["source"])
     return {gpio: next(iter(values)) for gpio, values in sources.items() if len(values) == 1}
 

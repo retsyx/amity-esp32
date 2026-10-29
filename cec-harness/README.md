@@ -80,6 +80,8 @@ assertion failure or exception, in that order.
 `DUT.scan_hdmi()` uses the existing UI scan operations and returns a
 `ScanResult`; `assert_contains()` checks the requested component identities and
 fresh physical exchanges through the common discovery implementation.
+Those exchanges must carry the expected OSD name, physical address and device
+type in their actual wire frames; matching cached UI rows alone cannot pass.
 `assert_contains_only()` additionally rejects every extra or duplicate scan
 entry. `assert_on(component, endpoint)` checks the DUT-reported owner, tentacle
 number and front/back side using the existing UI's qualified equipment

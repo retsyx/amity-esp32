@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import (AvrComponent, DUT, PlaybackComponent, ScanResult,
+from amity_harness import (AvrComponent, DUT, Frame, PlaybackComponent, ScanResult,
                            TvComponent, assign_addresses)
 
 
@@ -51,12 +51,17 @@ class ScanAssertionSnapshotTests(unittest.TestCase):
             for offset, (query, reply) in enumerate(((0x46, 0x47), (0x83, 0x84))):
                 common = {"component": component.name, "gpio": component.gpio, "transport": "wire"}
                 timestamp = 2.0 + index + offset * 0.2
+                destination = initiator if reply == 0x47 else 15
+                operands = (component.name.encode("ascii") if reply == 0x47 else
+                            component.address.physical.to_bytes(2, "big") + bytes([component.device_type]))
                 records.extend([
                     {**common, "direction": "rx", "opcode": query, "source": initiator,
                      "destination": component.address.logical, "timestamp": timestamp,
+                     "frame": Frame(initiator, component.address.logical, query).raw.hex(":"),
                      "wire_timestamp_ns": int(timestamp * 1e9)},
                     {**common, "direction": "tx", "opcode": reply, "source": component.address.logical,
-                     "destination": initiator if reply == 0x47 else 15, "timestamp": timestamp + 0.1,
+                     "destination": destination, "timestamp": timestamp + 0.1,
+                     "frame": Frame(component.address.logical, destination, reply, operands).raw.hex(":"),
                      "wire_timestamp_ns": int((timestamp + 0.1) * 1e9), "ok": True},
                 ])
         status = {"discovering": False, "discovery_generation": 2, "expected_boot_id": boot,

@@ -16,8 +16,13 @@ RadioResult RadioArbiter::request(RadioMode requested,uint64_t now,uint32_t dura
 }
 RadioResult RadioArbiter::cleanup_complete(uint64_t generation,uint64_t now){
     if(generation!=generation_||owner_!=RadioMode::transition)return RadioResult::stale;
-    if(now>=cancel_deadline_||now>=deadline_){return RadioResult::timed_out;}
-    remote_reconnect_=false;setup_handle_.reset();owner_=next_;return RadioResult::granted;
+    const bool expired=now>=cancel_deadline_||now>=deadline_;
+    // Cleanup is now proven even if its caller's bounded wait has expired.
+    // Consume it without reviving the expired setup reservation, so the radio
+    // worker can resume reconnect and a later request can reserve fresh work.
+    remote_reconnect_=false;setup_handle_.reset();owner_=expired?RadioMode::operational:next_;
+    if(owner_==RadioMode::operational){next_=RadioMode::operational;deadline_=cancel_deadline_=0;}
+    return expired?RadioResult::timed_out:RadioResult::granted;
 }
 RadioResult RadioArbiter::release(uint64_t generation,uint64_t now){
     if(generation!=generation_||owner_==RadioMode::operational)return RadioResult::stale;

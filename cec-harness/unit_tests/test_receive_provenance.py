@@ -102,6 +102,23 @@ class ReceiveProvenanceTests(unittest.TestCase):
             self.assertEqual(received[0]["wire_timestamp_ns"], stale_wire_ns)
             self.assertFalse(_fresh_discovery(session.records, avr, 0, started_ns))
 
+    def test_rewritten_identity_replies_cannot_establish_the_expected_wire_identity(self):
+        avr = self.component()
+        with CecSession([avr], backend_factory=IdleBackend) as session:
+            started_ns = time.monotonic_ns()
+            avr.hooks.before_tx = lambda component, frame: Frame(
+                frame.source, frame.destination, frame.opcode,
+                b"Wrong AVR" if frame.opcode == 0x47 else b"\x20\x00\x04")
+            avr.receive(Frame(0, 5, 0x46, timestamp_ns=time.monotonic_ns()))
+            avr.receive(Frame(0, 5, 0x83, timestamp_ns=time.monotonic_ns()))
+
+            replies = [record for record in session.records if record["direction"] == "tx"
+                       and record["timestamp"] * 1_000_000_000 >= started_ns]
+            self.assertEqual([record["frame"] for record in replies],
+                             ["50:47:57:72:6f:6e:67:20:41:56:52", "5f:84:20:00:04"])
+            self.assertTrue(all(record["ok"] for record in replies))
+            self.assertFalse(_fresh_discovery(session.records, avr, 0, started_ns))
+
 
 if __name__ == "__main__":
     unittest.main()

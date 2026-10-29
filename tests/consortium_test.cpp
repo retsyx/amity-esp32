@@ -220,9 +220,11 @@ void radio_and_gesture_tests(){
     using G=device_settings::SetupGesture;using Button=device_settings::SetupGestureButton;
     auto gesture=[](uint64_t duration){Button b;assert(b.update(false,0)==G::none);assert(b.update(false,50)==G::none);assert(b.update(true,100)==G::none);assert(b.update(true,150)==G::none);assert(b.update(false,100+duration)==G::none);return b.update(false,150+duration);};
     assert(gesture(2999)==G::initial_matter);assert(gesture(3000)==G::consortium);assert(gesture(9999)==G::consortium);
-    // The existing destructive hold still starts after its press debounce.
-    assert(gesture(10049)==G::consortium);assert(gesture(10050)==G::factory_reset);
-    Button held;assert(held.update(false,0)==G::none);assert(held.update(false,50)==G::none);assert(held.update(true,100)==G::none);assert(held.update(true,150)==G::none);assert(held.update(true,3150)==G::none);assert(held.update(true,10150)==G::factory_reset);assert(held.update(false,10200)==G::none);assert(held.update(false,10250)==G::none);
+    // Add and reset share the accepted physical press edge. Release debounce
+    // cannot promote a sub-ten-second hold or extend Add beyond ten seconds.
+    assert(gesture(10000)==G::factory_reset);assert(gesture(10049)==G::factory_reset);assert(gesture(10050)==G::factory_reset);
+    Button held;assert(held.update(false,0)==G::none);assert(held.update(false,50)==G::none);assert(held.update(true,100)==G::none);assert(held.update(true,150)==G::none);assert(held.update(true,3150)==G::none);assert(held.update(true,10099)==G::none);assert(held.next_check_ms(10099)==1);assert(held.update(true,10100)==G::factory_reset);assert(held.update(true,10150)==G::none);assert(held.update(false,10200)==G::none);assert(held.update(false,10250)==G::none);
+    Button delayed;assert(delayed.update(false,0)==G::none);assert(delayed.update(false,50)==G::none);assert(delayed.update(true,100)==G::none);assert(delayed.update(true,250)==G::none);assert(delayed.next_check_ms(250)==9850);assert(delayed.update(true,10100)==G::factory_reset);
     Button bootheld;assert(bootheld.update(true,0)==G::none);assert(bootheld.update(true,50)==G::none);assert(bootheld.update(true,20000)==G::none);assert(bootheld.update(false,20001)==G::none);assert(bootheld.update(false,20051)==G::none);
 }
 void bootstrap_tests(){

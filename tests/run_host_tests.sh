@@ -35,7 +35,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 for scenario in idle boot-held hold short cancel boot-release-hold latched-edge retry \
   allocation-failure shared-service-failure handler-failure setup-short setup-before-three-seconds \
   setup-three-seconds setup-release-bounce setup-press-bounce-short setup-press-bounce-three-seconds \
-  setup-before-reset setup-reset-release setup-long setup-boot-held; do
+  setup-before-reset setup-reset-release setup-after-reset setup-long setup-boot-held; do
   "$out/reset_button_interrupt_test" "$scenario"
 done
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \

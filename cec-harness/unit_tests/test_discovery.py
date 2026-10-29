@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import CecAddress, PowerState
+from amity_harness import CecAddress, Frame, PowerState
 from amity_harness.discovery import ScanResult, scan_hdmi
 
 
@@ -28,12 +28,17 @@ def exchanges(device, initiator=4, transport="wire"):
     for index, (query, response) in enumerate(((0x46, 0x47), (0x83, 0x84))):
         common = {"component": device.name, "gpio": device.gpio, "transport": transport}
         timestamp = 11.0 + index
+        destination = initiator if response == 0x47 else 15
+        operands = (device.name.encode("ascii") if response == 0x47 else
+                    device.address.physical.to_bytes(2, "big") + bytes([device.device_type]))
         records.extend([
             {**common, "direction": "rx", "source": initiator,
              "destination": device.address.logical, "opcode": query,
+             "frame": Frame(initiator, device.address.logical, query).raw.hex(":"),
              "timestamp": timestamp, "wire_timestamp_ns": int(timestamp * 1e9)},
             {**common, "direction": "tx", "source": device.address.logical,
-             "destination": initiator if response == 0x47 else 15, "opcode": response,
+             "destination": destination, "opcode": response,
+             "frame": Frame(device.address.logical, destination, response, operands).raw.hex(":"),
              "timestamp": timestamp + 0.1, "wire_timestamp_ns": int((timestamp + 0.1) * 1e9), "ok": True},
         ])
     return records

@@ -28,6 +28,8 @@ Keep the original controller's input and gesture algorithms, startup/selection w
 
 An admitted hold retains its exact recipient even when later name lookup changes. Final release is a recipient-stream decision over all keys on the same physical wire, initiator and destination. Exact cleanup, stale-input generation checks and bounded causal IPC remain necessary. They are transient lifecycle state, not a durable activity graph.
 
+The controller retains a hold token only after owner delivery is consumed. Local adapter/authority rejection before that admission leaves no token; its button-up is a no-op and the first fresh press after the adapter returns reaches the owner. A consumed down whose CEC attempt fails still retains its lifecycle token until physical up so unchanged down reports cannot restart it. `tests/owned_hub_test.sh` exercises the actual qualified local path through detach, rejected down/up, reattach and the first fresh down, followed by failed-TX suppression and a later new press. This closes the rejected-local-token gap without changing the baseline's per-key completion or release behavior; the existing local/remote transcript and settling comparisons remain required.
+
 ## 5. Queues and completion
 
 Use bounded IPC where thread/task communication requires it. Preserve causal down/up ordering and failed-key no-op behavior under pressure. The executor submits directly to CEC and does not retain ordinary work for capacity. Only CEC has a transmit FIFO: eight total active/queued frames per wire, including releases. Every full-FIFO TX drop is logged; a dropped release remains dropped.

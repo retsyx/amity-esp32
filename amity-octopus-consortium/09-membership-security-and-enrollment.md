@@ -14,6 +14,16 @@ At boot, automatically open the bounded Matter setup window when the current fab
 
 On the original main, open **Amity devices → Add** to scan directly for nearby unclaimed boards. Hold the candidate's **FW RESET** for at least three seconds and release before ten seconds. Choose the candidate if several are found, enter a valid unique **Name**, then add it. The candidate must remain within the existing bounded physical setup window. A ten-second hold retains its factory-reset meaning; the shorter setup action must not fire first.
 
+Both hold thresholds use the same accepted physical press edge. Debounce confirms
+that edge without shifting the hold clock, and the release edge stops the clock
+before release debounce. A 9.999-second release opens Add; a 10-second release or
+continued hold resets once. `tests/consortium_test.cpp` covers these boundaries,
+delayed press confirmation and one-shot reset; the actual setup/reset GPIO task
+in `tests/reset_button_interrupt_test.cpp` covers releases before, at and after
+ten seconds, press/release bounce and boot-held suppression. This explicitly
+aligns the setup gesture's reset threshold with its existing physical Add clock;
+the baseline's separate debounced reset clock no longer extends the Add range.
+
 Normalize names to lowercase after trimming surrounding whitespace: 1–32 letters, digits or hyphens, with no leading/trailing hyphen. Bind the selected candidate ID and proposed hostname into admission before applying credentials or membership. A hostname is metadata, never authority or equipment identity. Do not turn old cosmetic labels into hostnames during migration.
 
 ## Admission profiles

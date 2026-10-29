@@ -115,6 +115,39 @@ static void owner_keys(){
     authority=false;bad.sequence=++sequence;assert(!hub.submit_owned(bad,auth));authority=true;
     fixture_async_autocomplete=true;fixture_complete_all();run_idle(2);
 }
+static void rejected_local_hold(){
+    fixture_present=true;
+    cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
+        {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
+         {2,cec::Side::Front,7},{2,cec::Side::Back,8},{3,cec::Side::Front,9},{3,cec::Side::Back,44}},-1,-1};
+    profile.presence[0]={20,true,false,false};int detector=1;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);
+    assert(hub.set_presence_reader([&](int){return detector;})==ESP_OK);assert(hub.start(profile)==ESP_OK);
+    assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
+        {{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},{},controller,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();
+    fixture_async_autocomplete=false;
+    detector=0;run_idle(1);fixture_sent.clear();
+    assert(hub.press_key(0x41,true));run_one_command();
+    assert(hub.release_key(0x41));run_one_command();
+    assert(fixture_sent.empty());
+    // Rejected local admission has no consumed hold or cleanup token. The
+    // returning adapter must receive the very next physical down, once.
+    detector=1;run_idle(1);assert(fixture_sent.empty());
+    assert(hub.press_key(0x41,true));run_one_command();
+    const auto presses=[](){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& f){
+        return f.gpio==2&&f.frame.size==3&&f.frame.data[1]==0x44&&f.frame.data[2]==0x41;});};
+    assert(presses()==1);
+    assert(hub.press_key(0x41,true));run_one_command();assert(presses()==1);
+    // A consumed down still retains its token on a wire failure: unchanged
+    // down reports cannot restart it, and the eventual up emits no new TX.
+    fixture_complete_all(cec::TxResult::Nack);run_idle(1);
+    const auto failed_count=fixture_sent.size();
+    assert(hub.press_key(0x41,true));run_one_command();assert(fixture_sent.size()==failed_count);
+    assert(hub.release_key(0x41));run_one_command();assert(fixture_sent.size()==failed_count);
+    assert(hub.press_key(0x41,true));run_one_command();assert(presses()==2);
+    assert(hub.release_key(0x41));run_one_command();fixture_complete_all();fixture_async_autocomplete=true;
+}
 static void every_adapter(){
     fixture_present=true;
     fixture_peer_address=[](int gpio)->uint8_t{return gpio==1||gpio==5||gpio==7||gpio==9?0:4;};
@@ -206,4 +239,4 @@ static void remote_receiver_parity(){
     const auto local=receiver_transcript(false),remote=receiver_transcript(true);assert(local.size()==remote.size());
     for(size_t phase=0;phase<local.size();++phase){if(local[phase].size()!=remote[phase].size()){for(const auto* trace:{&local[phase],&remote[phase]}){std::fprintf(stderr,"phase=%zu trace=%zu\n",phase,trace->size());for(const auto& f:*trace){std::fprintf(stderr,"gpio%d attempts%u:",f.gpio,f.attempts);for(unsigned j=0;j<f.frame.size;++j)std::fprintf(stderr," %02x",f.frame.data[j]);std::fprintf(stderr,"\n");}}}assert(local[phase].size()==remote[phase].size());for(size_t i=0;i<local[phase].size();++i){const auto& a=local[phase][i];const auto& b=remote[phase][i];assert(a.gpio==b.gpio&&a.attempts==b.attempts&&a.frame.size==b.frame.size);assert(std::memcmp(a.frame.data,b.frame.data,a.frame.size)==0);}}
 }
-int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();every_adapter();remote_receiver_parity();std::puts("Original local/owned frame parity, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();rejected_local_hold();every_adapter();remote_receiver_parity();std::puts("Original local/owned frame parity, first OSD match, startup taps, observation pressure, rejected local hold/reconnect, independent owner keys, authorization, and all-adapter discovery passed");}

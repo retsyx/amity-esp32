@@ -28,8 +28,8 @@
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 6761,
-      "sha256": "f286d62fc92e8c6fa0b539118ea359a7639c5bc9fe3e0a8ab71ccc26c5af2b4b"
+      "size_bytes": 7529,
+      "sha256": "0d6cba13881861d7b6b62e952c616c2ecd67f1016e06305192335b0435dceb6b"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
@@ -38,13 +38,13 @@
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 6557,
-      "sha256": "90b6b8aaedec81bf1741f600c8c1c06def1436ace0fc18bda46823a8789649dd"
+      "size_bytes": 7280,
+      "sha256": "b7d6a51a84034b09781b735fe4ce4e118491be00e0eba632af8e8667391cbfe9"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
-      "size_bytes": 6262,
-      "sha256": "7b1d579d89a97f76c19ec9e54d82e27bcf830656b998edf69468f9c1b2709ded"
+      "size_bytes": 6815,
+      "sha256": "272fab6101ecc79c49220e1463017735b38263721871aa41316ce1093acc71d8"
     },
     {
       "path": "11-config-storage-and-migration.md",
@@ -68,8 +68,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 11696,
-      "sha256": "695c1ef54ad49e3b7e6c46f8e318b1aef9ad17a687b646fc97fe03f3dee61bb2"
+      "size_bytes": 12176,
+      "sha256": "626d381786f6cfc3d3c617be98c874e78315462a406d927a66160dd188d91511"
     },
     {
       "path": "19-source-baseline.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 5843,
-      "sha256": "69a0b9431dce03b0d9d3032b866c147ab5d7c64455112c26ced92b0b1357b7ed"
+      "size_bytes": 7519,
+      "sha256": "5b3f523f3d5fe904bfe4d045a0194cc2132bf691f5fcf1fe6d6b26fd6dc2f10b"
     },
     {
       "path": "examples/README.md",
