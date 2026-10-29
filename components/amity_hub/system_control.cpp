@@ -23,14 +23,10 @@ esp_err_t SystemControl::configure_v2(config_store::ConfigurationV2 config,std::
     std::string error;
     if(!accepts_local_input()||!config_store::validate_configuration_v2(config,error)||config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
     std::vector<system::ScopedSelector> selectors;
-    for(const auto& c:config.components)for(const auto& name:c.record.qualified_names){
-        std::vector<system::OwnedQuirk> effective;
-        for(const auto& q:config.quirks)if(!q.component_id||q.component_id==c.record.component_id)effective.push_back({q.vendor_id,q.power_on,q.power_off});
-        selectors.push_back({c.record.component_id.str(),name,std::move(effective)});
-    }
-    std::vector<Quirk> quirks;for(const auto& q:config.quirks)if(!q.component_id)quirks.push_back({q.vendor_id,q.power_on,q.power_off});
+    for(const auto& c:config.components)for(const auto& name:c.record.qualified_names)
+        selectors.push_back({c.record.component_id.str(),name});
     auto stored=std::make_shared<const config_store::ConfigurationV2>(std::move(config));
-    const auto result=local_.configure_scoped(activities(*stored),std::move(selectors),std::move(quirks),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,std::move(commit),stored->presentation_revision);
+    const auto result=local_.configure_scoped(activities(*stored),std::move(selectors),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,std::move(commit),stored->presentation_revision);
     if(result==ESP_OK)std::atomic_store(&active_,std::move(stored));
     return result;
 }

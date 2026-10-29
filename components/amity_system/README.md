@@ -10,4 +10,4 @@ Original `Hub`/owner handling decides CEC frames, ordering, attempts, repeats/re
 
 Preserve strong nonzero stable IDs, canonical bounded numeric codecs, exact selector scope and the shared OSD decoder's octet rules. Keep runtime held recipients/completions and message authorization fences needed to prevent stale work reaching another endpoint; these are distinct from a stored permission to use an activity. Physical CEC protocol/FIFO remains in the CEC layer.
 
-Software transcript tests must compare baseline local and scoped local/remote handling for AVR/audio/switch, quirks, absent equipment return, address changes during holds and hard FIFO8. Physical electrical/AV/radio behavior requires separate qualification.
+Software transcript tests must compare baseline local and scoped local/remote handling for AVR/audio/switch, absent equipment return, address changes during holds and hard FIFO8. Physical electrical/AV/radio behavior requires separate qualification.

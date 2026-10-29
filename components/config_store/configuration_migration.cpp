@@ -62,7 +62,7 @@ ConfigResult migrate_legacy(ConfigurationStore& store,ConfigBackend& backend,con
     model::ConsortiumId consortium,model::OctopusId owner,const std::vector<LegacyEvidence>& evidence,
     const std::function<bool(uint8_t*,size_t)>& random,ConfigurationV2& out,std::vector<std::string>& tasks,std::string& error){
     ConfigurationV2 active;const auto recovered=store.recover(active,error);if(recovered==ConfigResult::ok){out=active;tasks.clear();return recovered;}if(recovered!=ConfigResult::missing)return recovered;
-    if(!consortium||!owner||original.size()>configuration_compatibility_limit||original.find('\0')!=std::string::npos||legacy.activities.size()>16||legacy.quirks.size()>32){error="Invalid legacy migration input";return ConfigResult::invalid;}
+    if(!consortium||!owner||original.size()>configuration_compatibility_limit||original.find('\0')!=std::string::npos||legacy.activities.size()>16){error="Invalid legacy migration input";return ConfigResult::invalid;}
     std::string backup;const auto backup_status=backend.read("legacy_backup",backup);
     if(backup_status==ReadResult::error||(backup_status==ReadResult::found&&backup!=original)){error="Legacy backup conflict or storage error";return ConfigResult::recovery_required;}
     if(backup_status==ReadResult::missing&&!write_checked(backend,"legacy_backup",original))return ConfigResult::storage_error;
@@ -79,7 +79,6 @@ ConfigResult migrate_legacy(ConfigurationStore& store,ConfigBackend& backend,con
         Builder builder{candidate,evidence,ids,{},owner};
         for(size_t n=0;n<legacy.activities.size();++n){ids.next=1+n*31;if(!builder.activity(legacy.activities[n])||ids.next>1+(n+1)*31){error="Migration identity capacity exhausted";return ConfigResult::capacity;}}
         for(const auto& alias:legacy.aliases)if(alias.slot<candidate.external_slots.size()){candidate.external_slots[alias.slot].alias=alias.alias;candidate.external_slots[alias.slot].hidden=alias.hidden;}
-        for(const auto& q:legacy.quirks)candidate.quirks.push_back({{},q.vendor_id,q.power_on,q.power_off});
     }
     bool changed=false;if(!bind_original_controller(candidate,owner,changed,error))return ConfigResult::recovery_required;
     if(!validate_configuration_v2(candidate,error))return ConfigResult::invalid;

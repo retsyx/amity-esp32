@@ -32,7 +32,7 @@ A resolved endpoint has the same scope plus `logical_address`. Logical address, 
 
 ## 3. Saved activity intent
 
-Save the original activity choices: name, display, source, audio, optional switch device and switch input. Stable activity/component IDs, labels, activity order, home-app slots/aliases and original vendor quirks are ordinary configuration. Existing zone/presentation references may organize those choices without changing the local execution algorithm.
+Save the original activity choices: name, display, source, audio, optional switch device and switch input. Stable activity/component IDs, labels, activity order, home-app slots/aliases are ordinary configuration. Existing zone/presentation references may organize those choices without changing the local execution algorithm.
 
 Do not store activity `enabled`, `route_id`, executable route steps, binding approvals, confirmed domains, capability approvals, signal graphs, resource allocations or physical-address evidence as permission to use those choices. The absence of equipment changes the outcome of current lookup; it does not change saved intent.
 
@@ -49,5 +49,5 @@ Runtime state includes discovery caches, current activity/input generation, exac
 - The same activity and observations produce equivalent local and remote CEC frames, order, attempt budgets and key lifecycle.
 - Temporarily absent owner/adapter/name can return without changing or enabling the activity.
 - Name resolution never crosses owner, adapter or side; renaming an Amity does not change equipment identity.
-- Existing AVR/audio/switch and vendor-quirk behavior remains available without topology approval.
+- Existing AVR/audio/switch and power behavior remains available without topology approval.
 - Saved configuration contains user intent and selectors, with no executable graph or activity availability bit.

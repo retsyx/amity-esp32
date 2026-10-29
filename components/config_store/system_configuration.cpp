@@ -110,12 +110,6 @@ template<class T> void ids(cJSON* o, const char* k, const std::vector<T>& values
 template<class T> bool id_list(cJSON* o, const char* k, std::vector<T>& values, size_t maximum) {
     return list(o, k, values, maximum, [](cJSON* v, T& out) { if (!cJSON_IsString(v)) return false; auto p = T::parse(v->valuestring); if (!p) return false; out = *p; return true; });
 }
-bool bytes(cJSON* o, const char* key, std::vector<uint8_t>& out) {
-    return list(o, key, out, 15, [](cJSON* v, uint8_t& byte) {
-        if (!cJSON_IsNumber(v) || !std::isfinite(v->valuedouble) || v->valuedouble != v->valueint || v->valueint < 0 || v->valueint > 255) return false;
-        byte = static_cast<uint8_t>(v->valueint); return true;
-    });
-}
 std::string printed(cJSON* root) { char* s = cJSON_PrintUnformatted(root); if (!s) return {}; std::string out(s); cJSON_free(s); return out; }
 bool label(cJSON* o, std::string& value, std::string& generated, bool& override) {
     return text(o, "label", value) && text(o, "generated_label", generated, 128, true) && boolean(o, "label_override", override, true);
@@ -140,14 +134,13 @@ bool parse_configuration_v2(const std::string& input, ConfigurationV2& out, std:
     const auto fail=[&]{error="Invalid saved activity field, selector, identifier or revision";return false;};
     if(!root||!number(root.get(),"version",version,3)||(version!=2&&version!=3))return fail();
     const bool legacy=version==2;
-    if(!(legacy?keys(root.get(),{"version","consortium_id","config_revision","presentation_revision","primary_zone_id","controller_octopus_id","activity_order","octopuses","components","domains","binding_policies","resources","signal_edges","routes","activities","zones","external_slots","quirks","remotes","primary_remote_id"}):keys(root.get(),{"version","consortium_id","config_revision","presentation_revision","primary_zone_id","controller_octopus_id","activity_order","octopuses","components","activities","zones","external_slots","quirks"}))||
+    if(!(legacy?keys(root.get(),{"version","consortium_id","config_revision","presentation_revision","primary_zone_id","controller_octopus_id","activity_order","octopuses","components","domains","binding_policies","resources","signal_edges","routes","activities","zones","external_slots","remotes","primary_remote_id"}):keys(root.get(),{"version","consortium_id","config_revision","presentation_revision","primary_zone_id","controller_octopus_id","activity_order","octopuses","components","activities","zones","external_slots"}))||
         !identifier(root.get(),"consortium_id",c.consortium_id)||!revision(root.get(),"config_revision",c.config_revision)||!revision(root.get(),"presentation_revision",c.presentation_revision)||!identifier(root.get(),"primary_zone_id",c.primary_zone_id))return fail();
     if(!list(root.get(),"octopuses",c.octopuses,64,[](cJSON* o,ConfiguredOctopus& b){uint64_t capacity=1;return keys(o,{"octopus_id","label","generated_label","label_override","supported_tentacles"})&&identifier(o,"octopus_id",b.octopus_id)&&label(o,b.label,b.generated_label,b.label_override)&&(!field(o,"supported_tentacles")||number(o,"supported_tentacles",capacity,amity::max_tentacles))&&(b.supported_tentacles=static_cast<uint8_t>(capacity),true);})||
        !list(root.get(),"components",c.components,64,[&](cJSON* o,ConfiguredComponent& v){return (legacy?keys(o,{"component_id","label","generated_label","label_override","kind","qualified_names","capabilities"}):keys(o,{"component_id","label","generated_label","label_override","kind","qualified_names"}))&&identifier(o,"component_id",v.record.component_id)&&label(o,v.record.label,v.generated_label,v.label_override)&&text(o,"kind",v.kind,32)&&list(o,"qualified_names",v.record.qualified_names,16,[](cJSON* n,model::QualifiedDeviceName& selected){return name(n,selected);});})||
        !list(root.get(),"activities",c.activities,64,[&](cJSON* o,ConfiguredActivity& a){uint64_t input=0;if(!(legacy?keys(o,{"activity_id","zone_id","route_id","label","generated_label","label_override","enabled","source","display","audio","switch_device","switch_input"}):keys(o,{"activity_id","zone_id","label","generated_label","label_override","source","display","audio","switch_device","switch_input"}))||!identifier(o,"activity_id",a.activity_id)||!identifier(o,"zone_id",a.zone_id)||!label(o,a.label,a.generated_label,a.label_override)||!optional_id(o,"source",a.source)||!optional_id(o,"display",a.display)||!optional_id(o,"audio",a.audio)||!optional_id(o,"switch_device",a.switch_device)||!number(o,"switch_input",input,255))return false;a.switch_input=static_cast<uint8_t>(input);return true;})||
        !list(root.get(),"zones",c.zones,16,[](cJSON* o,ConfiguredZone& z){return keys(o,{"zone_id","label","generated_label","label_override","activity_order"})&&identifier(o,"zone_id",z.zone_id)&&label(o,z.label,z.generated_label,z.label_override)&&id_list(o,"activity_order",z.activity_order,64);})||
-       !list(root.get(),"external_slots",c.external_slots,16,[](cJSON* o,ExternalSlot& s){uint64_t index;if(!keys(o,{"slot","activity_id","tombstone","hidden","alias"})||!number(o,"slot",index,15)||!identifier(o,"activity_id",s.activity_id)||!boolean(o,"tombstone",s.tombstone)||!boolean(o,"hidden",s.hidden)||!text(o,"alias",s.alias))return false;s.slot=static_cast<uint16_t>(index);return true;})||
-       !list(root.get(),"quirks",c.quirks,32,[](cJSON* o,ScopedQuirk& q){uint64_t vendor;if(!keys(o,{"component_id","vendor_id","power_on","power_off"})||!(cJSON_IsNull(field(o,"component_id"))||identifier(o,"component_id",q.component_id))||!number(o,"vendor_id",vendor,0xffffff)||!bytes(o,"power_on",q.power_on)||!bytes(o,"power_off",q.power_off))return false;q.vendor_id=static_cast<uint32_t>(vendor);return true;}))return fail();
+       !list(root.get(),"external_slots",c.external_slots,16,[](cJSON* o,ExternalSlot& s){uint64_t index;if(!keys(o,{"slot","activity_id","tombstone","hidden","alias"})||!number(o,"slot",index,15)||!identifier(o,"activity_id",s.activity_id)||!boolean(o,"tombstone",s.tombstone)||!boolean(o,"hidden",s.hidden)||!text(o,"alias",s.alias))return false;s.slot=static_cast<uint16_t>(index);return true;}))return fail();
     if(field(root.get(),"controller_octopus_id")){model::OctopusId controller;if(!identifier(root.get(),"controller_octopus_id",controller))return fail();c.controller_octopus_id=controller;}
     if(!legacy&&!c.controller_octopus_id)return fail();
     if(field(root.get(),"activity_order")&&!id_list(root.get(),"activity_order",c.activity_order,64))return fail();
@@ -172,7 +165,6 @@ std::string serialize_configuration_v2(const ConfigurationV2& input,bool executa
     array(root.get(),"activities",c.activities,[&](const auto& a){auto* o=cJSON_CreateObject();id(o,"activity_id",a.activity_id);id(o,"zone_id",a.zone_id);labels(o,a.label,a.generated_label,a.label_override);optional(o,"source",a.source);optional(o,"display",a.display);optional(o,"audio",a.audio);optional(o,"switch_device",a.switch_device);cJSON_AddNumberToObject(o,"switch_input",a.switch_input);return o;});
     array(root.get(),"zones",c.zones,[&](const auto& z){auto* o=cJSON_CreateObject();id(o,"zone_id",z.zone_id);labels(o,z.label,z.generated_label,z.label_override);if(!executable)ids(o,"activity_order",z.activity_order);return o;});
     array(root.get(),"external_slots",c.external_slots,[&](const auto& s){auto* o=cJSON_CreateObject();cJSON_AddNumberToObject(o,"slot",s.slot);id(o,"activity_id",s.activity_id);cJSON_AddBoolToObject(o,"tombstone",s.tombstone);if(!executable){cJSON_AddBoolToObject(o,"hidden",s.hidden);string(o,"alias",s.alias);}return o;});
-    array(root.get(),"quirks",c.quirks,[](const auto& q){auto* o=cJSON_CreateObject();if(q.component_id)id(o,"component_id",q.component_id);else cJSON_AddNullToObject(o,"component_id");cJSON_AddNumberToObject(o,"vendor_id",q.vendor_id);array(o,"power_on",q.power_on,[](uint8_t b){return cJSON_CreateNumber(b);});array(o,"power_off",q.power_off,[](uint8_t b){return cJSON_CreateNumber(b);});return o;});
     return printed(root.get());
 }
 std::string sha256_hex(std::string_view input) {
@@ -247,7 +239,7 @@ bool bind_original_controller(ConfigurationV2& config, model::OctopusId original
 
 bool validate_configuration_v2(const ConfigurationV2& c,std::string& error) {
     const auto fail=[&](const char* reason){error=reason;return false;};
-    if(!c.consortium_id||!c.config_revision||!c.presentation_revision||!c.primary_zone_id||c.components.size()>64||c.activities.size()>64||c.zones.empty()||c.zones.size()>16||c.external_slots.size()>16||c.quirks.size()>32||c.octopuses.empty()||c.octopuses.size()>64)return fail("Configuration identifiers, revisions or capacity invalid");
+    if(!c.consortium_id||!c.config_revision||!c.presentation_revision||!c.primary_zone_id||c.components.size()>64||c.activities.size()>64||c.zones.empty()||c.zones.size()>16||c.external_slots.size()>16||c.octopuses.empty()||c.octopuses.size()>64)return fail("Configuration identifiers, revisions or capacity invalid");
     std::set<model::OctopusId> owners;std::set<model::ComponentId> components;std::set<model::ActivityId> activities;std::set<model::ZoneId> zones;std::set<std::string> selectors;
     for(const auto& b:c.octopuses)if(!b.octopus_id||!owners.insert(b.octopus_id).second||b.label.size()>128||b.generated_label.size()>128||!b.supported_tentacles||b.supported_tentacles>amity::max_tentacles)return fail("Invalid Amity identity or adapter capacity");
     if(c.controller_octopus_id&&(!*c.controller_octopus_id||!owners.count(*c.controller_octopus_id)))return fail("The original controller must be retained");
@@ -273,7 +265,6 @@ bool validate_configuration_v2(const ConfigurationV2& c,std::string& error) {
     for(const auto& z:c.zones){std::set<model::ActivityId> order;for(auto id:z.activity_order)if(!order.insert(id).second||std::none_of(c.activities.begin(),c.activities.end(),[&](const auto& a){return a.activity_id==id&&a.zone_id==z.zone_id;}))return fail("Invalid screen activity order");for(const auto& a:c.activities)if(a.zone_id==z.zone_id&&!order.count(a.activity_id))return fail("Every activity must occur in its screen order");}
     std::set<uint16_t> slots;std::set<model::ActivityId> assigned;
     for(const auto& s:c.external_slots)if(s.slot>=16||!s.activity_id||!slots.insert(s.slot).second||!assigned.insert(s.activity_id).second||(!s.tombstone&&!activities.count(s.activity_id))||s.alias.size()>128)return fail("Invalid external selector registry");
-    for(const auto& q:c.quirks)if((q.component_id&&!components.count(q.component_id))||q.vendor_id>0xffffff||q.power_on.size()>15||q.power_off.size()>15)return fail("Invalid vendor recipe");
     if(serialize_configuration_v2(c).size()>configuration_compatibility_limit)return fail("Configuration exceeds saved payload capacity");
     error.clear();return true;
 }

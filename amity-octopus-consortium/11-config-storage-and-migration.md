@@ -4,13 +4,13 @@
 
 ## 1. Persistent configuration
 
-Save stable component/activity IDs, user/default labels, qualified OSD selectors, original display/source/audio/switch selections and switch inputs, activity order, stable home-app slots/aliases and original vendor quirks. A qualified equipment selector is installation scope plus Amity device ID, stable HDMI adapter, front/back side and OSD name. Device hostnames are presentation/network metadata and do not replace stable identity.
+Save stable component/activity IDs, user/default labels, qualified OSD selectors, original display/source/audio/switch selections and switch inputs, activity order, stable home-app slots/aliases. A qualified equipment selector is installation scope plus Amity device ID, stable HDMI adapter, front/back side and OSD name. Device hostnames are presentation/network metadata and do not replace stable identity.
 
 Do not save activity `enabled`, route IDs/steps, binding policies, confirmed domains, capability approvals, signal edges, resource graphs or physical-address evidence as execution permission. Do not save current logical addresses, observations, held buttons, valid grants or a current-activity/resume journal. Missing equipment remains a configured selection and uses ordinary live lookup.
 
 ## 2. Validation and persistence boundaries
 
-Validate syntax, stable identity form, selector scope, adapter capacity, references, original field bounds and ordering/slot invariants. Validation must not require devices to answer, establish a physical path or support an additional approved capability profile. Separate AVR audio, explicit receiver input and original vendor quirks remain valid configuration.
+Validate syntax, stable identity form, selector scope, adapter capacity, references, original field bounds and ordering/slot invariants. Validation must not require devices to answer, establish a physical path or support an additional approved capability profile. Separate AVR audio and explicit receiver input remain valid configuration.
 
 Retain crash-consistent staging, readback/integrity validation and commit markers, expected revision checks, bounded storage admission and explicit recoverable errors. No owner replica, owner-ready/applied acknowledgment vector or staged-owner digest is stored. The controller saves valid intent independently of offline peers. Its queued owner application reports both configuration and presentation revisions through volatile UI status; enqueue success alone is not an applied acknowledgment. These protect saved intent and concurrent edits; they are not a distributed execution prepare/commit protocol. Configuration and presentation revisions distinguish storage/UI changes; they do not select a different live configure algorithm. Preserve original unconditional configure-to-standby/generation behavior even for label-only edits. Presentation edits cannot rewrite OSD selectors or pairing ownership.
 
@@ -18,7 +18,7 @@ Identity, membership trust, credentials, durable original-controller role, reset
 
 ## 3. Version-1 migration
 
-Keep the exact legacy configuration backup and stable ID mapping needed for restart-safe conversion. Preserve every activity name and role field, optional switch/input, original order, home-app slots, aliases and vendor quirks. Scope the former local selections to the proven original Amity and its existing adapter/CEC side. Resolve any data that the original representation did not identify only through the original local rules; do not guess another owner or silently delete the name.
+Keep the exact legacy configuration backup and stable ID mapping needed for restart-safe conversion. Preserve every activity name and role field, optional switch/input, original order, home-app slots and aliases. Scope the former local selections to the proven original Amity and its existing adapter/CEC side. Resolve any data that the original representation did not identify only through the original local rules; do not guess another owner or silently delete the name.
 
 Migration does not require equipment to be present. Valid original names receive their proven original owner/adapter/side selector independently of current observations. A name that cannot be represented as a legal CEC OSD string remains a placeholder for the original source-absence/switch fallback. Preserve unresolved names as saved intent. Do not disable AVR/switch activities, demand user confirmation of a new topology or limit migrated operation to a direct source/screen path. A component's absence at migration is runtime absence, not a permanent availability decision.
 
@@ -26,7 +26,7 @@ Bind the original controller only from its existing durable authority or checked
 
 ## 4. Version-2 migration
 
-Read the prior document's user intent and selectors. Preserve stable IDs, labels, original activity role choices, switch inputs, order, slots/aliases and original quirks. Discard obsolete `enabled` values, route IDs, domains, bindings, resources, capability/signal graph approvals and PA evidence. A formerly disabled activity becomes the same saved activity under live qualified lookup; no enable/repair step is required.
+Read the prior document's user intent and selectors. Preserve stable IDs, labels, original activity role choices, switch inputs, order, slots/aliases. Discard obsolete `enabled` values, route IDs, domains, bindings, resources, capability/signal graph approvals and PA evidence. A formerly disabled activity becomes the same saved activity under live qualified lookup; no enable/repair step is required.
 
 Keep the original backup for diagnosis and storage-cut recovery. Treat old graph data as obsolete input, never as authority to move an owner or choose a new OSD name. Migration must not silently discard the user's unresolved equipment or change their configured behavior. Do not import a persisted activity-resume request.
 
@@ -44,6 +44,6 @@ GPIO mapping, factory commissioning records, reset-retained origin identity and 
 
 ## 7. Evidence and migration lesson
 
-Counts, labels, a readable document and Ready are insufficient to declare migration parity. Compare execution with the original baseline for AVR audio, explicit switch fallback, quirks, same-target repair, missing equipment and return, and local/remote key lifecycle. Verify no persistent availability or route-approval state remains in canonical serialization. Fault-inject storage cuts and prove user intent, authority and credentials survive without restoring live work.
+Counts, labels, a readable document and Ready are insufficient to declare migration parity. Compare execution with the original baseline for AVR audio, explicit switch fallback, same-target repair, missing equipment and return, and local/remote key lifecycle. Verify no persistent availability or route-approval state remains in canonical serialization. Fault-inject storage cuts and prove user intent, authority and credentials survive without restoring live work.
 
 The previous migration preserved six activities while making four AVR/switch activities non-executable. That was a behavioral regression. Do not instruct the user to repair/reconfigure existing activities to work around such a regression; remove the extra policy and record its actual test evidence.

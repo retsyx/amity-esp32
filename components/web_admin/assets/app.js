@@ -431,7 +431,7 @@ $('restore').addEventListener('change',run(async e=>{
  try{
   if(file.size>32768)throw Error('Backup must be no more than 32 KiB.');
   const contents=await file.text(),scoped=window.amityInterface?.enabled;
-  if(!confirm(scoped?'Replace saved configuration with this backup? If replacing a failed main Amity, confirm that the old main is powered off and disconnected.':'Replace activities and quirks with this backup?'))return;
+  if(!confirm(scoped?'Replace saved configuration with this backup? If replacing a failed main Amity, confirm that the old main is powered off and disconnected.':'Replace activities with this backup?'))return;
   const data=scoped?{configuration:JSON.parse(contents),expected_boot_id:(await request('status')).boot_id}:contents;
   const result=await request('restore',data),warning=result.warning||(result.unresolved||[]).join(' ');await enter();message(warning||'Configuration restored.',!!warning);
  }finally{e.target.value='';}

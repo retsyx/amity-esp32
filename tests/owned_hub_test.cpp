@@ -16,7 +16,7 @@ static std::vector<SentFrame> select_trace(bool scoped){
     assert(hub.start(1,2)==ESP_OK);
     std::vector<Activity> activities{{"Watch",scoped?"display":"TV",scoped?"source":"Source",scoped?"source":"Source","",0}};
     if(scoped){
-        assert(hub.configure_scoped(activities,{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}}, {},
+        assert(hub.configure_scoped(activities,{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},
             [](const auto&){assert(false&&"Local equipment must use the same direct owner entry");return false;},controller,1)==ESP_OK);
     }else assert(hub.configure(activities));
     run_one_command();fixture_finish_discovery(hub);
@@ -58,7 +58,7 @@ static void first_matching_osd(){
     assert(owner_wire.sent.front().side==BusSide::Front&&owner_wire.sent.front().address==0);
 
     fixture_present=true;HubService controller_hub;controller_hub.set_system_identity(group,controller);controller_hub.set_boot_identity(boot);assert(controller_hub.start(1,2)==ESP_OK);
-    assert(controller_hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(member,m::Side::back,"TV")}}, {},[](const auto&){return true;},controller,1)==ESP_OK);run_one_command();fixture_finish_discovery(controller_hub);
+    assert(controller_hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(member,m::Side::back,"TV")}},[](const auto&){return true;},controller,1)==ESP_OK);run_one_command();fixture_finish_discovery(controller_hub);
     m::OwnedAdapterSnapshot report;report.owner=member;report.boot=boot;report.ready=true;
     report.devices={{m::Side::back,"TV",4},{m::Side::back,"TV",8},{m::Side::front,"TV",0}};
     assert(controller_hub.update_owned_snapshot(report));run_idle(1);
@@ -69,7 +69,7 @@ static std::vector<SentFrame> startup_trace(bool scoped){
     fixture_present=true;HubService hub;
     if(scoped){hub.set_system_identity(group,controller);hub.set_boot_identity(boot);}
     assert(hub.start(1,2)==ESP_OK);
-    if(scoped)assert(hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}}, {},{},controller,1)==ESP_OK);
+    if(scoped)assert(hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},{},controller,1)==ESP_OK);
     else assert(hub.configure({{"Watch","TV","Source","Source","",0}}));
     run_one_command();fixture_sent.clear();
     assert(hub.select_activity(0));assert(hub.press_key(4,true));assert(hub.release_key(4));
@@ -85,7 +85,7 @@ static void startup_parity(){
 }
 static void observation_pressure(){
     fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}}, {},{},controller,1)==ESP_OK);run_one_command();fixture_finish_discovery(hub);
+    assert(hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},{},controller,1)==ESP_OK);run_one_command();fixture_finish_discovery(hub);
     for(unsigned n=0;n<32;++n)assert(hub.press_key(4));
     m::OwnedAdapterSnapshot report;report.owner=member;report.boot=boot;report.ready=true;
     for(unsigned n=0;n<100;++n){report.setup_last_sequence=n;report.setup_pending=100-n;assert(hub.update_owned_snapshot(report));}
@@ -161,13 +161,13 @@ static std::vector<std::vector<SentFrame>> receiver_transcript(bool remote){
         latest_task=primary_task;
         assert(primary.configure_scoped({{"Watch","display","player","receiver","receiver",3}},
             {{"display",named(controller,m::Side::front,"TV")},{"player",named(member,m::Side::back,"Player")},{"receiver",named(member,m::Side::back,"Receiver")}},
-            {{0x010203,{0x44,0x6d},{0x44,0x6c}}},[&](const m::OwnedIntent& intent){
+            [&](const m::OwnedIntent& intent){
                 assert(intent.target.port.octopus_id==member);auto* previous=latest_task;latest_task=other_task;
                 m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};auth.authority=intent.kind==m::OwnedIntentKind::key_up?m::OwnedAuthority::cleanup:intent.kind==m::OwnedIntentKind::key_down?m::OwnedAuthority::realtime:m::OwnedAuthority::control;const auto admitted=other->submit_owned(intent,auth);latest_task=previous;
                 if(intent.kind==m::OwnedIntentKind::source_input&&admitted.source_present)assert(primary.owned_input_result(member,intent.generation,intent.sequence,*admitted.source_present));
                 return admitted.code==m::AdmissionCode::accepted||admitted.code==m::AdmissionCode::pending||admitted.code==m::AdmissionCode::overloaded||admitted.code==m::AdmissionCode::unresolved;
             },controller,1)==ESP_OK);
-    }else assert(primary.configure({{"Watch","TV","Player","Receiver","Receiver",3}},{{0x010203,{0x44,0x6d},{0x44,0x6c}}}));
+    }else assert(primary.configure({{"Watch","TV","Player","Receiver","Receiver",3}}));
     latest_task=primary_task;run_one_command();
     auto drain=[&](uint32_t previous){
         for(unsigned n=0;n<2500;++n){

@@ -1794,56 +1794,10 @@
                 "properties": {
                   "on": {
                     "type": "boolean"
-                  },
-                  "apply_quirks": {
-                    "type": "boolean"
-                  },
-                  "quirks": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "vendor_id": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 16777215
-                        },
-                        "power_on": {
-                          "type": "array",
-                          "items": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 255
-                          },
-                          "minItems": 0,
-                          "maxItems": 15
-                        },
-                        "power_off": {
-                          "type": "array",
-                          "items": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 255
-                          },
-                          "minItems": 0,
-                          "maxItems": 15
-                        }
-                      },
-                      "required": [
-                        "vendor_id",
-                        "power_on",
-                        "power_off"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "minItems": 0,
-                    "maxItems": 32
                   }
                 },
                 "required": [
-                  "on",
-                  "apply_quirks",
-                  "quirks"
+                  "on"
                 ],
                 "additionalProperties": false
               },

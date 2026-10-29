@@ -10,7 +10,7 @@ const choices=[
  {value:B,title:'Twin',location:'Adapter 1',roles:['display','source','audio','switch']},
  {value:C,title:'Unique player',location:'Adapter 2',roles:['source']},
 ];
-const original={version:1,expected_config_revision:'7',expected_presentation_revision:'3',device_choices:choices,quirks:[],activities:[
+const original={version:1,expected_config_revision:'7',expected_presentation_revision:'3',device_choices:choices,activities:[
  {activity_id:FIRST,name:'First activity',display:A,source:B,audio:A,switch:{device:B,input:2}},
  {activity_id:SECOND,name:'Second activity',display:B,source:A,audio:B,switch:{device:A,input:6}},
  {activity_id:THIRD,name:'Third activity',display:'',source:C,audio:''},

@@ -116,7 +116,7 @@ restores the provisioned hostname and initial password. If no initial password
 was supplied, onboarding returns. The original Matter setup code and installed
 firmware remain. Add the device to your home again to provision Wi-Fi.
 Hostname, credentials and Matter configuration are excluded from backup/restore;
-configuration backups support only activities and vendor quirks.
+configuration backups support only activities.
 
 `--passcode` optionally accepts a valid numeric Matter setup PIN (up to eight
 digits), and `--discriminator` accepts 0–4095. The displayed **manual pairing

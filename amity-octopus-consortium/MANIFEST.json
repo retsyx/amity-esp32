@@ -8,8 +8,8 @@
   "files": [
     {
       "path": "03-domain-model-and-addressing.md",
-      "size_bytes": 5207,
-      "sha256": "55b8decf4545b615f1722054620312ee0c489f8975e204ca02c4ed81fa87bcc0"
+      "size_bytes": 5173,
+      "sha256": "b3f42718cd0164de6efb480b5f6fc17e9d0023af833d11e38682202ed0f2e1fb"
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
@@ -23,8 +23,8 @@
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 5148,
-      "sha256": "7dd8eba42d49779f47521b33c9b6c16a435ca158851b7b7d69d758ed88b6263f"
+      "size_bytes": 5437,
+      "sha256": "9fd8cad75bb3ff390b110c18222e575b46f447e0b201e72764eb1676f85d1f4b"
     },
     {
       "path": "07-activity-planning-and-execution.md",
@@ -48,18 +48,18 @@
     },
     {
       "path": "11-config-storage-and-migration.md",
-      "size_bytes": 7640,
-      "sha256": "ee0e2cbaced516b1f1e459531bb31277005e0d768ec3ccc189c2f83d4ca3d51c"
+      "size_bytes": 7546,
+      "sha256": "f67575cda754b571edfd72a47e5dc1fcdaa87e5e159d1f29012f21be827161b3"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 7642,
-      "sha256": "3d1322f0ff5c6e40ad30190dd6c2ab214225ed46b3641671978b2ffcc5853f8e"
+      "size_bytes": 7622,
+      "sha256": "a2665a8e75f860462f3dad236b366544df4a23bda9163555c6084bc2600d8799"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
-      "size_bytes": 5620,
-      "sha256": "3d1ddf8ef849fb0125ad96d037a4e146ef5e36998bbe60208dfd61edd84e4af9"
+      "size_bytes": 5609,
+      "sha256": "7fec8ceac4a3003dc8a7f73a3ceab5840e58169792a1a59467a8e52558da4929"
     },
     {
       "path": "14-ota-and-compatibility.md",
@@ -68,33 +68,33 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 5456,
-      "sha256": "7fce3bbdf9d65ff3baabf555739dfd86be494c4a9b02705c4cfbb65bfb23fee8"
+      "size_bytes": 11696,
+      "sha256": "695c1ef54ad49e3b7e6c46f8e318b1aef9ad17a687b646fc97fe03f3dee61bb2"
     },
     {
       "path": "19-source-baseline.md",
-      "size_bytes": 2692,
-      "sha256": "f010c3166f792d4ad68925f91bf10e62e357b67ad0e879848dc7a1ca6320f6e4"
+      "size_bytes": 2684,
+      "sha256": "defe0b7598462da6310520c4f495b2c2db3607bb692e539bbcb1af5aa6142798"
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 25978,
-      "sha256": "07f151466604ca392f381a1113f4f0929914bdefdad7c4f9f7a2ecc1d305b0b7"
+      "size_bytes": 28203,
+      "sha256": "6065d2fe600c1c7fde019a9dded0fab26d964aa7017fc90af7c2e767162b78b7"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 8684,
-      "sha256": "e8262c74235f4c48f07894ace86bd993fe0cc5d05cd7e04b69855a3d9103c4b2"
+      "size_bytes": 8657,
+      "sha256": "b7f1e9d2d74816a70683ee1abeb0af84a89f6b647f626dc721c7243b17855710"
     },
     {
       "path": "README.md",
-      "size_bytes": 4423,
-      "sha256": "01c4fb3df7cc9afc7d0f7ddb6f8c9494915518b943ca0aecd612b6b3b1f31c3a"
+      "size_bytes": 4415,
+      "sha256": "6b8ea3c5a3c45ea9c3a743f6e132f27e705ef6530a92eb3d05ff5f1156f3a2cd"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 5857,
-      "sha256": "ca53fb8381251c60c179cc8c1a15d2a458b85cd370423240adca03d6237f6669"
+      "size_bytes": 5843,
+      "sha256": "69a0b9431dce03b0d9d3032b866c147ab5d7c64455112c26ced92b0b1357b7ed"
     },
     {
       "path": "examples/README.md",
@@ -103,8 +103,8 @@
     },
     {
       "path": "examples/activity-configuration.json",
-      "size_bytes": 4146,
-      "sha256": "66095ce13e33c7d711a5189ea7eb43d3ba4b2c11f7f524fdc119241da84ba81b"
+      "size_bytes": 4130,
+      "sha256": "4c978d1928ee56cb0b77a339bd90b609c078b7b25ad49d491ed89ace6fde5c38"
     },
     {
       "path": "examples/name-reresolution.json",
@@ -113,8 +113,8 @@
     },
     {
       "path": "examples/operation-ensure-power.json",
-      "size_bytes": 953,
-      "sha256": "b239f21501847f4e30cbd2051a4b3b4b2f24cdb82c38dbd44036ec07eb43fb3a"
+      "size_bytes": 905,
+      "sha256": "57d77a5ffa76e57bfc4612ff9ba3561a5a72170dc75e6f634304431a9e8b264a"
     },
     {
       "path": "examples/operation-press-key.json",
@@ -138,8 +138,8 @@
     },
     {
       "path": "schemas/README.md",
-      "size_bytes": 3164,
-      "sha256": "9295c8187dad7e2ba6ff155a9277d7b841fca0a1fa520dcbf60996e3b3d80f31"
+      "size_bytes": 3347,
+      "sha256": "7425d0f7098cb752a1dcce5c83da9fa011617a16b2df1d10a1d912eafbfaf669"
     },
     {
       "path": "schemas/adapter-settings.schema.json",
@@ -153,8 +153,8 @@
     },
     {
       "path": "schemas/configuration.schema.json",
-      "size_bytes": 9117,
-      "sha256": "3a298e9c0b7633a75fbb05cce64111689440b1cd311db95fa9106f9f977cc6c9"
+      "size_bytes": 7905,
+      "sha256": "b7895a6cc8faee67a60f43b1e507d73ffdcb9375bf19dae1ba5079f2865bd4a2"
     },
     {
       "path": "schemas/core-types.schema.json",
@@ -173,8 +173,8 @@
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 17404,
-      "sha256": "10507bd4399b86841bd16186fee0b253977450ba1339bcb096f4440fe0c57174"
+      "size_bytes": 17273,
+      "sha256": "1c3a1d4f93e2af4f69e449d9e9ad1444cc8eb5e97f738b5a82206a125c03b3d4"
     }
   ]
 }

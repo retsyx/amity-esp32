@@ -28,9 +28,9 @@ void legacy_and_absence(){
     assert(serialize_configuration_v2(decoded).find("enabled")==std::string::npos);
     // All ordinary AVR/switch selections survive with no observations at all.
     auto base=empty_configuration();Memory memory;ConfigurationStore store(memory);LegacyConfiguration legacy;
-    legacy.activities={{"Watch","TV","Source","AVR","",0},{"Play Wii","TV","Wii","AVR","AVR",6}};legacy.quirks.push_back({0x123456,{0x04},{0x36}});legacy.aliases.push_back({1,true,"Console"});
+    legacy.activities={{"Watch","TV","Source","AVR","",0},{"Play Wii","TV","Wii","AVR","AVR",6}};legacy.aliases.push_back({1,true,"Console"});
     std::vector<std::string> tasks;assert(migrate_legacy(store,memory,"original v1",legacy,base.consortium_id,*base.controller_octopus_id,{},random_source(),decoded,tasks,error)==ConfigResult::ok&&tasks.empty());
-    const auto console=std::find_if(decoded.activities.begin(),decoded.activities.end(),[](const auto& a){return a.label=="Play Wii";});assert(decoded.activities.size()==2&&console!=decoded.activities.end()&&console->switch_input==6&&console->audio==console->switch_device&&decoded.quirks.size()==1&&!decoded.quirks[0].component_id);
+    const auto console=std::find_if(decoded.activities.begin(),decoded.activities.end(),[](const auto& a){return a.label=="Play Wii";});assert(decoded.activities.size()==2&&console!=decoded.activities.end()&&console->switch_input==6&&console->audio==console->switch_device);
     assert(decoded.external_slots[1].alias=="Console"&&decoded.external_slots[1].hidden&&memory.values.at("legacy_backup")=="original v1");
     const auto ids=decoded.activities;assert(store.commit(decoded,error)==ConfigResult::ok);ConfigurationStore reboot(memory);assert(reboot.recover(decoded,error)==ConfigResult::ok&&decoded.activities[1].activity_id==ids[1].activity_id);
 }

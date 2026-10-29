@@ -70,7 +70,7 @@ struct HubService::Impl : Transport {
         explicit Command(Kind k,int v=0,bool r=false):kind(k),value(v),repeat(r){}
         Kind kind; int value=0; bool repeat=false,cleanup_reservation=false,activity_bound=false,route_transition=false,owned_deferred=false,owned_received=false;
         uint32_t key_generation=0,release_generation=0,activity_generation=0,intent_generation=0,discovery_generation=0,activity_receipt=0;
-        std::vector<Activity> activities;std::vector<Quirk> quirks;
+        std::vector<Activity> activities;
         std::vector<system::ScopedSelector> selectors;OwnedSender sender;
         system::OwnedIntent owned;system::OwnedAuthorization auth;
         system::OctopusId controller;system::LinkId link;uint64_t config_revision=0,presentation_revision=1;
@@ -786,7 +786,7 @@ struct HubService::Impl : Transport {
         switch (command.kind) {
         case Kind::Configure:
             if(scoped_mode)activity_hub.release_key();else stop_holds();
-            control_hub().configure(std::move(command.activities), std::move(command.quirks));
+            control_hub().configure(std::move(command.activities));
             ++setup_generation; setup_outstanding = 0; setup_pending = false;
             xSemaphoreTake(lock, portMAX_DELAY); settling.cancel(); xSemaphoreGive(lock);
             break;
@@ -1145,7 +1145,7 @@ struct HubService::Impl : Transport {
         case K::ScopedConfigure:
             // Original configure cleanup uses the original selected recipe and
             // selectors before the replacement ownership map is installed.
-            activity_hub.configure(std::move(command.activities),std::move(command.quirks));
+            activity_hub.configure(std::move(command.activities));
             ++setup_generation;setup_outstanding=0;setup_pending=false;setup_owners.clear();input_setups.clear();
             xSemaphoreTake(lock,portMAX_DELAY);settling.cancel();xSemaphoreGive(lock);
             std::fill(sent_keys.begin(),sent_keys.end(),std::nullopt);scoped_mode=true;legacy_enabled=true;
@@ -1239,7 +1239,7 @@ struct HubService::Impl : Transport {
             Command* command=nullptr;
             if(xQueueReceive(p.commands,&command,pending?1:pdMS_TO_TICKS(10))==pdTRUE){
                 if(p.legacy_enabled&&!p.maintenance_started&&!p.retiring.load())p.accept(command);
-                else{p.free_reservation(*command);if(!p.owned_command(*command)&&command->kind==Kind::Configure&&p.local_coordinator.load()&&!p.maintenance_started){p.legacy_enabled=true;p.hub.configure(std::move(command->activities),std::move(command->quirks));p.scan_requested=true;}delete command;}
+                else{p.free_reservation(*command);if(!p.owned_command(*command)&&command->kind==Kind::Configure&&p.local_coordinator.load()&&!p.maintenance_started){p.legacy_enabled=true;p.hub.configure(std::move(command->activities));p.scan_requested=true;}delete command;}
                 changed=true;
             }
             for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=p.adapter(id)){
@@ -1370,14 +1370,14 @@ esp_err_t HubService::commit_adapter_settings(system::BootId boot,
     }
     return reply->settings_result;
 }
-bool HubService::configure(std::vector<Activity> activities, std::vector<Quirk> quirks) {
-    return configure_with_commit(std::move(activities), std::move(quirks), {}) == ESP_OK;
+bool HubService::configure(std::vector<Activity> activities) {
+    return configure_with_commit(std::move(activities), {}) == ESP_OK;
 }
-esp_err_t HubService::configure_with_commit(std::vector<Activity> activities, std::vector<Quirk> quirks,
+esp_err_t HubService::configure_with_commit(std::vector<Activity> activities,
                                            std::function<esp_err_t()> commit) {
     auto *c = new (std::nothrow) Impl::Command{Impl::Kind::Configure};
     if (!c) return ESP_ERR_NO_MEM;
-    c->activities = std::move(activities); c->quirks = std::move(quirks);
+    c->activities = std::move(activities);
     return impl_->submit(c, commit);
 }
 esp_err_t HubService::request_activity(int index,uint32_t* accepted) { return request_activity(index,true,accepted); }
@@ -1495,11 +1495,11 @@ void HubService::end_maintenance() {
 }
 bool HubService::maintenance_ready() const { return impl_->maintenance_applied.load(); }
 
-esp_err_t HubService::configure_scoped(std::vector<Activity> activities,std::vector<system::ScopedSelector> selectors,std::vector<Quirk> quirks,
+esp_err_t HubService::configure_scoped(std::vector<Activity> activities,std::vector<system::ScopedSelector> selectors,
         OwnedSender sender,system::OctopusId controller,uint64_t revision,std::function<esp_err_t()> commit,uint64_t presentation_revision){
     if(!controller||!revision)return ESP_ERR_INVALID_ARG;
     auto* c=new(std::nothrow)Impl::Command{Impl::Kind::ScopedConfigure};if(!c)return ESP_ERR_NO_MEM;
-    c->activities=std::move(activities);c->selectors=std::move(selectors);c->quirks=std::move(quirks);c->sender=std::move(sender);c->controller=controller;c->config_revision=revision;c->presentation_revision=presentation_revision;
+    c->activities=std::move(activities);c->selectors=std::move(selectors);c->sender=std::move(sender);c->controller=controller;c->config_revision=revision;c->presentation_revision=presentation_revision;
     return impl_->submit(c,commit);
 }
 system::AdmissionResult HubService::submit_owned(system::OwnedIntent intent,system::OwnedAuthorization auth,uint32_t timeout){

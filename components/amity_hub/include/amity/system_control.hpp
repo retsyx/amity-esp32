@@ -29,8 +29,8 @@ public:
     esp_err_t set_presence_reader(std::function<int(int)> f){return local_.set_presence_reader(std::move(f));}
     std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const{return local_.adapter_runtime_snapshot();}
     esp_err_t commit_adapter_settings(system::BootId boot,std::vector<std::pair<uint8_t,uint64_t>> presence,uint64_t deadline,std::function<esp_err_t()> persist){return local_.commit_adapter_settings(boot,std::move(presence),deadline,std::move(persist));}
-    bool configure(std::vector<Activity> activities,std::vector<Quirk> quirks={}){return local_.configure(std::move(activities),std::move(quirks));}
-    esp_err_t configure_with_commit(std::vector<Activity> activities,std::vector<Quirk> quirks,std::function<esp_err_t()> commit){return local_.configure_with_commit(std::move(activities),std::move(quirks),std::move(commit));}
+    bool configure(std::vector<Activity> activities){return local_.configure(std::move(activities));}
+    esp_err_t configure_with_commit(std::vector<Activity> activities,std::function<esp_err_t()> commit){return local_.configure_with_commit(std::move(activities),std::move(commit));}
     bool accepts_local_input()const;
     esp_err_t request_activity(int index);
     bool select_activity(int index){return request_activity(index)==ESP_OK;}

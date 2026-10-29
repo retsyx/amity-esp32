@@ -150,7 +150,7 @@ class Activity:
         return {"version": 1, "request_id": uuid4().hex,
                 "expected_config_revision": document["expected_config_revision"],
                 "expected_presentation_revision": document["expected_presentation_revision"],
-                "activities": deepcopy(rows), "quirks": deepcopy(document.get("quirks", []))}
+                "activities": deepcopy(rows)}
 
     def _write(self, path, payload, deadline, trace, *, stage):
         try:
@@ -326,7 +326,6 @@ class Activity:
                 full = self._full_configuration(document)
                 references = {row.get(role) for row in full.get("activities", [])
                               for role in ("source", "display", "audio", "switch_device")}
-                references.update(quirk.get("component_id") for quirk in full.get("quirks", []))
                 removable = {record["component_id"] for record in full["components"]
                              if record.get("component_id") in self._new_equipment
                              and record == self._new_equipment[record["component_id"]]

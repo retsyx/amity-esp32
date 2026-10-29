@@ -170,10 +170,15 @@ static void hub_tests() {
     h.receive(B, frame({0x40, 0x82, 0x15, 0})); assert(t.sent.empty()); // Active Source must broadcast.
     h.receive(F, frame({0x04, 0xff})); assert(t.contains(F, 0, {0, 0xff, 4}));
     t.sent.clear(); h.receive(F, frame({0x04, 0x9f, 0})); assert(t.contains(F, 0, {0x9e, 6}));
-    // Vendor power quirks apply to activity entry/full standby, not switching.
+    // Manufacturer identity never changes the normal power commands.
     h.receive(B, frame({0x4f, 0x87, 0, 0x12, 0x34}));
-    h.configure({{"TV", "Screen", "Apple TV", "AVR", "", 0}}, {{0x1234, {0x44, 0x40}, {0x36}}});
-    t.sent.clear(); h.select_activity(0); assert(t.contains(B, 4, {0x44, 0x40})); assert(t.contains(B, 4, {0x45}));
+    h.configure({{"TV", "Screen", "Apple TV", "AVR", "", 0}});
+    t.sent.clear(); h.select_activity(0);
+    assert(t.contains(F, 0, {0x04}));
+    assert(t.contains(B, 4, {0x44, 0x6d}) && t.contains(B, 4, {0x45}));
+    assert(!t.contains(B, 4, {0x44, 0x40}));
+    t.sent.clear(); h.standby();
+    assert(t.contains(F, 0, {0x36}) && t.contains(B, 4, {0x36}));
     // Device matching is scoped to a bus: front TV must survive a back PA=0.
     device(h, B, 8, 0, 4, "Duplicate PA");
     bool found_tv = false; for (const auto &d : h.snapshot().devices) if (d.name == "Screen") found_tv = true;
@@ -223,28 +228,27 @@ static void shared_power_tests() {
     const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
     h.configure({{"Shared", "Front", "Back", "Back", "Back", 0},
-                 {"Other", "", "Other", "Other", "", 0}},
-                {{0x1234, {0x44, 0x40}, {0x44, 0x40}}});
+                 {"Other", "", "Other", "Other", "", 0}});
     device(h, F, 5, 0x1000, 5, "Front"); device(h, B, 5, 0x1000, 5, "Back");
     device(h, B, 8, 0x2000, 4, "Other");
     for (const auto header : {0x5f, 0x8f}) h.receive(B, frame({static_cast<uint8_t>(header), 0x87, 0, 0x12, 0x34}));
     h.receive(F, frame({0x5f, 0x87, 0, 0x12, 0x34}));
-    // Reused source/audio/switch roles send one toggle, while the same logical
+    // Reused source/audio/switch roles send one power-on command, while the same logical
     // address on another bus remains a separate device. Repairs do the same.
     for (unsigned attempt = 0; attempt < 2; ++attempt) {
         t.sent.clear(); assert(h.select_activity(0));
-        assert(t.count(F, 5, {0x44, 0x40}) == 1);
-        assert(t.count(B, 5, {0x44, 0x40}) == 1);
-        assert(t.count(B, 8, {0x44, 0x40}) == 0);
+        assert(t.count(F, 5, {0x44, 0x6d}) == 1);
+        assert(t.count(B, 5, {0x44, 0x6d}) == 1);
+        assert(t.count(B, 8, {0x44, 0x6d}) == 0);
     }
     t.sent.clear(); h.standby();
-    assert(t.count(F, 5, {0x44, 0x40}) == 1);
-    assert(t.count(B, 5, {0x44, 0x40}) == 1);
+    assert(t.count(F, 5, {0x36}) == 1);
+    assert(t.count(B, 5, {0x36}) == 1);
     assert(h.select_activity(0)); t.sent.clear(); assert(h.select_activity(1));
     assert(t.count(F, 5, {0x36}) == 1);
     assert(t.count(B, 5, {0x36}) == 1);
-    assert(t.count(B, 8, {0x44, 0x40}) == 1);
-    t.sent.clear(); h.standby(); assert(t.count(B, 8, {0x44, 0x40}) == 1);
+    assert(t.count(B, 8, {0x44, 0x6d}) == 1);
+    t.sent.clear(); h.standby(); assert(t.count(B, 8, {0x36}) == 1);
 }
 static void playback_tests() {
     const auto B = amity::BusSide::Back;

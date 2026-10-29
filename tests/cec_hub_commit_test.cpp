@@ -11,14 +11,14 @@ static std::vector<amity::Activity> config() { return {{"Saved", "TV", "Source",
 int main() {
     { // An unstarted service must not persist a configuration it cannot run.
         amity::HubService hub; bool committed = false;
-        assert(hub.configure_with_commit(config(), {}, [&] { committed = true; return ESP_OK; }) == ESP_ERR_INVALID_STATE);
+        assert(hub.configure_with_commit(config(), [&] { committed = true; return ESP_OK; }) == ESP_ERR_INVALID_STATE);
         assert(!committed);
     }
     { // Every producer counts toward capacity; full queue forbids the commit.
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         for (int i = 0; i < 32; ++i) assert(hub.release_key());
         bool committed = false;
-        assert(hub.configure_with_commit(config(), {}, [&] { committed = true; return ESP_OK; }) == ESP_ERR_NO_MEM);
+        assert(hub.configure_with_commit(config(), [&] { committed = true; return ESP_OK; }) == ESP_ERR_NO_MEM);
         assert(!committed && !hub.standby());
         run_one_command();
         assert(hub.standby()); // Dequeue releases exactly one slot.
@@ -27,7 +27,7 @@ int main() {
     { // Storage failure leaves all queue slots and the old live config intact.
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         int commits = 0;
-        assert(hub.configure_with_commit(config(), {}, [&] { ++commits; return ESP_FAIL; }) == ESP_FAIL);
+        assert(hub.configure_with_commit(config(), [&] { ++commits; return ESP_FAIL; }) == ESP_FAIL);
         assert(commits == 1 && hub.snapshot().activities.empty());
         for (int i = 0; i < 32; ++i) assert(hub.press_key(0));
         assert(hub.release_key()); // Emergency path consumes no queue slot.
@@ -36,10 +36,10 @@ int main() {
     { // A competing producer cannot steal the slot while commit is running.
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         int commits = 0;
-        assert(hub.configure_with_commit(config(), {}, [&] {
+        assert(hub.configure_with_commit(config(), [&] {
             ++commits;
             bool competing_commit = false;
-            assert(hub.configure_with_commit(config(), {}, [&] { competing_commit = true; return ESP_OK; }) == ESP_ERR_TIMEOUT);
+            assert(hub.configure_with_commit(config(), [&] { competing_commit = true; return ESP_OK; }) == ESP_ERR_TIMEOUT);
             assert(!competing_commit);
             for (int i = 0; i < 31; ++i) assert(hub.release_key());
             assert(!hub.press_key(0));
@@ -49,7 +49,7 @@ int main() {
     }
     { // A committed config becomes live only through the ordinary owner task.
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
-        assert(hub.configure_with_commit(config(), {}, [] { return ESP_OK; }) == ESP_OK);
+        assert(hub.configure_with_commit(config(), [] { return ESP_OK; }) == ESP_OK);
         assert(hub.snapshot().activities.empty());
         run_one_command();
         assert(hub.snapshot().activities.size() == 1);
@@ -268,10 +268,10 @@ int main() {
         assert((sequence == std::vector<uint8_t>{0x44, 0x45}));
         fixture_async_autocomplete = true; fixture_present = false;
     }
-    { // Every caller supplies one UCP attempt, including power quirks and
+    { // Every caller supplies one UCP attempt, including power-on commands and
       // switch selection. Releases use the same eight-slot FIFO.
         fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command(); fixture_finish_discovery(hub);
+        assert(hub.configure({{"Switch","TV","","Source","Source",2}}));run_one_command(); fixture_finish_discovery(hub);
         fixture_sent.clear();assert(hub.select_activity(0));run_one_command();assert(hub.standby());run_one_command();
         bool power=false,input=false;
         for(const auto& sent:fixture_sent)if(sent.frame.size>1){
@@ -283,7 +283,7 @@ int main() {
     { // With eight ordinary frames already buffered in the driver, denied
       // finite UCPs cannot emit an unpaired release.
         fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command(); fixture_finish_discovery(hub);
+        assert(hub.configure({{"Switch","TV","","Source","Source",2}}));run_one_command(); fixture_finish_discovery(hub);
         unsigned occupied=8,presses=0,releases=0;
         fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<8;}return true;};
         assert(hub.select_activity(0));run_one_command();assert(presses>=2&&releases==0&&occupied==8);
@@ -356,21 +356,20 @@ int main() {
         assert(fixture_completed.size() == 1 && fixture_pending.empty());
         fixture_async_autocomplete = true; fixture_present = false;
     }
-    { // Matching releases survive route changes but cannot reach a replacement
-      // appliance at the same LA. Unknown vendor actuation defaults to guarded.
+    { // Matching releases and power commands survive activity changes but
+      // cannot reach a replacement appliance at the same LA.
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
-                              {"Second", "TV", "Source", "Source", "", 0}},
-                            {{0, {0xa0, 0x12}, {0xa0, 0x34}}})); run_one_command(); fixture_finish_discovery(hub);
+                              {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
         fixture_guarded.clear();
         assert(hub.select_activity(0)); run_one_command();
-        cec::ExecutionFence vendor_fence;
-        bool found_vendor = false;
-        for (const auto &work : fixture_guarded) if (work.frame.size > 1 && work.frame.data[1] == 0xa0) {
-            vendor_fence = work.fence; found_vendor = true;
+        cec::ExecutionFence power_fence;
+        bool found_power = false;
+        for (const auto &work : fixture_guarded) if (work.gpio == 2 && work.frame.size == 3 && work.frame.data[1] == 0x44 && work.frame.data[2] == 0x6d) {
+            power_fence = work.fence; found_power = true;
         }
-        assert(found_vendor && cec::current_fence(vendor_fence));
+        assert(found_power && cec::current_fence(power_fence));
         assert(hub.press_key(0x41, true)); run_one_command();
         assert(hub.release_key()); run_one_command();
         cec::ExecutionFence release_fence;
@@ -380,7 +379,7 @@ int main() {
         }
         assert(found_release && cec::current_fence(release_fence));
         assert(hub.select_activity(1));
-        assert(cec::current_fence(vendor_fence)); // Already admitted work remains in FIFO order.
+        assert(cec::current_fence(power_fence)); // Already admitted work remains in FIFO order.
         assert(cec::current_fence(release_fence)); // It can still finish from the Bus FIFO.
         run_one_command();
         cec::Frame replacement{{0x4f, 0x84, 0x20, 0, 4}, 5};
@@ -389,6 +388,7 @@ int main() {
         // work for the same appliance. Replacing its OSD identity fences it.
         assert(cec::current_fence(release_fence));
         fixture_incoming.push_back({2, cec::Frame{{static_cast<uint8_t>(0x40|hub.snapshot().back_address),0x47,'O','t','h','e','r'},7}});run_idle(1);
+        assert(!cec::current_fence(power_fence));
         assert(!cec::current_fence(release_fence));
         fixture_guarded.clear(); fixture_present = false;
     }
@@ -438,7 +438,7 @@ int main() {
     }
     { // Standalone-policy merge: a denied finite press cannot emit an unpaired release.
         fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(hub.configure({{"Switch","TV","","Source","Source",2}},{{0,{0x44,0x6d},{0x44,0x6c}}}));run_one_command();fixture_finish_discovery(hub);
+        assert(hub.configure({{"Switch","TV","","Source","Source",2}}));run_one_command();fixture_finish_discovery(hub);
         unsigned presses=0,releases=0;fixture_send=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45)++releases;return true;};
         assert(hub.select_activity(0));run_one_command();assert(presses>=2&&releases==0);fixture_send={};fixture_present=false;
     }
@@ -586,7 +586,7 @@ int main() {
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         const auto initial = hub.activity_selection();
-        assert(hub.configure_with_commit(config(), {}, [] { return ESP_FAIL; }) == ESP_FAIL);
+        assert(hub.configure_with_commit(config(), [] { return ESP_FAIL; }) == ESP_FAIL);
         assert(hub.activity_selection() == initial);
         assert(hub.configure({{"Watch", "TV", "Source", "Source", "", 0}}));
         assert(hub.activity_selection() == initial + 1);

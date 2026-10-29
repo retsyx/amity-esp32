@@ -111,7 +111,7 @@ def test_activity():
 ```
 
 `DUT.create_activity()` uses the exact scanned selections and the shipping UI's
-authenticated activity editor. It retains existing activities and power quirks.
+authenticated activity editor. It retains existing activities.
 The activity context attempts to remove its test-owned activity on exit,
 including after an assertion fails, before the component responders and HTTP
 session close. A DUT restart or conflicting user activity can prevent safe

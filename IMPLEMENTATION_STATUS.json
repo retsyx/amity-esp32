@@ -1,7 +1,7 @@
 {
-  "status": "Permanent automatic zero-fabric Matter boot setup passes host/native tests and all four 0.1.84 device upgrades; amity-dut also completed actual Home/Matter setup and started as the original main.",
+  "status": "Standard CEC power handling only; runtime, transport, configuration, UI and harness override support removed. Full host regression, affected browser suites and contract validation pass. The native 0.1.87 working-tree build also includes the separately pending task-stack capacity fix. This power-handling change has not been deployed.",
   "audit_date": "2026-10-28",
-  "firmware_version": "0.1.84",
+  "firmware_version": "0.1.87",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -15,7 +15,7 @@
     "owner": "Resolve local adapter/side/name and perform original local CEC handling",
     "transport": "Authenticated typed owner intents/state changes, causal ordering and stale-work rejection",
     "configuration_schema": 3,
-    "saved_intent": "Original activity role/switch fields, qualified selectors, IDs, labels/order/slots and original vendor quirks",
+    "saved_intent": "Original activity role/switch fields, qualified selectors, IDs, labels/order/slots",
     "removed": "Persistent enabled, executable route/binding/domain/resource/capability/PA approvals, prepared execution plans, global owner-profile approval and durable current-activity resume ledger",
     "retained_state": "Durable identity/trust/original role and configuration/reset journals; runtime discovery, exact held recipients, input/completion state and message authorization"
   },
@@ -94,7 +94,7 @@
         "sh tests/cec_hub_test.sh",
         "sh tests/owned_hub_test.sh"
       ],
-      "scope": "All five baseline CEC suites; original/local/owned frame traces including two-owner AVR/switch/quirks, first OSD match and side isolation, no coordinator cache veto, startup taps, observation IPC pressure, independent keys, authorization/all-adapter discovery and nonzero global completion-paced settling",
+      "scope": "All five baseline CEC suites; original/local/owned frame traces including two-owner AVR/switch, first OSD match and side isolation, no coordinator cache veto, startup taps, observation IPC pressure, independent keys, authorization/all-adapter discovery and nonzero global completion-paced settling",
       "logs": [
         "test-results/host/intent-final-cec.log",
         "test-results/host/intent-final-owned.log"
@@ -118,7 +118,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 85,
+  "matter_software_version": 88,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -296,5 +296,52 @@
       "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
       "radio_enrollment_exercised": false
     }
-  ]
+  ],
+  "standard_power_validation": {
+    "scope": "Standard CEC power commands only; no custom power payload types, configuration fields, codecs, migrations or decoder compatibility paths.",
+    "host": {
+      "result": "PASS",
+      "command": "sh tests/run_host_tests.sh (pinned SDK Python and local contract packages)",
+      "log": "test-results/functional/standard-power-full-host.log"
+    },
+    "framework": {
+      "result": "PASS",
+      "tests": 161,
+      "log": "test-results/functional/standard-power-framework-tests.log"
+    },
+    "browser": {
+      "result": "PASS",
+      "fixtures": [
+        "tests/web_system_ui.py",
+        "tests/web_device_settings_ui.py",
+        "tests/web_member_update_ui.py"
+      ],
+      "scope": "Localhost fixtures only"
+    },
+    "contracts": {
+      "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "log": "test-results/functional/standard-power-contracts.log"
+    },
+    "native_build": {
+      "result": "PASS",
+      "firmware_version": "0.1.87",
+      "matter_software_version": 88,
+      "scope": "Working-tree build includes the separately pending task-stack capacity fix; not an image of the power-handling change alone.",
+      "log": "test-results/functional/standard-power-build-0.1.87.log",
+      "image_sha256": "0f1926b1ba530c0024b12a8e31812a47b2b87072c61d14c5b5a6c3dcabc3e3c0",
+      "image_elf_sha256": "49e1afdba6724dbe05bdf885d6b34c9d08107bb451ba012ff4a317ebbf28f775",
+      "hardware_profiles": [
+        "esp32s3-development-4t-v1"
+      ]
+    },
+    "source_audit": {
+      "tracked_feature_references": 0,
+      "canonical_power_arguments": [
+        "on"
+      ],
+      "owned_intent_target_bytes": 392
+    },
+    "deployment": "Not deployed; earlier physical evidence does not qualify this changed configuration/transport format."
+  }
 }

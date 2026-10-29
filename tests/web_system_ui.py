@@ -30,7 +30,7 @@ def main():
                choice(12, 'Apple TV', 'amity-bedroom · Adapter 4', ['source'])]
     activities = [dict(activity_id=aid, name='Watch TV', display=choices[0]['value'], source=choices[1]['value'], audio=choices[0]['value']),
                   dict(activity_id=second, name='Bedroom source', display=choices[0]['value'], source=choices[2]['value'], audio=choices[0]['value'])]
-    editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1', activities=activities, device_choices=choices, quirks=[])
+    editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1', activities=activities, device_choices=choices)
     status = dict(version='0.1.73', hostname='amity-living-room', front_physical_address='1.0.0.0', hardware='Amity', free_heap=200000,
                   wifi_connected=True, wifi_rssi=-40, wifi_channel=6, ready=True, discovering=False, discovery_generation=1,
                   current_activity=-1, front_address=4, back_address=0, tx_errors=0, rx_dropped=0,

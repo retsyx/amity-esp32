@@ -317,58 +317,6 @@
       },
       "minItems": 0,
       "maxItems": 16
-    },
-    "quirks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "component_id": {
-            "anyOf": [
-              {
-                "$ref": "core-types.schema.json#/$defs/Id128"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "vendor_id": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 16777215
-          },
-          "power_on": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 255
-            },
-            "minItems": 0,
-            "maxItems": 15
-          },
-          "power_off": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 255
-            },
-            "minItems": 0,
-            "maxItems": 15
-          }
-        },
-        "required": [
-          "component_id",
-          "vendor_id",
-          "power_on",
-          "power_off"
-        ],
-        "additionalProperties": false
-      },
-      "minItems": 0,
-      "maxItems": 32
     }
   },
   "required": [
@@ -382,7 +330,6 @@
     "activities",
     "zones",
     "external_slots",
-    "quirks",
     "controller_octopus_id"
   ],
   "additionalProperties": false

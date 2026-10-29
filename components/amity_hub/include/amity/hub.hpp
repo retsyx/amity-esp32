@@ -30,10 +30,6 @@ struct Device {
     // The original owner-local cache has a name for this appliance.
     bool resolved = false;
 };
-struct Quirk {
-    uint32_t vendor_id = 0;
-    std::vector<uint8_t> power_on, power_off;
-};
 struct Snapshot {
     uint64_t applied_config_revision=0,applied_presentation_revision=0;
     uint32_t processed_activity_selection=0;
@@ -66,7 +62,7 @@ public:
 class Hub {
 public:
     explicit Hub(Transport &transport) : transport_(transport) {}
-    void configure(std::vector<Activity> activities, std::vector<Quirk> quirks = {});
+    void configure(std::vector<Activity> activities);
     using OwnedSender = std::function<system::OwnedDispatchResult(system::OwnedIntent)>;
     using OwnedLookup = std::function<std::optional<Device>(const system::QualifiedDeviceName&)>;
     void scoped_transport(std::vector<system::ScopedSelector>, OwnedSender, OwnedLookup,
@@ -114,7 +110,7 @@ private:
     void invalidate_endpoint(BusSide side, uint8_t address);
     Activity current() const;
     bool send(BusSide side, uint8_t dest, std::initializer_list<uint8_t> data);
-    bool power(const Device &device, bool on, bool quirk = true);
+    bool power(const Device &device, bool on);
     void input(const Activity &activity);
     void fallback_input(const Activity&);
     void active_source(const std::string& display = {});
@@ -126,7 +122,7 @@ private:
     bool press_device(const Device*, uint8_t key, bool repeat);
     bool finite_press(const Device&, const uint8_t*, size_t);
     std::optional<system::QualifiedDeviceName> target(const std::string&) const;
-    bool owned(system::OwnedIntentKind, const std::string&, bool on = false, uint8_t value = 0, bool repeat = false, bool quirks = true);
+    bool owned(system::OwnedIntentKind, const std::string&, bool on = false, uint8_t value = 0, bool repeat = false);
     bool publish_owned_context(bool source_changed,system::OctopusId owner={});
     Transport &transport_;
     std::vector<system::ScopedSelector> scoped_selectors_;
@@ -144,7 +140,6 @@ private:
     std::vector<Device> devices_;
     std::vector<Device> discovery_;
     bool discovering_ = false;
-    std::vector<Quirk> quirks_;
     int selected_ = -1;
     std::optional<int> lookup_previous_selection_;
     uint32_t lookup_previous_generation_=0;

@@ -36,7 +36,6 @@ struct ExternalSlot {
     bool tombstone = false, hidden = false;
     std::string alias;
 };
-struct ScopedQuirk { model::ComponentId component_id; uint32_t vendor_id = 0; std::vector<uint8_t> power_on, power_off; };
 struct ConfiguredOctopus {
     model::OctopusId octopus_id;
     std::string label, generated_label;
@@ -52,7 +51,6 @@ struct ConfigurationV2 {
     std::vector<ConfiguredActivity> activities;
     std::vector<ConfiguredZone> zones;
     std::vector<ExternalSlot> external_slots;
-    std::vector<ScopedQuirk> quirks;
     // Immutable first-setup controller. Absent only in legacy schema2 records
     // awaiting an upgrade using authenticated original-authority evidence.
     std::optional<model::OctopusId> controller_octopus_id;
@@ -101,9 +99,8 @@ private:
 };
 
 struct LegacyActivity { std::string name, display, source, audio, switch_device; uint8_t switch_input = 0; };
-struct LegacyQuirk { uint32_t vendor_id = 0; std::vector<uint8_t> power_on, power_off; };
 struct LegacyAlias { unsigned slot = 0; bool hidden = false; std::string alias; };
-struct LegacyConfiguration { std::vector<LegacyActivity> activities; std::vector<LegacyQuirk> quirks; std::vector<LegacyAlias> aliases; };
+struct LegacyConfiguration { std::vector<LegacyActivity> activities; std::vector<LegacyAlias> aliases; };
 struct LegacyEvidence { model::QualifiedDeviceName name; bool native = true, unique = true; };
 // Stable migration seed and original blob are journaled before any generated IDs
 // are exposed. Presence is resolved at execution; it never disables saved intent.

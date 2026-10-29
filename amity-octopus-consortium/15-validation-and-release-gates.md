@@ -8,7 +8,7 @@ Feed identical activities, observations and input events to baseline `98e64a6`, 
 
 Required cases:
 
-- Selective power transitions and same-target repair, one device used in several roles, TV/source power differences, original vendor quirks, standby and original completion-paced activity-settling/input readiness.
+- Selective power transitions and same-target repair, one device used in several roles, TV/source power differences, standby and original completion-paced activity-settling/input readiness.
 - Separate AVR/audio equipment, source routing, missing source with explicit switch-device/input fallback and non-CEC source use. Power/key work reaches the owner even with no coordinator observation; source presence comes from owner lookup, and FIFO overload must not masquerade as absence.
 - Missing owner/adapter/OSD name and later return with zero activity-enable/configuration mutation; identical OSD text on separate owners/adapters/sides.
 - Per-adapter original allocation, back-first discovery, lowest usable detected front PA or saved fallback, fixed-for-boot selection, received-frame effects and discovery-triggered original handling.
@@ -20,7 +20,7 @@ Use meaningful transcript/integration assertions. A test that merely expects new
 
 ## Persistence and migration
 
-Canonical schema 3 contains selectors and user intent, with no enabled, executable route, binding/domain/resource/capability/PA approval graph or durable activity-resume ledger. Migrate v1/v2 while retaining stable IDs where present, all role/switch/quirk fields, order, slots and aliases. Ignore old enabled flags. Inject storage cuts and verify backup/identity/trust/journal consistency without restoring runtime addresses, input or grants.
+Canonical schema 3 contains selectors and user intent, with no enabled, executable route, binding/domain/resource/capability/PA approval graph or durable activity-resume ledger. Migrate v1/v2 while retaining stable IDs where present, all role/switch fields, order, slots and aliases. Ignore old enabled flags. Inject storage cuts and verify backup/identity/trust/journal consistency without restoring runtime addresses, input or grants.
 
 Verify temporarily absent equipment remains selected, AVR/switch activities remain executable through original handling and no new repair/approval workflow is required. The prior six-retained/four-disabled migration is a regression case, not successful parity evidence.
 

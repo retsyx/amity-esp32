@@ -154,7 +154,7 @@ class DUTTests(unittest.TestCase):
                   password="secret", opener=opener)
         configuration = {"version": 1, "expected_config_revision": "12",
                          "expected_presentation_revision": "4", "activities": [],
-                         "device_choices": [{"title": "TV"}], "quirks": []}
+                         "device_choices": [{"title": "TV"}]}
         with patch("amity_harness.dut.time.sleep"):
             result = dut.set_configuration(configuration)
         self.assertEqual(result["stage"], "applied")

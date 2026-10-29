@@ -130,7 +130,6 @@ def validate_configuration(value):
         require(set(zone['activity_order']) == {a['activity_id'] for a in activities.values() if a['zone_id']==zone['zone_id']}, 'Screen order loses/duplicates activity')
     require(len({s['slot'] for s in value['external_slots']}) == len(value['external_slots']), 'Duplicate external slot')
     require(all(s['tombstone'] or s['activity_id'] in activities for s in value['external_slots']), 'Missing assigned activity')
-    require(all(q['component_id'] is None or q['component_id'] in components for q in value['quirks']), 'Missing quirk component')
     return len(selectors)
 
 

@@ -1,5 +1,15 @@
 # Preserve original Amity behavior
 
+## Standard power commands only — 28 October 2026
+
+The user removed all vendor-specific power command overrides. Power handling
+uses the standard TV Image View On, non-TV Power On Function and Standby
+commands. There are no configurable vendor command recipes, configuration
+fields, transport parameters, decoder exceptions or migration paths for those
+overrides. Vendor IDs remain ordinary HDMI-CEC discovery metadata. This
+explicit amendment supersedes any earlier baseline requirement to preserve
+custom power payloads.
+
 The current `main` implementation is the authoritative behavior baseline.
 This merge incorporates `main` at `98e64a6`; its independent key lifecycle,
 asynchronous CEC submission, input gate and Siri macros supersede conflicting
@@ -90,7 +100,7 @@ not an alternative activity planner or CEC policy.
 Do not persist an activity `enabled` flag, executable route approval, confirmed
 topology, resource graph, capability approval, or physical-address evidence as
 permission to use an activity. Save the user's original activity fields,
-equipment selectors, names, ordering, shortcuts and quirks. A missing owner,
+equipment selectors, names, ordering and shortcuts. A missing owner,
 adapter or OSD name remains a saved selection; normal runtime lookup and the
 original local handling determine the result. A device returning or changing
 its CEC logical address must not require re-enabling, rebuilding or approving

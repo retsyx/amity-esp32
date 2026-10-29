@@ -52,34 +52,18 @@ bool dto_string(const cJSON* value,const char* key,std::string& out,size_t maxim
     if(!cJSON_IsString(field)||!field->valuestring||strlen(field->valuestring)>maximum)return false;
     out=field->valuestring;for(unsigned char ch:out)if(ch<32||ch==127)return false;return true;
 }
-bool unchanged_quirks(const cJSON* array,const cs::ConfigurationV2& config){
-    if(!array)return true;
-    if(!cJSON_IsArray(array)||cJSON_GetArraySize(array)!=static_cast<int>(config.quirks.size()))return false;
-    std::set<size_t> matched;
-    for(const auto* item=array->child;item;item=item->next){
-        if(!dto_keys(item,{"component_id","vendor_id","power_on","power_off"}))return false;
-        const auto* vendor=cJSON_GetObjectItemCaseSensitive(item,"vendor_id");if(!cJSON_IsNumber(vendor)||vendor->valuedouble!=vendor->valueint||vendor->valueint<0||vendor->valueint>0xffffff)return false;
-        bool found=false;for(size_t n=0;n<config.quirks.size()&&!found;++n){const auto& q=config.quirks[n];if(matched.count(n)||q.vendor_id!=static_cast<uint32_t>(vendor->valueint)||(!dto_text(item,"component_id").empty()&&dto_text(item,"component_id")!=q.component_id.str()))continue;
-            bool same=true;for(const auto& field:std::vector<std::pair<const char*,const std::vector<uint8_t>*>>{{"power_on",&q.power_on},{"power_off",&q.power_off}}){const auto* bytes=cJSON_GetObjectItemCaseSensitive(item,field.first);if(!cJSON_IsArray(bytes)||cJSON_GetArraySize(bytes)!=static_cast<int>(field.second->size())){same=false;break;}size_t i=0;for(const auto* b=bytes->child;b;b=b->next,++i)if(!cJSON_IsNumber(b)||b->valuedouble!=b->valueint||b->valueint!=(*field.second)[i])same=false;}
-            if(same){matched.insert(n);found=true;}
-        }if(!found)return false;
-    }return true;
-}
-
-
 }
 std::string component_value(std::optional<m::ComponentId> id) { return id?"component:"+id->str():std::string{}; }
 bool parse_submission(const std::string& body,const cs::ConfigurationV2& config,Submission& out,std::string& error) {
     const auto fail=[&](const char* message){error=message;return false;};
     if(body.size()>cs::configuration_compatibility_limit)return fail("The activity document is too large");
     std::unique_ptr<cJSON,decltype(&cJSON_Delete)> root(parse_json_input(body),cJSON_Delete);
-    if(!root||!dto_keys(root.get(),{"request_id","version","expected_config_revision","expected_presentation_revision","activities","quirks","device_choices"}))return fail("Unknown or invalid activity editor field");
+    if(!root||!dto_keys(root.get(),{"request_id","version","expected_config_revision","expected_presentation_revision","activities","device_choices"}))return fail("Unknown or invalid activity editor field");
     Submission value;const auto request=m::MessageId::parse(dto_text(root.get(),"request_id"));const auto semantic=m::parse_uint64(dto_text(root.get(),"expected_config_revision"));const auto presentation=m::parse_uint64(dto_text(root.get(),"expected_presentation_revision"));
     if(!request||!semantic||!presentation)return fail("Activity requests require canonical identities and revision strings");
     value.request_id=*request;value.expected={*semantic,*presentation};if(value.expected!=config.revisions())return fail("Activities changed. Reload before saving");
     const auto* version=cJSON_GetObjectItemCaseSensitive(root.get(),"version");const auto* rows=cJSON_GetObjectItemCaseSensitive(root.get(),"activities");
     if(!cJSON_IsNumber(version)||version->valuedouble!=1||!cJSON_IsArray(rows)||cJSON_GetArraySize(rows)>16)return fail("Use activity editor version 1 with at most sixteen activities");
-    if(!unchanged_quirks(cJSON_GetObjectItemCaseSensitive(root.get(),"quirks"),config))return fail("Vendor power recipes require a supported equipment profile; existing scoped recipes are retained");
     for(const auto* row=rows->child;row;row=row->next){
         Row entry;if(!dto_keys(row,{"activity_id","name","display","source","audio","switch"})||!dto_string(row,"name",entry.name,63)||!dto_string(row,"display",entry.display,80,true)||!dto_string(row,"source",entry.source,80,true)||!dto_string(row,"audio",entry.audio,80,true))return fail("Invalid activity field");
         if(cJSON_GetObjectItemCaseSensitive(row,"activity_id")){entry.activity_id=m::ActivityId::parse(dto_text(row,"activity_id"));if(!entry.activity_id)return fail("Invalid stable activity identity");}

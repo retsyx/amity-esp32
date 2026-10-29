@@ -31,10 +31,10 @@ std::vector<std::string> names(const Activity &a) {
     return result;
 }
 }
-void Hub::configure(std::vector<Activity> activities, std::vector<Quirk> quirks) {
+void Hub::configure(std::vector<Activity> activities) {
     if (selected_ >= 0) standby();
     ++activity_generation_; ++owned_generation_; pending_inputs_.clear();lookup_previous_selection_.reset();
-    activities_ = std::move(activities); quirks_ = std::move(quirks);
+    activities_ = std::move(activities);
     if (owned_sender_) publish_owned_context(true);
 }
 void Hub::scoped_transport(std::vector<system::ScopedSelector> selectors, OwnedSender sender, OwnedLookup lookup,
@@ -47,14 +47,11 @@ std::optional<system::QualifiedDeviceName> Hub::target(const std::string& value)
     for (const auto& selector : scoped_selectors_) if (selector.value == value) return selector.target;
     return {};
 }
-bool Hub::owned(system::OwnedIntentKind kind, const std::string& value, bool on, uint8_t data, bool repeat, bool apply_quirks) {
+bool Hub::owned(system::OwnedIntentKind kind, const std::string& value, bool on, uint8_t data, bool repeat) {
     if (!owned_sender_) return false;
     auto endpoint = target(value); if (!endpoint) return false;
     system::OwnedIntent intent; intent.kind = kind; intent.target = *endpoint; intent.generation = owned_generation_;
-    intent.on = on; intent.key = data; intent.input = data; intent.repeat = repeat; intent.apply_quirks = apply_quirks;
-    if (kind == system::OwnedIntentKind::power) for (const auto& q : quirks_) intent.quirks.push_back({q.vendor_id,q.power_on,q.power_off});
-    if (kind == system::OwnedIntentKind::power) for (const auto& selector : scoped_selectors_)
-        if (selector.value == value && selector.quirks) { intent.quirks = *selector.quirks; break; }
+    intent.on = on; intent.key = data; intent.input = data; intent.repeat = repeat;
     return bool(owned_sender_(std::move(intent)));
 }
 bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
@@ -119,8 +116,7 @@ bool Hub::execute_owned(const system::OwnedIntent& intent) {
     auto* device = find_on_side(side,intent.target.osd_name); if (!device) { transport_.request_scan(); return false; }
     switch (intent.kind) {
     case system::OwnedIntentKind::power:
-        quirks_.clear(); for (const auto& q : intent.quirks) quirks_.push_back({q.vendor_id,q.power_on,q.power_off});
-        return power(*device,intent.on,intent.apply_quirks);
+        return power(*device,intent.on);
     case system::OwnedIntentKind::source_input:
         return send(side,15,{0x86,static_cast<uint8_t>(device->physical_address>>8),static_cast<uint8_t>(device->physical_address)});
     case system::OwnedIntentKind::switch_input: {
@@ -202,15 +198,8 @@ bool Hub::key_needs_discovery(uint8_t key) const {
     const auto &name = ((key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66) ? a.audio : a.source;
     return !name.empty() && !known(name);
 }
-bool Hub::power(const Device &device, bool on, bool quirk) {
-    if (owned_sender_) return owned(system::OwnedIntentKind::power,device.name,on,0,false,quirk);
-    if (quirk) for (const auto &q : quirks_) {
-        if (q.vendor_id != device.vendor_id) continue;
-        const auto &data = on ? q.power_on : q.power_off;
-        if (data.empty() || data.size() > 15) continue;
-        return data[0] == 0x44 ? finite_press(device,data.data(),data.size()) :
-            transport_.send(device.bus,device.address,data.data(),data.size());
-    }
+bool Hub::power(const Device &device, bool on) {
+    if (owned_sender_) return owned(system::OwnedIntentKind::power,device.name,on);
     if (!on) return send(device.bus, device.address, {0x36});
     else if (device.type == 0) return send(device.bus, device.address, {0x04});
     else {
@@ -271,7 +260,7 @@ bool Hub::select_activity(int index) {
     const auto after_activity = index < 0 ? Activity{} : activities_[index];
     const auto after = names(after_activity);
     for (const auto &name : before) if (std::find(after.begin(), after.end(), name) == after.end()) {
-        if (auto *d = find(name)) power(*d, false, index == -1);
+        if (auto *d = find(name)) power(*d, false);
     }
     for (const auto &name : after) if (std::find(before.begin(), before.end(), name) == before.end()) {
         if (auto *d = find(name)) power(*d, true);

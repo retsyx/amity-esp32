@@ -23,7 +23,7 @@ MAIN,MEMBER=(f'{n:032x}' for n in (1,2))
 BOOT,REMOTE_BOOT,RENAMED_BOOT='a'*32,'b'*32,'c'*32
 fixture=dict(hostname='amity-dut',boot_id=BOOT,hostname_probes=0,hostname_ready=False,early_navigation=False,determined=None,calls=[],gets=[],fail=False,
              settings_fail=False,settings_outcome='applied',settings_http500=False,remote_status='ready',named=True,operations={},next_id=100)
-editor=dict(version=1,activities=[],device_choices=[],quirks=[],expected_config_revision='1',expected_presentation_revision='1')
+editor=dict(version=1,activities=[],device_choices=[],expected_config_revision='1',expected_presentation_revision='1')
 configuration=dict(version=2,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],zones=[],
                    octopuses=[dict(octopus_id=MAIN,supported_tentacles=1),dict(octopus_id=MEMBER,supported_tentacles=4)])
 def adapter(slot,presence='present',configured=True,default='1.0.0.0',observed=None):

@@ -4,7 +4,7 @@ The authoritative behavior baseline is local Amity at `98e64a6`, plus the user's
 
 ## Sources to compare before changes
 
-- `components/amity_hub/hub.cpp` and `include/amity/hub.hpp`: activity fields, selective power, source routing/switch fallback, quirks, received frames, metadata, held recipients and audio/playback state.
+- `components/amity_hub/hub.cpp` and `include/amity/hub.hpp`: activity fields, selective power, source routing/switch fallback, received frames, metadata, held recipients and audio/playback state.
 - `components/amity_hub/hub_service.cpp`: owner-task input/RX/setup/discovery sequencing, original allocation/back-first PA selection, asynchronous CEC submission and completion handling.
 - `components/ble_remote`, `main/swipe_sequence.hpp` and original controller input code: HID/Siri recognition, macros, input gate, gesture sequence and cancellation.
 - `components/cec`: mechanical transmit admission, wire protocol/timing, attempts/results and the eight-slot FIFO.

@@ -10,7 +10,12 @@ Moving equipment to another Amity must preserve every CEC frame, wire order, att
 
 ## 2. Original activity operations
 
-Use the original Hub decisions for selective power changes, same-target repair, standby, source input selection, explicit switch-input fallback, audio status and vendor quirks. The owner obtains current LA/PA/type/vendor from ordinary local lookup and translates the original operation there.
+Use the original Hub decisions for selective power changes, same-target repair, standby, source input selection, explicit switch-input fallback and audio status. The owner obtains current LA/PA/type/vendor from ordinary local lookup and translates the original operation there.
+
+Power uses standard commands only: TV On sends Image View On (`04`), other
+devices receive Power On Function (`44:6d`) and Released (`45`), and Off sends
+Standby (`36`). The transported power arguments contain only the `on` boolean.
+There are no configurable command recipes or vendor-dependent power branches.
 
 A separate AVR/audio target is an ordinary qualified equipment selection. A source that cannot be found can still use the original explicit switch-device/input fallback. Missing one recipient does not authorize an all-or-nothing topology preflight that prevents the rest of the original algorithm from proceeding. Preserve baseline deduplication when one recipient fills several activity roles.
 
@@ -36,4 +41,4 @@ Authenticate the original controller and selected owner, reject stale boot/confi
 
 ## 6. Validation
 
-Compare baseline and scoped-owner transcripts for TV/source power, separate AVR audio, explicit input selection, source absence, quirks, received frames, same-target repair, independent held keys, finite taps, failed presses, FIFO saturation and releases. Host evidence must assert frames/order/attempts/admission, not only Ready or storage equality. Physical CEC captures remain necessary for timing qualification.
+Compare baseline and scoped-owner transcripts for TV/source power, separate AVR audio, explicit input selection, source absence, received frames, same-target repair, independent held keys, finite taps, failed presses, FIFO saturation and releases. Host evidence must assert frames/order/attempts/admission, not only Ready or storage equality. Physical CEC captures remain necessary for timing qualification.

@@ -1,12 +1,12 @@
 # Original Amity handling and qualified owner dispatch
 
-`amity::Hub` remains the behavior source for activities, separate AVR/audio, source routing and explicit switch-input fallback, vendor quirks, received frames, discovery and held keys. Compare baseline `98e64a6` and [AGENTS.md](../../AGENTS.md) before changing those algorithms. Distribution adds scoped recipients and typed delivery; it does not provide a second CEC policy.
+`amity::Hub` remains the behavior source for activities, separate AVR/audio, source routing and explicit switch-input fallback, received frames, discovery and held keys. Compare baseline `98e64a6` and [AGENTS.md](../../AGENTS.md) before changing those algorithms. Distribution adds scoped recipients and typed delivery; it does not provide a second CEC policy.
 
 The configured equipment address is Amity device ID / HDMI adapter / CEC side / OSD name, scoped to the installation. `SystemControl` carries original activity choices and stable presentation/slot identity. The controller sequences the original decisions and selects the owner; the owner resolves local adapter/side/OSD equipment and applies the original local operation. Missing equipment stays configured and uses ordinary lookup rather than an enabled/approved-route gate.
 
 Each configured adapter is an independent original front/back pair. `HubService` owns local input/RX/setup/discovery and CEC completion work. Preserve the original allocation candidates, asynchronous scans, lowest usable back-device PA or that adapter's saved fallback, fixed-for-boot front PA, announcement order and original received-frame/configuration effects. An adapter's default/observations never determine another adapter's identity.
 
-The sole original controller hosts UI, home integrations and the remote. Added devices remain headless and accept only authenticated original-controller delivery. No planner/resource/domain/profile graph, prepared global execution plan or durable current-activity/resume ledger is part of normal execution. Canonical schema 3 stores original activity fields, qualified selectors, labels/order/slots and quirks. [Addressing](../../amity-octopus-consortium/03-domain-model-and-addressing.md) and [execution](../../amity-octopus-consortium/07-activity-planning-and-execution.md).
+The sole original controller hosts UI, home integrations and the remote. Added devices remain headless and accept only authenticated original-controller delivery. No planner/resource/domain/profile graph, prepared global execution plan or durable current-activity/resume ledger is part of normal execution. Canonical schema 3 stores original activity fields, qualified selectors, labels/order/slots. [Addressing](../../amity-octopus-consortium/03-domain-model-and-addressing.md) and [execution](../../amity-octopus-consortium/07-activity-planning-and-execution.md).
 
 ## Keys, submissions and cleanup
 

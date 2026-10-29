@@ -330,7 +330,6 @@ esp_err_t load_v2(amity::SystemControl& service,bool defer_configuration){
         Configuration legacy;if(!parse_configuration(original,legacy,message))return ESP_ERR_INVALID_ARG;
         config_store::LegacyConfiguration old;
         for(const auto& activity:legacy.activities)old.activities.push_back({activity.name,activity.display,activity.source,activity.audio,activity.switch_device,activity.switch_input});
-        for(const auto& quirk:legacy.quirks)old.quirks.push_back({quirk.vendor_id,quirk.power_on,quirk.power_off});
         // The saved local name already identifies its original owner/adapter.
         // Available observations refine that address; missing equipment never
         // postpones migration or adds an availability veto.

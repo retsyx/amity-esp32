@@ -31,7 +31,7 @@ window.amityInterface=(()=>{
  }
  function submit(document,preserve=true){
   return {version:1,request_id:identifier(),expected_config_revision:document.expected_config_revision,expected_presentation_revision:document.expected_presentation_revision,
-   activities:(document.activities||[]).map(a=>{const previous=preserve?originalSelections.get(a.activity_id):null;const row={name:a.name,display:reference('display',a.display,previous?.display),source:reference('source',a.source,previous?.source),audio:reference('audio',a.audio,previous?.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device,previous?.switch),input:a.switch.input};return row;}),quirks:document.quirks||[]};
+   activities:(document.activities||[]).map(a=>{const previous=preserve?originalSelections.get(a.activity_id):null;const row={name:a.name,display:reference('display',a.display,previous?.display),source:reference('source',a.source,previous?.source),audio:reference('audio',a.audio,previous?.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device,previous?.switch),input:a.switch.input};return row;})};
  }
  function response(value,original){return new Response(JSON.stringify(value),{status:original.status,headers:original.headers});}
  async function wait(original){

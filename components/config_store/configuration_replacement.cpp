@@ -38,7 +38,7 @@ bool restore_main_configuration(const ConfigurationV2& backup,const Configuratio
     if(!backup.controller_octopus_id||!current.controller_octopus_id)return fail("Restore requires a backup identifying its original main Amity and a newly set up main Amity");
     const auto old=*backup.controller_octopus_id,replacement=*current.controller_octopus_id;
     if(old==replacement&&backup.consortium_id==current.consortium_id){out=backup;out.config_revision=current.config_revision;out.presentation_revision=current.presentation_revision;return true;}
-    if(!current.components.empty()||!current.activities.empty()||!current.external_slots.empty()||!current.quirks.empty()||current.octopuses.size()!=1)return fail("Restore another main Amity's backup onto a freshly set up empty main Amity");
+    if(!current.components.empty()||!current.activities.empty()||!current.external_slots.empty()||current.octopuses.size()!=1)return fail("Restore another main Amity's backup onto a freshly set up empty main Amity");
     const auto hardware=std::find_if(current.octopuses.begin(),current.octopuses.end(),[&](const auto& b){return b.octopus_id==replacement;});
     if(hardware==current.octopuses.end())return fail("The replacement main Amity hardware profile is missing");
     if(std::any_of(backup.octopuses.begin(),backup.octopuses.end(),[&](const auto& b){return b.octopus_id==replacement;}))return fail("The replacement identity already names a different device in this backup");

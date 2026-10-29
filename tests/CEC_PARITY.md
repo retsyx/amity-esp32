@@ -61,8 +61,7 @@ directly attached device stays silent; see the hub component README.
 | TV power on | Image View On (`04`) |
 | Other device power on | User Control Pressed / Power On (`44:6d`), then Released (`45`) |
 | Switch activity | Standby (`36`) only devices no longer used |
-| Power off | Apply vendor `power_off` quirk when present, otherwise Standby |
-| Power-on quirk | Send configured payload; append Released when it begins with `44` |
+| Power off | Send Standby |
 | Reselect current activity | Power on its devices again and restore routing |
 | Known source | Broadcast Set Stream Path (`86:PAhi:PAlo`) on its bus |
 | Missing/absent source with configured switch | Send `44:69:input`, `45`, then front Active Source |
@@ -126,7 +125,7 @@ Release admission is immediate:
 a release submitted at eight is dropped, logged and consumed. Every TX dropped
 because the FIFO is full must be logged, including each frame of a rejected
 atomic batch.
-No later tick or capacity change retries that admission, including power-quirk
+No later tick or capacity change retries that admission, including power
 and switch-key cleanup. CEC applies supplied attempt budgets and the same
 eight-message admission limit without interpreting button policy. The
 [hub component README](../components/amity_hub/README.md) also documents
@@ -167,7 +166,7 @@ Validation:
 
 - `sh tests/cec_hub_test.sh` checks wire ACK/arbitration/timing failures,
   startup message order, activity transitions, identity payloads, ignored
-  unsupported/badly addressed messages, quirks, and audio feedback under
+  unsupported/badly addressed messages, and audio feedback under
   ASan and UBSan. Front physical-address tests cover multiple response orders,
   delayed AVR replies, invalid reports, configured fallback, startup ordering,
   and retaining the result until a fresh boot.

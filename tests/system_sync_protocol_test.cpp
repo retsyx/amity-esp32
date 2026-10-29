@@ -144,7 +144,7 @@ void intent_delivery_preserves_authorization(){
     assert(member.deadline(auth)==refreshed_deadline&&deadline_queries.size()==1&&deadline_queries.back().link_id==link&&deadline_queries.back().deadline_ms==deadline);
     auto up=intent;up.kind=s::OwnedIntentKind::key_up;auto released=envelope(member,original,up);
     assert(hooks.control(original,released,deadline,link)==c::Error::none&&member.authorizations.back().authority==s::OwnedAuthority::cleanup);
-    auto power=intent;power.kind=s::OwnedIntentKind::power;power.on=true;power.quirks.clear();auto powered=envelope(member,original,power);
+    auto power=intent;power.kind=s::OwnedIntentKind::power;power.on=true;auto powered=envelope(member,original,power);
     assert(hooks.control(original,powered,deadline,link)==c::Error::none&&member.authorizations.back().authority==s::OwnedAuthority::control);
     auth_allowed=false;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role);auth_allowed=true;
     for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::lease_expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(hooks.control(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;

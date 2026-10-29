@@ -54,7 +54,7 @@ void inputs(const Configuration &c) {
 esp_err_t apply(const std::string &data,bool persist,std::string &error) {
     Configuration c;
     if(!parse_configuration(data,c,error))return ESP_ERR_INVALID_ARG;
-    auto e=hub->configure_with_commit(c.activities,c.quirks,[&] {
+    auto e=hub->configure_with_commit(c.activities,[&] {
         return persist ? config_store::write("config",data) : ESP_OK;
     });
     if(e!=ESP_OK) {error="Configuration could not be committed";return e;}

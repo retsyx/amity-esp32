@@ -13,10 +13,6 @@ enum class OwnedIntentKind {
     power, source_input, switch_input, announce_active_source, query_audio,
     key_down, key_up, context, standby_wire, discover
 };
-struct OwnedQuirk {
-    uint32_t vendor_id = 0;
-    std::vector<uint8_t> power_on, power_off;
-};
 struct OwnedIntent {
     OwnedIntentKind kind = OwnedIntentKind::query_audio;
     // Port-only actions (context, announcement, standby and discovery) may
@@ -26,8 +22,7 @@ struct OwnedIntent {
     uint32_t setup_generation = 0;
     HoldToken token;
     uint8_t key = 0, input = 0;
-    bool repeat = false, on = false, apply_quirks = true;
-    std::vector<OwnedQuirk> quirks;
+    bool repeat = false, on = false;
     // Non-emitting context mirrors the original controller's selected activity
     // for follower replies and play/pause state, without replaying its recipe.
     bool selected = false, source_changed = false;
@@ -44,7 +39,6 @@ struct OwnedAuthorization {
 struct ScopedSelector {
     std::string value;
     QualifiedDeviceName target;
-    std::optional<std::vector<OwnedQuirk>> quirks = std::nullopt;
 };
 struct OwnedDispatchResult {
     bool admitted = false;

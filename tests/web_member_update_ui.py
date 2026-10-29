@@ -38,7 +38,7 @@ def main():
                              dict(octopus_id=CONTROLLER, label='Living room Amity', supported_tentacles=1)],
                   activities=[], zones=[])
     editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1',
-                  activities=[], device_choices=[], quirks=[])
+                  activities=[], device_choices=[])
     status = dict(version=VERSION, hostname='amity-living-room', front_physical_address='1.0.0.0',
                   hardware='Amity', ready=True, current_activity=-1, devices=[], device_choices=[],
                   expected_boot_id='a' * 32, expected_state_revision='1')

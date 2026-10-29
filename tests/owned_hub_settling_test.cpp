@@ -23,7 +23,7 @@ static void settling_parity(unsigned mode){
     }
     latest_task=primary_task;
     if(mode)assert(primary.configure_scoped({{"First","display","source","source","",0},{"Second","display","source","source","",0}},
-        {{"display",named(controller,m::Side::front,"TV")},{"source",named(mode==2?member:controller,m::Side::back,"Source")}}, {},[&](const m::OwnedIntent& intent){
+        {{"display",named(controller,m::Side::front,"TV")},{"source",named(mode==2?member:controller,m::Side::back,"Source")}},[&](const m::OwnedIntent& intent){
             auto* previous=latest_task;latest_task=other_task;m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};
             const auto result=other->submit_owned(intent,auth);latest_task=previous;
             if(result.source_present)assert(primary.owned_input_result(member,intent.generation,intent.sequence,*result.source_present));

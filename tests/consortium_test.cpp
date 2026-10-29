@@ -49,6 +49,13 @@ std::string packet(const LinkScope& s,Kind kind,const std::string& payload){retu
 m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::power;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=x.sequence=1;x.on=true;return x;}
 void envelope_tests(const std::string& body){
     Envelope out;assert(parse_envelope(body,out)==Error::none);
+    const auto* arguments=out.payload.get("arguments");
+    assert(arguments&&closed(*arguments,{"on"}));
+    m::OwnedIntent decoded;m::ExecutionLeaseId lease;
+    assert(parse_owned_intent(out.payload,decoded,lease)==Error::none&&decoded.kind==m::OwnedIntentKind::power&&decoded.on);
+    assert(parse_envelope(replace(body,"\"on\":true","\"on\":false"),out)==Error::none);
+    assert(parse_owned_intent(out.payload,decoded,lease)==Error::none&&!decoded.on);
+    assert(parse_envelope(replace(body,"\"arguments\":{\"on\":true}","\"arguments\":{}"),out)==Error::invalid_message);
     for(const auto* invalid:{"0","01","18446744073709551616"})assert(parse_envelope(replace(body,"\"sequence\":\"1\"","\"sequence\":\""+std::string(invalid)+"\""),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":0"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"config_revision\":\"7\"","\"config_revision\":7"),out)==Error::invalid_message);

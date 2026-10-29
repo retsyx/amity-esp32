@@ -2,7 +2,7 @@
 
 This package documents a thin distributed layer around original local Amity. The configured equipment address is **Amity device ID / HDMI adapter / CEC side / OSD name**. The original controller locates the owner; that owner resolves its local equipment and runs the same local algorithms.
 
-The 27 October 2026 user instruction removes the earlier persistent executable-topology/planner design. Canonical schema 3 stores original activity choices and qualified selectors. There is no activity enabled flag, approved route, resource/capability graph or persisted PA evidence required for normal operation. Missing equipment stays saved and uses ordinary runtime lookup. AVR/audio, explicit receiver input, quirks, discovery, gestures and CEC behavior remain those of baseline `98e64a6` plus the user's explicit amendments. Read [AGENTS.md](../AGENTS.md) first.
+The 27 October 2026 user instruction removes the earlier persistent executable-topology/planner design. Canonical schema 3 stores original activity choices and qualified selectors. There is no activity enabled flag, approved route, resource/capability graph or persisted PA evidence required for normal operation. Missing equipment stays saved and uses ordinary runtime lookup. AVR/audio, explicit receiver input, discovery, gestures and CEC behavior remain those of baseline `98e64a6` plus the user's explicit amendments. Read [AGENTS.md](../AGENTS.md) first.
 
 ## Documents
 

@@ -31,7 +31,6 @@ class Fixture:
         self.full = {**deepcopy(source.config), "activities": [], "external_slots": [{"slot": 0, "activity_id": "9" * 32}],
                      "controller_octopus_id": self.dut.identity.device_id, "primary_zone_id": "d" * 32,
                      "components": [{"component_id": "f" * 32, "label": "Preexisting equipment", "qualified_names": []}]}
-        self.quirks = [{"component_id": None, "vendor_id": 7, "power_on": [4], "power_off": [54]}]
         self.selectors = {component.name: row["name"] for component, row in zip(source.components, source.rows)}
         self.current, self.pending_stop, self.state_revision, self.polls = None, 0, 1, 0
         self.reject_create = self.lose_create_reply = self.conflict_cleanup = self.change_boot_on_action = self.reject_start = False
@@ -50,7 +49,6 @@ class Fixture:
                                      **{role: row.get(role, "").removeprefix("component:") or None
                                         for role in ("display", "source", "audio")}}
                                     for row in self.rows]
-        self.full["quirks"] = deepcopy(self.quirks)
 
     def editor(self):
         choices = [{"value": self.selectors[component.name], "roles": roles}
@@ -58,7 +56,7 @@ class Fixture:
                                             (self.player, ["source"]))]
         return {"version": 1, "expected_config_revision": self.full["config_revision"],
                 "expected_presentation_revision": self.full["presentation_revision"],
-                "activities": deepcopy(self.rows), "quirks": deepcopy(self.quirks), "device_choices": choices}
+                "activities": deepcopy(self.rows), "device_choices": choices}
 
     def state(self):
         if self.pending_stop:
@@ -127,7 +125,7 @@ class Fixture:
             self.allocate(rows)
             for row in rows:
                 row.setdefault("activity_id", "a" * 32)
-            self.rows, self.quirks = rows, deepcopy(data["quirks"])
+            self.rows = rows
             self.bump()
             self.sync_full()
             if creating and self.reject_create:
@@ -171,7 +169,7 @@ class ActivityTests(unittest.TestCase):
 
     def test_create_start_standby_and_remove_preserve_original_state(self):
         f = self.fixture
-        original_rows, original_quirks = deepcopy(f.rows), deepcopy(f.quirks)
+        original_rows = deepcopy(f.rows)
         with f.activity() as activity:
             self.assertEqual(f.rows[:-1], original_rows)
             started = activity.start()
@@ -184,7 +182,6 @@ class ActivityTests(unittest.TestCase):
             activity.standby()
             self.assertGreaterEqual(f.polls - before, 3)
         self.assertEqual(f.rows, original_rows)
-        self.assertEqual(f.quirks, original_quirks)
         self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32])
         self.assertEqual(len([call for call in f.calls if call[0].endswith("/activity")]), 2)
         calls = len(f.calls)
@@ -227,20 +224,15 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(len(f.rows), 1)
         self.assertIsNone(f.current)
 
-    def test_cleanup_preserves_new_equipment_reused_by_another_activity_or_quirk(self):
-        for quirk in (False, True):
-            with self.subTest(quirk=quirk):
-                f = Fixture()
-                activity = f.activity()
-                identity = f.selectors[f.player.name].removeprefix("component:")
-                if quirk:
-                    f.quirks.append({"component_id": identity, "vendor_id": 1, "power_on": [], "power_off": []})
-                else:
-                    f.rows[0]["source"] = "component:" + identity
-                f.sync_full()
-                activity.close()
-                self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32, identity])
-                self.assertEqual(activity.retained_equipment, [identity])
+    def test_cleanup_preserves_new_equipment_reused_by_another_activity(self):
+        f = self.fixture
+        activity = f.activity()
+        identity = f.selectors[f.player.name].removeprefix("component:")
+        f.rows[0]["source"] = "component:" + identity
+        f.sync_full()
+        activity.close()
+        self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32, identity])
+        self.assertEqual(activity.retained_equipment, [identity])
 
     def test_rejected_start_does_not_require_a_nonexistent_operation_for_cleanup(self):
         f = self.fixture

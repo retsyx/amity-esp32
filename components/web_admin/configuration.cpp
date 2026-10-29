@@ -46,7 +46,7 @@ bool parse_configuration(const std::string &json,Configuration &config,std::stri
     if(!root) {error="Invalid JSON";return false;}
     auto fail=[&](const char *s){error=s;cJSON_Delete(root);return false;};
     if(!cJSON_IsObject(root)||!unique_keys(root)||!integer(cJSON_GetObjectItemCaseSensitive(root,"version"),1,1))return fail("Expected configuration version 1 with unique keys");
-    if(!only_keys(root,{"version","activities","quirks"}))return fail("Backup supports only activities and vendor quirks; device and Matter settings are excluded");
+    if(!only_keys(root,{"version","activities"}))return fail("Backup supports only activities; device and Matter settings are excluded");
     auto *list=cJSON_GetObjectItemCaseSensitive(root,"activities");
     if(!cJSON_IsArray(list)||cJSON_GetArraySize(list)>16)return fail("Expected up to 16 activities");
     std::set<std::string> names;
@@ -61,24 +61,6 @@ bool parse_configuration(const std::string &json,Configuration &config,std::stri
             a.switch_input=input->valueint;
         }
         config.activities.push_back(std::move(a));
-    }
-    auto *quirks=cJSON_GetObjectItemCaseSensitive(root,"quirks");
-    if(quirks) {
-        if(!cJSON_IsArray(quirks)||cJSON_GetArraySize(quirks)>32)return fail("Expected up to 32 vendor quirks");
-        for(auto *item=quirks->child;item;item=item->next) {
-            if(!only_keys(item,{"vendor_id","power_on","power_off"}))return fail("Unknown quirk field");
-            amity::Quirk q;auto *vendor=cJSON_GetObjectItemCaseSensitive(item,"vendor_id");
-            if(!integer(vendor,0,0xffffff))return fail("Invalid quirk vendor ID");
-            q.vendor_id=vendor->valueint;
-            const std::pair<const char *,std::vector<uint8_t> *> payloads[]={{"power_on",&q.power_on},{"power_off",&q.power_off}};
-            for(auto pair:payloads) {
-                auto *bytes=cJSON_GetObjectItemCaseSensitive(item,pair.first);
-                if(!bytes)continue;
-                if(!cJSON_IsArray(bytes)||cJSON_GetArraySize(bytes)<1||cJSON_GetArraySize(bytes)>15)return fail("Quirk payload must contain 1..15 bytes");
-                for(auto *byte=bytes->child;byte;byte=byte->next) {if(!integer(byte,0,255))return fail("Invalid quirk byte");pair.second->push_back(byte->valueint);}
-            }
-            config.quirks.push_back(std::move(q));
-        }
     }
     cJSON_Delete(root);return true;
 }

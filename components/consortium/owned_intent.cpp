@@ -44,14 +44,6 @@ bool target(const Json& v, model::QualifiedDeviceName& n, bool allow_empty) {
     n.port.tentacle_id=static_cast<uint8_t>(adapter);n.port.side=*model::parse_side(side);
     return n.port.valid()&&(n.osd_name.empty()?allow_empty:n.valid());
 }
-bool recipe(const Json* value,std::vector<uint8_t>& out) {
-    if(!value||value->type!=Json::Type::array||value->array.size()>15)return false;
-    for(const auto& b:value->array){uint64_t n=0;if(!json_uint(&b,n,0,255))return false;out.push_back(static_cast<uint8_t>(n));}
-    return true;
-}
-std::string bytes(const std::vector<uint8_t>& data) {
-    std::string out="[";for(auto b:data){if(out.size()>1)out+=',';out+=std::to_string(b);}return out+"]";
-}
 }
 Error parse_owned_intent(const Json& v,model::OwnedIntent& out,model::ExecutionLeaseId& lease) {
     if(!closed(v,{"execution_lease_id","generation","sequence","setup_generation","target","action","arguments"})||
@@ -68,11 +60,9 @@ Error parse_owned_intent(const Json& v,model::OwnedIntent& out,model::ExecutionL
     if(!found||!target(*v.get("target"),x.target,port_only))return Error::invalid_message;
     const auto& a=*v.get("arguments");uint64_t n=0;
     switch(x.kind) {
-    case K::power:{
-        if(!closed(a,{"on","apply_quirks","quirks"})||!json_bool(a.get("on"),x.on)||!json_bool(a.get("apply_quirks"),x.apply_quirks))return Error::invalid_message;
-        const auto* qs=a.get("quirks");if(qs->type!=Json::Type::array||qs->array.size()>32)return Error::invalid_message;
-        for(const auto& q:qs->array){model::OwnedQuirk next;if(!closed(q,{"vendor_id","power_on","power_off"})||!json_uint(q.get("vendor_id"),n,0,0xffffff)||!recipe(q.get("power_on"),next.power_on)||!recipe(q.get("power_off"),next.power_off))return Error::invalid_message;next.vendor_id=static_cast<uint32_t>(n);x.quirks.push_back(std::move(next));}
-        break;}
+    case K::power:
+        if(!closed(a,{"on"})||!json_bool(a.get("on"),x.on))return Error::invalid_message;
+        break;
     case K::switch_input:if(!closed(a,{"input"})||!json_uint(a.get("input"),n,0,255))return Error::invalid_message;x.input=static_cast<uint8_t>(n);break;
     case K::key_down:
         if(!closed(a,{"key","repeat","token"})||!json_uint(a.get("key"),n,0,255)||!json_bool(a.get("repeat"),x.repeat)||!id(a.get("token"),x.token))return Error::invalid_message;
@@ -93,9 +83,7 @@ Error parse_owned_intent(const Json& v,model::OwnedIntent& out,model::ExecutionL
 std::string owned_intent_json(const model::OwnedIntent& x,model::ExecutionLeaseId lease) {
     std::string args="{}";
     switch(x.kind) {
-    case K::power:
-        args="{\"on\":"+std::string(x.on?"true":"false")+",\"apply_quirks\":"+(x.apply_quirks?"true":"false")+",\"quirks\":[";
-        for(const auto& q:x.quirks){if(args.back()!='[')args+=',';args+="{\"vendor_id\":"+std::to_string(q.vendor_id)+",\"power_on\":"+bytes(q.power_on)+",\"power_off\":"+bytes(q.power_off)+"}";}args+="]}";break;
+    case K::power:args="{\"on\":"+std::string(x.on?"true":"false")+"}";break;
     case K::switch_input:args="{\"input\":"+std::to_string(x.input)+"}";break;
     case K::key_down:args="{\"key\":"+std::to_string(x.key)+",\"repeat\":"+(x.repeat?"true":"false")+",\"token\":\""+x.token.str()+"\"}";break;
     case K::key_up:args="{\"key\":"+std::to_string(x.key)+",\"token\":\""+x.token.str()+"\"}";break;

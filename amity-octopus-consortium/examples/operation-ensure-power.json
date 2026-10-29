@@ -23,9 +23,7 @@
     },
     "action": "power",
     "arguments": {
-      "on": true,
-      "apply_quirks": true,
-      "quirks": []
+      "on": true
     },
     "setup_generation": 0
   }
