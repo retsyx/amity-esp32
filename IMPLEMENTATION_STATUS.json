@@ -191,18 +191,27 @@
   },
   "latest_deployment": {
     "date": "2026-10-28",
-    "firmware_version": "0.1.84",
-    "matter_software_version": 85,
-    "device_count": 4,
+    "firmware_version": "0.1.86",
+    "matter_software_version": 87,
+    "device_count": 1,
+    "bench_labels": [
+      "amity-dut"
+    ],
     "hardware_profile": "esp32s3-development-4t-v1",
     "normal_admission": true,
     "result": "PASS",
-    "report": "test-results/matter-auto-boot-2026-10-28/deployment.json",
-    "checks": "Exact image/version/profile on all four; factory credentials, origin IDs and non-application flash preserved; automatic Matter setup window, SDK window-open event, CHIPoBLE advertising and SDK security self-test passed on every board.",
-    "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
-    "setup_cards_unchanged": true,
-    "actual_home_setup": "amity-dut completed Matter commissioning and original-main startup; other three retain unclaimed-boot advertising evidence.",
-    "radio_enrollment_exercised": false
+    "report": "test-results/standby-stack-fix-0.1.86/after-update.json",
+    "running_elf_sha256": "6cd6bb5195da40c2174aefc7d5b86993b5966cd556fc4e8f3a96844c34a32997",
+    "healthy_boot_id": "0c508459411bbdbf06b380cf41f7f46b",
+    "configuration_preserved": true,
+    "checks": "Existing authenticated application update; exact running version/ELF and healthy boot verified. The four-tentacle profile and existing configuration were preserved. The physical scan/activity suite and two additional activity cycles passed on the same boot; no upgrade of the other three boards is claimed.",
+    "functional_reports": [
+      "test-results/standby-stack-fix-0.1.86/functional-suite.json",
+      "test-results/standby-stack-fix-0.1.86/activity-cycle-2.json",
+      "test-results/standby-stack-fix-0.1.86/activity-cycle-3.json"
+    ],
+    "radio_enrollment_exercised": false,
+    "final_verification": "test-results/standby-stack-fix-0.1.86/verified.json"
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -295,8 +304,111 @@
       "checks": "Exact MAC/application/boot identity; all non-application partitions and OTA selection unchanged before reboot; preserved Matter/admin credentials and origin IDs; SDK admission security self-test passed on every board.",
       "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
       "radio_enrollment_exercised": false
+    },
+    {
+      "date": "2026-10-28",
+      "firmware_version": "0.1.84",
+      "matter_software_version": 85,
+      "device_count": 4,
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "normal_admission": true,
+      "result": "PASS",
+      "report": "test-results/matter-auto-boot-2026-10-28/deployment.json",
+      "checks": "Exact image/version/profile on all four; factory credentials, origin IDs and non-application flash preserved; automatic Matter setup window, SDK window-open event, CHIPoBLE advertising and SDK security self-test passed on every board.",
+      "setup_cards": "test-results/admission-0.1.83-deployment-2026-10-27/index.html",
+      "setup_cards_unchanged": true,
+      "actual_home_setup": "amity-dut completed Matter commissioning and original-main startup; other three retain unclaimed-boot advertising evidence.",
+      "radio_enrollment_exercised": false
     }
   ],
+  "standby_stack_fix_validation": {
+    "test_commit": "c4833a1",
+    "failure_evidence": {
+      "firmware_version": "0.1.85",
+      "report": "test-results/functional/activity-suite-0.1.85.json",
+      "uart_log": "test-results/functional/activity-dut-uart.log",
+      "finding": "The activity started and all three fixture components received real DUT power-on commands. Standby triggered a detected stack overflow in task amity_hub and a software CPU reset. A target-compiled additive call-chain estimate exceeded 6304 bytes before final owner send/runtime overhead, exceeding the old 6144-byte task stack; no recursive callback cycle was found."
+    },
+    "change": {
+      "task": "amity_hub",
+      "previous_stack_bytes": 6144,
+      "stack_bytes": 12288,
+      "additional_internal_heap_bytes": 6144,
+      "allocation_count": 1,
+      "scope": "Task stack capacity only; original activity/CEC algorithms, timing, wire attempt budgets and ownership delivery remain unchanged."
+    },
+    "focused_host": {
+      "result": "PASS",
+      "commands": [
+        "sh tests/cec_hub_test.sh",
+        "sh tests/owned_hub_test.sh"
+      ],
+      "logs": [
+        "test-results/functional/standby-stack-cec-host.log",
+        "test-results/functional/standby-stack-owned-host.log"
+      ],
+      "scope": "Original hub admission/key/activity/physical-address/settling behavior and qualified local/two-owner frame parity with completion-paced settling."
+    },
+    "native_build": {
+      "result": "PASS",
+      "command": "idf.py build (pinned SDK environment)",
+      "log": "test-results/functional/standby-stack-build-0.1.86.log",
+      "firmware_version": "0.1.86",
+      "matter_software_version": 87,
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "image": "build/amity.bin",
+      "image_bytes": 2435312,
+      "ota_partition_bytes": 3997696,
+      "free_bytes": 1562384,
+      "running_elf_sha256": "6cd6bb5195da40c2174aefc7d5b86993b5966cd556fc4e8f3a96844c34a32997"
+    },
+    "physical": {
+      "result": "PASS",
+      "device_count": 1,
+      "bench_label": "amity-dut",
+      "boot_id": "0c508459411bbdbf06b380cf41f7f46b",
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "supported_tentacles": 4,
+      "configured_tentacles_mask": 15,
+      "suite_report": "test-results/standby-stack-fix-0.1.86/functional-suite.json",
+      "activity_reports": [
+        "test-results/standby-stack-fix-0.1.86/functional-suite.json",
+        "test-results/standby-stack-fix-0.1.86/activity-cycle-2.json",
+        "test-results/standby-stack-fix-0.1.86/activity-cycle-3.json"
+      ],
+      "completed_activity_cycles": 3,
+      "checks": "Exact scanned fixture identities and attachment locations; initial component standby; real DUT-origin power-on commands and directed Standby 0x36 to TV, AVR and player after each action boundary; completed UI operations and settling; no boot change; only owned temporary activity/equipment removed while preserving pre-existing equipment.",
+      "scope": "One local Amity and its simulated TV/AVR/player on one adapter. This does not qualify all four adapters, remote owner radio delivery or real AV equipment.",
+      "final_verification": "test-results/standby-stack-fix-0.1.86/verified.json",
+      "configuration_preservation": "Original activities and equipment preserved; expected configuration/presentation revisions and normal external-slot tombstones advanced through test creation/removal.",
+      "harness_release": {
+        "report": "test-results/standby-stack-fix-0.1.86/adapters-after.json",
+        "adapters_checked": 14,
+        "all_logical_address_masks_zero": true,
+        "scope": "All harness Linux CEC adapters released their claimed logical addresses after cleanup; not a four-adapter DUT timing qualification."
+      }
+    },
+    "memory": {
+      "allocation": "One internal-RAM task stack; PSRAM capacity is not stack headroom.",
+      "after_update": {
+        "free_internal_heap_bytes": 32283,
+        "largest_internal_block_bytes": 11264,
+        "report": "test-results/standby-stack-fix-0.1.86/after-update.json"
+      },
+      "after_first_cycle": {
+        "free_internal_heap_bytes": 32031,
+        "largest_internal_block_bytes": 11264,
+        "report": "test-results/standby-stack-fix-0.1.86/after-cycle-1.json"
+      },
+      "runtime_stack_high_water_measured": false,
+      "limitation": "Remaining stack margin and post-workload historical minimum internal heap were not measured. Physical evidence is successful exercised transitions with unchanged boot identity and real CEC standby frames; current free/largest heap snapshots are not low-water measurements.",
+      "after_three_cycles": {
+        "free_internal_heap_bytes": 32015,
+        "largest_internal_block_bytes": 11264,
+        "report": "test-results/standby-stack-fix-0.1.86/verified.json"
+      }
+    }
+  },
   "standard_power_validation": {
     "scope": "Standard CEC power commands only; no custom power payload types, configuration fields, codecs, migrations or decoder compatibility paths.",
     "host": {
@@ -343,6 +455,51 @@
       "owned_intent_target_bytes": 392
     },
     "deployment": "Not deployed; earlier physical evidence does not qualify this changed configuration/transport format."
+  },
+  "owned_intent_reference_validation": {
+    "scope": "Mutable reference for synchronous sequence/setup/token stamping; const references for facade/transport forwarding and request submission. Queued Command payloads and retained key state still own copies. No CEC, queue, deadline, task-priority or cadence changes.",
+    "host": {
+      "result": "PASS",
+      "commands": [
+        "sh tests/cec_hub_test.sh",
+        "sh tests/owned_hub_test.sh",
+        "sh tests/system_remote_control_test.sh",
+        "sh tests/system_sync_test.sh"
+      ],
+      "logs": [
+        "test-results/functional/owned-intent-refs-cec.log",
+        "test-results/functional/owned-intent-refs-owned.log",
+        "test-results/functional/owned-intent-refs-control.log",
+        "test-results/functional/owned-intent-refs-sync.log"
+      ],
+      "checks": "ASan/UBSan suites include exact original/local-qualified/two-owner start and standby frame/order/attempt parity, queued power requests after caller argument reuse/destruction, key/token lifecycle, completion-paced settling, actual facade and synchronization authorization/deadline/IPC behavior."
+    },
+    "target_stack_usage": {
+      "report": "test-results/functional/owned-intent-refs-stack/report.json",
+      "method": "Same Xtensa -Os compile flags with -fstack-usage and object call relocations; before/after source identities, commands and frame tables retained.",
+      "local_standby_known_subtotal_before_bytes": 6112,
+      "local_standby_known_subtotal_after_bytes": 3968,
+      "local_standby_known_subtotal_reduction_bytes": 2144,
+      "remote_forwarding_known_prefix_before_bytes": 6432,
+      "remote_forwarding_known_prefix_after_bytes": 3472,
+      "task_stack_bytes": 12288,
+      "limitation": "Static subtotals exclude final owner-send/CEC/runtime frames (local) and runtime callback/serialization/transport frames (remote). Neither is a full maximum or a measured runtime stack high-water margin."
+    },
+    "native_build": {
+      "result": "PASS",
+      "firmware_version": "0.1.87",
+      "matter_software_version": 88,
+      "command": "idf.py -D Python3_EXECUTABLE=<pinned SDK Python> build (tools/env.sh sourced in bash)",
+      "log": "test-results/functional/owned-intent-refs-build.log",
+      "image_sha256": "ddfb9839fbe5dc9f2d02954244919c71d34353ae90cbf2e7c7b2873d3158f7cb",
+      "image_elf_sha256": "ebc6132fe6c0ad8ed8e4b55e3685e7d6ffbc19ef6b8568f9551e1137ccdd18f0",
+      "image_bytes": 2418832,
+      "hardware_profiles": [
+        "esp32s3-development-4t-v1"
+      ],
+      "scope": "Working-tree image includes the separately pending 12 KiB task-stack capacity fix."
+    },
+    "deployment": "Not deployed. The 0.1.86 physical activity-cycle evidence does not qualify this subsequent reference refactor."
   },
   "audit_fixes_validation": {
     "date": "2026-10-28",

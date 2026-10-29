@@ -63,9 +63,12 @@ class Hub {
 public:
     explicit Hub(Transport &transport) : transport_(transport) {}
     void configure(std::vector<Activity> activities);
-    using OwnedSender = std::function<system::OwnedDispatchResult(system::OwnedIntent)>;
+    using OwnedSender = std::function<system::OwnedDispatchResult(const system::OwnedIntent&)>;
+    // Dispatch stamps the caller's request synchronously; senders only read it.
+    // A callback retaining work beyond the call must own its own copy.
+    using OwnedDispatcher = std::function<system::OwnedDispatchResult(system::OwnedIntent&)>;
     using OwnedLookup = std::function<std::optional<Device>(const system::QualifiedDeviceName&)>;
-    void scoped_transport(std::vector<system::ScopedSelector>, OwnedSender, OwnedLookup,
+    void scoped_transport(std::vector<system::ScopedSelector>, OwnedDispatcher, OwnedLookup,
                           std::optional<system::CecPortRef> default_port = {});
     bool scoped() const { return bool(owned_sender_); }
     uint64_t scoped_generation() const { return owned_generation_; }
@@ -126,7 +129,7 @@ private:
     bool publish_owned_context(bool source_changed,system::OctopusId owner={});
     Transport &transport_;
     std::vector<system::ScopedSelector> scoped_selectors_;
-    OwnedSender owned_sender_;
+    OwnedDispatcher owned_sender_;
     OwnedLookup owned_lookup_;
     std::optional<system::CecPortRef> scoped_default_port_;
     struct PendingInput {Activity activity;system::OctopusId owner;uint64_t generation=0,sequence=0;bool query_audio=false;};

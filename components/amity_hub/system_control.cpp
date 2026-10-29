@@ -15,8 +15,8 @@ std::vector<Activity> SystemControl::activities(const config_store::Configuratio
     }
     return out;
 }
-bool SystemControl::dispatch_owned(system::OwnedIntent intent){
-    const auto sender=std::atomic_load(&sender_);return sender&&(*sender)(std::move(intent));
+bool SystemControl::dispatch_owned(const system::OwnedIntent& intent){
+    const auto sender=std::atomic_load(&sender_);return sender&&(*sender)(intent);
 }
 esp_err_t SystemControl::configure_v2(config_store::ConfigurationV2 config,std::function<esp_err_t()> commit){
     refresh_outcomes();

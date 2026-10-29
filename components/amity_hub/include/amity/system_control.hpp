@@ -73,7 +73,7 @@ public:
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> check){local_.set_owned_authorizer(std::move(check));}
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> check){local_.set_owned_deadline(std::move(check));}
     void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)> observer){local_.set_owned_input_observer(std::move(observer));}
-    system::AdmissionResult submit_owned(system::OwnedIntent intent,system::OwnedAuthorization auth,uint32_t timeout=1000){return local_.submit_owned(std::move(intent),std::move(auth),timeout);}
+    system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout=1000){return local_.submit_owned(intent,auth,timeout);}
     esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision){return local_.bind_owned_controller(controller,revision);}
     bool update_owned_snapshot(system::OwnedAdapterSnapshot report){return local_.update_owned_snapshot(std::move(report));}
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const{return local_.owned_snapshots();}
@@ -84,7 +84,7 @@ public:
     void end_maintenance(){local_.end_maintenance();maintenance_.store(false);}
     bool maintenance_ready()const{return local_.maintenance_ready();}
 private:
-    bool dispatch_owned(system::OwnedIntent);
+    bool dispatch_owned(const system::OwnedIntent&);
     std::vector<Activity> activities(const config_store::ConfigurationV2&)const;
     void update_outcomes_locked(const Snapshot&,const config_store::ConfigurationV2*)const;
     void refresh_outcomes()const;

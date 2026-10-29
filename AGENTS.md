@@ -1,39 +1,5 @@
 # Preserve original Amity behavior
 
-## Standard power commands only — 28 October 2026
-
-The user removed all vendor-specific power command overrides. Power handling
-uses the standard TV Image View On, non-TV Power On Function and Standby
-commands. There are no configurable vendor command recipes, configuration
-fields, transport parameters, decoder exceptions or migration paths for those
-overrides. Vendor IDs remain ordinary HDMI-CEC discovery metadata. This
-explicit amendment supersedes any earlier baseline requirement to preserve
-custom power payloads.
-
-The current `main` implementation is the authoritative behavior baseline.
-This merge incorporates `main` at `98e64a6`; its independent key lifecycle,
-asynchronous CEC submission, input gate and Siri macros supersede conflicting
-older baseline rules. Preserve that behavior unless the user explicitly
-requests a change. This rule applies to implementation, design documents,
-tests and future maintenance.
-
-The distributed path is layered on the same code as `main`. It only moves
-messages to the owning Amity; it must have zero effect on CEC behavior. Local
-and remote equipment must receive equivalent frames, order, attempt budgets,
-key lifecycle, repeat/release decisions and queue-admission behavior for the
-same input. Native/compatibility labels identify transport plumbing, never
-alternative CEC policy.
-
-The consortium is an additional ownership and transport layer around those
-algorithms. It is not permission to redesign activity planning,
-AVR/audio/switch handling, discovery, physical-address selection, remote input,
-CEC transmission, retries, held-button repetition, or existing UI workflows.
-Keep existing behavior for both local and remotely owned equipment. Make only
-the adaptations required to identify the owning device, deliver the original
-intent, and fence stale or unauthorized distributed work. Do not introduce new
-normal-operation timing, timeouts, cadence, or recovery behavior without an
-explicit user request.
-
 ## Automatic Matter setup at boot — 28 October 2026
 
 Matter commissioning must open automatically at boot when the current Matter

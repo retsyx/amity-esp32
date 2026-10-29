@@ -16,6 +16,25 @@ Each configured adapter uses the same original front playback/back TV behavior a
 
 The distribution layer does not allocate identities from a persistent electrical-domain or proxy-resource graph. It selects an owner and adapter; the owner applies the original local algorithm there. Settings and actual hardware availability are separate from a stored approval to use an activity.
 
+The shared `amity_hub` task has a 12 KiB internal-RAM stack. Coordinator activity
+handling and owner-local execution can nest on that task even when equipment is
+local. The `0.1.85` Xtensa Standby path retained at least 6,304 bytes before final
+wire and runtime overhead, so the former 6 KiB allocation overflowed. This resource
+allowance is shared across adapters and adds 6 KiB of internal RAM once. It
+changes no CEC decisions, task priority, queue capacity or timing. Validate
+boot/heap availability and actual Start/Standby wire effects when changing that
+budget; [recorded evidence](15-validation-and-release-gates.md#functional-test-framework).
+
+Synchronous ownership dispatch borrows one `OwnedIntent`: the dispatcher uses
+a mutable reference to stamp sequence, setup and key-token fields, while the
+facade and transport sender take const references. Queued commands and retained
+key state own copies before the caller's request can expire. With the same
+Xtensa optimization flags, the known nested Standby call-chain subtotal falls
+from 6,112 to 3,968 bytes after this change, excluding final owner-send, CEC and
+runtime overhead in both measurements. This is compiler stack-usage evidence,
+not a runtime high-water measurement, and does not reduce the 12 KiB allocation
+or change CEC behavior, IPC admission, deadlines or task ownership.
+
 ## Transmission and queue ownership
 
 CEC mechanically transmits supplied frames and attempt budgets through one FIFO per wire, with eight queued-plus-active messages total. Releases share those eight slots. Full admission drops the submitted frame and logs it; every member of a rejected atomic batch is logged. No reserved release slot, executor outgoing backlog or later retry of a dropped release exists.

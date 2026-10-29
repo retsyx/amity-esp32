@@ -13,8 +13,8 @@
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 4095,
-      "sha256": "67ec08146d3dc19edf1fddbb21d3e45b5c1f918dd4ed9c753ed89a547a8a94bc"
+      "size_bytes": 5444,
+      "sha256": "a6b0f32264aa2639d27526fb7611c2a4d1af0867d7783708d46bfed678126a79"
     },
     {
       "path": "05-discovery-and-topology.md",
@@ -68,8 +68,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 12176,
-      "sha256": "626d381786f6cfc3d3c617be98c874e78315462a406d927a66160dd188d91511"
+      "size_bytes": 14380,
+      "sha256": "1c301d7bff818353d84a8feb01eba8e5cb897d59bd404be50ad3a845801d846a"
     },
     {
       "path": "19-source-baseline.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 7519,
-      "sha256": "5b3f523f3d5fe904bfe4d045a0194cc2132bf691f5fcf1fe6d6b26fd6dc2f10b"
+      "size_bytes": 11370,
+      "sha256": "4afaaa86486e1268c96deb8ad9ca17c87834a0fc16d0e369cec4eff4f2288bf4"
     },
     {
       "path": "examples/README.md",

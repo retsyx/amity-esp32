@@ -37,7 +37,7 @@ void Hub::configure(std::vector<Activity> activities) {
     activities_ = std::move(activities);
     if (owned_sender_) publish_owned_context(true);
 }
-void Hub::scoped_transport(std::vector<system::ScopedSelector> selectors, OwnedSender sender, OwnedLookup lookup,
+void Hub::scoped_transport(std::vector<system::ScopedSelector> selectors, OwnedDispatcher sender, OwnedLookup lookup,
         std::optional<system::CecPortRef> default_port) {
     scoped_selectors_ = std::move(selectors); owned_sender_ = std::move(sender); owned_lookup_ = std::move(lookup);
     scoped_default_port_ = std::move(default_port);
@@ -52,7 +52,7 @@ bool Hub::owned(system::OwnedIntentKind kind, const std::string& value, bool on,
     auto endpoint = target(value); if (!endpoint) return false;
     system::OwnedIntent intent; intent.kind = kind; intent.target = *endpoint; intent.generation = owned_generation_;
     intent.on = on; intent.key = data; intent.input = data; intent.repeat = repeat;
-    return bool(owned_sender_(std::move(intent)));
+    return bool(owned_sender_(intent));
 }
 bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
     if (!owned_sender_) return false;
@@ -66,7 +66,7 @@ bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
         intent.target.port = port; intent.generation = owned_generation_; intent.selected = selected_ >= 0;
         intent.source_changed = source_changed; intent.source = target(activity.source); intent.audio = target(activity.audio);
         intent.display = target(activity.display); intent.switch_device = target(activity.switch_device); intent.input = activity.switch_input;
-        admitted=bool(owned_sender_(std::move(intent)))&&admitted;
+        admitted=bool(owned_sender_(intent))&&admitted;
     }
     return admitted;
 }
@@ -217,7 +217,7 @@ void Hub::active_source(const std::string& display) {
         if(target(value))owned(system::OwnedIntentKind::announce_active_source,value);
         else if (scoped_default_port_) {
             system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::announce_active_source;
-            intent.target.port=*scoped_default_port_;intent.generation=owned_generation_;owned_sender_(std::move(intent));
+            intent.target.port=*scoped_default_port_;intent.generation=owned_generation_;owned_sender_(intent);
         }
         return;
     }
@@ -229,7 +229,7 @@ void Hub::input(const Activity &activity) {
         current_input_sequence_=0;
         if(pending_inputs_.size()>=32)return;
         system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::source_input;intent.target=*source;intent.generation=owned_generation_;
-        const auto result=owned_sender_(std::move(intent));
+        const auto result=owned_sender_(intent);
         if(result.source_present){if(!*result.source_present)fallback_input(activity);}
         else if(result.admitted){pending_inputs_.push_back(PendingInput{activity,source->port.octopus_id,owned_generation_,result.sequence,false});current_input_sequence_=result.sequence;}
         return;
@@ -305,7 +305,7 @@ void Hub::force_standby() {
             auto port = selector.target.port; port.side = side;
             if (std::find(ports.begin(),ports.end(),port) != ports.end()) continue;
             ports.push_back(port); system::OwnedIntent intent; intent.kind = system::OwnedIntentKind::standby_wire;
-            intent.target.port = port; intent.generation = owned_generation_; owned_sender_(std::move(intent));
+            intent.target.port = port; intent.generation = owned_generation_; owned_sender_(intent);
         }
         return;
     }

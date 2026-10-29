@@ -25,6 +25,10 @@ static std::vector<SentFrame> select_trace(bool scoped){
     auto trace=fixture_sent;
     fixture_sent.clear();assert(hub.press_key(0x41,true));run_one_command();
     assert(hub.release_key(0x41));run_one_command();
+    fixture_sent.clear();assert(hub.standby());run_one_command();
+    assert(hub.snapshot().current_activity==-1);
+    assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){return frame.frame.size==2&&frame.frame.data[1]==0x36;})==2);
+    trace.insert(trace.end(),fixture_sent.begin(),fixture_sent.end());
     return trace;
 }
 static void local_parity(){
@@ -148,6 +152,28 @@ static void rejected_local_hold(){
     assert(hub.press_key(0x41,true));run_one_command();assert(presses()==2);
     assert(hub.release_key(0x41));run_one_command();fixture_complete_all();fixture_async_autocomplete=true;
 }
+static void queued_request_lifetime(){
+    fixture_present=true;HubService hub;
+    hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    assert(hub.start(1,2)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    for(const bool on:{true,false}){
+        fixture_sent.clear();
+        {
+            m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.target=named(member,m::Side::front,"TV");
+            intent.generation=1;intent.sequence=on?1:2;intent.on=on;
+            m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+            assert(hub.submit_owned(intent,auth,0));
+            // The caller may reuse and destroy both arguments before the
+            // owner task consumes the queued command.
+            intent={};auth={};
+        }
+        assert(fixture_sent.empty());run_one_command();
+        assert(fixture_sent.size()==1);
+        const auto& frame=fixture_sent.front();
+        assert(frame.gpio==1&&frame.frame.destination()==0&&frame.frame.size==2);
+        assert(frame.frame.data[1]==(on?0x04:0x36));
+    }
+}
 static void every_adapter(){
     fixture_present=true;
     fixture_peer_address=[](int gpio)->uint8_t{return gpio==1||gpio==5||gpio==7||gpio==9?0:4;};
@@ -233,10 +259,15 @@ static std::vector<std::vector<SentFrame>> receiver_transcript(bool remote){
             transcript.push_back(std::move(repairs));
         }
     }
+    fixture_sent.clear();latest_task=primary_task;assert(primary.standby());run_one_command();run_idle(1);
+    auto standby=fixture_sent;
+    for(auto& frame:standby)if(remote){assert(frame.gpio==1||frame.gpio==4);if(frame.gpio==4)frame.gpio=2;}
+    assert(std::count_if(standby.begin(),standby.end(),[](const auto& frame){return frame.frame.size==2&&frame.frame.data[1]==0x36;})==3);
+    transcript.push_back(std::move(standby));
     latest_task=primary_task;fixture_send={};fixture_transmit={};return transcript;
 }
 static void remote_receiver_parity(){
     const auto local=receiver_transcript(false),remote=receiver_transcript(true);assert(local.size()==remote.size());
     for(size_t phase=0;phase<local.size();++phase){if(local[phase].size()!=remote[phase].size()){for(const auto* trace:{&local[phase],&remote[phase]}){std::fprintf(stderr,"phase=%zu trace=%zu\n",phase,trace->size());for(const auto& f:*trace){std::fprintf(stderr,"gpio%d attempts%u:",f.gpio,f.attempts);for(unsigned j=0;j<f.frame.size;++j)std::fprintf(stderr," %02x",f.frame.data[j]);std::fprintf(stderr,"\n");}}}assert(local[phase].size()==remote[phase].size());for(size_t i=0;i<local[phase].size();++i){const auto& a=local[phase][i];const auto& b=remote[phase][i];assert(a.gpio==b.gpio&&a.attempts==b.attempts&&a.frame.size==b.frame.size);assert(std::memcmp(a.frame.data,b.frame.data,a.frame.size)==0);}}
 }
-int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();rejected_local_hold();every_adapter();remote_receiver_parity();std::puts("Original local/owned frame parity, first OSD match, startup taps, observation pressure, rejected local hold/reconnect, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();rejected_local_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();std::puts("Original local/owned start/standby frame parity, queued request lifetime, rejected local hold/reconnect, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}

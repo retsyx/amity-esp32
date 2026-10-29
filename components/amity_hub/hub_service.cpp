@@ -41,6 +41,9 @@
 namespace amity {
 namespace {
 constexpr const char *TAG = "amity_hub";
+// Scoped activity dispatch and owner-local execution share this task. Allow
+// headroom for nested typed requests, authorization and CEC/runtime frames.
+constexpr uint32_t hub_task_stack_bytes = 12 * 1024;
 template<class T> constexpr std::array<T, amity::max_tentacles> filled_tentacles(T value) {
     std::array<T, amity::max_tentacles> result{};
     for(auto& item:result)item=value;
@@ -243,7 +246,7 @@ struct HubService::Impl : Transport {
         commands = xQueueCreate(96, sizeof(Impl::Command *));
         command_slots = xSemaphoreCreateCounting(32, 32);
         cleanup_slots = xSemaphoreCreateCounting(64, 64);
-        if (!commands || !command_slots || !cleanup_slots || xTaskCreate(Impl::run, "amity_hub", 6144, this, 5, &task) != pdPASS) {
+        if (!commands || !command_slots || !cleanup_slots || xTaskCreate(Impl::run, "amity_hub", hub_task_stack_bytes, this, 5, &task) != pdPASS) {
             reset_startup(); return ESP_ERR_NO_MEM;
         }
         return ESP_OK;
@@ -988,7 +991,7 @@ struct HubService::Impl : Transport {
         }
         return {};
     }
-    system::OwnedDispatchResult dispatch_owned(system::OwnedIntent intent) {
+    system::OwnedDispatchResult dispatch_owned(system::OwnedIntent& intent) {
         using K=system::OwnedIntentKind;
         if(owned_sequence==UINT64_MAX)return false;
         intent.sequence=++owned_sequence;
@@ -1073,7 +1076,7 @@ struct HubService::Impl : Transport {
         for(const auto& selector:active_selectors){auto port=selector.target.port;port.side=system::Side::front;
             if(std::find(ports.begin(),ports.end(),port)!=ports.end())continue;
             ports.push_back(port);system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::discover;
-            intent.target.port=port;intent.generation=control_hub().scoped_generation();dispatch_owned(std::move(intent));
+            intent.target.port=port;intent.generation=control_hub().scoped_generation();dispatch_owned(intent);
         }
     }
     system::OwnedAdapterSnapshot adapter_report(Impl& engine) const {
@@ -1159,7 +1162,7 @@ struct HubService::Impl : Transport {
             xSemaphoreTake(lock,portMAX_DELAY);
             owned_reports.erase(std::remove_if(owned_reports.begin(),owned_reports.end(),[&](const auto& report){return report.owner!=octopus&&std::none_of(active_selectors.begin(),active_selectors.end(),[&](const auto& selector){return selector.target.port.octopus_id==report.owner&&selector.target.port.tentacle_id==report.adapter;});}),owned_reports.end());
             xSemaphoreGive(lock);
-            activity_hub.scoped_transport(command.selectors,[this](auto intent){return dispatch_owned(std::move(intent));},[this](const auto& name){return lookup_owned(name);},system::CecPortRef{consortium,octopus,0,system::Side::front});
+            activity_hub.scoped_transport(command.selectors,[this](auto& intent){return dispatch_owned(intent);},[this](const auto& name){return lookup_owned(name);},system::CecPortRef{consortium,octopus,0,system::Side::front});
             for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->hub.qualified_names();
             record_selection(command);
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
@@ -1186,7 +1189,7 @@ struct HubService::Impl : Transport {
             setting_activity=previous;return true;}
         case K::OwnedDiscover:{system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::discover;
             intent.target.port={consortium,command.controller,static_cast<uint8_t>(command.value),system::Side::front};
-            intent.generation=control_hub().scoped_generation();dispatch_owned(std::move(intent));return true;}
+            intent.generation=control_hub().scoped_generation();dispatch_owned(intent);return true;}
         case K::OwnedContext:
             finish(command.reply,activity_hub.refresh_owned_context(command.controller)?system::AdmissionResult{system::AdmissionCode::accepted,{}}:
                 system::AdmissionResult{system::AdmissionCode::overloaded,"Current equipment context could not enter the owner transport"});
@@ -1507,9 +1510,10 @@ esp_err_t HubService::configure_scoped(std::vector<Activity> activities,std::vec
     c->activities=std::move(activities);c->selectors=std::move(selectors);c->sender=std::move(sender);c->controller=controller;c->config_revision=revision;c->presentation_revision=presentation_revision;
     return impl_->submit(c,commit);
 }
-system::AdmissionResult HubService::submit_owned(system::OwnedIntent intent,system::OwnedAuthorization auth,uint32_t timeout){
+system::AdmissionResult HubService::submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout){
     auto* c=new(std::nothrow)Impl::Command{Impl::Kind::Owned};if(!c)return {system::AdmissionCode::overloaded,"Owner request allocation failed"};
-    c->owned=std::move(intent);c->auth=std::move(auth);
+    // The queued command owns the request before either caller reference expires.
+    c->owned=intent;c->auth=auth;
     if(!timeout){const auto result=impl_->submit(c);return result==ESP_OK?system::AdmissionResult{system::AdmissionCode::accepted,{}}:system::AdmissionResult{system::AdmissionCode::overloaded,"Owner input IPC is full"};}
     return impl_->request(c,timeout);
 }

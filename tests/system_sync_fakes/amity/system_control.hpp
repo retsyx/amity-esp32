@@ -47,8 +47,8 @@ public:
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> fn) { deadline=std::move(fn); }
     void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)> fn) { input_observer=std::move(fn); }
     system::ExecutionSnapshot execution_snapshot() const { return applied; }
-    system::AdmissionResult submit_owned(system::OwnedIntent intent,system::OwnedAuthorization auth) {
-        submitted.push_back(std::move(intent));authorizations.push_back(auth);
+    system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth) {
+        submitted.push_back(intent);authorizations.push_back(auth);
         if(authorizer&&!authorizer(auth))return {system::AdmissionCode::unauthorized,"injected runtime authorization rejection"};
         system::AdmissionResult result{admission,{}};
         if(admission==system::AdmissionCode::accepted||admission==system::AdmissionCode::unresolved||admission==system::AdmissionCode::overloaded)result.source_present=source_present;

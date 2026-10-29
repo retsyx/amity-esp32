@@ -122,22 +122,53 @@ Validation on 28 October 2026: all 161 framework unit checks pass. On the
 and the activity test confirms initial Standby plus fresh physical power-on
 commands and On state for all three components. Returning to Standby exposes
 a reproducible firmware failure: the `amity_hub` task overflows its stack and
-the DUT restarts before the components receive CEC Standby. The new test
-therefore fails at this step; its assertions have not been relaxed. Private
+the DUT restarts before the components receive CEC Standby. The `0.1.85` test
+run therefore failed at this step; its assertions have not been relaxed. Private
 evidence is in `test-results/functional/activity-suite-0.1.85.json`,
 `activity-0.1.85-uart.json` and `activity-dut-uart.log` under the same directory.
 After the old-boot credentials correctly failed cleanup, fresh authenticated
 recovery removed only the confirmed test-owned activity/equipment and preserved
 the original two equipment records and activity list. All 14 GPIO CEC adapters
-were verified to have zero logical-address claims. This establishes the test's
-ability to detect the failure, not successful firmware standby qualification.
+were verified to have zero logical-address claims. This established the test's
+ability to detect the `0.1.85` failure.
 An isolated Xtensa compile with the current firmware flags and stack-usage
 reporting accounts for at least 6,304 bytes along the nested Standby ownership
 dispatch path before final transmission/runtime overhead, exceeding the
-task's current 6,144-byte allocation. Object call relocations retain these
-frames; no recursive cycle was found. Resource provisioning for that ownership
-layer remains unresolved; changing the original CEC policy is not required to
-explain or address this failure.
+task's former 6,144-byte allocation. Object call relocations retain these
+frames; no recursive cycle was found. Firmware `0.1.86` increases the shared
+`amity_hub` task stack from 6 KiB to 12 KiB to accommodate that ownership layer.
+This adds 6 KiB of internal RAM for the single shared task; no CEC algorithms,
+frame order, attempt budgets, input handling, task priority or cadence change.
+
+With `0.1.86` installed on `amity-dut`, the unchanged scan/activity suite and two
+additional activity cycles all pass on `test2`. Every cycle confirms all three
+initial Standby states, fresh physical power-on commands, and fresh directed
+CEC Standby (`0x36`) commands with final Standby states. The DUT retained one
+boot ID throughout all three cycles. Its original activity list and two
+preexisting equipment records are preserved; temporary configuration was
+removed and all 14 GPIO CEC address masks are zero. Internal free heap was
+32,283 bytes after the update and 32,015 after the three cycles, with an
+11,264-byte largest internal block at both observations. Runtime stack
+high-water margin was not measured. The targeted CEC/hub and owned-hub suites
+pass with ASan/UBSan, and the pinned native firmware build passes. Evidence is
+in `test-results/standby-stack-fix-0.1.86/`, including `functional-suite.json`,
+`activity-cycle-2.json`, `activity-cycle-3.json`, `verified.json` and
+`adapters-after.json`. This qualifies the reproduced local standby failure;
+four-adapter electrical load, remote radio delivery and real AV behavior retain
+their separate qualification gates.
+
+The subsequent `OwnedIntent` reference refactor passes the CEC/hub, owned-hub,
+actual activity-facade and owner-synchronization host suites with ASan/UBSan.
+The owned-hub regression compares complete Start/Standby frames, order and
+attempt budgets for original local, qualified local and two-owner equipment.
+It also enqueues On and Standby requests, destroys the caller's intent and
+authorization before the worker runs, and verifies the original frames are
+still emitted. The command owns its payload; synchronous forwarding borrows it.
+Logs are `test-results/functional/owned-intent-refs-{cec,owned,control,sync}.log`.
+Before/after Xtensa stack-usage records for the same optimized Standby call
+chain show a known subtotal of 6,112 versus 3,968 bytes, excluding final
+owner-send/CEC/runtime frames. These static measurements do not establish a
+runtime stack high-water margin or qualify this refactor on physical hardware.
 
 ## Evidence record
 
