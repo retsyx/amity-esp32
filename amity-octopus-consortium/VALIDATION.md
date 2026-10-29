@@ -79,6 +79,27 @@ credential carriers and redacted superseded credentials in 13 historical
 evidence files. The four current records and latest original provisioner cards
 were preserved; no setup-card QR, password image or instructions were changed.
 
+## Add Amity functional test — 29 October 2026
+
+The new `add_amity.py` uses `amity-dut` and the documented `amity-dut-2`,
+skipping candidate HTTP while controlling its parsed FW RESET wiring. All 238
+framework unit tests pass. Physical qualification fails: the initial discovery
+attempt hit a TLS handshake timeout; a retry matching the UI's admission-only
+polling stayed responsive but never discovered the candidate. Firmware 0.1.84
+on the candidate logged a stack overflow in `fw_reset` and a software reboot
+during the attempt. No Add or Remove was submitted, and the scans were canceled.
+The connected-member and scheduled-reset assertions have not passed on hardware.
+
+Opening diagnostic serial ports also caused unintended USB serial resets on
+both boards; capture was stopped. The original main's exact saved configuration,
+controller identity and authority were subsequently verified, and its UI reports
+two current Matter fabrics. Reports are under `test-results/functional/`:
+`add-amity-2026-10-29.json`, `add-amity-retry-2026-10-29.json`,
+`add-amity-retry-amity-dut-2-uart.log`, `add-amity-after-2026-10-29.json` and
+`add-amity-main-matter-after.json`. The first failure is retained as a failure;
+no blanket request retry, weaker assertion, new firmware API or firmware change
+was introduced to turn either result into a pass.
+
 ## Source theft functional test — 29 October 2026
 
 The new `source_theft.py` configures a saved activity for each of two playback

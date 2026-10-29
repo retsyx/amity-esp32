@@ -10,11 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import CecAddress, Frame
 from amity_harness.discovery import _fresh_discovery, _matching_devices, _wire_initiators
+from unit_tests.harness_pins import cec_gpio
 
 
 class ScanEvidenceTests(unittest.TestCase):
     def setUp(self):
-        self.component = SimpleNamespace(name="ScanTV-test", gpio=23, direction="front",
+        self.component = SimpleNamespace(name="ScanTV-test", gpio=cec_gpio(direction="front"), direction="front",
                                          address=CecAddress(0, 0), device_type=0, vendor_id=1)
         self.started_ns = 10_000_000_000
         self.records = self.exchanges(self.component, 4)
@@ -86,7 +87,7 @@ class ScanEvidenceTests(unittest.TestCase):
         self.assertFalse(self.fresh(late))
 
     def test_requests_from_other_device_or_wire_do_not_pass(self):
-        for field, value in (("source", 8), ("destination", 5), ("gpio", 24),
+        for field, value in (("source", 8), ("destination", 5), ("gpio", cec_gpio()),
                              ("component", "different-component")):
             records = deepcopy(self.records)
             for record in records:
@@ -128,9 +129,9 @@ class ScanEvidenceTests(unittest.TestCase):
         self.assertTrue(self.fresh(self.records))
 
     def test_wire_identity_uses_real_queries_when_ui_aggregate_is_unregistered(self):
-        avr = SimpleNamespace(name="ScanAVR-test", gpio=24, direction="back",
+        avr = SimpleNamespace(name="ScanAVR-test", gpio=cec_gpio(), direction="back",
                               address=CecAddress(5, 0x1000), device_type=5, vendor_id=1)
-        player = SimpleNamespace(name="ScanPlay-test", gpio=24, direction="back",
+        player = SimpleNamespace(name="ScanPlay-test", gpio=cec_gpio(), direction="back",
                                  address=CecAddress(4, 0x1100), device_type=4, vendor_id=1)
         components = [self.component, avr, player]
         records = self.records + self.exchanges(avr, 0) + self.exchanges(player, 0)
@@ -139,7 +140,7 @@ class ScanEvidenceTests(unittest.TestCase):
                  "type": component.device_type} for component in components]
         state = {"front_address": 15, "back_address": 15, "devices": rows}
         initiators = _wire_initiators(records, components, self.started_ns)
-        self.assertEqual(initiators, {23: 4, 24: 0})
+        self.assertEqual(initiators, {self.component.gpio: 4, avr.gpio: 0})
         self.assertEqual(_matching_devices(state, components), rows)
         for component in components:
             self.assertTrue(_fresh_discovery(records, component, initiators[component.gpio], self.started_ns))
@@ -161,7 +162,7 @@ class ScanEvidenceTests(unittest.TestCase):
             "self source": [{**record, "source": 0} for record in self.records],
             "unregistered source": [{**record, "source": 15} for record in self.records],
             "wrong target": [{**record, "destination": 5} for record in self.records],
-            "other wire": [{**record, "gpio": 24} for record in self.records],
+            "other wire": [{**record, "gpio": cec_gpio()} for record in self.records],
             "missing wire bytes": [{**record, "frame": None} for record in self.records],
             "query operands": [{**record, "frame": record["frame"] + ":00"} for record in self.records],
         }

@@ -41,7 +41,7 @@ class PinctrlGPIO:
 
     def _set(self, gpio, *settings):
         self.runner(["pinctrl", "set", str(gpio), *settings], check=True,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=1)
 
     def low(self, gpio):
         # Set the output latch before enabling output to avoid a high pulse.
@@ -50,6 +50,10 @@ class PinctrlGPIO:
 
     def release(self, gpio):
         self._set(gpio, "ip", "pn")
+
+    def hold_low(self, gpio, seconds):
+        from .gpio import hold_low
+        hold_low(self, gpio, seconds)
 
 
 class DUT:
@@ -71,6 +75,7 @@ class DUT:
         self._testbed = None
         self.last_scan = None
         self.activity_operations = []
+        self.membership_operations = []
         if wiring is None:
             wiring = (Wiring.from_markdown(self._runtime.wiring_path)
                       if self._runtime.wiring_path is not None else Wiring.from_markdown())
@@ -79,7 +84,8 @@ class DUT:
             raise ValueError(f"Unknown DUT {name!r}")
         self.name = name
         self.identity = self.wiring.identities[name]
-        self.gpio = gpio if gpio is not None else PinctrlGPIO()
+        self.gpio = (gpio if gpio is not None else
+                     self._runtime.gpio_factory() if self._runtime.gpio_factory is not None else PinctrlGPIO())
         url = (self._runtime.url_for(name) or f"https://{name}.local") if url is None else url
         parsed = urlsplit(url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
@@ -124,6 +130,8 @@ class DUT:
         """
         _positive_seconds(seconds, "FW RESET hold")
         gpio = self.wiring.reset_gpio(self.name)
+        if callable(getattr(self.gpio, "hold_low", None)):
+            return self.gpio.hold_low(gpio, seconds)
         try:
             self.gpio.low(gpio)
             time.sleep(seconds)
@@ -201,6 +209,15 @@ class DUT:
         """Create an owned temporary activity through the existing UI APIs."""
         from .activity import Activity
         return Activity(self, name, display=display, source=source, audio=audio, timeout=timeout).create()
+
+    def add_amity(self, candidate, *, name=None, timeout=None, setup_code=None):
+        """Temporarily add a control-only DUT using the existing Add Amity UI.
+
+        Closing the returned context removes that test-owned member and requires
+        its acknowledgement of the UI's scheduled factory reset.
+        """
+        from .membership import AddedAmity
+        return AddedAmity(self, candidate, name=name, timeout=timeout, setup_code=setup_code).create()
 
     def logout(self):
         try:

@@ -46,6 +46,12 @@ _ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "timestamp_ns
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
                               "removed_activity", "removed_equipment", "retained_equipment"))
+_MEMBERSHIP_FIELDS = frozenset(("phase", "candidate", "device_id", "name", "request_id", "scan_id",
+                               "operation_stage", "candidate_id", "boot", "member_boot",
+                               "membership_revision", "reset", "retained_member", "error_type",
+                               "step", "reset_gpio", "hold_seconds", "released"))
+_MEMBERSHIP_REQUEST_FIELDS = frozenset(("method", "path", "started_ns", "finished_ns", "duration_ms",
+                                       "admission_phase", "error_type"))
 
 
 def _select(value, fields):
@@ -61,6 +67,13 @@ def _activity_report(dut, record):
     for key, fields in (("operation", _OPERATION_FIELDS | {"partial"}), ("state", _STATE_FIELDS)):
         if isinstance(record.get(key), dict):
             result[key] = _select(record[key], fields)
+    return result
+
+
+def _membership_report(dut, record):
+    result = {"dut": dut.name, **_select(record, _MEMBERSHIP_FIELDS)}
+    if isinstance(record.get("requests"), list):
+        result["requests"] = [_select(request, _MEMBERSHIP_REQUEST_FIELDS) for request in record["requests"]]
     return result
 
 
@@ -85,6 +98,8 @@ class TestBed:
 
     Accept DUTs and/or Components in any order; a component implies its DUT.
     Authentication and documented identity checks precede CEC adapter mutation.
+    ``control_only`` DUTs are owned physical resources without HTTP access;
+    unclaimed/headless boards need no login and cannot host CEC components here.
     Each owned login is logged out after session cleanup, including failures.
     Foreign active DUTs are rejected before this bed acquires any resource.
     Reports retain only selected fixture/UI/CEC evidence, never runtime config,
@@ -93,7 +108,7 @@ class TestBed:
 
     __test__ = False
 
-    def __init__(self, *resources, session_factory=None):
+    def __init__(self, *resources, session_factory=None, control_only=()):
         self.session = None
         self.duts = ()
         self.components = ()
@@ -110,6 +125,7 @@ class TestBed:
         self._failure = None
         self._initial_scans = {}
         self._initial_activity_counts = {}
+        self._initial_membership_counts = {}
         if not resources:
             raise ValueError("A test bed needs at least one DUT or component")
         explicit, duts, components = set(), [], []
@@ -135,6 +151,16 @@ class TestBed:
             names.add(dut.name)
             identities.add(dut.identity.device_id)
         self.duts, self.components = tuple(duts), tuple(components)
+        self.control_only = tuple(control_only)
+        if any(not isinstance(dut, DUT) or not any(dut is member for member in self.duts)
+               for dut in self.control_only):
+            raise ValueError("Control-only DUTs must be resources owned by this TestBed")
+        if len({id(dut) for dut in self.control_only}) != len(self.control_only):
+            raise ValueError("A control-only DUT was supplied more than once")
+        if any(component.dut in self.control_only for component in self.components):
+            raise ValueError("Control-only DUTs cannot host CEC components in this TestBed")
+        if any(getattr(dut, "_token", None) for dut in self.control_only):
+            raise ValueError("Control-only DUTs must not have an authenticated HTTP session")
         register_testbed(self)
 
     def _claim_duts(self):
@@ -148,6 +174,7 @@ class TestBed:
                 self._owned.append(dut)
                 self._initial_scans[id(dut)] = getattr(dut, "last_scan", None)
                 self._initial_activity_counts[id(dut)] = len(getattr(dut, "activity_operations", ()))
+                self._initial_membership_counts[id(dut)] = len(getattr(dut, "membership_operations", ()))
 
     def __enter__(self):
         if self._started:
@@ -156,6 +183,8 @@ class TestBed:
         try:
             self._claim_duts()
             for dut in self.duts:
+                if dut in self.control_only:
+                    continue
                 dut.authenticate()
                 system = dut.get_system()
                 if system.get("octopus_id") != dut.identity.device_id:
@@ -201,7 +230,7 @@ class TestBed:
                 except BaseException as error:
                     errors.append(error)
             for dut in reversed(self._owned):
-                if getattr(dut, "_token", None):
+                if dut not in self.control_only and getattr(dut, "_token", None):
                     try:
                         dut.logout()
                     except BaseException as error:
@@ -275,10 +304,13 @@ class TestBed:
                 scans.append(_scan_report(dut, scan))
         result = {"passed": self._finished and self._failure is None and not self._cleanup_errors,
                   "entered": self._entered,
-                  "duts": [{"name": dut.name, "device_id": dut.identity.device_id} for dut in self.duts],
+                  "duts": [{"name": dut.name, "device_id": dut.identity.device_id,
+                            "control_only": dut in self.control_only} for dut in self.duts],
                   "components": components, "scans": scans,
                   "activities": [_activity_report(dut, record) for dut in self._owned
                                  for record in getattr(dut, "activity_operations", ())[self._initial_activity_counts[id(dut)]:]],
+                  "memberships": [_membership_report(dut, record) for dut in self._owned
+                                  for record in getattr(dut, "membership_operations", ())[self._initial_membership_counts[id(dut)]:]],
                   "cec": _traffic(self.session.records if self.session is not None else ()),
                   "cleanup_errors": list(self._cleanup_errors)}
         if self._failure is not None:

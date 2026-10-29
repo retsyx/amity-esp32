@@ -2,16 +2,16 @@
 
 A Python functional test declares its DUTs, component topology and assertions.
 The common framework configures the run, authenticates DUTs, owns the CEC
-adapters and collects evidence. CEC I/O runs on the Raspberry Pi bench, locally
-or over SSH. There is no boot-time virtual theater, device profile file or
-permanently running follower service.
+adapters and collects evidence. CEC I/O and physical button holds run on the
+Raspberry Pi bench, locally or over SSH. There is no boot-time virtual theater,
+device profile file or permanently running follower service.
 
 **Functional tests MUST use the existing authenticated HTTP APIs used by the
 shipping Amity UI. Never add firmware APIs, test-only commands, authentication
 bypasses, or test control surfaces for this framework.** The DUT helpers wrap
 `/api/login`, the current activity editor/status/discover/configuration routes,
-and the existing operation-status route. Additional harness helpers must wrap
-existing UI operations as well. Firmware CEC, activity, input, commissioning and
+the existing membership scan/add/remove controls, and operation-status routes.
+Additional harness helpers must wrap existing UI operations as well. Firmware CEC, activity, input, commissioning and
 membership behavior remains unchanged.
 
 ## Layout
@@ -26,6 +26,8 @@ membership behavior remains unchanged.
   then verifies standby using physical component power commands.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
+- `functional_tests/add_amity.py`: adds the second bench board through the main
+  Amity, verifies its membership, then removes and resets that added board.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -76,9 +78,11 @@ their existing `handle()` protocol behavior.
 `TestBed` accepts DUTs and components in any order, and infers each component's
 DUT. It supports several DUTs and configurations through the same interface;
 this does not add another functional scenario. On entry it authenticates the
-DUTs, checks their documented identities and opens their component session.
-Exit attempts registered UI resource cleanup, CEC cleanup and logout on success,
-assertion failure or exception, in that order.
+HTTP DUTs, checks their documented identities and opens their component session.
+DUTs listed in `control_only` supply documented physical button control without
+HTTP authentication or a Wi-Fi/UI prerequisite. Exit attempts registered UI
+resource cleanup, CEC cleanup and logout on success, assertion failure or
+exception, in that order.
 `DUT.scan_hdmi()` uses the existing UI scan operations and returns a
 `ScanResult`; `assert_contains()` checks the requested component identities and
 fresh physical exchanges through the common discovery implementation.
@@ -156,7 +160,7 @@ remain unchanged. Both test-owned activities are cleaned up before the
 responders close. Shared component and activity helpers perform these checks,
 so the functional body contains no raw CEC commands or HTTP handling.
 
-On 29 October 2026, all three functional scenarios passed on `test2` against
+On 29 October 2026, the three CEC functional scenarios passed on `test2` against
 `amity-dut` firmware `0.1.88`, along with all 204 framework unit tests. The
 source-theft run verified physical directed Standby `03:36` and route
 restoration `0f:86:11:00`, retained the same boot and saved activities/equipment,
@@ -164,6 +168,61 @@ and released all 14 GPIO CEC address masks. Private evidence is in
 `test-results/functional/source-theft-suite-0.1.88.json` and
 `source-theft-verified.json` in the same directory. This exercises simulated
 CEC equipment on tentacle 0; it does not qualify real AV behavior or all adapters.
+
+`add_amity.py` uses the original main and the second board from the inventory:
+
+```python
+from amity_harness import DUT, TestBed
+
+
+def test_add_amity():
+    main = DUT("amity-dut")
+    candidate = DUT("amity-dut-2")
+    with TestBed(main, candidate, control_only=(candidate,)):
+        with main.add_amity(candidate) as member:
+            member.assert_connected()
+```
+
+The candidate's canonical inventory name is `amity-dut-2`. Only the main uses
+authenticated HTTP. The candidate needs harness button wiring;
+it does not need its own HTTP credentials, Wi-Fi connection or reachable UI.
+The shared helper scans through the existing UI Add flow and holds the
+candidate's FW RESET for 3.5 seconds, then releases it. The GPIO assignment is
+resolved from the setup/reset table parsed from `TEST-HARNESS.md`, never a
+hardcoded bench pin in the framework or tests. With `--harness-host`,
+the resolved GPIO is sent to the Pi, which owns the bounded hold and releases
+the pin even if the requesting process disconnects. The normal admission
+profile uses no setup code.
+
+`member.assert_connected()` verifies the candidate's full inventory device ID,
+assigned name, ready membership, configuration entry and device settings. It
+also checks that the original main, its authority and its saved activities
+remain intact. On exit, the helper removes only the new member that this scope
+successfully identified, using the existing Remove action with reviewed
+membership revision and target boot. Cleanup requires acknowledgment that the
+candidate's reset was scheduled; this deliberately resets the added board.
+It does not factory-reset the main, run a ten-second reset before the test,
+or remove a preexisting member. Failures retain/report uncertain ownership
+rather than removing another device.
+
+On 29 October 2026, all 238 framework unit tests passed. Physical validation
+of `add_amity.py` failed during candidate discovery: the 3.5-second gesture on
+`amity-dut-2` firmware 0.1.84 produced a stack overflow in its `fw_reset` task,
+and the main never found the candidate. The harness confirmed button release
+and completed scan cancellation; it submitted neither Add nor Remove. Admission,
+connected-member checks and the removal/reset acknowledgment remain unqualified.
+No firmware was changed and the existing-API assertions were retained. Private
+evidence is in `test-results/functional/add-amity-retry-2026-10-29.json` and
+`add-amity-retry-amity-dut-2-uart.log` in that directory.
+
+Opening the diagnostic serial ports also caused unintended
+`USB_UART_CHIP_RESET` reboots on both boards; serial capture was stopped.
+These reboots were separate from the candidate's `fw_reset` stack overflow.
+The main's saved configuration and controller identity were preserved, and its
+existing UI reports two current Matter fabrics after the diagnostic reboot.
+The main runs 0.1.88. An admission-only pass with these mixed versions would
+not qualify distributed power commands, whose message format changed between
+those versions.
 
 ## DUTs and wiring
 
@@ -322,12 +381,22 @@ python3 cec-harness/run.py \
 ```
 
 The default remains `hdmi_scan`. Select `--test activity` for the scan plus
-activity lifecycle, `--test source_theft` for unselected-source recovery, or
-`--test all` for all three registered scenarios. The same
-credentials, TLS, SSH and output options apply. A multi-test report has
+activity lifecycle, `--test source_theft` for unselected-source recovery,
+`--test add_amity` for adding and removing the second board, or `--test all`
+for all four registered scenarios. The same credentials, TLS, SSH and output
+options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
+The Add Amity test uses only the main's credentials in the normal admission
+profile, for example:
 
-The test uses only `amity-dut`, one TV on tentacle 0/front, one AVR on
+```sh
+python3 cec-harness/run.py --test add_amity \
+  --credentials /private/path/amity-dut.json --insecure \
+  --harness-host pi@test2.local \
+  --output test-results/functional/add-amity.json
+```
+
+The HDMI scan test uses only `amity-dut`, one TV on tentacle 0/front, one AVR on
 tentacle 0/back, and a playback device on AVR input 1. The player shares the
 AVR's back CEC bus through that attachment. It checks the DUT identity, submits the UI's
 HDMI scan, and requires both fresh discovery exchanges on the CEC wires and the
@@ -348,7 +417,7 @@ cleanup outcome. A failed run also includes an error. Test functions need no
 report-writing code.
 
 Alternatively, keep HTTP authentication and credentials on the development
-computer and run only CEC I/O over SSH on the Pi:
+computer and run CEC I/O and physical button control over SSH on the Pi:
 
 ```sh
 python3 cec-harness/run.py \
@@ -359,10 +428,11 @@ python3 cec-harness/run.py \
 
 Install this framework at `/home/pi/amity/esp32/cec-harness` on the Pi first, or
 set `--harness-root`. `--ssh-port` supports an existing SSH tunnel. SSH uses the
-normal known-host and authentication configuration. Its stdio worker transports
-CEC frames and component identities only; it receives no DUT password or HTTP
-session token. This is harness IPC, not an additional firmware API. Remote
-kernel timestamps are mapped conservatively to the local monotonic clock so
+normal known-host and authentication configuration. The harness transport
+carries CEC frames, component identities and bounded physical button requests;
+it receives no DUT password or HTTP session token. This is harness IPC, not an
+additional firmware API. Remote kernel timestamps are mapped conservatively to
+the local monotonic clock so
 queued pre-scan frames cannot count as fresh discovery evidence.
 
 ## Interactive use on test2

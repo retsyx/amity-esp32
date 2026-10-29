@@ -198,13 +198,14 @@ functional tests. Extend the harness around the existing UI capabilities.
 `cec-harness/TEST-HARNESS.md` is the source of truth for physical bench wiring.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
-components and releases their CEC addresses when it ends. The initial framework
-has three functional scenarios on `amity-dut`: an HDMI scan with a TV, AVR and
+components and releases their CEC addresses when it ends. The framework has
+four functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
 playback device; `activity.py`, which reuses that scan to create, start and
-standby an activity; and `source_theft.py`, which adds a second playback device
+standby an activity; `source_theft.py`, which adds a second playback device
 on AVR input 2 to check recovery from its Active Source announcement while the
-input-1 player's activity remains selected.
-`--test source_theft` selects that scenario; `--test all` runs all three.
+input-1 player's activity remains selected; and `add_amity.py`, which uses
+`amity-dut` to add, verify, remove and reset the second board `amity-dut-2`.
+`--test add_amity` selects that scenario; `--test all` runs all four.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 
@@ -259,6 +260,36 @@ evidence. The first player must be active again, and `activity.assert_active()`
 verifies its selected UI activity and DUT boot did not change. Clean up both
 test-owned activities before component responders close. Keep raw CEC and
 protocol handling in shared component helpers, outside the functional scenario.
+
+The Add Amity test uses `TestBed(main, candidate, control_only=(candidate,))`
+with `DUT("amity-dut")` and `DUT("amity-dut-2")`. Only the original main needs
+HTTP credentials. The candidate uses its documented button wiring without a
+Wi-Fi/UI prerequisite. `main.add_amity(candidate)` owns a 3.5-second candidate
+FW RESET hold and the existing UI scan/add/operation flow. Resolve FW RESET
+GPIO assignments only by parsing the setup/reset table in `TEST-HARNESS.md`;
+never hardcode bench pin assignments in framework or test code.
+`--harness-host` selects Pi-owned bounded physical button control as well as
+CEC transport; SSH button requests carry the already resolved GPIO.
+The normal admission profile uses no setup code. Keep HTTP and protocol details
+in shared helpers. `member.assert_connected()` must verify full inventory ID,
+assigned name, ready membership, configuration and device settings while
+preserving the original main, its authority and existing activities.
+
+The user explicitly authorized reset on removal as this test's cleanup. Remove
+only the known newly added member through the existing UI Remove API, with the
+reviewed membership revision and target boot, and require acknowledgment that
+the candidate reset was scheduled. Never remove the main or a preexisting
+member, and do not add a ten-second factory reset before the test. Uncertain
+ownership or a missing reset acknowledgment fails cleanup and must be reported.
+An Add-only result with mixed firmware versions does not qualify distributed
+power behavior; do not invent a global firmware-version equality gate.
+
+Physical qualification on 29 October 2026 failed when the candidate's
+0.1.84 `fw_reset` task overflowed during the 3.5-second gesture. The candidate
+was not discovered; Add and Remove were not submitted, and scan cancellation
+completed. All 238 framework unit tests passed. Connected membership and the
+removal/reset acknowledgment remain physically unqualified; no firmware change
+or weaker existing-API assertion was introduced for this result.
 
 Components sharing a physical harness GPIO also share one virtual CEC bus.
 Route directed virtual messages and replies within that bus, with powered ACK,

@@ -65,7 +65,7 @@ def main(test, argv=None):
     tls.add_argument("--cafile", type=Path)
     tls.add_argument("--insecure", action="store_true", help="accept the bench's self-signed TLS certificate")
     parser.add_argument("--timeout", type=float, default=90)
-    parser.add_argument("--harness-host", help="run only CEC I/O on this Pi over SSH")
+    parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
     parser.add_argument("--output", type=Path, help="private JSON evidence under test-results/")
@@ -77,15 +77,19 @@ def main(test, argv=None):
     if args.credentials is None and not credentials:
         parser.error("Provide --credentials or --dut-credentials")
     session_factory = CecSession
+    gpio_factory = None
     if args.harness_host:
         from .remote import SSHCecBackend
+        from .gpio import SSHPinctrlGPIO
         backend = partial(SSHCecBackend, host=args.harness_host,
                           root=args.harness_root, port=args.ssh_port)
         session_factory = partial(CecSession, backend_factory=backend)
+        gpio_factory = partial(SSHPinctrlGPIO, host=args.harness_host,
+                               root=args.harness_root, port=args.ssh_port)
     config = RunConfig(credentials=credentials, default_credentials=args.credentials,
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
-                       timeout=args.timeout, session_factory=session_factory)
+                       timeout=args.timeout, session_factory=session_factory, gpio_factory=gpio_factory)
     selected = tests if args.test == "all" else {args.test: tests[args.test]}
     reports = [run_test(scenario, config) for scenario in selected.values()]
     report = (reports[0] if len(reports) == 1 else

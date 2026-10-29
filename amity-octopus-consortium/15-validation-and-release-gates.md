@@ -90,7 +90,7 @@ Physical Linux adapter restrictions apply to the wire backend, not to virtual
 component communication. TX/RX records distinguish `virtual` and `wire`;
 virtual records have `wire_timestamp_ns=0` and cannot establish DUT behavior.
 
-The framework contains three functional scenarios. `hdmi_scan.py` has `amity-dut`
+The framework contains four functional scenarios. `hdmi_scan.py` has `amity-dut`
 scan a TV, AVR and playback device. It requires fresh wire identity exchanges
 and matching UI names/types/addresses. Wire captures identify the actual DUT
 initiators; legacy aggregate UI address fields are not owner-local addressing
@@ -115,7 +115,8 @@ virtual exchanges, stale frames and UI admission alone cannot establish those
 effects. Registered cleanup runs before CEC closure/logout and removes only
 test-owned configuration while preserving other activities and normal history.
 No firmware API or original activity/CEC behavior changes are authorized by
-this scenario. The runner selects `hdmi_scan`, `activity`, `source_theft` or `all`.
+this scenario. The runner selects `hdmi_scan`, `activity`, `source_theft`,
+`add_amity` or `all`.
 
 `source_theft.py` extends the fixture with a second playback device on AVR
 input 2. Both players have saved activities using the same TV and AVR. After
@@ -199,6 +200,32 @@ HDMI adapters were also checked). Evidence is
 `source-theft-suite-0.1.88.json` and `source-theft-verified.json` in that
 directory. This is one local DUT/tentacle with simulated CEC equipment, not
 qualification of real AV switching, remote owner radio delivery or all adapters.
+
+`add_amity.py` uses the original `amity-dut` and a control-only `amity-dut-2`.
+Only the main authenticates to HTTP. The candidate's 3.5-second FW RESET hold
+uses the setup/reset GPIO parsed from `TEST-HARNESS.md`, with Pi-owned timing
+and release when running over SSH. Existing UI scan/add/operation/settings
+calls must prove the full candidate ID, requested hostname, connected ready
+membership and configuration adoption while retaining the original main and
+existing saved intent. Cleanup uses only the proven new member's reviewed
+membership revision and boot; Remove must acknowledge its scheduled factory
+reset. A failed search never authorizes resetting an unrelated board.
+
+All 238 framework unit tests pass, including GPIO interruption/release, strict
+candidate identity, control-only ownership, uncertain-reply reconciliation,
+request-report redaction and Markdown-derived pin fixtures. The physical test
+does not pass: the first attempt hit a TLS handshake timeout during discovery;
+the admission-only polling retry remained responsive but found no candidate.
+Candidate firmware `0.1.84` logged a `fw_reset` task stack overflow and software
+reboot during the attempt. Neither attempt submitted Add or Remove, and their
+own scans were canceled. Connected membership and reset-on-removal remain
+unqualified. Diagnostic serial opening also caused unintended USB resets on
+both boards; capture was stopped. Main configuration/identity remain intact,
+with two current Matter fabrics confirmed through the existing UI. Evidence:
+`test-results/functional/add-amity-2026-10-29.json`,
+`add-amity-retry-2026-10-29.json`, `add-amity-retry-amity-dut-2-uart.log`,
+`add-amity-after-2026-10-29.json` and `add-amity-main-matter-after.json` in that
+directory. No firmware or assertion criteria were changed to hide this result.
 
 ## Evidence record
 

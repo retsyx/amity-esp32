@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from amity_harness.cec import CecError, CecSession, LinuxCecBackend
+from unit_tests.harness_pins import cec_gpio
 
 
 def device(logical, allocation_type, primary=4, physical=0x1100):
@@ -59,7 +60,7 @@ class Kernel:
 
 class LinuxBackendTests(unittest.TestCase):
     def setUp(self):
-        self.backend = LinuxCecBackend(24)
+        self.backend = LinuxCecBackend(cec_gpio())
         self.backend.fd = 123
         self.backend.caps = SimpleNamespace(available_log_addrs=4)
         self.kernel = Kernel()
@@ -139,7 +140,7 @@ class LinuxBackendTests(unittest.TestCase):
     def test_close_attempts_both_adapter_resets_and_fd_close_after_failures(self):
         for failing in ((4,), (2,), ("close",), (4, 2, "close")):
             with self.subTest(failing=failing):
-                backend = LinuxCecBackend(24)
+                backend = LinuxCecBackend(cec_gpio())
                 backend.fd, backend.cec_version = 123, 5
                 calls = []
                 errors = {step: OSError(f"failed {step}") for step in failing}
@@ -174,23 +175,24 @@ class LinuxBackendTests(unittest.TestCase):
 
     def test_session_sets_version_before_announcing_and_updates_after_power_changes(self):
         announced = []
-        first = SimpleNamespace(gpio=24, power=SimpleNamespace(value="standby"), cec_version=6)
-        second = SimpleNamespace(gpio=24, power=SimpleNamespace(value="standby"), cec_version=6)
+        wire = cec_gpio()
+        first = SimpleNamespace(gpio=wire, power=SimpleNamespace(value="standby"), cec_version=6)
+        second = SimpleNamespace(gpio=wire, power=SimpleNamespace(value="standby"), cec_version=6)
         first.announce = lambda: announced.append(("first", first.cec_version))
         second.announce = lambda: announced.append(("second", second.cec_version))
         session = CecSession([first, second])
         backend = SimpleNamespace(cec_version=5, configure=lambda active: None)
-        session._backends[24] = backend
-        session._configure(24)
+        session._backends[wire] = backend
+        session._configure(wire)
         self.assertEqual(announced, [("first", 5), ("second", 5)])
         first.power.value = "off"
         backend.cec_version = 6
-        session._configure(24)
+        session._configure(wire)
         self.assertEqual(announced[-1], ("second", 6))
         # Lightweight injected backends need no version metadata contract.
         del backend.cec_version
         second.cec_version = 5
-        session._configure(24)
+        session._configure(wire)
         self.assertEqual(announced[-1], ("second", 6))
 
 

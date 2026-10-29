@@ -12,24 +12,25 @@ from urllib.error import HTTPError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.dut import AmityHTTPError, DUT, PinctrlGPIO
-from amity_harness.wiring import Wiring
+from amity_harness.wiring import DEFAULT_WIRING, Wiring
+from unit_tests.harness_pins import cec_gpio, reset_gpio, wiring
 
 
-DOCUMENT = """# Test Harness
-## DUTs
-| Bench label | ESP32-S3 MAC / USB serial | Amity device ID |
-|---|---|---|
-| amity-dut | 68:EE:8F:50:2B:44 | dfcddb1bb98d70eca83cd015db66a2ad |
-## Setup/reset GPIO wiring
-| Bench label | DUT GPIO (XIAO pin) | Harness GPIO (BCM/RP1) | Pi physical header pin |
-|---|---|---:|---:|
-| amity-dut | 4 (D3) | 4 | 7 |
-## HDMI-CEC harness GPIO mapping
-| Device | Device Tentacle # | Tentacle Front/Back | DUT GPIO | Harness GPIO |
-|---|---:|---|---:|---:|
-| amity-dut | 0 | front | 1 | 23 |
-| amity-dut | 0 | back | 2 | 24 |
-"""
+def single_dut_document():
+    """Keep one board from the actual Markdown, preserving every pin value."""
+    names = set(wiring().identities)
+    lines = []
+    for line in DEFAULT_WIRING.read_text().splitlines():
+        if line.lstrip().startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if cells[0] in names and cells[0] != "amity-dut":
+                continue
+            line = "| " + " | ".join(cells) + " |"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+DOCUMENT = single_dut_document()
 
 
 class Opener:
@@ -54,9 +55,9 @@ class WiringTests(unittest.TestCase):
 
     def test_named_gpio_lookup(self):
         wiring = self.parse()
-        self.assertEqual(wiring.cec_gpio("amity-dut", 0, "front"), 23)
-        self.assertEqual(wiring.cec_gpio("amity-dut", 0, "back"), 24)
-        self.assertEqual(wiring.reset_gpio("amity-dut"), 4)
+        self.assertEqual(wiring.cec_gpio("amity-dut", 0, "front"), cec_gpio(direction="front"))
+        self.assertEqual(wiring.cec_gpio("amity-dut", 0, "back"), cec_gpio())
+        self.assertEqual(wiring.reset_gpio("amity-dut"), reset_gpio())
         self.assertEqual(wiring.identities["amity-dut"].mac, "68:EE:8F:50:2B:44")
         with self.assertRaises(ValueError):
             wiring.cec_gpio("amity-dut", 1, "front")
@@ -64,17 +65,18 @@ class WiringTests(unittest.TestCase):
             DUT("unknown", wiring=wiring)
 
     def test_markdown_is_the_source_of_truth(self):
-        changed = DOCUMENT.replace("| 1 | 23 |", "| 1 | 22 |")
-        self.assertEqual(self.parse(changed).cec_gpio("amity-dut", 0, "front"), 22)
+        original, replacement = cec_gpio(direction="front"), cec_gpio("amity-dut-2", direction="front")
+        changed = DOCUMENT.replace(f"| {original} |", f"| {replacement} |")
+        self.assertEqual(self.parse(changed).cec_gpio("amity-dut", 0, "front"), replacement)
 
     def test_bad_wiring_is_rejected_before_hardware_access(self):
         corruptions = [
-            DOCUMENT.replace("| 2 | 24 |", "| 2 | 23 |"),
-            DOCUMENT.replace("| 2 | 24 |", "| 2 | 4 |"),
+            DOCUMENT.replace(f"| {cec_gpio()} |", f"| {cec_gpio(direction='front')} |"),
+            DOCUMENT.replace(f"| {cec_gpio()} |", f"| {reset_gpio()} |"),
             DOCUMENT.replace("| back |", "| backwards |"),
-            DOCUMENT.replace("| 2 | 24 |", "| 2 | invalid |"),
+            DOCUMENT.replace(f"| {cec_gpio()} |", "| invalid |"),
             DOCUMENT + "\n## HDMI-CEC harness GPIO mapping\n",
-            DOCUMENT.replace("| amity-dut | 0 | back | 2 | 24 |\n", ""),
+            "\n".join(line for line in DOCUMENT.splitlines() if not line.startswith("| amity-dut | 0 | back |")),
             DOCUMENT.replace("| amity-dut | 0 | back", "| another-dut | 0 | back"),
         ]
         for document in corruptions:
@@ -179,7 +181,8 @@ class DUTTests(unittest.TestCase):
         dut = DUT("amity-dut", wiring=self.wiring, gpio=gpio)
         with patch("amity_harness.dut.time.sleep", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
             dut.press_fw_reset(3.5)
-        self.assertEqual(gpio.calls, [("low", 4), ("release", 4)])
+        pin = self.wiring.reset_gpio(dut.name)
+        self.assertEqual(gpio.calls, [("low", pin), ("release", pin)])
         gpio.calls.clear()
         for seconds in (-1, 0, float("nan"), float("inf"), True):
             with self.assertRaises(ValueError):
@@ -189,11 +192,12 @@ class DUTTests(unittest.TestCase):
     def test_pinctrl_release_is_high_impedance_without_pull(self):
         calls = []
         gpio = PinctrlGPIO(runner=lambda command, **kwargs: calls.append(command))
-        gpio.low(4)
-        gpio.release(4)
-        self.assertEqual(calls, [["pinctrl", "set", "4", "dl"],
-                                 ["pinctrl", "set", "4", "op"],
-                                 ["pinctrl", "set", "4", "ip", "pn"]])
+        pin = self.wiring.reset_gpio("amity-dut")
+        gpio.low(pin)
+        gpio.release(pin)
+        self.assertEqual(calls, [["pinctrl", "set", str(pin), "dl"],
+                                 ["pinctrl", "set", str(pin), "op"],
+                                 ["pinctrl", "set", str(pin), "ip", "pn"]])
 
     def test_credentials_are_read_only_from_private_file(self):
         with tempfile.TemporaryDirectory() as directory:

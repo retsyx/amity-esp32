@@ -1,5 +1,5 @@
 {
-  "status": "Four audit fixes are committed and amity-dut runs verified 0.1.88. User-authorized factory reset cleared incompatible 0.1.86 configuration, and the user re-enrolled it in Matter. New main/UI readiness and retained factory login are verified; other three DUTs were not updated. hw/case remains untracked. The new two-player source-theft scenario and all three functional tests pass on test2, with 204 framework checks passing and no firmware changes.",
+  "status": "Add Amity functional test implemented using parsed GPIO wiring and existing authenticated UI APIs. All 238 framework tests pass; the physical retry fails candidate discovery with a fw_reset task overflow on the 0.1.84 candidate. No Add/Remove was submitted. Main saved configuration, controller identity and two current Matter fabrics remain intact after disclosed diagnostic serial resets; no firmware changes were made.",
   "audit_date": "2026-10-29",
   "firmware_version": "0.1.88",
   "branch": "consort",
@@ -633,5 +633,53 @@
     },
     "limitations": "Simulated CEC components on one local DUT/tentacle; not real AV switching, all-adapter timing or ESP32 owner radio qualification.",
     "firmware_changed": false
+  },
+  "add_amity_functional_validation": {
+    "date": "2026-10-29",
+    "test": "cec-harness/functional_tests/add_amity.py",
+    "duts": [
+      "amity-dut",
+      "amity-dut-2"
+    ],
+    "candidate_control_only": true,
+    "gpio_source": "cec-harness/TEST-HARNESS.md: Setup/reset GPIO wiring table; no duplicated pin assignments in framework or test fixtures",
+    "hold_seconds": 3.5,
+    "gpio_transport": "One Pi-owned bounded hold with signal-safe input release; parsed GPIO passed over SSH",
+    "host": {
+      "result": "PASS",
+      "tests": 238,
+      "log": "test-results/functional/add-amity-framework-tests.log"
+    },
+    "physical": {
+      "result": "FAIL",
+      "main_firmware": "0.1.88",
+      "candidate_firmware": "0.1.84",
+      "stage": "discover_candidate",
+      "initial_report": "test-results/functional/add-amity-2026-10-29.json",
+      "initial_failure": "TLS handshake timeout during discovery, before Add submission",
+      "retry_report": "test-results/functional/add-amity-retry-2026-10-29.json",
+      "retry_failure": "Admission-only UI polling remained responsive but no candidate was found before the deadline; candidate UART records fw_reset task stack overflow and software reboot during the attempt.",
+      "candidate_uart": "test-results/functional/add-amity-retry-amity-dut-2-uart.log",
+      "main_uart": "test-results/functional/add-amity-retry-amity-dut-uart.log",
+      "add_submitted": false,
+      "remove_submitted": false,
+      "scan_cancelled": true,
+      "qualification": "Connected membership and scheduled-reset-on-removal assertions remain unqualified; the test continues to fail."
+    },
+    "diagnostic_side_effect": {
+      "cause": "Opening diagnostic serial ports caused unintended USB_UART_CHIP_RESET reboots on both boards; capture stopped.",
+      "main_boot_before": "adf4abfb5b747b0b0cf5ef5aa03e393f",
+      "main_boot_after": "8e4c9c5a830fd54c91bfec619a41c588",
+      "main_saved_configuration_equal": true,
+      "main_controller_identity_retained": true,
+      "main_current_matter_fabrics": 2
+    },
+    "verification": "test-results/functional/add-amity-verified-2026-10-29.json",
+    "main_before": "test-results/functional/add-amity-before-2026-10-29.json",
+    "main_after": "test-results/functional/add-amity-after-2026-10-29.json",
+    "matter_after": "test-results/functional/add-amity-main-matter-after.json",
+    "pin_after": "test-results/functional/add-amity-reset-pin-after.json",
+    "firmware_changed": false,
+    "new_firmware_apis": false
   }
 }

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import (AvrComponent, DUT, PlaybackComponent, Tentacle,
                            TentacleEndpoint, TvComponent)
+from unit_tests.harness_pins import cec_gpio, wiring
 
 
 class ConnectionTests(unittest.TestCase):
@@ -22,15 +23,17 @@ class ConnectionTests(unittest.TestCase):
             tentacle = dut.tentacle(0)
             self.assertIsInstance(tentacle, Tentacle)
             self.assertIs(tentacle.front.dut, dut)
-            self.assertEqual((tentacle.front.tentacle, tentacle.front.direction, tentacle.front.gpio), (0, "front", 23))
-            self.assertEqual((tentacle.back.tentacle, tentacle.back.direction, tentacle.back.gpio), (0, "back", 24))
+            self.assertEqual((tentacle.front.tentacle, tentacle.front.direction, tentacle.front.gpio), (0, "front", cec_gpio(dut.name, direction="front")))
+            self.assertEqual((tentacle.back.tentacle, tentacle.back.direction, tentacle.back.gpio), (0, "back", cec_gpio(dut.name)))
             self.assertEqual((tentacle.front.tv_input, tentacle.back.tv_input), (1, 1))
             self.assertFalse(low.called or release.called or request.called)
 
     def test_all_documented_adapters_and_configurable_upstream_tv_input(self):
         dut = DUT("amity-dut-4")
-        expected = [(12, 13), (5, 6), (20, 21), (16, 26)]
-        for index, (front_gpio, back_gpio) in enumerate(expected):
+        indices = sorted({index for name, index, _ in wiring().cec if name == dut.name})
+        for index in indices:
+            front_gpio = cec_gpio(dut.name, index, "front")
+            back_gpio = cec_gpio(dut.name, index, "back")
             with self.subTest(index=index):
                 adapter = dut.tentacle(index, tv_input=3)
                 self.assertEqual((adapter.front.gpio, adapter.back.gpio), (front_gpio, back_gpio))
@@ -53,7 +56,7 @@ class ConnectionTests(unittest.TestCase):
         self.assertNotEqual(endpoint, dut.tentacle(0).back)
         self.assertNotEqual(endpoint, dut.tentacle(0, tv_input=2).front)
         self.assertNotEqual(endpoint, DUT("amity-dut").tentacle(0).front)
-        for field, value in (("gpio", 24), ("direction", "back"), ("tv_input", 2)):
+        for field, value in (("gpio", cec_gpio(dut.name)), ("direction", "back"), ("tv_input", 2)):
             with self.subTest(field=field), self.assertRaises(FrozenInstanceError):
                 setattr(endpoint, field, value)
 
@@ -71,31 +74,33 @@ class ConnectionTests(unittest.TestCase):
         self.assertIs(player.parent, avr)
         self.assertIs(player.endpoint, tentacle.back)
         self.assertEqual((player.dut, player.tentacle, player.direction, player.gpio, player.tv_input),
-                         (dut, 0, "back", 24, 2))
+                         (dut, 0, "back", cec_gpio(dut.name), 2))
         self.assertEqual(player.port, 1)
-        self.assertEqual(tv.gpio, 23)
+        self.assertEqual(tv.gpio, cec_gpio(dut.name, direction="front"))
 
     def test_direct_dut_convenience_is_normalized_and_tv_default_does_not_override_endpoint(self):
         dut = DUT("amity-dut")
         tv = TvComponent(dut, "Unit TV")
         player = PlaybackComponent(dut, "Unit Player")
         self.assertIsInstance(tv.attachment, TentacleEndpoint)
-        self.assertEqual((tv.direction, tv.gpio), ("front", 23))
-        self.assertEqual((player.direction, player.gpio), ("back", 24))
+        self.assertEqual((tv.direction, tv.gpio), ("front", cec_gpio(dut.name, direction="front")))
+        self.assertEqual((player.direction, player.gpio), ("back", cec_gpio(dut.name)))
         back_tv = TvComponent(dut.tentacle(0).back, "Back TV")
         front_player = PlaybackComponent(dut.tentacle(0).front, "Front Player")
-        self.assertEqual((back_tv.direction, back_tv.gpio), ("back", 24))
-        self.assertEqual((front_player.direction, front_player.gpio), ("front", 23))
+        self.assertEqual((back_tv.direction, back_tv.gpio), ("back", cec_gpio(dut.name)))
+        self.assertEqual((front_player.direction, front_player.gpio), ("front", cec_gpio(dut.name, direction="front")))
         keyword_tv = TvComponent(attachment=dut, name="Keyword TV")
         self.assertEqual(keyword_tv.direction, "front")
 
     def test_duck_typed_dut_uses_existing_lookup_without_hardware_methods(self):
         lookups = []
 
+        documented_gpio = cec_gpio("amity-dut-4", 2, "back")
+
         class Wiring:
             def cec_gpio(self, name, tentacle, direction):
                 lookups.append((name, tentacle, direction))
-                return 25
+                return documented_gpio
 
         dut = SimpleNamespace(name="unit-dut", wiring=Wiring())
         avr = AvrComponent(dut, "Unit AVR", tentacle=2)
@@ -103,7 +108,7 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(lookups, [("unit-dut", 2, "back")])
         self.assertEqual(hash(avr.endpoint), hash(player.endpoint))
         self.assertIs(player.dut, dut)
-        self.assertEqual(player.gpio, 25)
+        self.assertEqual(player.gpio, documented_gpio)
 
     def test_conflicting_overrides_and_parallel_parent_keyword_are_rejected(self):
         dut = DUT("amity-dut")
@@ -123,7 +128,7 @@ class ConnectionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             PlaybackComponent(dut, "Bad Player", parent=avr, port=1)
         child = PlaybackComponent(avr, "Unit Player", port=1, tentacle=0, direction="back")
-        for field, value in (("dut", dut), ("direction", "front"), ("gpio", 23),
+        for field, value in (("dut", dut), ("direction", "front"), ("gpio", cec_gpio(dut.name, direction="front")),
                              ("tentacle", 1), ("parent", None), ("attachment", dut)):
             with self.subTest(field=field), self.assertRaises(AttributeError):
                 setattr(child, field, value)

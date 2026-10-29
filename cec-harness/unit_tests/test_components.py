@@ -85,7 +85,7 @@ class FrameworkComponentTests(unittest.TestCase):
     def test_exact_discovery_reply_vectors_and_per_component_identity(self):
         tv, avr, playback = topology()
         with CecSession([tv, avr, playback], backend_factory=FakeBackend) as session:
-            back = session._backends[24]
+            back = session._backends[avr.gpio]
             back.messages.clear()
             avr.receive(Frame.from_bytes(bytes.fromhex("0583")))
             playback.receive(Frame.from_bytes(bytes.fromhex("0483")))
@@ -101,7 +101,7 @@ class FrameworkComponentTests(unittest.TestCase):
         observed = []
         playback.hooks = Hooks(before_rx=lambda c, frame: observed.append(frame) or frame)
         with CecSession([tv, avr, playback], backend_factory=FakeBackend) as session:
-            backend = session._backends[24]
+            backend = session._backends[avr.gpio]
             observed.clear()  # Ignore peer announcements while initially powered.
             playback.power_off()
             self.assertEqual(backend.configurations[-1], (5,))
@@ -125,7 +125,7 @@ class FrameworkComponentTests(unittest.TestCase):
         tv, avr, playback = topology()
         seen = []
         with CecSession([tv, avr, playback], backend_factory=FakeBackend) as session:
-            backend = session._backends[24]
+            backend = session._backends[avr.gpio]
             backend.messages.clear()
             avr.hooks = Hooks(before_rx=lambda c, frame: None)
             avr.receive(Frame(0, 5, 0x46))

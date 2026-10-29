@@ -11,6 +11,7 @@ from unittest.mock import patch
 from amity_harness import DUT, RunConfig, TestBed
 from amity_harness.config import current_config
 from amity_harness.runner import main, run_test
+from amity_harness.gpio import SSHPinctrlGPIO
 
 
 class RunnerTests(unittest.TestCase):
@@ -96,7 +97,11 @@ class RunnerTests(unittest.TestCase):
         def source_theft():
             called.append("source_theft")
 
-        scenarios = {"hdmi_scan": scan, "activity": activity, "source_theft": source_theft}
+        def add_amity():
+            called.append("add_amity")
+
+        scenarios = {"hdmi_scan": scan, "activity": activity,
+                     "source_theft": source_theft, "add_amity": add_amity}
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "result.json"
             options = ["--credentials", "/private/credentials.json", "--output", str(output)]
@@ -109,14 +114,36 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(called, ["source_theft"])
             self.assertTrue(json.loads(output.read_text())["passed"])
             called.clear()
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main(scenarios, [*options, "--test", "add_amity"]), 0)
+            self.assertEqual(called, ["add_amity"])
+            called.clear()
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(main(scenarios, [*options, "--test", "all"]), 1)
             report = json.loads(output.read_text())
-            self.assertEqual(called, ["scan", "activity", "source_theft"])
+            self.assertEqual(called, ["scan", "activity", "source_theft", "add_amity"])
             self.assertFalse(report["passed"])
             self.assertTrue(report["tests"][0]["passed"])
             self.assertIn("physical standby command", report["tests"][1]["error"])
             self.assertTrue(report["tests"][2]["passed"])
+            self.assertTrue(report["tests"][3]["passed"])
+
+    def test_harness_host_selects_remote_gpio_and_cec_without_performing_io(self):
+        def scenario():
+            pass
+
+        def capture(test, config):
+            gpio = config.gpio_factory()
+            self.assertIsInstance(gpio, SSHPinctrlGPIO)
+            self.assertEqual((gpio.host, gpio.root, gpio.port),
+                             ("pi@bench.example", "/bench/harness root", 2222))
+            self.assertIn("backend_factory", config.session_factory.keywords)
+            return {"test": test.__name__, "passed": True, "testbeds": []}
+
+        with patch("amity_harness.runner.run_test", side_effect=capture), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(scenario, ["--credentials", "/private/main.json",
+                                            "--harness-host", "pi@bench.example",
+                                            "--harness-root", "/bench/harness root", "--ssh-port", "2222"]), 0)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from .config import RunConfig, use_config
 from .testbed import TestBed
 from .discovery import ScanResult
 from .activity import Activity, ActivityAction, ActivityCleanupError, ActivityConflict
+from .membership import AddedAmity, MembershipConflict, MembershipCleanupError
 
 __all__ = [
     "AmityHTTPError", "DUT", "PinctrlGPIO", "Wiring", "CecAddress",
@@ -20,4 +21,5 @@ __all__ = [
     "CecError", "Frame", "LinuxCecBackend", "TxResult",
     "RunConfig", "use_config", "TestBed", "ScanResult", "Tentacle", "TentacleEndpoint",
     "Activity", "ActivityAction", "ActivityCleanupError", "ActivityConflict",
+    "AddedAmity", "MembershipConflict", "MembershipCleanupError",
 ]

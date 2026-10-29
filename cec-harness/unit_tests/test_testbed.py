@@ -9,11 +9,13 @@ from amity_harness.config import RunConfig, current_config, track_testbeds, use_
 from amity_harness.dut import DUT
 from amity_harness.testbed import TestBed, TestBedCleanupError
 from amity_harness.topology import CecAddress
+from unit_tests.harness_pins import cec_gpio
 
 
 class UnitWiring:
     def cec_gpio(self, name, tentacle, direction):
-        return 23 if name == "first-board" else 24
+        board = "amity-dut" if name == "first-board" else "amity-dut-2"
+        return cec_gpio(board, tentacle, direction)
 
 
 class UnitDUT(DUT):
@@ -113,6 +115,8 @@ class RunConfigTests(unittest.TestCase):
                 RunConfig(timeout=timeout)
         with self.assertRaises(ValueError):
             RunConfig(cafile=Path("/tmp/ca.pem"), insecure=True)
+        with self.assertRaises(ValueError):
+            RunConfig(gpio_factory=object())
 
 
 class TestBedLifetimeTests(unittest.TestCase):
@@ -160,6 +164,38 @@ class TestBedLifetimeTests(unittest.TestCase):
         self.assertFalse(bed.report["passed"])
         self.assertIsNone(dut._token)
         self.assertIsNone(dut._testbed)
+
+    def test_control_only_candidate_is_owned_and_reported_without_any_http(self):
+        main = UnitDUT("first-board", self.log)
+        candidate = UnitDUT("second-board", self.log, auth_error=True, wrong_identity=True)
+        bed = TestBed(main, candidate, control_only=(candidate,), session_factory=self.factory())
+        with bed:
+            self.assertEqual(bed.control_only, (candidate,))
+            self.assertIs(candidate._testbed, bed)
+            self.assertIsNone(candidate._token)
+            alias = UnitDUT("alias-board", self.log, identity=candidate.identity.device_id)
+            with self.assertRaisesRegex(RuntimeError, "active"):
+                TestBed(alias, control_only=(alias,), session_factory=self.factory()).__enter__()
+            self.assertIs(candidate._testbed, bed)
+        self.assertFalse(any(name == candidate.name for name, _ in self.log))
+        self.assertIsNone(candidate._testbed)
+        self.assertEqual(bed.report["duts"], [
+            {"name": main.name, "device_id": main.identity.device_id, "control_only": False},
+            {"name": candidate.name, "device_id": candidate.identity.device_id, "control_only": True}])
+
+    def test_invalid_control_only_resources_fail_before_any_io(self):
+        main, candidate = UnitDUT("first-board", self.log), UnitDUT("second-board", self.log)
+        for controls in ((candidate,), ("second-board",), (main, main)):
+            with self.subTest(controls=controls), self.assertRaises(ValueError):
+                TestBed(main, control_only=controls, session_factory=self.factory())
+        component = TvComponent(candidate, "Candidate TV", address=CecAddress(0, 0))
+        with self.assertRaisesRegex(ValueError, "CEC components"):
+            TestBed(main, component, control_only=(candidate,), session_factory=self.factory())
+        candidate._token = "PREEXISTING_TOKEN"
+        with self.assertRaisesRegex(ValueError, "authenticated"):
+            TestBed(main, candidate, control_only=(candidate,), session_factory=self.factory())
+        self.assertEqual(candidate._token, "PREEXISTING_TOKEN")
+        self.assertFalse(self.log)
 
     def test_partial_login_failure_logs_out_all_owned_logins(self):
         first = UnitDUT("first-board", self.log)
@@ -292,7 +328,7 @@ class TestBedLifetimeTests(unittest.TestCase):
                     devices=[{"title": "Unit TV", "bus": "front", "password": "PRIVATE_PASSWORD"}],
                     status={"discovering": True, "expected_boot_id": "boot", "token": "PRIVATE_TOKEN", "devices": []},
                     records=({"component": "Unit TV", "frame": "40:83", "transport": "wire", "Authorization": "PRIVATE_TOKEN"},),
-                    initiators={23: 4})
+                    initiators={cec_gpio(direction="front"): 4})
                 bed.session.records = list(dut.last_scan.records)
                 raise TimeoutError("synthetic scan timeout")
         report = bed.report

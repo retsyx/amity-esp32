@@ -21,6 +21,7 @@ class RunConfig:
     insecure: bool = False
     wiring_path: Path | None = None
     session_factory: Callable = CecSession
+    gpio_factory: Callable | None = None
     timeout: float = 90
 
     def __post_init__(self):
@@ -28,6 +29,8 @@ class RunConfig:
             raise ValueError("Run timeout must be a positive finite number")
         if not callable(self.session_factory):
             raise ValueError("session_factory must be callable")
+        if self.gpio_factory is not None and not callable(self.gpio_factory):
+            raise ValueError("gpio_factory must be callable or None")
         if not isinstance(self.insecure, bool):
             raise ValueError("insecure must be a boolean")
         if self.cafile is not None and self.insecure:

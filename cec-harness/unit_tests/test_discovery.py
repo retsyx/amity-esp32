@@ -11,10 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import CecAddress, Frame, PowerState
 from amity_harness.discovery import ScanResult, scan_hdmi
+from unit_tests.harness_pins import cec_gpio
 
 
-def component(dut, *, name="A TV", gpio=22, logical=0, physical=0, power=PowerState.STANDBY):
-    return SimpleNamespace(dut=dut, name=name, gpio=gpio, direction="front", device_type=0,
+def component(dut, *, name="A TV", direction="front", logical=0, physical=0, power=PowerState.STANDBY):
+    return SimpleNamespace(dut=dut, name=name, gpio=cec_gpio(dut.name, direction=direction),
+                           direction=direction, device_type=0,
                            address=CecAddress(logical, physical), power=power)
 
 
@@ -56,8 +58,8 @@ class Session:
 
 
 class Device:
-    def __init__(self):
-        self.name = "amity-dut-3"
+    def __init__(self, name="amity-dut-3"):
+        self.name = name
         self.identity = SimpleNamespace(device_id="f" * 32)
         self.http_identity = self.identity.device_id
         self.before = {"discovering": False, "discovery_generation": 4, "expected_boot_id": "boot", "devices": []}
@@ -98,8 +100,8 @@ class DiscoveryTests(unittest.TestCase):
             return scan_hdmi(self.dut, self.dut.session)
 
     def test_arbitrary_named_dut_scans_only_its_powered_attached_components(self):
-        off = component(self.dut, name="Off TV", gpio=25, power=PowerState.OFF)
-        foreign = component(Device(), name="Other DUT TV", gpio=27)
+        off = component(self.dut, name="Off TV", direction="back", power=PowerState.OFF)
+        foreign = component(Device("amity-dut-2"), name="Other DUT TV", direction="back")
         self.dut.session.components.extend([off, foreign])
         result = self.scan()
         self.assertIsInstance(result, ScanResult)
@@ -166,7 +168,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(result.status, final)
 
     def test_scan_returns_partial_devices_without_implicitly_requiring_all_fixtures(self):
-        absent = component(self.dut, name="Missing Peer", gpio=25)
+        absent = component(self.dut, name="Missing Peer", direction="back")
         self.dut.session.components.append(absent)
         # A complete physical exchange for the responding TV allows the
         # missed-busy fallback, independently of the absent configured peer.
