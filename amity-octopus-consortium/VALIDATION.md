@@ -306,6 +306,36 @@ the earlier two Add/removal passes remain main-0.1.94/candidate-0.1.93 evidence.
 The functional test was not rerun on 0.1.94/0.1.94, and no new CEC/AV,
 strict-profile or all-board interoperability result is claimed.
 
+## Activity switch-input sub-test — 29 October 2026
+
+`--test activity` now runs independent power-cycle and switch-input sub-tests
+from `cec-harness/functional_tests/activity.py`, each with its own scan,
+temporary activity and cleanup. The added case uses the scanned AVR as audio
+and switch, no CEC source, and requested input 4. This exercises the original
+`Hub::fallback_input` behavior: a discovered CEC source uses Set Stream Path;
+an absent source permits explicit Select AV Input Function. Firmware algorithms
+and endpoints are unchanged.
+
+The case requires the selected activity to be active, fresh physical power-on
+commands for TV/AVR, the unselected player in Standby, and an applied directed
+`44:69:04` from the scan-proven DUT initiator after activity start. Numeric input
+state is separate from physical-address routing. Virtual/stale/wrong-address
+traffic, modified/dropped hooks, ignored commands and local setters cannot prove
+the input selection. All 259 framework unit tests pass, covering these evidence
+boundaries, switch configuration/cleanup and independent sub-test reporting.
+
+Both activity sub-tests pass on `test2` against `amity-dut` 0.1.94. The added
+case observes wire frame `05:44:69:04` (DUT 0 to AVR 5), applies numeric input 4
+and verifies the selected UI activity without a reboot. Both cases remove their
+temporary activities/equipment with no cleanup errors. Private evidence is
+`test-results/activity-switch-2026-10-29/functional.json`.
+Final authenticated checks in `main-after.json` pass all 19 checks: same boot,
+authority, saved activities/equipment/settings, capabilities and two Matter
+fabrics, with the main idle and no peers or cleanup errors. Only revision
+metadata and two normal reserved external-slot tombstones for the exact removed
+test activities changed; preexisting slots and all other configuration values
+are identical. The session logs out, with no main USB access or reboot.
+
 ## Source theft functional test — 29 October 2026
 
 The new `source_theft.py` configures a saved activity for each of two playback

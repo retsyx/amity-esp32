@@ -47,10 +47,17 @@ def _named_options(parser, values, description, convert=str):
 
 
 def main(test, argv=None):
-    """Run one registered scenario with the same CLI across functional tests."""
+    """Run registered scenarios or groups with the shared functional-test CLI."""
     tests = {test.__name__: test} if callable(test) else dict(test)
-    if not tests or any(not isinstance(name, str) or not callable(scenario) for name, scenario in tests.items()):
-        raise ValueError("Provide named functional tests")
+    if not tests or any(not isinstance(name, str) for name in tests):
+        raise ValueError("Provide named functional tests or nonempty groups of callable tests")
+    for name, group in tests.items():
+        if callable(group):
+            tests[name] = (group,)
+        elif isinstance(group, (tuple, list)) and group and all(callable(scenario) for scenario in group):
+            tests[name] = tuple(group)
+        else:
+            raise ValueError("Provide named functional tests or nonempty groups of callable tests")
     parser = argparse.ArgumentParser(description="Run Amity functional tests using the CEC harness")
     parser.add_argument("--test", choices=[*tests, "all"], default=next(iter(tests)),
                         help="scenario to run; defaults to the first registered test")
@@ -91,7 +98,7 @@ def main(test, argv=None):
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, session_factory=session_factory, gpio_factory=gpio_factory)
     selected = tests if args.test == "all" else {args.test: tests[args.test]}
-    reports = [run_test(scenario, config) for scenario in selected.values()]
+    reports = [run_test(scenario, config) for group in selected.values() for scenario in group]
     report = (reports[0] if len(reports) == 1 else
               {"passed": all(result["passed"] for result in reports), "tests": reports})
     if args.output:

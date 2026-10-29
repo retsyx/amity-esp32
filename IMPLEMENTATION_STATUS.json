@@ -1383,5 +1383,80 @@
       "image_elf_sha256": "c7dccbb80d8c7cd4d795df53e2f52de0979f074701c33bccbac43878be674bc8",
       "factory_credentials_origin_and_protected_flash_retained": true
     }
+  },
+  "activity_switch_input_validation": {
+    "date": "2026-10-29",
+    "result": "PASS",
+    "firmware_version": "0.1.94",
+    "test": "cec-harness/functional_tests/activity.py",
+    "cli": "--test activity",
+    "subtests": [
+      "test_activity",
+      "test_activity_switch_input"
+    ],
+    "baseline": "Hub::input uses a discovered source physical address; Hub::fallback_input sends Select AV Input Function only when source lookup is absent. The new sub-test uses source=None and the AVR as audio/switch, input 4.",
+    "firmware_changed": false,
+    "new_firmware_apis": false,
+    "framework_host": {
+      "result": "PASS",
+      "unit_tests": 259,
+      "command": "python3 -m unittest discover -s cec-harness/unit_tests"
+    },
+    "physical": {
+      "result": "PASS",
+      "harness_host": "test2",
+      "dut": "amity-dut",
+      "report": "test-results/activity-switch-2026-10-29/functional.json",
+      "observed_switch_frame": "05:44:69:04",
+      "requested_input": 4,
+      "source": 0,
+      "destination": 5,
+      "fresh_applied_dut_wire_command": true,
+      "activity_active": true,
+      "tv_and_avr_on": true,
+      "unselected_player_standby": true,
+      "both_subtests_passed": true,
+      "temporary_activities_and_equipment_removed": true,
+      "cleanup_errors": []
+    },
+    "main_preservation": {
+      "result": "PASS",
+      "before": "test-results/activity-switch-2026-10-29/main-before.json",
+      "after": "test-results/activity-switch-2026-10-29/main-after.json",
+      "checks_passed": 19,
+      "checks": {
+        "expected_identity": true,
+        "same_firmware": true,
+        "same_main_boot": true,
+        "ready": true,
+        "original_main_authority": true,
+        "same_group": true,
+        "all_saved_values_preserved_except_identified_test_metadata": true,
+        "configuration_snapshot_complete": true,
+        "activities_preserved": true,
+        "equipment_preserved": true,
+        "saved_adapter_settings_preserved": true,
+        "hardware_capabilities_preserved": true,
+        "matter_fabrics_preserved": true,
+        "two_current_matter_fabrics": true,
+        "no_peers": true,
+        "idle": true,
+        "not_discovering": true,
+        "no_pending_configuration": true,
+        "no_activity_or_hardware_error": true
+      },
+      "configuration_note": "Only normal revision metadata and two reserved external-slot tombstones for the exact removed test activities changed. All preexisting slots and every other saved configuration value remain identical.",
+      "main_usb_opened": false,
+      "main_rebooted": false,
+      "logged_out": true
+    },
+    "qualification_scope": "Physical local activity power/standby and explicit switch-input fallback on this DUT/image. No new remote-owner, strict-profile admission or all-board CEC qualification.",
+    "contracts": {
+      "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "manifest_entries_checked": 34,
+      "schemas_checked": 6,
+      "current_wire_kinds_checked": 19
+    }
   }
 }

@@ -205,10 +205,12 @@ class DUT:
         return scan_hdmi(self, self._testbed.session,
                          timeout=self._runtime.timeout if timeout is None else timeout)
 
-    def create_activity(self, name, *, display, source, audio=None, timeout=None):
+    def create_activity(self, name, *, display, source, audio=None,
+                        switch_device=None, switch_input=0, timeout=None):
         """Create an owned temporary activity through the existing UI APIs."""
         from .activity import Activity
-        return Activity(self, name, display=display, source=source, audio=audio, timeout=timeout).create()
+        return Activity(self, name, display=display, source=source, audio=audio,
+                        switch_device=switch_device, switch_input=switch_input, timeout=timeout).create()
 
     def add_amity(self, candidate, *, name=None, timeout=None, setup_code=None):
         """Temporarily add a control-only DUT using the existing Add Amity UI.

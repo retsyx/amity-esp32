@@ -51,17 +51,23 @@ _STATE = ("current_activity", "activity_settling", "expected_boot_id", "expected
 class Activity:
     """A created activity owned by an active TestBed and optionally a context."""
 
-    def __init__(self, dut, name, *, display, source, audio=None, timeout=None):
+    def __init__(self, dut, name, *, display, source, audio=None,
+                 switch_device=None, switch_input=0, timeout=None):
         bed = getattr(dut, "_testbed", None)
         if bed is None or bed.session is None or not bed._entered or bed._closed:
             raise RuntimeError("Create activities inside an active TestBed")
         if (not isinstance(name, str) or not name or len(name.encode("utf-8")) > 63
                 or any(ord(character) < 32 or ord(character) == 127 for character in name)):
             raise ValueError("An activity needs a name of at most 63 bytes")
+        if type(switch_input) is not int or not 0 <= switch_input <= 255:
+            raise ValueError("Switch input must be an integer between 0 and 255")
+        if switch_device is None and switch_input != 0:
+            raise ValueError("A switch input requires a switch device")
         self.dut, self.name, self.session = dut, name, bed.session
         self.timeout = dut._runtime.timeout if timeout is None else timeout
         _positive_seconds(self.timeout, "Activity timeout")
-        self.components = {"display": display, "source": source, "audio": audio}
+        self.components = {"display": display, "source": source, "audio": audio, "switch": switch_device}
+        self.switch_input = switch_input
         self.scan = dut.last_scan
         if self.scan is None or self.scan.dut is not dut or self.scan._session is not self.session:
             raise RuntimeError("Scan this DUT in the current TestBed before creating an activity")
@@ -152,6 +158,28 @@ class Activity:
                 "expected_presentation_revision": document["expected_presentation_revision"],
                 "activities": deepcopy(rows)}
 
+    @staticmethod
+    def _row_selectors(row):
+        switch = row.get("switch")
+        return {**{role: row.get(role, "") for role in ("display", "source", "audio")},
+                "switch": switch.get("device", "") if isinstance(switch, dict) else ""}
+
+    def _matches_selections(self, row, selections):
+        if self._row_selectors(row) != selections:
+            return False
+        switch = row.get("switch")
+        if self.components["switch"] is None:
+            return switch is None
+        return (isinstance(switch, dict) and set(switch) == {"device", "input"}
+                and type(switch["input"]) is int and switch["input"] == self.switch_input)
+
+    def _selection_fields(self, document, state):
+        selections = self._selectors(document, state)
+        switch = selections.pop("switch")
+        if switch:
+            selections["switch"] = {"device": switch, "input": self.switch_input}
+        return selections
+
     def _write(self, path, payload, deadline, trace, *, stage):
         try:
             response = self.dut.request(path, payload, timeout=min(15, self._remaining(deadline)))
@@ -179,14 +207,15 @@ class Activity:
         if len(candidates) != 1 or not _identifier(candidates[0].get("activity_id")):
             raise AssertionError("The created activity identity is ambiguous")
         row = candidates[0]
-        if any(row.get(role, "") != selector for role, selector in self._selectors(document, state).items()):
+        if not self._matches_selections(row, self._selectors(document, state)):
             raise AssertionError("The created activity selectors differ from the scanned equipment")
         self.activity_id = row["activity_id"]
         self._created = True
-        if any(not row.get(role, "").startswith("component:") or not _identifier(row[role][len("component:"):])
+        selectors = self._row_selectors(row)
+        if any(not selectors[role].startswith("component:") or not _identifier(selectors[role][len("component:"):])
                for role, component in self.components.items() if component is not None):
             raise AssertionError("The created activity has no persisted scoped equipment identities")
-        selected = {row.get(role, "").removeprefix("component:") for role in self.components if row.get(role)}
+        selected = {selector.removeprefix("component:") for selector in selectors.values() if selector}
         self._allocated_equipment = selected - self._before_equipment
         full = self._full_configuration(document)
         for record in full["components"]:
@@ -210,7 +239,7 @@ class Activity:
             full = self._full_configuration(document)
             self._before_ids = {row["activity_id"] for row in document["activities"]}
             self._before_equipment = {record["component_id"] for record in full["components"]}
-            rows = [*document["activities"], {"name": self.name, **self._selectors(document, state)}]
+            rows = [*document["activities"], {"name": self.name, **self._selection_fields(document, state)}]
             payload = self._editor_payload(document, rows)
             trace.update(request_id=payload["request_id"], expected_config_revision=payload["expected_config_revision"],
                          expected_presentation_revision=payload["expected_presentation_revision"])
@@ -236,7 +265,7 @@ class Activity:
             if len(matches) != 1:
                 raise AssertionError("The created activity is missing or ambiguous")
             row = document["activities"][matches[0]]
-            if any(row.get(role, "") != selector for role, selector in self._selectors(document, state).items()):
+            if not self._matches_selections(row, self._selectors(document, state)):
                 raise AssertionError("The test activity equipment changed before start")
         payload = {"request_id": uuid4().hex, "activity_id": self.activity_id if kind == "start" else None,
                    "expected_config_revision": document["expected_config_revision"],
@@ -292,7 +321,7 @@ class Activity:
             if len(matches) != 1:
                 raise AssertionError("The created activity is missing or ambiguous")
             row = document["activities"][matches[0]]
-            if any(row.get(role, "") != selector for role, selector in self._selectors(document, state).items()):
+            if not self._matches_selections(row, self._selectors(document, state)):
                 raise AssertionError("The test activity equipment changed")
             current = state.get("current_activity")
             if type(current) is not int or current != matches[0]:

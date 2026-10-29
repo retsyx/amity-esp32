@@ -32,6 +32,8 @@ class Fixture:
                      "controller_octopus_id": self.dut.identity.device_id, "primary_zone_id": "d" * 32,
                      "components": [{"component_id": "f" * 32, "label": "Preexisting equipment", "qualified_names": []}]}
         self.selectors = {component.name: row["name"] for component, row in zip(source.components, source.rows)}
+        self.choice_roles = {self.tv.name: ["display", "audio"], self.avr.name: ["audio", "switch"],
+                             self.player.name: ["source"]}
         self.current, self.pending_stop, self.state_revision, self.polls = None, 0, 1, 0
         self.next_activity_number = 10
         self.reject_create = self.lose_create_reply = self.conflict_cleanup = self.change_boot_on_action = self.reject_start = False
@@ -48,13 +50,14 @@ class Fixture:
     def sync_full(self):
         self.full["activities"] = [{"activity_id": row["activity_id"], "label": row["name"],
                                      **{role: row.get(role, "").removeprefix("component:") or None
-                                        for role in ("display", "source", "audio")}}
+                                        for role in ("display", "source", "audio")},
+                                     "switch_device": (row.get("switch") or {}).get("device", "").removeprefix("component:") or None,
+                                     "switch_input": (row.get("switch") or {}).get("input", 0)}
                                     for row in self.rows]
 
     def editor(self):
-        choices = [{"value": self.selectors[component.name], "roles": roles}
-                   for component, roles in ((self.tv, ["display", "audio"]), (self.avr, ["audio", "switch"]),
-                                            (self.player, ["source"]))]
+        choices = [{"value": self.selectors[component.name], "roles": self.choice_roles[component.name]}
+                   for component in self.source.components]
         return {"version": 1, "expected_config_revision": self.full["config_revision"],
                 "expected_presentation_revision": self.full["presentation_revision"],
                 "activities": deepcopy(self.rows), "device_choices": choices}
@@ -90,7 +93,8 @@ class Fixture:
     def allocate(self, rows):
         for index, component in enumerate(self.source.components):
             native = self.source.rows[index]["name"]
-            if any(row.get(role) == native for row in rows for role in ("display", "source", "audio")):
+            if any(native in [row.get(role) for role in ("display", "source", "audio")]
+                   or (row.get("switch") or {}).get("device") == native for row in rows):
                 identity = f"{index + 11:032x}"
                 if not any(record["component_id"] == identity for record in self.full["components"]):
                     self.full["components"].append({"component_id": identity, "label": component.name,
@@ -100,6 +104,8 @@ class Fixture:
                     for role in ("display", "source", "audio"):
                         if row.get(role) == native:
                             row[role] = self.selectors[component.name]
+                    if (row.get("switch") or {}).get("device") == native:
+                        row["switch"]["device"] = self.selectors[component.name]
 
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
@@ -162,8 +168,9 @@ class Fixture:
             return result
         raise AssertionError(path)
 
-    def activity(self, name="Temporary test"):
-        return self.dut.create_activity(name, display=self.tv, source=self.player, audio=self.avr)
+    def activity(self, name="Temporary test", **overrides):
+        return self.dut.create_activity(name, **{"display": self.tv, "source": self.player,
+                                                "audio": self.avr, **overrides})
 
 
 class ActivityTests(unittest.TestCase):
@@ -352,6 +359,120 @@ class ActivityTests(unittest.TestCase):
         activity.close()
         with self.assertRaises(RuntimeError):
             activity.assert_active()
+
+    def test_switch_with_non_cec_source_uses_nested_ui_selection_and_owned_cleanup(self):
+        f = self.fixture
+        native_switch = f.selectors[f.avr.name]
+        original_rows = deepcopy(f.rows)
+        with f.activity(source=None, switch_device=f.avr, switch_input=3) as activity:
+            create = next(data for path, data in f.calls if path == "/api/v2/activity-editor" and data)
+            submitted = create["activities"][-1]
+            self.assertEqual(submitted["source"], "")
+            self.assertEqual(submitted["switch"], {"device": native_switch, "input": 3})
+            self.assertNotIn("switch_device", submitted)
+            self.assertNotIn("switch_input", submitted)
+            persisted = f.rows[-1]
+            self.assertEqual(persisted["switch"], {"device": f.selectors[f.avr.name], "input": 3})
+            self.assertEqual(persisted["audio"], persisted["switch"]["device"])
+            full = next(row for row in f.full["activities"] if row["activity_id"] == activity.activity_id)
+            self.assertEqual(full["switch_device"], persisted["switch"]["device"].removeprefix("component:"))
+            self.assertEqual(full["switch_input"], 3)
+            activity.start()
+            self.assertIs(activity.assert_active(), activity)
+        self.assertEqual(f.rows, original_rows)
+        self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32])
+        self.assertFalse(activity.retained_equipment)
+
+    def test_switch_input_accepts_uint8_endpoints(self):
+        for value in (0, 255):
+            with self.subTest(value=value):
+                f = Fixture()
+                with f.activity(source=None, audio=None, switch_device=f.avr, switch_input=value):
+                    self.assertEqual(f.rows[-1]["switch"]["input"], value)
+
+    def test_invalid_switch_inputs_fail_before_any_ui_mutation(self):
+        for value in (-1, 256, True, False, 3.0, "3", None):
+            with self.subTest(value=value):
+                f = Fixture()
+                with self.assertRaisesRegex(ValueError, "Switch input"):
+                    f.activity(switch_device=f.avr, switch_input=value)
+                self.assertFalse(f.calls)
+                self.assertFalse(f.callbacks)
+        f = self.fixture
+        with self.assertRaisesRegex(ValueError, "requires a switch device"):
+            f.activity(switch_input=3)
+        self.assertFalse(f.calls)
+
+    def test_switch_requires_current_ui_role_and_fresh_scanned_fixture(self):
+        for failure in ("role", "evidence", "foreign"):
+            with self.subTest(failure=failure):
+                f = Fixture()
+                switch = f.avr
+                if failure == "role":
+                    f.choice_roles[f.avr.name] = ["audio"]
+                elif failure == "evidence":
+                    f.dut.last_scan.records = tuple(record for record in f.dut.last_scan.records
+                                                    if record["component"] != f.avr.name)
+                else:
+                    switch = Fixture().avr
+                with self.assertRaises((ValueError, AssertionError)):
+                    f.activity(audio=None, switch_device=switch, switch_input=3)
+                self.assertFalse(any(data is not None for _, data in f.calls))
+
+    def test_changed_switch_selection_or_input_rejected_before_start_and_assert_active(self):
+        for phase in ("start", "assert_active"):
+            for change in ("input", "boolean", "device", "missing"):
+                with self.subTest(phase=phase, change=change):
+                    f = Fixture()
+                    activity = f.activity(source=None, switch_device=f.avr, switch_input=3)
+                    if phase == "assert_active":
+                        activity.start()
+                    row = next(row for row in f.rows if row["activity_id"] == activity.activity_id)
+                    if change == "input":
+                        row["switch"]["input"] = 4
+                    elif change == "boolean":
+                        row["switch"]["input"] = True
+                    elif change == "device":
+                        row["switch"]["device"] = f.selectors[f.tv.name]
+                    else:
+                        del row["switch"]
+                    mutations = len([data for _, data in f.calls if data is not None])
+                    with self.assertRaisesRegex(AssertionError, "equipment changed"):
+                        getattr(activity, phase)()
+                    self.assertEqual(len([data for _, data in f.calls if data is not None]), mutations)
+
+    def test_concurrently_added_switch_is_not_ignored_for_an_unswitched_activity(self):
+        f = self.fixture
+        activity = f.activity()
+        f.rows[-1]["switch"] = {"device": f.selectors[f.avr.name], "input": 3}
+        with self.assertRaisesRegex(AssertionError, "equipment changed"):
+            activity.start()
+
+    def test_switch_only_equipment_is_pruned_or_retained_if_reused(self):
+        for reused in (False, True):
+            with self.subTest(reused=reused):
+                f = Fixture()
+                activity = f.activity(source=None, audio=None, switch_device=f.avr, switch_input=3)
+                identity = f.selectors[f.avr.name].removeprefix("component:")
+                self.assertIn(identity, activity._new_equipment)
+                if reused:
+                    f.rows[0]["switch"] = {"device": "component:" + identity, "input": 7}
+                    f.sync_full()
+                activity.close()
+                expected = ["f" * 32, identity] if reused else ["f" * 32]
+                self.assertEqual([record["component_id"] for record in f.full["components"]], expected)
+                self.assertEqual(activity.retained_equipment, [identity] if reused else [])
+                if reused:
+                    self.assertEqual(f.rows[0]["switch"], {"device": "component:" + identity, "input": 7})
+
+    def test_lost_switch_creation_reply_recovers_and_removes_only_owned_equipment(self):
+        f = self.fixture
+        f.lose_create_reply = True
+        with self.assertRaises(OSError):
+            f.activity(source=None, audio=None, switch_device=f.avr, switch_input=3)
+        f.callbacks[0]()
+        self.assertEqual([row["name"] for row in f.rows], ["Existing activity"])
+        self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32])
 
 
 if __name__ == "__main__":

@@ -38,11 +38,11 @@ _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "des
                            "state_changed", "state_revision", "payload_modified", "applied"))
 _POWER_ASSERTION_FIELDS = frozenset(("kind", "power", "timestamp_ns", "since_monotonic_ns", "frame",
                                      "source", "destination", "wire_timestamp_ns", "command"))
-_ROUTING_FIELDS = frozenset(("opcode", "physical_address", "frame", "source", "destination", "transport",
+_ROUTING_FIELDS = frozenset(("opcode", "physical_address", "input", "command", "frame", "source", "destination", "transport",
                             "wire_timestamp_ns", "processed_monotonic_ns", "state_revision",
                             "payload_modified", "applied"))
-_ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "timestamp_ns", "since_monotonic_ns",
-                                      "frame", "source", "wire_timestamp_ns"))
+_ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "input", "command", "timestamp_ns", "since_monotonic_ns",
+                                      "frame", "source", "destination", "wire_timestamp_ns"))
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
                               "removed_activity", "removed_equipment", "retained_equipment"))
@@ -292,6 +292,7 @@ class TestBed:
             row["power_assertions"] = [_select(event, _POWER_ASSERTION_FIELDS) for event in component.power_assertions]
             if component.can_route:
                 row["active_input"] = component.active_input
+                row["selected_input"] = component.selected_input
                 row["routing_events"] = [_select(event, _ROUTING_FIELDS) for event in component.routing_events]
                 row["routing_assertions"] = [_select(event, _ROUTING_ASSERTION_FIELDS) for event in component.routing_assertions]
             if hasattr(component, "active"):

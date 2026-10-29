@@ -120,6 +120,15 @@ def test_activity():
 
 `DUT.create_activity()` uses the exact scanned selections and the shipping UI's
 authenticated activity editor. It retains existing activities.
+The separate `test_activity_switch_input()` sub-test configures the AVR as the
+switch with `switch_device=avr, switch_input=4` and `source=None`, representing
+a non-CEC source on that input. It verifies the selected activity, TV/AVR power
+and `avr.wait_for_switch_input(4, since=started)`. That assertion requires a
+fresh, directed DUT Select AV Input Function (`44:69:04`) and the AVR's applied
+numeric `selected_input`; cached state, virtual traffic or Set Stream Path
+cannot satisfy it. The scanned CEC player remains in Standby. A discovered CEC
+source uses its physical address instead, preserving Amity's original input
+selection behavior.
 The activity context attempts to remove its test-owned activity on exit,
 including after an assertion fails, before the component responders and HTTP
 session close. A DUT restart or conflicting user activity can prevent safe
@@ -422,10 +431,10 @@ python3 cec-harness/run.py \
   --output test-results/functional/hdmi-scan-framework.json
 ```
 
-The default remains `hdmi_scan`. Select `--test activity` for the scan plus
-activity lifecycle, `--test source_theft` for unselected-source recovery,
+The default remains `hdmi_scan`. Select `--test activity` for both the activity
+power-cycle and explicit switch-input sub-tests, `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, or `--test all`
-for all four registered scenarios. The same credentials, TLS, SSH and output
+for all four registered scenarios (five test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
 The Add Amity test uses only the main's credentials in the normal admission

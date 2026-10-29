@@ -112,6 +112,8 @@ class Component:
         self._power_checks = deque(maxlen=256)
         self._active_input = None
         self._input_revision = self._input_calls = 0
+        self._selected_input = None
+        self._switch_input_revision = self._switch_input_calls = 0
         self._routing_history = deque(maxlen=256)
         self._routing_checks = deque(maxlen=256)
         runtime = getattr(self.dut, "_runtime", None) or current_config()
@@ -277,6 +279,22 @@ class Component:
             self._power_condition.notify_all()
 
     @property
+    def selected_input(self):
+        """Numeric input selected through Select AV Input Function (0x69)."""
+        return self._selected_input
+
+    @selected_input.setter
+    def selected_input(self, number):
+        if isinstance(number, bool) or not isinstance(number, int) or not 0 <= number <= 255:
+            raise ValueError("Switch input must be an integer from 0 to 255")
+        with self._power_condition:
+            if number != self._selected_input:
+                self._switch_input_revision += 1
+            self._selected_input = number
+            self._switch_input_calls += 1
+            self._power_condition.notify_all()
+
+    @property
     def routing_events(self):
         with self._power_condition:
             return tuple(dict(event) for _, event in self._routing_history)
@@ -294,18 +312,37 @@ class Component:
         """
         if not self.can_route:
             raise ValueError("This component does not model HDMI input routing")
-        session, started, source = self._wire_context(since)
         if isinstance(source_component, Component):
-            if source_component.dut is not self.dut or source_component._session is not session:
+            if source_component.dut is not self.dut or source_component._session is not self._session:
                 raise ValueError("Input equipment belongs to a different DUT or CEC session")
             physical = source_component.address.physical
         else:
             physical = CecAddress(0, source_component).physical
+        return self._wait_for_routing(physical, since=since, timeout=timeout, command="set_stream_path")
+
+    def wait_for_switch_input(self, number, *, since, timeout=None):
+        """Require a fresh, directed DUT Select AV Input Function and its effect.
+
+        A numeric switch input is distinct from a CEC physical address. Local
+        setters, virtual messages, stale packets and Set Stream Path do not
+        prove that the requested explicit input command reached the switch.
+        """
+        if not self.can_route:
+            raise ValueError("This component does not model HDMI input routing")
+        if isinstance(number, bool) or not isinstance(number, int) or not 0 <= number <= 255:
+            raise ValueError("Switch input must be an integer from 0 to 255")
+        return self._wait_for_routing(number, since=since, timeout=timeout, command="select_av_input")
+
+    def _wait_for_routing(self, expected, *, since, timeout, command):
+        session, started, source = self._wire_context(since)
+        switch = command == "select_av_input"
+        field = "input" if switch else "physical_address"
         timeout = self._power_timeout if timeout is None else timeout
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Routing assertion timeout must be a positive finite number")
         deadline = time.monotonic() + timeout
-        missing = f"{self.name} did not handle a fresh DUT Set Stream Path for {physical:04x}"
+        requested = f"Select AV Input Function for input {expected}" if switch else f"Set Stream Path for {expected:04x}"
+        missing = f"{self.name} did not handle a fresh DUT {requested}"
         while True:
             stopped = getattr(session, "_stop", None)
             if self._session is not session or stopped is not None and stopped.is_set():
@@ -320,17 +357,20 @@ class Component:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(missing)
                 with self._power_condition:
+                    revision = self._switch_input_revision if switch else self._input_revision
+                    actual = self.selected_input if switch else self.active_input
                     matching = next((event for owner, event in reversed(self._routing_history)
                                      if owner is session and event["transport"] == "wire"
-                                     and event["source"] == source and event["opcode"] == 0x86
-                                     and event["applied"] and event["physical_address"] == physical
+                                     and event["source"] == source and event["command"] == command
+                                     and event["applied"] and event[field] == expected
                                      and event["wire_timestamp_ns"] >= started
                                      and event["processed_monotonic_ns"] >= started
-                                     and event["state_revision"] == self._input_revision), None)
-                    if self.power != PowerState.OFF and self.active_input == physical and matching is not None:
-                        self._routing_checks.append({"kind": "wire_command", "physical_address": physical,
+                                     and event["state_revision"] == revision), None)
+                    if self.power != PowerState.OFF and actual == expected and matching is not None:
+                        self._routing_checks.append({"kind": "wire_command", field: expected, "command": command,
                                                      "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": started,
                                                      "frame": matching["frame"], "source": source,
+                                                     "destination": matching["destination"],
                                                      "wire_timestamp_ns": matching["wire_timestamp_ns"]})
                         return self
                     remaining = deadline - time.monotonic()
@@ -436,17 +476,22 @@ class Component:
             self._session._record(self, "rx", original, transport=transport, **handling)
         power_calls = self._power_calls
         input_calls = self._input_calls
+        switch_input_calls = self._switch_input_calls
         self.handle(frame)
         handled_power = self.power
         handled_revision = self._power_revision
         controlled_power = self._power_calls != power_calls
         handled_input, input_revision = self.active_input, self._input_revision
         controlled_input = self._input_calls != input_calls
+        handled_switch_input, switch_input_revision = self.selected_input, self._switch_input_revision
+        controlled_switch_input = self._switch_input_calls != switch_input_calls
         if self.hooks.after_rx is not None:
             self.hooks.after_rx(self, frame)
         self._retain_power_command(original, frame, transport, power_before,
                                    controlled_power, handled_power, handled_revision)
         self._retain_routing(original, frame, transport, controlled_input, handled_input, input_revision)
+        self._retain_switch_input(original, frame, transport, controlled_switch_input,
+                                  handled_switch_input, switch_input_revision)
 
     def _power_command(self, frame, before):
         """Recognize explicit commands supported by these component models."""
@@ -497,6 +542,7 @@ class Component:
         target = int.from_bytes(original.operands, "big")
         changed = original.raw != handled.raw
         event = {"opcode": original.opcode, "physical_address": target,
+                 "command": "set_stream_path" if original.opcode == 0x86 else "active_source",
                  "frame": original.raw.hex(":"), "source": original.source,
                  "destination": original.destination, "transport": transport,
                  "wire_timestamp_ns": original.timestamp_ns if transport == "wire" else 0,
@@ -504,6 +550,24 @@ class Component:
                  "payload_modified": changed,
                  "applied": controlled and not changed and physical == target
                             and self.active_input == target and revision == self._input_revision}
+        with self._power_condition:
+            self._routing_history.append((self._session, event))
+            self._power_condition.notify_all()
+
+    def _retain_switch_input(self, original, handled, transport, controlled, number, revision):
+        if (not self.can_route or original.source == 15 or original.destination != self.address.logical
+                or original.opcode != 0x44 or len(original.operands) != 2 or original.operands[0] != 0x69):
+            return
+        target = original.operands[1]
+        changed = original.raw != handled.raw
+        event = {"opcode": original.opcode, "command": "select_av_input", "input": target,
+                 "frame": original.raw.hex(":"), "source": original.source,
+                 "destination": original.destination, "transport": transport,
+                 "wire_timestamp_ns": original.timestamp_ns if transport == "wire" else 0,
+                 "processed_monotonic_ns": time.monotonic_ns(), "state_revision": self._switch_input_revision,
+                 "payload_modified": changed,
+                 "applied": controlled and not changed and number == target
+                            and self.selected_input == target and revision == self._switch_input_revision}
         with self._power_condition:
             self._routing_history.append((self._session, event))
             self._power_condition.notify_all()
@@ -540,6 +604,10 @@ class Component:
                     return
         if opcode == 0x36 and not operands:
             self.standby()
+        elif (opcode == 0x44 and frame.destination != 15 and len(operands) == 2
+              and operands[0] == 0x69 and self.can_route):
+            self.pressed_key = operands[0]
+            self.selected_input = operands[1]
         elif opcode == 0x44 and frame.destination != 15 and len(operands) == 1:
             self.pressed_key = operands[0]
             self.on_key(operands[0])

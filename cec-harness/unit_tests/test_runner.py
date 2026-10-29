@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
+import runpy
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -144,6 +145,80 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(main(scenario, ["--credentials", "/private/main.json",
                                             "--harness-host", "pi@bench.example",
                                             "--harness-root", "/bench/harness root", "--ssh-port", "2222"]), 0)
+
+    def test_activity_group_retains_independent_failure_cleanup_and_evidence(self):
+        called, logged_out, duts = [], [], []
+
+        def activity_power():
+            dut = DUT("amity-dut")
+            duts.append(dut)
+            with TestBed(dut):
+                called.append("power")
+                raise AssertionError("missing physical power command")
+
+        def activity_switch_input():
+            dut = DUT("amity-dut")
+            duts.append(dut)
+            with TestBed(dut):
+                called.append("switch")
+
+        def logout(dut):
+            logged_out.append(dut.name)
+            dut._token = None
+
+        output, errors = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "activity.json"
+            with patch.object(DUT, "authenticate", lambda dut: setattr(dut, "_token", "private-token")), \
+                    patch.object(DUT, "logout", logout), \
+                    patch.object(DUT, "get_system", lambda dut: {"octopus_id": dut.identity.device_id}), \
+                    redirect_stdout(output), redirect_stderr(errors):
+                code = main({"activity": [activity_power, activity_switch_input]},
+                            ["--test", "activity", "--credentials", "/private/main.json", "--output", str(evidence)])
+            report = json.loads(evidence.read_text())
+        self.assertEqual(code, 1)
+        self.assertEqual(called, ["power", "switch"])
+        self.assertEqual(logged_out, ["amity-dut", "amity-dut"])
+        self.assertTrue(all(dut._testbed is None and dut._token is None for dut in duts))
+        self.assertFalse(report["passed"])
+        self.assertEqual([result["test"] for result in report["tests"]], ["activity_power", "activity_switch_input"])
+        self.assertEqual([result["passed"] for result in report["tests"]], [False, True])
+        self.assertEqual([len(result["testbeds"]) for result in report["tests"]], [1, 1])
+        self.assertFalse(report["tests"][0]["testbeds"][0]["passed"])
+        self.assertTrue(report["tests"][1]["testbeds"][0]["passed"])
+        self.assertIn("missing physical power command", report["tests"][0]["error"])
+        self.assertIn("PASS: activity_switch_input", output.getvalue())
+        self.assertIn("FAIL: AssertionError", errors.getvalue())
+        self.assertIn("Evidence:", errors.getvalue())
+        self.assertNotIn("private-token", json.dumps(report))
+
+    def test_actual_all_registration_runs_both_activity_subtests_once(self):
+        called = []
+
+        def capture(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": True, "testbeds": []}
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "all.json"
+            arguments = ["run.py", "--test", "all", "--credentials", "/private/main.json", "--output", str(evidence)]
+            with patch("sys.argv", arguments), patch("amity_harness.runner.run_test", side_effect=capture), \
+                    redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as exited:
+                runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
+            self.assertEqual(exited.exception.code, 0)
+            report = json.loads(evidence.read_text())
+        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity"]
+        self.assertEqual(called, expected)
+        self.assertEqual([result["test"] for result in report["tests"]], expected)
+        self.assertTrue(report["passed"])
+
+    def test_invalid_scenario_groups_are_rejected_before_execution(self):
+        def scenario():
+            self.fail("Invalid registration must not run a test")
+
+        for group in ([], (), None, 1, [scenario, None], (scenario, [scenario])):
+            with self.subTest(group=group), self.assertRaisesRegex(ValueError, "nonempty groups of callable tests"):
+                main({"activity": group}, [])
 
 
 if __name__ == "__main__":

@@ -244,6 +244,16 @@ CEC traffic; ordinary CEC Standby retains the powered CEC responder. Reuse the
 existing authenticated UI activity operations and clean up test-owned activity
 configuration before closing component responders and logging out.
 
+The activity scenario also has a separate explicit switch-input sub-test,
+run together with the power-cycle case by `--test activity`. Use the AVR as
+the switch and no CEC source, preserving the original fallback behavior;
+a discovered CEC source uses Set Stream Path instead. Assert the activity is
+active, TV/AVR are On, the unselected player remains in Standby, and a fresh
+directed DUT Select AV Input Function with the configured numeric input was
+actually applied by the AVR. Local state, virtual traffic and a physical-address
+routing command cannot satisfy that input assertion. Keep numeric input state
+separate from the component's CEC physical-address routing state.
+
 The source-theft test uses two playback devices attached to AVR inputs 1 and 2,
 with a saved activity for each using the shared TV and AVR. The second
 `PlaybackComponent` explicitly uses `address_type="tuner"` for logical-address

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import (AvrComponent, CecSession, DUT, Frame, Hooks,
                            PlaybackComponent, PowerState, RunConfig, TvComponent,
-                           TxResult, use_config)
+                           TestBed, TxResult, use_config)
 
 
 class IdleWire:
@@ -97,6 +97,136 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
             self.receive(avr, 0, player.address.physical)
             avr.wait_for_input(player.address.physical, since=start)
             self.assertTrue(avr.routing_events[-1]["applied"])
+
+    def switch_command(self, component, *, source=0, number=4, destination=None,
+                       operands=None, timestamp=None, transport="wire"):
+        component.receive(Frame(source, component.address.logical if destination is None else destination,
+                                0x44, bytes((0x69, number)) if operands is None else operands,
+                                timestamp_ns=time.monotonic_ns() if timestamp is None else timestamp),
+                          transport=transport)
+
+    def missing_switch(self, component, boundary, number=4):
+        with self.assertRaises(TimeoutError):
+            component.wait_for_switch_input(number, since=boundary, timeout=0.005)
+
+    def test_switch_input_requires_applied_directed_command_and_remains_distinct_from_physical_route(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            self.receive(avr, 0, player.address.physical)
+            self.switch_command(avr)
+            self.assertIs(avr.wait_for_switch_input(4, since=start), avr)
+            self.assertEqual(avr.selected_input, 4)
+            self.assertEqual(avr.active_input, player.address.physical)
+            proof = avr.routing_assertions[-1]
+            self.assertEqual(proof["frame"], "05:44:69:04")
+            self.assertEqual(proof["destination"], avr.address.logical)
+            self.assertEqual(proof["input"], 4)
+            self.assertEqual(proof["command"], "select_av_input")
+            report = TestBed(dut, tv, avr, player).report
+            reported_avr = next(component for component in report["components"] if component["name"] == avr.name)
+            self.assertEqual(reported_avr["selected_input"], 4)
+            self.assertEqual(reported_avr["routing_assertions"][-1], proof)
+            self.assertEqual(reported_avr["routing_events"][-1]["input"], 4)
+            # The finite input key is released without clearing the selection.
+            avr.receive(Frame(0, avr.address.logical, 0x45, timestamp_ns=time.monotonic_ns()))
+            self.assertIsNone(avr.pressed_key)
+            self.assertEqual(avr.selected_input, 4)
+
+    def test_tv_can_select_numeric_input_and_same_input_command_still_counts(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            tv.selected_input = 4
+            start = self.boundary(dut, session)
+            self.switch_command(tv, source=4)
+            self.assertIs(tv.wait_for_switch_input(4, since=start), tv)
+
+    def test_local_virtual_stale_or_other_input_commands_cannot_prove_requested_switch_input(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            old = time.monotonic_ns()
+            start = self.boundary(dut, session)
+            avr.selected_input = 4
+            self.missing_switch(avr, start)
+            self.receive(avr, 0, player.address.physical)
+            self.missing_switch(avr, start)
+            self.switch_command(avr, transport="virtual")
+            self.missing_switch(avr, start)
+            self.switch_command(avr, timestamp=old)
+            self.missing_switch(avr, start)
+            self.switch_command(avr, number=3)
+            self.missing_switch(avr, start)
+
+    def test_wrong_switch_sender_destination_or_operands_cannot_satisfy_assertion(self):
+        cases = (dict(source=8), dict(source=15), dict(destination=15), dict(destination=4),
+                 dict(operands=b""), dict(operands=b"\x69"), dict(operands=b"\x69\x04\x01"),
+                 dict(operands=b"\x6d\x04"))
+        for arguments in cases:
+            with self.subTest(arguments=arguments), self.fixture() as (dut, tv, avr, player, session):
+                start = self.boundary(dut, session)
+                self.switch_command(avr, **arguments)
+                self.missing_switch(avr, start)
+
+    def test_switch_hooks_and_ignored_commands_cannot_fabricate_applied_wire_evidence(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            avr.hooks.before_rx = lambda component, frame: None
+            self.switch_command(avr)
+            self.missing_switch(avr, start)
+            avr.hooks.before_rx = lambda component, frame: Frame(
+                frame.source, frame.destination, frame.opcode, b"\x69\x04", timestamp_ns=frame.timestamp_ns)
+            self.switch_command(avr, number=3)
+            self.assertEqual(avr.selected_input, 4)
+            self.missing_switch(avr, start)
+            avr.hooks = Hooks()
+            handle = avr.handle
+            avr.handle = lambda frame: None
+            try:
+                self.switch_command(avr)
+            finally:
+                avr.handle = handle
+            self.assertFalse(avr.routing_events[-1]["applied"])
+            self.missing_switch(avr, start)
+
+    def test_switch_input_changed_and_restored_invalidates_old_evidence(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+
+            def replace(component, frame):
+                component.selected_input = 3
+                component.selected_input = 4
+
+            avr.hooks.after_rx = replace
+            self.switch_command(avr)
+            self.assertFalse(avr.routing_events[-1]["applied"])
+            self.missing_switch(avr, start)
+            avr.hooks = Hooks()
+            self.switch_command(avr)
+            avr.wait_for_switch_input(4, since=start)
+            avr.selected_input = 3
+            avr.selected_input = 4
+            self.missing_switch(avr, start)
+
+    def test_unpowered_switch_has_no_rx_or_routing_proof(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            avr.power_off()
+            self.switch_command(avr)
+            self.assertIsNone(avr.selected_input)
+            self.assertEqual(avr.routing_events, ())
+            self.missing_switch(avr, start)
+
+    def test_switch_input_and_boundary_validation(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            for number in (None, True, -1, 256, 4.0, "4"):
+                with self.subTest(number=number), self.assertRaises(ValueError):
+                    avr.wait_for_switch_input(number, since=start)
+            for number in (0, 255):
+                self.switch_command(avr, number=number)
+                avr.wait_for_switch_input(number, since=start)
+            for change in (dict(dut=object()), dict(session=object()), dict(initiators={avr.gpio: 4})):
+                with self.subTest(change=change), self.assertRaises(AssertionError):
+                    avr.wait_for_switch_input(4, since=SimpleNamespace(**{**vars(start), **change}))
+            with self.assertRaises(ValueError):
+                player.wait_for_switch_input(4, since=start)
 
     def test_same_path_playback_announcement_preserves_applied_wire_routing_proof(self):
         backends = {}
