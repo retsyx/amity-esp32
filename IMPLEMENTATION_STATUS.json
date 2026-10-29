@@ -1,5 +1,5 @@
 {
-  "status": "Add Amity functional test implemented using parsed GPIO wiring and existing authenticated UI APIs. All 238 framework tests pass; the physical retry fails candidate discovery with a fw_reset task overflow on the 0.1.84 candidate. No Add/Remove was submitted. Main saved configuration, controller identity and two current Matter fabrics remain intact after disclosed diagnostic serial resets; no firmware changes were made.",
+  "status": "All four DUTs are verified on the exact latest 0.1.88 image: the three remaining boards were updated from 0.1.84, preserving provisioning and origin identity; the already-current main was checked without restarting and retains its configuration and two Matter fabrics. The Add Amity framework has 238 passing unit tests; its earlier physical discovery failure on 0.1.84 remains recorded, and Add/Remove has not been rerun on the updated candidate.",
   "audit_date": "2026-10-29",
   "firmware_version": "0.1.88",
   "branch": "consort",
@@ -118,7 +118,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 88,
+  "matter_software_version": 89,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -193,31 +193,74 @@
     "date": "2026-10-29",
     "firmware_version": "0.1.88",
     "matter_software_version": 89,
-    "device_count": 1,
+    "device_count": 3,
+    "updated_device_count": 3,
+    "verified_device_count": 4,
     "bench_labels": [
-      "amity-dut"
+      "amity-dut-2",
+      "amity-dut-3",
+      "amity-dut-4"
     ],
     "hardware_profile": "esp32s3-development-4t-v1",
     "result": "PASS",
-    "report": "test-results/audit-deployment-0.1.88/deployment.json",
+    "report": "test-results/firmware-update-2026-10-29/deployment.json",
+    "device_reports": {
+      "amity-dut-2": "test-results/firmware-update-2026-10-29/44b176aec5e0/deployment.json",
+      "amity-dut-3": "test-results/firmware-update-2026-10-29/44b176aec2ac/deployment.json",
+      "amity-dut-4": "test-results/firmware-update-2026-10-29/44b176aecf64/deployment.json"
+    },
     "running_elf_sha256": "c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e",
     "image_sha256": "22b9476fcd45cab52c4cf3d0da372839aacc9c6a34a6bb7daee433609876a393",
-    "healthy_boot_id": "adf4abfb5b747b0b0cf5ef5aa03e393f",
+    "image_bytes": 2418752,
     "source_commit": "2d148ca212a76b1f518aff6ec87dcd2e0376f37a",
     "source_dirty": true,
-    "configuration_preserved": false,
-    "factory_reset_authorized_by_user": true,
-    "reset_reason": "Previous 0.1.86 stored an obsolete empty configuration field; user authorized factory reset instead of firmware migration",
-    "recommissioned_by_user": true,
-    "factory_credentials_retained": true,
-    "current_admin_factory_password_verified": true,
-    "checks": "Authenticated shipping firmware endpoint; exact version/ELF and stable device identity verified. Physical FW RESET 10.2s via parsed bench wiring, pin released, user-confirmed Matter re-enrollment, then exact version/ELF, ready coordinator authority, current factory admin login, two fabrics and empty new configuration verified. User restored hostname to amity-dut; after its reboot, exact image, normal UI, retained factory login, unchanged fresh configuration, two fabrics and closed automatic commissioning window were verified.",
-    "qualification_scope": "Image/boot/main/UI readiness and fresh reset state only; no CEC/AV/remote/radio admission behavior qualification",
-    "other_duts_updated": false,
+    "previous_firmware_version": "0.1.84",
+    "transport": "USB application-slot update without full-flash erase",
+    "updated_boot_roles": {
+      "amity-dut-2": "unclaimed",
+      "amity-dut-3": "unclaimed",
+      "amity-dut-4": "unclaimed"
+    },
+    "factory_reset_performed": false,
+    "checks": {
+      "all_four_on_exact_latest_image": true,
+      "three_updates_passed": true,
+      "main_current_and_unchanged": true,
+      "factory_credentials_and_origin_ids_retained": true,
+      "non_application_flash_preserved_before_restart": true,
+      "ota_metadata_preserved_before_restart": true,
+      "no_factory_reset": true,
+      "unclaimed_boards_automatic_matter_setup": true,
+      "setup_cards_unchanged": true
+    },
+    "verified_current": {
+      "bench_label": "amity-dut",
+      "version": "0.1.88",
+      "update_skipped": true,
+      "serial_opened": false,
+      "restarted": false,
+      "boot_id": "8e4c9c5a830fd54c91bfec619a41c588",
+      "current_matter_fabric_count": 2,
+      "report": "test-results/firmware-update-2026-10-29/amity-dut-postcheck-20261029T204300Z.json",
+      "checks": {
+        "identity_matches_inventory": true,
+        "exact_latest_build_running": true,
+        "same_main_boot": true,
+        "ready": true,
+        "configuration_unchanged": true,
+        "matter_fabrics_unchanged": true,
+        "matter_fabric_count_positive": true,
+        "no_peers": true,
+        "membership_revision_unchanged": true,
+        "original_main_authority": true,
+        "hardware_capabilities_unchanged": true,
+        "saved_activities_and_equipment_empty": true
+      },
+      "passed": true
+    },
+    "qualification_scope": "Exact-image update, startup/role, factory credentials, origin identity, automatic Matter setup and SDK admission self-test on the three updated boards; authenticated read-only current-image and preserved state verification on main. No new Add/Remove, CEC/AV, remote/radio admission or fw_reset overflow-fix qualification.",
     "functional_or_av_qualification": false,
-    "hostname": "amity-dut",
-    "current_fabrics_no_automatic_setup": true,
-    "final_verification": "test-results/audit-deployment-0.1.88/after-hostname.json"
+    "fw_reset_overflow_fix_qualification": false
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -349,6 +392,36 @@
       ],
       "radio_enrollment_exercised": false,
       "final_verification": "test-results/standby-stack-fix-0.1.86/verified.json"
+    },
+    {
+      "date": "2026-10-29",
+      "firmware_version": "0.1.88",
+      "matter_software_version": 89,
+      "device_count": 1,
+      "bench_labels": [
+        "amity-dut"
+      ],
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "result": "PASS",
+      "report": "test-results/audit-deployment-0.1.88/deployment.json",
+      "running_elf_sha256": "c9849838205bbf60f2558603f44d035d896a33f4b714bf062bb17c4878b48c2e",
+      "image_sha256": "22b9476fcd45cab52c4cf3d0da372839aacc9c6a34a6bb7daee433609876a393",
+      "healthy_boot_id": "adf4abfb5b747b0b0cf5ef5aa03e393f",
+      "source_commit": "2d148ca212a76b1f518aff6ec87dcd2e0376f37a",
+      "source_dirty": true,
+      "configuration_preserved": false,
+      "factory_reset_authorized_by_user": true,
+      "reset_reason": "Previous 0.1.86 stored an obsolete empty configuration field; user authorized factory reset instead of firmware migration",
+      "recommissioned_by_user": true,
+      "factory_credentials_retained": true,
+      "current_admin_factory_password_verified": true,
+      "checks": "Authenticated shipping firmware endpoint; exact version/ELF and stable device identity verified. Physical FW RESET 10.2s via parsed bench wiring, pin released, user-confirmed Matter re-enrollment, then exact version/ELF, ready coordinator authority, current factory admin login, two fabrics and empty new configuration verified. User restored hostname to amity-dut; after its reboot, exact image, normal UI, retained factory login, unchanged fresh configuration, two fabrics and closed automatic commissioning window were verified.",
+      "qualification_scope": "Image/boot/main/UI readiness and fresh reset state only; no CEC/AV/remote/radio admission behavior qualification",
+      "other_duts_updated": false,
+      "functional_or_av_qualification": false,
+      "hostname": "amity-dut",
+      "current_fabrics_no_automatic_setup": true,
+      "final_verification": "test-results/audit-deployment-0.1.88/after-hostname.json"
     }
   ],
   "standby_stack_fix_validation": {
@@ -561,7 +634,7 @@
       "layout_checks": 35,
       "scope": "Existing working-tree four-adapter profile, including prior reference/task-stack changes"
     },
-    "deployment": "The earlier working-tree build above was not installed. A later committed-source 0.1.88 build was deployed, reset with user authorization and recommissioned; see latest_deployment and audit_fix_deployment_validation."
+    "deployment": "The earlier working-tree build above was not installed. A later committed-source 0.1.88 build was deployed to the main, reset with user authorization and recommissioned; see deployment_history and audit_fix_deployment_validation. The same exact image was subsequently installed on the three other DUTs; see latest_deployment."
   },
   "audit_fix_deployment_validation": {
     "build": {

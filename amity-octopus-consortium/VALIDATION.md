@@ -69,7 +69,7 @@ Private evidence is in `test-results/audit-deployment-0.1.88/`, including
 `build.log`, `deployment.json`, `new-boot-diagnostics.json`,
 `factory-reset-action.json`, `factory-reset-uart.log`, `after-reset.json` and
 `after-hostname.json`.
-No other DUT was updated. This verifies image, reset and main/UI readiness;
+No other DUT was updated in that operation. This verifies image, reset and main/UI readiness;
 physical CEC/AV/key behavior, multi-adapter timing and Amity admission remain
 separate qualification work.
 
@@ -78,6 +78,24 @@ Current credential records are consolidated in the ignored private
 credential carriers and redacted superseded credentials in 13 historical
 evidence files. The four current records and latest original provisioner cards
 were preserved; no setup-card QR, password image or instructions were changed.
+
+## Remaining DUT updates — 29 October 2026
+
+`amity-dut-2`, `amity-dut-3` and `amity-dut-4` were updated by USB from 0.1.84
+to the same exact 0.1.88 image above (Matter software 89, source `2d148ca`,
+release metadata `source_dirty: true`). All three per-board reports passed:
+exact written image and running ELF, retained factory credentials and origin IDs,
+ready unclaimed startup, automatic Matter setup/window/advertising and the SDK
+admission self-test. Non-application flash and OTA metadata were unchanged before
+restart; no full-flash erase or factory reset was performed, and setup cards were
+unchanged. The already-current `amity-dut` was skipped without opening USB or
+restarting it; authenticated read-only checks confirmed its same boot, original
+main authority, unchanged configuration and two Matter fabrics. The aggregate
+report is `test-results/firmware-update-2026-10-29/deployment.json`, with per-board
+reports and main pre/post checks in that directory. This verifies image and
+startup state, not a new Add/Remove attempt, a fix for the observed `fw_reset`
+overflow, CEC/AV behavior or radio admission. The failed Add evidence below remains
+unchanged.
 
 ## Add Amity functional test — 29 October 2026
 
