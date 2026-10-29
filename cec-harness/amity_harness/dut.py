@@ -105,6 +105,15 @@ class DUT:
         if password is not None:
             self.login(password)
 
+    def tentacle(self, index=0, *, tv_input=1):
+        """Return the documented front/back endpoints of one HDMI tentacle.
+
+        This only resolves the parsed wiring lookup. It performs no network or
+        hardware I/O and never changes DUT adapter settings.
+        """
+        from .connections import Tentacle
+        return Tentacle(self, index, tv_input)
+
     def press_fw_reset(self, seconds):
         """Hold FW RESET active-low for ``seconds``, then release in all cases.
 

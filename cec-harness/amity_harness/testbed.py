@@ -31,6 +31,7 @@ _TRAFFIC_FIELDS = frozenset(("timestamp", "direction", "component", "gpio", "fra
                              "ok", "recipient", "recipients", "dropped", "handled_frame",
                              "handled_timestamp_ns"))
 _OPERATION_FIELDS = frozenset(("operation_id", "stage", "status", "saved", "unresolved"))
+_PORT_FIELDS = frozenset(("consortium_id", "octopus_id", "tentacle_id", "side"))
 
 
 def _select(value, fields):
@@ -50,6 +51,10 @@ def _scan_report(dut, scan):
             "operation": _select(getattr(scan, "operation", {}), _OPERATION_FIELDS),
             "devices": devices, "last_state": state,
             "dut_cec_initiators": deepcopy(getattr(scan, "initiators", {})),
+            "locations": [{"component": location.get("component"),
+                           "qualified_name": _select(location.get("qualified_name", {}), _PORT_FIELDS | {"osd_name"}),
+                           "runtime_address": _select(location.get("runtime_address", {}), _PORT_FIELDS | {"logical_address"})}
+                          for location in getattr(scan, "locations", [])],
             "cec": _traffic(getattr(scan, "records", ()))}
 
 
@@ -198,6 +203,14 @@ class TestBed:
             row = {"name": component.name, "dut": component.dut.name,
                    "type": component.device_type, "gpio": component.gpio,
                    "tentacle": component.tentacle, "direction": component.direction}
+            if component.parent is None:
+                row["attachment"] = {"dut": component.dut.name,
+                                     "tentacle": component.tentacle,
+                                     "side": component.direction,
+                                     "tv_input": component.tv_input}
+            else:
+                row["attachment"] = {"component": component.parent.name,
+                                     "input": component.port}
             if component.address is not None:
                 row["logical_address"] = component.address.logical
                 row["physical_address"] = format_physical_address(component.address.physical)

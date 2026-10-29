@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from enum import Enum
 
 from .cec import CecError, Frame
+from .connections import TentacleEndpoint, hdmi_port
 from .topology import CecAddress
 
 
@@ -37,10 +38,11 @@ class Hooks:
 class Component:
     """Generic registered CEC device with identity, power and message hooks.
 
-    ``parent`` and ``port`` describe HDMI topology, independent of the DUT wire
-    attachment. ``address`` is a CecAddress(logical, physical), or None for
-    assign_addresses(). Generic devices default to playback address semantics;
-    subclasses can override device_type/logical_address_type/logical_addresses.
+    The first argument is a DUT tentacle endpoint or another component. Attach
+    a child to a component with ``port=`` naming that parent's HDMI input; its
+    DUT, tentacle, CEC side and GPIO are inherited. A DUT first argument remains
+    a convenience for a direct endpoint, with optional direction/tentacle.
+    ``address`` is a CecAddress(logical, physical), or None for assignment.
     Only powered On/Standby devices claim a logical address or receive frames.
     """
 
@@ -50,8 +52,8 @@ class Component:
     all_device_types = 0x10
     can_route = False
 
-    def __init__(self, dut, name, *, tentacle=0, direction="back", address=None,
-                 parent=None, port=None, power=PowerState.STANDBY, vendor_id=1,
+    def __init__(self, attachment, name, *, tentacle=None, direction=None, address=None,
+                 port=None, power=PowerState.STANDBY, vendor_id=1,
                  hooks=None):
         if not isinstance(name, str) or not name:
             raise ValueError("A component needs a name")
@@ -65,14 +67,66 @@ class Component:
             raise TypeError("address must be CecAddress(logical, physical)")
         if isinstance(vendor_id, bool) or not isinstance(vendor_id, int) or not 0 <= vendor_id <= 0xffffff:
             raise ValueError("CEC vendor IDs must fit 24 bits")
-        self.dut, self.name, self.tentacle, self.direction = dut, name, tentacle, direction
-        self.gpio = dut.wiring.cec_gpio(dut.name, tentacle, direction)
-        self.address, self.parent, self.port = address, parent, port
+        if isinstance(attachment, Component):
+            endpoint = attachment.endpoint
+            hdmi_port(port)
+        elif isinstance(attachment, TentacleEndpoint):
+            endpoint = attachment
+            if port is not None:
+                raise ValueError("An HDMI input port belongs to a parent component, not a DUT endpoint")
+        else:
+            # Duck typing retains lightweight unit DUTs while the endpoint
+            # constructor validates access to the parsed wiring lookup.
+            endpoint = TentacleEndpoint(attachment, 0 if tentacle is None else tentacle,
+                                        "back" if direction is None else direction)
+            attachment = endpoint
+            if port is not None:
+                raise ValueError("An HDMI input port requires attachment to a parent component")
+        if tentacle is not None and (isinstance(tentacle, bool) or not isinstance(tentacle, int)
+                                      or tentacle != endpoint.tentacle):
+            raise ValueError("Tentacle override conflicts with the component's attachment")
+        if direction is not None and direction != endpoint.direction:
+            raise ValueError("Direction override conflicts with the component's attachment")
+        self._attachment, self._endpoint = attachment, endpoint
+        self.name = name
+        self.address, self.port = address, port
         self.vendor_id, self.hooks = vendor_id, hooks or Hooks()
         self._power = PowerState(power)
         self._session = None
         self._active_since_ns = 0
         self.pressed_key = None
+
+    @property
+    def attachment(self):
+        return self._attachment
+
+    @property
+    def parent(self):
+        return self._attachment if isinstance(self._attachment, Component) else None
+
+    @property
+    def endpoint(self):
+        return self._endpoint
+
+    @property
+    def dut(self):
+        return self._endpoint.dut
+
+    @property
+    def tentacle(self):
+        return self._endpoint.tentacle
+
+    @property
+    def direction(self):
+        return self._endpoint.direction
+
+    @property
+    def gpio(self):
+        return self._endpoint.gpio
+
+    @property
+    def tv_input(self):
+        return self._endpoint.tv_input
 
     @property
     def power(self):
@@ -220,8 +274,10 @@ class TvComponent(Component):
     all_device_types = 0x80
     can_route = True
 
-    def __init__(self, *args, direction="front", **kwargs):
-        super().__init__(*args, direction=direction, **kwargs)
+    def __init__(self, attachment, name, *, direction=None, **kwargs):
+        if not isinstance(attachment, (TentacleEndpoint, Component)) and direction is None:
+            direction = "front"
+        super().__init__(attachment, name, direction=direction, **kwargs)
         self.active_input = None
 
     def handle(self, frame):

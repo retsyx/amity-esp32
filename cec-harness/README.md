@@ -31,7 +31,7 @@ connections, not simulated equipment.
 
 ## Writing a functional test
 
-The single scenario is the complete 13-line `functional_tests/hdmi_scan.py`:
+The complete scenario is in `functional_tests/hdmi_scan.py`:
 
 ```python
 """One Amity discovers a TV, AVR and playback device."""
@@ -41,12 +41,18 @@ from amity_harness import DUT, TestBed, TvComponent, AvrComponent, PlaybackCompo
 
 def test_hdmi_scan():
     dut = DUT("amity-dut")
-    tv = TvComponent(dut, "Scan TV")
-    avr = AvrComponent(dut, "Scan AVR", parent=tv, port=1)
-    player = PlaybackComponent(dut, "Scan Player", parent=avr, port=1)
+    tentacle = dut.tentacle(0)
+    tv = TvComponent(tentacle.front, "Scan TV")
+    avr = AvrComponent(tentacle.back, "Scan AVR")
+    player = PlaybackComponent(avr, "Scan Player", port=1)
 
     with TestBed(dut, tv, avr, player):
-        dut.scan_hdmi().assert_contains(tv, avr, player)
+        scan = dut.scan_hdmi()
+        scan.assert_contains(tv, avr, player)
+        scan.assert_contains_only(tv, avr, player)
+        scan.assert_on(tv, tentacle.front)
+        scan.assert_on(avr, tentacle.back)
+        scan.assert_on(player, tentacle.back)
 ```
 
 A functional test contains its equipment and behavior. Wiring parsing,
@@ -62,6 +68,12 @@ Exit attempts CEC cleanup and logout on success, assertion failure or exception.
 `DUT.scan_hdmi()` uses the existing UI scan operations and returns a
 `ScanResult`; `assert_contains()` checks the requested component identities and
 fresh physical exchanges through the common discovery implementation.
+`assert_contains_only()` additionally rejects every extra or duplicate scan
+entry. `assert_on(component, endpoint)` checks the DUT-reported owner, tentacle
+number and front/back side using the existing UI's qualified equipment
+observations. It does not infer the reported connection from the fixture's
+attachment or parse a display label. The initial scenario requires exactly
+these three devices: TV on tentacle 0/front, AVR and player on tentacle 0/back.
 
 ## DUTs and wiring
 
@@ -92,8 +104,12 @@ test does not press FW RESET, commission, rename, or change saved activities.
 
 ## Components and topology
 
-Each `Component` attaches to a DUT, tentacle and CEC direction. It has a logical
-and physical `CecAddress`, a name, a device type, and `PowerState.ON`,
+Each `Component` attaches to a tentacle endpoint or another component's HDMI
+input. `dut.tentacle(0).front` connects the TV; `.back` connects the AVR. A
+playback component attached to the AVR inherits its DUT, tentacle, CEC side and
+GPIO. The attachment determines those values, so a child cannot independently
+select a different wire. Each component has a logical and physical `CecAddress`,
+a name, a device type, and `PowerState.ON`,
 `PowerState.STANDBY` or `PowerState.OFF`. Standby remains CEC responsive; Off
 removes the logical address and suppresses CEC TX/RX, including ACKs. Power can
 be changed explicitly with `set_power()`.
@@ -115,9 +131,10 @@ from amity_harness import (
 )
 
 dut = DUT("amity-dut")
-tv = TvComponent(dut, "Scan TV", direction="front")
-avr = AvrComponent(dut, "Scan AVR", direction="back", parent=tv, port=1)
-player = PlaybackComponent(dut, "Scan Player", direction="back", parent=avr, port=1)
+tentacle = dut.tentacle(0, tv_input=1)
+tv = TvComponent(tentacle.front, "Scan TV")
+avr = AvrComponent(tentacle.back, "Scan AVR")
+player = PlaybackComponent(avr, "Scan Player", port=1)
 components = [tv, avr, player]
 assign_addresses(components)
 # TV: 0 / 0.0.0.0; AVR: 5 / 1.0.0.0; player: 4 / 1.1.0.0.
@@ -129,9 +146,25 @@ with CecSession(components) as session:
     player.send(avr.address.logical, 0x45)  # Release
 ```
 
-Address assignment follows parent/input-port topology for physical addresses and
-component type for logical addresses. Logical addresses are independent on each
-isolated CEC wire. Explicit addresses are accepted and validated. Optional
+The HDMI attachment chain is:
+
+```text
+TV input 1 -- front [Amity tentacle 0] back -- AVR input 1 -- Playback
+```
+
+The tentacle is inline and adds no HDMI physical-address level. `tv_input=1`
+selects the TV input containing this chain: the TV is `0.0.0.0`, the directly
+attached AVR is `1.0.0.0`, and its input-1 player is `1.1.0.0`. Choosing
+`tv_input=3` instead gives the AVR `3.0.0.0` and player `3.1.0.0`.
+The TV and AVR attach to opposite DUT endpoints; the AVR has no direct TV
+component parent. Component children inherit their parent's isolated CEC bus.
+The inline HDMI path keeps the two front/back CEC wires isolated.
+
+Address assignment follows these attachments and input ports for physical
+addresses and component type for logical addresses. Logical addresses are
+independent on each isolated CEC wire. Explicit addresses are accepted and
+validated; a standalone back component can supply its base physical address
+when a front TV is outside the modeled fixture. Optional
 `reserved={gpio: {logical_addresses}}` avoids known existing occupants. Cycles,
 duplicate addresses, invalid parent ports and excessive depth fail before I/O.
 
@@ -187,11 +220,14 @@ python3 cec-harness/run.py \
   --output test-results/functional/hdmi-scan-framework.json
 ```
 
-The test uses only `amity-dut`, one TV on tentacle 0/front, and one AVR plus one
-playback device on tentacle 0/back. It checks the DUT identity, submits the UI's
+The test uses only `amity-dut`, one TV on tentacle 0/front, one AVR on
+tentacle 0/back, and a playback device on AVR input 1. The player shares the
+AVR's back CEC bus through that attachment. It checks the DUT identity, submits the UI's
 HDMI scan, and requires both fresh discovery exchanges on the CEC wires and the
 correct names, types, logical addresses and physical addresses in the completed
-UI scan. Cached names or a scan submission acknowledgment alone cannot pass.
+UI scan. It rejects all additional entries and verifies each component's
+reported tentacle and side from typed UI identity data. Cached names or a scan
+submission acknowledgment alone cannot pass.
 Each component must answer fresh Give Physical Address and Give OSD Name
 requests from the DUT on its actual wire. The initial test does not require
 vendor metadata or qualify every optional CEC discovery feature. It derives
@@ -243,9 +279,10 @@ from amity_harness import DUT, TestBed, TvComponent, AvrComponent, PlaybackCompo
 
 dut = DUT("amity-dut", insecure=True)
 dut.login(getpass("Amity admin password: "))
-tv = TvComponent(dut, "Test TV")
-avr = AvrComponent(dut, "Test AVR", parent=tv, port=1)
-player = PlaybackComponent(dut, "Test Player", parent=avr, port=1)
+tentacle = dut.tentacle(0)
+tv = TvComponent(tentacle.front, "Test TV")
+avr = AvrComponent(tentacle.back, "Test AVR")
+player = PlaybackComponent(avr, "Test Player", port=1)
 
 stack = ExitStack()
 bed = stack.enter_context(TestBed(dut, tv, avr, player))
@@ -265,33 +302,3 @@ PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -v
 ```
 
 These validate the framework, not DUT behavior.
-
-## Validation — 28 October 2026
-
-The single HDMI scan scenario passed on `amity-dut` firmware `0.1.84` with CEC
-transport on `test2.local`. The UI reported all three fresh component identities
-with their expected types, logical addresses and physical addresses. Captures
-confirmed Give Physical Address/Report Physical Address and Give OSD Name/Set
-OSD Name exchanges with the DUT on GPIOs 23 and 24. DUT authentication stayed on
-the development computer. Private evidence is in
-`test-results/functional/hdmi-scan.json` at the repository root.
-
-After the run, all 14 bench CEC adapters had an empty logical-address mask. The
-old follower services, profiles and installed setup command were absent. This
-qualifies the initial scan and dynamic fixture lifecycle; it does not claim
-AV picture/audio, remote activity parity, all optional CEC features, or physical
-FW RESET gesture coverage.
-
-The framework's host-only unit checks and Python compilation checks passed.
-No production firmware code or API was changed for this framework.
-
-After adding virtual component routing, the same physical scan passed again;
-evidence is in `test-results/functional/hdmi-scan-virtual-routing.json`. Its
-records distinguish the actual DUT wire exchanges from virtual peer delivery.
-Host checks cover directed virtual requests/replies, polls, Off behavior,
-fault hooks, bus isolation, broadcast wire failures and bounded response loops.
-
-The 13-line scenario using the common runner and `TestBed` also passed on the
-physical harness. Evidence is in `test-results/functional/hdmi-scan-framework.json`.
-All 97 framework unit checks passed locally and on the Pi. Common cleanup
-released all 14 CEC adapters after the scan; DUT credentials stayed local.

@@ -51,13 +51,14 @@ def child_address(parent, port):
 
 
 def assign_addresses(components, *, reserved=None):
-    """Assign by device type and parent/port; detect collisions before any I/O.
+    """Assign physical topology and per-wire logical addresses before any I/O.
 
-    Logical addresses are scoped to isolated GPIO wires. Physical addresses are
-    scoped to the connected topology (a TV root and all its descendants), so a
-    parent can sit across the DUT's front/back isolation boundary. ``reserved``
-    maps GPIO numbers to already occupied logical addresses, for example a DUT.
-    Explicit CecAddress values are preserved and validated against the tree.
+    A DUT HDMI adapter sits inline on a TV input without consuming a physical
+    address level. Its front TV is the root; the directly attached back device
+    occupies that TV input. Component children occupy their parent's ports and
+    inherit its isolated CEC wire. Pairing the two sides for physical addressing
+    never bridges their CEC traffic. ``reserved`` maps GPIO numbers to already
+    occupied logical addresses. Explicit addresses must agree with the topology.
     """
     components = list(components)
     if len(set(components)) != len(components):
@@ -65,6 +66,23 @@ def assign_addresses(components, *, reserved=None):
     members = set(components)
     used = {gpio: set(addresses) for gpio, addresses in (reserved or {}).items()}
     roots, visiting, physicals = {}, set(), {}
+    front_tvs, inputs = {}, {}
+
+    def adapter(component):
+        return id(component.dut), component.tentacle
+
+    for component in components:
+        # Endpoint settings belong to one physical DUT adapter, regardless of
+        # which side or child happens to introduce it into the component list.
+        key = adapter(component)
+        child_address(0, component.tv_input)  # Validate the configured TV port.
+        if key in inputs and inputs[key] != component.tv_input:
+            raise ValueError("Paired DUT endpoints disagree on the TV input port")
+        inputs[key] = component.tv_input
+        if component.parent is None and component.device_type == 0 and component.direction == "front":
+            if key in front_tvs:
+                raise ValueError("A DUT adapter has more than one directly attached front TV")
+            front_tvs[key] = component
 
     def locate(component):
         if component in roots:
@@ -77,14 +95,26 @@ def assign_addresses(components, *, reserved=None):
             if component.port is not None:
                 raise ValueError("A root component cannot specify an HDMI input port")
             root = component
-            if component.address is None and component.device_type != 0:
-                raise ValueError("A non-TV root needs an explicit physical address")
-            pa = component.address.physical if component.address else 0
-            if component.device_type == 0 and pa != 0:
-                raise ValueError("A TV root must have physical address 0.0.0.0")
+            paired_tv = front_tvs.get(adapter(component)) if component.direction == "back" else None
+            if component.device_type == 0:
+                pa = component.address.physical if component.address else 0
+                if pa != 0:
+                    raise ValueError("A TV root must have physical address 0.0.0.0")
+            elif paired_tv is not None:
+                root = locate(paired_tv)
+                pa = child_address(physicals[paired_tv], component.tv_input)
+                if component.address and component.address.physical != pa:
+                    raise ValueError("Explicit physical address disagrees with the inline DUT TV input")
+            else:
+                if component.address is None:
+                    raise ValueError("A non-TV root without a paired front TV needs an explicit physical address")
+                pa = component.address.physical
         else:
             if parent not in members:
                 raise ValueError("Every parent must be included in the topology")
+            if (component.dut is not parent.dut or component.tentacle != parent.tentacle
+                    or component.direction != parent.direction or component.gpio != parent.gpio):
+                raise ValueError("A component parent must be attached to the same isolated CEC wire")
             root = locate(parent)
             if component.port is None:
                 raise ValueError("A child component needs its parent's HDMI input port")
@@ -121,6 +151,10 @@ def assign_addresses(components, *, reserved=None):
             if logical is None:
                 raise ValueError(f"No logical address available for {component.name}")
             wire.add(logical)
-            component.address = CecAddress(logical, physicals[component])
-        assigned[component] = component.address
+            assigned[component] = CecAddress(logical, physicals[component])
+        else:
+            assigned[component] = component.address
+    # Publish only after the entire topology and all logical claims validate.
+    for component, address in assigned.items():
+        component.address = address
     return assigned

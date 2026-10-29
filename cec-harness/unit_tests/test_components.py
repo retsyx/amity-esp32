@@ -1,9 +1,9 @@
 """Framework unit checks; no DUT, radio, network or GPIO operation."""
 
 import ctypes
-from types import SimpleNamespace
 import unittest
 
+from amity_harness import DUT
 from amity_harness.cec import (CecError, CecSession, Frame, TxResult, _Caps,
                                _LogAddrs, _Message, _request)
 from amity_harness.components import (AvrComponent, Component, Hooks,
@@ -12,16 +12,11 @@ from amity_harness.topology import (CecAddress, assign_addresses, child_address,
                                    physical_address)
 
 
-class Wiring:
-    def cec_gpio(self, name, tentacle, direction):
-        return {("front", 0): 23, ("back", 0): 24}[(direction, tentacle)]
-
-
 def topology():
-    dut = SimpleNamespace(name="amity-dut", wiring=Wiring())
-    tv = TvComponent(dut, "Unit TV")
-    avr = AvrComponent(dut, "Unit AVR", parent=tv, port=1)
-    playback = PlaybackComponent(dut, "Unit Player", parent=avr, port=2)
+    dut = DUT("amity-dut")
+    tv = TvComponent(dut.tentacle(0).front, "Unit TV")
+    avr = AvrComponent(dut.tentacle(0).back, "Unit AVR")
+    playback = PlaybackComponent(avr, "Unit Player", port=2)
     return tv, avr, playback
 
 
@@ -74,7 +69,7 @@ class FrameworkComponentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assign_addresses([tv, avr, playback])
         playback.port = 1
-        avr.parent = playback
+        avr._attachment = playback
         with self.assertRaisesRegex(ValueError, "cycle"):
             assign_addresses([tv, avr, playback])
         tv, avr, playback = topology()

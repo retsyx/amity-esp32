@@ -54,8 +54,8 @@ class VirtualBusTests(unittest.TestCase):
 
     def topology(self):
         tv = TvComponent(self.dut, "Virtual TV")
-        avr = AvrComponent(self.dut, "Virtual AVR", parent=tv, port=1)
-        player = PlaybackComponent(self.dut, "Virtual Player", parent=avr, port=1)
+        avr = AvrComponent(self.dut.tentacle(0).back, "Virtual AVR")
+        player = PlaybackComponent(avr, "Virtual Player", port=1)
         return tv, avr, player
 
     def clear_wire(self):
@@ -139,7 +139,7 @@ class VirtualBusTests(unittest.TestCase):
     def test_same_logical_address_on_other_gpio_cannot_capture_peer_traffic(self):
         front_tv = TvComponent(self.dut, "Front TV")
         back_tv = TvComponent(self.dut, "Back TV", direction="back")
-        player = PlaybackComponent(self.dut, "Front Player", direction="front", parent=front_tv, port=1)
+        player = PlaybackComponent(front_tv, "Front Player", port=1)
         with CecSession([front_tv, player, back_tv], backend_factory=self.backend):
             self.clear_wire()
             result = player.send(0, 0x04)

@@ -50,7 +50,7 @@ theater profiles, boot-time follower setup and previous hardware scripts have
 been removed.
 
 Functional files declare equipment, topology and behavior only. The initial
-13-line test constructs `DUT("amity-dut")`, a TV, AVR and player, then uses
+concise test constructs `DUT("amity-dut")`, a TV, AVR and player, then uses
 `with TestBed(...): dut.scan_hdmi().assert_contains(...)`. DUT construction
 implicitly reads the wiring document. Shared configuration, test-bed, runner
 and discovery modules own CLI options, per-DUT credentials/URLs/TLS,
@@ -59,6 +59,18 @@ and scan assertions. The resource interface supports multiple DUTs without
 adding another functional scenario. Component protocol `handle()` methods
 remain in the common framework. Generic private reports contain `test`,
 `passed` and a `testbeds` list; tests contain no reporting helpers.
+
+HDMI attachments explicitly include the DUT: TV on `tentacle.front`, AVR on
+`tentacle.back`, playback on an AVR input. A child inherits its parent's owner,
+tentacle and CEC wire. The inline DUT adds no physical-address level; a TV-input-1
+chain gives TV `0.0.0.0`, AVR `1.0.0.0` and player `1.1.0.0`. Pairing the HDMI
+endpoints for address assignment preserves their separate CEC wires. Reports
+identify actual endpoint or component attachments alongside the derived GPIOs.
+The scenario explicitly asserts that the scan includes exactly TV, AVR and
+playback, rejecting extra or duplicate entries. It then checks typed reported
+connections: TV on tentacle 0/front, AVR and playback on tentacle 0/back. These
+assertions correlate the existing UI device selectors with qualified equipment
+observations; fixture wiring or display labels alone are insufficient evidence.
 
 Functional DUT state access MUST use the existing authenticated shipping UI
 HTTP routes. Do not add firmware APIs, test-only commands or authentication
@@ -82,8 +94,9 @@ The initial framework contains exactly one functional scenario: `amity-dut`
 scans a TV, AVR and playback device. It requires fresh wire identity exchanges
 and matching UI names/types/addresses. Wire captures identify the actual DUT
 initiators; legacy aggregate UI address fields are not owner-local addressing
-evidence. This scan passed on firmware `0.1.84` on 28 October 2026; the framework
-README records the evidence location and scope. It does not replace the broader
+evidence. The exact-set and typed-port scan assertions passed on firmware
+`0.1.84` on 28 October 2026; private evidence is in
+`test-results/functional/hdmi-scan-exact-ports.json`. This does not replace the broader
 behavioral comparison or physical qualification gates above.
 
 ## Evidence record

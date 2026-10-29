@@ -238,6 +238,20 @@ functional scenario. `TestBed` supports multiple DUTs through the same resource
 interface and always attempts cleanup; component `handle()` implementations
 remain in the common framework.
 
+Model actual HDMI attachments explicitly: the TV connects to a tentacle's
+front endpoint, the AVR to its back endpoint, and playback to an AVR input.
+Children inherit the attachment's DUT, tentacle, CEC side and GPIO. The DUT is
+inline for HDMI physical addressing and consumes no extra address level;
+front/back CEC isolation remains intact. Do not substitute a direct TV/AVR
+component-parent edge for the intervening DUT connection.
+
+The initial scan must explicitly assert both presence and exact membership of
+TV, AVR and playback, with no additional or duplicate scan entries. Assert the
+TV on tentacle 0/front and AVR/playback on tentacle 0/back using actual typed
+owner/adapter/side observations from existing UI APIs. Fixture attachments,
+matching names, counts or human-readable location strings alone do not prove
+that the DUT reported the correct connections.
+
 Components sharing a physical harness GPIO also share one virtual CEC bus.
 Route directed virtual messages and replies within that bus, with powered ACK,
 Off NACK and no Off RX/hooks; polls report presence without RX handling. Keep

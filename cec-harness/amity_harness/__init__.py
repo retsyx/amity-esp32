@@ -1,6 +1,7 @@
 """Configurable Amity functional testing on the Raspberry Pi CEC bench."""
 
 from .dut import AmityHTTPError, DUT, PinctrlGPIO
+from .connections import Tentacle, TentacleEndpoint
 from .wiring import Wiring
 from .topology import CecAddress, assign_addresses, format_physical_address
 from .components import (
@@ -16,5 +17,5 @@ __all__ = [
     "assign_addresses", "format_physical_address", "Component", "TvComponent",
     "AvrComponent", "PlaybackComponent", "PowerState", "Hooks", "CecSession",
     "CecError", "Frame", "LinuxCecBackend", "TxResult",
-    "RunConfig", "use_config", "TestBed", "ScanResult",
+    "RunConfig", "use_config", "TestBed", "ScanResult", "Tentacle", "TentacleEndpoint",
 ]

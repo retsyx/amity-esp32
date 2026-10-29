@@ -83,8 +83,8 @@ class SessionLifecycleTests(unittest.TestCase):
 
     def topology(self, **player_args):
         tv = TvComponent(self.dut, "Test TV")
-        avr = AvrComponent(self.dut, "Test AVR", parent=tv, port=1)
-        player = PlaybackComponent(self.dut, "Test Player", parent=avr, port=1, **player_args)
+        avr = AvrComponent(self.dut.tentacle(0).back, "Test AVR")
+        player = PlaybackComponent(avr, "Test Player", port=1, **player_args)
         return tv, avr, player
 
     def test_successful_tx_reaches_same_wire_siblings_once(self):
@@ -207,7 +207,7 @@ class SessionLifecycleTests(unittest.TestCase):
 
     def test_playback_first_shared_wire_keeps_tv_at_physical_root(self):
         tv = TvComponent(self.dut, "Test TV")
-        player = PlaybackComponent(self.dut, "Test Player", direction="front", parent=tv, port=1)
+        player = PlaybackComponent(tv, "Test Player", port=1)
         assign_addresses([player, tv])
         backend = LinuxCecBackend(tv.gpio)
         backend.fd = 123  # All adapter operations below are intercepted.
