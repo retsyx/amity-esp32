@@ -199,9 +199,13 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The initial framework
-has two functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
-playback device, and `activity.py`, which reuses that scan to create, start and
-standby an activity. Host-only framework unit tests are separate.
+has three functional scenarios on `amity-dut`: an HDMI scan with a TV, AVR and
+playback device; `activity.py`, which reuses that scan to create, start and
+standby an activity; and `source_theft.py`, which adds a second playback device
+on AVR input 2 to check recovery from its Active Source announcement while the
+input-1 player's activity remains selected.
+`--test source_theft` selects that scenario; `--test all` runs all three.
+Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 
 Keep functional test bodies limited to equipment, topology and behavior:
@@ -238,6 +242,23 @@ satisfy those command assertions. `Off` means electrically unpowered with no
 CEC traffic; ordinary CEC Standby retains the powered CEC responder. Reuse the
 existing authenticated UI activity operations and clean up test-owned activity
 configuration before closing component responders and logging out.
+
+The source-theft test uses two playback devices attached to AVR inputs 1 and 2,
+with a saved activity for each using the shared TV and AVR. The second
+`PlaybackComponent` explicitly uses `address_type="tuner"` for logical-address
+allocation while retaining playback behavior; the three-component back bus
+uses the explicit CEC 1.4 profile. Its extended scan must require exactly all
+four components and assert the TV on tentacle 0/front and the AVR and both
+players on tentacle 0/back. Start and verify the first
+player's activity, then use the second player's `activate()` to send a physical
+Active Source broadcast. `Component.activate()` returns the transmission
+result. The DUT must issue a fresh directed Standby to the second player and a
+fresh Set Stream Path to the first player's physical address;
+`avr.wait_for_input(player, since=boundary)` must verify actual DUT wire
+evidence. The first player must be active again, and `activity.assert_active()`
+verifies its selected UI activity and DUT boot did not change. Clean up both
+test-owned activities before component responders close. Keep raw CEC and
+protocol handling in shared component helpers, outside the functional scenario.
 
 Components sharing a physical harness GPIO also share one virtual CEC bus.
 Route directed virtual messages and replies within that bus, with powered ACK,

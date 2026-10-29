@@ -79,6 +79,23 @@ credential carriers and redacted superseded credentials in 13 historical
 evidence files. The four current records and latest original provisioner cards
 were preserved; no setup-card QR, password image or instructions were changed.
 
+## Source theft functional test — 29 October 2026
+
+The new `source_theft.py` configures a saved activity for each of two playback
+devices behind one AVR, starts the first, and makes the second claim Active
+Source. All three functional scenarios pass on `test2` against `amity-dut`
+0.1.88; all 204 framework unit tests also pass. The second playback model uses
+the tuner allocation pool, retaining playback identity and behavior, so the
+shared back wire can claim 5/4/3 in CEC 1.4 mode. The test observes actual DUT
+directed Standby and Set Stream Path frames, verifies the original activity
+and boot, and removes both temporary activities. Saved activities/equipment
+are preserved and all 14 GPIO address masks are clear after cleanup. Reports
+are `test-results/functional/source-theft-suite-0.1.88.json` and
+`source-theft-verified.json`; host output is `source-theft-framework-tests.log`
+in the same directory. No firmware API or behavior changes were made. This
+qualifies the exercised local CEC path with simulated components, not real AV
+behavior, all adapters or remote radio delivery.
+
 ## Standby stack fix — 28 October 2026
 
 The activity functional test committed at `c4833a1` exposed a firmware failure on `amity-dut` running 0.1.85: start completed and the TV, AVR and player each received a real DUT power-on command, then standby caused an `amity_hub` task stack overflow and software CPU reset. The original failure report is `test-results/functional/activity-suite-0.1.85.json`; the detected overflow is in `test-results/functional/activity-dut-uart.log`. Target-compiled stack analysis found a standby call-chain subtotal above 6,304 bytes before downstream owner-send/runtime overhead, exceeding the 6,144-byte allocation. No recursive callback cycle was found.

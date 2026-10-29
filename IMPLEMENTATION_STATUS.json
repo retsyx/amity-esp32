@@ -1,5 +1,5 @@
 {
-  "status": "Four audit fixes are committed and amity-dut runs verified 0.1.88. User-authorized factory reset cleared incompatible 0.1.86 configuration, and the user re-enrolled it in Matter. New main/UI readiness and retained factory login are verified; other three DUTs were not updated. hw/case remains untracked.",
+  "status": "Four audit fixes are committed and amity-dut runs verified 0.1.88. User-authorized factory reset cleared incompatible 0.1.86 configuration, and the user re-enrolled it in Matter. New main/UI readiness and retained factory login are verified; other three DUTs were not updated. hw/case remains untracked. The new two-player source-theft scenario and all three functional tests pass on test2, with 204 framework checks passing and no firmware changes.",
   "audit_date": "2026-10-29",
   "firmware_version": "0.1.88",
   "branch": "consort",
@@ -589,5 +589,49 @@
       "post_hostname_verification": "test-results/audit-deployment-0.1.88/after-hostname.json"
     },
     "limitations": "No new physical CEC activity, key, AVR, multi-adapter timing, remote or Amity admission qualification"
+  },
+  "source_theft_validation": {
+    "date": "2026-10-29",
+    "scenario": "cec-harness/functional_tests/source_theft.py",
+    "scope": "One amity-dut on tentacle0 with TV front and AVR/two playback models back. Both players have saved activities; start the first, then reject the second player's physical Active Source announcement. No firmware API or CEC behavior changes.",
+    "address_assignment": {
+      "avr": 5,
+      "first_playback": 4,
+      "second_playback": 3,
+      "second_allocation_profile": "tuner",
+      "playback_primary_type": 4,
+      "back_wire_cec_version": 5,
+      "front_wire_cec_version": 6
+    },
+    "host": {
+      "result": "PASS",
+      "tests": 204,
+      "command": "PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q",
+      "log": "test-results/functional/source-theft-framework-tests.log"
+    },
+    "physical": {
+      "result": "PASS",
+      "firmware_version": "0.1.88",
+      "dut": "amity-dut",
+      "harness": "test2",
+      "scenarios": [
+        "hdmi_scan",
+        "activity",
+        "source_theft"
+      ],
+      "report": "test-results/functional/source-theft-suite-0.1.88.json",
+      "verified": "test-results/functional/source-theft-verified.json",
+      "boot_id": "adf4abfb5b747b0b0cf5ef5aa03e393f",
+      "checks": "Exact four-device scan and typed locations; two configured activities; first activity power and physical route; successful second-player wire Active Source; fresh directed Standby03:36 and restoration0f:86:11:00; first player active/On and selected activity unchanged; same boot throughout.",
+      "configuration": "Saved activities and equipment preserved (zero before and after); expected revision/history advancement is not reverted.",
+      "before": "test-results/functional/source-theft-before.json",
+      "after": "test-results/functional/source-theft-after.json",
+      "adapters_after": "test-results/functional/source-theft-adapters-after.json",
+      "gpio_adapters_checked": 14,
+      "total_adapters_checked": 16,
+      "all_address_masks_zero": true
+    },
+    "limitations": "Simulated CEC components on one local DUT/tentacle; not real AV switching, all-adapter timing or ESP32 owner radio qualification.",
+    "firmware_changed": false
   }
 }

@@ -93,20 +93,30 @@ class RunnerTests(unittest.TestCase):
             called.append("activity")
             raise AssertionError("missing physical standby command")
 
+        def source_theft():
+            called.append("source_theft")
+
+        scenarios = {"hdmi_scan": scan, "activity": activity, "source_theft": source_theft}
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "result.json"
             options = ["--credentials", "/private/credentials.json", "--output", str(output)]
             with redirect_stdout(io.StringIO()):
-                self.assertEqual(main({"hdmi_scan": scan, "activity": activity}, options), 0)
+                self.assertEqual(main(scenarios, options), 0)
             self.assertEqual(called, ["scan"])
             called.clear()
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main(scenarios, [*options, "--test", "source_theft"]), 0)
+            self.assertEqual(called, ["source_theft"])
+            self.assertTrue(json.loads(output.read_text())["passed"])
+            called.clear()
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                self.assertEqual(main({"hdmi_scan": scan, "activity": activity}, [*options, "--test", "all"]), 1)
+                self.assertEqual(main(scenarios, [*options, "--test", "all"]), 1)
             report = json.loads(output.read_text())
-            self.assertEqual(called, ["scan", "activity"])
+            self.assertEqual(called, ["scan", "activity", "source_theft"])
             self.assertFalse(report["passed"])
             self.assertTrue(report["tests"][0]["passed"])
             self.assertIn("physical standby command", report["tests"][1]["error"])
+            self.assertTrue(report["tests"][2]["passed"])
 
 
 if __name__ == "__main__":

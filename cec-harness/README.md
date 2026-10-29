@@ -24,6 +24,8 @@ membership behavior remains unchanged.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
   then verifies standby using physical component power commands.
+- `functional_tests/source_theft.py`: adds a second playback device on AVR
+  input 2 and verifies that Amity restores the first player after source theft.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -131,6 +133,37 @@ requires the CEC Standby opcode rather than another command that changes power.
 CEC Standby leaves the component
 in `PowerState.STANDBY`. `PowerState.OFF` models disconnected power and has no
 CEC traffic. Private reports retain the power commands and assertion evidence.
+
+`source_theft.py` uses `scanned_devices(extra_player=True)`: the same TV and
+AVR, plus playback devices on AVR inputs 1 and 2. The second
+`PlaybackComponent` explicitly selects `address_type="tuner"` to use a distinct
+logical-address allocation profile while retaining playback behavior. The
+Linux session uses CEC 1.4 for the three modeled components on the back bus.
+The extended scan requires exactly these four components, with the TV on
+tentacle 0/front and the AVR and both players on tentacle 0/back. Each player
+has a saved activity using the shared TV and AVR. The test starts and verifies
+the first player's activity, then calls the second player's `activate()` to
+broadcast its own Active Source
+announcement. `Component.activate()` returns the transmission's `TxResult`;
+the scenario requires a successful physical announcement.
+
+Amity must then send a fresh directed Standby command to the second player and
+a fresh Set Stream Path restoring the first player's physical address.
+`avr.wait_for_input(player, since=boundary)` checks that routing command using
+real DUT wire evidence. The first player must be active again;
+`activity.assert_active()` verifies that its saved UI activity and DUT boot
+remain unchanged. Both test-owned activities are cleaned up before the
+responders close. Shared component and activity helpers perform these checks,
+so the functional body contains no raw CEC commands or HTTP handling.
+
+On 29 October 2026, all three functional scenarios passed on `test2` against
+`amity-dut` firmware `0.1.88`, along with all 204 framework unit tests. The
+source-theft run verified physical directed Standby `03:36` and route
+restoration `0f:86:11:00`, retained the same boot and saved activities/equipment,
+and released all 14 GPIO CEC address masks. Private evidence is in
+`test-results/functional/source-theft-suite-0.1.88.json` and
+`source-theft-verified.json` in the same directory. This exercises simulated
+CEC equipment on tentacle 0; it does not qualify real AV behavior or all adapters.
 
 ## DUTs and wiring
 
@@ -253,13 +286,24 @@ The Linux backend finds `cec-gpio` adapters by stable `cec@<GPIO>` identity,
 never `/dev/cecN` numbering. Components on a wire share one adapter and a worker.
 It checks logical-address capacity, claims exactly the requested addresses,
 uses passthrough mode for replies to the DUT and clears dynamic addresses when
-the session closes. Linux chooses logical addresses by device type; unsupported
+the session closes. Linux chooses logical addresses by allocation type; unsupported
 claims or collisions fail explicitly. Linux's restriction on electrical TX
 between addresses claimed by one adapter applies only to the physical backend;
 the session routes component-to-component messages on the virtual bus. No fixed
 follower processes are needed. The bench's GPIO adapters support four logical
-addresses, with CEC 2.0 restrictions checked by the driver; the scan uses two on
-the back wire.
+addresses. Compatible fixtures keep CEC 2.0; larger or differently paired
+fixtures explicitly use CEC 1.4. Components advertise that selected version and
+omit CEC 2.0 feature reports in 1.4 mode. Remote workers report the same version;
+update both ends together when changing the harness RPC protocol.
+
+`PlaybackComponent(..., address_type="tuner")` selects the tuner address pool
+while retaining playback identity and behavior. The default is `"playback"`;
+`"recording"` is also available for compatible topologies. Linux rejects
+duplicate allocation types and the recording-plus-playback combination even
+in CEC 1.4. The source-theft test therefore uses AVR address 5, the selected
+player at playback address 4, and the second player at tuner address 3 on the
+same back wire, with distinct physical addresses `1.1.0.0` and `1.2.0.0`.
+Claim failures remain explicit; the backend does not retry using another type.
 
 ## Run functional tests
 
@@ -278,7 +322,8 @@ python3 cec-harness/run.py \
 ```
 
 The default remains `hdmi_scan`. Select `--test activity` for the scan plus
-activity lifecycle, or `--test all` for both registered scenarios. The same
+activity lifecycle, `--test source_theft` for unselected-source recovery, or
+`--test all` for all three registered scenarios. The same
 credentials, TLS, SSH and output options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
 

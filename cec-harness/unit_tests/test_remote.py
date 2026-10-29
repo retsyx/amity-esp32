@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from amity_harness.cec import CecError, Frame, TxResult
-from amity_harness.remote import SSHCecBackend, _component_descriptor, _serve
+from amity_harness.remote import SSHCecBackend, _RPC_VERSION, _component_descriptor, _serve
 from amity_harness.topology import CecAddress
 
 
@@ -21,12 +21,14 @@ class WorkerBackend:
         self.opened = False
         self.close_count = 0
         self.configured = []
+        self.cec_version = None
 
     def open(self):
         self.opened = True
 
     def configure(self, components):
         self.configured = components
+        self.cec_version = 5 if len(components) > 2 else 6 if components else None
 
     def transmit(self, frame):
         return TxResult(frame, 1, 12345)
@@ -36,9 +38,12 @@ class WorkerBackend:
 
     def close(self):
         self.close_count += 1
+        self.cec_version = None
 
 
 def request(request_id, operation, **arguments):
+    if operation == "open":
+        arguments.setdefault("protocol_version", _RPC_VERSION)
     return json.dumps({"id": request_id, "operation": operation, "arguments": arguments}) + "\n"
 
 
@@ -52,11 +57,13 @@ def clock():
 class Backend:
     def __init__(self, gpio):
         self.gpio = gpio
+        self.cec_version = None
     def open(self):
         pass
     def configure(self, components):
         if components and components[0].address.logical == 14:
             raise RuntimeError("synthetic configuration failure")
+        self.cec_version = 5 if len(components) > 2 else 6 if components else None
     def transmit(self, frame):
         return TxResult(frame, 1, clock())
     def receive(self, timeout):
@@ -80,11 +87,58 @@ class RemoteProtocolTests(unittest.TestCase):
         _serve(24, io.StringIO(commands), output, backend_factory=lambda gpio: backend, clock=lambda: 1000)
         responses = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertTrue(all(response["ok"] for response in responses))
+        self.assertEqual(responses[0]["result"], {"protocol_version": _RPC_VERSION})
         self.assertEqual(responses[1]["result"], {"remote_monotonic_ns": 1000})
+        self.assertEqual(responses[2]["result"], {"cec_version": 6})
         self.assertEqual(responses[3]["result"], {"status": 1, "timestamp_ns": 12345})
         self.assertEqual(responses[4]["result"], {"frame": "0546", "timestamp_ns": 12346})
         self.assertEqual(backend.configured[0].address, CecAddress(5, 4096))
         self.assertGreaterEqual(backend.close_count, 1)
+
+    def test_worker_rejects_stale_protocols_before_opening_the_adapter(self):
+        missing_version = json.dumps({"id": 1, "operation": "open", "arguments": {}}) + "\n"
+        for command in (missing_version, request(1, "open", protocol_version=1),
+                        request(1, "open", protocol_version=True)):
+            with self.subTest(command=command):
+                backend = WorkerBackend(24)
+                output = io.StringIO()
+                _serve(24, io.StringIO(command), output, backend_factory=lambda gpio: backend)
+                self.assertFalse(json.loads(output.getvalue())["ok"])
+                self.assertFalse(backend.opened)
+                self.assertGreaterEqual(backend.close_count, 1)
+
+    def test_worker_reports_selected_cec_version_and_rejects_invalid_backend_metadata(self):
+        descriptor = {"logical": 5, "physical": 4096, "device_type": 5,
+                      "logical_address_type": 4, "all_device_types": 8}
+        commands = request(1, "open") + request(2, "configure", components=[descriptor] * 3)
+        backend = WorkerBackend(24)
+        output = io.StringIO()
+        _serve(24, io.StringIO(commands), output, backend_factory=lambda gpio: backend)
+        self.assertEqual(json.loads(output.getvalue().splitlines()[-1])["result"], {"cec_version": 5})
+        for invalid in (True, False, 4, 7, "6", 6.0, [], {}):
+            with self.subTest(invalid=invalid):
+                backend = WorkerBackend(24)
+                backend.configure = lambda components: setattr(backend, "cec_version", invalid)
+                output = io.StringIO()
+                _serve(24, io.StringIO(commands), output, backend_factory=lambda gpio: backend)
+                self.assertFalse(json.loads(output.getvalue().splitlines()[-1])["ok"])
+                self.assertGreaterEqual(backend.close_count, 1)
+
+    def test_transport_validates_exact_configure_metadata_and_clears_it_on_error(self):
+        backend = SSHCecBackend(24)
+        for version in (None, 5, 6):
+            with self.subTest(version=version), patch.object(backend, "_rpc", return_value={"cec_version": version}):
+                backend.configure([])
+                self.assertEqual(backend.cec_version, version)
+        for result in (None, {}, {"cec_version": True}, {"cec_version": False},
+                       {"cec_version": 6.0}, {"cec_version": "6"},
+                       {"cec_version": 4}, {"cec_version": 7},
+                       {"cec_version": 6, "extra": 1}):
+            with self.subTest(result=result):
+                backend.cec_version = 6
+                with patch.object(backend, "_rpc", return_value=result), self.assertRaisesRegex(CecError, "Malformed.*configure"):
+                    backend.configure([])
+                self.assertIsNone(backend.cec_version)
 
     def test_worker_rejects_credentials_and_always_cleans_up_on_failure_or_eof(self):
         for extra in (request(2, "http", password="must never be accepted"),
@@ -148,11 +202,19 @@ class RemoteProtocolTests(unittest.TestCase):
             backend.open()
             process = backend._process
             try:
+                self.assertIsNone(backend.cec_version)
                 self.assertLess(abs(backend.clock_offset_ns + 50_000_000_000), 100_000_000)
                 self.assertGreaterEqual(backend.clock_uncertainty_ns, 0)
                 component = SimpleNamespace(address=CecAddress(5, 4096), device_type=5,
                                             logical_address_type=4, all_device_types=8)
                 backend.configure([component])
+                self.assertEqual(backend.cec_version, 6)
+                player = SimpleNamespace(address=CecAddress(4, "1.1.0.0"), device_type=4,
+                                         logical_address_type=3, all_device_types=16)
+                thief = SimpleNamespace(address=CecAddress(8, "1.2.0.0"), device_type=4,
+                                        logical_address_type=2, all_device_types=16)
+                backend.configure([component, player, thief])
+                self.assertEqual(backend.cec_version, 5)
                 before = time.monotonic_ns()
                 frame = backend.receive()
                 after = time.monotonic_ns()
@@ -162,10 +224,26 @@ class RemoteProtocolTests(unittest.TestCase):
                 sent = backend.transmit(Frame(5, 0, 0x90, b"\x01"))
                 self.assertTrue(sent.ok)
                 self.assertLessEqual(sent.timestamp_ns, time.monotonic_ns())
+                backend.configure([])
+                self.assertIsNone(backend.cec_version)
+                backend.configure([component])
+                self.assertEqual(backend.cec_version, 6)
             finally:
                 backend.close()
             self.assertIsNotNone(process.poll())
             self.assertIsNone(backend._process)
+            self.assertIsNone(backend.cec_version)
+
+    def test_transport_rejects_a_stale_worker_handshake_and_closes_the_process(self):
+        for result in (None, {"protocol_version": 1}, {"protocol_version": True}):
+            source = ("import json, sys\nrequest = json.loads(sys.stdin.readline())\n"
+                      f"print(json.dumps({{'id': request['id'], 'ok': True, 'result': {result!r}}}), flush=True)\n")
+            with self.subTest(result=result):
+                backend, launcher = self._local_transport(source)
+                with launcher, self.assertRaisesRegex(CecError, "Malformed.*open"):
+                    backend.open()
+                self.assertIsNone(backend._process)
+                self.assertIsNone(backend.cec_version)
 
     def test_transport_remote_error_and_unexpected_eof_terminate_processes(self):
         backend, launcher = self._local_transport()
@@ -177,6 +255,7 @@ class RemoteProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(CecError, "synthetic configuration failure"):
                 backend.configure([bad])
             self.assertIsNone(backend._process)
+            self.assertIsNone(backend.cec_version)
             self.assertIsNotNone(process.poll())
         backend, launcher = self._local_transport("pass\n")
         with launcher, self.assertRaisesRegex(CecError, "closed"):

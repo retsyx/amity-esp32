@@ -102,6 +102,7 @@ class Component:
         self.vendor_id, self.hooks = vendor_id, hooks or Hooks()
         self._power = PowerState(power)
         self._session = None
+        self.cec_version = 6
         self._active_since_ns = 0
         self.pressed_key = None
         self._power_revision = 0
@@ -109,6 +110,10 @@ class Component:
         self._power_condition = threading.Condition()
         self._power_history = deque(maxlen=256)
         self._power_checks = deque(maxlen=256)
+        self._active_input = None
+        self._input_revision = self._input_calls = 0
+        self._routing_history = deque(maxlen=256)
+        self._routing_checks = deque(maxlen=256)
         runtime = getattr(self.dut, "_runtime", None) or current_config()
         self._power_timeout = runtime.timeout
 
@@ -179,7 +184,7 @@ class Component:
                                        "timestamp_ns": time.monotonic_ns()})
         return self
 
-    def wait_for_power(self, power, *, since, timeout=None, command=None):
+    def wait_for_power(self, power, *, since, timeout=None, command=None, directed=False):
         """Require a fresh physical DUT power command and its resulting state.
 
         ``since`` is an activity action boundary or a checkpoint() integer.
@@ -188,8 +193,11 @@ class Component:
         setters, virtual peer traffic and unrelated wake-up side effects do not.
         ``command='standby'`` specifically requires Standby opcode 0x36 rather
         than another command that also leaves the component in Standby.
+        ``directed=True`` excludes broadcasts to all components on the wire.
         """
         power = PowerState(power)
+        if not isinstance(directed, bool):
+            raise ValueError("Directed power assertion must be a boolean")
         if command is not None and (not isinstance(command, str) or command not in _POWER_COMMANDS):
             raise ValueError("Unknown component power command")
         if power == PowerState.OFF:
@@ -197,9 +205,45 @@ class Component:
         timeout = self._power_timeout if timeout is None else timeout
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Power assertion timeout must be a positive finite number")
+        session, started, source = self._wire_context(since)
+        deadline = time.monotonic() + timeout
+        while True:
+            session.assert_healthy()
+            stopped = getattr(session, "_stop", None)
+            if self._session is not session or stopped is not None and stopped.is_set():
+                raise AssertionError("The CEC session ended before the requested power command was confirmed")
+            with self._power_condition:
+                matching = next((event for owner, event in reversed(self._power_history)
+                                 if owner is session and event["transport"] == "wire"
+                                 and event["source"] == source and event["applied"]
+                                 and (not directed or event["destination"] == self.address.logical)
+                                 and (command is None or event["command"] == command)
+                                 and event["wire_timestamp_ns"] >= started
+                                 and event["processed_monotonic_ns"] >= started
+                                 and event["requested_power"] == power.value
+                                 and event["after"] == power.value
+                                 and event["state_revision"] == self._power_revision), None)
+                if self.power == power and matching is not None:
+                    self._power_checks.append({"kind": "wire_command", "power": power.value,
+                                               "timestamp_ns": time.monotonic_ns(),
+                                               "since_monotonic_ns": started,
+                                               "frame": matching["frame"], "source": source,
+                                               "destination": matching["destination"],
+                                               "wire_timestamp_ns": matching["wire_timestamp_ns"],
+                                               "command": matching["command"]})
+                    return self
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"{self.name} did not handle a fresh DUT {power.value} command and remain {power.value}")
+                # Wake on evidence; periodically check responder health even if
+                # a failing worker produces no further component callbacks.
+                self._power_condition.wait(min(remaining, 0.05))
+
+    def _wire_context(self, since):
+        """Validate a boundary and the scan-proven initiator on this wire."""
         session = self._session
         if session is None:
-            raise AssertionError("Power command assertions need an active CEC session")
+            raise AssertionError("Wire command assertions need an active CEC session")
         if isinstance(since, int) and not isinstance(since, bool):
             started = since
             scan = getattr(self.dut, "last_scan", None)
@@ -212,40 +256,89 @@ class Component:
                 raise AssertionError("The action boundary belongs to a different DUT or CEC session")
             initiators = getattr(since, "initiators", {})
         if isinstance(started, bool) or not isinstance(started, int) or started <= 0:
-            raise ValueError("A power assertion needs a valid monotonic action boundary")
+            raise ValueError("A wire assertion needs a valid monotonic action boundary")
         source = initiators.get(self.gpio) if hasattr(initiators, "get") else None
         occupied = {component.address.logical for component in session.components if component.gpio == self.gpio}
         if isinstance(source, bool) or not isinstance(source, int) or not 0 <= source < 15 or source in occupied:
-            raise AssertionError("A power assertion needs the DUT initiator verified by its HDMI scan")
+            raise AssertionError("A wire assertion needs the DUT initiator verified by its HDMI scan")
+        return session, started, source
+
+    @property
+    def active_input(self):
+        return self._active_input
+
+    @active_input.setter
+    def active_input(self, physical):
+        with self._power_condition:
+            if physical != self._active_input:
+                self._input_revision += 1
+            self._active_input = physical
+            self._input_calls += 1
+            self._power_condition.notify_all()
+
+    @property
+    def routing_events(self):
+        with self._power_condition:
+            return tuple(dict(event) for _, event in self._routing_history)
+
+    @property
+    def routing_assertions(self):
+        with self._power_condition:
+            return tuple(dict(event) for event in self._routing_checks)
+
+    def wait_for_input(self, source_component, *, since, timeout=None):
+        """Require a fresh applied DUT Set Stream Path and its current input.
+
+        Peer Active Source broadcasts can change model state; they cannot prove
+        Amity restored a route. Hooks cannot rewrite or manufacture wire proof.
+        """
+        if not self.can_route:
+            raise ValueError("This component does not model HDMI input routing")
+        session, started, source = self._wire_context(since)
+        if isinstance(source_component, Component):
+            if source_component.dut is not self.dut or source_component._session is not session:
+                raise ValueError("Input equipment belongs to a different DUT or CEC session")
+            physical = source_component.address.physical
+        else:
+            physical = CecAddress(0, source_component).physical
+        timeout = self._power_timeout if timeout is None else timeout
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Routing assertion timeout must be a positive finite number")
         deadline = time.monotonic() + timeout
+        missing = f"{self.name} did not handle a fresh DUT Set Stream Path for {physical:04x}"
         while True:
-            session.assert_healthy()
             stopped = getattr(session, "_stop", None)
             if self._session is not session or stopped is not None and stopped.is_set():
-                raise AssertionError("The CEC session ended before the requested power command was confirmed")
+                raise AssertionError("The CEC session ended before the requested input was confirmed")
+            # Complete delivery to every peer (including the selected player)
+            # before exposing the restored route to the scenario.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not session._lock.acquire(timeout=remaining):
+                raise TimeoutError(missing)
+            try:
+                session.assert_healthy()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(missing)
+                with self._power_condition:
+                    matching = next((event for owner, event in reversed(self._routing_history)
+                                     if owner is session and event["transport"] == "wire"
+                                     and event["source"] == source and event["opcode"] == 0x86
+                                     and event["applied"] and event["physical_address"] == physical
+                                     and event["wire_timestamp_ns"] >= started
+                                     and event["processed_monotonic_ns"] >= started
+                                     and event["state_revision"] == self._input_revision), None)
+                    if self.power != PowerState.OFF and self.active_input == physical and matching is not None:
+                        self._routing_checks.append({"kind": "wire_command", "physical_address": physical,
+                                                     "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": started,
+                                                     "frame": matching["frame"], "source": source,
+                                                     "wire_timestamp_ns": matching["wire_timestamp_ns"]})
+                        return self
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(missing)
+            finally:
+                session._lock.release()
             with self._power_condition:
-                matching = next((event for owner, event in reversed(self._power_history)
-                                 if owner is session and event["transport"] == "wire"
-                                 and event["source"] == source and event["applied"]
-                                 and (command is None or event["command"] == command)
-                                 and event["wire_timestamp_ns"] >= started
-                                 and event["processed_monotonic_ns"] >= started
-                                 and event["requested_power"] == power.value
-                                 and event["after"] == power.value
-                                 and event["state_revision"] == self._power_revision), None)
-                if self.power == power and matching is not None:
-                    self._power_checks.append({"kind": "wire_command", "power": power.value,
-                                               "timestamp_ns": time.monotonic_ns(),
-                                               "since_monotonic_ns": started,
-                                               "frame": matching["frame"], "source": source,
-                                               "wire_timestamp_ns": matching["wire_timestamp_ns"],
-                                               "command": matching["command"]})
-                    return self
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(f"{self.name} did not handle a fresh DUT {power.value} command and remain {power.value}")
-                # Wake on evidence; periodically check responder health even if
-                # a failing worker produces no further component callbacks.
                 self._power_condition.wait(min(remaining, 0.05))
 
     def set_power(self, power):
@@ -299,10 +392,16 @@ class Component:
             self.hooks.after_tx(self, result)
         return result
 
+    def activate(self):
+        """Wake and claim Active Source; return the actual transmission result."""
+        self.power_on()
+        return self.send(15, 0x82, self.address.physical.to_bytes(2, "big"))
+
     def announce(self):
         if self.power == PowerState.OFF:
             return
-        self.send(15, 0xa6, [6, self.all_device_types, 0, 0])
+        if self.cec_version >= 6:
+            self.send(15, 0xa6, [self.cec_version, self.all_device_types, 0, 0])
         self.send(15, 0x84, self.address.physical.to_bytes(2, "big") + bytes([self.device_type]))
         self.send(15, 0x87, self.vendor_id.to_bytes(3, "big"))
 
@@ -336,14 +435,18 @@ class Component:
                         if frame != original else {})
             self._session._record(self, "rx", original, transport=transport, **handling)
         power_calls = self._power_calls
+        input_calls = self._input_calls
         self.handle(frame)
         handled_power = self.power
         handled_revision = self._power_revision
         controlled_power = self._power_calls != power_calls
+        handled_input, input_revision = self.active_input, self._input_revision
+        controlled_input = self._input_calls != input_calls
         if self.hooks.after_rx is not None:
             self.hooks.after_rx(self, frame)
         self._retain_power_command(original, frame, transport, power_before,
                                    controlled_power, handled_power, handled_revision)
+        self._retain_routing(original, frame, transport, controlled_input, handled_input, input_revision)
 
     def _power_command(self, frame, before):
         """Recognize explicit commands supported by these component models."""
@@ -387,6 +490,24 @@ class Component:
             self._power_history.append((self._session, event))
             self._power_condition.notify_all()
 
+    def _retain_routing(self, original, handled, transport, controlled, physical, revision):
+        if (not self.can_route or original.source == 15 or original.destination != 15
+                or original.opcode not in (0x82, 0x86) or len(original.operands) != 2):
+            return
+        target = int.from_bytes(original.operands, "big")
+        changed = original.raw != handled.raw
+        event = {"opcode": original.opcode, "physical_address": target,
+                 "frame": original.raw.hex(":"), "source": original.source,
+                 "destination": original.destination, "transport": transport,
+                 "wire_timestamp_ns": original.timestamp_ns if transport == "wire" else 0,
+                 "processed_monotonic_ns": time.monotonic_ns(), "state_revision": self._input_revision,
+                 "payload_modified": changed,
+                 "applied": controlled and not changed and physical == target
+                            and self.active_input == target and revision == self._input_revision}
+        with self._power_condition:
+            self._routing_history.append((self._session, event))
+            self._power_condition.notify_all()
+
     def handle(self, frame):
         """Handle standard discovery/power messages; override for extra behavior."""
         opcode, operands = frame.opcode, frame.operands
@@ -402,14 +523,17 @@ class Component:
                 self.send(15, 0x87, self.vendor_id.to_bytes(3, "big"))
                 return
             if opcode == 0xa5 and not operands:
-                self.send(15, 0xa6, [6, self.all_device_types, 0, 0])
+                if self.cec_version >= 6:
+                    self.send(15, 0xa6, [self.cec_version, self.all_device_types, 0, 0])
+                elif frame.source != 15:
+                    self.send(frame.source, 0x00, [opcode, 0])
                 return
             if frame.source != 15:
                 if opcode == 0x46 and not operands:
                     self.send(frame.source, 0x47, self.name.encode("ascii"))
                     return
                 if opcode == 0x9f and not operands:
-                    self.send(frame.source, 0x9e, [6])
+                    self.send(frame.source, 0x9e, [self.cec_version])
                     return
                 if opcode == 0x8f and not operands:
                     self.send(frame.source, 0x90, [0 if self.power == PowerState.ON else 1])
@@ -502,7 +626,16 @@ class AvrComponent(Component):
 
 
 class PlaybackComponent(Component):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, address_type="playback", **kwargs):
+        # Allocation slots can differ while the model retains playback
+        # identity and behavior. Linux forbids duplicate allocation types.
+        profiles = {"playback": (3, (4, 8, 11)),
+                    "recording": (1, (1, 2, 9)),
+                    "tuner": (2, (3, 6, 7, 10))}
+        if not isinstance(address_type, str) or address_type not in profiles:
+            raise ValueError("Playback address type must be playback, recording or tuner")
+        self.address_type = address_type
+        self.logical_address_type, self.logical_addresses = profiles[address_type]
         super().__init__(*args, **kwargs)
         self.active = False
         self.playing = False
@@ -515,7 +648,7 @@ class PlaybackComponent(Component):
     def activate(self):
         self.power_on()
         self.active = True
-        self.send(15, 0x82, self.address.physical.to_bytes(2, "big"))
+        return self.send(15, 0x82, self.address.physical.to_bytes(2, "big"))
 
     def handle(self, frame):
         opcode, operands = frame.opcode, frame.operands

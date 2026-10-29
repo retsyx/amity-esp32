@@ -107,9 +107,11 @@ def _ioctl(fd, direction, number, value):
 class LinuxCecBackend:
     """Own one stable cec-gpio adapter, shared by components on that wire.
 
-    The CEC 2.0 kernel API supports at most two logical addresses on one adapter,
-    with TV/audio-system plus playback/recording as the permitted combination.
-    Other topologies fail explicitly instead of pretending devices can ACK.
+    Uses CEC 2.0 for its permitted one-address or TV/audio-system plus
+    playback/recording configurations. Other supported combinations use CEC 1.4,
+    up to the adapter's capacity and the four-address ioctl limit. Linux rejects
+    duplicate allocation types and recording plus playback in either version.
+    The selected version is exposed as ``cec_version`` after a successful claim.
     Kernel address allocation chooses addresses by type; the exact result is
     checked against the test's requested addresses. Closing clears all dynamic
     addresses and disables this adapter; it never reinstalls a static profile.
@@ -119,6 +121,7 @@ class LinuxCecBackend:
         self.gpio = gpio
         self.fd = None
         self.path = None
+        self.cec_version = None
 
     def open(self):
         if sys.platform != "linux":
@@ -155,14 +158,22 @@ class LinuxCecBackend:
         if self.fd is None:
             raise CecError("CEC adapter is not open")
         components = list(components)
-        if len(components) > min(self.caps.available_log_addrs, 2):
-            raise CecError("This Linux CEC 2.0 adapter cannot claim that many component addresses")
+        if len(components) > min(self.caps.available_log_addrs, 4):
+            raise CecError("This Linux CEC adapter cannot claim that many component addresses")
         types = [component.logical_address_type for component in components]
+        if any(type(value) is not int or not 0 <= value <= 5 for value in types):
+            raise CecError("Components need a registered Linux logical-address type")
         if len(set(types)) != len(types):
             raise CecError("Linux cannot emulate two components of the same logical-address type on one GPIO")
-        if len(types) == 2 and not (set(types) & {0, 4} and set(types) & {1, 3}):
-            raise CecError("Linux CEC 2.0 requires TV/audio-system plus playback/recording on a shared GPIO")
+        if {1, 3} <= set(types):
+            raise CecError("Linux cannot combine recording and playback allocation types on one GPIO")
+        if any(type(c.device_type) is not int or c.device_type not in (0, 1, 3, 4, 5, 6, 7)
+               for c in components):
+            raise CecError("Invalid CEC primary device type")
+        version = 6 if len(types) <= 1 or (len(types) == 2 and set(types) & {0, 4}
+                                           and set(types) & {1, 3}) else 5
         _ioctl(self.fd, 3, 4, _LogAddrs())
+        self.cec_version = None
         if not components:
             _ioctl(self.fd, 1, 2, ctypes.c_uint16(0xffff))
             return
@@ -173,7 +184,7 @@ class LinuxCecBackend:
                         components[0].address.physical)
         _ioctl(self.fd, 1, 2, ctypes.c_uint16(physical))
         addresses = _LogAddrs()
-        addresses.cec_version = 6
+        addresses.cec_version = version
         addresses.num_log_addrs = len(components)
         addresses.vendor_id = 0xffffffff  # Python supplies each device's vendor
         addresses.osd_name = b"Amity fixture"
@@ -187,10 +198,12 @@ class LinuxCecBackend:
         actual = _ioctl(self.fd, 3, 4, addresses)
         wanted = [component.address.logical for component in components]
         claimed = list(actual.log_addr[:actual.num_log_addrs])
-        if claimed != wanted or actual.log_addr_mask != sum(1 << la for la in wanted):
+        if (actual.cec_version != version or claimed != wanted
+                or actual.log_addr_mask != sum(1 << la for la in wanted)):
             _ioctl(self.fd, 3, 4, _LogAddrs())
             raise CecError(f"cec@{self.gpio} requested logical addresses {wanted}, claimed {claimed}; "
                            "a DUT/peer may occupy an address or the kernel chose a different type address")
+        self.cec_version = version
 
     def transmit(self, frame):
         message = _Message()
@@ -216,13 +229,22 @@ class LinuxCecBackend:
         return Frame.from_bytes(bytes(result.msg[:result.len]), timestamp_ns=result.rx_ts)
 
     def close(self):
+        self.cec_version = None
         if self.fd is not None:
             fd, self.fd = self.fd, None
+            errors = []
+            for direction, number, value in ((3, 4, _LogAddrs()),
+                                              (1, 2, ctypes.c_uint16(0xffff))):
+                try:
+                    _ioctl(fd, direction, number, value)
+                except BaseException as exc:
+                    errors.append(exc)
             try:
-                _ioctl(fd, 3, 4, _LogAddrs())
-                _ioctl(fd, 1, 2, ctypes.c_uint16(0xffff))
-            finally:
                 os.close(fd)
+            except BaseException as exc:
+                errors.append(exc)
+            if errors:
+                raise errors[0]
 
 
 class CecSession:
@@ -297,7 +319,13 @@ class CecSession:
 
     def _configure(self, gpio):
         active = [c for c in self.components if c.gpio == gpio and c.power.value != "off"]
-        self._backends[gpio].configure(active)
+        backend = self._backends[gpio]
+        backend.configure(active)
+        version = getattr(backend, "cec_version", None)
+        version = version if type(version) is int and version in (5, 6) else 6
+        for component in self.components:
+            if component.gpio == gpio:
+                component.cec_version = version
         # Kernel-generated announcements carry the adapter's shared PA. Correct
         # each component's identity before beginning a scan or other scenario.
         for component in active:

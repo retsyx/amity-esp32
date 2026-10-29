@@ -90,7 +90,7 @@ Physical Linux adapter restrictions apply to the wire backend, not to virtual
 component communication. TX/RX records distinguish `virtual` and `wire`;
 virtual records have `wire_timestamp_ns=0` and cannot establish DUT behavior.
 
-The framework contains two functional scenarios. `hdmi_scan.py` has `amity-dut`
+The framework contains three functional scenarios. `hdmi_scan.py` has `amity-dut`
 scan a TV, AVR and playback device. It requires fresh wire identity exchanges
 and matching UI names/types/addresses. Wire captures identify the actual DUT
 initiators; legacy aggregate UI address fields are not owner-local addressing
@@ -99,7 +99,7 @@ queries, the expected OSD-name reply, and the expected physical-address/device-t
 reply. Cached matching UI rows cannot substitute for those identity operands.
 Host regressions keep matching UI observations while rewriting reply identities
 and require the complete scan assertions to reject them, including a real session
-TX hook. The strengthened assertions have not been rerun on the physical bench.
+TX hook. The strengthened assertions also pass in the 29 October bench suite below.
 The earlier exact-set and typed-port scan assertions passed on firmware
 `0.1.84` on 28 October 2026; private evidence is in
 `test-results/functional/hdmi-scan-exact-ports.json`. This does not replace the broader
@@ -115,7 +115,21 @@ virtual exchanges, stale frames and UI admission alone cannot establish those
 effects. Registered cleanup runs before CEC closure/logout and removes only
 test-owned configuration while preserving other activities and normal history.
 No firmware API or original activity/CEC behavior changes are authorized by
-this scenario. The runner selects `hdmi_scan`, `activity` or `all`.
+this scenario. The runner selects `hdmi_scan`, `activity`, `source_theft` or `all`.
+
+`source_theft.py` extends the fixture with a second playback device on AVR
+input 2. Both players have saved activities using the same TV and AVR. After
+starting and verifying the input-1 player's activity, the input-2 player wakes
+and broadcasts Active Source. Require a fresh directed DUT Standby to that
+player, a fresh DUT Set Stream Path restoring the input-1 player's PA, the
+original player's active/On state, and the same selected activity and boot.
+The second playback model explicitly uses the tuner allocation pool while
+retaining playback identity and handling. The three-component back wire uses
+CEC 1.4; the front TV and original legal two-component fixtures retain CEC 2.0.
+Routing proof rejects virtual, stale, rewritten, dropped and wrong-source
+frames, and waits for the entire component delivery to finish within its
+deadline. Both temporary activities and their unreferenced equipment must be
+cleaned up before CEC address release.
 
 Validation on 28 October 2026: all 161 framework unit checks pass. On the
 `test2` harness against `amity-dut` firmware `0.1.85`, the standalone scan passes,
@@ -169,6 +183,22 @@ Before/after Xtensa stack-usage records for the same optimized Standby call
 chain show a known subtotal of 6,112 versus 3,968 bytes, excluding final
 owner-send/CEC/runtime frames. These static measurements do not establish a
 runtime stack high-water margin or qualify this refactor on physical hardware.
+
+Validation on 29 October 2026: all 204 framework unit tests pass, including
+physical/virtual provenance, alternate allocation profiles, CEC-version
+reporting, bounded peer-delivery completion, two saved activity identities,
+and cleanup under injected backend failures. On `test2` against `amity-dut`
+firmware `0.1.88`, all three functional scenarios pass. The source-theft case
+claims back-wire addresses 5/4/3 in CEC 1.4 mode, configures both activities,
+and verifies fresh DUT frames `03:36` and `0f:86:11:00` after the second
+player's announcement. The original activity remains selected on the same
+boot. Final authenticated snapshots preserve the saved activities/equipment,
+return to idle, and all 14 GPIO CEC address masks are zero (the two native Pi
+HDMI adapters were also checked). Evidence is
+`test-results/functional/source-theft-framework-tests.log`,
+`source-theft-suite-0.1.88.json` and `source-theft-verified.json` in that
+directory. This is one local DUT/tentacle with simulated CEC equipment, not
+qualification of real AV switching, remote owner radio delivery or all adapters.
 
 ## Evidence record
 

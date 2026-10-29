@@ -24,6 +24,7 @@ from .topology import CecAddress
 
 
 _MAX_LINE = 65536
+_RPC_VERSION = 2
 
 
 def _integer(value, name, minimum, maximum):
@@ -35,6 +36,12 @@ def _integer(value, name, minimum, maximum):
 def _keys(value, names):
     if not isinstance(value, dict) or set(value) != set(names):
         raise ValueError("Unexpected CEC RPC fields")
+
+
+def _cec_version(value):
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value not in (5, 6)):
+        raise ValueError("Invalid CEC version metadata")
+    return value
 
 
 def _component_descriptor(component):
@@ -84,6 +91,7 @@ class SSHCecBackend:
         self.rpc_timeout = rpc_timeout
         self.clock_offset_ns = None
         self.clock_uncertainty_ns = None
+        self.cec_version = None
         self._process = None
         self._stderr = None
         self._buffer = bytearray()
@@ -102,6 +110,7 @@ class SSHCecBackend:
             if self._process is not None:
                 raise CecError("Remote CEC adapter is already open")
             self.clock_offset_ns = self.clock_uncertainty_ns = None
+            self.cec_version = None
             self._buffer.clear()
             self._stderr = tempfile.TemporaryFile()
             try:
@@ -110,7 +119,12 @@ class SSHCecBackend:
                                                  bufsize=0)
                 os.set_blocking(self._process.stdin.fileno(), False)
                 os.set_blocking(self._process.stdout.fileno(), False)
-                self._rpc("open", {})
+                result = self._rpc("open", {"protocol_version": _RPC_VERSION})
+                try:
+                    _keys(result, ("protocol_version",))
+                    _integer(result["protocol_version"], "CEC RPC protocol version", _RPC_VERSION, _RPC_VERSION)
+                except (TypeError, ValueError) as exc:
+                    self._bad_result("open", exc)
                 samples = []
                 # Exclude SSH connection/module import/adapter acquisition from
                 # clock uncertainty; sample the live RPC after opening succeeds.
@@ -214,9 +228,13 @@ class SSHCecBackend:
         return max(1, remote_ns + self.clock_offset_ns - self.clock_uncertainty_ns)
 
     def configure(self, components):
-        result = self._rpc("configure", {"components": [_component_descriptor(c) for c in components]})
-        if result is not None:
-            self._bad_result("configure", ValueError("Expected an empty acknowledgement"))
+        with self._lock:
+            result = self._rpc("configure", {"components": [_component_descriptor(c) for c in components]})
+            try:
+                _keys(result, ("cec_version",))
+                self.cec_version = _cec_version(result["cec_version"])
+            except (TypeError, ValueError) as exc:
+                self._bad_result("configure", exc)
 
     def _bad_result(self, operation, error):
         with self._lock:
@@ -249,6 +267,7 @@ class SSHCecBackend:
             self._bad_result("receive", exc)
 
     def _shutdown(self):
+        self.cec_version = None
         process, self._process = self._process, None
         if process is not None:
             try:
@@ -275,6 +294,7 @@ class SSHCecBackend:
     def close(self):
         with self._lock:
             if self._process is None:
+                self.cec_version = None
                 return
             try:
                 self._rpc("close", {})
@@ -301,12 +321,13 @@ def _serve(gpio, reader, writer, *, backend_factory=LinuxCecBackend,
                 request_id = _integer(request["id"], "request ID", 1, 2**53 - 1)
                 operation, arguments = request["operation"], request["arguments"]
                 if operation == "open":
-                    _keys(arguments, ())
+                    _keys(arguments, ("protocol_version",))
+                    _integer(arguments["protocol_version"], "CEC RPC protocol version", _RPC_VERSION, _RPC_VERSION)
                     if opened:
                         raise ValueError("CEC adapter already opened")
                     backend.open()
                     opened = True
-                    result = None
+                    result = {"protocol_version": _RPC_VERSION}
                 elif operation == "close":
                     _keys(arguments, ())
                     backend.close()
@@ -323,7 +344,7 @@ def _serve(gpio, reader, writer, *, backend_factory=LinuxCecBackend,
                     if not isinstance(values, list) or len(values) > 4:
                         raise ValueError("Invalid CEC component descriptors")
                     backend.configure([_decode_component(value) for value in values])
-                    result = None
+                    result = {"cec_version": _cec_version(getattr(backend, "cec_version", None))}
                 elif operation == "transmit":
                     _keys(arguments, ("frame",))
                     frame = Frame.from_bytes(bytes.fromhex(arguments["frame"]))

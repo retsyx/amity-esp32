@@ -279,6 +279,33 @@ class Activity:
     def standby(self):
         return self._action("standby")
 
+    def assert_active(self):
+        """Assert this exact saved activity is active on the scanned DUT boot."""
+        trace = self._record("assert_active")
+        try:
+            if self._closed or not self._created:
+                raise RuntimeError("The test activity is not available")
+            document, state = self._view()
+            trace["state"] = {key: state[key] for key in _STATE if key in state}
+            matches = [index for index, row in enumerate(document["activities"])
+                       if row.get("activity_id") == self.activity_id]
+            if len(matches) != 1:
+                raise AssertionError("The created activity is missing or ambiguous")
+            row = document["activities"][matches[0]]
+            if any(row.get(role, "") != selector for role, selector in self._selectors(document, state).items()):
+                raise AssertionError("The test activity equipment changed")
+            current = state.get("current_activity")
+            if type(current) is not int or current != matches[0]:
+                raise AssertionError("The test activity is not the current activity")
+            if state.get("activity_settling") is not False:
+                raise AssertionError("The test activity has not finished settling")
+            if state.get("activity_error") != "":
+                raise AssertionError("The DUT has an activity execution error")
+            return self
+        except BaseException as error:
+            trace["error_type"] = type(error).__name__
+            raise
+
     def _remove_row(self, deadline):
         for attempt in range(3):
             try:

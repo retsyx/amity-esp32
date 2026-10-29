@@ -33,6 +33,7 @@ class Fixture:
                      "components": [{"component_id": "f" * 32, "label": "Preexisting equipment", "qualified_names": []}]}
         self.selectors = {component.name: row["name"] for component, row in zip(source.components, source.rows)}
         self.current, self.pending_stop, self.state_revision, self.polls = None, 0, 1, 0
+        self.next_activity_number = 10
         self.reject_create = self.lose_create_reply = self.conflict_cleanup = self.change_boot_on_action = self.reject_start = False
         self.dut.get_configuration, self.dut.get_state = self.editor, self.state
         self.dut.request, self.dut.wait_for = self.request, self.wait_for
@@ -69,7 +70,7 @@ class Fixture:
                      expected_state_revision=str(self.state_revision),
                      current_activity=next((index for index, row in enumerate(self.rows)
                                             if row["activity_id"] == self.current), -1),
-                     activity_settling=bool(self.pending_stop))
+                     activity_settling=bool(self.pending_stop), activity_error="")
         state["expected_boot_id"] = self.source.system["boot_id"]
         state["devices"] = [{**row, "name": self.selectors[component.name]}
                             for component, row in zip(self.source.components, self.source.rows)]
@@ -124,7 +125,9 @@ class Fixture:
                 raise AmityHTTPError(409, "concurrent edit")
             self.allocate(rows)
             for row in rows:
-                row.setdefault("activity_id", "a" * 32)
+                if "activity_id" not in row:
+                    row["activity_id"] = f"{self.next_activity_number:032x}"
+                    self.next_activity_number += 1
             self.rows = rows
             self.bump()
             self.sync_full()
@@ -159,8 +162,8 @@ class Fixture:
             return result
         raise AssertionError(path)
 
-    def activity(self):
-        return self.dut.create_activity("Temporary test", display=self.tv, source=self.player, audio=self.avr)
+    def activity(self, name="Temporary test"):
+        return self.dut.create_activity(name, display=self.tv, source=self.player, audio=self.avr)
 
 
 class ActivityTests(unittest.TestCase):
@@ -282,6 +285,73 @@ class ActivityTests(unittest.TestCase):
         f.change_boot_on_action = True
         with self.assertRaisesRegex(AssertionError, "restarted"):
             activity.start()
+
+    def test_assert_active_uses_current_row_after_another_activity_was_created(self):
+        f = self.fixture
+        with f.activity() as first, f.activity("Another saved activity") as second:
+            first.start()
+            # An unrelated presentation reorder must not turn a saved row index
+            # into the identity of the activity being asserted.
+            f.rows[:] = f.rows[1:] + f.rows[:1]
+            f.sync_full()
+            mutations = len([data for _, data in f.calls if data is not None])
+            self.assertIs(first.assert_active(), first)
+            self.assertEqual(len([data for _, data in f.calls if data is not None]), mutations)
+            record = f.dut.activity_operations[-1]
+            self.assertEqual(record["phase"], "assert_active")
+            self.assertEqual(record["activity_id"], first.activity_id)
+            self.assertEqual(record["state"]["expected_boot_id"], first.boot)
+            self.assertEqual(record["state"]["current_activity"], 0)
+            with self.assertRaisesRegex(AssertionError, "not the current"):
+                second.assert_active()
+            first.standby()
+
+    def test_assert_active_rejects_missing_duplicate_or_changed_saved_selection(self):
+        for changed in ("missing", "duplicate", "selector"):
+            with self.subTest(changed=changed):
+                f = Fixture()
+                activity = f.activity()
+                activity.start()
+                row = next(row for row in f.rows if row["activity_id"] == activity.activity_id)
+                if changed == "missing":
+                    f.rows.remove(row)
+                elif changed == "duplicate":
+                    f.rows.append(deepcopy(row))
+                else:
+                    row["source"] = f.selectors[f.tv.name]
+                with self.assertRaises(AssertionError):
+                    activity.assert_active()
+                self.assertEqual(f.dut.activity_operations[-1]["error_type"], "AssertionError")
+
+    def test_assert_active_rejects_unsettled_failed_or_malformed_state(self):
+        for field, value in (("activity_settling", True), ("activity_error", "owner execution failed"),
+                             ("current_activity", None), ("current_activity", True)):
+            with self.subTest(field=field, value=value):
+                f = Fixture()
+                activity = f.activity()
+                activity.start()
+                state = f.state
+                f.dut.get_state = lambda: {**state(), field: value}
+                with self.assertRaises(AssertionError):
+                    activity.assert_active()
+
+    def test_assert_active_rejects_reboot_config_read_race_and_closed_activity(self):
+        f = self.fixture
+        activity = f.activity()
+        activity.start()
+        f.source.system["boot_id"] = "d" * 32
+        with self.assertRaisesRegex(AssertionError, "restarted"):
+            activity.assert_active()
+        f.source.system["boot_id"] = activity.boot
+        state = f.state
+        f.dut.get_state = lambda: {**state(), "expected_config_revision": "999"}
+        with self.assertRaises(ActivityConflict):
+            activity.assert_active()
+        f.dut.get_state = state
+        activity.standby()
+        activity.close()
+        with self.assertRaises(RuntimeError):
+            activity.assert_active()
 
 
 if __name__ == "__main__":
