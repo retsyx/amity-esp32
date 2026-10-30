@@ -68,7 +68,10 @@ int main(){
  assert(names.remember(id<model::OctopusId>(65),"full",save)==Error::queue_full);HostnameRegistry reboot;assert(reboot.restore(stored)&&reboot.lookup(id<model::OctopusId>(4))=="device-4");
  const auto original=stored;assert(names.remember(id<model::OctopusId>(4),"renamed",[](std::string_view){return false;})==Error::storage_failure&&names.lookup(id<model::OctopusId>(4))=="device-4");
  assert(!reboot.restore("{\"version\":1,\"devices\":[{\"octopus_id\":\""+id<model::OctopusId>(4).str()+"\",\"hostname\":\"bad.local\"}]}"));assert(reboot.lookup(id<model::OctopusId>(4))=="device-4");
- std::cout<<"PASS names: bounded64 identities, full-cap rejection, exact reboot retention independent of roster/removal, no mutation after failed storage or malformed record\n";
+ assert(names.forget(id<model::OctopusId>(4),[](std::string_view){return false;})==Error::storage_failure&&names.lookup(id<model::OctopusId>(4))=="device-4");
+ assert(names.forget(id<model::OctopusId>(4),save)==Error::none&&names.lookup(id<model::OctopusId>(4)).empty());
+ assert(reboot.restore(stored)&&reboot.lookup(id<model::OctopusId>(4)).empty()&&reboot.lookup(id<model::OctopusId>(5))=="device-5");
+ std::cout<<"PASS names: bounded64 identities, full-cap rejection, offline reboot retention, explicit durable removal and failed-storage rollback\n";
  reset();sent=0;{Active active;start(active);active.storage.incoming=packet();assert(exchange_hostname(active,{})&&active.status.hostname=="remote-name"&&hostnames.lookup(active.peer)=="remote-name"&&sent==1&&active.session.state()==ConnectionState::synchronizing);}
  reset();sent=0;{Active active;start(active,false);assert(exchange_hostname(active,{})&&sent==0&&hostnames.entries().empty());assert(!exchange_hostname(active,"required-name")&&sent==0);}
  for(unsigned failure=0;failure<4;++failure){reset();Active active;start(active);active.storage.incoming=packet(failure==0?"invalid.name":"remote-name",failure==1?99:4);if(failure==2)registry_failure=true;assert(!exchange_hostname(active,failure==3?"other-name":"")&&hostnames.entries().empty()&&active.status.hostname.empty());}

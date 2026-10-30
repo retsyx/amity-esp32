@@ -4,11 +4,12 @@
 int main(){
     auto config=switch_configuration(direct_configuration());std::vector<std::string> tasks;std::string error;
     const auto old=id<model::OctopusId>(70),replacement=id<model::OctopusId>(71);config.octopuses.push_back({old,"Old member","",false,1});config.octopuses.push_back({replacement,"New member","",false,4});
-    ReplacementApproval approval;approval.previous=old;approval.replacement=replacement;approval.previous_revoked=approval.previous_isolated=approval.replacement_enrolled=true;
+    ReplacementApproval approval;approval.previous=old;approval.replacement=replacement;approval.previous_isolated=approval.replacement_enrolled=true;
     for(auto& component:config.components)for(auto& selector:component.record.qualified_names){selector.port.octopus_id=old;auto new_name=selector;new_name.port.octopus_id=replacement;new_name.port.tentacle_id=3;approval.equipment.push_back({component.record.component_id,selector,new_name,true});}
     for(auto side:{model::Side::front,model::Side::back})approval.ports.push_back({{config.consortium_id,old,0,side},{config.consortium_id,replacement,3,side}});
     Configuration proposed;std::vector<model::ActivityId> affected;assert(propose_octopus_replacement(config,approval,proposed,affected,error));assert(affected.size()==2&&proposed.activities[1].switch_input==6&&proposed.activities[1].switch_device==config.activities[1].switch_device);
     for(const auto& c:proposed.components)for(const auto& n:c.record.qualified_names)assert(n.port.octopus_id==replacement&&n.port.tentacle_id==3);
+    assert(std::none_of(proposed.octopuses.begin(),proposed.octopuses.end(),[&](const auto& owner){return owner.octopus_id==old;}));
     for(size_t n=0;n<config.activities.size();++n)assert(proposed.activities[n].activity_id==config.activities[n].activity_id);
     auto denied=approval;denied.previous_isolated=false;assert(!propose_octopus_replacement(config,denied,proposed,affected,error));denied=approval;denied.replacement_enrolled=false;assert(!propose_octopus_replacement(config,denied,proposed,affected,error));denied=approval;denied.previous=*config.controller_octopus_id;assert(!propose_octopus_replacement(config,denied,proposed,affected,error));denied=approval;denied.equipment.pop_back();assert(!propose_octopus_replacement(config,denied,proposed,affected,error));
     // Fresh-main restore rebases the original owner's selectors, keeps member

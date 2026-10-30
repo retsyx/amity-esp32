@@ -9,7 +9,7 @@ bool propose_octopus_replacement(const Configuration& previous,const Replacement
     const auto fail=[&](const char* reason){error=reason;return false;};affected.clear();
     if(!validate_configuration(previous,error))return false;
     if(!previous.controller_octopus_id||approval.previous==*previous.controller_octopus_id)return fail("The original controller cannot be moved to replacement hardware");
-    if(!approval.previous||!approval.replacement||approval.previous==approval.replacement||!approval.previous_revoked||!approval.previous_isolated||!approval.replacement_enrolled)return fail("Revoke and isolate the old hardware, then enroll the replacement using its own credentials");
+    if(!approval.previous||!approval.replacement||approval.previous==approval.replacement||!approval.previous_isolated||!approval.replacement_enrolled)return fail("Isolate the old hardware, then add the replacement using its own credentials");
     const auto target=std::find_if(previous.octopuses.begin(),previous.octopuses.end(),[&](const auto& b){return b.octopus_id==approval.replacement;});
     if(target==previous.octopuses.end())return fail("The replacement Amity is not enrolled");
     std::set<std::string> old_ports,new_ports;
@@ -27,6 +27,7 @@ bool propose_octopus_replacement(const Configuration& previous,const Replacement
     if(changed.empty())return fail("The old Amity has no saved equipment to replace");
     for(const auto& e:approval.equipment)if(!selections.count(model::name_json(e.previous)))return fail("An equipment mapping does not refer to a saved old selector");
     for(const auto& a:out.activities)if((a.source&&changed.count(*a.source))||(a.display&&changed.count(*a.display))||(a.audio&&changed.count(*a.audio))||(a.switch_device&&changed.count(*a.switch_device)))affected.push_back(a.activity_id);
+    out.octopuses.erase(std::remove_if(out.octopuses.begin(),out.octopuses.end(),[&](const auto& owner){return owner.octopus_id==approval.previous;}),out.octopuses.end());
     if(!validate_configuration(out,error))return false;
     candidate=std::move(out);error.clear();return true;
 }

@@ -86,6 +86,66 @@ qualification gates. No new firmware API or functional-test control surface was
 introduced. Permanent behavior requirements are recorded in
 [AGENTS.md](../AGENTS.md).
 
+## Explicit Remove and direct Replace — 29 October 2026
+
+Firmware 0.1.99/Matter software 100 changes confirmed Remove to delete the
+selected owner, its equipment/settings/name and every referencing activity.
+The dialog lists activities across all four roles and confirms their exact IDs
+and configuration/presentation revisions together with membership revision and
+target boot. Offline-to-known-boot changes also require a fresh review. Saved-only
+and metadata-only records can be explicitly purged. The main cannot remove itself.
+
+The existing journal stages/readbacks the candidate and the owner task reserves
+capacity before membership revocation. Reset outcome is tracked separately from
+applied configuration cleanup. Storage/metadata failures remain explicitly
+incomplete. Direct Replace remains available without destructive Remove first,
+preserving mapped equipment/activity/slot IDs while revoking and forgetting the
+old isolated device. The requested device-card and replacement-dialog sentences
+are removed; clean activity projections refresh while dirty drafts require reload.
+
+Targeted native checks cover all-role cascades, unrelated values, slot metadata,
+stage/reservation/marker failures, metadata storage/reboot behavior, saved-only
+retry, exact reviewed sets and optional boot changes. Thirty browser checks and
+three actual-script Node UI suites pass; all 317 Python framework checks pass.
+The ESP-IDF build passes 36 public record layout checks. Logs are under
+`test-results/device-removal-2026-10-29/`. These checks do not qualify physical
+execution of the new removal behavior; deployment and functional evidence must
+be recorded separately after running.
+
+## Three-Amity physical attempts — 29 October 2026
+
+The new `test_consortium_three_duts` case was run on `test2` with `amity-dut`
+as the main and `amity-dut-2`/`amity-dut-3` as candidates. The main reported
+firmware 0.1.98. A frozen copy of the framework was verified identical locally
+and on the Pi; no firmware or assertion changes were made for either attempt.
+
+The first attempt exhausted its default 90-second Add budget during the first
+member's settings verification, ending with an HTTPS handshake timeout. Only
+member 2 was added, then removed with reset `scheduled` and no cleanup errors.
+The fresh postcheck preserved every saved value except revision counters, along
+with the main's boot, authority, Matter fabrics and HomeKit state. The user
+reported accessing the UI during this attempt; its contribution to the delay
+is unproven. Preserve this failed report at
+`test-results/consortium-three-duts-2026-10-29/functional.json` and its stdio log.
+
+The unchanged retry used the existing `--timeout 180` option. Both members
+passed exact connected/configuration/settings checks. During the HDMI scan,
+`GET /api/system` failed with `IncompleteRead`: 4,096 bytes arrived from a
+6,218-byte response. The retained scan snapshot contained nine devices, six
+wire initiators and three owner boots, but the scan did not return and none of
+its explicit membership/location assertions or activity/theft checks ran.
+Both newly added members were removed in reverse order with reset `scheduled`,
+no retained membership and no cleanup errors. The main remained ready/idle with
+the same boot, authority, activities, equipment, sixteen reserved slots, Matter
+fabrics and HomeKit state. Its only saved-value change was the retained device
+record for member 3; the postcheck records that difference rather than declaring
+exact configuration equality. No active peers remained.
+
+Retry evidence is under `test-results/consortium-three-duts-retry-2026-10-29/`:
+`functional.json`, `functional-run.log`, `main-pre.json`, `main-post.json`,
+`provenance.json` and `physical-summary.json`. Neither attempt qualifies
+three-owner CEC activity or source-theft behavior.
+
 ## Current saved format only — 29 October 2026
 
 Firmware 0.1.96/Matter software 97 removes older saved-format readers, migration

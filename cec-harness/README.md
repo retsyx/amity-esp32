@@ -28,9 +28,9 @@ membership behavior remains unchanged.
   input 2 and verifies that Amity restores the first player after source theft.
 - `functional_tests/add_amity.py`: adds the second bench board through the main
   Amity, verifies its membership, then removes and resets that added board.
-- `functional_tests/consortium.py`: scans equipment on the main and a headless
-  member, then checks activity power and source-theft suppression in both
-  ownership directions.
+- `functional_tests/consortium.py`: scans equipment on the main and one or two
+  headless members, then checks activity power and source-theft suppression in
+  every ownership direction.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -230,8 +230,12 @@ records, membership, member boot and name before passing. This uses the same API
 deadline; it changes neither the firmware cache lifetime nor assertion criteria.
 On exit, the helper removes only the new member that this scope
 successfully identified, using the existing Remove action with reviewed
-membership revision and target boot. Cleanup requires acknowledgment that the
-candidate's reset was scheduled; this deliberately resets the added board.
+configuration/presentation and membership revisions, target boot and the exact
+affected activity list. Cleanup requires acknowledgment that the candidate's
+reset was scheduled and verifies its saved owner, equipment, adapter settings
+and named inventory are gone; this deliberately resets the added board. A
+candidate referenced by preexisting user activities is rejected before Add,
+so the test cannot authorize deleting those activities.
 It does not factory-reset the main, run a ten-second reset before the test,
 or remove a preexisting member. Failures retain/report uncertain ownership
 rather than removing another device.
@@ -323,6 +327,25 @@ removed with a scheduled reset, while component responders remain available.
 Normal reserved activity-slot tombstones are retained; cleanup accepts only
 new default-metadata tombstones tied to successfully created and removed
 fixture activity IDs, preserving existing slots and user metadata.
+
+`test_consortium_three_duts()` adds `amity-dut-2` and `amity-dut-3` to the
+original main `amity-dut` in the same bed, with both candidates listed in
+`members`. Each owner has the same TV/front and AVR plus input-1 player/back
+topology. It requires exactly nine scanned identities, nine typed locations
+and fresh discovery on all six isolated wires. Only the main uses HTTP.
+
+The three-DUT case creates one activity per owner, starts each in turn, and
+tests theft from both other owners while it is selected: six directed theft
+checks in total. Each cycle requires fresh power-on and standby commands for
+its active triple, retains its AVR route and selected activity during both
+theft attempts, and leaves all nine components in Standby. All three activities
+and their fixture equipment are removed before member 3 is removed/reset,
+followed by member 2, with responders still running. Member 2 is verified before
+the second Add and again after member 3 is removed; the distributed scan and
+activity assertions retain and recheck both members' proven boots throughout.
+Select it with `--test consortium_three_duts`. Host checks verify its coverage
+and cleanup order; adding the case does not physically qualify three-owner
+operation.
 
 On 29 October 2026, all six functional cases passed on `test2` with firmware
 0.1.98, including both directions of `consortium.py`. Its scan proved exactly
@@ -495,8 +518,9 @@ python3 cec-harness/run.py \
 The default remains `hdmi_scan`. Select `--test activity` for both the activity
 power-cycle and explicit switch-input sub-tests, `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
-for the two-owner equipment scenario, or `--test all` for all five registered
-scenarios (six test cases). The same credentials, TLS, SSH and output
+for the two-owner equipment scenario, `--test consortium_three_duts` for the
+three-owner scenario, or `--test all` for all six registered scenarios (seven
+test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
 The shared framework logs progress to stderr as it runs, with a UTC timestamp,

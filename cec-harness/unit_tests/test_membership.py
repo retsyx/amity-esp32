@@ -65,6 +65,7 @@ class Fixture:
         self.bad_add_identity = self.bad_add_boot = self.wrong_candidate = False
         self.foreign_scan = self.reject_add = self.fail_add_operation = False
         self.change_boot_before_remove = False
+        self.change_config_before_remove = False
         self.lose_remove_reply = False
         self.adoption_remaining, self.pending_owner = 0, None
         self.reset_mode = "scheduled"
@@ -209,7 +210,8 @@ class Fixture:
                 self.pending_owner = identity
                 self.system["configuration_pending"] = True
             else:
-                self.config["octopuses"].append(self.owner(identity))
+                if not any(row["octopus_id"] == identity for row in self.config["octopuses"]):
+                    self.config["octopuses"].append(self.owner(identity))
                 self.bump()
             self.operations[request_id] = self.operation(request_id, "complete", kind="add")
             if self.lose_add_reply:
@@ -219,12 +221,29 @@ class Fixture:
             target = next(p for p in self.system["membership"]["peers"] if p["octopus_id"] == data["octopus_id"])
             if self.change_boot_before_remove:
                 target["boot_id"] = "9" * 32
+            if self.change_config_before_remove:
+                self.bump()
             if (data["expected_target_boot_id"] != target["boot_id"]
-                    or data["expected_membership_revision"] != self.system["membership"]["membership_revision"]):
+                    or data["expected_membership_revision"] != self.system["membership"]["membership_revision"]
+                    or data["expected_config_revision"] != self.config["config_revision"]
+                    or data["expected_presentation_revision"] != self.config["presentation_revision"]):
                 raise AmityHTTPError(409, "Removal review changed")
+            owned = {row["component_id"] for row in self.config["components"]
+                     if any(name["octopus_id"] == data["octopus_id"] for name in row["qualified_names"])}
+            affected = [row["activity_id"] for row in self.config["activities"]
+                        if any(row.get(role) in owned for role in ("source", "display", "audio", "switch_device"))]
+            if data["affected_activity_ids"] != affected:
+                raise AmityHTTPError(409, "Affected activities changed")
             self.system["membership"]["membership_revision"] = str(int(self.system["membership"]["membership_revision"]) + 1)
             self.system["membership"]["peers"] = [p for p in self.system["membership"]["peers"] if p["octopus_id"] != data["octopus_id"]]
-            # Real removal may retain owner/name history in saved configuration.
+            self.config["octopuses"] = [row for row in self.config["octopuses"] if row["octopus_id"] != data["octopus_id"]]
+            if "adapter_settings" in self.config:
+                self.config["adapter_settings"] = [row for row in self.config["adapter_settings"]
+                                                   if row["octopus_id"] != data["octopus_id"]]
+            self.config["components"] = [row for row in self.config["components"] if row["component_id"] not in owned]
+            self.config["activities"] = [row for row in self.config["activities"] if row["activity_id"] not in affected]
+            self.system["named_devices"] = [row for row in self.system["named_devices"] if row["octopus_id"] != data["octopus_id"]]
+            self.bump()
             self.operations[request_id] = self.operation(request_id, "complete", reset=self.reset_mode)
             if self.lose_remove_reply:
                 self.lose_remove_reply = False
@@ -262,11 +281,14 @@ class MembershipTests(unittest.TestCase):
             self.assertEqual(f.gpio.calls, [("low", pin), ("release", pin)])
         removal = f.posts("remove")
         self.assertEqual(len(removal), 1)
-        self.assertEqual(set(removal[0]), {"request_id", "octopus_id", "confirm", "expected_membership_revision", "expected_target_boot_id"})
+        self.assertEqual(set(removal[0]), {"request_id", "octopus_id", "confirm", "expected_membership_revision", "expected_target_boot_id",
+                                          "expected_config_revision", "expected_presentation_revision", "affected_activity_ids"})
         self.assertEqual(removal[0]["octopus_id"], f.candidate.identity.device_id)
         self.assertEqual(removal[0]["expected_membership_revision"], "3")
         self.assertEqual(removal[0]["expected_target_boot_id"], f.member_boot)
         self.assertIs(removal[0]["confirm"], True)
+        self.assertEqual(removal[0]["affected_activity_ids"], [])
+        self.assertFalse(any(row["octopus_id"] == f.candidate.identity.device_id for row in f.config["octopuses"]))
         self.assertEqual([p["octopus_id"] for p in f.system["membership"]["peers"]], [f.existing_id])
         for field in ("activities", "components", "external_slots", "zones", "controller_octopus_id"):
             self.assertEqual(f.config[field], f.original[field])
@@ -283,6 +305,143 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(f.posts("add")[0]["name"], f.candidate.name)
         self.assertEqual(len(f.posts("add")), 1)
         self.assertEqual(len(f.posts("remove")), 1)
+
+    def test_cleanup_purges_retained_candidate_inventory_settings_and_unreferenced_equipment(self):
+        f = Fixture()
+        target = f.candidate.identity.device_id
+        target_component = {"component_id": "5" * 32, "label": "Old candidate equipment", "kind": "source",
+                            "qualified_names": [{"consortium_id": f.group, "octopus_id": target,
+                                                 "tentacle_id": 0, "side": "back", "osd_name": "Old player"}]}
+        f.config["octopuses"].append(f.owner(target))
+        f.config["components"].append(target_component)
+        f.config["adapter_settings"] = [{"octopus_id": f.main.identity.device_id, "tentacle_id": 0},
+                                        {"octopus_id": target, "tentacle_id": 0}]
+        before = deepcopy(f.config)
+        with f.added().create():
+            pass
+        self.assertEqual(f.config["octopuses"], before["octopuses"][:-1])
+        self.assertEqual(f.config["components"], before["components"][:-1])
+        self.assertEqual(f.config["adapter_settings"], before["adapter_settings"][:1])
+        for key in set(before) - {"octopuses", "components", "adapter_settings", "config_revision", "presentation_revision"}:
+            self.assertEqual(f.config[key], before[key], key)
+        removal = f.posts("remove")[0]
+        self.assertEqual(removal["affected_activity_ids"], [])
+        self.assertEqual(removal["expected_config_revision"], str(int(before["config_revision"]) + 1))
+        self.assertEqual(removal["expected_presentation_revision"], before["presentation_revision"])
+        self.assertFalse(any(row["octopus_id"] == target for row in f.system["named_devices"]))
+
+    def test_candidate_referenced_by_existing_activity_is_rejected_before_scan_or_gpio(self):
+        for role in ("display", "source", "audio", "switch_device"):
+            with self.subTest(role=role):
+                f = Fixture()
+                target = f.candidate.identity.device_id
+                f.config["components"].append({"component_id": "5" * 32, "label": "Saved candidate source", "kind": "source",
+                                                "qualified_names": [{"consortium_id": f.group, "octopus_id": target,
+                                                                     "tentacle_id": 0, "side": "back", "osd_name": "Saved source"}]})
+                f.config["activities"][0][role] = "5" * 32
+                before = deepcopy(f.config)
+                member = f.added()
+                with self.assertRaises(MembershipConflict):
+                    member.create()
+                member.close()
+                self.assertEqual(f.posts("scan"), [])
+                self.assertEqual(f.posts("add"), [])
+                self.assertEqual(f.posts("remove"), [])
+                self.assertEqual(f.gpio.calls, [])
+                self.assertEqual(f.config, before)
+
+    def test_cleanup_never_deletes_a_concurrent_user_activity_selection(self):
+        f = Fixture()
+        member = f.added().create()
+        f.config["components"].append({"component_id": "5" * 32, "label": "User equipment", "kind": "source",
+                                        "qualified_names": [{"consortium_id": f.group, "octopus_id": f.candidate.identity.device_id,
+                                                             "tentacle_id": 0, "side": "back", "osd_name": "User source"}]})
+        f.config["activities"][0]["source"] = "5" * 32
+        before = deepcopy(f.config)
+        with self.assertRaises(MembershipCleanupError):
+            member.close()
+        self.assertEqual(f.posts("remove"), [])
+        self.assertEqual(f.config, before)
+
+    def test_cleanup_rejects_retained_owner_settings_or_equipment_after_reset_acknowledgment(self):
+        for key in ("octopuses", "adapter_settings", "components"):
+            with self.subTest(key=key):
+                f = Fixture()
+                target = f.candidate.identity.device_id
+                rows = {"octopuses": f.owner(target), "adapter_settings": {"octopus_id": target, "tentacle_id": 0},
+                        "components": {"component_id": "5" * 32, "label": "Old source", "kind": "source",
+                                       "qualified_names": [{"consortium_id": f.group, "octopus_id": target,
+                                                            "tentacle_id": 0, "side": "back", "osd_name": "Old source"}]}}
+                f.config.setdefault(key, []).append(deepcopy(rows[key]))
+                member = f.added().create()
+                original_request = f.request
+
+                def request(path, data=None, **kwargs):
+                    response = original_request(path, data, **kwargs)
+                    if path == "/api/membership/remove" and data is not None:
+                        f.config[key].append(deepcopy(rows[key]))
+                    return response
+
+                f.request = f.main.request = request
+                with self.assertRaises(MembershipCleanupError):
+                    member.close()
+                self.assertEqual(len(f.posts("remove")), 1)
+                self.assertFalse(any(peer["octopus_id"] == target for peer in f.system["membership"]["peers"]))
+
+    def test_nested_cleanup_accepts_only_a_completed_test_owned_inventory_removal(self):
+        for completed in (True, False):
+            with self.subTest(completed=completed):
+                f = Fixture()
+                third = DUT("amity-dut-3")
+                third._testbed = f.bed
+                f.bed.control_only = ()
+                f.bed.members = (f.candidate, third)
+                f.config["octopuses"].append(f.owner(third.identity.device_id))
+                member = f.added().create()
+                f.config["octopuses"] = [row for row in f.config["octopuses"] if row["octopus_id"] != third.identity.device_id]
+                if completed:
+                    f.main.membership_operations.append({"phase": "cleanup", "device_id": third.identity.device_id,
+                                                         "operation_stage": "complete", "reset": "scheduled",
+                                                         "retained_member": False})
+                    member.close()
+                    self.assertEqual(len(f.posts("remove")), 1)
+                else:
+                    with self.assertRaises(MembershipCleanupError):
+                        member.close()
+                    self.assertEqual(f.posts("remove"), [])
+
+    def test_cleanup_rejects_retained_named_device_inventory_after_reset_acknowledgment(self):
+        f = Fixture()
+        member = f.added().create()
+        original_request = f.request
+
+        def request(path, data=None, **kwargs):
+            response = original_request(path, data, **kwargs)
+            if path == "/api/membership/remove" and data is not None:
+                f.system["named_devices"].append({"octopus_id": f.candidate.identity.device_id,
+                                                 "hostname": f.candidate.name})
+            return response
+
+        f.request = f.main.request = request
+        with self.assertRaises(MembershipCleanupError):
+            member.close()
+        self.assertEqual(len(f.posts("remove")), 1)
+        self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
+
+    def test_prior_bed_removal_receipt_does_not_authorize_inventory_changes(self):
+        f = Fixture()
+        third = DUT("amity-dut-3")
+        third._testbed = f.bed
+        f.bed.members = (third,)
+        f.config["octopuses"].append(f.owner(third.identity.device_id))
+        f.main.membership_operations.append({"phase": "cleanup", "device_id": third.identity.device_id,
+                                             "operation_stage": "complete", "reset": "scheduled", "retained_member": False})
+        f.bed._initial_membership_counts = {id(f.main): len(f.main.membership_operations)}
+        member = f.added().create()
+        f.config["octopuses"] = [row for row in f.config["octopuses"] if row["octopus_id"] != third.identity.device_id]
+        with self.assertRaises(MembershipCleanupError):
+            member.close()
+        self.assertEqual(f.posts("remove"), [])
 
     def test_add_waits_for_async_owner_adoption_and_applied_configuration(self):
         f = Fixture()
@@ -733,14 +892,16 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(len(f.gpio.calls), 2)
 
     def test_cleanup_fences_the_main_and_member_boot_review_before_removal(self):
-        for change in ("main", "target_race"):
+        for change in ("main", "target_race", "config_race"):
             with self.subTest(change=change):
                 f = Fixture()
                 member = f.added().create()
                 if change == "main":
                     f.system["boot_id"] = "9" * 32
-                else:
+                elif change == "target_race":
                     f.change_boot_before_remove = True
+                else:
+                    f.change_config_before_remove = True
                 with self.assertRaises(MembershipCleanupError):
                     member.close()
                 self.assertEqual(len(f.posts("remove")), 0 if change == "main" else 1)

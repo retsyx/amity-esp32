@@ -50,6 +50,17 @@ def main():
         checks.append(value)
         print('PASS', value, flush=True)
 
+    def purge_removal(data):
+        removed = set(data['affected_activity_ids'])
+        owned = {component['component_id'] for component in fixture['config'].get('components', [])
+                 if any(name['octopus_id'] == member for name in component.get('qualified_names', []))}
+        fixture['config']['octopuses'] = [owner for owner in fixture['config']['octopuses'] if owner['octopus_id'] != member]
+        fixture['config']['components'] = [component for component in fixture['config'].get('components', []) if component['component_id'] not in owned]
+        fixture['config']['activities'] = [activity for activity in fixture['config']['activities'] if activity['activity_id'] not in removed]
+        editor['activities'] = [activity for activity in editor['activities'] if activity['activity_id'] not in removed]
+        system['membership']['peers'] = []
+        system['named_devices'] = [device for device in system['named_devices'] if device['octopus_id'] != member]
+
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(ROOT/'components/web_admin/assets'), **kwargs)
@@ -74,11 +85,11 @@ def main():
                 operation['polls'] += 1
                 if operation['kind'] == 'remove':
                     if fixture['remove_mode'] == 'poll_error':
-                        system['membership']['peers'] = []
+                        purge_removal(operation['removal'])
                         return self.reply(dict(error='The removal result was lost'), 503)
                     if not fixture['remove_release']:
                         return self.reply(dict(operation_id=operation['id'], stage='admitted'))
-                    system['membership']['peers'] = []
+                    purge_removal(operation['removal'])
                     return self.reply(dict(operation_id=operation['id'], stage='complete', reset=operation['reset'],
                                            message='Reset was not confirmed. Hold its physical button for at least 10 seconds to factory reset it before adding it again.'))
                 if operation['polls'] == 1:
@@ -142,17 +153,20 @@ def main():
                     return self.reply(dict(error='The setup code could not be verified'), 409)
                 kind = 'add'
             elif self.path == '/api/membership/remove':
-                assert set(body) == {'request_id', 'octopus_id', 'confirm', 'expected_membership_revision', 'expected_target_boot_id'}
+                assert set(body) == {'request_id', 'octopus_id', 'confirm', 'expected_membership_revision', 'expected_target_boot_id', 'expected_config_revision', 'expected_presentation_revision', 'affected_activity_ids'}
                 assert body['octopus_id'] == member and body['confirm'] is True
                 assert re.fullmatch('[0-9a-f]{32}', body['request_id'])
                 assert body['expected_membership_revision'] == '1'
+                assert body['expected_config_revision'] == saved_remove_config['config_revision']
+                assert body['expected_presentation_revision'] == saved_remove_config['presentation_revision']
+                assert body['affected_activity_ids'] == [row['activity_id'] for row in saved_remove_config['activities'] if row.get('label', '').startswith('Uses ')]
                 assert body['expected_target_boot_id'] == (None if fixture['remove_mode'] == 'offline' else 'b'*32)
-                if fixture['remove_mode'] in ('stale_revision', 'stale_boot'):
+                if fixture['remove_mode'] in ('stale_revision', 'stale_boot', 'stale_configuration'):
                     return self.reply(dict(error='The Amity changed. Reopen Remove and review its current state.'), 409)
                 if fixture['remove_mode'] == 'unsupported':
                     return self.reply(dict(error='Update this Amity before removing it so it can factory reset safely.'), 409)
                 if fixture['remove_mode'] == 'post_error':
-                    system['membership']['peers'] = []
+                    purge_removal(body)
                     return self.reply(dict(error='The removal response was lost'), 503)
                 kind = 'remove'
             elif self.path in ('/api/remotes/pair', '/api/remotes/unpair'):
@@ -167,6 +181,7 @@ def main():
             op = dict(id=request, kind=kind, polls=0)
             if kind == 'remove':
                 op['reset'] = fixture['remove_mode']
+                op['removal'] = deepcopy(body)
             if self.path.endswith('/restore'):
                 op['unresolved'] = ['Configuration restored.', 'Re-pair the remote and re-enroll added Amity devices before repairing activities.']
             if kind == 'activity':
@@ -271,7 +286,7 @@ def main():
             expect(rows.nth(1).get_by_role('button', name='Remove', exact=True)).to_be_visible()
             for width in (320, 430, 1280):
                 page.set_viewport_size(dict(width=width, height=1000))
-                for index, names in ((0, ('Settings',)), (1, ('Settings', 'Remove'))):
+                for index, names in ((0, ('Settings',)), (1, ('Settings', 'Remove', 'Replace'))):
                     row = rows.nth(index)
                     # Read one DOM snapshot so the normal polling refresh
                     # cannot replace the card between rectangle reads.
@@ -287,7 +302,9 @@ def main():
                     assert abs(buttons[-1]['x'] + buttons[-1]['width'] - header['x'] - header['width']) < 1
                     assert row.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
             page.set_viewport_size(dict(width=430, height=1000))
-            passed('inline this-device heading with Settings and Remove on the same row, right aligned at 320, 430 and 1280 pixels')
+            passed('inline headings and device actions remain aligned at 320, 430 and 1280 pixels')
+            expect(page.locator('#managedAmityList')).not_to_contain_text('Controlled by the original Amity')
+            expect(page.locator('#managedAmityList')).not_to_contain_text('HDMI adapters')
             expect(page.get_by_text('Manage added devices from this original Amity. They have no separate interface or remote.', exact=True)).to_have_count(0)
             expect(page.get_by_role('button', name='Move coordinator')).to_have_count(0)
             page.screenshot(path=str(ROOT/'test-results/controller-managed-devices-ui-0.1.73.png'), full_page=True)
@@ -314,6 +331,7 @@ def main():
             saved_peers = system['membership']['peers']
             fixture['config']['octopuses'] = [b for b in saved_boards if b['octopus_id'] == controller]
             system['membership']['peers'] = []
+            system['named_devices'] = [device for device in saved_names if device['octopus_id'] == controller]
             try:
                 page.evaluate('amityInterface.refresh()')
                 expect(rows).to_have_count(1)
@@ -325,6 +343,7 @@ def main():
             finally:
                 fixture['config']['octopuses'] = saved_boards
                 system['membership']['peers'] = saved_peers
+                system['named_devices'] = saved_names
                 page.evaluate('amityInterface.refresh()')
             expect(rows).to_have_count(2)
             fixture['admission']['requires_setup_code'] = True
@@ -364,21 +383,32 @@ def main():
             saved_config = deepcopy(fixture['config'])
             saved_editor = deepcopy(editor)
             saved_peers = deepcopy(system['membership']['peers'])
+            saved_remove_config = deepcopy(saved_config)
+            saved_remove_config['components'] = [dict(component_id=f'{n:032x}', qualified_names=[dict(octopus_id=member)]) for n in range(31, 35)]
+            saved_remove_config['activities'] = [dict(activity_id=f'{n+40:032x}', label='Uses '+role, **{role:f'{n:032x}'})
+                                                for n, role in zip(range(31, 35), ('display', 'source', 'audio', 'switch_device'))]
+            saved_remove_config['activities'].append(dict(activity_id='f'*32, label='Unrelated local activity'))
+            fixture['config'] = deepcopy(saved_remove_config)
             before_remove = len(fixture['posts'])
             before_scans = fixture['scans']
             rows.nth(1).get_by_role('button', name='Remove', exact=True).click()
             dialog = page.locator('dialog:visible')
-            expect(dialog).to_contain_text('If amity-bedroom responds, removing it factory resets that Amity.')
-            expect(dialog).to_contain_text('If it does not respond, it is removed from this system')
+            expect(dialog).to_contain_text('Removing this Amity deletes its saved equipment and settings.')
+            expect(dialog).to_contain_text('If it responds, it will also factory reset.')
             expect(dialog).to_contain_text('physical button before adding it again')
-            expect(dialog).to_contain_text('Equipment and activities stay saved here')
+            expect(dialog).to_contain_text('The following activities will be deleted if you confirm removal:')
+            expect(dialog.locator('li')).to_have_text(['Uses display', 'Uses source', 'Uses audio', 'Uses switch_device'])
+            expect(dialog).not_to_contain_text('Unrelated local activity')
             dialog.get_by_role('button', name='Cancel', exact=True).click()
             assert len(fixture['posts']) == before_remove and fixture['scans'] == before_scans
-            assert system['membership']['peers'] == saved_peers
-            passed('Remove explains reset versus offline drop and retained activities; Cancel is inert')
-            for mode in ('scheduled', 'offline', 'unconfirmed', 'unsupported', 'post_error', 'poll_error', 'stale_revision', 'stale_boot'):
+            assert system['membership']['peers'] == saved_peers and fixture['config'] == saved_remove_config
+            passed('Remove lists every affected role, warns of activity deletion and leaves Cancel inert')
+            for mode in ('scheduled', 'offline', 'unconfirmed', 'unsupported', 'post_error', 'poll_error', 'stale_revision', 'stale_boot', 'stale_configuration'):
                 fixture['remove_mode'] = mode
                 fixture['remove_release'] = False
+                fixture['config'] = deepcopy(saved_remove_config)
+                editor.clear()
+                editor.update(deepcopy(saved_editor))
                 system['membership']['peers'] = deepcopy(saved_peers)
                 system['membership']['membership_revision'] = '1'
                 if mode == 'offline':
@@ -389,67 +419,94 @@ def main():
                 before = len([p for p, _ in fixture['posts'] if p == '/api/membership/remove'])
                 rows.nth(1).get_by_role('button', name='Remove', exact=True).click()
                 dialog = page.locator('dialog:visible')
+                expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_enabled()
                 if mode == 'stale_revision':
                     system['membership']['membership_revision'] = '2'
                 elif mode == 'stale_boot':
                     system['membership']['peers'][0]['boot_id'] = 'c'*32
+                elif mode == 'stale_configuration':
+                    fixture['config']['config_revision'] = str(int(saved_remove_config['config_revision'])+1)
+                    fixture['config']['activities'].append(dict(activity_id='e'*32, label='New unreviewed activity', source=f'{31:032x}'))
                 if mode.startswith('stale_'):
-                    # A background refresh while confirmation is open must not
-                    # replace what the user actually reviewed with fresh tokens.
                     page.evaluate('amityInterface.refresh()')
                 with page.expect_response(lambda r: r.url.endswith('/api/membership/remove')):
-
                     dialog.get_by_role('button', name='Remove Amity', exact=True).click()
                 result = dialog.get_by_role('status')
                 if mode.startswith('stale_'):
                     expect(result).to_contain_text('The Amity changed. Reopen Remove')
-                    expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_enabled()
+                    expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_hidden()
                     assert system['membership']['peers']
-                    dialog.get_by_role('button', name='Cancel', exact=True).click()
-                    passed(('stale membership revision' if mode == 'stale_revision' else 'target reboot') + ' retains reviewed confirmation tokens and rejects without drop or replay')
+                    dialog.get_by_role('button', name='Close', exact=True).click()
+                    passed(mode+' retains reviewed confirmation tokens and rejects without drop or replay')
                 elif mode == 'unsupported':
                     expect(result).to_contain_text('Update this Amity before removing it')
-                    expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_enabled()
-                    expect(dialog.get_by_role('button', name='Cancel', exact=True)).to_be_visible()
+                    expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_hidden()
                     assert system['membership']['peers'] == saved_peers
-                    dialog.get_by_role('button', name='Cancel', exact=True).click()
+                    dialog.get_by_role('button', name='Close', exact=True).click()
                     passed('unsupported responding firmware rejects before removal/reset and never retries itself')
                 else:
                     if mode not in ('post_error', 'poll_error'):
                         expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_disabled()
                         expect(result).to_contain_text('Removing amity-bedroom')
                         assert system['membership']['peers']
-                        # Admission remains visible and is not called reset success.
                         expect(result).not_to_contain_text('Factory reset accepted')
                         fixture['remove_release'] = True
                     if mode == 'scheduled':
                         expect(result).to_contain_text('Factory reset accepted; it will restart and forget its Wi-Fi and settings.')
                         expect(result).not_to_contain_text('Factory reset completed')
-                        passed('responsive removal waits beyond admission, then reports only acknowledged reset scheduling')
+                        passed('responsive removal waits for configuration cleanup and acknowledged reset scheduling')
                     elif mode in ('offline', 'unconfirmed'):
                         expect(result).to_contain_text('amity-bedroom removed.')
                         expect(result).to_contain_text('at least 10 seconds')
                         expect(result).not_to_contain_text('Factory reset accepted')
-                        passed(('offline drop' if mode == 'offline' else 'lost reset acknowledgment') + ' requires the physical reset button and makes no reset-success claim')
+                        passed(mode+' removes saved data but requires physical reset without a reset-success claim')
                     else:
                         expect(result).to_contain_text('Removal could not be confirmed')
                         expect(result).to_contain_text('physical button before adding it again')
                         expect(result).not_to_contain_text('Factory reset accepted')
-                        passed(('lost POST response' if mode == 'post_error' else 'lost operation result') + ' remains unknown without destructive replay')
+                        passed(mode+' remains unknown without destructive replay')
                     expect(dialog).to_be_visible()
-                    expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).not_to_be_visible()
+                    expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_hidden()
                     dialog.get_by_role('button', name='Close', exact=True).click()
-                # Polling/refresh after a result must never dispatch another reset.
+                    assert [row['octopus_id'] for row in fixture['config']['octopuses']] == [controller]
+                    assert fixture['config']['components'] == []
+                    assert fixture['config']['activities'] == [dict(activity_id='f'*32, label='Unrelated local activity')]
                 page.evaluate('amityInterface.refresh()')
                 assert len([p for p, _ in fixture['posts'] if p == '/api/membership/remove']) == before + 1
-                assert fixture['config'] == saved_config and editor == saved_editor
                 assert fixture['scans'] == before_scans
-                system['membership']['peers'] = deepcopy(saved_peers)
-                system['membership']['membership_revision'] = '1'
-                page.evaluate('amityInterface.refresh()')
             assert all(path == '/api/membership/remove' for path, _ in fixture['posts'][before_remove:])
+            fixture['config'] = deepcopy(saved_config)
+            editor.clear()
+            editor.update(saved_editor)
+            system['membership']['peers'] = deepcopy(saved_peers)
+            system['membership']['membership_revision'] = '1'
+            page.evaluate('amityInterface.refresh()')
             expect(rows.first.locator('h3')).to_have_text('amity-living-room (this device)')
             expect(rows.first.get_by_role('button', name='Remove', exact=True)).to_have_count(0)
+            # Successful device changes reload the saved activity projection.
+            # A concurrent server deletion cannot silently erase a local draft.
+            projection_baseline = deepcopy(editor)
+            editor['activities'] = deepcopy(projection_baseline['activities'][:1])
+            page.evaluate('refreshActivityConfiguration()')
+            page.locator('[data-tab=activities]').click()
+            expect(page.locator('#activityList article')).to_have_count(1)
+            passed('completed device changes can immediately reload the saved activity projection')
+            page.locator('#activityList article').first.get_by_role('button', name='Edit', exact=True).click()
+            page.locator('#activityFields input').first.fill('Unrelated unsaved draft')
+            page.locator('#activityForm button[type=submit]').click()
+            editor['activities'] = []
+            page.evaluate('refreshActivityConfiguration()')
+            expect(page.locator('#message')).to_have_text('Activities changed. Reload the page before saving your edits.')
+            expect(page.locator('#activityList')).to_contain_text('Unrelated unsaved draft')
+            before_save = len([path for path, _ in fixture['posts'] if path == '/api/activity-editor'])
+            page.locator('#saveActivities').click()
+            expect(page.locator('#message')).to_have_text('Activities changed in another session. Reload the page before continuing.')
+            assert len([path for path, _ in fixture['posts'] if path == '/api/activity-editor']) == before_save
+            passed('device changes preserve unsaved activity drafts and require the existing reload conflict path')
+            editor.clear()
+            editor.update(projection_baseline)
+            page.reload()
+            expect(page.locator('#admin')).to_be_visible()
             page.locator('[data-tab=advanced]').click()
             backup = deepcopy(configuration)
             backup['controller_octopus_id'] = 'f'*32
@@ -552,6 +609,7 @@ def main():
                 expect(retained_row).to_have_count(1)
                 retained_row.get_by_role('button', name='Replace', exact=True).click()
                 replacement_dialog = page.locator('dialog:visible')
+                expect(replacement_dialog).not_to_contain_text('The remote stays on the original Amity.')
                 replacement_dialog.get_by_label('Replacement Amity', exact=True).select_option(replacement)
                 expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True)).to_have_count(1)
                 expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True).locator('option')).to_have_count(2)

@@ -70,6 +70,10 @@ const ConfiguredActivity* activity_for_slot(const Configuration&, unsigned slot)
 std::vector<model::ActivityId> ordered_activities(const Configuration&);
 // Preserve slots and tombstones independently of presentation ordering.
 bool reconcile_external_slots(const Configuration& previous, Configuration& candidate, std::string& error);
+// Explicit user removal deletes every recipe referring to this owner's saved
+// equipment. Ordinary missing/offline equipment keeps its saved selections.
+bool propose_octopus_removal(const Configuration&, model::OctopusId,
+    Configuration& candidate, std::vector<model::ActivityId>& affected, std::string& error);
 enum class ConfigResult { ok, missing, conflict, invalid, storage_error, recovery_required, not_ready, capacity };
 struct ConfigBackend : IdentityBackend { virtual bool erase(const char* key) = 0; };
 class ConfigurationStore {

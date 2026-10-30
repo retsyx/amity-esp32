@@ -1019,6 +1019,31 @@ std::string runtime_removal_operation(model::OctopusId owner,model::MessageId re
     return "{\"stage\":\"complete\",\"reset\":\"unconfirmed\",\"message\":\"The removal result is no longer available. Physically factory reset the removed Amity before adding it again.\"}";
 }
 bool runtime_removed_device_reset_authorized(model::OctopusId issuer){std::lock_guard<std::mutex> guard(lock);return removal_authorized_locked(issuer);}
+esp_err_t runtime_forget_removed_octopus(model::OctopusId owner){
+    if(!owner)return ESP_ERR_INVALID_ARG;
+    RuntimeLifecycleHooks hooks;
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        if(!original_controller(group,identity.id)||!status.authority_ready||owner==identity.id||
+           std::any_of(group.peers.begin(),group.peers.end(),[&](const auto& peer){return peer.id==owner;}))
+            return ESP_ERR_INVALID_STATE;
+        const auto saved=hostnames.forget(owner,[](std::string_view bytes){return write_record("amity_group","hostnames",bytes)==ESP_OK;});
+        if(saved!=Error::none)return ESP_FAIL;
+        settings_caches.erase(std::remove_if(settings_caches.begin(),settings_caches.end(),
+            [&](const auto& item){return item.owner==owner;}),settings_caches.end());
+        settings_operations.erase(std::remove_if(settings_operations.begin(),settings_operations.end(),
+            [&](const auto& item){return item.owner==owner;}),settings_operations.end());
+        if(!settings_authorization.local){
+            const auto active=settings_authorization.link.lock();
+            if(active&&active->peer==owner)settings_authorization={};
+        }
+        hooks=lifecycle;
+    }
+    // Clear owner-local snapshots for saved-only purges as well as roster
+    // removals. Reset acknowledgement state remains available to the caller.
+    if(hooks.revoked)hooks.revoked(owner);
+    return ESP_OK;
+}
 void runtime_settings_hooks(RuntimeSettingsHooks hooks){std::lock_guard<std::mutex> guard(lock);settings_hooks=std::move(hooks);}
 bool runtime_device_settings_authorized(model::MessageId id){std::lock_guard<std::mutex> guard(lock);return settings_authorized_locked(id);}
 std::string runtime_device_settings(model::OctopusId owner){

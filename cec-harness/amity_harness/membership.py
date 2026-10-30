@@ -129,23 +129,55 @@ class AddedAmity:
             raise MembershipConflict("The main has no proven boot/system identity")
         return system
 
-    def _config(self, *, deadline):
+    @staticmethod
+    def _owned_components(config, owners):
+        return {component.get("component_id") for component in config.get("components", [])
+                if any(name.get("octopus_id") in owners for name in component.get("qualified_names", []))}
+
+    @classmethod
+    def _affected_activities(cls, config, owners):
+        components = cls._owned_components(config, owners)
+        return [activity.get("activity_id") for activity in config.get("activities", [])
+                if any(activity.get(role) in components for role in ("display", "source", "audio", "switch_device"))]
+
+    def _removed_owners(self):
+        """Earlier successful removals in this bed may change a nested baseline."""
+        bed = self.main._testbed
+        candidates = {dut.identity.device_id for dut in
+                      (*bed.control_only, *getattr(bed, "members", ()))}
+        start = getattr(bed, "_initial_membership_counts", {}).get(id(self.main), 0)
+        return {row.get("device_id") for row in self.main.membership_operations[start:]
+                if row.get("phase") == "cleanup" and row.get("device_id") in candidates
+                and row.get("operation_stage") == "complete" and row.get("reset") == "scheduled"
+                and row.get("retained_member") is False and not row.get("error_type")}
+
+    def _config(self, *, deadline, removed=False):
         config = self._request("/api/config", deadline=deadline)
         if (not isinstance(config, dict) or config.get("controller_octopus_id") != self.main.identity.device_id
                 or config.get("consortium_id") != self.group
                 or any(not isinstance(config.get(k), list) for k in ("activities", "components", "octopuses"))):
             raise MembershipConflict("The main returned an invalid saved configuration")
         if self._baseline is not None:
+            removed_owners = self._removed_owners() | ({self.device_id} if removed else set())
+            removed_components = self._owned_components(self._baseline, removed_owners)
             for key, value in self._baseline.items():
                 if key == "external_slots" and self._owned_retired_slots(value, config.get(key)):
                     continue
+                if key == "components":
+                    value = [row for row in value if row.get("component_id") not in removed_components]
                 if key not in {"config_revision", "presentation_revision", "octopuses", "adapter_settings"} and config.get(key) != value:
                     raise MembershipConflict("Existing saved activity/equipment configuration changed")
             for key in ("octopuses", "adapter_settings"):
-                original = self._baseline.get(key, [])
+                original = [row for row in self._baseline.get(key, [])
+                            if row.get("octopus_id") not in removed_owners]
                 current = config.get(key, [])
-                if not isinstance(original, list) or not isinstance(current, list) or any(record not in current for record in original):
+                if (not isinstance(current, list)
+                        or any(row.get("octopus_id") in removed_owners for row in current)
+                        or [row for row in current if row in original] != original
+                        or any(row not in original and row.get("octopus_id") != self.device_id for row in current)):
                     raise MembershipConflict("Existing Amity settings changed")
+            if self._owned_components(config, removed_owners) or self._affected_activities(config, removed_owners):
+                raise MembershipConflict("Removed Amity equipment remains in saved configuration")
         return config
 
     def _owned_retired_slots(self, before, after):
@@ -246,6 +278,8 @@ class AddedAmity:
             if current.get("phase") not in {"idle", "complete", "cancelled", "failed"}:
                 raise MembershipConflict("Another Add Amity search is in progress")
             self._baseline = deepcopy(self._config(deadline=deadline))
+            if self._affected_activities(self._baseline, {self.device_id}):
+                raise MembershipConflict("This test cannot own a candidate referenced by existing saved activities")
             self._scan_attempted = True
             self._step(record, "start_scan")
             scan = self._request("/api/membership/scan", {"request_id": self.scan_id}, deadline=deadline)
@@ -410,10 +444,17 @@ class AddedAmity:
                     peer = active[self.device_id]
                     if not _identifier(peer.get("boot_id")):
                         raise MembershipConflict("The added Amity has no reviewed boot for removal")
+                    config = self._config(deadline=deadline)
+                    affected = self._affected_activities(config, {self.device_id})
+                    if affected:
+                        raise MembershipConflict("Test-owned activities must be cleaned up before removing their Amity")
                     self._remove_id = uuid4().hex
                     payload = {"request_id": self._remove_id, "octopus_id": self.device_id, "confirm": True,
                                "expected_membership_revision": system["membership"]["membership_revision"],
-                               "expected_target_boot_id": peer["boot_id"]}
+                               "expected_target_boot_id": peer["boot_id"],
+                               "expected_config_revision": config["config_revision"],
+                               "expected_presentation_revision": config["presentation_revision"],
+                               "affected_activity_ids": affected}
                     self._remove_attempted = True
                     self._log("membership.remove.submit", operation_id=self._remove_id,
                               target_boot=peer["boot_id"],
@@ -430,7 +471,9 @@ class AddedAmity:
                     system = self._system()
                     if self.device_id not in self._active(system):
                         self._preserved_members(system, added=False)
-                        self._config(deadline=deadline)
+                        if any(row.get("octopus_id") == self.device_id for row in system.get("named_devices", [])):
+                            raise MembershipConflict("The removed Amity remains in the device inventory")
+                        self._config(deadline=deadline, removed=True)
                         break
                     time.sleep(min(0.25, self._remaining(deadline)))
             elif self._scan_attempted:

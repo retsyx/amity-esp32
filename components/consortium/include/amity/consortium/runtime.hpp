@@ -59,6 +59,9 @@ esp_err_t runtime_remove_octopus(model::OctopusId,model::MessageId request_id,ui
 // Complete means local roster removal. scheduled confirms only a durable reset marker.
 std::string runtime_removal_operation(model::OctopusId,model::MessageId request_id);
 bool runtime_removed_device_reset_authorized(model::OctopusId authenticated_coordinator);
+// Finish successful saved-configuration deletion. This erases public metadata,
+// never an enrolled identity or the exact transient reset/replay transaction.
+esp_err_t runtime_forget_removed_octopus(model::OctopusId);
 // Radio bridge supplied by application's shared-host admission adapter.
 struct RuntimeRadioHooks {
     std::function<esp_err_t(bool inviter,uint64_t &generation)> reserve;
@@ -138,7 +141,7 @@ struct RuntimePeerStatus {
     bool management_ready=false,ready=false,enrolled=false,provisional=false,hardware_profile=false;
 };
 std::vector<RuntimePeerStatus> runtime_peers();
-// Bounded public metadata retained offline/after removal. Never an allowlist.
+// Bounded public metadata retained while offline, erased on explicit removal.
 std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames();
 // Delivery and live authorization for original Amity actions.
 esp_err_t runtime_send_owned(const model::OwnedIntent&);

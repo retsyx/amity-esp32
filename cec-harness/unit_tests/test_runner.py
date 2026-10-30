@@ -208,10 +208,25 @@ class RunnerTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
-        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity", "test_consortium"]
+        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity",
+                    "test_consortium", "test_consortium_three_duts"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])
+
+    def test_three_dut_consortium_can_be_selected_without_other_scenarios(self):
+        called = []
+
+        def capture(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": True, "testbeds": []}
+
+        arguments = ["run.py", "--test", "consortium_three_duts", "--credentials", "/private/main.json"]
+        with patch("sys.argv", arguments), patch("amity_harness.runner.run_test", side_effect=capture), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+            runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
+        self.assertEqual(exited.exception.code, 0)
+        self.assertEqual(called, ["test_consortium_three_duts"])
 
     def test_invalid_scenario_groups_are_rejected_before_execution(self):
         def scenario():

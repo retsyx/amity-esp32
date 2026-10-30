@@ -53,13 +53,13 @@
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 7996,
-      "sha256": "8199756312c6f2feae88f5710edcf2696eb912b7540cead6c8b51cb4876c0a61"
+      "size_bytes": 8479,
+      "sha256": "a7f957cc87e1f082107cff11fcaa77a0d996399efe009e824549c0bd06dfa2cc"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
-      "size_bytes": 6187,
-      "sha256": "1e0fb5b7e137cdb73539322f47f0a6af4096557d4c21a924eb588bcc1544324d"
+      "size_bytes": 7182,
+      "sha256": "474cf1a2fc7794a8143042ff7a2a2c4aef6103d2c006e8b4ccb65bd195eaa998"
     },
     {
       "path": "14-ota-and-compatibility.md",
@@ -78,13 +78,13 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 28937,
-      "sha256": "a880db2a12a7d7762367eb92040ec1ac885183dd7c1b84bedfbdec7768d16e15"
+      "size_bytes": 29759,
+      "sha256": "8feec01aaddeefdcb46467ca278b75e2283d8c86d26998f3f7a828743848ad63"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 9997,
-      "sha256": "0944c43d67e9e739584ad0d1a3ee0462e26eb773b5f2bea963968c29b11d4ee7"
+      "size_bytes": 10611,
+      "sha256": "d0145e4b9198742ab71f4239669897d676a217b1e9fe5a69f55d0466ec17b8b6"
     },
     {
       "path": "README.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 40153,
-      "sha256": "f469dea95e7d16b81ca358c7bd47ac7479841fa0f1a97791ab3c5121cfe1af36"
+      "size_bytes": 43990,
+      "sha256": "030f647cdbea50dbc22cc318e054de3f46c5a2a6049c38e6d6af79dbd9936bc0"
     },
     {
       "path": "examples/README.md",

@@ -96,4 +96,34 @@ void candidate_network_recovery(){
     for(unsigned cut=1;cut<=8;++cut){Memory interrupted;interrupted.values=decided;interrupted.cut_at=cut;CandidateNetworkJournal transaction(interrupted);try{transaction.finish(value.join_id,value.proposal_digest,error);}catch(const PowerCut&){}interrupted.cut_at=0;CandidateNetworkJournal reboot(interrupted);const auto status=reboot.recover(recovered,error);assert(status==ConfigResult::missing||(status==ConfigResult::ok&&recovered.decided));}
     assert(journal.finish(value.join_id,value.proposal_digest,error)==ConfigResult::ok&&memory.values.at("net_candidate")=="NETWORK_DONE\n");Memory damaged;damaged.values=before;damaged.values["net_candidate"][80]^=1;CandidateNetworkJournal corrupt(damaged);assert(corrupt.recover(recovered,error)==ConfigResult::recovery_required);
 }
-int main(){codecs();current_format_only();initialization();journal();ownership_and_slots();candidate_network_recovery();std::cout<<"PASS intent-only configuration: scoped selectors, current-format rejection, AVR/switch selections without discovery, preserved slots/authority, 80 storage interruptions\n";}
+void explicit_owner_removal(){
+    auto previous=direct_configuration();std::string error;const auto removed=id<model::OctopusId>(70),other=id<model::OctopusId>(71);
+    previous.octopuses.push_back({removed,"Removed Amity","Removed Amity",true,1});previous.octopuses.push_back({other,"Other Amity","Other Amity",false,1});
+    const auto selected=fixture_equipment(previous,"Remote source","source",model::Side::back);
+    for(auto& component:previous.components)if(component.record.component_id==selected)component.record.qualified_names[0].port.octopus_id=removed;
+    std::vector<model::ActivityId> doomed;
+    for(unsigned role=0;role<4;++role){auto activity=previous.activities.front();activity.activity_id={};activity.label="Dependent "+std::to_string(role);
+        if(role==0)activity.source=selected;else if(role==1)activity.display=selected;else if(role==2)activity.audio=selected;else{activity.switch_device=selected;activity.switch_input=7;}
+        fixture_activity(previous,activity);doomed.push_back(previous.activities.back().activity_id);
+        previous.external_slots.back().alias="Removed Amity shortcut";previous.external_slots.back().hidden=true;
+    }
+    const auto unused=fixture_equipment(previous,"Unused remote","source",model::Side::back);
+    for(auto& component:previous.components)if(component.record.component_id==unused)component.record.qualified_names[0].port.octopus_id=removed;
+    previous.external_slots.front().alias="Keep this shortcut";previous.external_slots.front().hidden=true;
+    const auto original=serialize_configuration(previous);Configuration candidate;std::vector<model::ActivityId> affected;
+    assert(!propose_octopus_removal(previous,*previous.controller_octopus_id,candidate,affected,error));
+    assert(propose_octopus_removal(previous,removed,candidate,affected,error)&&affected==doomed&&serialize_configuration(previous)==original);
+    assert(candidate.activities.size()==1&&candidate.activities.front().activity_id==previous.activities.front().activity_id);
+    assert(candidate.activity_order==std::vector<model::ActivityId>{previous.activities.front().activity_id}&&candidate.zones.front().activity_order==candidate.activity_order);
+    assert(serialize_configuration(candidate).find(removed.str())==std::string::npos);
+    assert(candidate.octopuses.size()==2&&candidate.octopuses.back().octopus_id==other);
+    assert(candidate.components.size()==2&&candidate.external_slots.front().alias=="Keep this shortcut"&&candidate.external_slots.front().hidden);
+    // Reserved integration slots retain no device/equipment metadata and cannot
+    // be reassigned to an unrelated activity when a device is deleted.
+    for(size_t index=1;index<candidate.external_slots.size();++index){const auto& slot=candidate.external_slots[index];assert(slot.activity_id==doomed[index-1]&&slot.tombstone&&!slot.hidden&&slot.alias.empty());}
+    Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,previous,{},active);
+    assert(store.stage(candidate,active.revisions(),error)==ConfigResult::ok&&store.commit(active,error)==ConfigResult::ok);
+    assert(serialize_configuration(active).find(removed.str())==std::string::npos&&active.activities.size()==1);
+    for(size_t index=1;index<active.external_slots.size();++index)assert(active.external_slots[index].tombstone&&active.external_slots[index].alias.empty());
+}
+int main(){codecs();current_format_only();initialization();journal();ownership_and_slots();candidate_network_recovery();explicit_owner_removal();std::cout<<"PASS intent-only configuration: scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}

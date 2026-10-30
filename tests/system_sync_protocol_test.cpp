@@ -238,6 +238,9 @@ void reports_and_exact_disconnect(){
     available=amity::discovered_equipment();assert(available.size()==1&&available[0].owner_boot_id==newboot&&available[0].endpoint.logical_address==8);
     const auto& missing=main.updates.back();assert(missing.boot==oldboot&&missing.adapter==1&&!missing.ready&&!missing.discovering&&missing.devices.empty());
     assert(hooks.disconnected(owner,newboot,id<s::LinkId>(71))&&amity::discovered_equipment().empty());
+    main.update_result=true;value=report_envelope(fresh);assert(hooks.control(owner,value,100,id<s::LinkId>(2))==c::Error::none);
+    main.fence_result=false;amity::set_owner_maintenance(owner,true);amity::forget_owner(owner);
+    assert(amity::discovered_equipment().empty()&&amity::state.reports.empty()&&!amity::state.maintenance.count(owner));
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
 }
 void report_coalescing_and_no_intent_backlog(){
@@ -293,5 +296,23 @@ void saved_owner_capacity_does_not_shrink(){
     amity::adopt_owners();
     assert(main.configure_calls==0&&memory.writes==writes&&configuration_changes.empty()&&serialize_configuration(main.configuration)==saved);
 }
+void removal_commit_boundary(){
+    reset();auto main=control();const auto removed=id<s::OctopusId>(9);
+    main.configuration.octopuses.push_back({removed,"Member","Member",false,1});
+    for(auto& component:main.configuration.components)if(component.record.component_id==main.configuration.activities.front().source)component.record.qualified_names[0].port.octopus_id=removed;
+    Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
+    assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    Configuration candidate;std::vector<s::ActivityId> affected;std::string error;assert(propose_octopus_removal(active,removed,candidate,affected,error));
+    unsigned revoked=0;const auto revoke=[&]{assert(journal->staged());++revoked;return ESP_OK;};
+    assert(amity::activate_distributed_configuration(candidate,{99,99},id<s::MessageId>(130),revoke)!=ESP_OK&&revoked==0);
+    main.configure_result=ESP_ERR_NO_MEM;
+    assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(131),revoke)!=ESP_OK&&revoked==0);
+    main.configure_result=ESP_OK;memory.fail_marker=true;
+    assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(132),revoke)!=ESP_OK&&revoked==1);
+    assert(amity::configuration_activation_status().phase=="failed"&&serialize_configuration(main.configuration)==serialize_configuration(active));
+    memory.fail_marker=false;
+    assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(133),revoke)==ESP_OK&&revoked==2);
+    assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();report_coalescing_and_no_intent_backlog();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, scoped snapshots, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers\n";}
+}
+int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();report_coalescing_and_no_intent_backlog();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, scoped snapshots, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

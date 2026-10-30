@@ -162,7 +162,8 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     control.set_owned_input_observer([](const auto& intent,const auto& auth,const auto& result){input_result(intent,auth,result);});
     c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner){return state.control->refresh_owned_context(owner);},[]{return state.control->executing_configuration_revision();},configuration_snapshot});return ESP_OK;
 }
-esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request){
+esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,
+    std::function<esp_err_t()> before_commit){
     SystemControl* control=nullptr;
     {std::lock_guard<std::mutex> guard(state.mutex);if(!state.control||state.activating)return ESP_ERR_INVALID_STATE;state.activating=true;control=state.control;state.activation={request,0,0,"admitted",{}};}
     struct Clear{~Clear(){std::lock_guard<std::mutex> guard(state.mutex);state.activating=false;}} clear;
@@ -170,7 +171,10 @@ esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::Rev
     if(request&&control->accepts_local_input()){
         result=cs::stage_system_configuration(std::move(candidate),expected,error);
         if(result==ESP_OK)result=cs::staged_system_configuration(candidate);
-        if(result==ESP_OK)result=control->configure(candidate,[&]{return cs::activate_system_configuration(candidate,error);});
+        if(result==ESP_OK)result=control->configure(candidate,[&]{
+            if(before_commit){const auto admitted=before_commit();if(admitted!=ESP_OK){error="The reviewed device removal changed before configuration commit";return admitted;}}
+            return cs::activate_system_configuration(candidate,error);
+        });
         if(result==ESP_OK)publish_configuration_revision();
     }
     if(result!=ESP_OK)cs::cancel_staged_configuration();
@@ -186,7 +190,17 @@ ConfigurationActivationStatus configuration_activation_status(){
     }
     return state.activation;
 }
-void forget_owner(s::OctopusId owner){if(state.control)disconnected(owner,{},{});}
+void forget_owner(s::OctopusId owner){
+    if(state.control)disconnected(owner,{},{});
+    // Explicit membership removal forgets diagnostic observations even when
+    // exact outstanding-key cleanup cannot enter the owner task immediately.
+    // Runtime authorization has already revoked that owner. Keep its transient
+    // wire cleanup state separate from this latest-observation cache.
+    std::lock_guard<std::mutex> guard(state.mutex);
+    state.reports.erase(std::remove_if(state.reports.begin(),state.reports.end(),[&](const auto& report){return report.owner==owner;}),state.reports.end());
+    state.pending_reports.erase(std::remove_if(state.pending_reports.begin(),state.pending_reports.end(),[&](const auto& report){return report.owner==owner;}),state.pending_reports.end());
+    state.maintenance.erase(owner);
+}
 void set_owner_maintenance(s::OctopusId owner,bool maintenance){std::lock_guard<std::mutex> guard(state.mutex);if(maintenance)state.maintenance.insert(owner);else state.maintenance.erase(owner);}
 esp_err_t request_equipment_scan(){
     if(!state.control||!state.control->accepts_local_input())return ESP_ERR_INVALID_STATE;

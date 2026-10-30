@@ -83,10 +83,10 @@ window.amityInterface=(()=>{
   if(!result.operation_id)return result;
   const fake=new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}});return (await wait(fake)).json();
  }
- function boardName(board){
+ function boardName(board,snapshot=system){
   if(!board)return 'Name unavailable';
-  if(board.octopus_id===system?.octopus_id)return system.hostname||'Name unavailable';
-  return system?.named_devices?.find(device=>device.octopus_id===board.octopus_id)?.hostname||system?.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id)?.hostname||'Name unavailable';
+  if(board.octopus_id===snapshot?.octopus_id)return snapshot.hostname||'Name unavailable';
+  return snapshot?.named_devices?.find(device=>device.octopus_id===board.octopus_id)?.hostname||snapshot?.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id)?.hostname||'Name unavailable';
  }
  function deviceHeader(row,title){
   const header=document.createElement('div'),heading=document.createElement('h3'),actions=document.createElement('div');
@@ -103,10 +103,10 @@ window.amityInterface=(()=>{
   root.append(localRow);
   const boards=[...(configuration.octopuses||[])];
   for(const peer of system.membership?.peers||[])if((peer.enrolled||peer.provisional)&&!boards.some(board=>board.octopus_id===peer.octopus_id))boards.push({octopus_id:peer.octopus_id,supported_tentacles:peer.supported_tentacles||1});
+  for(const known of system.named_devices||[])if(!boards.some(board=>board.octopus_id===known.octopus_id))boards.push({octopus_id:known.octopus_id});
   for(const board of boards){
    if(board.octopus_id===original)continue;
-   const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));row.append(text(peer?.ready?'Connected':peer?.management_ready?'Firmware update required':peer?.enrolled?'Not responding':'Removed · equipment retained'));
-   row.append(text('Controlled by the original Amity · up to '+board.supported_tentacles+' HDMI adapters'));
+   const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));row.append(text(peer?.ready?'Connected':peer?.management_ready?'Firmware update required':peer?.enrolled?'Not responding':'Not added'));
    actions.append(button('Settings',()=>deviceSettings(board)));
    if((peer?.ready||peer?.management_ready)&&(peer.capabilities&512)){
     const upload=document.createElement('input');upload.type='file';upload.accept='.bin';upload.hidden=true;
@@ -114,8 +114,7 @@ window.amityInterface=(()=>{
     row.append(button('Update firmware',()=>upload.click()),upload);
    }
 
-   if(peer?.enrolled)actions.append(button('Remove',()=>remove(board)));
-   else actions.append(button('Replace',()=>replace(board)));
+   actions.append(button('Remove',()=>remove(board)),button('Replace',()=>replace(board)));
    root.append(row);
   }
  }
@@ -191,26 +190,45 @@ window.amityInterface=(()=>{
   }
   await load();
  }
- function remove(board){
-  const name=boardName(board),membershipRevision=system?.membership?.membership_revision,targetBoot=system?.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id)?.boot_id||null;
-  const d=dialog('Remove '+name+'?'),status=text('');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-  d.append(text('If '+name+' responds, removing it factory resets that Amity. If it does not respond, it is removed from this system; factory reset it using its physical button before adding it again.'),text('Equipment and activities stay saved here for repair or replacement.'),status);
+ async function remove(board){
+  let review=null,name=boardName(board);
+  const d=dialog('Remove '+name+'?'),warning=text(''),activities=document.createElement('ul'),status=text('Reading activities…');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  d.append(text('Removing this Amity deletes its saved equipment and settings. If it responds, it will also factory reset. If it does not respond, factory reset it using its physical button before adding it again.'),warning,activities,status);
   const close=button('Cancel',()=>d.close()),remove=button('Remove Amity',async()=>{
-   if(remove.disabled)return;remove.disabled=true;close.textContent='Close';let admitted=false;
+   if(remove.disabled||!review)return;remove.disabled=true;close.textContent='Close';let admitted=false;
    try{
-    status.textContent='Removing '+name+'…';let result=await mutation('membership/remove',{octopus_id:board.octopus_id,confirm:true,expected_membership_revision:membershipRevision,expected_target_boot_id:targetBoot});admitted=true;
-    for(let n=0;result.stage==='admitted'&&n<24;n++){
+    status.textContent='Removing '+name+'…';let result=await mutation('membership/remove',review);admitted=true;
+    for(let n=0;['admitted','preparing','executing','configuring','activating','stopping'].includes(result.stage)&&n<160;n++){
      await new Promise(resolve=>setTimeout(resolve,250));if(!d.isConnected)return;
      result=await request('operations/'+result.operation_id);
     }
     if(result.stage!=='complete')throw Error('Removal could not be confirmed. Refresh the device list. If this Amity was removed and reset was not confirmed, factory reset it using its physical button before adding it again.');
-    status.textContent=result.reset==='scheduled'?name+' removed. Factory reset accepted; it will restart and forget its Wi-Fi and settings.':name+' removed. '+(result.reset==='offline'?'It did not respond. ':'Factory reset was not confirmed. ')+'Hold its physical button for at least 10 seconds to factory reset it before adding it again.';
-    remove.hidden=true;await refresh();
+    status.textContent=result.reset==='scheduled'?name+' removed. Factory reset accepted; it will restart and forget its Wi-Fi and settings.':result.reset==='not_needed'?name+' removed from this system.':name+' removed. '+(result.reset==='offline'?'It did not respond. ':'Factory reset was not confirmed. ')+'Hold its physical button for at least 10 seconds to factory reset it before adding it again.';
+    remove.hidden=true;await refresh();await refreshActivityConfiguration();
    }catch(error){
     status.textContent=admitted||!error.status||error.status>=500?'Removal could not be confirmed. Refresh the device list. If this Amity was removed and reset was not confirmed, factory reset it using its physical button before adding it again.':customerText(error.message);
-    if(!admitted&&error.status&&error.status<500){remove.disabled=false;close.textContent='Cancel';}else remove.hidden=true;
+    // A rejected review must be reopened against fresh activities, revisions
+    // and boot identity. Never replay the original destructive request.
+    remove.hidden=true;
    }
-  });d.append(remove,close);
+  });remove.disabled=true;d.append(remove,close);
+  try{
+   const [snapshot,current]=await Promise.all([request('backup'),request('system')]);
+   if(!d.isConnected||openDialog!==d)return;
+   name=boardName(board,current);
+   const peer=current.membership?.peers?.find(value=>value.octopus_id===board.octopus_id);
+   if(board.octopus_id===(snapshot.controller_octopus_id||current.octopus_id))throw Error('This Amity cannot remove itself.');
+   if(!(snapshot.octopuses||[]).some(value=>value.octopus_id===board.octopus_id)&&!peer?.enrolled&&!peer?.provisional&&!(current.named_devices||[]).some(value=>value.octopus_id===board.octopus_id))throw Error('This Amity is no longer in this system. Close and refresh the device list.');
+   const equipment=new Set((snapshot.components||[]).filter(component=>(component.qualified_names||[]).some(value=>value.octopus_id===board.octopus_id)).map(component=>component.component_id));
+   const affected=(snapshot.activities||[]).filter(activity=>['display','source','audio','switch_device'].some(role=>equipment.has(activity[role])));
+   for(const activity of affected){const item=document.createElement('li');item.textContent=activity.label||activity.generated_label||'Unnamed activity';activities.append(item);}
+   activities.hidden=!affected.length;
+   warning.textContent=affected.length?'The following activities will be deleted if you confirm removal:':'No saved activities reference this Amity.';
+   review={octopus_id:board.octopus_id,confirm:true,expected_membership_revision:current.membership?.membership_revision,
+    expected_target_boot_id:peer?.boot_id||null,expected_config_revision:snapshot.config_revision,
+    expected_presentation_revision:snapshot.presentation_revision,affected_activity_ids:affected.map(activity=>activity.activity_id)};
+   status.textContent='';remove.disabled=false;
+  }catch(error){if(d.isConnected)status.textContent=customerText(error.message);}
  }
  function add(){
   const d=dialog('Add Amity'),scanId=identifier(),name=field('Name'),code=field('Matter setup code'),status=text('Searching for Amity devices…');
@@ -315,26 +333,27 @@ window.amityInterface=(()=>{
   });d.append(start,done);
  }
  function replace(board){
+  const snapshot=structuredClone(configuration),current=structuredClone(system),previousPeer=current.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id);
   const d=dialog('Replace '+boardName(board)),select=document.createElement('select'),mapping=document.createElement('div'),preview=document.createElement('div');select.setAttribute('aria-label','Replacement Amity');
   const blank=document.createElement('option');blank.textContent='Choose an added Amity';blank.value='';select.append(blank);
-  for(const peer of system.membership?.peers||[])if(peer.enrolled&&peer.ready&&peer.octopus_id!==board.octopus_id){const target=configuration.octopuses.find(b=>b.octopus_id===peer.octopus_id),option=document.createElement('option');option.value=peer.octopus_id;option.textContent=boardName(target);select.append(option);}
-  d.append(text('Add the replacement Amity first. Disconnect the old device from HDMI, then confirm its cable and equipment mappings. The remote stays on the original Amity.'),select,mapping,preview);
+  for(const peer of current.membership?.peers||[])if(peer.enrolled&&peer.ready&&peer.octopus_id!==board.octopus_id){const target=snapshot.octopuses.find(b=>b.octopus_id===peer.octopus_id),option=document.createElement('option');option.value=peer.octopus_id;option.textContent=boardName(target,current);select.append(option);}
+  d.append(text('Add the replacement Amity first. Disconnect the old device from HDMI, then confirm its cable and equipment mappings.'),select,mapping,preview);
   const isolated=field('Old Amity is disconnected or electrically isolated');isolated.input.type='checkbox';d.append(isolated.label);
   const portOnly=n=>({consortium_id:n.consortium_id,octopus_id:n.octopus_id,tentacle_id:n.tentacle_id,side:n.side}),key=p=>JSON.stringify(portOnly(p)),ports=new Map();
-  for(const component of configuration.components||[])for(const n of component.qualified_names||[])if(n.octopus_id===board.octopus_id)ports.set(key(n),portOnly(n));
+  for(const component of snapshot.components||[])for(const n of component.qualified_names||[])if(n.octopus_id===board.octopus_id)ports.set(key(n),portOnly(n));
   let portFields=[],equipmentFields=[],approved=null;
   const addSelect=(title,items)=>{const label=document.createElement('label');label.textContent=title;const control=document.createElement('select');control.setAttribute('aria-label',title);const empty=document.createElement('option');empty.value='';empty.textContent='Choose a connection';control.append(empty);for(const [value,title] of items){const option=document.createElement('option');option.value=value;option.textContent=title;control.append(option);}label.append(control);mapping.append(label);return control;};
-  const apply=button('Apply confirmed replacement',async()=>{if(!approved)throw Error('Preview the mappings first.');await completed('replacements/apply',approved);d.close();await refresh();message('Replacement saved. Choose an activity when its equipment is ready.');});apply.disabled=true;
+  const apply=button('Apply confirmed replacement',async()=>{if(!approved)throw Error('Preview the mappings first.');await completed('replacements/apply',approved);d.close();await refresh();if(await refreshActivityConfiguration())message('Replacement saved. Choose an activity when its equipment is ready.');});apply.disabled=true;
   select.onchange=()=>{mapping.replaceChildren();preview.replaceChildren();approved=null;apply.disabled=true;portFields=[];equipmentFields=[];if(!select.value)return;
-   const peer=system.membership.peers.find(p=>p.octopus_id===select.value),connectors=[];
+   const peer=current.membership.peers.find(p=>p.octopus_id===select.value),connectors=[];
    for(let i=0;i<(peer?.supported_tentacles||1);i++)if((peer?.configured_tentacles_mask??1)&(1<<i))for(const side of ['front','back'])connectors.push([i+':'+side,`HDMI adapter ${i+1} · ${side==='back'?'From the source':'To the screen or receiver'}`]);
    for(const old of ports.values()){const control=addSelect(`Previous HDMI adapter ${old.tentacle_id+1} · ${old.side==='back'?'From the source':'To the screen or receiver'}`,connectors);portFields.push({old,control});}
-   const observed=(system.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===select.value);
-   for(const component of configuration.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · HDMI adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'From the source':'To the screen or receiver'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
+   const observed=(current.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===select.value);
+   for(const component of snapshot.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · HDMI adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'From the source':'To the screen or receiver'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
   };
   d.append(button('Preview replacement',async()=>{
    if(!isolated.input.checked||!select.value||portFields.some(f=>!f.control.value)||equipmentFields.some(f=>!f.control.value||!f.confirmed.checked))throw Error('Confirm old-device isolation and every cable and equipment mapping.');
-   const proposal={expected_config_revision:configuration.config_revision,expected_presentation_revision:configuration.presentation_revision,previous_octopus_id:board.octopus_id,replacement_octopus_id:select.value,old_hardware_isolated:true,
+   const proposal={expected_config_revision:snapshot.config_revision,expected_presentation_revision:snapshot.presentation_revision,expected_membership_revision:current.membership?.membership_revision,expected_target_boot_id:previousPeer?.boot_id||null,previous_octopus_id:board.octopus_id,replacement_octopus_id:select.value,old_hardware_isolated:true,
     ports:portFields.map(f=>{const [id,side]=f.control.value.split(':');return {previous:f.old,replacement:{...f.old,octopus_id:select.value,tentacle_id:Number(id),side}};}),equipment:equipmentFields.map(f=>({component_id:f.component_id,previous:f.old,replacement:JSON.parse(f.control.value),same_equipment_confirmed:true}))};
    const result=await mutation('replacements/preview',proposal);approved=proposal;preview.replaceChildren(text('Review the confirmed mappings. Equipment, activity and home-selector identities stay stable.'));for(const task of result.blockers||[])preview.append(text(customerText(typeof task==='string'?task:JSON.stringify(task))));apply.disabled=false;
   }),apply,button('Cancel',()=>d.close()));

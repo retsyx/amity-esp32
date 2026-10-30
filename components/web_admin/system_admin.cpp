@@ -37,7 +37,8 @@ std::optional<config_store::Configuration> active;
 bool configuration_passive=false;
 std::optional<config_store::Configuration> deferred_configuration;
 uint64_t deferred_epoch=1;
-struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;};
+struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;
+    config_store::RevisionPair removal_revisions{};bool removal_enrolled=false;};
 bool operation_pending(const Tracked& operation){return operation.status=="admitted"||operation.status=="configuring"||operation.status=="preparing"||operation.status=="activating";}
 std::vector<Tracked> operations;
 std::string string(cJSON* root,const char* key){auto* v=cJSON_GetObjectItemCaseSensitive(root,key);return cJSON_IsString(v)?v->valuestring:"";}
@@ -65,6 +66,24 @@ bool unique_keys(const cJSON* value,unsigned depth=0){
     return true;
 }
 bool expected_pair(cJSON* root,config_store::RevisionPair& pair){return uint64(root,"expected_config_revision",pair.config_revision)&&uint64(root,"expected_presentation_revision",pair.presentation_revision);}
+bool reviewed_activities(cJSON* root,const std::vector<m::ActivityId>& affected){
+    auto* values=cJSON_GetObjectItemCaseSensitive(root,"affected_activity_ids");
+    if(!cJSON_IsArray(values)||cJSON_GetArraySize(values)>64)return false;
+    std::set<m::ActivityId> reviewed;
+    for(auto* value=values->child;value;value=value->next){
+        const auto id=cJSON_IsString(value)?m::ActivityId::parse(value->valuestring):std::nullopt;
+        if(!id||!reviewed.insert(*id).second)return false;
+    }
+    return reviewed==std::set<m::ActivityId>(affected.begin(),affected.end());
+}
+bool reviewed_member(m::OctopusId owner,uint64_t revision,std::optional<m::BootId> boot,bool& enrolled){
+    if(amity::consortium::runtime_status().membership_revision!=revision)return false;
+    enrolled=false;std::optional<m::BootId> current_boot;
+    for(const auto& peer:amity::consortium::runtime_peers())if(peer.id==owner&&(peer.enrolled||peer.provisional)){
+        enrolled=true;if(peer.boot_id)current_boot=peer.boot_id;break;
+    }
+    return boot==current_boot;
+}
 std::vector<m::CecObservation> equipment_observations(){
     auto observations=amity::discovered_equipment();
     if(observations.empty())for(const auto& device:control->snapshot().devices){
@@ -134,11 +153,11 @@ std::optional<std::string> device_settings_target(const std::string& path){
 std::optional<std::vector<std::string>> request_fields(const std::string& path){
     std::vector<std::string> allowed{"request_id"};
     if(path=="/api/config"||path=="/api/config/validate")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","configuration"});
-    else if(path=="/api/replacements/preview"||path=="/api/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
+    else if(path=="/api/replacements/preview"||path=="/api/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","expected_membership_revision","expected_target_boot_id","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
     else if(path=="/api/membership/scan"){}
     else if(path=="/api/membership/cancel")allowed.push_back("scan_id");
     else if(path=="/api/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","setup_code","name"});
-    else if(path=="/api/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id"});
+    else if(path=="/api/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id","expected_config_revision","expected_presentation_revision","affected_activity_ids"});
     else if(path=="/api/updates/validate")allowed.insert(allowed.end(),{"manifest","signature"});
     else if(path=="/api/updates/cohort")allowed.insert(allowed.end(),{"manifest","signature","targets"});
     else if(path=="/api/updates/chunk")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id","offset","data_hex"});
@@ -165,13 +184,25 @@ void publish_inputs(){
     amity_matter_set_inputs(inputs,count);
 }
 void update_operation(Tracked& operation){
-    if(!operation_pending(operation))return;
-    if(operation.path=="/api/membership/remove"){
-        Json status(cJSON_Parse(amity::consortium::runtime_removal_operation(operation.candidate,*m::MessageId::parse(operation.id)).c_str()),cJSON_Delete);
-        if(!status)return;
-        const auto stage=string(status.get(),"stage");
-        if(stage=="admitted"||stage=="complete")operation.status=stage;
-        operation.error=string(status.get(),"message");operation.reset=string(status.get(),"reset");
+    const bool removing=operation.path=="/api/membership/remove"||(operation.path=="/api/replacements/apply"&&operation.candidate);
+    if(!operation_pending(operation)&&!removing)return;
+    if(removing){
+        bool reset_complete=!operation.removal_enrolled;
+        if(operation.removal_enrolled){
+            Json status(cJSON_Parse(amity::consortium::runtime_removal_operation(operation.candidate,*m::MessageId::parse(operation.id)).c_str()),cJSON_Delete);
+            if(!status)return;
+            reset_complete=string(status.get(),"stage")=="complete";
+            operation.reset=string(status.get(),"reset");
+        }else operation.reset="not_needed";
+        if(operation.status=="failed"||operation.status=="complete"||operation.status=="applied")return;
+        const auto activation=amity::configuration_activation_status();
+        if(activation.request_id.str()==operation.id&&activation.phase=="failed"){
+            operation.status="failed";operation.error="The device membership was removed, but its saved configuration cleanup could not be committed. Review the device list and remove its saved record again.";return;
+        }
+        const auto applied=control->execution_snapshot();
+        if(applied.applied_config_revision<operation.removal_revisions.config_revision||
+           applied.applied_presentation_revision<operation.removal_revisions.presentation_revision||!reset_complete){operation.status="configuring";return;}
+        operation.status=operation.path=="/api/replacements/apply"?"applied":"complete";operation.error.clear();
         return;
     }
     if(device_settings_target(operation.path)){
@@ -215,7 +246,7 @@ esp_err_t operation_response(httpd_req_t* req,Tracked& operation){
     cJSON_AddBoolToObject(result.get(),"retryable",false);
     cJSON_AddStringToObject(result.get(),"boot_id",system_services::boot_id());
     cJSON_AddBoolToObject(result.get(),"rebooting",operation.rebooting);
-    if(operation.path=="/api/membership/remove")cJSON_AddStringToObject(result.get(),"reset",operation.reset.c_str());
+    if(operation.path=="/api/membership/remove"||(operation.path=="/api/replacements/apply"&&operation.candidate))cJSON_AddStringToObject(result.get(),"reset",operation.reset.c_str());
     const auto sent=send(req,result.get());
     if(device_settings_target(operation.path))amity::consortium::runtime_device_settings_response_attempted(operation.candidate,*m::MessageId::parse(operation.id));
     return sent;
@@ -458,9 +489,14 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         const auto previous=m::OctopusId::parse(string(root.get(),"previous_octopus_id")),replacement=m::OctopusId::parse(string(root.get(),"replacement_octopus_id"));
         if(!previous||!replacement||*previous==control->octopus_id()){result=error(req,"coordinator_replacement","The original Amity cannot be replaced by an added device. This operation replaces added devices only.","409 Conflict");return true;}
         approval.previous=*previous;approval.replacement=*replacement;
-        approval.previous_revoked=true;
+        uint64_t membership_revision=0;std::optional<m::BootId> target_boot;
+        auto* reviewed_boot=cJSON_GetObjectItemCaseSensitive(root.get(),"expected_target_boot_id");
+        if(cJSON_IsString(reviewed_boot))target_boot=m::BootId::parse(reviewed_boot->valuestring);
+        if(!uint64(root.get(),"expected_membership_revision",membership_revision)||
+           (!cJSON_IsNull(reviewed_boot)&&!target_boot)){result=error(req,"stale_revision","The devices changed. Refresh the device list before reviewing the replacement.","409 Conflict");return true;}
+        bool enrolled=false;
+        if(!reviewed_member(*previous,membership_revision,target_boot,enrolled)){result=error(req,"stale_revision","The previous Amity membership or boot changed. Refresh the device list before reviewing the replacement.","409 Conflict");return true;}
         for(const auto& peer:amity::consortium::runtime_peers()){
-            if(peer.id==*previous&&(peer.enrolled||peer.provisional))approval.previous_revoked=false;
             if(peer.id==*replacement&&peer.enrolled&&!peer.provisional)approval.replacement_enrolled=true;
         }
         approval.previous_isolated=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root.get(),"old_hardware_isolated"));
@@ -480,9 +516,22 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         config_store::Configuration candidate;std::vector<m::ActivityId> affected;
         if(!config_store::propose_octopus_replacement(*active,approval,candidate,affected,message)){result=error(req,"replacement_not_ready",message,"409 Conflict");return true;}
         if(path=="/api/replacements/apply"){
-            const auto queued=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id));
-            if(queued!=ESP_OK){result=error(req,"activation_pending","The replacement configuration could not be saved. Reload before retrying.","409 Conflict",true);return true;}
-            operation.status="configuring";finish();return true;
+            bool revoked=false;
+            const auto queued=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id),[&]{
+                bool current_enrolled=false;if(!reviewed_member(*previous,membership_revision,target_boot,current_enrolled)||current_enrolled!=enrolled)return ESP_ERR_INVALID_STATE;
+                if(!enrolled)return ESP_OK;
+                const auto removed=amity::consortium::runtime_remove_octopus(*previous,*m::MessageId::parse(id),membership_revision,target_boot);
+                revoked=removed==ESP_OK;return removed;
+            });
+            operation.candidate=*previous;operation.removal_enrolled=enrolled;
+            if(queued!=ESP_OK){
+                if(revoked){operation.status="failed";operation.error="The previous device membership was removed, but its replacement configuration could not be committed. Replacement is incomplete.";finish();return true;}
+                result=error(req,"activation_pending","The replacement configuration could not be saved. Reload before retrying.","409 Conflict",true);return true;
+            }
+            const auto activation=amity::configuration_activation_status();
+            operation.removal_revisions={activation.config_revision,activation.presentation_revision};operation.status="configuring";
+            if(amity::consortium::runtime_forget_removed_octopus(*previous)!=ESP_OK){operation.status="failed";operation.error="The replacement configuration was saved, but the previous device's name or settings could not be erased. Replacement is incomplete.";}
+            finish();return true;
         }
         Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddItemToObject(response.get(),"configuration",cJSON_Parse(config_store::serialize_configuration(candidate).c_str()));cJSON_AddStringToObject(response.get(),"canonical_configuration",config_store::serialize_configuration(candidate).c_str());
         auto* ids=cJSON_AddArrayToObject(response.get(),"affected_activity_ids");for(auto activity:affected)cJSON_AddItemToArray(ids,cJSON_CreateString(activity.str().c_str()));
@@ -532,14 +581,41 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     }
     if(path=="/api/membership/remove"){
         const auto owner=m::OctopusId::parse(string(root.get(),"octopus_id"));
-        uint64_t membership_revision=0;std::optional<m::BootId> target_boot;
+        uint64_t membership_revision=0;std::optional<m::BootId> target_boot;config_store::RevisionPair expected;
         auto* reviewed_boot=cJSON_GetObjectItemCaseSensitive(root.get(),"expected_target_boot_id");
         if(cJSON_IsString(reviewed_boot))target_boot=m::BootId::parse(reviewed_boot->valuestring);
         if(!owner||!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root.get(),"confirm"))||!uint64(root.get(),"expected_membership_revision",membership_revision)||(!cJSON_IsNull(reviewed_boot)&&!target_boot)){result=error(req,"invalid_removal","Refresh the device list, choose an Amity and confirm its removal.");return true;}
         if(*owner==control->octopus_id()){result=error(req,"invalid_removal","This Amity cannot remove itself.","409 Conflict");return true;}
-        const auto e=amity::consortium::runtime_remove_octopus(*owner,*m::MessageId::parse(id),membership_revision,target_boot);
-        if(e!=ESP_OK){result=error(req,e==ESP_ERR_NOT_SUPPORTED?"update_required":"removal_unavailable",e==ESP_ERR_NOT_SUPPORTED?"Update this Amity's firmware before removing it so it can be factory reset.":"Only added Amity devices can be removed. Refresh the device list and try again.","409 Conflict");return true;}
-        operation.candidate=*owner;operation.status="admitted";
+        bool enrolled=false;
+        if(!reviewed_member(*owner,membership_revision,target_boot,enrolled)){result=error(req,"stale_removal","The Amity membership or boot changed. Refresh the device list before removing it.","409 Conflict");return true;}
+        config_store::Configuration candidate;std::vector<m::ActivityId> affected;std::string message;
+        const auto known_names=amity::consortium::runtime_known_hostnames();
+        const bool named=std::any_of(known_names.begin(),known_names.end(),[&](const auto& entry){return entry.first==*owner;});
+        if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()||
+           (!enrolled&&!named&&std::none_of(active->octopuses.begin(),active->octopuses.end(),[&](const auto& board){return board.octopus_id==*owner;}))||
+           !config_store::propose_octopus_removal(*active,*owner,candidate,affected,message)||!reviewed_activities(root.get(),affected)||
+           membership_revision!=amity::consortium::runtime_status().membership_revision){
+            result=error(req,"stale_removal","The device or its activities changed. Refresh the device list and review the activities before confirming removal.","409 Conflict");return true;
+        }
+        bool revoked=false;
+        const auto e=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id),[&]{
+            bool current_enrolled=false;if(!reviewed_member(*owner,membership_revision,target_boot,current_enrolled)||current_enrolled!=enrolled)return ESP_ERR_INVALID_STATE;
+            if(!enrolled)return ESP_OK;
+            const auto removed=amity::consortium::runtime_remove_octopus(*owner,*m::MessageId::parse(id),membership_revision,target_boot);
+            revoked=removed==ESP_OK;return removed;
+        });
+        operation.candidate=*owner;operation.removal_enrolled=enrolled;
+        if(e!=ESP_OK){
+            if(revoked){operation.status="failed";operation.error="Membership was removed, but saved configuration cleanup failed. Refresh the device list and remove the saved device again.";finish();return true;}
+            result=error(req,revoked?"removal_incomplete":e==ESP_ERR_NOT_SUPPORTED?"update_required":"removal_unavailable",
+                revoked?"Membership was removed, but saved configuration cleanup failed. Refresh the device list and remove the saved device again.":
+                e==ESP_ERR_NOT_SUPPORTED?"Update this Amity's firmware before removing it so it can be factory reset.":
+                "Removal could not be saved. Refresh the device list and review the activities before trying again.","409 Conflict");return true;
+        }
+        const auto activation=amity::configuration_activation_status();
+        operation.status="configuring";
+        operation.removal_revisions={activation.config_revision,activation.presentation_revision};
+        if(amity::consortium::runtime_forget_removed_octopus(*owner)!=ESP_OK){operation.status="failed";operation.error="The saved device configuration was removed, but its saved name or settings could not be erased. Removal is incomplete.";}
         finish();return true;
     }
     result=error(req,"not_found","Unknown operation.","404 Not Found");return true;

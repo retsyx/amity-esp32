@@ -13,7 +13,7 @@ struct ReplacementEquipment {
 };
 struct ReplacementApproval {
     model::OctopusId previous, replacement;
-    bool previous_revoked = false, previous_isolated = false, replacement_enrolled = false;
+    bool previous_isolated = false, replacement_enrolled = false;
     std::vector<ReplacementPort> ports;
     std::vector<ReplacementEquipment> equipment;
 };

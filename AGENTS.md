@@ -4,6 +4,30 @@
 
 This project is in early development. There is no need for backward compatibility with prior revisions of the software. This remains true as long as this instruction is in this file. When the software is more mature, this instruction will be replaced with an instruction to ensure backward compatibility between software revisions.
 
+## Explicit Amity removal — 29 October 2026
+
+An explicit Remove deletes the Amity from saved configuration. Remove its owner
+record, saved name, adapter settings and equipment, and delete every activity
+that references that equipment through source, display, audio or switch. Show
+the affected activity names and warn that confirming removal deletes those
+activities. Confirm against reviewed configuration/presentation and membership
+revisions, target boot and exact affected activity IDs. A changed review needs
+fresh confirmation. Successful completion leaves no saved owner/equipment
+selector or ordinary metadata for the removed Amity. Existing removed records
+can be deleted too. Preserve unrelated data and slot metadata; ordinary deleted
+activity slot reservations contain no device reference or retained alias.
+
+Replace remains supported separately. It preserves and explicitly remaps the
+selected equipment and activity definitions to the replacement, revokes the
+isolated old device and removes its saved record. Do not require destructive
+Remove before Replace. Omit the device-card controller/capacity sentence and
+the replacement dialog's remote-ownership sentence.
+
+Missing/offline devices retain saved selections until explicit Remove or
+Replace. Keep reset acknowledgment, authority, transaction and stale-work
+fences. Transient reset/replay journals do not authorize retained normal device
+records or a successful response before configuration cleanup finishes.
+
 ## Lessons — 29 October 2026
 
 I should have followed the original Amity implementation earlier, instead of adding coordination and special cases around valid behavior.
@@ -323,16 +347,19 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The framework has
-five functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
+six functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
 playback device; `activity.py`, which reuses that scan to create, start and
 standby an activity; `source_theft.py`, which adds a second playback device
 on AVR input 2 to check recovery from its Active Source announcement while the
 input-1 player's activity remains selected; `add_amity.py`, which uses
 `amity-dut` to add, verify, remove and reset the second board `amity-dut-2`;
-and `consortium.py`, which adds that headless member and exercises one
-TV/AVR/player triple on each owner in both activity/theft directions.
-`--test consortium` selects the distributed scenario; `--test all` runs all
-five scenarios, comprising six test cases because `activity` has two cases.
+and `consortium.py`, whose two-owner case adds that headless member and
+exercises one TV/AVR/player triple on each owner in both activity/theft
+directions, and whose three-owner case adds `amity-dut-2` and `amity-dut-3`
+to the original main `amity-dut` and exercises all three owners.
+`--test consortium` selects the two-owner scenario;
+`--test consortium_three_duts` selects the three-owner scenario. `--test all`
+runs all six scenarios, comprising seven test cases because `activity` has two.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 
@@ -430,10 +457,14 @@ preserving the original main, its authority and existing activities.
 
 The user explicitly authorized reset on removal as this test's cleanup. Remove
 only the known newly added member through the existing UI Remove API, with the
-reviewed membership revision and target boot, and require acknowledgment that
+reviewed configuration/presentation and membership revisions, target boot and
+affected activity list, and require acknowledgment that
 the candidate reset was scheduled. Never remove the main or a preexisting
 member, and do not add a ten-second factory reset before the test. Uncertain
 ownership or a missing reset acknowledgment fails cleanup and must be reported.
+Reject a fixture candidate with preexisting referenced user activities before
+opening its Add window. Cleanup must delete its saved owner, settings, equipment
+and name without deleting unrelated data or accepting another testbed's receipt.
 An Add-only result with mixed firmware versions does not qualify distributed
 power behavior; do not invent a global firmware-version equality gate.
 
@@ -468,6 +499,19 @@ errors, including acknowledged member removal/reset. Evidence is
 and final main preservation reports are alongside it. This qualifies only the
 exercised normal-profile two-board, one-adapter-per-board simulated CEC setup;
 do not extend historical Add-only results or this result to other hardware.
+
+The separate `test_consortium_three_duts` case adds `amity-dut-2` and
+`amity-dut-3` to `amity-dut` in the same bed. It uses one TV/AVR/player triple
+per owner, requires exactly nine identities and typed locations on six isolated
+wires, and exercises each owner as active with a physical theft attempt from
+each of the other two owners. Preserve the same fresh power/standby evidence,
+active route/activity/boot checks and all-components-in-Standby boundaries as
+the two-owner case. Clean up all three activities and fixture equipment before
+removing/resetting member 3 and then member 2, with responders still running.
+Verify member 2 before adding member 3 and again after removing member 3;
+the shared discovery and activity evidence rechecks both proven owner boots
+while both are enrolled. Host scenario checks do not establish physical
+three-owner qualification or extend the historical two-owner results.
 
 The initial physical qualification on 29 October 2026 failed when the
 candidate's 0.1.84 `fw_reset` task overflowed during the 3.5-second gesture;

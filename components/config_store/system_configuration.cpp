@@ -214,6 +214,31 @@ bool reconcile_external_slots(const Configuration& previous, Configuration& cand
     candidate.external_slots = std::move(slots); return true;
 }
 
+bool propose_octopus_removal(const Configuration& previous,model::OctopusId owner,
+    Configuration& candidate,std::vector<model::ActivityId>& affected,std::string& error) {
+    const auto fail=[&](const char* reason){error=reason;return false;};affected.clear();
+    if(!validate_configuration(previous,error))return false;
+    if(!owner||previous.controller_octopus_id==owner)return fail("The original Amity cannot remove itself");
+    std::set<model::ComponentId> equipment;
+    for(const auto& component:previous.components)for(const auto& name:component.record.qualified_names)
+        if(name.port.octopus_id==owner)equipment.insert(component.record.component_id);
+    std::set<model::ActivityId> removed;
+    for(const auto& activity:previous.activities)
+        if((activity.source&&equipment.count(*activity.source))||(activity.display&&equipment.count(*activity.display))||
+           (activity.audio&&equipment.count(*activity.audio))||(activity.switch_device&&equipment.count(*activity.switch_device)))
+            removed.insert(activity.activity_id);
+    for(auto id:ordered_activities(previous))if(removed.count(id))affected.push_back(id);
+    auto out=previous;
+    out.octopuses.erase(std::remove_if(out.octopuses.begin(),out.octopuses.end(),[&](const auto& board){return board.octopus_id==owner;}),out.octopuses.end());
+    out.components.erase(std::remove_if(out.components.begin(),out.components.end(),[&](const auto& component){return equipment.count(component.record.component_id);}),out.components.end());
+    out.activities.erase(std::remove_if(out.activities.begin(),out.activities.end(),[&](const auto& activity){return removed.count(activity.activity_id);}),out.activities.end());
+    const auto prune=[&](auto& order){order.erase(std::remove_if(order.begin(),order.end(),[&](auto id){return removed.count(id);}),order.end());};
+    prune(out.activity_order);for(auto& zone:out.zones)prune(zone.activity_order);
+    for(auto& slot:out.external_slots)if(removed.count(slot.activity_id)){slot.tombstone=true;slot.hidden=false;slot.alias.clear();}
+    if(!validate_configuration(out,error))return false;
+    candidate=std::move(out);error.clear();return true;
+}
+
 bool validate_configuration(const Configuration& c,std::string& error) {
     const auto fail=[&](const char* reason){error=reason;return false;};
     if(!c.consortium_id||!c.config_revision||!c.presentation_revision||!c.primary_zone_id||c.components.size()>64||c.activities.size()>64||c.zones.empty()||c.zones.size()>16||c.external_slots.size()>16||c.octopuses.empty()||c.octopuses.size()>64)return fail("Configuration identifiers, revisions or capacity invalid");

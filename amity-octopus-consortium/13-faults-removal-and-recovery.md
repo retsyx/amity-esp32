@@ -18,15 +18,17 @@ Under the **29 October 2026 scan/cache amendment**, reconnect itself does not en
 
 ## Intentional removal
 
-Only an explicit original-controller Remove command revokes a selected member. Keep reviewed membership revision and target boot checks. Prevent stale queued positive work, drain the owner's bounded current wire/cleanup state, then commit the established reset journal on a responding target before acknowledging reset scheduling. The selected target restarts only after the response transmission attempt.
+Only an explicit original-controller Remove command deletes a selected Amity. Before confirmation, list every activity using its equipment through source, display, audio or switch and warn that those activities will be deleted. Fence the exact reviewed activity IDs, configuration/presentation revisions, membership revision and target boot. A changed review requires fresh confirmation. Remove the owner, its equipment/settings/name and all affected activities and ordering references; preserve unrelated data. Normal deleted-activity slot reservations carry no device reference or retained alias. Saved-only records from an earlier removal can also be deleted.
+
+Stage and read back the configuration and reserve owner-task capacity before revoking membership. Prevent stale queued positive work, drain the owner's bounded current wire/cleanup state, then commit the established reset journal on a responding target before acknowledging reset scheduling. The selected target restarts only after the response transmission attempt. Report completion only after saved configuration and ordinary device metadata are gone and the new configuration is applied. Storage or activation failure must report incomplete cleanup rather than successful removal; revocation is never rolled back to restore trust.
 
 Roster removal and target erasure are separate outcomes. Offline/unconfirmed removal must explain that the user must hold that device's physical reset button for at least ten seconds before adding it again. Do not automatically replay an uncertain remove/reset request. A member lacking compatible reset support must be updated before a claimed remote reset.
 
-Generic authority loss, link failure, retirement, failed setup or enrollment cancellation does not request factory reset. Saved activities/equipment references remain saved; lookup reports unavailable while their selected owner is absent. The main has no Remove action.
+Generic authority loss, link failure, retirement, failed setup or enrollment cancellation does not request factory reset. Missing/offline owners retain saved choices until the user explicitly removes or replaces them. The main has no Remove action.
 
 ## Replacing an actuator
 
-Isolate/revoke the old hardware before using replacement hardware in its place. Establish fresh device identity and operational trust through authorized enrollment. Explicitly map the saved owner/adapter selectors to the chosen replacement. Preserve component/activity IDs, labels, role choices, input values, order and slots. Do not clone private keys, remote/home pairings, old operational grants or discovered addresses.
+Use Replace before destructive Remove. Isolate the old hardware and enroll the replacement with fresh identity and operational trust. Preview the exact old-owner/adapter/equipment mappings and affected activities without mutation. Applying the reviewed replacement revokes the old device, remaps its saved selectors and removes the old owner/name/settings while preserving component/activity IDs, labels, role choices, input values, order and slots. Do not clone private keys, remote/home pairings, old operational grants or discovered addresses.
 
 Ordinary qualified lookup on the new owner supplies current equipment data. Replacement does not require rebuilding an approved physical-route graph or enabling activities. Unmapped references remain saved and unresolved rather than guessed.
 

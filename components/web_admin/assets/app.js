@@ -137,6 +137,11 @@ async function currentSavedConfiguration(){
  if(activitySnapshot(latest.activities)!==persistedActivities)throw Error('Activities changed in another session. Reload the page before continuing.');
  return latest;
 }
+async function refreshActivityConfiguration(){
+ const latest=await request('config');
+ if(dirty){message('Activities changed. Reload the page before saving your edits.',true);return false;}
+ config=latest;rememberSaved();renderActivities();await refresh();return true;
+}
 async function persistActivities(editor=null){
  if(saving)throw Error('Activities are being saved.');
  const references=[...config.activities];let target=editor?.target;
