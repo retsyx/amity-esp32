@@ -17,6 +17,7 @@ PREFIX = r'''
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstdio>
@@ -53,6 +54,7 @@ struct Active{
  RuntimePeerStatus status;std::deque<Queued> queue;model::ExecutionLeaseId own_control,own_realtime;
  std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::string endpoint_hint;
 };
+constexpr size_t maximum_links=2;
 std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;
 uint64_t configuration=7;std::string configuration_hash=std::string(64,'a');
 std::vector<std::shared_ptr<Active>> links;
@@ -266,7 +268,8 @@ def main():
     pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(',
-        'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal(', 'void trace_link_closed('))
+        'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal('))
+    actual = source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')
     queued = source[source.index('enum class QueuedState'):source.index('void active_loop_work(')]
