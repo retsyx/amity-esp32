@@ -12,7 +12,7 @@ import unittest
 
 from amity_harness.config import RunConfig
 from amity_harness.runner import main, run_test
-from amity_harness.trace import event, stdio_logging, test_logging
+from amity_harness.trace import event, failure_fields, owner_assertion, stdio_logging, test_logging
 
 
 class TraceTests(unittest.TestCase):
@@ -104,7 +104,7 @@ class TraceTests(unittest.TestCase):
         self.assertIn("run.aborted", errors.getvalue())
         self.assertNotIn("run.report", errors.getvalue())
 
-    def test_failure_summary_keeps_exception_contents_in_private_json(self):
+    def test_failure_summary_excludes_arbitrary_exception_contents_from_json_and_stdio(self):
         def scenario():
             raise RuntimeError("private-server-token https://private-origin.example")
 
@@ -113,7 +113,9 @@ class TraceTests(unittest.TestCase):
             errors = io.StringIO()
             with redirect_stdout(io.StringIO()), redirect_stderr(errors):
                 self.assertEqual(main(scenario, ["--credentials", "/private/main.json", "--output", str(report)]), 1)
-            self.assertIn("private-server-token", json.loads(report.read_text())["error"])
+            self.assertEqual(json.loads(report.read_text())["error"], "RuntimeError")
+            self.assertNotIn("private-server-token", report.read_text())
+            self.assertNotIn("private-origin.example", report.read_text())
         self.assertIn("FAIL: RuntimeError: scenario", errors.getvalue())
         self.assertNotIn("private-server-token", errors.getvalue())
         self.assertNotIn("private-origin.example", errors.getvalue())
@@ -139,6 +141,56 @@ class TraceTests(unittest.TestCase):
                 event("next.ready")
         self.assertIn("test=original worker.delayed", errors.getvalue())
         self.assertIn("test=next next.ready", errors.getvalue())
+
+    def test_controlled_assertion_survives_cleanup_cause_without_stringifying_errors(self):
+        class PrivateCleanupError(RuntimeError):
+            def __str__(self):
+                raise AssertionError("Exception text must never be requested")
+
+        def scenario():
+            try:
+                error = owner_assertion("member_status")
+                error.args = ("private-mutated-assertion",)
+                raise error
+            except AssertionError as primary:
+                raise PrivateCleanupError("private-cleanup-token") from primary
+
+        output = io.StringIO()
+        with redirect_stderr(output), stdio_logging():
+            report = run_test(scenario, RunConfig())
+        self.assertEqual(report["error"], "PrivateCleanupError")
+        cause = report["failure"]["causes"][0]
+        self.assertEqual(cause["error_type"], "AssertionError")
+        self.assertEqual(cause["reason"], "member_status")
+        self.assertEqual(cause["message"], "The scan member is unproven, unready, retired or changed boot")
+        self.assertEqual(cause["stack"][-1]["function"], "scenario")
+        serialized = json.dumps(report) + output.getvalue()
+        self.assertNotIn("private-", serialized)
+        self.assertIn('"causes"', output.getvalue())
+
+    def test_assertion_literal_needs_factory_provenance_and_chain_is_bounded(self):
+        literal = "The scan member is unproven, unready, retired or changed boot"
+        for error in (AssertionError(literal), AssertionError("private-token"), RuntimeError("private-response")):
+            error._amity_owner_assertion = (object(), "member_status")
+            error.reason = "member_status"
+            error.message = "private-forged-message"
+            self.assertNotIn("message", failure_fields(error))
+            self.assertNotIn("reason", failure_fields(error))
+        error._amity_owner_assertion = (object(), [])
+        self.assertEqual(failure_fields(error)["error_type"], "RuntimeError")
+        root = owner_assertion("coordinator_identity")
+        for _ in range(20):
+            outer = RuntimeError("private-chain-token")
+            outer.__cause__ = root
+            root = outer
+        self.assertEqual(len(failure_fields(root)["causes"]), 8)
+        cycle = RuntimeError("private-cycle-token")
+        cycle.__cause__ = cycle
+        self.assertNotIn("causes", failure_fields(cycle))
+        hidden = RuntimeError("private-outer")
+        hidden.__context__ = owner_assertion("member_status")
+        hidden.__suppress_context__ = True
+        self.assertNotIn("causes", failure_fields(hidden))
 
 
 if __name__ == "__main__":

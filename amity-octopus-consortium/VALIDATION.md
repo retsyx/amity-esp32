@@ -112,6 +112,47 @@ The ESP-IDF build passes 36 public record layout checks. Logs are under
 execution of the new removal behavior; deployment and functional evidence must
 be recorded separately after running.
 
+## 0.1.100 deployment and strict-deadline physical rerun — 30 October 2026
+
+All four DUTs run the exact 2,428,224-byte 0.1.100 image from commit
+`291b9239065a8265e137928c05227e7f41293a08` (`source_dirty=true`), ELF SHA-256
+`a46975167832e538590835e8f830aeecfad4ed3b5b0c927f46a20249b359449d`.
+Main OTA passed 13 preservation/health checks; each application-only candidate
+update passed 18 checks with full private backup and protected-flash equality.
+Evidence is under `test-results/consortium-runtime-fix-2026-10-29/`.
+The complete host suite passed with 333 framework tests and 36 public layouts.
+
+The two-owner consortium passed: six typed locations, fourteen fresh physical
+power assertions, both theft directions at 66.900 ms, clean fixture removal and
+acknowledged member reset. Independent report verification recomputes latency
+from correlated same-component/wire TX, RX and applied-state records.
+The separate shared-wire source-theft case also passed with clean cleanup:
+directed Standby at 66.899909 ms and route restoration at 183.349990 ms within
+the same original two-second window. Reports are `consortium.json`,
+`consortium-verification.json` and `source-theft.json` in that directory.
+
+The three-owner case failed. It proved nine typed locations and all three
+owner boots, then completed the main activity, two theft responses at 69.949991
+and 68.100104 ms, and all three fresh final Standby commands. Before submitting
+the member-2 start, a fresh system owner-proof assertion failed. Its rejected
+snapshot and assertion message were not retained. Initial member cleanup failed;
+a later read showed both exact member boots ready. Fresh reviewed cleanup then
+removed only the two known fixtures, acknowledged both resets and preserved all
+main saved values except ordinary revisions and the same post-OTA boot.
+`consortium-three-duts.json` remains failed; `manual-cleanup.json` records recovery.
+No missing-receipt/source-policy cause is inferred from these later passes.
+
+The next framework revision retains bounded sanitized owner-failure snapshots
+and controlled primary assertion/cause stacks in both stdio and JSON; arbitrary
+exception text and HTTP payloads remain excluded. All 339 framework units pass.
+Firmware diagnostics add reason-tagged operational link closures without
+changing admission, queue, lease or source policy. A separately reproduced
+live-refresh bug now delivers already-admitted typed lookup results before
+configuration advance; its host proof does not establish the cause of this
+physical readiness failure. Target 0.1.101 still requires deployment and a new
+physical qualification. Earlier unmatched/pre-review build artifacts were
+caught by integrity assertions and were never deployed.
+
 ## Enrollment timing, CEC deadlines and 0.1.99 bench results — 29 October 2026
 
 All four bench DUTs were updated and verified against the exact 0.1.99 image:

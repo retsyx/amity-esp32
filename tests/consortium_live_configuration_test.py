@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the actual in-place synchronizer against scripted authenticated TLS I/O."""
 from pathlib import Path
+import argparse
 import os
 import shlex
 import subprocess
@@ -18,6 +19,7 @@ PREFIX = r'''
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <cstdio>
 #include <deque>
 #include <functional>
 #include <iostream>
@@ -34,8 +36,14 @@ template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++)
 // real SnapshotTransfer a deterministic digest and still checks its binding.
 std::string sha256(std::string_view){return std::string(64,'a');}
 struct Queued{Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
+std::vector<std::string> diagnostic_logs;
+template<class... Args>void capture_log(const char* level,const char* tag,const char* format,Args... args){
+ const int length=snprintf(nullptr,0,format,args...);assert(length>=0);std::vector<char> text(static_cast<size_t>(length)+1);snprintf(text.data(),text.size(),format,args...);diagnostic_logs.push_back(std::string(level)+":"+tag+" "+text.data());
+}
+template<class... Args>void ESP_LOGW(const char* tag,const char* format,Args... args){capture_log("W",tag,format,args...);}
+template<class... Args>void ESP_LOGI(const char* tag,const char* format,Args... args){capture_log("I",tag,format,args...);}
 struct FakeTls{
- int socket=-1;std::deque<std::string> incoming;std::vector<Envelope> sent;unsigned receives=0;
+ int socket=-1;model::OctopusId authenticated;std::deque<std::string> incoming;std::vector<Envelope> sent;unsigned receives=0;
  std::function<void()> before_receive;
  bool receive(std::string& value,uint32_t timeout=10000){++receives;if(before_receive)before_receive();if(incoming.empty()){clock_ms+=timeout;return false;}value=std::move(incoming.front());incoming.pop_front();return true;}
 };
@@ -79,17 +87,18 @@ std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
  auto a=std::make_shared<Active>();
  const auto coordinator=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);const auto mainboot=ident<model::BootId>(4),memberboot=ident<model::BootId>(5);
  LinkScope scope{ident<model::LinkId>(6),ident<model::ConsortiumId>(1),server?coordinator:member,server?member:coordinator,coordinator,server?mainboot:memberboot,server?memberboot:mainboot,1,7};
- a->peer=scope.peer_id;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;a->status.negotiated_capabilities=caps;
+ a->peer=scope.peer_id;a->tls->authenticated=a->peer;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;a->status.negotiated_capabilities=caps;
  HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=caps;
  assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
  a->own_control=ident<model::ExecutionLeaseId>(70);a->own_control_deadline=5000;a->status.control_lease=a->own_control;a->status.control_usable_until_ms=4900;
  assert(a->session.execution_leases().issue(a->own_control,LeaseClass::control,5000,clock_ms)==Error::none);
- clock_ms=100;controls={};configuration=7;configuration_hash=std::string(64,'a');status={};group={};group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;
+ clock_ms=100;controls={};configuration=7;configuration_hash=std::string(64,'a');status={};group={};group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();
  return a;
 }
 std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
 const std::string owner_state="{\"adapters\":[]}";
 const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
+const std::string input_result="{\"input_result\":{\"generation\":\"1\",\"sequence\":\"2\",\"source_present\":true}}";
 void unchanged(const Active& active,const LinkScope& original,const FakeTls* tls){
  auto expected=original;expected.config_revision=active.session.scope().config_revision;
  assert(active.tls.get()==tls&&active.session.scope()==expected&&active.ready&&active.status.ready&&!active.cancelled&&!active.retiring&&active.session.state()==ConnectionState::ready);
@@ -100,16 +109,23 @@ SUITE = r'''
 namespace amity::consortium {
 void coordinator_refresh(){
  auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
- const auto oldlease=a->own_control;unsigned applied=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale;
+ const auto oldlease=a->own_control;unsigned applied=0,delivered=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8);return controller_slice(original,revision);};
  controls.synchronize=[&](auto owner,const Json& value){++applied;assert(owner==a->peer&&value.type==Json::Type::string&&value.string==owner_state&&cached.size()==3);return Error::none;};
+ controls.control=[&](auto owner,const Envelope& e,uint64_t deadline,model::LinkId link){
+  assert(owner==a->peer&&e.kind==Kind::scoped_result&&e.payload.get("input_result")&&deadline==0&&link==original.link_id);
+  assert(a->session.scope()==original&&e.origin_boot_id==original.peer_boot_id&&e.config_revision==original.config_revision&&applied==0);
+  assert(a->session.execution_leases().valid(oldlease,LeaseClass::control,original,clock_ms));++delivered;return Error::none;
+ };
  a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==3);};
  on_send=[&](Active& active,const Envelope& e){
   unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
   if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
-   if(m.document_kind=="configuration"){assert(phase=="begin"&&e.config_revision==7&&m.config_revision==8);config_manifest=m;feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
+   if(m.document_kind=="configuration"){assert(phase=="begin"&&e.config_revision==7&&m.config_revision==8);config_manifest=m;
+    result=inbound(original,7,Kind::scoped_result,input_result);feed(active,*result);feed(active,*result);
+    feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
    else assert(e.config_revision==8&&m.config_revision==8&&(phase=="ack"||phase=="complete"));
-  }else{assert(config_manifest&&e.kind==Kind::snapshot_chunk&&e.config_revision==7);
+  }else{assert(config_manifest&&e.kind==Kind::snapshot_chunk&&e.config_revision==7&&delivered==1);
    feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
    // Already-in-flight obsolete messages are safely discarded after advance,
    // including a replay; they cannot masquerade as the new owner-state slice.
@@ -121,12 +137,41 @@ void coordinator_refresh(){
  };
  runtime_configuration_changed(8,std::string(64,'b'));
  assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&applied==0&&cached.size()==3);
- assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
+ assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&delivered==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
  assert(a->session.execution_leases().live(LeaseClass::control,clock_ms)==0&&!a->own_control&&!a->status.control_lease&&a->own_control_deadline==0&&!a->context_ready);
  assert(!a->session.execution_leases().valid(oldlease,LeaseClass::control,a->session.scope(),clock_ms));
  assert(stale&&a->session.discard_stale(*stale,clock_ms,clock_ms)==Error::duplicate);stale->config_revision=8;assert(a->session.admit(*stale,clock_ms,clock_ms)==Error::duplicate);
+ assert(result&&a->session.discard_stale(*result,clock_ms,clock_ms)==Error::duplicate);result->config_revision=8;assert(a->session.admit(*result,clock_ms,clock_ms)==Error::duplicate);
  assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
  runtime_configuration_changed(6,std::string(64,'c'));assert(configuration==8&&shutdowns==0);
+}
+void rejected_interleaved_input_results(){
+ for(unsigned failure=0;failure<9;++failure){
+  auto a=start(true);const auto original=a->session.scope();unsigned delivered=0,applied=0;
+  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
+  controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
+  if(failure!=7)controls.control=[&](auto owner,const Envelope& e,uint64_t deadline,model::LinkId link){
+   assert(owner==original.peer_id&&e.config_revision==7&&deadline==0&&link==original.link_id&&a->session.scope()==original);++delivered;return Error::identity_conflict;
+  };
+  on_send=[&](Active& active,const Envelope& e){
+   assert(e.kind==Kind::snapshot_request);SnapshotManifest m;std::string phase;uint32_t next=0;assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none&&phase=="begin");
+   auto result=inbound(original,7,Kind::scoped_result,input_result);
+   switch(failure){
+    case 0:result.origin_boot_id=ident<model::BootId>(99);break;
+    case 1:result.destination_boot_id=ident<model::BootId>(99);break;
+    case 2:result.origin_octopus_id=ident<model::OctopusId>(99);break;
+    case 3:result.destination_octopus_id=ident<model::OctopusId>(99);break;
+    case 4:result.consortium_id=ident<model::ConsortiumId>(99);break;
+    case 5:result.coordinator_epoch=2;break;
+    case 6:result.config_revision=8;break;
+   }
+   feed(active,result);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));
+  };
+  LinkTrace trace;assert(!synchronize(*a,true,true,8,nullptr,&trace));assert(applied==0&&delivered==(failure==8?1u:0u)&&a->session.scope()==original);
+  assert(trace.unexpected&&trace.has_kind&&trace.kind==Kind::scoped_result&&!trace.has_queue);
+  assert(std::string(trace.phase)=="configuration_send"&&std::string(trace.reason)==(failure<7?"synchronization_admission":failure==7?"input_result_hook_missing":"input_result_delivery"));
+  trace_link_closed(*a,trace,clock_ms);assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("kind=scoped_result")!=std::string::npos&&diagnostic_logs.front().find("input_result\"")==std::string::npos&&diagnostic_logs.front().find("source_present")==std::string::npos);
+ }
 }
 void member_refresh(){
  auto a=start(false);const auto original=a->session.scope();const auto* tls=a->tls.get();unsigned applied=0;std::vector<std::string> cached={"Member TV","Member Player"};
@@ -175,6 +220,7 @@ void immutable_queue(){
  // The actual worker block expires the admitted IPC item at its original
  // deadline, even if context/fresh leases were unavailable during refresh.
  clock_ms=600;a->context_ready=false;assert(!pump(*a)&&a->tls->sent.empty()&&a->queue.empty());
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_intent queue_age_ms=500 queue_ttl_ms=500")!=std::string::npos);
  auto settings=Queued{Kind::settings_read,"{\"request_id\":\""+ident<model::MessageId>(91).str()+"\"}",1000,600,7,{}};
  a->queue.push_back(settings);clock_ms=601;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()); // no old management-payload restamp
  a->context_ready=true;clock_ms=650;queued.created=650;a->queue.push_back(queued);assert(pump(*a)&&a->tls->sent.size()==1&&a->tls->sent.back().config_revision==8);
@@ -190,33 +236,37 @@ void observation_expiry_is_not_lost_causal_work(){
  assert(!queued_causal(observation)&&queued_causal(input_result));
  auto malformed=observation;malformed.payload="{\"snapshot\":{}}";assert(queued_causal(malformed));
  malformed.payload="{}";assert(queued_causal(malformed));malformed.payload="invalid";assert(queued_causal(malformed));
- a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled);
+ a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled&&diagnostic_logs.empty());
  assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
  // Admission performs the same expiry distinction before submitting new IPC.
  a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_result,typed,1000,{},scope.config_revision)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
- assert(retries.size()==2); // Same scoped recapture from admission-side expiry.
+ assert(retries.size()==2&&diagnostic_logs.empty()); // Same scoped recapture from admission-side expiry.
  assert(a->queue.front().payload==typed);
  a->queue.clear();a->queue.push_back(input_result);
  assert(queue_control(a->peer,Kind::scoped_result,snapshot,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE&&a->cancelled&&shutdowns==1);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_result queue_age_ms=1100 queue_ttl_ms=1000")!=std::string::npos);
  // A typed source lookup result is still causal even when it reaches the
  // worker instead of a later admission call; expiry must fence its old link.
  a=start(false);a->queue.push_back(input_result);clock_ms=1200;assert(!pump(*a)&&a->queue.empty()&&a->tls->sent.empty());
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_result queue_age_ms=1100 queue_ttl_ms=1000")!=std::string::npos);
 }
 }
-int main(){using namespace amity::consortium;coordinator_refresh();member_refresh();rejected_frames();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope completion then new owner state; strict obsolete/future frames, replay, lease invalidation and original queued revision/deadline; snapshot expiry independent of causal input results\n";}
+int main(){using namespace amity::consortium;coordinator_refresh();member_refresh();rejected_frames();rejected_interleaved_input_results();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope input result delivered once before revision advance; strict identity/boot/replay and missing/rejected callback fences; old-scope completion then new owner state; lease invalidation and original queued revision/deadline; snapshot expiry independent of causal input results\n";}
 '''
 
 
 def main():
-    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
+    source = parser.parse_args().source.read_text()
     # Run the same queue block as the link task, including break-on-expired-
     # causal-work and send-time TTL reduction; no copy of its decisions.
     start = source.index('        Queued queued;std::string payload;')
     end = source.index('        fd_set reads;', start)
-    pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();while(true){' + source[start:end] + 'return true;}return false;}\n'
+    pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(',
-        'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal('))
+        'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal(', 'void trace_link_closed('))
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')
     queued = source[source.index('enum class QueuedState'):source.index('void active_loop_work(')]
@@ -224,7 +274,9 @@ def main():
         temp = Path(directory)
         (temp / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
         cpp, binary = temp / 'test.cpp', temp / 'test'
-        cpp.write_text(PREFIX + 'namespace amity::consortium {\n' + actual + queued + pump + '\n}\n' + SUPPORT + SUITE)
+        trace = function(source, 'struct LinkTrace {').rstrip() + ';\n'
+        prefix = PREFIX.replace('struct Active{', trace + 'struct Active{')
+        cpp.write_text(prefix + 'namespace amity::consortium {\n' + actual + queued + pump + '\n}\n' + SUPPORT + SUITE)
         sources = [ROOT / 'components/consortium' / name for name in
                    ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')

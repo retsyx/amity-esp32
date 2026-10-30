@@ -34,6 +34,7 @@
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <deque>
 #include <cstdio>
@@ -44,6 +45,20 @@ namespace {
 constexpr size_t maximum_links=2;
 constexpr size_t maximum_roster_peers=maximum_links;
 struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
+// Diagnostic metadata only: no retained payload, retry or execution decision.
+struct LinkTrace {
+    const char* phase="handshake";
+    const char* reason="cancelled";
+    Error error=Error::none;
+    Kind kind=Kind::heartbeat;
+    bool has_kind=false,unexpected=false,has_queue=false;
+    uint64_t created=0,queued_revision=0;
+    uint32_t ttl=0;
+    int action_code=-1;
+    int socket_error=0;
+    bool fail(const char* why,Error result=Error::none){reason=why;error=result;unexpected=true;return false;}
+    void queued(const Queued& value){kind=value.kind;has_kind=has_queue=true;created=value.created;ttl=value.ttl;queued_revision=value.revision;action_code=value.owned?static_cast<int>(value.owned->kind):-1;}
+};
 static bool queued_cleanup(const Queued& queued){
     if(queued.owned)return queued.owned->kind==model::OwnedIntentKind::key_up;
     Json value;JsonError error;
@@ -265,59 +280,81 @@ bool enroll_lan(Active &active,bool server){
 bool same_manifest(const SnapshotManifest &a,const SnapshotManifest &b){
     return a.transfer_id==b.transfer_id&&a.owner_octopus_id==b.owner_octopus_id&&a.owner_boot_id==b.owner_boot_id&&a.config_revision==b.config_revision&&a.total_length==b.total_length&&a.payload_hash==b.payload_hash&&a.document_kind==b.document_kind;
 }
-bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t revision=0,const Envelope* first=nullptr){
+bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t revision=0,const Envelope* first=nullptr,LinkTrace* diagnostic=nullptr){
+    LinkTrace local;auto& trace=diagnostic?*diagnostic:local;trace.phase="synchronization";trace.has_kind=trace.has_queue=false;trace.error=Error::none;
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
-    if(!hooks.snapshot||!hooks.synchronize)return false;
+    if(!hooks.snapshot||!hooks.synchronize)return trace.fail("synchronization_hooks",Error::not_ready);
     const auto scope=active.session.scope();
     const auto target=revision?revision:scope.config_revision;
     const bool refresh=target!=scope.config_revision;
-    if(refresh&&(target<scope.config_revision||!(active.status.negotiated_capabilities&live_configuration)))return false;
-    if(refresh){std::lock_guard<std::mutex> guard(lock);if(active.cancelled||active.retiring)return false;active.refreshing=true;}
+    if(refresh&&target<scope.config_revision)return trace.fail("synchronization_revision",Error::stale_config);
+    if(refresh&&!(active.status.negotiated_capabilities&live_configuration))return trace.fail("synchronization_capability",Error::unsupported_kind);
+    if(refresh){std::lock_guard<std::mutex> guard(lock);if(active.cancelled||active.retiring){trace.reason=active.retiring?"retiring":"cancelled";return false;}active.refreshing=true;}
     auto receive=[&](Envelope &envelope,uint32_t timeout=10000){
-        if(first){envelope=*first;first=nullptr;return true;}
+        if(first){envelope=*first;first=nullptr;trace.kind=envelope.kind;trace.has_kind=true;return true;}
         const auto until=now_ms()+timeout;
         for(unsigned n=0;n<64&&now_ms()<until;++n){
-            const auto before=now_ms();if(before>=until)return false;
-            std::string body;if(!active.tls->receive(body,static_cast<uint32_t>(until-before))||parse_envelope(body,envelope)!=Error::none)return false;
+            const auto before=now_ms();if(before>=until)return trace.fail("synchronization_timeout");
+            std::string body;if(!active.tls->receive(body,static_cast<uint32_t>(until-before)))return trace.fail("synchronization_receive");
+            const auto parsed=parse_envelope(body,envelope);if(parsed!=Error::none)return trace.fail("synchronization_parse",parsed);
+            trace.kind=envelope.kind;trace.has_kind=true;
             const auto now=now_ms();const auto result=active.session.admit(envelope,now,now);
             if(result==Error::duplicate)continue;
             if(result==Error::stale_config){const auto discarded=active.session.discard_stale(envelope,now,now);if(discarded==Error::none||discarded==Error::duplicate)continue;}
-            if(result!=Error::none)return false;
+            if(result!=Error::none)return trace.fail("synchronization_admission",result);
             if(envelope.kind==Kind::snapshot_request||envelope.kind==Kind::snapshot_chunk)return true;
-            if(!refresh)return false; // Only already-admitted old traffic can interleave a live refresh.
+            if(!refresh)return trace.fail("synchronization_interleaving"); // Only already-admitted old traffic can interleave a live refresh.
+            // A typed lookup result completes an already waiting original
+            // operation. Deliver it in its admitted scope before advancing;
+            // remembering it for replay while skipping the hook loses that
+            // continuation permanently. Observation snapshots remain replaceable.
+            if(envelope.kind==Kind::scoped_result&&envelope.payload.get("input_result")){
+                if(!hooks.control)return trace.fail("input_result_hook_missing",Error::not_ready);
+                const auto delivered=hooks.control(active.peer,envelope,0,active.session.scope().link_id);
+                if(delivered!=Error::none)return trace.fail("input_result_delivery",delivered);
+            }
         }
-        return false;
+        return trace.fail("synchronization_receive_bound");
     };
     auto send_slice=[&](){
-        std::string payload=server&&hooks.configuration_snapshot?hooks.configuration_snapshot(active.peer,target):hooks.snapshot(active.peer);if(payload.empty()||payload.size()>32768)return false;
+        trace.phase=server?"configuration_send":"owner_state_send";
+        std::string payload=server&&hooks.configuration_snapshot?hooks.configuration_snapshot(active.peer,target):hooks.snapshot(active.peer);if(payload.empty()||payload.size()>32768)return trace.fail("synchronization_payload");
         SnapshotManifest manifest;manifest.transfer_id=random_id<model::MessageId>();manifest.owner_octopus_id=server?scope.peer_id:scope.local_id;manifest.owner_boot_id=server?scope.peer_boot_id:scope.local_boot_id;manifest.config_revision=target;manifest.total_length=payload.size();manifest.payload_hash=sha256(payload);manifest.document_kind=server?"configuration":"owner_state";
-        if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"begin",0)))return false;
+        if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"begin",0)))return trace.fail("synchronization_begin_send");
         Envelope reply;SnapshotManifest ack;std::string phase;uint32_t next=0;
-        if(!receive(reply)||reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||phase!="ack"||next!=0)return false;
+        if(!receive(reply))return false;
+        if(reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||phase!="ack"||next!=0)return trace.fail("synchronization_begin_ack");
         for(uint32_t i=0;i<manifest.chunk_count();++i){
-            if(!send(active,Kind::snapshot_chunk,snapshot_chunk_json(manifest,i,payload))||!receive(reply,i+1==manifest.chunk_count()?40000:10000)||reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||next!=i+1||phase!=(i+1==manifest.chunk_count()?"complete":"ack"))return false;
+            if(!send(active,Kind::snapshot_chunk,snapshot_chunk_json(manifest,i,payload)))return trace.fail("synchronization_chunk_send");
+            if(!receive(reply,i+1==manifest.chunk_count()?40000:10000))return false;
+            if(reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||next!=i+1||phase!=(i+1==manifest.chunk_count()?"complete":"ack"))return trace.fail("synchronization_chunk_ack");
         }
         return true;
     };
     auto receive_slice=[&](){
+        trace.phase=server?"owner_state_receive":"configuration_receive";
         Envelope envelope;SnapshotManifest manifest;std::string phase;uint32_t next=0;
-        if(!receive(envelope)||envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||manifest.document_kind!=(server?"owner_state":"configuration"))return false;
+        if(!receive(envelope))return false;
+        if(envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||manifest.document_kind!=(server?"owner_state":"configuration"))return trace.fail("synchronization_begin_manifest");
         SnapshotTransfer transfer([](std::string_view value){return sha256(value);});
-        if(transfer.begin(manifest,server?scope.peer_id:scope.local_id,server?scope.peer_boot_id:scope.local_boot_id,target,now_ms())!=Error::none)return false;
-        if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"ack",0)))return false;
+        const auto begun=transfer.begin(manifest,server?scope.peer_id:scope.local_id,server?scope.peer_boot_id:scope.local_boot_id,target,now_ms());if(begun!=Error::none)return trace.fail("synchronization_transfer_begin",begun);
+        if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"ack",0)))return trace.fail("synchronization_begin_ack_send");
         while(!transfer.complete()){
-            if(!receive(envelope)||envelope.kind!=Kind::snapshot_chunk)return false;
-            const auto result=transfer.accept(envelope.payload,now_ms());if(result!=Error::none&&result!=Error::duplicate)return false;
+            if(!receive(envelope))return false;
+            if(envelope.kind!=Kind::snapshot_chunk)return trace.fail("synchronization_chunk_kind");
+            const auto result=transfer.accept(envelope.payload,now_ms());if(result!=Error::none&&result!=Error::duplicate)return trace.fail("synchronization_transfer_chunk",result);
             bool applied=true;
             if(transfer.complete()){Json document;document.type=Json::Type::string;document.string=transfer.payload();applied=hooks.synchronize(active.peer,document)==Error::none;}
-            if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,applied?(transfer.complete()?"complete":"ack"):"reject",transfer.next_index()))||!applied)return false;
+            if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,applied?(transfer.complete()?"complete":"ack"):"reject",transfer.next_index())))return trace.fail("synchronization_chunk_ack_send");
+            if(!applied)return trace.fail("synchronization_apply");
         }
         return true;
     };
     auto advance=[&](){
         if(!refresh)return true;
         std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
-        if(active.session.advance_configuration(target)!=Error::none)return false;
+        trace.phase="configuration_advance";
+        const auto advanced=active.session.advance_configuration(target);if(advanced!=Error::none)return trace.fail("synchronization_advance",advanced);
         active.status.config_revision=target;active.status.control_lease={};active.status.realtime_lease={};active.status.control_usable_until_ms=active.status.realtime_usable_until_ms=0;
         active.own_control={};active.own_realtime={};active.own_control_deadline=0;active.own_realtime_deadline=0;active.context_ready=false;
         if(!server)configuration=target;
@@ -326,7 +363,7 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
     // One bounded chunk in flight avoids filling both TCP send buffers while
     // each endpoint waits for the other; coordinator sends its owner slice first.
     if(server?(!send_slice()||!advance()||!receive_slice()):(!receive_slice()||!advance()||!send_slice()))return false;
-    if(!refresh&&active.session.synchronized(scope.config_revision,true,true)!=Error::none)return false;
+    if(!refresh){const auto synchronized=active.session.synchronized(scope.config_revision,true,true);if(synchronized!=Error::none)return trace.fail("synchronization_ready",synchronized);}
     {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;}if(!server){std::lock_guard<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(save_group(next)==ESP_OK)group=std::move(next);}}
     return true;
 }
@@ -390,37 +427,44 @@ void reap_closed_links(){
     {std::lock_guard<std::mutex> guard(lock);for(const auto& active:links)if(active->cancelled)pending.push_back(active);}
     for(const auto& active:pending)if(notify_link_closed(*active)){std::lock_guard<std::mutex> guard(lock);links.erase(std::remove(links.begin(),links.end(),active),links.end());}
 }
-bool establish(Active &active,bool server){
+bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
+    LinkTrace fallback;auto& trace=diagnostic?*diagnostic:fallback;trace.phase="hello";
     Group current;Identity local;uint64_t config;uint8_t profile_count,profile_mask;std::string policy_hash;std::optional<EnrollmentAbort> cancelled_join;
     {std::lock_guard<std::mutex> guard(lock);current=group;local=identity;config=configuration;policy_hash=configuration_hash;profile_count=hardware_tentacles;profile_mask=hardware_tentacles_mask;if(server&&abort_peer_credential(active,group))cancelled_join=active.enrollment_abort;}
-    if(!controller_membership_compatible(current))return false;
+    if(!controller_membership_compatible(current))return trace.fail("controller_membership");
     HelloFrame ours;ours.consortium_id=current.consortium;ours.octopus_id=local.id;ours.boot_id=boot;ours.coordinator_epoch=current.epoch;ours.config_revision=config;ours.config_hash=policy_hash.empty()?sha256(std::to_string(config)):policy_hash;ours.required_capabilities=qualified_lookup|owner_repeated_keys|original_controller_only|chunked_snapshots;ours.optional_capabilities=(active.tls->extended_profile()?known_capabilities:1023u)&~ours.required_capabilities;
     const auto *application=esp_app_get_description();ours.firmware_identity=hex(std::string_view(reinterpret_cast<const char*>(application->app_elf_sha256),32));
     ours.hardware_profile=active.tls->hardware_profile();ours.supported_tentacles=profile_count;ours.configured_tentacles_mask=profile_mask;
     if(active.tls->extended_profile()&&current.join_id&&((!server&&current.role==Group::prepared)||(server&&current.joining_id==active.tls->authenticated))){ours.pending_join_id=current.join_id;ours.join_digest=current.join_digest;}
-    if(cancelled_join){if(!active.tls->extended_profile())return false;ours.pending_join_id=cancelled_join->join;ours.join_digest=cancelled_join->digest;}
-    std::string incoming;if(!active.tls->send(hello_json(ours))||!active.tls->receive(incoming))return false;HelloFrame peer;if(parse_hello(incoming,peer)!=Error::none||peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch||!supports_capabilities(peer,ours.required_capabilities))return false;
-    if(peer.hardware_profile!=active.tls->hardware_profile())return false;
+    if(cancelled_join){if(!active.tls->extended_profile())return trace.fail("enrollment_abort_profile");ours.pending_join_id=cancelled_join->join;ours.join_digest=cancelled_join->digest;}
+    std::string incoming;if(!active.tls->send(hello_json(ours))||!active.tls->receive(incoming))return trace.fail("hello_exchange");
+    HelloFrame peer;const auto parsed=parse_hello(incoming,peer);if(parsed!=Error::none)return trace.fail("hello_parse",parsed);
+    if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch||!supports_capabilities(peer,ours.required_capabilities))return trace.fail("hello_validation");
+    if(peer.hardware_profile!=active.tls->hardware_profile())return trace.fail("hardware_profile");
     {std::lock_guard<std::mutex> guard(lock);if(group.consortium!=current.consortium||group.authority!=current.authority||group.epoch!=current.epoch||group.revision!=current.revision||!current_peer_credential(active,group)){
-        if(!(server&&abort_peer_credential(active,group)))return false;
-    }active.peer=peer.octopus_id;}model::LinkId link;
-    if(server){link=random_id<model::LinkId>();if(!active.tls->send("{\"type\":\"link\",\"link_id\":\""+link.str()+"\"}"))return false;}
-    else{Json j;JsonError error;if(!active.tls->receive(incoming)||!parse_json(incoming,j,error)||!closed(j,{"type","link_id"})||j.get("type")->type!=Json::Type::string||j.get("type")->string!="link"||!id(j.get("link_id"),link))return false;}
-    if(peer.pending_join_id&&!server&&(!current.join_id||*peer.pending_join_id!=current.join_id||peer.join_digest!=current.join_digest))return false;
+        if(!(server&&abort_peer_credential(active,group)))return trace.fail("hello_roster_changed");
+    }active.peer=peer.octopus_id;}model::LinkId link;trace.phase="link_id";
+    if(server){link=random_id<model::LinkId>();if(!active.tls->send("{\"type\":\"link\",\"link_id\":\""+link.str()+"\"}"))return trace.fail("link_id_send");}
+    else{Json j;JsonError error;if(!active.tls->receive(incoming)||!parse_json(incoming,j,error)||!closed(j,{"type","link_id"})||j.get("type")->type!=Json::Type::string||j.get("type")->string!="link"||!id(j.get("link_id"),link))return trace.fail("link_id_receive");}
+    if(peer.pending_join_id&&!server&&(!current.join_id||*peer.pending_join_id!=current.join_id||peer.join_digest!=current.join_digest))return trace.fail("join_scope");
     const bool pending_join=current.join_id&&((server&&current.joining_id==peer.octopus_id)||(!server&&peer.pending_join_id.has_value()));
     const bool aborting=server&&enrollment_abort_pending(active);
     bool provisional=current.role==Group::prepared||pending_join||aborting;
     LinkScope scope{link,current.consortium,local.id,peer.octopus_id,current.authority,boot,peer.boot_id,current.epoch,server?ours.config_revision:peer.config_revision};
     const auto operational_role=server?PeerRole::actuator:PeerRole::coordinator;
     const auto role=provisional?PeerRole::provisional_candidate:operational_role;
-    if(active.session.authenticate(scope,active.tls->authenticated,role,!provisional)!=Error::none||active.session.hello(peer,known_capabilities)!=Error::none)return false;
-    if(aborting)return finish_enrollment_abort(active);
-    if(!fence_replaced_links(active))return false;
-    if(provisional){if(!enroll_lan(active,server))return false;if(active.session.authenticate(scope,active.tls->authenticated,operational_role,true)!=Error::none||active.session.hello(peer,known_capabilities)!=Error::none)return false;}
+    trace.phase="session_authentication";
+    auto admitted=active.session.authenticate(scope,active.tls->authenticated,role,!provisional);if(admitted!=Error::none)return trace.fail("session_authenticate",admitted);
+    admitted=active.session.hello(peer,known_capabilities);if(admitted!=Error::none)return trace.fail("session_hello",admitted);
+    if(aborting){trace.phase="enrollment_abort";const bool finished=finish_enrollment_abort(active);return finished?true:trace.fail("enrollment_abort");}
+    trace.phase="replacement_fence";if(!fence_replaced_links(active))return trace.fail("replacement_fence");
+    if(provisional){trace.phase="enrollment_commit";if(!enroll_lan(active,server))return trace.fail("enrollment_commit");
+        admitted=active.session.authenticate(scope,active.tls->authenticated,operational_role,true);if(admitted!=Error::none)return trace.fail("member_authenticate",admitted);
+        admitted=active.session.hello(peer,known_capabilities);if(admitted!=Error::none)return trace.fail("member_hello",admitted);}
     {std::lock_guard<std::mutex> guard(active.mutex);active.status.id=peer.octopus_id;active.status.boot_id=peer.boot_id;active.status.config_revision=scope.config_revision;active.status.negotiated_capabilities=(peer.required_capabilities|peer.optional_capabilities)&known_capabilities;active.status.firmware_identity=peer.firmware_identity;active.status.supported_tentacles=peer.supported_tentacles;active.status.configured_tentacles_mask=peer.configured_tentacles_mask;active.status.hardware_profile=peer.hardware_profile;}
-    if(!exchange_hostname(active,server&&pending_join?current.join_hostname:std::string{}))return false;
-    if(!execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask)){if(!synchronize(active,server,false))return false;active.session.restrict_management();active.management_ready=true;std::lock_guard<std::mutex> guard(active.mutex);active.status.management_ready=true;return true;}
-    if(!synchronize(active,server))return false;
+    trace.phase="hostname";if(!exchange_hostname(active,server&&pending_join?current.join_hostname:std::string{}))return trace.fail("hostname_exchange");
+    if(!execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask)){if(!synchronize(active,server,false,0,nullptr,&trace))return false;active.session.restrict_management();active.management_ready=true;std::lock_guard<std::mutex> guard(active.mutex);active.status.management_ready=true;return true;}
+    if(!synchronize(active,server,true,0,nullptr,&trace))return false;
     return true;
 }
 std::string retirement_hash(const LinkScope &scope,model::MutationId mutation,uint64_t revision){
@@ -473,6 +517,36 @@ bool initialize_context(Active& active){
     if(!hooks.ready||!hooks.ready(active.peer))return false;
     active.context_ready=true;active.refreshing=false;return true;
 }
+struct LinkTraceSnapshot {
+    LinkTrace trace;
+    LinkScope scope;
+    model::OctopusId peer,authenticated_peer;
+    uint64_t now=0;
+};
+LinkTraceSnapshot snapshot_link_trace(const Active& active,const LinkTrace& trace,uint64_t now){
+    return {trace,active.session.scope(),active.peer,active.tls->authenticated,now};
+}
+void emit_link_trace(const LinkTraceSnapshot& captured){
+    const auto& trace=captured.trace;const auto& scope=captured.scope;
+    const auto age=trace.has_queue&&captured.now>=trace.created?captured.now-trace.created:0;
+    const bool reversed=trace.has_queue&&captured.now<trace.created;
+    if(trace.unexpected)
+        ESP_LOGW("consortium","Link closed reason=%s phase=%s peer=%s authenticated_peer=%s link=%s local_boot=%s peer_boot=%s revision=%llu error=%s kind=%s queue_age_ms=%llu queue_ttl_ms=%u queue_revision=%llu action_code=%d clock_reversed=%d socket_errno=%d",
+            trace.reason,trace.phase,captured.peer.str().c_str(),captured.authenticated_peer.str().c_str(),scope.link_id.str().c_str(),scope.local_boot_id.str().c_str(),scope.peer_boot_id.str().c_str(),
+            static_cast<unsigned long long>(scope.config_revision),error_name(trace.error),trace.has_kind?kind_name(trace.kind):"none",static_cast<unsigned long long>(age),trace.ttl,static_cast<unsigned long long>(trace.queued_revision),trace.action_code,reversed,trace.socket_error);
+    else
+        ESP_LOGI("consortium","Link closed reason=%s phase=%s peer=%s authenticated_peer=%s link=%s local_boot=%s peer_boot=%s revision=%llu",
+            trace.reason,trace.phase,captured.peer.str().c_str(),captured.authenticated_peer.str().c_str(),scope.link_id.str().c_str(),scope.local_boot_id.str().c_str(),scope.peer_boot_id.str().c_str(),static_cast<unsigned long long>(scope.config_revision));
+}
+void trace_link_closed(const Active& active,const LinkTrace& trace,uint64_t now){emit_link_trace(snapshot_link_trace(active,trace,now));}
+struct DeferredLinkTrace {
+    std::array<LinkTraceSnapshot,maximum_links> snapshots;
+    size_t size=0;
+    void capture(const Active& active,const LinkTrace& trace,uint64_t now){if(size<snapshots.size())snapshots[size++]=snapshot_link_trace(active,trace,now);}
+    // Construct before runtime/queue guards; emit only after they unlock. The
+    // snapshot has no mutable Active pointer, payload or deferred work.
+    ~DeferredLinkTrace(){for(size_t i=0;i<size;++i)emit_link_trace(snapshots[i]);}
+};
 std::optional<RuntimeSnapshotRetry> snapshot_retry(const Active& active,const Queued& queued){
     if(queued.kind!=Kind::scoped_result||active.cancelled||active.retiring||!active.ready)return {};
     const auto scope=active.session.scope();
@@ -508,11 +582,13 @@ QueuedState prepare_queued(Active& active,const Queued& queued,uint64_t now,std:
 }
 void active_loop_work(void *arg){
     std::unique_ptr<std::shared_ptr<Active>> holder(static_cast<std::shared_ptr<Active>*>(arg));auto active=*holder;holder.reset();bool server=active->tls->server;
-    if(!active->tls->handshake()||!establish(*active,server)){if(!active->lifecycle_only)error("Operational authentication or synchronization failed");active->cancelled=true;}else{
+    LinkTrace trace;trace.phase="tls_handshake";const bool handshaken=active->tls->handshake();if(!handshaken)trace.fail("tls_handshake");
+    if(!handshaken||!establish(*active,server,&trace)){if(!active->lifecycle_only)error("Operational authentication or synchronization failed");active->cancelled=true;}else{
         std::lock_guard<std::mutex> guard(lock);status.connected=true;status.synchronized=active->ready.load();status.phase=active->ready?"enrollment_ready":"membership_committed";
     }
     uint64_t heartbeat=0,renewal=0,control_renewal=0,sequence=0;bool retirement_attempted=false;
     while(!active->cancelled){
+        trace.phase="operational";trace.has_kind=trace.has_queue=false;trace.ttl=0;trace.action_code=-1;trace.queued_revision=0;trace.socket_error=0;
         if(active->retiring){retirement_attempted=true;finish_retirement(*active);break;}
         auto now=now_ms();
         if(server&&active->ready&&(active->status.negotiated_capabilities&live_configuration)){
@@ -521,11 +597,12 @@ void active_loop_work(void *arg){
                 bool drain=false;{std::lock_guard<std::mutex> guard(active->mutex);
                     while(!active->queue.empty()&&active->queue.front().revision!=active->session.scope().config_revision&&active->queue.front().revision!=target)active->queue.pop_front();
                     drain=!active->queue.empty()&&active->queue.front().revision==active->session.scope().config_revision;}
-                if(!drain&&!synchronize(*active,true,true,target))break;
+                if(!drain&&!synchronize(*active,true,true,target,nullptr,&trace))break;
             }
         }
-        if(!server&&active->ready&&now>=renewal){auto realtime=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(realtime,LeaseClass::realtime_input,500,now);if(now>=control_renewal){auto control=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(control,LeaseClass::control,5000,now);active->own_control=control;active->own_control_deadline=now+5000;if(!send(*active,Kind::execution_lease,lease_json(control,active->session.scope().link_id,LeaseClass::control,5000)))break;control_renewal=now+4000;}active->own_realtime=realtime;active->own_realtime_deadline=now+500;if(!send(*active,Kind::execution_lease,lease_json(realtime,active->session.scope().link_id,LeaseClass::realtime_input,500)))break;renewal=now+250;}
-        if(now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}"))break;heartbeat=now+1000;}
+        trace.phase="operational";trace.has_kind=trace.has_queue=false;
+        if(!server&&active->ready&&now>=renewal){auto realtime=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(realtime,LeaseClass::realtime_input,500,now);if(now>=control_renewal){auto control=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(control,LeaseClass::control,5000,now);active->own_control=control;active->own_control_deadline=now+5000;if(!send(*active,Kind::execution_lease,lease_json(control,active->session.scope().link_id,LeaseClass::control,5000))){trace.fail("control_lease_send");break;}control_renewal=now+4000;}active->own_realtime=realtime;active->own_realtime_deadline=now+500;if(!send(*active,Kind::execution_lease,lease_json(realtime,active->session.scope().link_id,LeaseClass::realtime_input,500))){trace.fail("realtime_lease_send");break;}renewal=now+250;}
+        if(now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}")){trace.fail("heartbeat_send");break;}heartbeat=now+1000;}
         now=now_ms();
         Queued queued;std::string payload;bool have=false,invalid=false;{std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
@@ -535,38 +612,39 @@ void active_loop_work(void *arg){
                 if(prepared==QueuedState::invalid)invalid=true;
                 if(prepared==QueuedState::ready||expired){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}
             }}
-        if(invalid)break;
-        if(have&&queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl))break;
+        if(invalid){trace.fail("queued_invalid");break;}
+        if(have&&queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl)){trace.queued(queued);trace.fail("causal_expired");break;}
         if(have&&!queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl))
             if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
         if(have&&now>=queued.created&&now-queued.created<queued.ttl){
-            if(!send(*active,queued.kind,payload,queued.ttl-static_cast<uint32_t>(now-queued.created)))break;
+            if(!send(*active,queued.kind,payload,queued.ttl-static_cast<uint32_t>(now-queued.created))){trace.queued(queued);trace.fail("queued_send");break;}
         }
-        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0)break;if(!ready&&mbedtls_ssl_check_pending(&active->tls->ssl)==0)continue;
-        std::string text;if(!active->tls->receive(text))break;Envelope envelope;if(parse_envelope(text,envelope)!=Error::none)break;const auto received=now_ms();
+        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}if(!ready&&mbedtls_ssl_check_pending(&active->tls->ssl)==0)continue;
+        std::string text;if(!active->tls->receive(text)){trace.fail("frame_receive");break;}Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
         if(envelope.config_revision<active->session.scope().config_revision){
             const auto discarded=active->session.discard_stale(envelope,received,received);
             if(discarded==Error::none||discarded==Error::duplicate)continue;
-            break;
+            trace.fail("stale_frame",discarded);break;
         }
         if(envelope.kind==Kind::snapshot_request||envelope.kind==Kind::snapshot_chunk){
-            if(server||!active->ready||!(active->status.negotiated_capabilities&live_configuration)||active->session.admit(envelope,received,received)!=Error::none)break;
+            if(server||!active->ready||!(active->status.negotiated_capabilities&live_configuration)){trace.fail("live_configuration_role");break;}
+            const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("live_configuration_admit",admitted);break;}
             SnapshotManifest manifest;std::string phase;uint32_t next=0;
-            if(envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||next||manifest.document_kind!="configuration"||manifest.config_revision<=active->session.scope().config_revision)break;
-            if(!synchronize(*active,false,true,manifest.config_revision,&envelope))break;
+            if(envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||next||manifest.document_kind!="configuration"||manifest.config_revision<=active->session.scope().config_revision){trace.fail("live_configuration_manifest");break;}
+            if(!synchronize(*active,false,true,manifest.config_revision,&envelope,&trace))break;
             renewal=control_renewal=0;continue;
         }
-        if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);}break;}}
-        if(!server&&envelope.kind==Kind::membership_event){if(active->session.admit(envelope,received,received)!=Error::none)break;retire_member(*active,envelope,received);break;}
-        if(active->management_ready&&envelope.kind==Kind::execution_lease){if(active->session.admit(envelope,received,received)!=Error::none)break;continue;}
-        if(is_settings_kind(envelope.kind)){if(!settings_dispatch(active,envelope,received))break;continue;}
+        if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);trace.reason="retired";}else trace.fail("membership_revoked");break;}}
+        if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope,received))trace.fail("retirement");else trace.reason="retired";break;}
+        if(active->management_ready&&envelope.kind==Kind::execution_lease){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("management_lease_admit",admitted);break;}continue;}
+        if(is_settings_kind(envelope.kind)){if(!settings_dispatch(active,envelope,received)){trace.fail("settings_dispatch");break;}continue;}
         if(is_update_kind(envelope.kind)) {
-            if(active->session.admit(envelope,received,received)!=Error::none || (!active->ready&&!active->management_ready)) break;
+            const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none || (!active->ready&&!active->management_ready)){trace.fail("update_admit",admitted);break;}
             RuntimeUpdateHooks hooks; bool allowed=false;
             {std::lock_guard<std::mutex> guard(lock);hooks=updates;
                 allowed=envelope.kind==Kind::update_result ? (server&&group.role==Group::coordinator&&status.authority_ready) :
                     (!server&&group.role==Group::member&&group.authority==active->peer&&group.epoch==envelope.coordinator_epoch);}
-            if(!allowed) break;
+            if(!allowed){trace.fail("update_authority");break;}
             if(envelope.kind==Kind::update_result) {if(hooks.result) hooks.result(active->peer,envelope.payload);}
             else {
                 if(envelope.kind==Kind::update_chunk) {
@@ -584,25 +662,25 @@ void active_loop_work(void *arg){
             }
         }
         else if(envelope.kind==Kind::execution_lease&&server){
-            if(active->session.admit(envelope,received,received)!=Error::none)break;
+            const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("execution_lease_admit",admitted);break;}
             model::ExecutionLeaseId id;model::LinkId link;uint64_t duration=0;
-            if(!consortium::id(envelope.payload.get("lease_id"),id)||!consortium::id(envelope.payload.get("link_id"),link)||link!=active->session.scope().link_id||!json_uint(envelope.payload.get("validity_ms"),duration,1,10000))break;
+            if(!consortium::id(envelope.payload.get("lease_id"),id)||!consortium::id(envelope.payload.get("link_id"),link)||link!=active->session.scope().link_id||!json_uint(envelope.payload.get("validity_ms"),duration,1,10000)){trace.fail("execution_lease_scope");break;}
             const bool control=envelope.payload.get("class")->string=="control";
             {std::lock_guard<std::mutex> guard(active->mutex);
                 if(control){active->status.control_lease=id;active->status.control_usable_until_ms=received+(duration>100?duration-100:0);}
                 else{active->status.realtime_lease=id;active->status.realtime_usable_until_ms=received+(duration>100?duration-100:0);}
             }
-            if(control&&!initialize_context(*active))break;
+            if(control&&!initialize_context(*active)){trace.fail("initial_context");break;}
         }
         else if(envelope.kind!=Kind::heartbeat){
             const auto admitted=active->session.admit(envelope,received,received);
             if(admitted==Error::duplicate)continue;
-            if(admitted!=Error::none)break;
+            if(admitted!=Error::none){trace.fail("control_admit",admitted);break;}
             RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
             uint64_t deadline=0;
             if(envelope.kind==Kind::scoped_intent){
                 model::OwnedIntent intent;model::ExecutionLeaseId lease;
-                if(parse_owned_intent(envelope.payload,intent,lease)!=Error::none)break;
+                if(parse_owned_intent(envelope.payload,intent,lease)!=Error::none){trace.fail("owned_intent_parse");break;}
                 if(received>UINT64_MAX-envelope.ttl_ms)continue;
                 deadline=received+envelope.ttl_ms;
                 if(intent.kind!=model::OwnedIntentKind::key_up){
@@ -615,13 +693,15 @@ void active_loop_work(void *arg){
             if(hooks.control){
                 const auto result=hooks.control(active->peer,envelope,deadline,active->session.scope().link_id);
                 if(!server&&result==Error::none&&envelope.kind==Kind::scoped_intent&&envelope.payload.get("action")->string=="context"){active->context_ready=true;active->refreshing=false;}
-                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||(envelope.kind==Kind::scoped_intent&&(envelope.payload.get("action")->string=="key_up"||envelope.payload.get("action")->string=="source_input"||envelope.payload.get("action")->string=="context"))))break;
+                if(result!=Error::none&&(envelope.kind==Kind::scoped_result||(envelope.kind==Kind::scoped_intent&&(envelope.payload.get("action")->string=="key_up"||envelope.payload.get("action")->string=="source_input"||envelope.payload.get("action")->string=="context")))){trace.fail("control_dispatch",result);break;}
             }
         }
-        else if(active->session.admit(envelope,received,received)!=Error::none)break;
+        else{const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("heartbeat_admit",admitted);break;}}
     }
     if(server&&active->retiring&&!retirement_attempted)finish_retirement(*active);
     if(active->update_begin_id) {RuntimeUpdateHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=updates;}if(hooks.disconnected) hooks.disconnected(active->peer,active->update_begin_id);}
+    if(!trace.unexpected&&active->retiring)trace.reason="retired";
+    trace_link_closed(*active,trace,now_ms());
     active->cancelled=true;
     const bool fenced=notify_link_closed(*active);
     active->session.disconnect();::shutdown(active->tls->socket,SHUT_RDWR);
@@ -1150,13 +1230,16 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
     if(is_update_kind(kind))return runtime_send_update(owner,kind,std::move(payload),ttl);
     if(retired_kind(kind))return ESP_ERR_NOT_SUPPORTED;
     if(!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;
-    SnapshotRetryBatch retries;
+    SnapshotRetryBatch retries;DeferredLinkTrace diagnostics;
     std::lock_guard<std::mutex> guard(lock);if(!status.authority_ready&&group.role==Group::coordinator)return ESP_ERR_INVALID_STATE;
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
         std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();
-        const bool expired_cleanup=std::any_of(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl);});
-        if(expired_cleanup){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);return ESP_ERR_INVALID_STATE;}
+        const auto expired_cleanup=std::find_if(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl);});
+        if(expired_cleanup!=active->queue.end()){
+            LinkTrace trace;trace.phase="queue_admission";trace.queued(*expired_cleanup);trace.fail("causal_expired");diagnostics.capture(*active,trace,now);
+            active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);return ESP_ERR_INVALID_STATE;
+        }
         active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[&](const auto& queued){
             const bool expired=now<queued.created||now-queued.created>=queued.ttl;
             if(expired)retries.dropped(*active,queued);
@@ -1164,7 +1247,7 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
         }),active->queue.end());
         const bool cleanup=queued_cleanup({kind,payload,ttl,now,revision,owned});
         if(active->queue.size()>=(cleanup?16u:15u)){
-            if(cleanup){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
+            if(cleanup){LinkTrace trace;trace.phase="queue_admission";trace.kind=kind;trace.has_kind=true;trace.fail("cleanup_queue_full");diagnostics.capture(*active,trace,now);active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
             return ESP_ERR_NO_MEM;
         }
         active->queue.push_back({kind,std::move(payload),ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned)});
@@ -1182,8 +1265,11 @@ esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,st
 }
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     if(!link)return;
-    std::lock_guard<std::mutex> guard(lock);
-    for(auto& active:links)if(active->peer==owner&&active->session.scope().link_id==link){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
+    DeferredLinkTrace diagnostics;std::lock_guard<std::mutex> guard(lock);
+    for(auto& active:links)if(active->peer==owner&&active->session.scope().link_id==link){
+        if(!active->cancelled){LinkTrace trace;trace.phase="result_delivery";trace.fail("causal_result_fence");diagnostics.capture(*active,trace,now_ms());}
+        active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);
+    }
 }
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}

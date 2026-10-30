@@ -583,6 +583,12 @@ failures and cleanup. PASS/FAIL summaries go to stdout/stderr after each test.
 After writing the JSON report, the final `run.report` line gives its absolute
 path on successful and failed runs.
 
+Owner-proof failures retain the rejected check's bounded identity, boot,
+readiness and proof fields in stdio and `scans[].owner_failures` in the JSON
+report. Primary failure and cause stacks survive cleanup failures. Only
+framework-owned assertion messages are included; arbitrary exception text,
+HTTP bodies, credentials and opaque tokens are excluded.
+
 Use `--log-level DEBUG` to include HTTP method/route, request duration and
 status, and individual CEC frames with owner, GPIO and wire/virtual transport.
 HTTP bodies, headers, credentials and opaque tokens are excluded. No separate

@@ -1,7 +1,7 @@
 {
-  "status": "IN PROGRESS: all four bench DUTs run exact 0.1.99/Matter software 100. Remove and Replace changes passed host and UI checks; physical two-owner consortium failed during scan readiness and three-owner consortium failed after a main-player Active Source received no physical response. Historical 0.1.98 passes remain historical. Reconnect identity and diagnostic snapshot expiry firmware defects are under regression verification for 0.1.100, with focused source/context traces and a hard two-second physical source-theft deadline. No new physical qualification is claimed.",
+  "status": "IN PROGRESS: all four DUTs run verified 0.1.100/Matter software 101 and the full host suite passes including333 framework units. The two-owner consortium passes both 66.9ms theft directions and clean removal. The three-owner run passed nine locations and the main-owner cycle, then failed owner-proof preflight before Member2 start. Its cleanup initially failed; fresh scoped recovery removed both known members with reset scheduled and exact main value/boot preservation. Invalid snapshot/primary exception and link-close reason tracing are being completed before another qualification. No three-owner pass is claimed.",
   "audit_date": "2026-10-29",
-  "firmware_version": "0.1.99",
+  "firmware_version": "0.1.100",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -50,49 +50,65 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
+    "result": "IN PROGRESS: deployment and host/two-owner qualification passed; three-owner running",
     "design_contracts": {
       "result": "PASS",
-      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
-      "report": "test-results/consortium-live-config-2026-10-29/contracts-complete.json",
-      "checks": {
-        "manifest_entries_checked": 34,
-        "schemas_checked": 6,
-        "positive_schema_vectors": 17,
-        "negative_schema_vectors": 59,
-        "configured_selectors_checked": 4,
-        "current_wire_kinds_checked": 19,
-        "markdown_files_checked": 20,
-        "local_links_checked": 140,
-        "firmware_or_hardware_tests_run": false
-      }
+      "report": "test-results/consortium-runtime-fix-2026-10-29/contracts.json"
     },
     "software_tests": {
       "result": "PASS (exit 0)",
       "command": "sh tests/run_host_tests.sh",
-      "log": "test-results/consortium-live-config-2026-10-29/host-tests-complete.log",
-      "framework_unit_tests": 287,
-      "environment": "Pinned ESP-IDF SDK Python 3.14 and toolchain",
-      "scope": "Complete retained host runner including actual Hub/SystemSync/Session paths, ASan/UBSan CEC activity sequencing, cache-miss scan throttling, unsolicited announcement ingestion, live TLS configuration revisions, owner-local source theft, original input/gesture/held-key lifecycle and 287 framework units."
+      "log": "test-results/consortium-runtime-fix-2026-10-29/host-tests.log",
+      "framework_unit_tests": 333
     },
     "native_firmware_build": {
       "result": "PASS",
-      "command": "idf.py build provisioning-package (pinned SDK environment)",
-      "log": "test-results/consortium-live-config-2026-10-29/build-complete.log",
-      "firmware_version": "0.1.98",
-      "matter_software_version": 99,
-      "image_bytes": 2414032,
-      "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
-      "image_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
-      "ota_partition_bytes": 3997696,
-      "free_bytes": 1583664,
-      "free_percent_reported": 40,
-      "public_record_layouts": 36,
-      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+      "log": "test-results/consortium-runtime-fix-2026-10-29/build.log",
+      "release_packaging": "Manifest and browser bundle regenerated from the final unchanged binary after hash validation caught a stale earlier bundle; no stale artifact deployed",
+      "firmware_version": "0.1.100",
+      "matter_software_version": 101,
+      "image_bytes": 2428224,
+      "image_sha256": "8175bb7040ac3da56192c821f16e6a847c5371cb18e528a61cea313f5100b9c6",
+      "image_elf_sha256": "a46975167832e538590835e8f830aeecfad4ed3b5b0c927f46a20249b359449d",
+      "source_commit": "291b9239065a8265e137928c05227e7f41293a08",
       "source_dirty": true,
-      "frozen_artifacts": "test-results/consortium-live-config-2026-10-29/firmware-0.1.98-final"
+      "frozen_artifacts": "test-results/consortium-runtime-fix-2026-10-29/firmware-0.1.100",
+      "public_record_layouts": 36
     },
-    "physical_devices": "All four DUTs updated and verified. All six physical functional cases pass on test2; both activity roles in the two-board consortium scenario are exercised. No broader real-AV/electrical qualification claimed.",
-    "scope": "Current consortium/live configuration/cache/scan/sequential activity/input changes. Earlier qualified-lookup records are preserved separately."
+    "physical_devices": {
+      "result": "PASS exact-image update/startup/preservation on all four DUTs",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/deployment.json"
+    },
+    "two_owner_functional": {
+      "result": "PASS",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/consortium.json",
+      "verification": "test-results/consortium-runtime-fix-2026-10-29/consortium-verification.json",
+      "power_assertions": 14,
+      "typed_locations": 6,
+      "theft_responses_ms": [
+        66.900096,
+        66.900077
+      ],
+      "cleanup_errors": []
+    },
+    "three_owner_functional": {
+      "result": "FAIL: owner-proof preflight before Member2 start; initial member cleanup failed",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/consortium-three-duts.json",
+      "cleanup_recovery": "test-results/consortium-runtime-fix-2026-10-29/manual-cleanup.json",
+      "partial_theft_responses_ms": [
+        69.949991,
+        68.100104
+      ],
+      "typed_locations": 9
+    },
+    "shared_wire_source_theft": {
+      "result": "PASS",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/source-theft.json",
+      "standby_ms": 66.899909,
+      "route_restoration_ms": 183.34999,
+      "same_physical_deadline_ms": 2000,
+      "cleanup_errors": []
+    }
   },
   "historical_evidence": {
     "release": "0.1.80",
@@ -110,7 +126,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 100,
+  "matter_software_version": 101,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -182,168 +198,18 @@
     "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
-    "date": "2026-10-29",
     "result": "PASS",
-    "firmware_version": "0.1.98",
-    "matter_software_version": 99,
-    "device_count": 4,
-    "updated_device_count": 4,
-    "bench_labels": [
-      "amity-dut",
-      "amity-dut-2",
-      "amity-dut-3",
-      "amity-dut-4"
-    ],
-    "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
-    "running_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
-    "image_bytes": 2414032,
-    "hardware_profile": "esp32s3-development-4t-v1",
-    "hardware_mapping_sha256": "1b756583cfd9c09b5ceb9db4573bc4bc6a3808d2799453e8f3749a24e2564f6e",
-    "configuration_formats": {
-      "read_max": "3",
-      "read_min": "3",
-      "write": "3"
-    },
-    "storage_formats": {
-      "read_max": "2",
-      "read_min": "2",
-      "write": "2"
-    },
-    "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+    "date": "2026-10-30",
+    "firmware_version": "0.1.100",
+    "matter_software_version": 101,
+    "source_commit": "291b9239065a8265e137928c05227e7f41293a08",
     "source_dirty": true,
-    "artifact_provenance": "Frozen artifact built from parent 1be1436 with source_dirty=true before the final change commit. Preserve that original provenance; this is not a clean final-commit rebuild.",
-    "frozen_artifacts": "test-results/consortium-live-config-2026-10-29/firmware-0.1.98-final",
-    "report": "test-results/consortium-live-config-2026-10-29/deployment.json",
-    "transport": "Existing authenticated POST /api/firmware on main; exact-MAC application-only USB writes on boards 2/3/4 with full backups and protected-flash comparison before reboot",
-    "main_usb_opened": false,
-    "flash_erased": false,
-    "factory_reset_during_updates": false,
-    "main": {
-      "firmware_version": "0.1.98",
-      "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
-      "image_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
-      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
-      "source_dirty": true,
-      "previous_boot": "38461dd607330cb488c540cfefa5ce62",
-      "boot_id": "ff485359980e6139df1b3c2bbd1ab468",
-      "route": "POST /api/firmware",
-      "main_usb_opened": false,
-      "checks": {
-        "exact_version": true,
-        "exact_elf": true,
-        "ready": true,
-        "same_identity": true,
-        "same_group": true,
-        "new_boot": true,
-        "original_main_authority": true,
-        "configuration_unchanged": true,
-        "matter_fabrics_unchanged": true,
-        "homekit_pairing_unchanged": true,
-        "hardware_capabilities_unchanged": true,
-        "local_update_healthy": true,
-        "no_peers": true
-      },
-      "passed": true,
-      "report": "test-results/consortium-live-config-2026-10-29/main-0.1.98-deployment.json",
-      "before": "test-results/consortium-live-config-2026-10-29/main-0.1.98-before-update.json",
-      "after": "test-results/consortium-live-config-2026-10-29/main-0.1.98-after-update.json"
-    },
-    "updated_devices": [
-      {
-        "bench_label": "amity-dut-3",
-        "usb_mac": "44:B1:76:AE:C2:AC",
-        "device_id": "fad293fe0f3b513a10e027a20cb3b7c8",
-        "version": "0.1.98",
-        "previous_version": "0.1.97",
-        "elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
-        "checks": {
-          "exact_usb_and_chip_mac": true,
-          "partition_table_matches": true,
-          "factory_record_matches_previous_card": true,
-          "exact_application_written": true,
-          "non_application_flash_unchanged": true,
-          "ota_metadata_unchanged": true,
-          "expected_unclaimed_role": true,
-          "version_running": true,
-          "exact_elf_running": true,
-          "ready": true,
-          "factory_credentials_retained": true,
-          "no_panic": true,
-          "no_identity_recovery_errors": true,
-          "matter_setup_automatic": true,
-          "matter_window_open": true,
-          "matter_ble_advertising": true,
-          "origin_identity_retained": true,
-          "sdk_admission_selftest": true
-        },
-        "passed": true,
-        "report": "test-results/consortium-live-config-2026-10-29/44b176aec2ac/deployment.json"
-      },
-      {
-        "bench_label": "amity-dut-2",
-        "usb_mac": "44:B1:76:AE:C5:E0",
-        "device_id": "7468ba8afeb9ffad49eb57b3ba0a3288",
-        "version": "0.1.98",
-        "previous_version": "0.1.97",
-        "elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
-        "checks": {
-          "exact_usb_and_chip_mac": true,
-          "partition_table_matches": true,
-          "factory_record_matches_previous_card": true,
-          "exact_application_written": true,
-          "non_application_flash_unchanged": true,
-          "ota_metadata_unchanged": true,
-          "expected_unclaimed_role": true,
-          "version_running": true,
-          "exact_elf_running": true,
-          "ready": true,
-          "factory_credentials_retained": true,
-          "no_panic": true,
-          "no_identity_recovery_errors": true,
-          "matter_setup_automatic": true,
-          "matter_window_open": true,
-          "matter_ble_advertising": true,
-          "origin_identity_retained": true,
-          "sdk_admission_selftest": true
-        },
-        "passed": true,
-        "report": "test-results/consortium-live-config-2026-10-29/44b176aec5e0/deployment.json"
-      },
-      {
-        "bench_label": "amity-dut-4",
-        "usb_mac": "44:B1:76:AE:CF:64",
-        "device_id": "e453c2c503e55e5f6fe6ab7976c6f1d0",
-        "version": "0.1.98",
-        "previous_version": "0.1.97",
-        "elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
-        "checks": {
-          "exact_usb_and_chip_mac": true,
-          "partition_table_matches": true,
-          "factory_record_matches_previous_card": true,
-          "exact_application_written": true,
-          "non_application_flash_unchanged": true,
-          "ota_metadata_unchanged": true,
-          "expected_unclaimed_role": true,
-          "version_running": true,
-          "exact_elf_running": true,
-          "ready": true,
-          "factory_credentials_retained": true,
-          "no_panic": true,
-          "no_identity_recovery_errors": true,
-          "matter_setup_automatic": true,
-          "matter_window_open": true,
-          "matter_ble_advertising": true,
-          "origin_identity_retained": true,
-          "sdk_admission_selftest": true
-        },
-        "passed": true,
-        "report": "test-results/consortium-live-config-2026-10-29/44b176aecf64/deployment.json"
-      }
-    ],
-    "functional_verification": "PASS: all six cases and all testbeds; no cleanup errors",
-    "functional_report": "test-results/consortium-live-config-2026-10-29/functional.json",
-    "post_functional_report": "test-results/consortium-live-config-2026-10-29/main-final-postcheck.json",
-    "qualification_scope": "Exact-image update/startup/provisioning retention on four DUTs. Exercised local CEC and normal two-board membership plus distributed CEC activities and source-theft suppression on main/member2, one adapter each with simulated equipment. No strict-profile, three-owner, four-adapter electrical, real AV/remote or production-security qualification."
+    "image_sha256": "8175bb7040ac3da56192c821f16e6a847c5371cb18e528a61cea313f5100b9c6",
+    "image_elf_sha256": "a46975167832e538590835e8f830aeecfad4ed3b5b0c927f46a20249b359449d",
+    "report": "test-results/consortium-runtime-fix-2026-10-29/deployment.json",
+    "main": "Authenticated OTA with exact retained configuration, pairings, identity and authority",
+    "candidates": "Three MAC-locked application-only writes with private full-flash backups, protected-range and OTA metadata equality, exact running identity/version/hash and 18 checks each",
+    "functional_qualification_separate": true
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -2162,9 +2028,9 @@
     "qualification_scope": "Exact-image update/startup/provisioning retention on four DUTs. Exercised local CEC and normal two-board membership plus distributed CEC activities and source-theft suppression on main/member2, one adapter each with simulated equipment. No strict-profile, three-owner, four-adapter electrical, real AV/remote or production-security qualification."
   },
   "consortium_runtime_fix_validation": {
-    "result": "IN PROGRESS",
-    "firmware_target": "0.1.100",
-    "matter_software_version_target": 101,
+    "result": "IN PROGRESS: all-four deployment and two-owner pass; three-owner readiness failure under diagnosis with acknowledged reset cleanup recovered",
+    "firmware_target": "0.1.101",
+    "matter_software_version_target": 102,
     "deployment_to_be_repeated_on_all_duts": true,
     "previous_deployment": "test-results/device-removal-2026-10-29/deployment.json",
     "previous_physical_results": {
@@ -2181,6 +2047,54 @@
     },
     "source_theft_deadline_seconds": 2,
     "ordinary_cec_assertion_default_seconds": 5,
-    "physical_source_theft_cause": "Unresolved: wire TX success is a broadcast result and does not prove the DUT decoded that frame. Native three-owner current-activity policy regression passes; focused receipt/context/admission firmware traces will distinguish the next failure."
+    "physical_source_theft_cause": "Unresolved: wire TX success is a broadcast result and does not prove the DUT decoded that frame. Native three-owner current-activity policy regression passes; focused receipt/context/admission firmware traces will distinguish the next failure.",
+    "deployment_report": "test-results/consortium-runtime-fix-2026-10-29/deployment.json",
+    "two_owner_report": "test-results/consortium-runtime-fix-2026-10-29/consortium.json",
+    "diagnostics_target": "Bounded exact owner-proof failures/cause stacks and firmware link-close reason; physical readiness failure remains unresolved"
+  },
+  "previous_live_configuration_task_validation": {
+    "design_contracts": {
+      "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "report": "test-results/consortium-live-config-2026-10-29/contracts-complete.json",
+      "checks": {
+        "manifest_entries_checked": 34,
+        "schemas_checked": 6,
+        "positive_schema_vectors": 17,
+        "negative_schema_vectors": 59,
+        "configured_selectors_checked": 4,
+        "current_wire_kinds_checked": 19,
+        "markdown_files_checked": 20,
+        "local_links_checked": 140,
+        "firmware_or_hardware_tests_run": false
+      }
+    },
+    "software_tests": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/consortium-live-config-2026-10-29/host-tests-complete.log",
+      "framework_unit_tests": 287,
+      "environment": "Pinned ESP-IDF SDK Python 3.14 and toolchain",
+      "scope": "Complete retained host runner including actual Hub/SystemSync/Session paths, ASan/UBSan CEC activity sequencing, cache-miss scan throttling, unsolicited announcement ingestion, live TLS configuration revisions, owner-local source theft, original input/gesture/held-key lifecycle and 287 framework units."
+    },
+    "native_firmware_build": {
+      "result": "PASS",
+      "command": "idf.py build provisioning-package (pinned SDK environment)",
+      "log": "test-results/consortium-live-config-2026-10-29/build-complete.log",
+      "firmware_version": "0.1.98",
+      "matter_software_version": 99,
+      "image_bytes": 2414032,
+      "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
+      "image_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+      "ota_partition_bytes": 3997696,
+      "free_bytes": 1583664,
+      "free_percent_reported": 40,
+      "public_record_layouts": 36,
+      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+      "source_dirty": true,
+      "frozen_artifacts": "test-results/consortium-live-config-2026-10-29/firmware-0.1.98-final"
+    },
+    "physical_devices": "All four DUTs updated and verified. All six physical functional cases pass on test2; both activity roles in the two-board consortium scenario are exercised. No broader real-AV/electrical qualification claimed.",
+    "scope": "Current consortium/live configuration/cache/scan/sequential activity/input changes. Earlier qualified-lookup records are preserved separately."
   }
 }

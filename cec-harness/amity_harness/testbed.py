@@ -8,7 +8,7 @@ from .components import Component
 from .config import current_config, register_testbed
 from .dut import DUT
 from .topology import format_physical_address
-from .trace import event
+from .trace import event, failure_fields
 
 
 _ownership_lock = threading.RLock()
@@ -88,6 +88,7 @@ def _scan_report(dut, scan):
                         for row in getattr(scan, "status", {}).get("devices", [])]
     return {"dut": dut.name, "started_monotonic_ns": getattr(scan, "started", 0),
             "owner_boots": deepcopy(getattr(scan, "owner_boots", {})),
+            "owner_failures": deepcopy(getattr(scan, "owner_failures", ())),
             "operation": _select(getattr(scan, "operation", {}), _OPERATION_FIELDS),
             "devices": devices, "last_state": state,
             "dut_cec_initiators": deepcopy(getattr(scan, "initiators", {})),
@@ -129,6 +130,7 @@ class TestBed:
         self._closing = False
         self._cleanup_errors = []
         self._failure = None
+        self._failure_details = None
         self._initial_scans = {}
         self._initial_activity_counts = {}
         self._initial_membership_counts = {}
@@ -227,6 +229,7 @@ class TestBed:
             return self
         except BaseException as exc:
             self._failure = type(exc).__name__
+            self._failure_details = failure_fields(exc)
             event("testbed.setup.failed", level=logging.ERROR,
                   duts=[dut.name for dut in self.duts], error_type=self._failure)
             errors = self._cleanup(type(exc), exc, exc.__traceback__)
@@ -315,6 +318,7 @@ class TestBed:
                 exc_type, exc, traceback = type(error), error, error.__traceback__
         if exc is not None:
             self._failure = type(exc).__name__
+            self._failure_details = failure_fields(exc)
             event("testbed.failed", level=logging.ERROR, duts=[dut.name for dut in self.duts],
                   error_type=self._failure)
         errors = self._cleanup(exc_type, exc, traceback)
@@ -379,4 +383,5 @@ class TestBed:
                   "cleanup_errors": list(self._cleanup_errors)}
         if self._failure is not None:
             result["error"] = self._failure
+            result["failure"] = deepcopy(self._failure_details)
         return result

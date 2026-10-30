@@ -17,7 +17,7 @@ import time
 
 from .connections import TentacleEndpoint
 from .cec import Frame
-from .trace import event
+from .trace import event, owner_assertion
 
 
 _PORT_KEYS = ("consortium_id", "octopus_id", "tentacle_id", "side")
@@ -275,6 +275,7 @@ class ScanResult:
     _group: str = field(default="", repr=False, compare=False)
     _generation: object = field(default=None, repr=False, compare=False)
     _logged_state: object = field(default=None, init=False, repr=False, compare=False)
+    owner_failures: list = field(default_factory=list, init=False, repr=False, compare=False)
 
     def _log(self, name, *, level=logging.INFO, **fields):
         operation_id = self.operation.get("operation_id") if isinstance(self.operation, dict) else None
@@ -294,11 +295,77 @@ class ScanResult:
                 continue
             candidate = getattr(proof, "candidate", None)
             if owner != getattr(getattr(candidate, "identity", None), "device_id", None):
-                raise AssertionError("The scan member proof has a mismatched DUT identity")
+                self._owner_failure("member_identity", system, owner=owner, proof=proof, source="provided")
             self.owner_duts[owner] = candidate
             self.owner_boots[owner] = getattr(proof, "member_boot", None)
         self._group = system.get("consortium_id", "")
         self.validate_owners(_system=system)
+
+    def _owner_failure(self, reason, system=None, *, owner=None, proof=None, current=(), source="not_fetched"):
+        """Retain only selected identity/boolean evidence from this exact check."""
+        error = owner_assertion(reason)  # Reject an unregistered reason before emitting evidence.
+        identifier = lambda value: value if _identifier(value) else None
+        flag = lambda value: value if type(value) is bool else None
+        document = system if isinstance(system, dict) else {}
+        membership = document.get("membership")
+        membership = membership if isinstance(membership, dict) else {}
+        peers = membership.get("peers")
+        peers = peers if isinstance(peers, list) else []
+        bed = self._testbed
+        owner_dut = self.owner_duts.get(owner)
+        evidence = {
+            "reason": reason, "snapshot_source": source, "observed_monotonic_ns": time.monotonic_ns(),
+            "expected_main_id": identifier(self.dut.identity.device_id),
+            "current_main_id": identifier(document.get("octopus_id")),
+            "expected_main_boot": identifier(self._boot),
+            "captured_main_boot": identifier(self.owner_boots.get(self.dut.identity.device_id, self._boot)),
+            "current_main_boot": identifier(document.get("boot_id")),
+            "expected_group": identifier(self._group), "current_group": identifier(document.get("consortium_id")),
+            "system_is_object": isinstance(system, dict), "main_ready": flag(document.get("ready")),
+            "main_is_coordinator_mode": document.get("mode") == "coordinator",
+            "coordinator": flag(membership.get("coordinator")),
+            "authority_ready": flag(membership.get("authority_ready")), "member": flag(membership.get("member")),
+            "peers_is_list": isinstance(membership.get("peers"), list), "peer_count": min(len(peers), 65535),
+            "peers_valid": all(isinstance(peer, dict) and _identifier(peer.get("octopus_id")) for peer in peers),
+            "peer_ids_unique": (all(isinstance(peer, dict) and _identifier(peer.get("octopus_id")) for peer in peers)
+                                and len({peer["octopus_id"] for peer in peers}) == len(peers)),
+            "bed_present": bed is not None, "bed_entered": flag(getattr(bed, "_entered", None)),
+            "bed_closed": flag(getattr(bed, "_closed", None)),
+            "bed_session_matches": bed is not None and getattr(bed, "session", None) is self._session,
+            "main_bed_matches": bed is not None and getattr(self.dut, "_testbed", None) is bed,
+        }
+        for index, peer in enumerate(peers[:4]):
+            row = peer if isinstance(peer, dict) else {}
+            evidence.update({f"peer_{index}_id": identifier(row.get("octopus_id")),
+                             f"peer_{index}_boot": identifier(row.get("boot_id")),
+                             f"peer_{index}_ready": flag(row.get("ready")),
+                             f"peer_{index}_enrolled": flag(row.get("enrolled"))})
+        if owner is not None:
+            evidence.update({
+                "owner_id": identifier(owner), "expected_owner_boot": identifier(self.owner_boots.get(owner)),
+                "owner_dut_present": owner_dut is not None,
+                "owner_bed_matches": bed is not None and getattr(owner_dut, "_testbed", None) is bed,
+                "owner_in_bed": bed is not None and any(owner_dut is dut for dut in getattr(bed, "duts", ())),
+                "owner_is_explicit_member": bed is not None and any(owner_dut is dut for dut in getattr(bed, "members", ())),
+                "proof_present": proof is not None,
+                "proof_main_matches": getattr(proof, "main", None) is self.dut,
+                "proof_candidate_matches": owner_dut is not None and getattr(proof, "candidate", None) is owner_dut,
+                "proof_session_matches": getattr(proof, "session", None) is self._session,
+                "proof_device_id": identifier(getattr(proof, "device_id", None)),
+                "proof_created": flag(getattr(proof, "_created", None)), "proof_closed": flag(getattr(proof, "_closed", None)),
+                "proof_main_boot": identifier(getattr(proof, "boot", None)),
+                "proof_member_boot": identifier(getattr(proof, "member_boot", None)),
+                "proof_group": identifier(getattr(proof, "group", None)), "matching_peer_count": min(len(current), 65535),
+            })
+            if len(current) == 1 and isinstance(current[0], dict):
+                evidence.update(current_owner_boot=identifier(current[0].get("boot_id")),
+                                owner_enrolled=flag(current[0].get("enrolled")), owner_ready=flag(current[0].get("ready")))
+        # Keep bounded evidence separately from the full HTTP response. Later
+        # snapshots, proof cleanup or response mutation cannot replace this one.
+        self.owner_failures.append(evidence)
+        del self.owner_failures[:-16]
+        event("scan.owners.failed", level=logging.ERROR, **evidence)
+        raise error
 
     def validate_owners(self, components=None, *, _system=None):
         """Fence captured owners using the main's existing UI membership data.
@@ -311,14 +378,15 @@ class ScanResult:
         requested = self.expected if components is None else tuple(components)
         local = self.dut.identity.device_id
         if any(component not in self.expected for component in requested):
-            raise AssertionError("The scan owner assertion includes an unknown component")
+            self._owner_failure("unknown_component")
         system = self.dut.get_system() if _system is None else _system
+        source = "http" if _system is None else "provided"
         if (not isinstance(system, dict) or system.get("octopus_id") != local
                 or system.get("boot_id") != self._boot
                 or self._group and system.get("consortium_id") != self._group):
-            raise AssertionError("The scan coordinator changed boot or system identity")
+            self._owner_failure("coordinator_identity", system, source=source)
         if self.owner_boots.get(local, self._boot) != self._boot:
-            raise AssertionError("The captured coordinator boot does not match the scan")
+            self._owner_failure("coordinator_boot_proof", system, source=source)
         remote = {component.dut.identity.device_id for component in requested if component.dut is not self.dut}
         if not remote:
             return dict(self.owner_boots or {local: self._boot})
@@ -326,13 +394,15 @@ class ScanResult:
         if (bed is None or not getattr(bed, "_entered", False) or getattr(bed, "_closed", True)
                 or getattr(bed, "session", None) is not self._session
                 or getattr(self.dut, "_testbed", None) is not bed):
-            raise AssertionError("Distributed scan owners need the same active TestBed and CEC session")
+            self._owner_failure("bed_scope", system, source=source)
         wires = {}
         for component in self.expected:
             wires.setdefault(component.gpio, set()).add(component.dut.identity.device_id)
         if any(len(owners) != 1 for owners in wires.values()):
-            raise AssertionError("A scan GPIO cannot belong to different DUT owners")
+            self._owner_failure("wire_scope", system, source=source)
         membership = system.get("membership", {})
+        if not isinstance(membership, dict):
+            self._owner_failure("coordinator_membership", system, source=source)
         peers = membership.get("peers")
         if (not _identifier(self._boot) or not _identifier(self._group)
                 or system.get("mode") != "coordinator" or system.get("ready") is not True
@@ -340,7 +410,7 @@ class ScanResult:
                 or membership.get("member") is not False or not isinstance(peers, list)
                 or any(not isinstance(peer, dict) or not _identifier(peer.get("octopus_id")) for peer in peers)
                 or len({peer["octopus_id"] for peer in peers}) != len(peers)):
-            raise AssertionError("The scan has no valid ready coordinator membership snapshot")
+            self._owner_failure("coordinator_membership", system, source=source)
         proofs = getattr(bed, "_member_proofs", {})
         for owner in remote:
             owner_dut, proof = self.owner_duts.get(owner), proofs.get(owner)
@@ -356,13 +426,14 @@ class ScanResult:
                     or getattr(proof, "device_id", None) != owner
                     or getattr(proof, "_created", False) is not True or getattr(proof, "_closed", True)
                     or getattr(proof, "boot", None) != self._boot or getattr(proof, "group", None) != self._group
-                    or getattr(proof, "member_boot", None) != boot
-                    or len(current) != 1 or current[0].get("enrolled") is not True
+                    or getattr(proof, "member_boot", None) != boot):
+                self._owner_failure("member_proof", system, owner=owner, proof=proof, current=current, source=source)
+            if (len(current) != 1 or current[0].get("enrolled") is not True
                     or current[0].get("ready") is not True or current[0].get("boot_id") != boot):
-                raise AssertionError("The scan member is unproven, unready, retired or changed boot")
+                self._owner_failure("member_status", system, owner=owner, proof=proof, current=current, source=source)
             for component in requested:
                 if component.dut.identity.device_id == owner and component.dut is not owner_dut:
-                    raise AssertionError("The scan component has a different owner DUT object")
+                    self._owner_failure("component_owner", system, owner=owner, proof=proof, current=current, source=source)
         return dict(self.owner_boots)
 
     def _retain(self, state=None):

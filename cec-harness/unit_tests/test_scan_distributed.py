@@ -1,6 +1,9 @@
 """Distributed scan evidence comes only from proven owners and their own wires."""
 
 from copy import deepcopy
+from contextlib import redirect_stderr
+import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -12,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, TvComponent, assign_addresses
 from amity_harness.discovery import _native_selector, scan_hdmi
+from amity_harness.testbed import _scan_report
+from amity_harness.trace import failure_fields, stdio_logging
 
 
 class DistributedScanTests(unittest.TestCase):
@@ -145,6 +150,90 @@ class DistributedScanTests(unittest.TestCase):
         self.system["boot_id"] = "e" * 32
         with self.assertRaises(AssertionError):
             result.validate_owners()
+
+    def test_failed_owner_preflight_retains_exact_scalar_snapshot_without_retry_or_secrets(self):
+        result = self.scan()
+        snapshot = deepcopy(self.system)
+        peer = snapshot["membership"]["peers"][0]
+        peer.update(ready=False, token="private-peer-token", hostname="private-peer-host")
+        snapshot.update(password="private-password", observations=[{"token": "private-observation-token"}])
+        snapshot["membership"]["last_error"] = "private-server-response"
+        calls = []
+        self.main.get_system = lambda: calls.append("GET") or snapshot
+        output = io.StringIO()
+        with redirect_stderr(output), stdio_logging(), self.assertRaises(AssertionError) as failure:
+            result.validate_owners(self.components[3:])
+        self.assertEqual(calls, ["GET"])
+        self.assertEqual(self.submissions, 1)
+        evidence = result.owner_failures[-1]
+        self.assertEqual(evidence["reason"], "member_status")
+        self.assertEqual(evidence["snapshot_source"], "http")
+        self.assertEqual(evidence["expected_main_boot"], self.boot)
+        self.assertEqual(evidence["current_main_boot"], self.boot)
+        self.assertEqual(evidence["expected_owner_boot"], self.member_boot)
+        self.assertEqual(evidence["current_owner_boot"], self.member_boot)
+        self.assertIs(evidence["owner_ready"], False)
+        self.assertIs(evidence["owner_enrolled"], True)
+        self.assertIs(evidence["proof_created"], True)
+        self.assertIs(evidence["proof_session_matches"], True)
+        self.assertEqual(failure_fields(failure.exception)["reason"], "member_status")
+        # Later recovery and proof teardown cannot rewrite the failure evidence.
+        peer.update(ready=True, boot_id="e" * 32)
+        self.proof._closed = True
+        report = _scan_report(self.main, result)
+        self.assertIs(report["owner_failures"][-1]["owner_ready"], False)
+        self.assertIs(report["owner_failures"][-1]["proof_closed"], False)
+        self.assertEqual(report["owner_failures"][-1]["current_owner_boot"], self.member_boot)
+        self.assertIn("scan.owners.failed", output.getvalue())
+        self.assertNotIn("private-", output.getvalue() + json.dumps(report))
+        self.assertTrue(all(value is None or type(value) in (str, bool, int) for value in evidence.values()))
+
+    def test_owner_failure_provenance_missing_boot_and_proof_are_distinct_and_bounded(self):
+        result = self.scan()
+        self.main.get_system = lambda: self.fail("Explicit snapshot validation must not fetch again")
+        snapshot = deepcopy(self.system)
+        snapshot["membership"]["peers"][0]["boot_id"] = "private-invalid-boot"
+        for _ in range(20):
+            with self.assertRaises(AssertionError):
+                result.validate_owners(self.components[3:], _system=snapshot)
+        self.assertEqual(len(result.owner_failures), 16)
+        evidence = result.owner_failures[-1]
+        self.assertEqual(evidence["snapshot_source"], "provided")
+        self.assertIsNone(evidence["current_owner_boot"])
+        self.assertEqual(evidence["reason"], "member_status")
+        self.assertNotIn("private-invalid-boot", json.dumps(evidence))
+        self.proof._created = False
+        with self.assertRaises(AssertionError):
+            result.validate_owners(self.components[3:], _system=self.system)
+        self.assertEqual(result.owner_failures[-1]["reason"], "member_proof")
+        self.assertIs(result.owner_failures[-1]["proof_created"], False)
+        with self.assertRaises(AssertionError):
+            result.validate_owners((object(),))
+        self.assertEqual(result.owner_failures[-1]["snapshot_source"], "not_fetched")
+        self.assertEqual(result.owner_failures[-1]["reason"], "unknown_component")
+
+    def test_malformed_nested_scalar_fields_and_unknown_keys_are_never_serialized(self):
+        result = self.scan()
+        snapshot = deepcopy(self.system)
+        peer = snapshot["membership"]["peers"][0]
+        private = {"password": "private-password", "token": "private-token"}
+        peer.update(boot_id=private, ready=[private], enrolled=private, unexpected=private)
+        snapshot["membership"]["authority_ready"] = private
+        snapshot["ready"] = private
+        snapshot["unknown"] = private
+        output = io.StringIO()
+        with redirect_stderr(output), stdio_logging(), self.assertRaises(AssertionError):
+            result.validate_owners(_system=snapshot)
+        evidence = result.owner_failures[-1]
+        self.assertEqual(evidence["reason"], "coordinator_membership")
+        self.assertIsNone(evidence["main_ready"])
+        self.assertIsNone(evidence["authority_ready"])
+        self.assertIsNone(evidence["peer_0_boot"])
+        self.assertIsNone(evidence["peer_0_ready"])
+        self.assertIsNone(evidence["peer_0_enrolled"])
+        serialized = output.getvalue() + json.dumps(_scan_report(self.main, result))
+        for secret in ("private-password", "private-token", "unexpected", "unknown"):
+            self.assertNotIn(secret, serialized)
 
     def test_unconfirmed_retired_changed_or_foreign_proof_cannot_start_scan(self):
         for field, value in (("_created", False), ("_closed", True), ("member_boot", "e" * 32),

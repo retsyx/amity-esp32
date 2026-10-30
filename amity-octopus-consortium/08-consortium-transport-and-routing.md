@@ -38,6 +38,15 @@ future revisions and mismatched scope remain rejected. A successful stale-frame
 check means discard, never execution or lease renewal. These changes add no wire
 kind, HTTP endpoint, ordinary command retry or alternate CEC policy.
 
+While a live refresh waits for its snapshot acknowledgment, an admitted typed
+source-input result in the current old scope still completes its original
+lookup continuation exactly once, before revision advance. Deliver it through
+the same control hook and exact authenticated link as normal reception. Missing
+or rejected delivery fails synchronization; it cannot be silently remembered by
+replay protection and discarded. Obsolete-scope frames retain the existing
+strict discard checks, and this handoff executes no positive owner intent or
+restamped work.
+
 Live configuration support is part of the execution capability floor. A peer
 without it remains eligible for existing management/firmware-update operations,
 not ordinary equipment execution. The release installer's existing required
@@ -58,6 +67,17 @@ No durable current-activity resume ledger, global resource-plan reservation, pre
 ## 4. Backpressure and owner progress
 
 Bound communication queues by explicit resource limits and report admission failure. Necessary IPC state handoff is permitted; retained outgoing frames, retry queues and hidden repeat backlogs are not. Keep owner input, RX frames, setup and discovery advancing while CEC transmissions are outstanding.
+
+Unexpected operational link closures emit one bounded diagnostic summary with a
+static reason and phase, protocol error, peer/link/boot/revision identities and,
+for expired causal IPC, its original kind, age and TTL. Admission-side expiry
+and cleanup-capacity fences report the same metadata where the fence originates.
+Admission captures immutable scalar scope/trace metadata under its existing
+locks and emits only after those guards release; diagnostic formatting and
+logging never run under the runtime or link-queue mutex. Normal
+cancellation/retirement is distinguished. These logs contain no message
+payload, credential, certificate or key, add no periodic traffic, and do not
+change admission, deadlines, replay checks or reconnect policy.
 
 The CEC FIFO has eight total queued-plus-active messages per wire. Releases have no extra slot; dropped full-FIFO releases are not retained or retried. Log every full-FIFO TX drop, including every member of a rejected atomic batch. Transport does not inspect CEC opcodes to make a different admission policy.
 
@@ -82,3 +102,10 @@ Test wrong owner/installation/controller, old boot/configuration/input, replay, 
 The 30 October runtime regressions execute the actual peer projection, link-task queue pump/admission and synchronization code: `python3 tests/runtime_peer_status_test.py`, `python3 tests/consortium_live_configuration_test.py`, `python3 tests/consortium_owner_repeat_test.py` and `sh tests/system_sync_test.sh`. They cover partial/obsolete peer status, snapshot versus typed-result expiry, final completion recapture, exact recovery fences and a newer observation arriving during an older failed send. Before/after failures are preserved under `test-results/device-removal-2026-10-29/{peer-status,causal-snapshot}-{before,after}-fix.log`; the concurrent-send regression is `test-results/consortium-runtime-fix-2026-10-29/snapshot-send-overwrite-{before,after}-fix.log`. These establish the transport invariants; they do not establish the cause or resolution of the physical three-owner source-theft failure.
 
 Predeployment review also reproduced the partial-handshake scope read and a valid retry followed by a stale-link retry. Their failing/passing actual-code regressions are `test-results/consortium-runtime-fix-2026-10-29/{partial-scope,stale-retry}-{before,after}-fix.log`; the retry test checks that scope validation holds the same mutex as flag selection.
+
+The later three-owner run on exact 0.1.100 passed its Main activity, both remote
+theft suppressions and fresh Main Standby commands, then failed an owner proof
+before Member 2's activity start. Later snapshots showed the same member boots
+ready again, but the old firmware emitted no loop-close reason. This remains a
+physical failure requiring new evidence; the separate native live-refresh
+input-result regression establishes a lost-continuation bug, not its cause.

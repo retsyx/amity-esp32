@@ -25,9 +25,11 @@ def run_test(test, config):
             test()
             report["passed"] = True
         except Exception as exc:
-            report["error"] = f"{type(exc).__name__}: {exc}"
+            details = failure_fields(exc)
+            report["error"] = details["error_type"] + (": " + details["message"] if "message" in details else "")
             report["error_type"] = type(exc).__name__
-            event("test.failed", level=logging.ERROR, **failure_fields(exc))
+            report["failure"] = details
+            event("test.failed", level=logging.ERROR, **details)
         except BaseException as exc:
             event("test.interrupted", level=logging.ERROR, **failure_fields(exc))
             raise

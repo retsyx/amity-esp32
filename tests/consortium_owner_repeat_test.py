@@ -10,6 +10,7 @@ PREFIX=r'''
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
@@ -19,16 +20,30 @@ PREFIX=r'''
 #include <memory>
 #include <mutex>
 #include <sys/socket.h>
+#include <thread>
 namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
+std::vector<std::string> diagnostic_logs;
+void assert_log_unlocked();
+template<class... Args>void capture_log(const char*,const char* format,Args... args){assert_log_unlocked();char text[1024];snprintf(text,sizeof(text),format,args...);diagnostic_logs.emplace_back(text);}
+#define ESP_LOGW capture_log
+#define ESP_LOGI capture_log
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct Tls{int socket=-1;model::OctopusId authenticated;};
 struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
+constexpr size_t maximum_links=2;
 std::mutex lock;std::vector<std::shared_ptr<Active>> links;RuntimeControlHooks controls;RuntimeStatus status;Group group;
 struct Identity{model::OctopusId id;}identity;
 model::BootId boot;uint64_t configuration=1;
+void assert_log_unlocked(){
+ bool available=false;std::thread contender([&]{
+  if(!lock.try_lock())return;
+  available=true;for(const auto& active:links){if(active->mutex.try_lock())active->mutex.unlock();else available=false;}
+  lock.unlock();
+ });contender.join();assert(available); // SDK logging must run after both guards.
+}
 esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){return ESP_ERR_NOT_SUPPORTED;}
 }
 '''
@@ -39,7 +54,7 @@ std::shared_ptr<Active> connection(unsigned link=7){
  const LinkScope scope{ident<model::LinkId>(link),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),a->peer,ident<model::OctopusId>(2),ident<model::BootId>(4),a->status.boot_id,1,1};
  assert(a->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);return a;
 }
-void reset(){links.clear();controls={};status={};status.authority_ready=true;group={};group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);clock_ms=100;}
+void reset(){diagnostic_logs.clear();links.clear();controls={};status={};status.authority_ready=true;group={};group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);clock_ms=100;}
 model::OwnedIntent down(unsigned sequence=1){model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_down;i.target={{ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::back},"Player"};i.generation=2;i.sequence=sequence;i.config_revision=1;i.token=ident<model::HoldToken>(50+sequence);i.key=0x41;i.repeat=true;return i;}
 void closure(){
  reset();auto old=connection(),current=connection(9);links={old,current};unsigned calls=0;
@@ -57,13 +72,13 @@ void queues(){
  assert(runtime_send_control(a->peer,Kind::heartbeat,"first",1000)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.kind=model::OwnedIntentKind::key_up;++i.sequence;assert(runtime_send_owned(i)==ESP_OK);
  assert(a->queue.size()==3&&a->queue[0].payload=="first"&&a->queue[1].kind==Kind::scoped_intent&&queued_cleanup(a->queue[2])); // strict causal FIFO, no cleanup priority reordering
  reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_NO_MEM);i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM&&a->cancelled);
- reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);
+ reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent queue_age_ms=2000 queue_ttl_ms=2000")!=std::string::npos);
  reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);
  reset();a=connection();links={a};const auto result=std::string("{\"input_result\":{\"generation\":\"2\",\"sequence\":\"1\",\"source_present\":true}}");
  assert(runtime_send_owned_result(a->peer,ident<model::LinkId>(99),result)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);
  assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_OK&&a->queue.size()==16);
- assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_ERR_NO_MEM&&a->cancelled);
+ assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_ERR_NO_MEM&&a->cancelled);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=cleanup_queue_full")!=std::string::npos);
  reset();a=connection();links={a};assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",100)==ESP_OK);clock_ms+=100;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",100)==ESP_OK&&a->queue.size()==1);assert(runtime_send_control(a->peer,static_cast<Kind>(21),"{}",1000)==ESP_ERR_NOT_SUPPORTED);
  reset();a=connection();links={a};a->status.realtime_usable_until_ms=clock_ms;assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);assert(a->queue.empty());
 }
@@ -94,7 +109,7 @@ void authorization(){
  auth.controller_boot=ident<model::BootId>(99);assert(!runtime_owned_authorized(auth));auth.controller_boot=scope.peer_boot_id;
  auth.config_revision=2;assert(!runtime_owned_authorized(auth));auth.config_revision=1;
  runtime_fence_owned_link(a->peer,ident<model::LinkId>(99));assert(!a->cancelled);
- runtime_fence_owned_link(a->peer,scope.link_id);assert(a->cancelled&&!runtime_owned_authorized(auth));
+ runtime_fence_owned_link(a->peer,scope.link_id);assert(a->cancelled&&!runtime_owned_authorized(auth));assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_result_fence")!=std::string::npos);runtime_fence_owned_link(a->peer,scope.link_id);assert(diagnostic_logs.size()==1);
  reset();identity.id=group.authority=ident<model::OctopusId>(2);boot=ident<model::BootId>(4);
  auth={identity.id,boot,boot,{},1,0};assert(runtime_owned_deadline(auth)==UINT64_MAX);
 }
@@ -115,8 +130,10 @@ int main(){using namespace amity::consortium;closure();queues();initial_context(
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()
  names=['bool initialize_context(','bool notify_link_closed(','bool fence_replaced_links(','void reap_closed_links(','static bool queued_cleanup(const Queued& queued)','static bool queued_causal(','static esp_err_t queue_control(','esp_err_t runtime_send_control(','esp_err_t runtime_send_owned_result(','void runtime_fence_owned_link(','esp_err_t runtime_send_owned(','uint64_t runtime_owned_deadline(','bool runtime_owned_authorized(']
+ trace=source[source.index('struct LinkTrace {'):source.index('static bool queued_cleanup(')]
  retries=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
- actual=retries+''.join(function(source,name) for name in names)
+ diagnostics=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
+ actual=trace+diagnostics+retries+''.join(function(source,name) for name in names)
  with tempfile.TemporaryDirectory(prefix='amity-qualified-transport-') as directory:
   temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+actual+'\n}\n'+SUITE)

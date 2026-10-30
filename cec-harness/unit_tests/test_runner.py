@@ -13,6 +13,7 @@ from amity_harness import DUT, RunConfig, TestBed, TvComponent
 from amity_harness.config import current_config, use_config
 from amity_harness.runner import main, run_test
 from amity_harness.gpio import SSHPinctrlGPIO
+from amity_harness.trace import owner_assertion
 
 
 class RunnerTests(unittest.TestCase):
@@ -59,8 +60,32 @@ class RunnerTests(unittest.TestCase):
     def test_scenario_failure_still_cleans_up_and_retains_evidence(self):
         report = self.execute(fail=True)
         self.assertFalse(report["passed"])
-        self.assertIn("expected scenario failure", report["error"])
+        self.assertEqual(report["error"], "AssertionError")
+        self.assertEqual(report["failure"]["error_type"], "AssertionError")
+        self.assertNotIn("expected scenario failure", json.dumps(report))
         self.assertFalse(report["testbeds"][0]["passed"])
+
+    def test_actual_bed_cleanup_retains_controlled_primary_failure_in_report_chain(self):
+        def fail_cleanup():
+            raise RuntimeError("private-cleanup-body-token")
+
+        def scenario():
+            with TestBed(DUT("amity-dut")) as bed:
+                bed.add_cleanup(fail_cleanup)
+                raise owner_assertion("member_status")
+
+        with patch.object(DUT, "authenticate", lambda dut: None), \
+             patch.object(DUT, "logout", lambda dut: None), \
+             patch.object(DUT, "get_system", lambda dut: {"octopus_id": dut.identity.device_id}):
+            report = run_test(scenario, RunConfig())
+        self.assertEqual(report["error"], "TestBedCleanupError")
+        cause = report["failure"]["causes"][0]
+        self.assertEqual(cause["error_type"], "AssertionError")
+        self.assertEqual(cause["reason"], "member_status")
+        self.assertEqual(cause["stack"][-1]["function"], "scenario")
+        self.assertEqual(report["testbeds"][0]["failure"]["reason"], "member_status")
+        self.assertEqual(report["testbeds"][0]["cleanup_errors"], ["RuntimeError"])
+        self.assertNotIn("private-cleanup-body-token", json.dumps(report))
 
     def test_shared_cli_supports_per_dut_settings_and_private_reports(self):
         def scenario():
@@ -125,7 +150,8 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(called, ["scan", "activity", "source_theft", "add_amity"])
             self.assertFalse(report["passed"])
             self.assertTrue(report["tests"][0]["passed"])
-            self.assertIn("physical standby command", report["tests"][1]["error"])
+            self.assertEqual(report["tests"][1]["error"], "AssertionError")
+            self.assertNotIn("physical standby command", json.dumps(report))
             self.assertTrue(report["tests"][2]["passed"])
             self.assertTrue(report["tests"][3]["passed"])
 
@@ -214,7 +240,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual([len(result["testbeds"]) for result in report["tests"]], [1, 1])
         self.assertFalse(report["tests"][0]["testbeds"][0]["passed"])
         self.assertTrue(report["tests"][1]["testbeds"][0]["passed"])
-        self.assertIn("missing physical power command", report["tests"][0]["error"])
+        self.assertEqual(report["tests"][0]["error"], "AssertionError")
+        self.assertNotIn("missing physical power command", json.dumps(report))
         self.assertIn("PASS: activity_switch_input", output.getvalue())
         self.assertIn("FAIL: AssertionError", errors.getvalue())
         self.assertIn("run.report", errors.getvalue())
