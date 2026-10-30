@@ -1237,8 +1237,11 @@ std::vector<RuntimePeerStatus> runtime_peers(){
         for(const auto &active:links)if(!active->cancelled&&!active->retiring&&active->peer==peer.id&&active->tls&&
             active->tls->authenticated==peer.id&&current_peer_credential(*active,group)){
             std::lock_guard<std::mutex> qguard(active->mutex);
+            // Hello/authentication writes scope before publishing initialized
+            // status under this mutex. Do not read that in-flight scope.
+            if(active->status.id!=peer.id||!active->status.boot_id)continue;
             const auto scope=active->session.scope();
-            if(active->status.id!=peer.id||!active->status.boot_id||active->status.boot_id!=scope.peer_boot_id)continue;
+            if(active->status.boot_id!=scope.peer_boot_id)continue;
             const bool ready=active->ready&&active->status.ready,management=active->management_ready&&active->status.management_ready;
             const unsigned rank=ready?3:management?2:1;
             if(rank>selected){result=active->status;result.ready=ready;result.management_ready=management;selected=rank;}

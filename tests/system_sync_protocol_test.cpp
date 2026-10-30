@@ -3,6 +3,7 @@
 #include "../components/system_sync/system_sync.cpp"
 #include <iostream>
 #include <memory>
+#include <thread>
 
 namespace fixture {
 namespace s=amity::system;namespace c=amity::consortium;
@@ -23,6 +24,7 @@ s::LinkId current_result_link;
 uint64_t refreshed_deadline=654321;
 esp_err_t send_result=ESP_OK,report_result=ESP_OK;
 std::function<void()> on_report_send;
+bool require_retry_lock=false;
 std::vector<std::pair<uint64_t,std::string>> configuration_changes;
 struct JournalMemory:Memory {
     bool fail_marker=false;
@@ -40,6 +42,7 @@ void reset(){
     peers.clear();sent.clear();packets.clear();result_packets.clear();result_fences.clear();deadline_queries.clear();current_result_link={};configuration_changes.clear();hooks={};
     send_result=ESP_OK;report_result=ESP_OK;task_ok=true;auth_allowed=true;now=100;
     on_report_send={};
+    require_retry_lock=false;
     task_creations=authorization_checks=0;memory=JournalMemory{};journal=std::make_unique<ConfigurationStore>(memory);
 }
 amity::SystemControl control(bool member=false){
@@ -89,7 +92,10 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){fixture::sent.pus
 bool runtime_owned_authorized(const model::OwnedAuthorization&){++fixture::authorization_checks;return fixture::auth_allowed;}
 esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});if(fixture::on_report_send)fixture::on_report_send();return fixture::report_result;}
 esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){fixture::result_packets.push_back({owner,link,std::move(payload),ttl,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
-std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;return {};}
+std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){
+    if(fixture::require_retry_lock){bool held=false;std::thread contender([&]{held=!amity::state.mutex.try_lock();if(!held)amity::state.mutex.unlock();});contender.join();assert(held);}
+    for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;return {};
+}
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){fixture::result_fences.push_back({owner,link});}
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){fixture::deadline_queries.push_back(auth);return fixture::refreshed_deadline;}
 void runtime_configuration_changed(uint64_t revision,const std::string& hash){fixture::configuration_changes.push_back({revision,hash});}
@@ -292,11 +298,17 @@ void dropped_snapshot_recaptures_latest_without_regression(){
     hooks.snapshot_retry(retry);report_result=ESP_FAIL;amity::flush_reports();assert(amity::state.retry_reports[0]&&amity::state.pending_reports.empty());
     latest.discovery_generation=7;member.snapshots={latest};report_result=ESP_OK;amity::flush_reports();assert(decoded(result_packets.back().payload).discovery_generation==7&&!amity::state.retry_reports[0]);
     const auto count=result_packets.size();
+    // A delayed obsolete notification must not replace the current final-state
+    // retry. Validation and flag selection share one lock, so an event cannot
+    // prevalidate, pause, then overwrite a newer scope's flag.
+    hooks.snapshot_retry(retry);auto delayed=retry;delayed.link=id<s::LinkId>(100);hooks.snapshot_retry(delayed);amity::flush_reports();assert(result_packets.size()==count+1);
+    const auto after_delayed=result_packets.size();
     auto stale=retry;stale.owner_boot=id<s::BootId>(100);hooks.snapshot_retry(stale);amity::flush_reports();
     stale=retry;stale.controller_boot=id<s::BootId>(100);hooks.snapshot_retry(stale);amity::flush_reports();
     stale=retry;stale.link=id<s::LinkId>(100);hooks.snapshot_retry(stale);amity::flush_reports();
     stale=retry;stale.config_revision=22;hooks.snapshot_retry(stale);amity::flush_reports();
-    assert(result_packets.size()==count&&sent.empty());
+    assert(result_packets.size()==after_delayed&&sent.empty());
+    require_retry_lock=true;hooks.snapshot_retry(retry);require_retry_lock=false;amity::flush_reports();assert(result_packets.size()==after_delayed+1);
 }
 void scans_and_saved_intent_without_peer_ack(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);

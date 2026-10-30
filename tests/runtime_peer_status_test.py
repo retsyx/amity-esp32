@@ -28,7 +28,9 @@ void checks(){
     auto output=runtime_peers();assert(output.size()==1&&output.front().id==owner&&output.front().enrolled&&!output.front().ready);
     // Before hello, the connection knows its peer but has not populated status.
     auto connecting=link(owner,5,false);connecting->status={};links={connecting};
+    connecting->session.handshaking=true;
     output=runtime_peers();assert(output.size()==1&&output.front().id==owner&&output.front().hostname=="member"&&output.front().enrolled&&!output.front().boot_id&&!output.front().ready);
+    connecting->session.handshaking=false;
     auto ready=link(owner,6,true);links={connecting,ready};output=runtime_peers();assert(output.front().id==owner&&output.front().ready&&output.front().boot_id==ident<model::BootId>(6));
     // A partial newer link never hides the still-current ready snapshot.
     connecting=link(owner,7,false);links={connecting,ready};output=runtime_peers();assert(output.front().ready&&output.front().boot_id==ident<model::BootId>(6));
@@ -54,7 +56,15 @@ def main():
         directory=Path(directory)
         (directory/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
         cpp,binary=directory/'test.cpp',directory/'test'
-        cpp.write_text('#include "hostname_registry.hpp"\n'+PREFIX+suite)
+        # A partial link publishes its peer before authenticate()/hello() finish.
+        # Trap any scope read until initialized status is published: the actual
+        # projection must avoid that concurrently written handshake state.
+        prefix=PREFIX.replace('struct Active{Session session;', '''struct ProjectionSession:Session {
+ bool handshaking=false;
+ const LinkScope& scope()const{assert(!handshaking);return Session::scope();}
+};
+struct Active{ProjectionSession session;''')
+        cpp.write_text('#include "hostname_registry.hpp"\n'+prefix+suite)
         sources=[ROOT/'components/consortium'/name for name in ('json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp')]
         sources.append(ROOT/'components/amity_system/model.cpp')
         subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(directory)]+['-I'+str(ROOT/path) for path in ('components/consortium','components/consortium/include','components/amity_system/include')]+[str(cpp),*map(str,sources),'-o',str(binary)],check=True)

@@ -39,6 +39,13 @@ void observe(const s::OwnedAdapterSnapshot& report){
 void retry_report(const c::RuntimeSnapshotRetry& retry){
     if(retry.adapter>=amity::max_tentacles)return;
     std::lock_guard<std::mutex> guard(state.mutex);
+    if(!state.control||retry.owner_boot!=state.control->boot_identity())return;
+    // Selection and exact current-scope validation are atomic against other
+    // retry/observer callbacks. Otherwise a callback may validate, pause, and
+    // replace a newer flag after its own link has become stale. This read-only
+    // lookup takes runtime locks; runtime invokes control hooks only after
+    // releasing them, preserving the state -> runtime lock order here.
+    if(retry.link&&(retry.config_revision!=state.owner_revision||c::runtime_link_id(retry.controller,retry.controller_boot)!=retry.link))return;
     // A fresh owner observation supersedes a failed/expired publication. Never
     // put its older payload back over an observation arriving during send.
     if(std::none_of(state.pending_reports.begin(),state.pending_reports.end(),[&](const auto& p){return p.adapter==retry.adapter;}))
