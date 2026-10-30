@@ -73,6 +73,10 @@ published/stale/failed completion. A stale revision does not publish or fence
 the link. A genuine late publication failure fences only its still-current
 captured link, boots, configuration, installation and authority scope. The
 callback retains no mutable link pointer or old context payload.
+Successful capture with no selectors completes configuration refresh without
+granting context readiness, emitting a message or repeating empty captures.
+This keeps ordinary discovery and reviewed removal available for a newly added
+Amity before any activity refers to it.
 
 Preserve causal operation order and button down/up state through bounded task/network handoff. Keep request deduplication and stale input/boot fences needed for message delivery; do not turn them into persistent activity approval. Already admitted held recipients and cleanup remain exact. Reconnect or authority refresh does not replay uncertain relative actions or restart a failed key.
 

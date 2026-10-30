@@ -42,5 +42,8 @@ int main(){
     // session revision. An old queued recapture is stale, not a link failure.
     assert(hub.refresh_owned_context(member,1,[&](auto result){completed.push_back(result);}));assert(completed.empty());
     run_one_command();assert(completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::stale}&&sent.empty());
+    assert(hub.configure_scoped({}, {},sender,controller,3)==ESP_OK);run_one_command();sent.clear();completed.clear();fixture_sent.clear();
+    assert(hub.refresh_owned_context(member,3,[&](auto result){completed.push_back(result);}));assert(completed.empty()&&sent.empty());
+    run_one_command();assert(completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::published}&&sent.empty()&&fixture_sent.empty());
     std::puts("PASS actual configuration boundary: old-recipe cleanup keeps old scope, new context uses new revision, and ready recapture admits owner IPC without waiting for execution");
 }

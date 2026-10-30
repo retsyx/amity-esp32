@@ -20,8 +20,12 @@ using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char value[33];snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
 struct FakeTls{bool server=false;int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;std::vector<std::string> frames;size_t next=0;bool receive(std::string& out,uint32_t timeout){assert(timeout<=2000);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false;RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
-std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=false,context_requested=false;RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
+std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
+// Diagnostics are independently exercised by runtime transport tests. This
+// fixture executes the completion and real roster-removal decisions directly.
+struct LinkTrace{const char* phase="";bool fail(const char*){return false;}};
+struct DeferredLinkTrace{void capture(const Active&,const LinkTrace&,uint64_t){}};
 unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;
 void gatt_client_disconnect(){}
 esp_err_t save_group(const Group&){++group_saves;return disk_ok?ESP_OK:ESP_FAIL;}
@@ -37,7 +41,7 @@ bool send(Active&,Kind kind,std::string_view payload,uint32_t timeout){assert(ti
 SUITE=r'''
 namespace amity::consortium {
 void reset(bool main){
- clock_ms=100;configuration=1;group_saves=quiesces=markers=restarts=revocations=0;disk_ok=send_ok=true;failure=0;events.clear();sent.clear();links.clear();removal_operations.clear();removal_authorization={};identity={};group={};status={};boot=ident<model::BootId>(6);identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.consortium=ident<model::ConsortiumId>(2);group.authority=main?identity.id:ident<model::OctopusId>(3);group.epoch=1;group.revision=1;status.authority_ready=main;status.coordinator=main;status.member=!main;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});
+ clock_ms=100;configuration=1;controls={};group_saves=quiesces=markers=restarts=revocations=0;disk_ok=send_ok=true;failure=0;events.clear();sent.clear();links.clear();removal_operations.clear();removal_authorization={};identity={};group={};status={};boot=ident<model::BootId>(6);identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.consortium=ident<model::ConsortiumId>(2);group.authority=main?identity.id:ident<model::OctopusId>(3);group.epoch=1;group.revision=1;status.authority_ready=main;status.coordinator=main;status.member=!main;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});
  lifecycle.retire=[]{++quiesces;events.push_back("quiescent");if(failure==1)return ESP_FAIL;if(failure==2)clock_ms+=2000;if(failure==3)links.front()->cancelled=true;if(failure==4)++configuration;return ESP_OK;};
  lifecycle.revoked=[](model::OctopusId){++revocations;};
  lifecycle.factory_reset=[](model::OctopusId issuer){assert(quiesces&&runtime_removed_device_reset_authorized(issuer));events.push_back("marker");if(failure==5)return ESP_FAIL;++markers;return ESP_OK;};
@@ -79,13 +83,29 @@ void source_tests(){
  reset(true);for(unsigned n=0;n<24;++n){group.peers={{peer,"leaf","pin",true}};assert(runtime_remove_octopus(peer,ident<model::MessageId>(100+n),group.revision,{})==ESP_OK);assert(removal_operations.size()<=8);}assert(parsed(runtime_removal_operation(peer,other)).get("reset")->string=="unconfirmed");
  std::cout<<"PASS actual main removal: atomic revision+reviewedBoot CAS, durable localdrop, unsupportedpeer preflight, offline noqueue, duplicate noop, candidate abort distinct, bounded8terminal/evictedunknown\n";
 }
+void empty_context_refresh_allows_reviewed_removal(){
+ reset(true);auto active=connection(false);active->refreshing=true;
+ std::function<void(model::OwnedContextResult)> completed;unsigned requests=0;
+ controls.ready=[&](auto owner,uint64_t revision,auto done){assert(owner==active->peer&&revision==1);++requests;completed=std::move(done);return true;};
+ assert(initialize_context(*active)&&active->context_requested&&!active->context_ready&&active->refreshing&&requests==1);
+ const auto request=ident<model::MessageId>(95);
+ assert(runtime_remove_octopus(active->peer,request,1,active->status.boot_id)==ESP_ERR_INVALID_STATE&&group_saves==0&&group.peers.size()==1);
+ // The real HubService test proves an empty selector set produces published
+ // with no outgoing message. Consume that completion through actual runtime.
+ completed(model::OwnedContextResult::published);
+ assert(!active->refreshing&&!active->context_ready&&active->context_requested&&!active->cancelled&&active->queue.empty());
+ assert(initialize_context(*active)&&requests==1); // No repeated empty capture.
+ assert(runtime_remove_octopus(active->peer,request,1,active->status.boot_id)==ESP_OK&&group.peers.empty()&&active->retiring&&revocations==1);
+ assert(parsed(runtime_removal_operation(active->peer,request)).get("stage")->string=="admitted");
+ std::cout<<"PASS empty owner context completes refresh without false input readiness, repeated captures or blocking exact reviewed removal\n";
+}
 void ack_tests(){
  reset(true);auto active=connection(false);const auto request=ident<model::MessageId>(80);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);auto response=parsed(active->retirement_payload);response.object.emplace_back("result",parsed("\"reset_scheduled\""));const auto sc=active->session.scope();Envelope e;e.kind=Kind::membership_result;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.message_id=ident<model::MessageId>(81);e.ttl_ms=2000;std::string payload=active->retirement_payload;payload.pop_back();payload+=",\"result\":\"reset_scheduled\"}";
  active->tls->frames.push_back(envelope_json(e,payload));assert(finish_retirement(*active));assert(parsed(runtime_removal_operation(active->peer,request)).get("reset")->string=="scheduled");assert(!markers&&!restarts);
  std::cout<<"PASS exact authenticated durable-marker ACK updates only its removal operation; admission never claims completed reset\n";
 }
 }
-int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){Envelope value;std::cout<<(parse_envelope(line,value)==Error::none?'1':'0')<<'\n';}return 0;}amity::consortium::receiver_tests();amity::consortium::source_tests();amity::consortium::ack_tests();}
+int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){Envelope value;std::cout<<(parse_envelope(line,value)==Error::none?'1':'0')<<'\n';}return 0;}amity::consortium::receiver_tests();amity::consortium::source_tests();amity::consortium::empty_context_refresh_allows_reviewed_removal();amity::consortium::ack_tests();}
 '''
 def schema_vectors(binary):
  try:
@@ -123,7 +143,7 @@ def schema_vectors(binary):
 
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text();private=(ROOT/'components/consortium/removal_runtime.inc').read_text()
- actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'std::string envelope_json(')+''.join(function(source,name) for name in ['bool lifecycle_receive(','std::string retirement_hash(','bool finish_retirement(','bool retire_member(','esp_err_t runtime_remove_octopus(','std::string runtime_removal_operation(','bool runtime_removed_device_reset_authorized('])
+ actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'std::string envelope_json(')+''.join(function(source,name) for name in ['void context_capture_completed(', 'bool initialize_context(', 'bool lifecycle_receive(','std::string retirement_hash(','bool finish_retirement(','bool retire_member(','esp_err_t runtime_remove_octopus(','std::string runtime_removal_operation(','bool runtime_removed_device_reset_authorized('])
  with tempfile.TemporaryDirectory(prefix='amity-removal-') as temp:
   temp=Path(temp);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+private+actual+'\n}\n'+SUITE)

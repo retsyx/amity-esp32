@@ -112,6 +112,31 @@ The ESP-IDF build passes 36 public record layout checks. Logs are under
 execution of the new removal behavior; deployment and functional evidence must
 be recorded separately after running.
 
+## 0.1.102 bench interruption and empty-context correction — 30 October 2026
+
+All four DUTs were updated and verified on exact 0.1.102, image SHA-256
+`1df92c63d9f2f3c56d224a4242e99b703597743c67a782a7a9b0f342623c918e`,
+ELF SHA-256 `e6bfe91778c5efded3fa2f3f012ce093bf226d1d0bbfaa83f9854da2d265078b`,
+firmware commit `2b6e9a604a018b319050f02751eb918dd847e4b7`. The complete host
+runner passed, including 339 framework units and the new TLS/worker regressions.
+The first physical attempt was interrupted before scan/activity execution by
+simultaneous receive-RPC timeouts on all six Pi CEC channels. Preserve that
+failed report; it does not qualify or disqualify the repaired DUT context path.
+A separate 45.053-second six-wire idle probe passed 4,152 receive RPCs with
+maximum RTT 188.615 ms under the unchanged 1.05-second deadline. It used only
+open/receive/close, with no configure, transmit or DUT-control call. It did not
+reproduce the transient bench interruption. Evidence is under
+`test-results/consortium-context-fix-2026-10-30/`.
+
+Cleanup exposed a separate empty-selector completion regression: a successful
+current-context capture emitted no message, so no FIFO admission cleared the
+refresh flag and reviewed Remove rejected the otherwise-ready added member.
+The narrow correction clears refresh-pending on exact-current successful
+completion without granting context readiness or repeating an empty capture.
+Actual owner-task and runtime-removal before/after regressions pass. Target
+0.1.103 requires fresh deployment and physical qualification; no later pass is
+claimed here.
+
 ## 0.1.101 connection failure reproduced — 30 October 2026
 
 All four DUTs were updated and verified on exact 0.1.101 from firmware commit

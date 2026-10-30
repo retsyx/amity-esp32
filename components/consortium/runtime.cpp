@@ -511,7 +511,7 @@ bool retire_member(Active &active,const Envelope &envelope,uint64_t received){
     const std::string response="{\"mutation_id\":\""+mutation.str()+"\",\"proposal_digest\":\""+digest+"\",\"phase\":\"factory_reset\",\"membership_revision\":\""+std::to_string(revision)+"\",\"expected_boot_id\":\""+target_boot.str()+"\",\"result\":\"reset_scheduled\"}";
     const bool sent=send(active,Kind::membership_result,response,2000);hooks.after_factory_reset();return sent;
 }
-auto context_capture_failed(const LinkScope&) -> void;
+auto context_capture_completed(const LinkScope&,model::OwnedContextResult) -> void;
 bool initialize_context(Active& active){
     RuntimeControlHooks hooks;LinkScope scope;
     {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
@@ -520,7 +520,7 @@ bool initialize_context(Active& active){
     }
     // The hook may only admit an asynchronous owner-task recapture. Readiness
     // changes when its fresh current context actually enters this link's FIFO.
-    if(hooks.ready&&hooks.ready(active.peer,scope.config_revision,[scope](model::OwnedContextResult result){if(result==model::OwnedContextResult::failed)context_capture_failed(scope);}))return true;
+    if(hooks.ready&&hooks.ready(active.peer,scope.config_revision,[scope](model::OwnedContextResult result){context_capture_completed(scope,result);}))return true;
     {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);active.context_requested=false;}
     return false;
 }
@@ -557,12 +557,18 @@ struct DeferredLinkTrace {
     // snapshot has no mutable Active pointer, payload or deferred work.
     ~DeferredLinkTrace(){for(size_t i=0;i<size;++i)emit_link_trace(snapshots[i]);}
 };
-void context_capture_failed(const LinkScope& scope){
+void context_capture_completed(const LinkScope& scope,model::OwnedContextResult result){
+    if(result==model::OwnedContextResult::stale)return;
     DeferredLinkTrace diagnostics;std::lock_guard<std::mutex> guard(lock);
     if(!original_controller(group,identity.id)||!status.authority_ready||group.consortium!=scope.consortium_id||group.epoch!=scope.epoch)return;
     for(auto& active:links)if(!active->cancelled&&!active->retiring&&active->ready){
         std::lock_guard<std::mutex> queue(active->mutex);
         if(!(active->session.scope()==scope))continue;
+        // Empty selector sets publish successfully without an outbound context.
+        // Finish the revision refresh, but keep positive work gated until an
+        // actual current context enters the link FIFO. Leave the accepted
+        // request parked so an empty capture is not repeated on every lease.
+        if(result==model::OwnedContextResult::published){if(scope.config_revision==configuration)active->refreshing=false;continue;}
         LinkTrace trace;trace.phase="owner_context";trace.fail("context_recapture_failed");diagnostics.capture(*active,trace,now_ms());
         active->context_requested=false;active->context_ready=false;active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);
     }

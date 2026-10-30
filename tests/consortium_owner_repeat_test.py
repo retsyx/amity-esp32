@@ -96,7 +96,12 @@ void initial_context(){
  reset();a=connection();links={a};a->context_ready=false;assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);controls.ready=[](auto,auto,auto){return false;};assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);
  // No saved selectors means an admitted recapture may emit no context. Local
  // discovery and exact key-up cleanup still reach the owner independently.
- reset();a=connection();links={a};a->context_ready=false;controls.ready=[](auto,auto,auto){return true;};assert(initialize_context(*a));
+ reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;a->refreshing=true;
+ unsigned empty_requests=0;std::function<void(model::OwnedContextResult)> empty_completed;
+ controls.ready=[&](auto,auto,auto completed){++empty_requests;empty_completed=std::move(completed);return true;};assert(initialize_context(*a));
+ empty_completed(model::OwnedContextResult::published);
+ assert(!a->refreshing&&!a->context_ready&&a->context_requested&&a->queue.empty());
+ assert(initialize_context(*a)&&empty_requests==1); // Empty success is complete, not another capture request.
  auto scan=down();scan.kind=model::OwnedIntentKind::discover;scan.target.osd_name.clear();assert(runtime_send_owned(scan)==ESP_OK&&!a->context_ready);
  auto up=down(2);up.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(up)==ESP_OK&&!a->context_ready);
  assert(runtime_send_owned(down(3))==ESP_ERR_INVALID_STATE);
@@ -139,12 +144,14 @@ void asynchronous_context_failure_is_scoped(){
  reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
  controls.ready=[&](auto,uint64_t,auto completed){done=std::move(completed);return true;};assert(initialize_context(*a));
  const auto original=a->session.scope();done(model::OwnedContextResult::stale);assert(!a->cancelled&&a->session.scope()==original&&diagnostic_logs.empty());
+ configuration=2;a->refreshing=true;done(model::OwnedContextResult::published);
+ assert(a->refreshing&&!a->context_ready&&a->context_requested&&!a->cancelled); // Old success cannot finish a newer target revision.
  HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
  assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none&&a->session.advance_configuration(2)==Error::none);
  configuration=2;a->status.config_revision=2;a->context_requested=false;a->context_ready=false;
  std::function<void(model::OwnedContextResult)> newer;
  controls.ready=[&](auto,uint64_t revision,auto completed){assert(revision==2);newer=std::move(completed);return true;};assert(initialize_context(*a));
- done(model::OwnedContextResult::failed);assert(!a->cancelled&&a->context_requested&&diagnostic_logs.empty());
+ done(model::OwnedContextResult::failed);done(model::OwnedContextResult::published);assert(!a->cancelled&&a->context_requested&&a->refreshing&&diagnostic_logs.empty());
  context=down(20);context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();context.config_revision=2;assert(runtime_send_owned(context)==ESP_OK);newer(model::OwnedContextResult::published);
  assert(a->context_ready&&!a->context_requested&&!a->cancelled&&a->queue.size()==1);
  // Nor can an old callback fence a replacement authenticated connection.
