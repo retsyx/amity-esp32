@@ -1,6 +1,6 @@
 # Equipment addressing and saved intent
 
-**27 October 2026 user amendment.** This document owns the qualified lookup model. It supersedes the former persistent binding, electrical-domain, route, capability and resource approval model. [Original behavior](19-source-baseline.md), [execution](07-activity-planning-and-execution.md), [storage](11-config-storage-and-migration.md) and [AGENTS.md](../AGENTS.md) apply together.
+**27 October 2026 user amendment.** This document owns the qualified lookup model. It supersedes the former persistent binding, electrical-domain, route, capability and resource approval model. [Original behavior](19-source-baseline.md), [execution](07-activity-planning-and-execution.md), [storage](11-configuration-storage.md) and [AGENTS.md](../AGENTS.md) apply together.
 
 ## 1. Configured equipment selector
 

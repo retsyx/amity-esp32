@@ -1,5 +1,9 @@
 # Preserve original Amity behavior
 
+## General
+
+This project is in early development. There is no need for backward compatibility with prior revisions of the software. This remains true as long as this instruction is in this file. When the software is more mature, this instruction will be replaced with an instruction to ensure backward compatibility between software revisions.
+
 ## Automatic Matter setup at boot — 28 October 2026
 
 Matter commissioning must open automatically at boot when the current Matter
@@ -186,6 +190,22 @@ tests. Verify behavior parity for unaffected local operation and the equivalent
 distributed path. Record necessary distributed adaptations and evidence in the
 owning design document; a conflicting older design proposal or test does not
 authorize changing the original behavior.
+
+## Current saved format during development — 29 October 2026
+
+Support only the current saved configuration format. Remove prior-format
+decoders, conversion paths, migration backups/maps and compatibility aliases.
+Use versionless project types, functions and HTTP route names. Keep numeric
+format/version validation, explicit unsupported-version errors and the storage
+transaction framework for future deliberate changes; no format migration runs
+while the codebase is still being developed before its first release.
+
+Blank storage creates an empty current-format configuration directly using the
+proven original controller and current hardware capacity. Unsupported or corrupt
+committed records must not be silently replaced. Preserve current valid records,
+identity/authority, credentials, Matter setup, original CEC behavior and journal
+integrity. Numeric current-protocol metadata and external SDK standard names
+retain their actual meaning.
 
 ## Functional test framework
 

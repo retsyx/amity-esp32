@@ -15,6 +15,61 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Current saved format only — 29 October 2026
+
+Firmware 0.1.96/Matter software 97 removes older saved-format readers, migration
+backups/maps and imports, and versioned project names/routes. Only current
+configuration schema 3 and storage format 2 are read or written. Current valid
+configuration/journal bytes, mandatory original authority, independent
+factory/origin/settings formats and the original CEC/activity/input algorithms
+are preserved. Numeric editor document version 1 and system API version 2 remain
+current protocol metadata. Unsupported saved data is rejected without migration.
+
+The native build passes all 35 layout checks; the full host runner exits 0 with
+259 framework units. Browser checks pass: 90 activity, 27 system, 14 member-update
+and 21 device-settings checks. Regressions cover the activity application's
+incorrect retry after a removed-route 404 and the system view's raw-configuration
+collision with the activity editor document. Offline ASan/UBSan comparisons prove
+current serialization matches the parent implementation, including the captured
+main configuration. Final evidence is under
+`test-results/current-format-final-2026-10-29/`: `build.log`, `host-tests.log` and
+`firmware-0.1.96/`, plus `browser-activities.json`, `browser-system.json` and
+`browser-device-settings.json`. All 14 final member-update checks also pass.
+The frozen app is 2,401,632 bytes, SHA-256
+`27f600378f0e663a64de79104516e90b47f32083b6798d8cf0e08b8abd69ed02`,
+ELF `e3fd9fe9b3e6be1e1b4ad46dcf7d72516de3383c06bc7afe1e2d025b40b29622`,
+built from parent `bf973d7` with `source_dirty=true`.
+
+The intermediate 0.1.95 image deployed successfully on all four DUTs. Its
+functional attempt was interrupted for the final browser cleanup after scan and
+activity passed; it does not qualify the complete suite. Preserve
+`functional-interrupted.json` and the failed `interrupted-cleanup.json` in
+`test-results/current-format-cleanup-2026-10-29/`. Separate
+`interrupted-recovery-verification.json` passes equipment recovery with four new
+reserved slots retained as retired entries, giving a thirteen-slot baseline.
+All four final 0.1.96 deployments pass: main authenticated OTA passes 13
+preservation checks, and each application-only USB update passes 18. The new
+main boot is `5542bba1eda203612d8e5e5b0af2c95c`; configuration, two Matter
+fabrics, HomeKit, original authority and capabilities are identical through OTA.
+Updates use no main USB access, factory reset or full-flash erase. USB non-application
+and OTA equality is checked before normal boot writes. Evidence is
+`test-results/current-format-final-2026-10-29/deployment.json` and its four
+device reports. The complete `functional.json` now passes all five scenarios:
+HDMI scan, activity power, explicit switch input, source theft and Add Amity.
+Every testbed passes without cleanup errors. Add confirms candidate
+`7468ba8afeb9ffad49eb57b3ba0a3288`, two connected/settings assertions on one
+member boot, completed removal with reset `scheduled` and no retained member.
+Final `main-final-postcheck.json` passes all 23 checks and logs out, retaining
+the same post-OTA boot, authority/group, settings/capabilities, two Matter fabrics,
+HomeKit and all saved values. All thirteen baseline slots remain identical; only
+ordinary revisions and three exact fixture-owned retired slots are added. The
+fourth created activity is valid without an external slot because the unchanged
+sixteen-slot registry is full. Configuration/presentation revisions advance 42→54,
+state 1→19 and membership 10→12; whole-document equality after tests is false as
+expected. This qualifies the exercised local GPIO CEC paths with simulated
+equipment and the normal two-board Add/removal path, not strict-profile admission,
+distributed CEC actuation, real AV behavior or all-board interoperability.
+
 ## Audit fixes — 28 October 2026
 
 Firmware `0.1.88` fixes four audited cases: confirmed radio cleanup after a timeout

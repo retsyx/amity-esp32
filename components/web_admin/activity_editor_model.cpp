@@ -23,7 +23,7 @@ std::string kind(uint8_t type) {
     if(type==6||type==7)return "switch";
     return "placeholder";
 }
-std::string location(const cs::ConfigurationV2& config,const OwnerHostnames& names,const m::QualifiedDeviceName& name,bool has_added_amities,const OwnerCapacities& capacities) {
+std::string location(const cs::Configuration& config,const OwnerHostnames& names,const m::QualifiedDeviceName& name,bool has_added_amities,const OwnerCapacities& capacities) {
     const auto current=capacities.find(name.port.octopus_id);
     const auto retained=std::find_if(config.octopuses.begin(),config.octopuses.end(),[&](const auto& owner){return owner.octopus_id==name.port.octopus_id;});
     const auto capacity=current!=capacities.end()?current->second:(retained!=config.octopuses.end()?retained->supported_tentacles:0);
@@ -54,9 +54,9 @@ bool dto_string(const cJSON* value,const char* key,std::string& out,size_t maxim
 }
 }
 std::string component_value(std::optional<m::ComponentId> id) { return id?"component:"+id->str():std::string{}; }
-bool parse_submission(const std::string& body,const cs::ConfigurationV2& config,Submission& out,std::string& error) {
+bool parse_submission(const std::string& body,const cs::Configuration& config,Submission& out,std::string& error) {
     const auto fail=[&](const char* message){error=message;return false;};
-    if(body.size()>cs::configuration_compatibility_limit)return fail("The activity document is too large");
+    if(body.size()>cs::configuration_payload_limit)return fail("The activity document is too large");
     std::unique_ptr<cJSON,decltype(&cJSON_Delete)> root(parse_json_input(body),cJSON_Delete);
     if(!root||!dto_keys(root.get(),{"request_id","version","expected_config_revision","expected_presentation_revision","activities","device_choices"}))return fail("Unknown or invalid activity editor field");
     Submission value;const auto request=m::MessageId::parse(dto_text(root.get(),"request_id"));const auto semantic=m::parse_uint64(dto_text(root.get(),"expected_config_revision"));const auto presentation=m::parse_uint64(dto_text(root.get(),"expected_presentation_revision"));
@@ -77,7 +77,7 @@ bool parse_submission(const std::string& body,const cs::ConfigurationV2& config,
     }
     out=std::move(value);error.clear();return true;
 }
-std::vector<Choice> choices(const cs::ConfigurationV2& config,const std::vector<m::CecObservation>& observations,const OwnerHostnames& names,bool has_added_amities,const OwnerCapacities& capacities) {
+std::vector<Choice> choices(const cs::Configuration& config,const std::vector<m::CecObservation>& observations,const OwnerHostnames& names,bool has_added_amities,const OwnerCapacities& capacities) {
     std::vector<Choice> out;
     for(const auto& c:config.components){
         Choice choice;choice.value=component_value(c.record.component_id);choice.component_id=c.record.component_id;
@@ -107,22 +107,22 @@ std::vector<Choice> choices(const cs::ConfigurationV2& config,const std::vector<
     }
     return out;
 }
-bool parse_restore_request(const cJSON* root,const cs::ConfigurationV2& current,m::BootId boot,cs::ConfigurationV2& backup,std::string& error){
+bool parse_restore_request(const cJSON* root,const cs::Configuration& current,m::BootId boot,cs::Configuration& backup,std::string& error){
     if(!boot||!dto_keys(root,{"request_id","expected_config_revision","expected_presentation_revision","expected_boot_id","confirm","previous_controller_isolated","configuration"})||!m::MessageId::parse(dto_text(root,"request_id"))||dto_text(root,"expected_boot_id")!=boot.str()||!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root,"confirm"))||!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root,"previous_controller_isolated"))){error="Review the current main Amity and confirm the previous main is switched off and disconnected before restoring";return false;}
     const auto semantic=m::parse_uint64(dto_text(root,"expected_config_revision"));const auto presentation=m::parse_uint64(dto_text(root,"expected_presentation_revision"));
     if(!semantic||!presentation||cs::RevisionPair{*semantic,*presentation}!=current.revisions()){error="The saved configuration changed. Review it before restoring";return false;}
     const auto* configuration=cJSON_GetObjectItemCaseSensitive(root,"configuration");if(!cJSON_IsObject(configuration)){error="Choose a complete saved configuration";return false;}
     char* encoded=cJSON_PrintUnformatted(configuration);const std::string raw=encoded?encoded:"";cJSON_free(encoded);
-    return cs::parse_configuration_v2(raw,backup,error);
+    return cs::parse_configuration(raw,backup,error);
 }
-std::vector<m::ActivityId> projected_activities(const cs::ConfigurationV2& config) {
+std::vector<m::ActivityId> projected_activities(const cs::Configuration& config) {
     auto result=cs::ordered_activities(config);if(result.size()>16)result.resize(16);
     return result;
 }
-bool edit(const cs::ConfigurationV2& previous,const std::vector<Row>& rows,const std::vector<Choice>& available,
-    const std::function<bool(uint8_t*,size_t)>& random,cs::ConfigurationV2& out,std::vector<std::string>& unresolved,std::string& error) {
+bool edit(const cs::Configuration& previous,const std::vector<Row>& rows,const std::vector<Choice>& available,
+    const std::function<bool(uint8_t*,size_t)>& random,cs::Configuration& out,std::vector<std::string>& unresolved,std::string& error) {
     const auto fail=[&](const char* reason){error=reason;return false;};
-    if(!previous.controller_octopus_id||!cs::validate_configuration_v2(previous,error)||rows.size()>16)return fail("The saved activity configuration is not ready for editing");
+    if(!previous.controller_octopus_id||!cs::validate_configuration(previous,error)||rows.size()>16)return fail("The saved activity configuration is not ready for editing");
     const auto projection=projected_activities(previous);auto candidate=previous;
     std::set<m::ActivityId> retained;std::set<std::string> names;std::vector<m::ActivityId> order;unresolved.clear();
     const auto fresh=[&](auto tag){using Id=decltype(tag);auto value=Id::generate(random);return value.value_or(Id{});};
@@ -159,7 +159,7 @@ bool edit(const cs::ConfigurationV2& previous,const std::vector<Row>& rows,const
         std::vector<m::ActivityId> ordered;for(const auto& id:order)for(const auto& a:candidate.activities)if(a.activity_id==id&&a.zone_id==zone.zone_id)ordered.push_back(id);
         zone.activity_order.insert(zone.activity_order.begin(),ordered.begin(),ordered.end());
     }
-    if(!cs::reconcile_external_slots(previous,candidate,error)||!cs::validate_configuration_v2(candidate,error))return false;
+    if(!cs::reconcile_external_slots(previous,candidate,error)||!cs::validate_configuration(candidate,error))return false;
     out=std::move(candidate);error.clear();return true;
 }
 }

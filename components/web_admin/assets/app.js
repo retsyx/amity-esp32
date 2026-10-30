@@ -35,8 +35,7 @@ async function request(path,data,raw=false){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
  const mapped=window.amityInterface?.route(path,data)||{path,data};
  let response=await fetch('/api/'+mapped.path,{method:mapped.data===undefined?'GET':'POST',headers,body:mapped.data===undefined?undefined:typeof mapped.data==='string'?mapped.data:JSON.stringify(mapped.data)});
- if(mapped.path!==path&&response.status===404)response=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:typeof data==='string'?data:JSON.stringify(data)});
- else if(response.ok&&mapped.decode)response=await mapped.decode(response);
+ if(response.ok&&mapped.decode)response=await mapped.decode(response);
 
  if(response.status===401&&path!=='login'){if(!firmwareUpdating&&!hostnameReconnect){await showWelcome();if(!hostnameReconnect)message('');}throw Object.assign(Error(),{silent:true});}
  if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(customerText(e.error||e.message||'Request failed'));error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
@@ -429,10 +428,10 @@ $('backup').addEventListener('click',run(()=>download('backup','amity-config.jso
 $('restore').addEventListener('change',run(async e=>{
  const file=e.target.files[0];if(!file)return;
  try{
-  if(file.size>32768)throw Error('Backup must be no more than 32 KiB.');
-  const contents=await file.text(),scoped=window.amityInterface?.enabled;
-  if(!confirm(scoped?'Replace saved configuration with this backup? If replacing a failed main Amity, confirm that the old main is powered off and disconnected.':'Replace activities with this backup?'))return;
-  const data=scoped?{configuration:JSON.parse(contents),expected_boot_id:(await request('status')).boot_id}:contents;
+  if(file.size>16384)throw Error('Backup must be no more than 16 KiB.');
+  const contents=await file.text();
+  if(!confirm('Replace saved configuration with this backup? If replacing a failed main Amity, confirm that the old main is powered off and disconnected.'))return;
+  const data={configuration:JSON.parse(contents),expected_boot_id:(await request('status')).boot_id};
   const result=await request('restore',data),warning=result.warning||(result.unresolved||[]).join(' ');await enter();message(warning||'Configuration restored.',!!warning);
  }finally{e.target.value='';}
 }));

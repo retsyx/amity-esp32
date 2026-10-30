@@ -121,30 +121,11 @@ Continue with [USB installation and onboarding](README.md#install-over-usb). Fla
 
 In a new Bash session, set `IDF_PATH`, `ESP_MATTER_PATH`, and `IDF_TOOLS_PATH` to the locations used during setup before sourcing `tools/env.sh`. Once an existing build is configured, use `idf.py build provisioning-package` for subsequent builds; `set-target` resets the build configuration.
 
-## Upgrading an existing 0.1.80 installation to schema 3
+## Current saved format during development
 
-Firmware using qualified owner lookup writes configuration schema 3. Its release
-manifest must declare `config_write: 3` and readable configuration formats 1–3.
-The storage journal wrapper remains storage format 2 with readable formats 1–2;
-configuration schema and storage wrapper are separate compatibility axes.
+Firmware reads and writes only the current saved configuration format (numeric version 3) and current storage wrapper (numeric version 2). Earlier development formats are not decoded or migrated. Missing, malformed and unsupported format versions fail explicitly; blank storage creates an empty current-format document directly. Version checking and transaction boundaries remain available for a future deliberate format change after release.
 
-The installed 0.1.80 update verifier accepts only manifests declaring configuration
-writer 2, so it rejects a correctly labeled schema-3 update. Upgrade those boards
-over USB using the matching hardware profile and verified target serial port:
-
-```sh
-source tools/env.sh
-idf.py -p PORT flash
-```
-
-This application/bootloader/partition-table flash preserves the factory credential
-and NVS partitions. Do not use a full `amity-provisioned.bin` installation image
-for this upgrade: it replaces saved settings and pairings. The firmware reads
-legacy v1/v2 configuration for migration, retaining original user intent/recovery
-records until the new boot is confirmed. Do not mislabel schema-3 firmware as a
-schema-2 writer or bypass the old verifier to make browser OTA accept it. Once
-all relevant devices run the schema-3 firmware, ordinary compatible browser/member
-updates use the correctly labeled schema-3 release container.
+The source API and HTTP routes have versionless names, including `config_store::Configuration` and `/api/config`. Numeric format metadata is still validated. Existing valid current-format records keep their bytes, identities and journal markers. Normal application updates preserve factory provisioning and independent pairings/settings; never use a full fresh-install provisioned image for those updates.
 
 ## Development and release checks
 
@@ -165,7 +146,7 @@ Technical references: [hardware pins](main/board_pins.h), [Matter](components/am
 
 One firmware serves both roles. A fresh unclaimed device with no Matter fabric automatically opens a bounded Matter setup window at boot, including after factory reset; this requires no setup-button GPIO. It has no saved Wi-Fi credentials and hosts no UI. Completing Matter BLE enrollment establishes the original controller; adding a device over the authenticated Amity BLE channel selects its subordinate role. That durable choice survives removing Matter fabrics. The proven original main also opens Matter setup at boot if its current fabric count is zero, while keeping its main role/UI/authority. Saved activities and previous commissioning history do not gate this behavior. Boards with current Matter fabrics and headless/prepared/retired/recovery roles do not open it automatically. The original main retains explicit Matter pairing controls. Added devices retain the shared CHIP Wi-Fi/NimBLE substrate and authenticated peer config/OTA/status only; they host no UI or user-control integration and cannot promote themselves after reset or controller loss. No separate actuator-only build is required.
 
-The 20 October 2026 amendment fixes the original device as sole controller/UI/admin/remote/Matter/HomeKit owner. Controller identity migration must be proven, never inferred from ordering; ordinary portable import cannot replace it within a live installation. Supported failed-main recovery instead Matter-enrolls replacement hardware as a new main, restores portable configuration through existing Advanced upload/restore, and explicitly re-pairs integrations/remote and re-enrolls members after old-main isolation. Preserve baseline UI commit `d50af8026938797fc0820d0107f4c4e064c2d2bc` with only canonical Amity-hostname context and one Amity management tab. Historical hardware/startup evidence is separate from the current qualified-lookup implementation. Current software checks and remaining physical qualification follow the [original-controller contract](amity-octopus-consortium/21-original-controller-policy.md) and [validation requirements](amity-octopus-consortium/15-validation-and-release-gates.md).
+The 20 October 2026 amendment fixes the original device as sole controller/UI/admin/remote/Matter/HomeKit owner. The saved original controller identity must be proven, never inferred from ordering; ordinary portable import cannot replace it within a live installation. Supported failed-main recovery instead Matter-enrolls replacement hardware as a new main, restores portable configuration through existing Advanced upload/restore, and explicitly re-pairs integrations/remote and re-enrolls members after old-main isolation. Preserve baseline UI commit `d50af8026938797fc0820d0107f4c4e064c2d2bc` with only canonical Amity-hostname context and one Amity management tab. Historical hardware/startup evidence is separate from the current qualified-lookup implementation. Current software checks and remaining physical qualification follow the [original-controller contract](amity-octopus-consortium/21-original-controller-policy.md) and [validation requirements](amity-octopus-consortium/15-validation-and-release-gates.md).
 
 ## Adding Amity devices
 

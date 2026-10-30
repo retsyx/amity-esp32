@@ -33,7 +33,7 @@ def main():
                    management_ready=False, capabilities=512, boot_release=False,
                    reject_admission=False, wrong_target=False)
     errors, checks, all_posts = [], [], []
-    config = dict(version=2, controller_octopus_id=CONTROLLER, config_revision='1', presentation_revision='1',
+    config = dict(version=3, controller_octopus_id=CONTROLLER, config_revision='1', presentation_revision='1',
                   octopuses=[dict(octopus_id=MEMBER, label='Bedroom Amity', supported_tentacles=1),
                              dict(octopus_id=CONTROLLER, label='Living room Amity', supported_tentacles=1)],
                   activities=[], zones=[])
@@ -63,7 +63,7 @@ def main():
             self.wfile.write(data)
 
         def do_GET(self):
-            if self.path == '/api/v2/system':
+            if self.path == '/api/system':
                 peer = {key: fixture[key] for key in ('ready', 'management_ready', 'capabilities')}
                 if fixture['ready']:
                     peer['hostname'] = 'amity-bedroom'
@@ -71,15 +71,15 @@ def main():
                                        named_devices=[dict(octopus_id=CONTROLLER, hostname='amity-living-room'),
                                                       dict(octopus_id=MEMBER, hostname='amity-bedroom')],
                                        membership=dict(membership_revision='1', peers=[dict(octopus_id=MEMBER, enrolled=True, boot_id='b'*32, **peer)])))
-            if self.path == '/api/v2/updates/cohort':
+            if self.path == '/api/updates/cohort':
                 fixture['polls'] += 1
                 if fixture['phase'] == 'boot_checking' and fixture['boot_release']:
                     fixture['phase'] = 'complete'
                 return self.reply(dict(job_id=JOB, phase=fixture['phase'], current_index='0',
                                        targets=[dict(octopus_id=OTHER if fixture['wrong_target'] else MEMBER,
                                                      offset=str(fixture['offset']))]))
-            values = {'/api/setup': dict(required=False), '/api/v2/activity-editor': editor,
-                      '/api/v2/activity-editor/status': status, '/api/v2/config': config,
+            values = {'/api/setup': dict(required=False), '/api/activity-editor': editor,
+                      '/api/activity-editor/status': status, '/api/config': config,
                       '/api/remotes': dict(bonded=False, ready=True, devices=[]),
                       '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False)}
             if self.path in values:
@@ -91,19 +91,19 @@ def main():
             body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
             fixture['posts'].append((self.path, deepcopy(body)))
             all_posts.append(self.path)
-            if self.path == '/api/v2/updates/cohort':
+            if self.path == '/api/updates/cohort':
                 if fixture['reject_admission']:
                     return self.reply(dict(error='This release is incompatible with the selected device.'), 409)
                 assert body['manifest'] == MANIFEST and body['signature'] == SIGNATURE.hex()
                 assert body['targets'] == [MEMBER]
-            elif self.path == '/api/v2/updates/chunk':
+            elif self.path == '/api/updates/chunk':
                 assert body['cohort_job_id'] == JOB and body['target_octopus_id'] == MEMBER
                 assert body['offset'] == str(fixture['offset'])
                 chunk = bytes.fromhex(body['data_hex'])
                 assert 0 < len(chunk) <= 2048
                 assert chunk == IMAGE[fixture['offset']:fixture['offset'] + len(chunk)]
                 fixture['offset'] += len(chunk)
-            elif self.path == '/api/v2/updates/install':
+            elif self.path == '/api/updates/install':
                 assert body['cohort_job_id'] == JOB and body['target_octopus_id'] == MEMBER
                 assert fixture['offset'] == len(IMAGE)
                 fixture['phase'] = 'boot_checking'
@@ -149,7 +149,7 @@ def main():
                 selected.value.set_files(dict(name='amity-update.bin', mimeType='application/octet-stream', buffer=payload))
 
             def posts(path):
-                return [body for endpoint, body in fixture['posts'] if endpoint == '/api/v2/' + path]
+                return [body for endpoint, body in fixture['posts'] if endpoint == '/api/' + path]
 
             page = open_page()
             expect(page.locator('#advanced input#firmware')).to_have_count(1)
@@ -235,7 +235,7 @@ def main():
                 assert not fixture['posts']
                 page.close()
             passed('offline or unsupported peer has no update control')
-            assert set(all_posts) <= {'/api/v2/updates/cohort', '/api/v2/updates/chunk', '/api/v2/updates/install'}, all_posts
+            assert set(all_posts) <= {'/api/updates/cohort', '/api/updates/chunk', '/api/updates/install'}, all_posts
             assert not errors, errors
             browser.close()
     finally:

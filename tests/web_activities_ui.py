@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     fixture = {
         'remote_unpair_gate': None, 'remote_unpair_async': False,
-        'config': {'version': 1, 'activities': [{'name': 'TV', 'display': 'TV', 'source': 'Player'},
+        'config': {'activities': [{'name': 'TV', 'display': 'TV', 'source': 'Player'},
                                                {'name': 'Music', 'display': '', 'source': 'Player', 'audio': 'Receiver'}]},
         'config_calls': 0, 'remotes': {'devices': [], 'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'expired': False, 'logins': 0,
         'status': {'version': 'test', 'hardware': 'Amity Board / Fin', 'free_heap': 200000,
@@ -30,6 +30,96 @@ def main():
                        {'name': 'TV', 'bus': 'front', 'type': 0, 'address': 0, 'physical_address': 0},
                        {'name': 'Receiver', 'bus': 'back', 'type': 5, 'address': 5, 'physical_address': 4096},
                        {'name': 'Player', 'bus': 'back', 'type': 4, 'address': 4, 'physical_address': 8192}]}}
+
+    # Human-facing fixture state is projected through the same current editor
+    # DTO as shipping Amity; the backup endpoint serves only current saved data.
+    group, controller, zone, boot = (f'{value:032x}' for value in (1, 2, 3, 4))
+    fixture.update(config_revision=1, presentation_revision=1, state_revision=1, next_activity_id=100)
+    equipment = {}
+
+    def component(name, role=None):
+        if not name:
+            return ''
+        if name not in equipment:
+            observed = next((d for d in fixture['status']['devices'] if d['name'] == name), {})
+            kind = observed.get('type', 6 if role == 'switch' else 4)
+            roles = ['display', 'audio'] if kind == 0 else ['audio', 'switch'] if kind == 5 else ['switch'] if kind in (6, 7) else ['source']
+            equipment[name] = dict(value='component:' + f'{len(equipment) + 20:032x}', title=name, location='', roles=roles)
+        if role and role not in equipment[name]['roles']:
+            equipment[name]['roles'].append(role)
+        return equipment[name]['value']
+
+    def normalize_rows():
+        for row in fixture['config']['activities']:
+            if 'activity_id' not in row:
+                row['activity_id'] = f'{fixture["next_activity_id"]:032x}'
+                fixture['next_activity_id'] += 1
+            for role in ('display', 'source', 'audio'):
+                row.setdefault(role, '')
+                component(row[role], role)
+            if row.get('switch'):
+                component(row['switch']['device'], 'switch')
+
+    def choices():
+        normalize_rows()
+        for device in fixture['status']['devices']:
+            component(device['name'])
+        return deepcopy(list(equipment.values()))
+
+    def editor():
+        available = choices()
+        rows = deepcopy(fixture['config']['activities'])
+        for row in rows:
+            for role in ('display', 'source', 'audio'):
+                row[role] = component(row[role], role)
+            if row.get('switch'):
+                row['switch']['device'] = component(row['switch']['device'], 'switch')
+        return dict(version=1, expected_config_revision=str(fixture['config_revision']),
+                    expected_presentation_revision=str(fixture['presentation_revision']),
+                    activities=rows, device_choices=available)
+
+    def editor_status():
+        result = deepcopy(fixture['status'])
+        result.update(expected_config_revision=str(fixture['config_revision']),
+                      expected_presentation_revision=str(fixture['presentation_revision']),
+                      expected_state_revision=str(fixture['state_revision']), expected_boot_id=boot,
+                      device_choices=choices(), activity_settling=False)
+        for device in result['devices']:
+            device.update(title=device['name'], location='', name=component(device['name']))
+        return result
+
+    def configuration():
+        dto = editor()
+        rows = []
+        for row in dto['activities']:
+            value = dict(activity_id=row['activity_id'], zone_id=zone, label=row['name'], generated_label=row['name'], label_override=True,
+                         **{role: row[role].removeprefix('component:') or None for role in ('display', 'source', 'audio')},
+                         switch_device=row.get('switch', {}).get('device', '').removeprefix('component:') or None,
+                         switch_input=row.get('switch', {}).get('input', 0))
+            rows.append(value)
+        order = [row['activity_id'] for row in rows]
+        return dict(version=3, consortium_id=group, controller_octopus_id=controller, primary_zone_id=zone,
+                    config_revision=str(fixture['config_revision']), presentation_revision=str(fixture['presentation_revision']),
+                    octopuses=[dict(octopus_id=controller, label='amity-test', generated_label='amity-test', label_override=False, supported_tentacles=1)],
+                    components=[dict(component_id=c['value'].removeprefix('component:'), label=c['title'], generated_label=c['title'], label_override=False,
+                                     kind='display' if 'display' in c['roles'] else 'receiver' if 'audio' in c['roles'] else 'switch' if 'switch' in c['roles'] else 'source',
+                                     qualified_names=[dict(consortium_id=group, octopus_id=controller, tentacle_id=0,
+                                                           side='front' if 'display' in c['roles'] else 'back', osd_name=c['title'][:14])])
+                                for c in dto['device_choices']],
+                    activities=rows, activity_order=order,
+                    zones=[dict(zone_id=zone, label='Main screen', generated_label='Main screen', label_override=False, activity_order=order)],
+                    external_slots=[dict(slot=index, activity_id=value, tombstone=False, hidden=False, alias='') for index, value in enumerate(order)])
+
+    def visible_name(value):
+        if not value:
+            return ''
+        matches = [name for name, choice in equipment.items() if choice['value'] == value]
+        assert len(matches) == 1, 'Editor saves must retain exact current equipment selectors'
+        return matches[0]
+
+    # An unused retained selection is available to the current editor even
+    # while absent from scan results and activity-derived suggestions.
+    component('New Console', 'source')
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -47,8 +137,6 @@ def main():
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(data)))
-            if self.path == '/api/config':
-                self.send_header('X-Amity-Configured', str(fixture['configured']).lower())
             self.end_headers()
             self.wfile.write(data)
 
@@ -59,7 +147,11 @@ def main():
                 return self.reply({'required': False})
             if self.path.startswith('/api/') and fixture['expired']:
                 return self.reply({'error': 'Login required'}, 401)
-            endpoints = {'/api/config': fixture['config'], '/api/status': fixture['status'],
+            endpoints = {'/api/config': configuration(), '/api/activity-editor': editor(), '/api/activity-editor/status': editor_status(),
+                         '/api/system': dict(mode='coordinator', octopus_id=controller, consortium_id=group, boot_id=boot,
+                                             hostname='amity-test', named_devices=[dict(octopus_id=controller, hostname='amity-test')],
+                                             membership=dict(coordinator=True, authority_ready=True, member=False, membership_revision='1', peers=[])),
+                         '/api/homekit': dict(available=False, paired=False),
                          '/api/remotes': fixture['remotes'],
                          '/api/matter': fixture['matter']}
             if self.path in endpoints:
@@ -72,17 +164,37 @@ def main():
                 fixture['logins'] += 1
                 fixture['expired'] = False
                 return self.reply({'token': 'fixture-session'})
-            if self.path == '/api/activity':
-                fixture['activity_calls'].append(body['index'])
-                fixture['status']['current_activity'] = body['index']
-            if self.path == '/api/config':
+            if self.path == '/api/activity-editor/activity':
+                assert body['expected_config_revision'] == str(fixture['config_revision'])
+                assert body['expected_state_revision'] == str(fixture['state_revision']) and body['expected_boot_id'] == boot
+                assert 'index' not in body
+                index = next((i for i, row in enumerate(fixture['config']['activities']) if row['activity_id'] == body['activity_id']), -1)
+                assert body['activity_id'] is None or index >= 0
+                fixture['activity_calls'].append(index)
+                fixture['status']['current_activity'] = index
+                fixture['state_revision'] += 1
+                return self.reply(dict(operation_id=body['request_id'], stage='complete'))
+            if self.path == '/api/activity-editor':
+                assert body['version'] == 1
+                assert body['expected_config_revision'] == str(fixture['config_revision'])
+                assert body['expected_presentation_revision'] == str(fixture['presentation_revision'])
                 fixture['config_calls'] += 1
                 if fixture['fail_save']:
                     return self.reply({'error': 'Could not save configuration'}, 500)
-                fixture['config'] = body
+                rows = deepcopy(body['activities'])
+                for row in rows:
+                    for role in ('display', 'source', 'audio'):
+                        row[role] = visible_name(row[role])
+                    if row.get('switch'):
+                        row['switch']['device'] = visible_name(row['switch']['device'])
+                fixture['config'] = dict(activities=rows)
+                normalize_rows()
+                fixture['config_revision'] += 1
                 fixture['status']['current_activity'] = -1
+                fixture['state_revision'] += 1
                 if fixture['save_gate']:
                     assert fixture['save_gate'].wait(20)
+                return self.reply(dict(operation_id=body['request_id'], stage='applied', saved=True))
             if self.path.startswith('/api/remotes/'):
                 fixture['remote_calls'].append(self.path)
             if self.path == '/api/remotes/scan':
@@ -114,12 +226,13 @@ def main():
                 fixture['matter'] = {'fabrics': [], 'commissioning': True, 'manual_code': '12345678901', 'qr_modules': ['1' * 21] * 21}
             if self.path == '/api/matter/close':
                 fixture['matter'] = {'fabrics': [], 'commissioning': False}
-            if self.path == '/api/discover':
+            if self.path == '/api/activity-editor/discover':
                 if fixture['fail_discover']:
                     return self.reply({'error': 'Could not scan HDMI'}, 500)
                 if fixture['discover_gate']:
                     assert fixture['discover_gate'].wait(20)
                 fixture['status']['discovering'] = True
+                return self.reply(dict(operation_id=body['request_id'], stage='complete'))
             self.reply({'ok': True})
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -720,7 +833,7 @@ def main():
                 expect(page.locator('#matterStatus')).to_have_text('Not paired')
                 expect(page.locator('#fabricList button')).to_have_count(0)
                 passed('idle Remote and Matter tabs show Not paired before and after pairing operations')
-                fixture['config'] = {'version': 1, 'activities': []}
+                fixture['config'] = {'activities': []}
                 fixture['configured'] = False
                 page.reload()
                 expect(page.locator('#admin')).to_be_visible()
@@ -730,10 +843,10 @@ def main():
                 fixture['status']['discovery_generation'] += 1
                 page.wait_for_function('() => !polling && !activityActionPending')
                 page.evaluate('() => refresh()')
-                expect(page.locator('#activityList article')).to_have_count(2)
-                expect(save).to_be_visible()
-                expect(page.locator('#recommendations')).to_be_hidden()
-                passed('first scan defaults unconfigured activities to recommendations without saving')
+                expect(page.locator('#activityList article')).to_have_count(0)
+                expect(save).to_be_hidden()
+                expect(page.locator('#recommendations')).to_be_visible()
+                passed('current empty configuration offers scanned recommendations without overwriting saved activities')
                 page.evaluate('() => { dirty=false; }')
                 fixture['configured'] = True
                 page.reload()
@@ -749,7 +862,7 @@ def main():
                 expect(save).to_be_hidden()
                 passed('explicitly saved empty activities are preserved until recommendations are added')
 
-                fixture['config'] = {'version': 1, 'activities': [
+                fixture['config'] = {'activities': [
                     {'name': 'Cinema', 'display': 'Offline TV', 'source': 'Player', 'audio': 'Offline Receiver',
                      'switch': {'device': 'HDMI Switch', 'input': 3}},
                     {'name': 'Games', 'display': 'Offline TV', 'source': 'Offline Console', 'audio': ''},
@@ -836,6 +949,43 @@ def main():
                 page.wait_for_function('() => !polling')
                 assert device_names() == ['New Console', 'Offline TV', 'Player']
                 passed('new saved device names replace old suggestions and persist after reload; discarded drafts do not change suggestions')
+                route_calls = []
+
+                def current_missing(route):
+                    route_calls.append((route.request.method, route.request.url.split('/api/', 1)[-1]))
+                    route.fulfill(status=404, content_type='application/json',
+                                  headers={'Retry-After': '7'},
+                                  body=json.dumps({'error': 'Current ' + route.request.method + ' endpoint is unavailable'}))
+
+                def unexpected_old_route(route):
+                    route_calls.append((route.request.method, route.request.url.split('/api/', 1)[-1]))
+                    route.fulfill(status=200, content_type='application/json', body='{"ok":true}')
+
+                for current_path, old_path in (
+                        ('activity-editor/status', 'status'),
+                        ('activity-editor/discover', 'discover')):
+                    page.route('**/api/' + current_path, current_missing)
+                    page.route('**/api/' + old_path, unexpected_old_route)
+                    try:
+                        result = page.evaluate("""async operation => {
+                            const priorToken = token, priorStoredToken = sessionStorage.getItem('amityToken');
+                            try { await (operation === 'status' ? request('status') : request('discover', {})); return {resolved: true}; }
+                            catch (error) { return {status: error.status, message: error.message,
+                                retryAfter: error.retryAfter, tokenRetained: token === priorToken,
+                                storedTokenRetained: sessionStorage.getItem('amityToken') === priorStoredToken}; }
+                        }""", old_path)
+                        method = 'GET' if old_path == 'status' else 'POST'
+                        assert result == {'status': 404, 'message': 'Current ' + method + ' endpoint is unavailable',
+                                          'retryAfter': 7, 'tokenRetained': True, 'storedTokenRetained': True}, result
+                        assert (method, current_path) in route_calls
+                        assert not any(path == old_path for _, path in route_calls), route_calls
+                    finally:
+                        page.unroute('**/api/' + current_path, current_missing)
+                        page.unroute('**/api/' + old_path, unexpected_old_route)
+                page.wait_for_function('() => !polling')
+                page.evaluate("() => message('')")
+                expect(page.locator('#admin')).to_be_visible()
+                passed('mapped current GET and POST 404 preserve the first error and session without retrying old routes')
                 page.locator('#addActivity').click();expect(page.locator('#activityEditor')).to_be_visible()
                 fixture['expired'] = True
                 page.wait_for_function('() => !polling && !activityActionPending')

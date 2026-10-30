@@ -110,9 +110,9 @@ class Fixture:
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
         if data is None:
-            if path == "/api/v2/config":
+            if path == "/api/config":
                 return deepcopy(self.full)
-            if path.startswith("/api/v2/operations/"):
+            if path.startswith("/api/operations/"):
                 identity = path.rsplit("/", 1)[1]
                 if identity not in self.operations:
                     raise AmityHTTPError(404, "Unknown operation")
@@ -120,7 +120,7 @@ class Fixture:
             raise AssertionError(path)
         if data["expected_config_revision"] != self.full["config_revision"]:
             raise AmityHTTPError(409, "stale revision")
-        if path == "/api/v2/activity-editor":
+        if path == "/api/activity-editor":
             rows = deepcopy(data["activities"])
             creating = any("activity_id" not in row for row in rows)
             if self.conflict_cleanup and not creating:
@@ -147,7 +147,7 @@ class Fixture:
                 self.lose_create_reply = False
                 raise OSError("HTTP reply lost after accepted creation")
             return result
-        if path == "/api/v2/activity-editor/activity":
+        if path == "/api/activity-editor/activity":
             if data["activity_id"] is not None and self.reject_start:
                 raise AmityHTTPError(409, "start rejected before admission")
             self.state_revision += 1
@@ -160,7 +160,7 @@ class Fixture:
             result = {"operation_id": data["request_id"], "stage": "complete"}
             self.operations[data["request_id"]] = result
             return result
-        if path == "/api/v2/config":
+        if path == "/api/config":
             self.full = deepcopy(data["configuration"])
             self.bump()
             result = {"operation_id": data["request_id"], "stage": "applied"}
@@ -223,7 +223,7 @@ class ActivityTests(unittest.TestCase):
             f.activity()
         f.callbacks[0]()
         self.assertEqual([row["name"] for row in f.rows], ["Existing activity"])
-        self.assertTrue(any(path.startswith("/api/v2/operations/") for path, _ in f.calls))
+        self.assertTrue(any(path.startswith("/api/operations/") for path, _ in f.calls))
 
     def test_failed_cec_responder_does_not_block_http_cleanup(self):
         f = self.fixture
@@ -252,7 +252,7 @@ class ActivityTests(unittest.TestCase):
             activity.start()
         activity.close()
         self.assertEqual(len(f.rows), 1)
-        self.assertFalse(any(path.startswith("/api/v2/operations/") for path, _ in f.calls))
+        self.assertFalse(any(path.startswith("/api/operations/") for path, _ in f.calls))
 
     def test_cleanup_preserves_concurrently_edited_fixture_equipment(self):
         f = self.fixture
@@ -365,7 +365,7 @@ class ActivityTests(unittest.TestCase):
         native_switch = f.selectors[f.avr.name]
         original_rows = deepcopy(f.rows)
         with f.activity(source=None, switch_device=f.avr, switch_input=3) as activity:
-            create = next(data for path, data in f.calls if path == "/api/v2/activity-editor" and data)
+            create = next(data for path, data in f.calls if path == "/api/activity-editor" and data)
             submitted = create["activities"][-1]
             self.assertEqual(submitted["source"], "")
             self.assertEqual(submitted["switch"], {"device": native_switch, "input": 3})

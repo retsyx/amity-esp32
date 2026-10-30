@@ -16,7 +16,7 @@ fi
  -I"$root/components/amity_hub/include" -I"$root/components/amity_system/include" \
  "$root/components/amity_hub/hub.cpp" "$root/components/amity_hub/hub_service.cpp" \
  "$root/components/amity_hub/system_control.cpp" "$root/components/amity_hub/remote_control.cpp" "$root/components/config_store/system_configuration.cpp" \
- "$root/components/config_store/configuration_migration.cpp" "$root/components/config_store/configuration_journal.cpp" \
+ "$root/components/config_store/configuration_journal.cpp" \
  "$root/components/amity_system/model.cpp" \
  "$root/tests/system_remote_control_test.cpp" "$out/input_cjson.o" \
  $openssl_lib -lcrypto -o "$out/system_remote_control_test"

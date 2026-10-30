@@ -458,7 +458,7 @@ submission acknowledgment alone cannot pass.
 Each component must answer fresh Give Physical Address and Give OSD Name
 requests from the DUT on its actual wire. The initial test does not require
 vendor metadata or qualify every optional CEC discovery feature. It derives
-the DUT's initiator addresses from wire traffic, since the UI's legacy aggregate
+the DUT's initiator addresses from wire traffic, since the UI's aggregate
 address fields need not describe the owner-local CEC engine.
 It closes the CEC session and logs out on success or failure. Other DUT wires
 are untouched. The common runner writes private JSON reports under ignored

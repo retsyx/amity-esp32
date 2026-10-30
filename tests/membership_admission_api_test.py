@@ -22,12 +22,12 @@ def block(source, marker):
 
 
 def main():
-    source = (ROOT / 'components/web_admin/v2_admin.cpp').read_text()
+    source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
     settings = (ROOT / 'components/device_settings/device_settings.cpp').read_text()
     helpers = function(source, 'void wipe(') + function(source, 'std::string string(') + function(source, 'bool unique_keys(') + source[source.index('bool object_fields('):source.index('bool parse_port_value(')]
     selection = source[source.index('struct AdmissionSelection {'):source.index('esp_err_t admission_response(')]
-    addition = block(source[source.index('    Tracked operation;'):], '    if(path=="/api/v2/membership/add")').replace('root.get()', 'root')
-    update = block(source[source.index('void update_operation('):], '    if(operation.path=="/api/v2/membership/add")')
+    addition = block(source[source.index('    Tracked operation;'):], '    if(path=="/api/membership/add")').replace('root.get()', 'root')
+    update = block(source[source.index('void update_operation('):], '    if(operation.path=="/api/membership/add")')
     get_status = function(source, 'esp_err_t admission_response(')
     prefix = r'''
 #include "amity/system/model.hpp"
@@ -61,12 +61,12 @@ int runtime_add_octopus(m::MessageId scan,const std::string& token,const std::st
 std::string rejection,serialized;
 int error(httpd_req_t*,const char* code,const std::string&,const char* ="400 Bad Request",bool=false){rejection=code;return ESP_FAIL;}
 int send(httpd_req_t*,cJSON* value){char* data=cJSON_PrintUnformatted(value);serialized=data;cJSON_free(data);return ESP_OK;}
-struct Tracked {std::string path="/api/v2/membership/add",status="admitted",error; m::MessageId scan_id; m::OctopusId candidate;std::string name;};
+struct Tracked {std::string path="/api/membership/add",status="admitted",error; m::MessageId scan_id; m::OctopusId candidate;std::string name;};
 ''' + helpers + r'''
 SensitiveString::~SensitiveString(){wipe(value);}
 ''' + selection + get_status + r'''
 bool add(cJSON* root,Tracked& operation){
-    const std::string path="/api/v2/membership/add";httpd_req_t* req=nullptr;int result=0;bool done=false;
+    const std::string path="/api/membership/add";httpd_req_t* req=nullptr;int result=0;bool done=false;
     auto finish=[&]{done=true;};
 ''' + addition + r'''
     return done||result==ESP_FAIL;

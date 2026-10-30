@@ -8,8 +8,8 @@
   "files": [
     {
       "path": "03-domain-model-and-addressing.md",
-      "size_bytes": 5173,
-      "sha256": "b3f42718cd0164de6efb480b5f6fc17e9d0023af833d11e38682202ed0f2e1fb"
+      "size_bytes": 5166,
+      "sha256": "127ab4d6f2353e77efbd424fdffd67a57e69f87614fc71bd810033cd0e3a84d1"
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
@@ -38,8 +38,8 @@
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 10653,
-      "sha256": "5835acbdbf1aecd725bff10d72e6e524af145252ff13022c648ccebe680a2460"
+      "size_bytes": 10646,
+      "sha256": "bab0631cd29fecb9edd4f358fd324188cf2f03db3ab09b5dfef5bbc3ec3ed609"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
@@ -47,29 +47,29 @@
       "sha256": "272fab6101ecc79c49220e1463017735b38263721871aa41316ce1093acc71d8"
     },
     {
-      "path": "11-config-storage-and-migration.md",
-      "size_bytes": 7546,
-      "sha256": "f67575cda754b571edfd72a47e5dc1fcdaa87e5e159d1f29012f21be827161b3"
+      "path": "11-configuration-storage.md",
+      "size_bytes": 4545,
+      "sha256": "92a7bfdb5259e65e9057c1258c2262526e5e50dc3a4a8054b63f88d184f120ed"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 7622,
-      "sha256": "a2665a8e75f860462f3dad236b366544df4a23bda9163555c6084bc2600d8799"
+      "size_bytes": 7606,
+      "sha256": "c489694972267d556d1f527cedb6f9296e9a92593ccf0a85288526bdb665cf6e"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
-      "size_bytes": 5609,
-      "sha256": "7fec8ceac4a3003dc8a7f73a3ceab5840e58169792a1a59467a8e52558da4929"
+      "size_bytes": 5619,
+      "sha256": "ee9be6ee4e6d6f2509db5c19cf4d3d6aba3480386266c9e45f8dccf68154b5bd"
     },
     {
       "path": "14-ota-and-compatibility.md",
-      "size_bytes": 6395,
-      "sha256": "1cb8b443f3e34ebf5fc526d0d18d6da54b1228aae729771d0bd6b0546a0f758f"
+      "size_bytes": 5870,
+      "sha256": "99034ecac94fe1955a76ceed79e659e48530b9b92b4cf7225e9078ff1a3d9fb3"
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 23912,
-      "sha256": "3c11f54bdb1c148b7e27a5a0435d28438ee5861119b3fdb05aacfcc14197580a"
+      "size_bytes": 24066,
+      "sha256": "446fb9988897212c556b71cdb9f0d4155c2a708e4f46078577c1d7ffd221c14f"
     },
     {
       "path": "19-source-baseline.md",
@@ -78,23 +78,23 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 28203,
-      "sha256": "6065d2fe600c1c7fde019a9dded0fab26d964aa7017fc90af7c2e767162b78b7"
+      "size_bytes": 28196,
+      "sha256": "60a4696241a7b9cccf56ecfb5d8ccd74685c38e5a523f00a3fde8e189ba01229"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 8657,
-      "sha256": "b7f1e9d2d74816a70683ee1abeb0af84a89f6b647f626dc721c7243b17855710"
+      "size_bytes": 8650,
+      "sha256": "f225b74485c30927a1b24591df6fe68a42dcf88f12d7ad79a2a24c4d36593b3d"
     },
     {
       "path": "README.md",
-      "size_bytes": 4415,
-      "sha256": "6b8ea3c5a3c45ea9c3a743f6e132f27e705ef6530a92eb3d05ff5f1156f3a2cd"
+      "size_bytes": 4430,
+      "sha256": "adfb757051de8883e8c390787823545cc851f1af6d0f79ee1ddc6e2d36fbdbd7"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 31460,
-      "sha256": "384fb9fa763fc13a837625f03b1e53058fa999b29e676563f93fd476db8b7603"
+      "size_bytes": 35295,
+      "sha256": "be30fc43e54094ce73720ec67af9aca941c5178d87c2b84efceeb798b48b60b4"
     },
     {
       "path": "examples/README.md",
@@ -138,8 +138,8 @@
     },
     {
       "path": "schemas/README.md",
-      "size_bytes": 3347,
-      "sha256": "7425d0f7098cb752a1dcce5c83da9fa011617a16b2df1d10a1d912eafbfaf669"
+      "size_bytes": 3340,
+      "sha256": "62ba2459b04f6e82c54f718dec89a199abdac3819c46947f2787042c6247a897"
     },
     {
       "path": "schemas/adapter-settings.schema.json",

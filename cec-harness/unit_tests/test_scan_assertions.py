@@ -61,7 +61,7 @@ class ScanAssertionTests(unittest.TestCase):
 
         def request(path):
             self.requests.append(path)
-            self.assertEqual(path, "/api/v2/config")
+            self.assertEqual(path, "/api/config")
             return deepcopy(self.config)
 
         self.dut.request = request
@@ -192,7 +192,7 @@ class ScanAssertionTests(unittest.TestCase):
         self.result.assert_contains_only(*self.components)
         self.result.assert_on(self.tv, self.tv.endpoint)
         self.assertTrue(self.requests)
-        self.assertEqual(set(self.requests), {"/api/v2/config"})
+        self.assertEqual(set(self.requests), {"/api/config"})
         self.assertEqual(self.result.locations[0]["qualified_name"]["osd_name"], self.tv.name)
 
     def test_unknown_persisted_id_or_multiple_qualified_names_are_rejected(self):

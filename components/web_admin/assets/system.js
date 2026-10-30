@@ -29,9 +29,9 @@ window.amityInterface=(()=>{
   result.activities=(result.activities||[]).map(a=>{for(const role of roles){if(role==='switch'){if(a.switch)a.switch.device=visible(role,a.switch.device);}else a[role]=visible(role,a[role]);}return a;});
   return result;
  }
- function submit(document,preserve=true){
+ function submit(document){
   return {version:1,request_id:identifier(),expected_config_revision:document.expected_config_revision,expected_presentation_revision:document.expected_presentation_revision,
-   activities:(document.activities||[]).map(a=>{const previous=preserve?originalSelections.get(a.activity_id):null;const row={name:a.name,display:reference('display',a.display,previous?.display),source:reference('source',a.source,previous?.source),audio:reference('audio',a.audio,previous?.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device,previous?.switch),input:a.switch.input};return row;})};
+   activities:(document.activities||[]).map(a=>{const previous=originalSelections.get(a.activity_id);const row={name:a.name,display:reference('display',a.display,previous?.display),source:reference('source',a.source,previous?.source),audio:reference('audio',a.audio,previous?.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device,previous?.switch),input:a.switch.input};return row;})};
  }
  function response(value,original){return new Response(JSON.stringify(value),{status:original.status,headers:original.headers});}
  async function wait(original){
@@ -40,7 +40,7 @@ window.amityInterface=(()=>{
   if(!result.operation_id||!['admitted','preparing','executing','configuring','activating','stopping'].includes(result.stage))return response(result,original);
   for(let n=0;n<160;n++){
    await new Promise(resolve=>setTimeout(resolve,250));
-   const next=await request('v2/operations/'+result.operation_id);
+   const next=await request('operations/'+result.operation_id);
    if(['failed','rejected','cancelled'].includes(next.stage))throw Error(customerText(next.message||'The operation could not complete.'));
    if(!['admitted','preparing','executing','configuring','activating','stopping'].includes(next.stage)){if(next.warning)message(next.warning,true);return response(next,original);}
   }
@@ -48,27 +48,26 @@ window.amityInterface=(()=>{
  }
  async function saved(original,submitted){const completed=await wait(original),result=await completed.clone().json();if(result.stage==='applied'||result.saved===true)originalSelections=selections(submitted);return completed;}
  function route(path,data){
-  if(path==='config'&&data===undefined)return {path:'v2/activity-editor',decode:async original=>{
+  if(path==='config'&&data===undefined)return {path:'activity-editor',decode:async original=>{
    const document=await original.json();
-   if(document.version!==1||!Array.isArray(document.device_choices))return fetch('/api/config',{headers:{Authorization:'Bearer '+token}});
+   if(document.version!==1||!Array.isArray(document.device_choices))throw Error('Amity returned an invalid activity document. Reload before continuing.');
    enabled=true;return response(project(document),original);
   }};
   if(!enabled)return {path,data};
-  if(path==='config'){const submitted=submit(typeof data==='string'?JSON.parse(data):data);return {path:'v2/activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
-  if(path==='status')return {path:'v2/activity-editor/status',decode:async original=>{
+  if(path==='config'){const submitted=submit(typeof data==='string'?JSON.parse(data):data);return {path:'activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
+  if(path==='status')return {path:'activity-editor/status',decode:async original=>{
    const value=await original.json();
    if(Array.isArray(value.device_choices))choices=value.device_choices;
    value.state_revision=value.expected_state_revision;value.boot_id=value.expected_boot_id;
    value.devices=(value.devices||[]).map(d=>{const c=choices.find(c=>c.value===d.name),title=d.title||c?.title||d.name,location=d.location||c?.location||'';return {...d,title,location,name:[title,location].filter(Boolean).join(' · ')};});
    return response(value,original);
   }};
-  if(path==='discover')return {path:'v2/activity-editor/discover',data:{request_id:identifier()},decode:wait};
-  if(path==='activity')return {path:'v2/activity-editor/activity',data:{request_id:identifier(),activity_id:data.index<0?null:savedActivities[data.index]?.activity_id,expected_config_revision:config.expected_config_revision,expected_state_revision:String(state.state_revision||'0'),expected_boot_id:state.boot_id},decode:wait};
-  if(path==='backup')return {path:'v2/config'};
+  if(path==='discover')return {path:'activity-editor/discover',data:{request_id:identifier()},decode:wait};
+  if(path==='activity')return {path:'activity-editor/activity',data:{request_id:identifier(),activity_id:data.index<0?null:savedActivities[data.index]?.activity_id,expected_config_revision:config.expected_config_revision,expected_state_revision:String(state.state_revision||'0'),expected_boot_id:state.boot_id},decode:wait};
+  if(path==='backup')return {path:'config'};
   if(path==='restore'){
    const document=typeof data==='string'?JSON.parse(data):data,imported=document.configuration||document;
-   if(imported.version===1){const submitted=submit({...imported,expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision},false);return {path:'v2/activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
-   const submitted={request_id:identifier(),expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision,expected_boot_id:document.expected_boot_id,confirm:true,previous_controller_isolated:true,configuration:imported};return {path:'v2/activity-editor/restore',data:submitted,decode:original=>saved(original,submitted)};
+   const submitted={request_id:identifier(),expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision,expected_boot_id:document.expected_boot_id,confirm:true,previous_controller_isolated:true,configuration:imported};return {path:'activity-editor/restore',data:submitted,decode:original=>saved(original,submitted)};
   }
   return {path,data};
  }
@@ -78,7 +77,7 @@ window.amityInterface=(()=>{
  }
  function text(value){const p=document.createElement('p');p.textContent=value;return p;}
  function field(title,value=''){const l=document.createElement('label');l.textContent=title;const input=document.createElement('input');input.value=value;l.append(input);return {label:l,input};}
- async function mutation(path,data){return request('v2/'+path,{request_id:identifier(),...data});}
+ async function mutation(path,data){return request(''+path,{request_id:identifier(),...data});}
  async function completed(path,data){
   const result=await mutation(path,data);
   if(!result.operation_id)return result;
@@ -96,7 +95,7 @@ window.amityInterface=(()=>{
  }
  async function refresh(){
   if(!enabled||!token)return;
-  [configuration,system]=await Promise.all([request('v2/config'),request('v2/system')]);
+  [configuration,system]=await Promise.all([request('backup'),request('system')]);
   const root=$('managedAmityList');root.replaceChildren();
   const original=configuration.controller_octopus_id||system.octopus_id;
   const localRow=document.createElement('article'),localActions=deviceHeader(localRow,(system.hostname||'Name unavailable')+' (this device)');
@@ -130,7 +129,7 @@ window.amityInterface=(()=>{
   d.classList.add('adapter-settings');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   d.append(text('Leave blank to use 1.0.0.0.'),rows,status);
   let snapshot=null,inputs=[],busy=false,loading=false,needsReview=false;
-  const path='v2/devices/'+board.octopus_id+'/settings';
+  const path='devices/'+board.octopus_id+'/settings';
   const save=button('Save and restart Amity',async()=>{
    if(busy||!snapshot)return;
    const changes=[];
@@ -148,7 +147,7 @@ window.amityInterface=(()=>{
     let result=await request(path,{request_id:identifier(),expected_boot_id:snapshot.boot_id,expected_settings_revision:snapshot.settings_revision,confirm_restart:true,changes});
     for(let n=0;result.stage==='admitted'&&n<80;n++){
      await new Promise(resolve=>setTimeout(resolve,250));if(!d.isConnected)return;
-     result=await request('v2/operations/'+result.operation_id);
+     result=await request('operations/'+result.operation_id);
     }
     if(result.stage!=='applied'){
      needsReview=result.stage==='unknown'||result.stage==='admitted';
@@ -202,7 +201,7 @@ window.amityInterface=(()=>{
     status.textContent='Removing '+name+'…';let result=await mutation('membership/remove',{octopus_id:board.octopus_id,confirm:true,expected_membership_revision:membershipRevision,expected_target_boot_id:targetBoot});admitted=true;
     for(let n=0;result.stage==='admitted'&&n<24;n++){
      await new Promise(resolve=>setTimeout(resolve,250));if(!d.isConnected)return;
-     result=await request('v2/operations/'+result.operation_id);
+     result=await request('operations/'+result.operation_id);
     }
     if(result.stage!=='complete')throw Error('Removal could not be confirmed. Refresh the device list. If this Amity was removed and reset was not confirmed, factory reset it using its physical button before adding it again.');
     status.textContent=result.reset==='scheduled'?name+' removed. Factory reset accepted; it will restart and forget its Wi-Fi and settings.':name+' removed. '+(result.reset==='offline'?'It did not respond. ':'Factory reset was not confirmed. ')+'Hold its physical button for at least 10 seconds to factory reset it before adding it again.';
@@ -239,7 +238,7 @@ window.amityInterface=(()=>{
   };
   const cancelSearch=async()=>{
    try{await mutation('membership/cancel',{scan_id:scanId});}
-   catch(error){try{const state=await request('v2/membership/admission');if(state.scan_id===scanId&&['connecting','finishing'].includes(state.phase))message('Adding Amity is still finishing. Check the Amity devices list shortly.');else if(state.scan_id===scanId&&state.phase==='complete')message('Amity was added. Check the Amity devices list.');}catch(ignored){}}
+   catch(error){try{const state=await request('membership/admission');if(state.scan_id===scanId&&['connecting','finishing'].includes(state.phase))message('Adding Amity is still finishing. Check the Amity devices list shortly.');else if(state.scan_id===scanId&&state.phase==='complete')message('Amity was added. Check the Amity devices list.');}catch(ignored){}}
   };
   d.addEventListener('close',()=>{
    closed=true;if(timer!==null)clearTimeout(timer);code.input.value='';
@@ -249,9 +248,9 @@ window.amityInterface=(()=>{
   async function poll(){
    if(!live()||polling||ended)return;polling=true;
    try{
-    const state=await request('v2/membership/admission');if(!live())return;
+    const state=await request('membership/admission');if(!live())return;
     if(operationId){
-     const operation=await request('v2/operations/'+operationId);if(!live())return;
+     const operation=await request('operations/'+operationId);if(!live())return;
      if(['failed','rejected','cancelled','unknown'].includes(operation.stage)){ended=true;adding=false;status.textContent=customerText(operation.message||'The result could not be confirmed. Check the Amity devices list before trying again.');controls();return;}
      if(operation.stage==='complete'){
       finished=true;ended=true;code.input.value='';await refresh();if(live()){d.close();message('Amity added.');}return;
@@ -284,7 +283,7 @@ window.amityInterface=(()=>{
    finally{secret='';}
   });
   const closeButton=button('Cancel',()=>d.close());d.append(start,closeButton);controls();
-  void (async()=>{try{await request('v2/membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
+  void (async()=>{try{await request('membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
  }
  async function updateDevice(board,file){
   const header=new Uint8Array(await file.slice(0,32).arrayBuffer());
@@ -301,7 +300,7 @@ window.amityInterface=(()=>{
     await mutation('updates/cohort',{manifest,signature,targets:[board.octopus_id]});
     const deadline=Date.now()+900000;
     while(!stopped){
-     const job=await request('v2/updates/cohort');jobId=job.job_id;
+     const job=await request('updates/cohort');jobId=job.job_id;
      if(job.phase==='complete'){status.textContent='Amity restarted and reported the expected firmware. Choose an activity when you are ready.';progress.value=100;break;}
      if(['failed','interrupted','rolled_back','recovery_required','aborted'].includes(job.phase))throw Error(job.error||'The update needs an explicit retry. Choose the same update file to resume.');
      if(Date.now()>deadline)throw Error('The device has not reported a healthy restart. Check its power and network before retrying.');

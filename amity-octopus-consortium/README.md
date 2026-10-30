@@ -16,7 +16,7 @@ The 27 October 2026 user instruction removes the earlier persistent executable-t
 | [08 — Transport](08-consortium-transport-and-routing.md) | Authenticated typed delivery, ordering and stale-work rejection. |
 | [09 — Membership](09-membership-security-and-enrollment.md) | Physical bootstrap, identity, trust and enrollment. |
 | [10 — Shared radio/setup](10-ble-and-matter-coexistence.md) | Matter/NimBLE/Wi-Fi task ownership and setup gestures. |
-| [11 — Storage/migration](11-config-storage-and-migration.md) | Schema-3 user intent, migration, backups and journals. |
+| [11 — Configuration storage](11-configuration-storage.md) | Current-format user intent, strict version checks, backups and journals. |
 | [12 — Controls/admin](12-control-surfaces-and-admin.md) | Original controls, integration identity and management APIs. |
 | [13 — Recovery](13-faults-removal-and-recovery.md) | Loss, explicit removal/reset and manual replacement. |
 | [14 — Updates](14-ota-and-compatibility.md) | Exact release/image verification and compatible target updates. |

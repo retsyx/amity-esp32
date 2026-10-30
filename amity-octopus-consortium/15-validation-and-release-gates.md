@@ -18,9 +18,9 @@ Required cases:
 
 Use meaningful transcript/integration assertions. A test that merely expects new graph-policy types or repeats the implementation is not evidence that original behavior was preserved.
 
-## Persistence and migration
+## Persistence and format validation
 
-Canonical schema 3 contains selectors and user intent, with no enabled, executable route, binding/domain/resource/capability/PA approval graph or durable activity-resume ledger. Migrate v1/v2 while retaining stable IDs where present, all role/switch fields, order, slots and aliases. Ignore old enabled flags. Inject storage cuts and verify backup/identity/trust/journal consistency without restoring runtime addresses, input or grants.
+Canonical schema 3 contains selectors and user intent, with no enabled, executable route, binding/domain/resource/capability/PA approval graph or durable activity-resume ledger. Accept only the current numeric format version; reject missing, earlier and future versions and obsolete fields. Exercise direct empty-current-format initialization and retain role/switch fields, order, slots and aliases across ordinary current-format edits. No migration runs. Inject storage cuts and verify backup/identity/trust/journal consistency without restoring runtime addresses, input or grants.
 
 Verify temporarily absent equipment remains selected, AVR/switch activities remain executable through original handling and no new repair/approval workflow is required. The prior six-retained/four-disabled migration is a regression case, not successful parity evidence.
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-out=$(mktemp -d "$root/test-results/schema2.XXXXXX")
+out=$(mktemp -d "$root/test-results/current-configuration.XXXXXX")
 trap 'rm -rf "$out"' EXIT HUP INT TERM
 json="$root/managed_components/espressif__cjson/cJSON"
 test -f "$json/cJSON.c" || json="$root/managed_components/espressif__cjson"
@@ -15,6 +15,6 @@ cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$j
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     $openssl_include -I"$json" -I"$root/tests/reset_fakes" -I"$root/components/config_store/include" -I"$root/components/amity_system/include" -I"$root/components/system_sync/include" -I"$root/components/consortium/include" \
     "$root/components/amity_system/model.cpp" "$root/components/config_store/system_configuration.cpp" \
-    "$root/components/config_store/configuration_journal.cpp" "$root/components/config_store/configuration_migration.cpp" "$root/components/config_store/configuration_replacement.cpp" "$root/components/config_store/candidate_network.cpp" \
+    "$root/components/config_store/configuration_journal.cpp" "$root/components/config_store/configuration_replacement.cpp" "$root/components/config_store/candidate_network.cpp" \
     "$root/tests/system_configuration_test.cpp" "$out/cjson.o" $openssl_lib -lcrypto -o "$out/test"
 "$out/test"

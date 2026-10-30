@@ -36,7 +36,7 @@ def main():
                   current_activity=-1, front_address=4, back_address=0, tx_errors=0, rx_dropped=0,
                   expected_state_revision='1', expected_boot_id='a'*32, devices=[], device_choices=choices)
     status['devices'] = [dict(name=c['value'], title=c['title'], location=c['location'], bus='front' if i == 0 else 'back', type=0 if i == 0 else 4, address=0 if i == 0 else 4, physical_address=0 if i == 0 else 4096) for i, c in enumerate(choices)]
-    configuration = dict(version=2, controller_octopus_id=controller, config_revision='1', presentation_revision='1',
+    configuration = dict(version=3, controller_octopus_id=controller, config_revision='1', presentation_revision='1',
                          octopuses=[dict(octopus_id=member, label='Bedroom Amity', supported_tentacles=4), dict(octopus_id=controller, label='Living room Amity', supported_tentacles=1)],
                          activities=[], zones=[], external_slots=[dict(slot=5, activity_id=aid)])
     system = dict(octopus_id=controller, hostname='amity-living-room',
@@ -63,13 +63,13 @@ def main():
             self.end_headers()
             self.wfile.write(data)
         def do_GET(self):
-            values = {'/api/setup': dict(required=False), '/api/v2/activity-editor': editor,
-                      '/api/v2/activity-editor/status': status, '/api/v2/config': fixture['config'], '/api/v2/system': system,
+            values = {'/api/setup': dict(required=False), '/api/activity-editor': editor,
+                      '/api/activity-editor/status': status, '/api/config': fixture['config'], '/api/system': system,
                       '/api/remotes': remote, '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False),
-                      '/api/v2/membership/admission': fixture['admission']}
+                      '/api/membership/admission': fixture['admission']}
             if self.path in values:
                 return self.reply(deepcopy(values[self.path]))
-            if self.path.startswith('/api/v2/operations/'):
+            if self.path.startswith('/api/operations/'):
                 operation = fixture['operations'][self.path.rsplit('/', 1)[-1]]
                 operation['polls'] += 1
                 if operation['kind'] == 'remove':
@@ -93,7 +93,7 @@ def main():
             fixture['posts'].append((self.path, deepcopy(body)))
             if self.path == '/api/login':
                 return self.reply(dict(token='fixture-session'))
-            if self.path == '/api/v2/activity-editor':
+            if self.path == '/api/activity-editor':
                 assert body['version'] == 1
                 assert body['expected_config_revision'] == editor['expected_config_revision']
                 assert body['expected_presentation_revision'] == editor['expected_presentation_revision']
@@ -109,30 +109,30 @@ def main():
                 editor['expected_config_revision'] = str(int(editor['expected_config_revision'])+1)
                 fixture['config']['config_revision'] = editor['expected_config_revision']
                 kind = 'config'
-            elif self.path == '/api/v2/activity-editor/activity':
+            elif self.path == '/api/activity-editor/activity':
                 assert 'index' not in body and body['expected_boot_id'] == status['expected_boot_id']
                 assert body['expected_config_revision'] == editor['expected_config_revision']
                 kind = 'activity'
-            elif self.path == '/api/v2/activity-editor/discover':
+            elif self.path == '/api/activity-editor/discover':
                 fixture['scans'] += 1
                 status['discovery_generation'] += 1
                 return self.reply(dict(stage='complete'))
-            elif self.path == '/api/v2/activity-editor/restore':
+            elif self.path == '/api/activity-editor/restore':
                 assert body['confirm'] is True and body['previous_controller_isolated'] is True
                 assert body['expected_boot_id'] == status['expected_boot_id']
                 assert body['expected_config_revision'] == editor['expected_config_revision']
                 assert body['expected_presentation_revision'] == editor['expected_presentation_revision']
                 assert body['configuration']['controller_octopus_id'] == 'f'*32
                 kind = 'config'
-            elif self.path == '/api/v2/membership/scan':
+            elif self.path == '/api/membership/scan':
                 assert set(body) == {'request_id'}
                 fixture['admission'].update(scan_id=body['request_id'], phase='found', error='', candidates=[dict(token='nearby-token', label='Amity A1B2')], candidate_id=None)
                 return self.reply(dict(operation_id=body['request_id'], stage='complete'))
-            elif self.path == '/api/v2/membership/cancel':
+            elif self.path == '/api/membership/cancel':
                 assert set(body) == {'request_id', 'scan_id'} and body['scan_id'] == fixture['admission']['scan_id']
                 fixture['admission']['phase'] = 'cancelled'
                 return self.reply(dict(operation_id=body['request_id'], stage='complete'))
-            elif self.path == '/api/v2/membership/add':
+            elif self.path == '/api/membership/add':
                 assert set(body) == {'request_id', 'scan_id', 'candidate_token', 'setup_code', 'name'}
                 assert body['scan_id'] == fixture['admission']['scan_id'] and body['candidate_token'] == 'nearby-token'
                 assert fixture['admission']['requires_setup_code'] and body['setup_code'] == '1234-567-8901'
@@ -141,7 +141,7 @@ def main():
                 if fixture['fail_add']:
                     return self.reply(dict(error='The setup code could not be verified'), 409)
                 kind = 'add'
-            elif self.path == '/api/v2/membership/remove':
+            elif self.path == '/api/membership/remove':
                 assert set(body) == {'request_id', 'octopus_id', 'confirm', 'expected_membership_revision', 'expected_target_boot_id'}
                 assert body['octopus_id'] == member and body['confirm'] is True
                 assert re.fullmatch('[0-9a-f]{32}', body['request_id'])
@@ -337,26 +337,26 @@ def main():
             expect(name).to_have_attribute('required', '')
             expect(name).to_have_attribute('maxlength', '32')
             expect(dialog.get_by_label('Location', exact=True)).to_have_count(0)
-            before_add = len([p for p, _ in fixture['posts'] if p == '/api/v2/membership/add'])
+            before_add = len([p for p, _ in fixture['posts'] if p == '/api/membership/add'])
             for invalid in ('', 'bad name', '-bad', 'bad-', 'amity.room', 'café'):
                 name.fill(invalid)
                 dialog.get_by_label('Matter setup code').fill(secret)
                 dialog.get_by_role('button', name='Add', exact=True).click()
-                assert len([p for p, _ in fixture['posts'] if p == '/api/v2/membership/add']) == before_add
+                assert len([p for p, _ in fixture['posts'] if p == '/api/membership/add']) == before_add
                 expect(dialog).to_be_visible()
             for entered, canonical in (('a', 'a'), ('n' * 32, 'n' * 32), ('  AMITY-OFFICE  ', 'amity-office')):
                 name.fill(entered)
                 dialog.get_by_label('Matter setup code').fill(secret)
-                with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/add')):
+                with page.expect_response(lambda r: r.url.endswith('/api/membership/add')):
                     dialog.get_by_role('button', name='Add', exact=True).click()
                 expect(page.locator('#message')).to_have_text('The setup code could not be verified')
                 expect(dialog.get_by_role('button', name='Add', exact=True)).to_be_disabled()
-                assert [body for path, body in fixture['posts'] if path == '/api/v2/membership/add'][-1]['name'] == canonical
+                assert [body for path, body in fixture['posts'] if path == '/api/membership/add'][-1]['name'] == canonical
                 expect(dialog.get_by_label('Matter setup code')).to_have_value('')
                 dialog.get_by_label('Matter setup code').fill(secret)
                 expect(dialog.get_by_role('button', name='Add', exact=True)).to_be_enabled()
             assert secret not in page.evaluate('JSON.stringify({...localStorage,...sessionStorage})')
-            with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/cancel')):
+            with page.expect_response(lambda r: r.url.endswith('/api/membership/cancel')):
                 dialog.get_by_role('button', name='Cancel').click()
             passed('Add scans first, requires a valid hostname, uses only strict printed Matter codes, clears them after failure and cancels the exact scan')
             # All destructive responses below are synthetic localhost fixture
@@ -386,7 +386,7 @@ def main():
                     system['membership']['peers'][0]['boot_id'] = None
                 page.evaluate('amityInterface.refresh()')
                 expect(rows).to_have_count(2)
-                before = len([p for p, _ in fixture['posts'] if p == '/api/v2/membership/remove'])
+                before = len([p for p, _ in fixture['posts'] if p == '/api/membership/remove'])
                 rows.nth(1).get_by_role('button', name='Remove', exact=True).click()
                 dialog = page.locator('dialog:visible')
                 if mode == 'stale_revision':
@@ -397,7 +397,7 @@ def main():
                     # A background refresh while confirmation is open must not
                     # replace what the user actually reviewed with fresh tokens.
                     page.evaluate('amityInterface.refresh()')
-                with page.expect_response(lambda r: r.url.endswith('/api/v2/membership/remove')):
+                with page.expect_response(lambda r: r.url.endswith('/api/membership/remove')):
 
                     dialog.get_by_role('button', name='Remove Amity', exact=True).click()
                 result = dialog.get_by_role('status')
@@ -441,13 +441,13 @@ def main():
                     dialog.get_by_role('button', name='Close', exact=True).click()
                 # Polling/refresh after a result must never dispatch another reset.
                 page.evaluate('amityInterface.refresh()')
-                assert len([p for p, _ in fixture['posts'] if p == '/api/v2/membership/remove']) == before + 1
+                assert len([p for p, _ in fixture['posts'] if p == '/api/membership/remove']) == before + 1
                 assert fixture['config'] == saved_config and editor == saved_editor
                 assert fixture['scans'] == before_scans
                 system['membership']['peers'] = deepcopy(saved_peers)
                 system['membership']['membership_revision'] = '1'
                 page.evaluate('amityInterface.refresh()')
-            assert all(path == '/api/v2/membership/remove' for path, _ in fixture['posts'][before_remove:])
+            assert all(path == '/api/membership/remove' for path, _ in fixture['posts'][before_remove:])
             expect(rows.first.locator('h3')).to_have_text('amity-living-room (this device)')
             expect(rows.first.get_by_role('button', name='Remove', exact=True)).to_have_count(0)
             page.locator('[data-tab=advanced]').click()
@@ -468,7 +468,7 @@ def main():
             assert 'powered off and disconnected' in confirmations[0]
             restored = [b for p, b in fixture['posts'] if p.endswith('/restore')]
             assert len(restored) == 1 and restored[0]['configuration'] == backup
-            assert not [p for p, _ in fixture['posts'] if p in ('/api/restore', '/api/v2/config')]
+            assert not [p for p, _ in fixture['posts'] if p in ('/api/restore', '/api/config')]
             passed('existing Advanced restore confirms old-main isolation and submits guarded portable recovery without playback')
 
             # Fresh pages cover both compiled adapter capacities on a lone
@@ -528,6 +528,41 @@ def main():
                 fixture['config']['octopuses'] = saved_boards
                 system.clear()
                 system.update(saved_system)
+            saved_configuration, saved_management_system = deepcopy(fixture['config']), deepcopy(system)
+            try:
+                retained, replacement, component = (f'{n:032x}' for n in (91, 92, 93))
+                old_name = dict(consortium_id='c'*32, octopus_id=retained, tentacle_id=0, side='front', osd_name='Stored TV')
+                replacement_name = {**old_name, 'octopus_id': replacement}
+                fixture['config']['octopuses'] = [dict(octopus_id=controller, supported_tentacles=1),
+                                                  dict(octopus_id=retained, supported_tentacles=1),
+                                                  dict(octopus_id=replacement, supported_tentacles=1)]
+                fixture['config']['components'] = [dict(component_id=component, kind='display', label='Stored TV',
+                                                       qualified_names=[old_name])]
+                system['named_devices'] = [dict(octopus_id=controller, hostname='amity-living-room'),
+                                           dict(octopus_id=retained, hostname='amity-retained'),
+                                           dict(octopus_id=replacement, hostname='amity-replacement')]
+                system['membership']['peers'] = [dict(octopus_id=replacement, hostname='amity-replacement',
+                                                       enrolled=True, ready=True, supported_tentacles=1,
+                                                       configured_tentacles_mask=1, boot_id='d'*32)]
+                system['observations'] = [dict(resolved=True, title='Replacement TV', qualified_name=replacement_name)]
+                page.locator('[data-tab=amityDevices]').click()
+                page.evaluate('() => window.amityInterface.refresh()')
+                retained_row = page.locator('#managedAmityList article').filter(
+                    has=page.get_by_role('heading', name='amity-retained', exact=True))
+                expect(retained_row).to_have_count(1)
+                retained_row.get_by_role('button', name='Replace', exact=True).click()
+                replacement_dialog = page.locator('dialog:visible')
+                replacement_dialog.get_by_label('Replacement Amity', exact=True).select_option(replacement)
+                expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True)).to_have_count(1)
+                expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True).locator('option')).to_have_count(2)
+                expect(replacement_dialog.get_by_label('Previous HDMI adapter 1 · To the screen or receiver', exact=True)).to_have_count(1)
+                replacement_dialog.get_by_role('button', name='Cancel', exact=True).click()
+                passed('management loads canonical saved owners and components while the activity editor keeps its projection')
+            finally:
+                fixture['config'].clear()
+                fixture['config'].update(saved_configuration)
+                system.clear()
+                system.update(saved_management_system)
             assert not errors, errors
             passed('no browser script errors')
             browser.close()

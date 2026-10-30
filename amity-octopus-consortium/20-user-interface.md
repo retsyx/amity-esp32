@@ -98,7 +98,7 @@ Only a configured, positively present adapter on the fresh named owner is editab
 | Flash completion crosses deadline | Return its actual durable outcome; never strand a successful write as a definitive failed save. |
 | Applied response lost | Selected device still restarts after the transmission attempt; client reports unknown, never automatic retry. |
 
-The exact [HTTP contract](12-control-surfaces-and-admin.md#per-device-settings-contract) and [storage/provenance rules](11-config-storage-and-migration.md#per-adapter-default-front-address-preferences) apply. Physical detector/electrical, multi-device and recovery qualification remain separate from browser and host tests.
+The exact [HTTP contract](12-control-surfaces-and-admin.md#per-device-settings-contract) and [storage/provenance rules](11-configuration-storage.md#per-adapter-default-front-address-preferences) apply. Physical detector/electrical, multi-device and recovery qualification remain separate from browser and host tests.
 
 ## Amendment acceptance matrix
 

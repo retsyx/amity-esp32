@@ -104,7 +104,7 @@ class Fixture:
                                    add_cleanup=self.callbacks.append)
         self.main._testbed = self.candidate._testbed = self.bed
         self.main.request = self.request
-        self.main.get_system = lambda: self.request("/api/v2/system")
+        self.main.get_system = lambda: self.request("/api/system")
         self.main.authenticate = lambda: setattr(self.main, "_token", "PRIVATE_LOGIN_TOKEN")
         self.main.logout = lambda: setattr(self.main, "_token", None)
         self.candidate.authenticate = lambda: self.forbidden("Candidate authentication")
@@ -150,9 +150,9 @@ class Fixture:
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
         if data is None:
-            if path == "/api/v2/system":
+            if path == "/api/system":
                 return deepcopy(self.system)
-            if path == "/api/v2/config":
+            if path == "/api/config":
                 if self.pending_owner is not None:
                     self.adoption_remaining -= 1
                     if not self.adoption_remaining:
@@ -161,16 +161,16 @@ class Fixture:
                         self.system["configuration_pending"] = False
                         self.bump()
                 return deepcopy(self.config)
-            if path == "/api/v2/membership/admission":
+            if path == "/api/membership/admission":
                 return deepcopy(self.admission)
-            if path == "/api/v2/activity-editor/status":
+            if path == "/api/activity-editor/status":
                 return {"current_activity": -1, "activity_settling": False, "expected_boot_id": self.boot}
-            if path.startswith("/api/v2/operations/"):
+            if path.startswith("/api/operations/"):
                 operation = self.operations.get(path.rsplit("/", 1)[1])
                 if operation is None:
                     raise AmityHTTPError(404, "Unknown operation")
                 return deepcopy(operation)
-            if path == "/api/v2/devices/" + self.candidate.identity.device_id + "/settings":
+            if path == "/api/devices/" + self.candidate.identity.device_id + "/settings":
                 return {"status": self.settings_status, "error": "" if self.settings_status == "ready" else "offline",
                         "settings": {"boot_id": self.settings_boot, "settings_revision": "1",
                                      "adapters": [{"tentacle_id": index, "name": "HDMI adapter " + str(index + 1),
@@ -181,16 +181,16 @@ class Fixture:
                                                   for index in self.settings_adapter_ids]}}
             raise AssertionError(path)
         request_id = data["request_id"]
-        if path == "/api/v2/membership/scan":
+        if path == "/api/membership/scan":
             self.admission.update(scan_id=request_id, phase="scanning", error="",
                                   requires_setup_code=self.requires_code, candidates=[], candidate_id=None)
             result = self.operation(request_id, "complete")
-        elif path == "/api/v2/membership/cancel":
+        elif path == "/api/membership/cancel":
             if data["scan_id"] != self.admission["scan_id"]:
                 raise AmityHTTPError(409, "stale_scan")
             self.admission["phase"] = "cancelled"
             result = self.operation(request_id, "complete")
-        elif path == "/api/v2/membership/add":
+        elif path == "/api/membership/add":
             if self.reject_add:
                 raise AmityHTTPError(409, "Addition rejected")
             if self.unknown_add:
@@ -214,7 +214,7 @@ class Fixture:
             if self.lose_add_reply:
                 raise OSError("Add response was lost after admission")
             return self.operation(request_id, "admitted", kind="add")
-        elif path == "/api/v2/membership/remove":
+        elif path == "/api/membership/remove":
             target = next(p for p in self.system["membership"]["peers"] if p["octopus_id"] == data["octopus_id"])
             if self.change_boot_before_remove:
                 target["boot_id"] = "9" * 32
@@ -238,7 +238,7 @@ class Fixture:
         return AddedAmity(self.main, self.candidate, name=name, timeout=timeout, setup_code=setup_code)
 
     def posts(self, suffix):
-        return [data for path, data in self.calls if path == "/api/v2/membership/" + suffix and data is not None]
+        return [data for path, data in self.calls if path == "/api/membership/" + suffix and data is not None]
 
 
 class MembershipTests(unittest.TestCase):
@@ -304,7 +304,7 @@ class MembershipTests(unittest.TestCase):
         def request(path, data=None, **kwargs):
             nonlocal remaining
             response = original_request(path, data, **kwargs)
-            if path == "/api/v2/membership/admission" and data is None and f.presses and not f.posts("add") and remaining:
+            if path == "/api/membership/admission" and data is None and f.presses and not f.posts("add") and remaining:
                 remaining -= 1
                 response.update(phase="scanning", candidates=[])
             return response
@@ -313,19 +313,19 @@ class MembershipTests(unittest.TestCase):
         with f.added(timeout=1).create():
             self.assertEqual(remaining, 0)
             scan_index = next(index for index, (path, data) in enumerate(f.calls)
-                              if path == "/api/v2/membership/scan" and data is not None)
+                              if path == "/api/membership/scan" and data is not None)
             add_index = next(index for index, (path, data) in enumerate(f.calls)
-                             if path == "/api/v2/membership/add" and data is not None)
+                             if path == "/api/membership/add" and data is not None)
             between = f.calls[scan_index + 1:add_index]
             self.assertEqual([path for path, _ in between],
-                             ["/api/v2/membership/admission"] * 4 + ["/api/v2/system"])
+                             ["/api/membership/admission"] * 4 + ["/api/system"])
             trace = next(row for row in f.main.membership_operations if row["phase"] == "add")
             requests = trace["requests"]
-            started = next(index for index, row in enumerate(requests) if row["path"] == "/api/v2/membership/scan")
-            submitted = next(index for index, row in enumerate(requests) if row["path"] == "/api/v2/membership/add")
+            started = next(index for index, row in enumerate(requests) if row["path"] == "/api/membership/scan")
+            submitted = next(index for index, row in enumerate(requests) if row["path"] == "/api/membership/add")
             polls = requests[started + 1:submitted]
             self.assertEqual([row.get("admission_phase") for row in polls[:-1]], ["scanning"] * 3 + ["found"])
-            self.assertEqual(polls[-1]["path"], "/api/v2/system")
+            self.assertEqual(polls[-1]["path"], "/api/system")
             self.assertEqual(trace["reset_gpio"], f.candidate.wiring.reset_gpio(f.candidate.name))
             self.assertEqual(trace["hold_seconds"], 3.5)
             self.assertIs(trace["released"], True)
@@ -338,7 +338,7 @@ class MembershipTests(unittest.TestCase):
 
         def request(path, data=None, **kwargs):
             nonlocal failed
-            if path == "/api/v2/membership/admission" and data is None and f.presses and not failed:
+            if path == "/api/membership/admission" and data is None and f.presses and not failed:
                 failed = True
                 f.calls.append((path, None))
                 raise URLError(TimeoutError("synthetic TLS handshake timeout"))
@@ -354,11 +354,11 @@ class MembershipTests(unittest.TestCase):
             self.assertEqual(trace["error_type"], "URLError")
             failed_request = trace["requests"][-1]
             self.assertEqual((failed_request["method"], failed_request["path"], failed_request["error_type"]),
-                             ("GET", "/api/v2/membership/admission", "URLError"))
+                             ("GET", "/api/membership/admission", "URLError"))
             self.assertGreaterEqual(failed_request["finished_ns"], failed_request["started_ns"])
             self.assertGreaterEqual(failed_request["duration_ms"], 0)
             self.assertEqual(len([row for row in trace["requests"]
-                                  if row["path"] == "/api/v2/membership/admission"]), 2)  # Preflight plus one failed read.
+                                  if row["path"] == "/api/membership/admission"]), 2)  # Preflight plus one failed read.
             self.assertEqual(f.posts("add"), [])
             member.close()
             self.assertEqual(len(f.posts("cancel")), 1)
@@ -391,7 +391,7 @@ class MembershipTests(unittest.TestCase):
                              for p in f.system["membership"]["peers"]))
         member.close()
         self.assertEqual(len(f.posts("remove")), 1)
-        self.assertTrue(any(path == "/api/v2/operations/" + original_id for path, _ in f.calls))
+        self.assertTrue(any(path == "/api/operations/" + original_id for path, _ in f.calls))
         self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
         self.assertFalse(f.main.membership_operations[-1]["retained_member"])
 
@@ -533,7 +533,7 @@ class MembershipTests(unittest.TestCase):
         original_id = f.posts("add")[0]["request_id"]
         member.close()
         self.assertEqual(len(f.posts("add")), 1)
-        self.assertTrue(any(path == "/api/v2/operations/" + original_id for path, _ in f.calls))
+        self.assertTrue(any(path == "/api/operations/" + original_id for path, _ in f.calls))
         self.assertEqual(len(f.posts("remove")), 1)
 
     def test_unknown_add_result_never_retries_or_removes_an_unproven_member(self):
@@ -592,7 +592,7 @@ class MembershipTests(unittest.TestCase):
         f.calls.clear()
         original_request = f.request
         clock, cache_received, polls = [0.0], [None], []
-        settings_path = "/api/v2/devices/" + f.candidate.identity.device_id + "/settings"
+        settings_path = "/api/devices/" + f.candidate.identity.device_id + "/settings"
 
         def request(path, data=None, **kwargs):
             # Each TLS connection takes a second. A shipping settings GET
@@ -615,8 +615,8 @@ class MembershipTests(unittest.TestCase):
         # freshness window; direct settings polling reads it and then fences
         # the main, full configuration and member identity again.
         self.assertEqual([path for path, _ in f.calls],
-                         ["/api/v2/system", "/api/v2/config", settings_path, settings_path,
-                          "/api/v2/system", "/api/v2/config"])
+                         ["/api/system", "/api/config", settings_path, settings_path,
+                          "/api/system", "/api/config"])
         self.assertEqual(len(polls), 2)
         self.assertLess(polls[1] - polls[0], 2)
         self.assertEqual(member.member_boot, f.member_boot)

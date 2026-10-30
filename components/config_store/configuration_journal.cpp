@@ -37,12 +37,12 @@ bool verified(ConfigBackend& backend, const char* key, const std::string& payloa
     if (!backend.write(key, payload)) return false;
     std::string reread; return backend.read(key, reread) == ReadResult::found && reread == payload;
 }
-std::string record(const ConfigurationV2& config) {
-    const auto payload = serialize_configuration_v2(config);
+std::string record(const Configuration& config) {
+    const auto payload = serialize_configuration(config);
     return "AMITY3\n" + config.consortium_id.str() + "\n" + model::format_uint64(config.config_revision) + "\n" +
         model::format_uint64(config.presentation_revision) + "\n" + model::format_uint64(payload.size()) + "\n" + sha256_hex(payload) + "\n" + payload;
 }
-bool decode_record(const std::string& value, ConfigurationV2& out, std::string& error) {
+bool decode_record(const std::string& value, Configuration& out, std::string& error) {
     std::string_view input(value); std::vector<std::string_view> fields;
     for (unsigned n = 0; n < 6; ++n) {
         const auto newline = input.find('\n'); if (newline == std::string_view::npos) { error = "Configuration record header truncated"; return false; }
@@ -50,16 +50,16 @@ bool decode_record(const std::string& value, ConfigurationV2& out, std::string& 
     }
     auto consortium = model::ConsortiumId::parse(fields[1]); auto semantic = model::parse_uint64(fields[2]);
     auto presentation = model::parse_uint64(fields[3]); auto length = model::parse_uint64(fields[4]);
-    if ((fields[0] != "AMITY2" && fields[0] != "AMITY3") || !consortium || !semantic || !presentation || !length || *length != input.size() || *length > configuration_compatibility_limit ||
-        sha256_hex(input) != fields[5] || !parse_configuration_v2(std::string(input), out, error) || out.consortium_id != *consortium ||
-        out.config_revision != *semantic || out.presentation_revision != *presentation || (!out.legacy_encoding && serialize_configuration_v2(out) != input)) {
+    if (fields[0] != "AMITY3" || !consortium || !semantic || !presentation || !length || *length != input.size() || *length > configuration_payload_limit ||
+        sha256_hex(input) != fields[5] || !parse_configuration(std::string(input), out, error) || out.consortium_id != *consortium ||
+        out.config_revision != *semantic || out.presentation_revision != *presentation || serialize_configuration(out) != input) {
         if (error.empty()) error = "Configuration record metadata, canonical payload, or digest mismatch";
         return false;
     }
     return true;
 }
-std::string presentation_hash(const ConfigurationV2& c) {
-    auto encoded = serialize_configuration_v2(c); auto* root = cJSON_Parse(encoded.c_str()); if (!root) return {};
+std::string presentation_hash(const Configuration& c) {
+    auto encoded = serialize_configuration(c); auto* root = cJSON_Parse(encoded.c_str()); if (!root) return {};
     const auto retain = [](cJSON* object, const std::set<std::string>& allowed) {
         for (auto* child = object->child; child;) { auto* next = child->next; if (!allowed.count(child->string)) cJSON_DeleteItemFromObjectCaseSensitive(object, child->string); child = next; }
     };
@@ -78,27 +78,22 @@ std::string presentation_hash(const ConfigurationV2& c) {
 ConfigResult ConfigurationStore::write_verified(const char* key, const std::string& value) {
     return verified(backend_, key, value) ? ConfigResult::ok : ConfigResult::storage_error;
 }
-ConfigResult ConfigurationStore::recover(ConfigurationV2& out, std::string& error) {
+ConfigResult ConfigurationStore::recover(Configuration& out, std::string& error) {
     initialized_ = true;
     Marker selected; std::string payload; auto status = selection(backend_, "cm0", "cm1", "c0", "c1", selected, payload, error);
     if (status != ConfigResult::ok) return status;
-    ConfigurationV2 config; if (!decode_record(payload, config, error)) return ConfigResult::recovery_required;
+    Configuration config; if (!decode_record(payload, config, error)) return ConfigResult::recovery_required;
     active_ = config; generation_ = selected.generation; active_slot_ = selected.slot; candidate_.reset();
     out = std::move(config);
     backend_.erase(selected.slot ? "c0" : "c1");
-    std::string migration; if (backend_.read("migration_map", migration) == ReadResult::found) backend_.erase("migration_map");
-    // Only after the selected complete record is proven may superseded,
-    // nonsecret wizard/promotion artifacts be reclaimed. Keep the original
-    // legacy backup and identity seed, which are independent recovery data.
-    for(const auto* key:{"d0","d1","dm0","dm1","hprepare","hauthority","intent0","intent1","imark0","imark1","slice0","slice1","smark0","smark1"})backend_.erase(key);
     return ConfigResult::ok;
 }
-ConfigResult ConfigurationStore::stage(ConfigurationV2 candidate, RevisionPair expected, std::string& error) {
-    if (!initialized_) { ConfigurationV2 current; auto status = recover(current, error); if (status != ConfigResult::ok && status != ConfigResult::missing) return status; }
+ConfigResult ConfigurationStore::stage(Configuration candidate, RevisionPair expected, std::string& error) {
+    if (!initialized_) { Configuration current; auto status = recover(current, error); if (status != ConfigResult::ok && status != ConfigResult::missing) return status; }
     if (candidate_) { error = "A configuration transaction is already staged"; return ConfigResult::conflict; }
     if ((active_ && expected != active_->revisions()) || (!active_ && expected != RevisionPair{})) { error = "Configuration or presentation revision changed"; return ConfigResult::conflict; }
     if (generation_ == std::numeric_limits<uint64_t>::max()) { error = "Storage generation exhausted"; return ConfigResult::recovery_required; }
-    if(!validate_configuration_v2(candidate,error))return ConfigResult::invalid;
+    if(!validate_configuration(candidate,error))return ConfigResult::invalid;
 
     bool semantic = true;
     if (active_) {
@@ -116,17 +111,17 @@ ConfigResult ConfigurationStore::stage(ConfigurationV2 candidate, RevisionPair e
         candidate.presentation_revision = active_->presentation_revision + (presentation ? 1 : 0);
     } else { candidate.config_revision = 1; candidate.presentation_revision = 1; }
     if (!candidate.controller_octopus_id) { error = "Establish the original controller before activating this configuration"; return ConfigResult::invalid; }
-    if (!validate_configuration_v2(candidate, error)) return ConfigResult::invalid;
-    const auto encoded = serialize_configuration_v2(candidate);
-    ConfigurationV2 canonical;
-    if (!parse_configuration_v2(encoded, canonical, error)) return ConfigResult::invalid;
+    if (!validate_configuration(candidate, error)) return ConfigResult::invalid;
+    const auto encoded = serialize_configuration(candidate);
+    Configuration canonical;
+    if (!parse_configuration(encoded, canonical, error)) return ConfigResult::invalid;
     candidate = std::move(canonical); // Installed memory and journal bytes agree exactly.
     if (encoded.size() > configuration_payload_limit) { error = "Candidate exceeds the16KiB payload capacity for this board"; return ConfigResult::capacity; }
     const auto complete_record = record(candidate); const auto inactive = active_slot_ ? 0u : 1u;
     if (write_verified(inactive ? "c1" : "c0", complete_record) != ConfigResult::ok) { error = "Candidate write/readback failed; old active record retained"; return ConfigResult::storage_error; }
     candidate_ = std::move(candidate); return ConfigResult::ok;
 }
-ConfigResult ConfigurationStore::commit(ConfigurationV2& out, std::string& error) {
+ConfigResult ConfigurationStore::commit(Configuration& out, std::string& error) {
     if (!candidate_) { error = "No configuration transaction is staged"; return ConfigResult::not_ready; }
     const unsigned slot = active_slot_ ? 0u : 1u; const auto complete = record(*candidate_); std::string reread;
     if (backend_.read(slot ? "c1" : "c0", reread) != ReadResult::found || reread != complete) { error = "Staged candidate changed before commit"; return ConfigResult::recovery_required; }
@@ -139,8 +134,6 @@ ConfigResult ConfigurationStore::commit(ConfigurationV2& out, std::string& error
     std::string committed;
     if (backend_.read(slot ? "c1" : "c0", committed) != ReadResult::found || committed != complete) { error = "Committed payload readback failed; recovery required"; return ConfigResult::recovery_required; }
     backend_.erase(slot ? "c0" : "c1");
-    std::string migration;
-    if (backend_.read("migration_map", migration) == ReadResult::found) backend_.erase("migration_map");
     return ConfigResult::ok;
 }
 void ConfigurationStore::cancel_stage() { candidate_.reset(); }

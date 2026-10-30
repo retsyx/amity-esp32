@@ -7,7 +7,7 @@
  */
 
 #include "web_admin.hpp"
-#include "v2_admin.hpp"
+#include "system_admin.hpp"
 #include "activity_editor.hpp"
 #include "local_remote_approval.hpp"
 #include "web.hpp"
@@ -40,25 +40,10 @@ std::mutex server_mutex;
 std::atomic_bool ui_enabled{false};
 std::atomic_bool ui_revoked{false};
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
-const char empty_config[]="{\"version\":1,\"activities\":[]}";
 esp_err_t send(httpd_req_t *req,cJSON *root) {
     char *s=cJSON_PrintUnformatted(root);
     if(!s)return web::error(req,"Out of memory","503 Service Unavailable");
     auto e=web::json(req,s);cJSON_free(s);return e;
-}
-void inputs(const Configuration &c) {
-    amity_matter_input_t in[16]{};
-    for(size_t i=0;i<c.activities.size();++i) {in[i].index=i;snprintf(in[i].name,sizeof(in[i].name),"%s",c.activities[i].name.c_str());}
-    amity_matter_set_inputs(in,c.activities.size());
-}
-esp_err_t apply(const std::string &data,bool persist,std::string &error) {
-    Configuration c;
-    if(!parse_configuration(data,c,error))return ESP_ERR_INVALID_ARG;
-    auto e=hub->configure_with_commit(c.activities,[&] {
-        return persist ? config_store::write("config",data) : ESP_OK;
-    });
-    if(e!=ESP_OK) {error="Configuration could not be committed";return e;}
-    inputs(c);return ESP_OK;
 }
 esp_err_t status(httpd_req_t *req) {
     auto s=hub->snapshot();Json root(cJSON_CreateObject(),cJSON_Delete);
@@ -220,24 +205,15 @@ esp_err_t api(httpd_req_t *req) {
     }
     if(!web::authenticated(req))return web::error(req,"Login required","401 Unauthorized");
     if(device_settings::reset_pending())return web::error(req,"Factory reset is pending. Restarting.","503 Service Unavailable");
-    if(configuration_is_passive()&&req->method==HTTP_POST&&path!="/api/logout"&&path!="/api/password"&&path!="/api/firmware"&&path!="/api/reboot"&&path!="/api/v2/updates/validate")
+    if(configuration_is_passive()&&req->method==HTTP_POST&&path!="/api/logout"&&path!="/api/password"&&path!="/api/firmware"&&path!="/api/reboot"&&path!="/api/updates/validate")
         return web::error(req,"Configuration changes are unavailable while Amity is passive or updating.","403 Forbidden");
-    esp_err_t v2_result=ESP_OK;if(activity_editor_request(*hub,req,path,v2_result))return v2_result;
-    if(v2_request(req,path,v2_result))return v2_result;
-    if(!active_v2_json().empty()&&(path=="/api/activity"||path=="/api/key"||path=="/api/discover"))
-        return web::error(req,"Use the current activity controls to select activities or scan equipment.","409 Conflict");
+    esp_err_t administration_result=ESP_OK;if(activity_editor_request(*hub,req,path,administration_result))return administration_result;
+    if(admin_request(req,path,administration_result))return administration_result;
     if(req->method==HTTP_GET) {
         if(path=="/api/status")return status(req);
         if(path=="/api/remotes")return remotes(req);
         if(path=="/api/matter")return matter(req);
         if(path=="/api/homekit")return homekit(req);
-        if(path=="/api/config"||path=="/api/backup") {
-            if(!active_v2_json().empty())return web::error(req,"The active document is schema 2. Use /api/v2/config to retain stable identities and scoped equipment selectors.","409 Conflict");
-            std::string data;auto e=config_store::read("config",data);if(e==ESP_ERR_NVS_NOT_FOUND)data=empty_config;else if(e!=ESP_OK)return web::error(req,"Cannot read configuration","500 Internal Server Error");
-            httpd_resp_set_hdr(req,"X-Amity-Configured",e==ESP_ERR_NVS_NOT_FOUND?"false":"true");
-            if(path=="/api/backup")httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity-config.json");
-            return web::json(req,data);
-        }
         if(path=="/api/logs") {
             auto data=system_services::logs();httpd_resp_set_type(req,"text/plain");httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity.log");httpd_resp_set_hdr(req,"Cache-Control","no-store");
             return httpd_resp_send(req,data.data(),data.size());
@@ -246,19 +222,17 @@ esp_err_t api(httpd_req_t *req) {
     if(req->method==HTTP_POST) {
         if(path=="/api/firmware")return system_services::upload_firmware(req);
 
+        bool supported=false;
+        for(const auto* command:{"/api/key","/api/remotes/scan","/api/remotes/pair","/api/remotes/unpair",
+            "/api/matter/open","/api/matter/close","/api/matter/remove","/api/homekit/open","/api/homekit/close",
+            "/api/homekit/remove","/api/hostname","/api/factory-reset","/api/password","/api/logout","/api/reboot"})supported|=path==command;
+        if(!supported)return web::error(req,"Unknown endpoint","404 Not Found");
         std::string data;if(!web::body(req,data))return ESP_FAIL;
-        if(path=="/api/config"||path=="/api/restore") {
-            if(!active_v2_json().empty())return web::error(req,"Use the schema-2 configuration API. A legacy document cannot overwrite stable equipment and activity identities.","409 Conflict");
-            std::string error;auto e=apply(data,true,error);
-            return e==ESP_OK?web::json(req,"{\"saved\":true}"):web::error(req,error.empty()?esp_err_to_name(e):error.c_str());
-        }
         Json root(parse_json_input(data.empty()?"{}":data),cJSON_Delete);
         if(!root)return web::error(req,"Invalid JSON");
         esp_err_t e=ESP_OK;
         auto int_arg=[&](const char *key,int low,int high,int &out){auto *v=cJSON_GetObjectItemCaseSensitive(root.get(),key);if(!cJSON_IsNumber(v)||v->valuedouble!=v->valueint||v->valueint<low||v->valueint>high)return false;out=v->valueint;return true;};
-        if(path=="/api/discover")e=hub->discover()?ESP_OK:ESP_ERR_NO_MEM;
-        else if(path=="/api/activity") {int index;if(!int_arg("index",-1,15,index)||index>=static_cast<int>(hub->snapshot().activities.size()))return web::error(req,"Invalid activity index");e=hub->request_activity(index);if(e==ESP_ERR_TIMEOUT)return web::error(req,"System is settling. Try again shortly.","409 Conflict");}
-        else if(path=="/api/key") {int key;if(!int_arg("key",0,255,key))return web::error(req,"Invalid key");e=hub->press_key(key)?ESP_OK:ESP_ERR_NO_MEM;}
+        if(path=="/api/key") {int key;if(!int_arg("key",0,255,key))return web::error(req,"Invalid key");e=hub->press_key(key)?ESP_OK:ESP_ERR_NO_MEM;}
         else if(path=="/api/remotes/scan")e=ble_remote_scan(20);
         else if(path=="/api/remotes/unpair"||path=="/api/remotes/pair") {
             LocalRemoteRequest approval;
@@ -330,18 +304,11 @@ esp_err_t asset(httpd_req_t *req) {
     return httpd_resp_send(req,reinterpret_cast<const char *>(begin),end-begin);
 }
 }
-esp_err_t load(amity::SystemControl &service,bool recovery) {
-    hub=&service;if(recovery)return load_v2(service,true);
-    config_store::ConfigurationV2 existing;std::string error;
-    const auto loaded=config_store::load_system_configuration(existing,error);
-    if(loaded!=ESP_ERR_NVS_NOT_FOUND)return load_v2(service);
-    std::string data;auto result=config_store::read("config",data);
-    if(result==ESP_ERR_NVS_NOT_FOUND)return load_v2(service);
-    if(result!=ESP_OK)return result;
-    Configuration legacy;if(!parse_configuration(data,legacy,error))return ESP_ERR_INVALID_ARG;
-    if(legacy.activities.empty())return load_v2(service);
-    result=apply(data,false,error);return result==ESP_OK?load_v2(service):result;
+esp_err_t load(amity::SystemControl &service,bool defer_configuration) {
+    hub=&service;
+    return load_configuration(service,defer_configuration);
 }
+
 esp_err_t start(amity::SystemControl &service,const char *hostname,const char *initial_auth) {
     std::lock_guard<std::mutex> guard(server_mutex);
     if(ui_revoked.load() || server) return ESP_ERR_INVALID_STATE;

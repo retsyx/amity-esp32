@@ -28,13 +28,13 @@ function fixture(options={}){
  const main='1'.repeat(32),member='2'.repeat(32),management=document.createElement('div');management.id='managedAmityList';document.body.append(management);
  const request=async(path,data)=>{
   if(data!==undefined)posts.push([path,structuredClone(data)]);
-  if(path==='v2/config')return {controller_octopus_id:main,octopuses:[{octopus_id:main,supported_tentacles:1}]};
-  if(path==='v2/system')return {octopus_id:main,hostname:'amity-main',membership:{peers:[{octopus_id:member,hostname:'amity-office',enrolled:true,ready:true,supported_tentacles:1}]}};
-  if(path==='v2/membership/scan'){const activate=()=>{state.scan_id=data.request_id;state.phase=options.scanning?'scanning':'found';return {operation_id:data.request_id,stage:'complete'};};if(options.holdScanStart)return new Promise(resolve=>heldScans.push(()=>resolve(activate())));return activate();}
-  if(path==='v2/membership/admission'){const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
-  if(path==='v2/membership/cancel'){if(data.scan_id!==state.scan_id)throw Object.assign(Error('This search is no longer active.'),{status:409});state.phase='cancelled';return {stage:'complete'};}
-  if(path==='v2/membership/add'){if(options.failAdd)throw Object.assign(Error('The setup code could not be verified'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
-  if(path==='v2/operations/'+operationId)return {operation_id:operationId,stage:operationStage};
+  if(path==='backup')return {controller_octopus_id:main,octopuses:[{octopus_id:main,supported_tentacles:1}]};
+  if(path==='system')return {octopus_id:main,hostname:'amity-main',membership:{peers:[{octopus_id:member,hostname:'amity-office',enrolled:true,ready:true,supported_tentacles:1}]}};
+  if(path==='membership/scan'){const activate=()=>{state.scan_id=data.request_id;state.phase=options.scanning?'scanning':'found';return {operation_id:data.request_id,stage:'complete'};};if(options.holdScanStart)return new Promise(resolve=>heldScans.push(()=>resolve(activate())));return activate();}
+  if(path==='membership/admission'){const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
+  if(path==='membership/cancel'){if(data.scan_id!==state.scan_id)throw Object.assign(Error('This search is no longer active.'),{status:409});state.phase='cancelled';return {stage:'complete'};}
+  if(path==='membership/add'){if(options.failAdd)throw Object.assign(Error('The setup code could not be verified'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
+  if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage};
   throw Error('Unexpected HTTP request '+path);
  };
  const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,token:'fixture-session',console,
@@ -55,7 +55,7 @@ function fixture(options={}){
 }
 (async()=>{
  const normal=fixture();await normal.open();assert.match(normal.dialog().textContent,/Hold the Reset button on the new Amity for 3 seconds\./);
- const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'v2/membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Matter setup code').hidden,true);assert.equal(normal.label('Name').hidden,false);
+ const scan=normal.posts[0][1].request_id;assert.equal(normal.posts[0][0],'membership/scan');assert.equal(scan.length,32);assert.equal(normal.label('Matter setup code').hidden,true);assert.equal(normal.label('Name').hidden,false);
  for(const bad of ['', 'bad name','-bad','bad-','café']){await normal.fill(normal.input('Name'),bad);await normal.click(normal.button('Add'));assert.equal(normal.posts.filter(([path])=>path.endsWith('/add')).length,0);}
  await normal.fill(normal.input('Name'),'  AMITY-OFFICE  ');await normal.click(normal.button('Add'));
  const addition=normal.posts.find(([path])=>path.endsWith('/add'))[1];assert.equal(addition.scan_id,scan);assert.equal(addition.candidate_token,'opaque-one');assert.equal(addition.name,'amity-office');assert.equal(Object.hasOwn(addition,'setup_code'),false);

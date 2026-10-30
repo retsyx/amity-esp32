@@ -85,7 +85,7 @@ int retire_membership(){assert(!original_interfaces_enabled);events.push_back("r
 int transition_coordinator_authority(bool on,unsigned epoch){assert(on&&epoch==1&&amity::consortium::role.coordinator);events.push_back("promote");return 0;}}hub;
 namespace config_store{std::string executable_policy_hash(const Config&){return "exact-policy";}}
 namespace web_admin{int load(FakeHub&,bool member){assert(!member);events.push_back("load");hub.config=std::make_shared<Config>();return 0;}
-int finish_migration_bridge(){events.push_back("migrate");return 0;}int start(FakeHub&,const char*,const char*){assert(original_interfaces_enabled);events.push_back("web");return 0;}
+int finish_configuration_activation(){events.push_back("activate_configuration");return 0;}int start(FakeHub&,const char*,const char*){assert(original_interfaces_enabled);events.push_back("web");return 0;}
 int stop(){assert(!original_interfaces_enabled);events.push_back("web-stop");if(block_mdns_add){std::lock_guard<std::mutex>guard(interleave_mutex);retire_at_web=true;interleave.notify_all();}return web_result;}}
 namespace system_services{bool firmware_ready(){return firmware_healthy;}}
 struct amity_matter_status_t{unsigned fabric_count=0;};
@@ -174,7 +174,7 @@ int main(){using namespace amity::consortium;
  reset();firmware_healthy=true;enrolled=true;
  on_delay=[](){if(delays==1){assert(getter_calls==0&&!original_interfaces_enabled&&remote_workers==0);address_available=true;enrolled=false;}if(delays==2){assert(claims==0&&!original_interfaces_enabled&&remote_workers==0);enrolled=true;}};
  await_original_task(nullptr);assert(claims==1&&delays==2&&original_interfaces_enabled&&remote_workers==1&&delete_calls==1);
- const std::vector<std::string>expected={"claim","promote","load","migrate","publish-config","mdns","web","remote-worker","remote-start","homekit"};assert(events==expected);
+ const std::vector<std::string>expected={"claim","promote","load","activate_configuration","publish-config","mdns","web","remote-worker","remote-start","homekit"};assert(events==expected);
  reset();role.member=true;role.phase="member";address_available=enrolled=true;await_original_task(nullptr);assert(!claims&&events.empty()&&!remote_workers&&!original_interfaces_enabled&&delete_calls==1);
  reset();address_available=enrolled=true;claim_member_wins=true;await_original_task(nullptr);assert(claims==1&&role.member&&!original_interfaces_enabled&&remote_workers==0&&events==std::vector<std::string>{"claim"});
  reset();active_candidate=true;address_available=enrolled=true;role.phase="prepared";on_delay=[](){role.member=true;role.phase="member";};await_original_task(nullptr);assert(claims==1&&!original_interfaces_enabled&&remote_workers==0);

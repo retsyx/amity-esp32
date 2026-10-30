@@ -40,10 +40,10 @@ with tempfile.TemporaryDirectory(prefix='nvs-budget-', dir=ROOT / 'test-results'
     directory = Path(temporary)
     shared = [('amity_group', [('state', 6144), ('identity', 2048), ('identity_tmp', 2048)]),
               ('amity_origin', [('bootstrap', 833)]),
-              ('amity', [('config', 8192), ('aliases', 4096), ('ota_job', 2048), ('ota_cohort', 9216)])]
+              ('amity', [('device_metadata', 8192), ('tls_material', 4096), ('ota_job', 2048), ('ota_cohort', 9216)])]
     # Normal commits retain active + candidate until the exact marker/readback
     # decision. No obsolete setup draft or handover proposal is reserved.
-    ordinary = [('amity_config', [('c0', 16384 + 256), ('c1', 16384 + 256), ('legacy_backup', 8192), ('intent0', 2048), ('intent1', 2048), ('metadata', 2048)])] + shared
+    ordinary = [('amity_config', [('c0', 16384 + 256), ('c1', 16384 + 256), ('metadata', 2048)])] + shared
     generate(directory, 'ordinary-atomic16k', ordinary, True)
     enrollment = [(space, list(values)) for space, values in ordinary]
     # Candidate enrollment records both old and staged WiFi settings, including
@@ -53,6 +53,4 @@ with tempfile.TemporaryDirectory(prefix='nvs-budget-', dir=ROOT / 'test-results'
     pressure = [(space, list(values)) for space, values in enrollment]
     pressure[0][1].append(('extra', 32768))
     generate(directory, 'over-capacity-rejected', pressure, False)
-    legacy = [('amity_config', [('c0', 32768), ('c1', 32768), ('legacy_backup', 8192)])] + shared
-    generate(directory, 'old32k-three-copy-profile-rejected', legacy, False)
 print('NVS native allocator: atomic16KiB configuration and candidate-network rollback fit112KiB; excess pressure rejects without deleting originals')

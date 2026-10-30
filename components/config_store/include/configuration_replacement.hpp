@@ -17,14 +17,14 @@ struct ReplacementApproval {
     std::vector<ReplacementPort> ports;
     std::vector<ReplacementEquipment> equipment;
 };
-bool propose_octopus_replacement(const ConfigurationV2&, const ReplacementApproval&,
-    ConfigurationV2& candidate,
+bool propose_octopus_replacement(const Configuration&, const ReplacementApproval&,
+    Configuration& candidate,
     std::vector<model::ActivityId>& affected, std::string& error);
 // Manual recovery onto a freshly claimed original controller. Only portable
 // logical configuration and equipment selectors are retained. Availability is
 // resolved by the owning device; membership/security data is never imported.
-bool restore_main_configuration(const ConfigurationV2& backup, const ConfigurationV2& current,
-    bool previous_controller_isolated, ConfigurationV2& candidate,
+bool restore_main_configuration(const Configuration& backup, const Configuration& current,
+    bool previous_controller_isolated, Configuration& candidate,
     std::vector<std::string>& assignments, std::string& error);
 
 }

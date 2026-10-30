@@ -3,7 +3,6 @@
 #include "nvs_budget.hpp"
 #include "config_store.hpp"
 #include "nvs.h"
-#include "esp_random.h"
 #include <mutex>
 #include <atomic>
 #include "freertos/FreeRTOS.h"
@@ -22,13 +21,13 @@ public:
         if (error != ESP_OK) return ReadResult::error;
         size_t length = 0; error = nvs_get_blob(handle, key, nullptr, &length);
         if (error == ESP_ERR_NVS_NOT_FOUND) { nvs_close(handle); return ReadResult::missing; }
-        if (error != ESP_OK || length > configuration_compatibility_limit + 256) { nvs_close(handle); return ReadResult::error; }
+        if (error != ESP_OK || length > configuration_payload_limit + 256) { nvs_close(handle); return ReadResult::error; }
         std::string bytes(length, '\0'); error = nvs_get_blob(handle, key, bytes.data(), &length); nvs_close(handle);
         if (error != ESP_OK || length != bytes.size()) return ReadResult::error;
         value = std::move(bytes); return ReadResult::found;
     }
     bool write(const char* key, const std::string& value) override {
-        if (value.size() > configuration_compatibility_limit + 256 || !detail::blob_space(value.size(), detail::decision_key(key))) return false;
+        if (value.size() > configuration_payload_limit + 256 || !detail::blob_space(value.size(), detail::decision_key(key))) return false;
         nvs_handle_t handle;
         if (nvs_open_from_partition("amity_cfg", "amity_config", NVS_READWRITE, &handle) != ESP_OK) return false;
         auto error = nvs_set_blob(handle, key, value.data(), value.size());
@@ -99,7 +98,7 @@ std::mutex gate;
 bool recovered = false;
 ConfigResult recover_once(std::string& error) {
     if (recovered) return ConfigResult::ok;
-    ConfigurationV2 current; auto result = store.recover(current, error);
+    Configuration current; auto result = store.recover(current, error);
     if (result == ConfigResult::ok || result == ConfigResult::missing) recovered = true;
     return result;
 }
@@ -125,22 +124,22 @@ esp_err_t storage_budget(StorageBudget& out) {
     if (status != ESP_OK) return status;
     out = {stats.used_entries, stats.available_entries, stats.total_entries, configuration_payload_limit}; return ESP_OK;
 }
-esp_err_t load_system_configuration(ConfigurationV2& out, std::string& error) {
+esp_err_t load_system_configuration(Configuration& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); auto status = store.recover(out, error);
     if (status == ConfigResult::ok || status == ConfigResult::missing) recovered = true;
     return result(status);
 }
-esp_err_t stage_system_configuration(ConfigurationV2 candidate, RevisionPair expected, std::string& error) {
+esp_err_t stage_system_configuration(Configuration candidate, RevisionPair expected, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); const auto status = recover_once(error);
     if (status != ConfigResult::ok && status != ConfigResult::missing) return result(status);
     return result(store.stage(std::move(candidate), expected, error));
 }
-esp_err_t staged_system_configuration(ConfigurationV2& out) {
+esp_err_t staged_system_configuration(Configuration& out) {
     std::lock_guard<std::mutex> lock(gate); if (!store.staged()) return ESP_ERR_INVALID_STATE;
     out = *store.staged(); return ESP_OK;
 }
 esp_err_t cancel_staged_configuration() { std::lock_guard<std::mutex> lock(gate); store.cancel_stage(); return ESP_OK; }
-esp_err_t activate_system_configuration(ConfigurationV2& out, std::string& error) {
+esp_err_t activate_system_configuration(Configuration& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); return result(store.commit(out, error));
 }
 esp_err_t load_candidate_network(CandidateNetwork& out,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.recover(out,error));}
@@ -148,21 +147,5 @@ esp_err_t stage_candidate_network(const CandidateNetwork& value,std::string& err
 esp_err_t decide_candidate_network(model::JoinId join,const std::string& digest,bool use_candidate,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.decide(join,digest,use_candidate,error));}
 esp_err_t finish_candidate_network(model::JoinId join,const std::string& digest,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.finish(join,digest,error));}
 esp_err_t abandon_candidate_network(model::JoinId join,const std::string& digest,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.abandon(join,digest,error));}
-esp_err_t migrate_system_configuration(const std::string& original, const LegacyConfiguration& legacy, model::ConsortiumId consortium,
-    model::OctopusId octopus, const std::vector<LegacyEvidence>& evidence, ConfigurationV2& out, std::vector<std::string>& tasks, std::string& error) {
-    std::lock_guard<std::mutex> lock(gate); const auto status = recover_once(error);
-    if (status != ConfigResult::ok && status != ConfigResult::missing) return result(status);
-    const auto random = [](uint8_t* data, size_t size) { esp_fill_random(data, size); return true; };
-    auto migrated = legacy;
-    for (unsigned n = 0; n < legacy.activities.size() && n < 16; ++n) {
-        std::string record;
-        esp_err_t alias_result = ESP_FAIL;
-        if (!on_flash_stack([&] { alias_result = config_store::read(("hap_input_" + std::to_string(n)).c_str(), record); }) || alias_result != ESP_OK) continue;
-        const auto split = record.find('\0');
-        if (split != std::string::npos && split + 1 < record.size() && record.substr(0, split) == legacy.activities[n].name &&
-            (record[split + 1] == '0' || record[split + 1] == '1') && record.size() - split - 2 <= 128)
-            migrated.aliases.push_back({n, record[split + 1] == '1', record.substr(split + 2)});
-    }
-    return result(migrate_legacy(store, backend, original, migrated, consortium, octopus, evidence, random, out, tasks, error));
-}
+
 } // namespace config_store

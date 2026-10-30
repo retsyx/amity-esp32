@@ -96,8 +96,8 @@ class DUTTests(unittest.TestCase):
         dut.start_hdmi_scan()
         self.assertEqual([request.full_url for request in opener.requests], [
             "https://amity.local/api/login",
-            "https://amity.local/api/v2/activity-editor/status",
-            "https://amity.local/api/v2/activity-editor/discover",
+            "https://amity.local/api/activity-editor/status",
+            "https://amity.local/api/activity-editor/discover",
         ])
         self.assertEqual(opener.requests[1].get_header("Authorization"), "Bearer session")
         scan = json.loads(opener.requests[2].data)
@@ -118,7 +118,7 @@ class DUTTests(unittest.TestCase):
         self.assertFalse(opener.requests)
         dut.login("secret")
         self.assertEqual(dut.get_system()["octopus_id"], dut.identity.device_id)
-        self.assertEqual(opener.requests[-1].full_url, "https://amity-dut.local/api/v2/system")
+        self.assertEqual(opener.requests[-1].full_url, "https://amity-dut.local/api/system")
 
     def test_invalid_polling_durations_are_rejected_before_requests(self):
         opener = Opener()
@@ -138,7 +138,7 @@ class DUTTests(unittest.TestCase):
         self.assertFalse(opener.requests)
 
     def test_expired_session_is_not_reused(self):
-        error = HTTPError("https://amity.local/api/v2/activity-editor/status", 401,
+        error = HTTPError("https://amity.local/api/activity-editor/status", 401,
                           "Unauthorized", {}, io.BytesIO(b'{"error":"Login required"}'))
         opener = Opener({"token": "session"}, error)
         dut = DUT("amity-dut", wiring=self.wiring, url="https://amity.local",

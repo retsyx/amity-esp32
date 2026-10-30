@@ -1,6 +1,6 @@
 # Exact-image updates and compatibility
 
-Updates preserve the original activity model, device identity, membership and independent pairings/settings. They do not require stored HDMI route approval. [Storage/migration](11-config-storage-and-migration.md), [membership](09-membership-security-and-enrollment.md) and [recovery](13-faults-removal-and-recovery.md) apply.
+Updates preserve the original activity model, device identity, membership and independent pairings/settings. They do not require stored HDMI route approval. [Storage](11-configuration-storage.md), [membership](09-membership-security-and-enrollment.md) and [recovery](13-faults-removal-and-recovery.md) apply.
 
 ## Release and target validation
 
@@ -16,17 +16,15 @@ Only native bytes enter OTA verification. Raw `amity.bin` remains available for 
 
 ## Qualified owner-delivery compatibility
 
-Canonical saved configuration is schema 3. Conversion retains user selectors/activity fields and drops obsolete enabled/graph approval data; it does not require equipment to answer. Do not roll back to an image that cannot read the committed storage safely or enforce current original-controller/member authority.
+Only the current saved configuration (numeric version 3) is readable and writable. No conversion or compatibility decoder runs. Exact-version checks remain the boundary for any future format work. Do not roll back to an image that cannot read the committed storage safely or enforce current original-controller/member authority.
 
 `qualified_lookup` capability 262144 identifies the current typed owner-intent contract. Scoped intent/result use new numeric slots 41/42. Retired operation/plan/profile/config-replication and admission-relay slots remain retired and are never reassigned; relay kinds 7–10 and capability 2048 are not supported. An old peer may remain reachable for compatible authenticated management/update but cannot receive work through a superseded planner/CEC policy. Existing `owner_repeated_keys` semantics require state changes with owner-local repetition, not periodic presses or button renewals.
 
 Reject incompatible hardware/protocol/security combinations explicitly. Compatibility must not silently select an alternate CEC algorithm. A required update is a peer transport compatibility issue, not a persistent disabled activity or approved-route bit.
 
-## Existing 0.1.80 installations
+## Current configuration and storage declarations
 
-A real schema-3 image declares configuration read formats 1–3 and writer 3. The unchanged NVS journal wrapper declares storage read formats 1–2 and writer 2. Do not conflate these axes or label the new configuration writer as 2 for an older installer.
-
-The installed 0.1.80 verifier requires manifest `config_write == 2`, so it rejects a correctly labeled schema-3 browser/member update. That cohort requires a matching-profile USB firmware upgrade preserving factory/NVS partitions. Use the build's ordinary application/bootloader/partition-table flash, not a full fresh-install provisioned image. Legacy v1/v2 decoding retains original intent/recovery state until confirmed boot migration; it does not retain old graph execution policy. After the cohort runs schema-3 firmware, later compatible OTA uses the true schema-3 container. [Build/upgrade instructions](../BUILDING.md#upgrading-an-existing-0180-installation-to-schema-3).
+The release manifest declares configuration read/write format 3 only and storage read/write format 2 only. These are separate numeric format axes. No compatibility with earlier development configuration or journal records is promised or implemented; unsupported records fail explicitly. Version/range validation remains available for future planned format changes, with no active conversion path.
 
 ## Targeted and group updates
 

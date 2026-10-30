@@ -65,7 +65,7 @@ class AddedAmity:
         self._trace.setdefault("requests", []).append(request)
         try:
             response = call()
-            if path == "/api/v2/membership/admission" and isinstance(response, dict):
+            if path == "/api/membership/admission" and isinstance(response, dict):
                 phase = response.get("phase")
                 if isinstance(phase, str) and phase in {"idle", "scanning", "found", "connecting", "finishing", "complete", "failed", "cancelled"}:
                     request["admission_phase"] = phase
@@ -99,7 +99,7 @@ class AddedAmity:
 
     def _system(self):
         self.session.assert_healthy()
-        system = self._observe_http("/api/v2/system", self.main.get_system)
+        system = self._observe_http("/api/system", self.main.get_system)
         membership = system.get("membership", {})
         if (system.get("octopus_id") != self.main.identity.device_id or system.get("mode") != "coordinator"
                 or membership.get("coordinator") is not True or membership.get("authority_ready") is not True
@@ -112,7 +112,7 @@ class AddedAmity:
         return system
 
     def _config(self, *, deadline):
-        config = self._request("/api/v2/config", deadline=deadline)
+        config = self._request("/api/config", deadline=deadline)
         if (not isinstance(config, dict) or config.get("controller_octopus_id") != self.main.identity.device_id
                 or config.get("consortium_id") != self.group
                 or any(not isinstance(config.get(k), list) for k in ("activities", "components", "octopuses"))):
@@ -140,7 +140,7 @@ class AddedAmity:
         return active
 
     def _admission(self, *, deadline):
-        state = self._request("/api/v2/membership/admission", deadline=deadline)
+        state = self._request("/api/membership/admission", deadline=deadline)
         if not isinstance(state, dict) or state.get("scan_id") != self.scan_id:
             raise MembershipConflict("The Add Amity search changed")
         actual = state.get("candidate_id")
@@ -162,7 +162,7 @@ class AddedAmity:
             if stage not in {"admitted", "preparing", "executing", "configuring", "activating", "stopping"}:
                 raise MembershipConflict("The membership operation did not complete successfully")
             time.sleep(min(0.4, self._remaining(deadline)))
-            operation = self._request("/api/v2/operations/" + request_id, deadline=deadline)
+            operation = self._request("/api/operations/" + request_id, deadline=deadline)
 
     def create(self):
         if self._created:
@@ -189,16 +189,16 @@ class AddedAmity:
                 raise MembershipConflict("The main has no capacity for another Amity")
             if system.get("configuration_pending") is not False:
                 raise MembershipConflict("The main is still applying configuration")
-            state = self._observe_http("/api/v2/activity-editor/status", self.main.get_state)
+            state = self._observe_http("/api/activity-editor/status", self.main.get_state)
             if state.get("expected_boot_id") != self.boot or state.get("current_activity") != -1 or state.get("activity_settling") is not False:
                 raise MembershipConflict("Adding an Amity in this test requires the main to be idle")
-            current = self._request("/api/v2/membership/admission", deadline=deadline)
+            current = self._request("/api/membership/admission", deadline=deadline)
             if current.get("phase") not in {"idle", "complete", "cancelled", "failed"}:
                 raise MembershipConflict("Another Add Amity search is in progress")
             self._baseline = deepcopy(self._config(deadline=deadline))
             self._scan_attempted = True
             record["step"] = "start_scan"
-            scan = self._request("/api/v2/membership/scan", {"request_id": self.scan_id}, deadline=deadline)
+            scan = self._request("/api/membership/scan", {"request_id": self.scan_id}, deadline=deadline)
             self._wait_operation(scan, self.scan_id, deadline=deadline, record=record)
             record.update(step="open_window", reset_gpio=self.candidate.wiring.reset_gpio(self.candidate.name), hold_seconds=3.5)
             self.candidate.press_fw_reset(3.5)
@@ -228,7 +228,7 @@ class AddedAmity:
             self._add_attempted = True
             record["step"] = "submit_add"
             try:
-                self._add_operation = self._request("/api/v2/membership/add", payload, deadline=deadline)
+                self._add_operation = self._request("/api/membership/add", payload, deadline=deadline)
             except AmityHTTPError as error:
                 self._add_rejected = error.status < 500
                 raise
@@ -246,7 +246,7 @@ class AddedAmity:
         record["step"] = "confirm_add"
         operation = self._add_operation
         if operation is None:
-            operation = self._request("/api/v2/operations/" + self.request_id, deadline=deadline)
+            operation = self._request("/api/operations/" + self.request_id, deadline=deadline)
         self._add_operation = self._wait_operation(operation, self.request_id, deadline=deadline, record=record)
         state = self._admission(deadline=deadline)
         if state.get("candidate_id") != self.device_id or state.get("phase") != "complete":
@@ -297,7 +297,7 @@ class AddedAmity:
                     # Poll this shipping endpoint directly: its two-second
                     # cache can expire while unrelated TLS requests run.
                     while True:
-                        settings = self._request("/api/v2/devices/" + self.device_id + "/settings", deadline=deadline)
+                        settings = self._request("/api/devices/" + self.device_id + "/settings", deadline=deadline)
                         if self._settings_match(settings, peer):
                             system, confirmed, current = self._connected_snapshot(deadline=deadline)
                             if confirmed.get("boot_id") != peer["boot_id"]:
@@ -346,9 +346,9 @@ class AddedAmity:
                                "expected_membership_revision": system["membership"]["membership_revision"],
                                "expected_target_boot_id": peer["boot_id"]}
                     self._remove_attempted = True
-                    self._remove_operation = self._request("/api/v2/membership/remove", payload, deadline=deadline)
+                    self._remove_operation = self._request("/api/membership/remove", payload, deadline=deadline)
                 if self._remove_operation is None:
-                    self._remove_operation = self._request("/api/v2/operations/" + self._remove_id, deadline=deadline)
+                    self._remove_operation = self._request("/api/operations/" + self._remove_id, deadline=deadline)
                 operation = self._wait_operation(self._remove_operation, self._remove_id, deadline=deadline, record=record)
                 record["reset"] = operation.get("reset")
                 if operation.get("reset") != "scheduled":
@@ -364,7 +364,7 @@ class AddedAmity:
                 state = self._admission(deadline=deadline)
                 if state.get("phase") in {"scanning", "found"}:
                     request_id = uuid4().hex
-                    response = self._request("/api/v2/membership/cancel", {"request_id": request_id, "scan_id": self.scan_id}, deadline=deadline)
+                    response = self._request("/api/membership/cancel", {"request_id": request_id, "scan_id": self.scan_id}, deadline=deadline)
                     self._wait_operation(response, request_id, deadline=deadline, record=record)
             self._closed = True
         except BaseException as error:

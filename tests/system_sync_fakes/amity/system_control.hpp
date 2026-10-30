@@ -11,7 +11,7 @@ namespace amity {
 // decisions under test come from the production synchronization/journal code.
 class SystemControl {
 public:
-    config_store::ConfigurationV2 configuration;
+    config_store::Configuration configuration;
     system::OctopusId identity;
     system::BootId boot;
     bool local_input = true, local_scan_result = true, remote_scan_result = true, lookup_result = true, auto_apply = true, update_result = true, refresh_result = true, fence_result = true;
@@ -39,7 +39,7 @@ public:
     system::ConsortiumId consortium_id() const { return configuration.consortium_id; }
     system::OctopusId octopus_id() const { return identity; }
     system::BootId boot_identity() const { return boot; }
-    std::optional<config_store::ConfigurationV2> active_configuration() const { return configuration; }
+    std::optional<config_store::Configuration> active_configuration() const { return configuration; }
     bool accepts_local_input() const { return local_input; }
     void set_owned_sender(std::function<bool(const system::OwnedIntent&)> fn) { sender=std::move(fn); }
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> fn) { observer=std::move(fn); }
@@ -56,7 +56,7 @@ public:
     }
     esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision) {
         ++bind_calls;
-        if(configuration.controller_octopus_id&&*configuration.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
+        if(!configuration.controller_octopus_id||*configuration.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
         if(bind_result!=ESP_OK)return bind_result;
         bound_controller=controller;bound_revision=revision;return ESP_OK;
     }
@@ -72,7 +72,7 @@ public:
     bool discover_owned(system::OctopusId owner,uint8_t adapter) {
         remote_scans.push_back({owner,adapter});return remote_scan_result;
     }
-    esp_err_t configure_v2(config_store::ConfigurationV2 next,std::function<esp_err_t()> commit={}) {
+    esp_err_t configure(config_store::Configuration next,std::function<esp_err_t()> commit={}) {
         ++configure_calls;
         if(configure_result!=ESP_OK)return configure_result;
         const auto result=commit?commit():ESP_OK;

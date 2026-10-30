@@ -8,11 +8,10 @@
 
 #pragma once
 #include "amity/system_control.hpp"
-#include "configuration.hpp"
 #include <string>
 namespace web_admin {
 esp_err_t load(amity::SystemControl &hub,bool defer_configuration=false);
-esp_err_t finish_migration_bridge();
+esp_err_t finish_configuration_activation();
 bool member_recovery_only();
 esp_err_t start(amity::SystemControl &hub,const char *hostname,const char *initial_auth);
 // Permanently revoke user-facing HTTP for this boot, preserving credentials.

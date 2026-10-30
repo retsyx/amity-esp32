@@ -1,6 +1,6 @@
 # Identity, membership and adding a device
 
-Membership protects who may deliver work to an owner. It does not approve HDMI routes or replace local Amity algorithms. [Transport](08-consortium-transport-and-routing.md), [shared radio/setup](10-ble-and-matter-coexistence.md), [storage](11-config-storage-and-migration.md) and [original-controller policy](21-original-controller-policy.md) apply.
+Membership protects who may deliver work to an owner. It does not approve HDMI routes or replace local Amity algorithms. [Transport](08-consortium-transport-and-routing.md), [shared radio/setup](10-ble-and-matter-coexistence.md), [storage](11-configuration-storage.md) and [original-controller policy](21-original-controller-policy.md) apply.
 
 ## Identity and credentials
 

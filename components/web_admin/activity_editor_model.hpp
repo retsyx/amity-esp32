@@ -22,17 +22,17 @@ struct Submission { m::MessageId request_id; config_store::RevisionPair expected
 // retained peer names, never from a configured friendly label or DNS discovery.
 using OwnerHostnames=std::map<m::OctopusId,std::string>;
 using OwnerCapacities=std::map<m::OctopusId,uint8_t>;
-bool parse_submission(const std::string&,const config_store::ConfigurationV2&,Submission&,std::string& error);
-bool parse_restore_request(const cJSON*,const config_store::ConfigurationV2&,m::BootId current_boot,
-    config_store::ConfigurationV2& backup,std::string& error);
+bool parse_submission(const std::string&,const config_store::Configuration&,Submission&,std::string& error);
+bool parse_restore_request(const cJSON*,const config_store::Configuration&,m::BootId current_boot,
+    config_store::Configuration& backup,std::string& error);
 // Count enrolled members even while offline; retained configuration and names
 // alone do not imply that another Amity is still added.
 // Current compiled capacities override retained configuration capacity.
-std::vector<Choice> choices(const config_store::ConfigurationV2&, const std::vector<m::CecObservation>&,
+std::vector<Choice> choices(const config_store::Configuration&, const std::vector<m::CecObservation>&,
     const OwnerHostnames& = {}, bool has_added_amities = false, const OwnerCapacities& = {});
-std::vector<m::ActivityId> projected_activities(const config_store::ConfigurationV2&);
+std::vector<m::ActivityId> projected_activities(const config_store::Configuration&);
 std::string component_value(std::optional<m::ComponentId>);
-bool edit(const config_store::ConfigurationV2&, const std::vector<Row>&, const std::vector<Choice>&,
-          const std::function<bool(uint8_t*, size_t)>&, config_store::ConfigurationV2&,
+bool edit(const config_store::Configuration&, const std::vector<Row>&, const std::vector<Choice>&,
+          const std::function<bool(uint8_t*, size_t)>&, config_store::Configuration&,
           std::vector<std::string>& unresolved, std::string& error);
 }

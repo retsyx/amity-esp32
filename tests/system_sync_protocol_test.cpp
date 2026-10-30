@@ -92,9 +92,9 @@ uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){fixture::
 void runtime_configuration_changed(uint64_t revision,const std::string& hash){fixture::configuration_changes.push_back({revision,hash});}
 }
 namespace config_store {
-esp_err_t stage_system_configuration(ConfigurationV2 candidate,RevisionPair expected,std::string& error){return fixture::journal->stage(std::move(candidate),expected,error)==ConfigResult::ok?ESP_OK:ESP_FAIL;}
-esp_err_t staged_system_configuration(ConfigurationV2& out){if(!fixture::journal->staged())return ESP_ERR_INVALID_STATE;out=*fixture::journal->staged();return ESP_OK;}
-esp_err_t activate_system_configuration(ConfigurationV2& out,std::string& error){return fixture::journal->commit(out,error)==ConfigResult::ok?ESP_OK:ESP_FAIL;}
+esp_err_t stage_system_configuration(Configuration candidate,RevisionPair expected,std::string& error){return fixture::journal->stage(std::move(candidate),expected,error)==ConfigResult::ok?ESP_OK:ESP_FAIL;}
+esp_err_t staged_system_configuration(Configuration& out){if(!fixture::journal->staged())return ESP_ERR_INVALID_STATE;out=*fixture::journal->staged();return ESP_OK;}
+esp_err_t activate_system_configuration(Configuration& out,std::string& error){return fixture::journal->commit(out,error)==ConfigResult::ok?ESP_OK:ESP_FAIL;}
 esp_err_t cancel_staged_configuration(){fixture::journal->cancel_stage();return ESP_OK;}
 }
 
@@ -114,10 +114,10 @@ void startup_and_minimal_handshake(){
     main.refresh_result=false;assert(!hooks.ready(ready_owner)&&main.refreshed_context.size()==2&&memory.writes==0&&fixture::sent.empty());
     reset();auto member=control(true);const auto original=*member.configuration.controller_octopus_id;
     assert(amity::start_configuration_synchronization(member)==ESP_OK);
-    const auto saved=serialize_configuration_v2(member.configuration);
+    const auto saved=serialize_configuration(member.configuration);
     auto accepted=string_document("{\"controller\":\""+original.str()+"\",\"config_revision\":\"37\"}");
     assert(hooks.synchronize(original,accepted)==c::Error::none&&member.bound_controller==original&&member.bound_revision==37);
-    assert(memory.writes==0&&member.configure_calls==0&&serialize_configuration_v2(member.configuration)==saved);
+    assert(memory.writes==0&&member.configure_calls==0&&serialize_configuration(member.configuration)==saved);
     assert(hooks.synchronize(id<s::OctopusId>(99),accepted)==c::Error::unauthorized_role);
     auto zero=string_document("{\"controller\":\""+original.str()+"\",\"config_revision\":\"0\"}");
     assert(hooks.synchronize(original,zero)==c::Error::unauthorized_role);
@@ -233,7 +233,7 @@ void reports_and_exact_disconnect(){
     available=amity::discovered_equipment();assert(available.size()==1&&available[0].owner_boot_id==newboot&&available[0].endpoint.logical_address==8);
     const auto& missing=main.updates.back();assert(missing.boot==oldboot&&missing.adapter==1&&!missing.ready&&!missing.discovering&&missing.devices.empty());
     assert(hooks.disconnected(owner,newboot,id<s::LinkId>(71))&&amity::discovered_equipment().empty());
-    assert(serialize_configuration_v2(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
+    assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
 }
 void report_coalescing_and_no_intent_backlog(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
@@ -259,7 +259,7 @@ void scans_and_saved_intent_without_peer_ack(){
     main.local_input=false;const auto scans=main.local_scan_calls;assert(amity::request_equipment_scan()==ESP_ERR_INVALID_STATE&&main.local_scan_calls==scans);main.local_input=true;
     peers.clear();main.configuration.octopuses.push_back({id<s::OctopusId>(9),"offline","offline",false,4});
     const auto source=main.configuration.activities[0].source;for(auto& item:main.configuration.components)if(item.record.component_id==source)item.record.qualified_names[0].port.octopus_id=id<s::OctopusId>(9);
-    ConfigurationV2 active;commit(*journal,main.configuration,{},active);main.configuration=active;
+    Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
     auto candidate=active;candidate.activities[0].audio=candidate.activities[0].source;candidate.activities[0].label="Renamed";candidate.activities[0].label_override=true;main.auto_apply=false;const auto began=now;const auto request=id<s::MessageId>(100);
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),request)==ESP_OK&&now==began);
     const auto status=amity::configuration_activation_status();assert(status.request_id==request&&status.phase=="configuring"&&status.config_revision==2&&status.presentation_revision==2);
@@ -268,22 +268,22 @@ void scans_and_saved_intent_without_peer_ack(){
     main.applied.applied_presentation_revision=status.presentation_revision;
     assert(amity::configuration_activation_status().phase=="applied");
     assert(main.configuration.activities[0].audio==candidate.activities[0].source&&packets.empty()&&sent.empty()&&configuration_changes.size()==1);
-    assert(serialize_configuration_v2(main.configuration).find("\"enabled\"")==std::string::npos);
-    const auto saved=serialize_configuration_v2(main.configuration);const auto committed=memory.values;candidate=main.configuration;candidate.activities[0].audio=candidate.activities[0].display;
+    assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos);
+    const auto saved=serialize_configuration(main.configuration);const auto committed=memory.values;candidate=main.configuration;candidate.activities[0].audio=candidate.activities[0].display;
     memory.fail_marker=true;assert(amity::activate_distributed_configuration(candidate,main.configuration.revisions(),id<s::MessageId>(101))!=ESP_OK);memory.fail_marker=false;
-    assert(serialize_configuration_v2(main.configuration)==saved&&configuration_changes.size()==1&&amity::configuration_activation_status().phase=="failed");
+    assert(serialize_configuration(main.configuration)==saved&&configuration_changes.size()==1&&amity::configuration_activation_status().phase=="failed");
     for(const auto& item:committed)if(item.first=="cm0"||item.first=="cm1")assert(memory.values[item.first]==item.second);
-    ConfigurationStore recovered(memory);ConfigurationV2 after;std::string error;assert(recovered.recover(after,error)==ConfigResult::ok&&serialize_configuration_v2(after)==saved);
+    ConfigurationStore recovered(memory);Configuration after;std::string error;assert(recovered.recover(after,error)==ConfigResult::ok&&serialize_configuration(after)==saved);
 }
 void saved_owner_capacity_does_not_shrink(){
     reset();auto main=control();main.configuration.octopuses.push_back({id<s::OctopusId>(9),"saved owner","saved owner",false,4});
     const auto source=main.configuration.activities[0].source;
     for(auto& component:main.configuration.components)if(component.record.component_id==source){component.record.qualified_names[0].port.octopus_id=id<s::OctopusId>(9);component.record.qualified_names[0].port.tentacle_id=3;}
-    ConfigurationV2 active;commit(*journal,main.configuration,{},active);main.configuration=active;
+    Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
     assert(amity::start_configuration_synchronization(main)==ESP_OK);peers={remote(9,19,1,1)};
-    const auto saved=serialize_configuration_v2(main.configuration);const auto writes=memory.writes;
+    const auto saved=serialize_configuration(main.configuration);const auto writes=memory.writes;
     amity::adopt_owners();
-    assert(main.configure_calls==0&&memory.writes==writes&&configuration_changes.empty()&&serialize_configuration_v2(main.configuration)==saved);
+    assert(main.configure_calls==0&&memory.writes==writes&&configuration_changes.empty()&&serialize_configuration(main.configuration)==saved);
 }
 }
 int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();report_coalescing_and_no_intent_backlog();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, scoped snapshots, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers\n";}

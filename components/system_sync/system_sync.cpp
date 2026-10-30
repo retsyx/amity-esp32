@@ -146,7 +146,7 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     control.set_owned_input_observer([](const auto& intent,const auto& auth,const auto& result){input_result(intent,auth,result);});
     c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner){return state.control->refresh_owned_context(owner);}});return ESP_OK;
 }
-esp_err_t activate_distributed_configuration(cs::ConfigurationV2 candidate,cs::RevisionPair expected,s::MessageId request){
+esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request){
     SystemControl* control=nullptr;
     {std::lock_guard<std::mutex> guard(state.mutex);if(!state.control||state.activating)return ESP_ERR_INVALID_STATE;state.activating=true;control=state.control;state.activation={request,0,0,"admitted",{}};}
     struct Clear{~Clear(){std::lock_guard<std::mutex> guard(state.mutex);state.activating=false;}} clear;
@@ -154,7 +154,7 @@ esp_err_t activate_distributed_configuration(cs::ConfigurationV2 candidate,cs::R
     if(request&&control->accepts_local_input()){
         result=cs::stage_system_configuration(std::move(candidate),expected,error);
         if(result==ESP_OK)result=cs::staged_system_configuration(candidate);
-        if(result==ESP_OK)result=control->configure_v2(candidate,[&]{return cs::activate_system_configuration(candidate,error);});
+        if(result==ESP_OK)result=control->configure(candidate,[&]{return cs::activate_system_configuration(candidate,error);});
         if(result==ESP_OK)c::runtime_configuration_changed(candidate.config_revision,cs::executable_policy_hash(candidate));
     }
     if(result!=ESP_OK)cs::cancel_staged_configuration();

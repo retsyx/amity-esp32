@@ -7,7 +7,7 @@ esp_err_t SystemControl::transition_coordinator_authority(bool enabled,uint64_t 
     if(result==ESP_OK)local_coordinator_.store(enabled);
     return result;
 }
-std::vector<Activity> SystemControl::activities(const config_store::ConfigurationV2& config)const{
+std::vector<Activity> SystemControl::activities(const config_store::Configuration& config)const{
     std::vector<Activity> out;
     for(auto id:config_store::ordered_activities(config))for(const auto& a:config.activities)if(a.activity_id==id){
         auto value=[](const auto& ref){return ref?ref->str():std::string{};};
@@ -18,23 +18,23 @@ std::vector<Activity> SystemControl::activities(const config_store::Configuratio
 bool SystemControl::dispatch_owned(const system::OwnedIntent& intent){
     const auto sender=std::atomic_load(&sender_);return sender&&(*sender)(intent);
 }
-esp_err_t SystemControl::configure_v2(config_store::ConfigurationV2 config,std::function<esp_err_t()> commit){
+esp_err_t SystemControl::configure(config_store::Configuration config,std::function<esp_err_t()> commit){
     refresh_outcomes();
     std::string error;
-    if(!accepts_local_input()||!config_store::validate_configuration_v2(config,error)||config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
+    if(!accepts_local_input()||!config_store::validate_configuration(config,error)||config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
     std::vector<system::ScopedSelector> selectors;
     for(const auto& c:config.components)for(const auto& name:c.record.qualified_names)
         selectors.push_back({c.record.component_id.str(),name});
-    auto stored=std::make_shared<const config_store::ConfigurationV2>(std::move(config));
+    auto stored=std::make_shared<const config_store::Configuration>(std::move(config));
     const auto result=local_.configure_scoped(activities(*stored),std::move(selectors),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,std::move(commit),stored->presentation_revision);
     if(result==ESP_OK)std::atomic_store(&active_,std::move(stored));
     return result;
 }
-esp_err_t SystemControl::configure_passive_metadata(const config_store::ConfigurationV2& config){
-    std::string error;if(local_coordinator_.load()||!config_store::validate_configuration_v2(config,error)||config.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
-    std::atomic_store(&active_,std::make_shared<const config_store::ConfigurationV2>(config));return ESP_OK;
+esp_err_t SystemControl::configure_passive_metadata(const config_store::Configuration& config){
+    std::string error;if(local_coordinator_.load()||!config_store::validate_configuration(config,error)||config.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
+    std::atomic_store(&active_,std::make_shared<const config_store::Configuration>(config));return ESP_OK;
 }
-esp_err_t SystemControl::request_activity_v2(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
+esp_err_t SystemControl::request_activity(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
     refresh_outcomes();
     if(!accepts_local_input()||!request)return ESP_ERR_INVALID_STATE;
     if(expected&&*expected!=execution_snapshot().state_revision)return ESP_ERR_INVALID_STATE;
@@ -50,11 +50,11 @@ esp_err_t SystemControl::request_activity_v2(system::ZoneId zone,system::Activit
     if(result==ESP_OK){if(terminal!=pending_.end())pending_.erase(terminal);pending_.push_back({request,index,selection,config->revisions(),"admitted",{}});}
     return result;
 }
-esp_err_t SystemControl::stop_zone_v2(system::ZoneId zone){
+esp_err_t SystemControl::stop_zone(system::ZoneId zone){
     const auto state=execution_snapshot();if(!state.sessions.empty()&&state.sessions.front().zone_id!=zone)return ESP_ERR_INVALID_ARG;
     return request_activity(-1);
 }
-void SystemControl::update_outcomes_locked(const Snapshot& state,const config_store::ConfigurationV2* config)const{
+void SystemControl::update_outcomes_locked(const Snapshot& state,const config_store::Configuration* config)const{
     for(auto& pending:pending_){
         if(pending.stage!="admitted")continue;
         if(!config||config->revisions()!=pending.revisions){pending.stage="rejected";pending.error="The saved configuration changed before this request completed";continue;}

@@ -79,7 +79,7 @@ class _ObservedEquipment:
         if not _identifier(identity):
             raise AssertionError("Malformed saved equipment selector")
         if self.configuration is None:
-            self.configuration = self.dut.request("/api/v2/config")
+            self.configuration = self.dut.request("/api/config")
         config = self.configuration
         if (not isinstance(config, dict) or not isinstance(config.get("components"), list)
                 or config.get("consortium_id") != self.system["consortium_id"]
@@ -200,7 +200,7 @@ def _fresh_discovery(records, component, initiator, started_ns):
 def _wire_initiators(records, components, started_ns):
     """Find the DUT on each isolated wire from its fresh directed queries.
 
-    The UI's legacy aggregate front/back address fields can be unregistered
+    The UI's aggregate front/back address fields can be unregistered
     even while the owner-local engine is registered. No new DUT API is needed:
     these bench wires contain only the named DUT and our claimed components.
     """

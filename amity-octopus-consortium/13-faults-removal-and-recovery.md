@@ -1,6 +1,6 @@
 # Loss, removal and manual recovery
 
-The original controller remains the only UI, input and membership authority. The transport protects original local execution; it does not create a successor controller, persistent activity approval or automatic failover. [Role policy](21-original-controller-policy.md), [transport](08-consortium-transport-and-routing.md), [storage](11-config-storage-and-migration.md) and [membership](09-membership-security-and-enrollment.md) apply.
+The original controller remains the only UI, input and membership authority. The transport protects original local execution; it does not create a successor controller, persistent activity approval or automatic failover. [Role policy](21-original-controller-policy.md), [transport](08-consortium-transport-and-routing.md), [storage](11-configuration-storage.md) and [membership](09-membership-security-and-enrollment.md) apply.
 
 ## Missing equipment or owner
 
@@ -32,7 +32,7 @@ Ordinary qualified lookup on the new owner supplies current equipment data. Repl
 
 1. Isolate the old main so it cannot return and control the same installation.
 2. Matter-enroll replacement hardware as a new main. Its own checked role/identity establishes authority; the backup cannot do so.
-3. Use the existing Advanced upload/restore control to restore portable saved intent. Preserve valid IDs, labels, original activity fields, selectors, order, slots. Rebase owners only through explicit proven hardware mappings. Discard obsolete schema-2 enabled/route/binding/resource/domain/PA approvals; do not import live addresses or current-activity state. Import does not itself start an activity.
+3. Use the existing Advanced upload/restore control to restore portable saved intent. Preserve valid IDs, labels, original activity fields, selectors, order, slots. Rebase owners only through explicit proven hardware mappings. Reject unsupported saved formats and obsolete enabled/route/binding/resource/domain/PA fields; do not import live addresses or current-activity state. Import does not itself start an activity.
 4. Pair the sole remote and Matter/HomeKit integrations again. Do not copy their pairing stores, Wi-Fi/admin credentials or private keys from the old main.
 5. Factory-reset each old headless member with the existing at-least-ten-second hold, then release a three-to-below-ten-second hold to reopen its candidate window and re-add it through Amity devices → Add on the replacement main. Its origin ID and factory Matter/admin credentials survive; operational keys, network and roster trust are fresh. Only the stricter matched build requires the existing printed Matter code.
 

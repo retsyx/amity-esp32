@@ -131,7 +131,7 @@ class HardwareReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'differs'):
             self.manifest(image, sdkconfig)
         raw = image.read_bytes()
-        for data in [raw[:288], raw + hardware.descriptor(config), raw.replace(b'development-4t-v1', b'development-4t-v2'), raw.replace(b'capacity=4', b'capacity=5')]:
+        for data in [raw[:288], raw + hardware.descriptor(config), raw.replace(b'development-4t-v1', b'development-4t-x0'), raw.replace(b'capacity=4', b'capacity=5')]:
             image.write_bytes(data)
             with self.assertRaises(ValueError):
                 self.manifest(image)

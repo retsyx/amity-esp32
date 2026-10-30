@@ -419,7 +419,7 @@ void await_original_work() {
             if(claimed==ESP_OK){
                 ESP_ERROR_CHECK(hub.transition_coordinator_authority(true,1));
                 ESP_ERROR_CHECK(web_admin::load(hub,false));
-                ESP_ERROR_CHECK(web_admin::finish_migration_bridge());
+                ESP_ERROR_CHECK(web_admin::finish_configuration_activation());
                 const auto config=hub.active_configuration();
                 if(config)amity::consortium::runtime_configuration_changed(config->config_revision,config_store::executable_policy_hash(*config));
                 original_interfaces_enabled.store(true);
@@ -567,13 +567,13 @@ extern "C" void app_main() {
     // A proven original also starts its UI/remote/integrations before this point;
     // fresh and member boards intentionally have no such services.
     ESP_ERROR_CHECK(system_services::confirm_firmware());
-    const auto migrated=web_admin::finish_migration_bridge();
-    if(migrated!=ESP_OK)ESP_LOGE("amity","Migration activation needs recovery; active records retained");
-    if(group_start==ESP_OK&&migrated==ESP_OK){
+    const auto activated=web_admin::finish_configuration_activation();
+    if(activated!=ESP_OK)ESP_LOGE("amity","Configuration activation needs recovery; active records retained");
+    if(group_start==ESP_OK&&activated==ESP_OK){
         const auto synchronization=amity::start_configuration_synchronization(hub);
         if(synchronization!=ESP_OK)ESP_LOGE("amity","Consortium synchronization could not start; peers remain fenced");
     }
-    if(group_start==ESP_OK&&migrated==ESP_OK){
+    if(group_start==ESP_OK&&activated==ESP_OK){
         start_boot_matter_setup();
     }
     if(awaiting_first_setup)ESP_ERROR_CHECK(xTaskCreate(await_original_task,"await_setup",12288,nullptr,2,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);

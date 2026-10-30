@@ -69,7 +69,7 @@ class ScanAssertionSnapshotTests(unittest.TestCase):
         dut.get_system = lambda: deepcopy(system)
 
         def request(path, *args, **kwargs):
-            if path != "/api/v2/config":
+            if path != "/api/config":
                 raise AssertionError("The mapping must use only the existing UI config route")
             return deepcopy(config)
 

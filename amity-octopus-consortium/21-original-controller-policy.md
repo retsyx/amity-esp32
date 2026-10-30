@@ -1,6 +1,6 @@
 # Original controller, headless owners and original algorithms
 
-This document records the user's authoritative role and execution requirements. [AGENTS.md](../AGENTS.md), [addressing](03-domain-model-and-addressing.md), [local execution](07-activity-planning-and-execution.md), [storage](11-config-storage-and-migration.md) and [UI](20-user-interface.md) apply together.
+This document records the user's authoritative role and execution requirements. [AGENTS.md](../AGENTS.md), [addressing](03-domain-model-and-addressing.md), [local execution](07-activity-planning-and-execution.md), [storage](11-configuration-storage.md) and [UI](20-user-interface.md) apply together.
 
 ## Original algorithms and functionality amendment — 21 October 2026
 

@@ -5,10 +5,10 @@
 namespace ae=web_admin::activity_editor;
 ae::Row row(const ConfiguredActivity& a){return {a.activity_id,a.label,ae::component_value(a.display),ae::component_value(a.source),ae::component_value(a.audio),ae::component_value(a.switch_device),a.switch_input};}
 int main(){
-    auto c=direct_configuration();ConfigurationV2 avr;std::vector<std::string> unresolved;std::string error;assert(propose_local_activity(c,{"Play Wii","TV","Wii","AVR","AVR",6},{},random_source(),avr,unresolved,error));
+    auto c=direct_configuration();auto avr=switch_configuration(c,"Play Wii");std::vector<std::string> unresolved;std::string error;
     // No equipment observations or path approval are required to retain or save
     // local and remote selections, including AVR volume and switching.
-    const auto choices=ae::choices(avr,{},{{*avr.controller_octopus_id,"amity-main"}});ConfigurationV2 edited;
+    const auto choices=ae::choices(avr,{},{{*avr.controller_octopus_id,"amity-main"}});Configuration edited;
     std::vector<ae::Row> rows;for(const auto& a:avr.activities)rows.push_back(row(a));assert(ae::edit(avr,rows,choices,random_source(),edited,unresolved,error)&&unresolved.empty());
     assert(edited.activities[1].switch_input==6&&edited.activities[1].switch_device==avr.activities[1].switch_device&&edited.activities[1].audio==avr.activities[1].audio);
     for(const auto& choice:choices){assert(choice.location.empty()&&!choice.observation);}
@@ -46,7 +46,7 @@ int main(){
     // A saved scoped name remains selected when its owner is unreachable.
     auto remote=avr;const auto member=id<model::OctopusId>(70);remote.octopuses.push_back({member,"Old friendly label","",true,4});for(auto& x:remote.components)if(x.record.component_id==remote.activities[1].audio)for(auto& n:x.record.qualified_names){n.port.octopus_id=member;n.port.tentacle_id=3;}
     const ae::OwnerHostnames names{{*remote.controller_octopus_id,"amity-main"},{member,"amity-den"}};
-    const auto offline=ae::choices(remote,{},names,true);const auto receiver=std::find_if(offline.begin(),offline.end(),[&](const auto& choice){return choice.component_id==remote.activities[1].audio;});assert(receiver!=offline.end()&&receiver->location=="amity-den · Adapter 4"&&!receiver->observation);assert(ae::edit(remote,rows,offline,random_source(),edited,unresolved,error)&&unresolved.empty());assert(serialize_configuration_v2(edited).find("domains")==std::string::npos);
+    const auto offline=ae::choices(remote,{},names,true);const auto receiver=std::find_if(offline.begin(),offline.end(),[&](const auto& choice){return choice.component_id==remote.activities[1].audio;});assert(receiver!=offline.end()&&receiver->location=="amity-den · Adapter 4"&&!receiver->observation);assert(ae::edit(remote,rows,offline,random_source(),edited,unresolved,error)&&unresolved.empty());assert(serialize_configuration(edited).find("domains")==std::string::npos);
     // Removed owners stay identified on retained selections, but do not make
     // the remaining main's equipment display a redundant hostname.
     const auto retained=ae::choices(remote,{},names,false);

@@ -47,7 +47,7 @@ def production_parts(source):
     assert main_masked.count(call) == 1, 'app_main must open eligible Matter setup automatically once per boot'
     position = main_masked.index(call)
     assert main.index('system_services::confirm_firmware()') < position, 'Open commissioning only after healthy local startup'
-    assert main.index('const auto migrated=') < position, 'Retain the migration/health boundary before opening setup'
+    assert main.index('const auto activated=') < position, 'Retain the configuration activation/health boundary before opening setup'
     assert position < main.index('xTaskCreate(await_original_task,'), 'Open setup before waiting for a first enrollment'
     stack = []
     for index, char in enumerate(main_masked[:position]):
@@ -102,9 +102,9 @@ void release(uint64_t){}
 }
 struct Configuration{std::vector<int>activities,components;};
 struct Hub {
-    std::shared_ptr<Configuration> configuration;std::vector<int>legacy_activities;
+    std::shared_ptr<Configuration> configuration;std::vector<int>runtime_activities;
     auto active_configuration(){return configuration;}
-    struct Snapshot{std::vector<int>activities;};Snapshot snapshot(){return {legacy_activities};}
+    struct Snapshot{std::vector<int>activities;};Snapshot snapshot(){return {runtime_activities};}
 }hub;
 struct amity_matter_status_t {bool started=true,commissioning_window=false;unsigned fabric_count=0;};
 int amity_matter_get_status(amity_matter_status_t* status){
@@ -125,7 +125,7 @@ void reset(){
     amity::consortium::role={};firmware_healthy=false;eligible_unclaimed=true;station_has_ip=false;
     matter_fabrics=status_calls=open_calls=windows_opened=delays=delayed_ms=enrollment_windows=radio_reservations=0;
     status_failures=open_failures=0;status_result=open_result=ESP_OK;window_open=false;on_delay={};
-    hub.configuration.reset();hub.legacy_activities.clear();
+    hub.configuration.reset();hub.runtime_activities.clear();
 }
 void healthy(){reset();firmware_healthy=true;}
 void no_setup(){assert(!open_calls&&!windows_opened&&!enrollment_windows&&!radio_reservations);}
@@ -134,7 +134,7 @@ int main(){using namespace amity::consortium;
     // moved behind a physical button cannot satisfy these startup assertions.
     healthy();actual_boot_tail();assert(!station_has_ip&&window_open&&windows_opened==1&&!delays&&!enrollment_windows&&!radio_reservations);
     healthy();hub.configuration=std::make_shared<Configuration>();hub.configuration->activities.push_back(1);hub.configuration->components.push_back(2);actual_boot_tail();assert(windows_opened==1);
-    healthy();hub.legacy_activities.push_back(1);actual_boot_tail();assert(windows_opened==1);
+    healthy();hub.runtime_activities.push_back(1);actual_boot_tail();assert(windows_opened==1);
     healthy();role.coordinator=role.authority_ready=true;role.phase="coordinator";eligible_unclaimed=false;hub.configuration=std::make_shared<Configuration>();hub.configuration->activities.push_back(1);actual_boot_tail();assert(windows_opened==1&&role.coordinator&&role.authority_ready);
     for(unsigned fabrics:{1u,2u,5u})for(bool original:{false,true}){
         healthy();matter_fabrics=fabrics;if(original){role.coordinator=role.authority_ready=true;eligible_unclaimed=false;}
@@ -177,7 +177,7 @@ int main(){using namespace amity::consortium;
 def main():
     source = SOURCE.read_text()
     helpers, boot = production_parts(source)
-    fixture = PREFIX + helpers + '\nvoid actual_boot_tail(int group_start=ESP_OK,int migrated=ESP_OK){\n' + boot + '\n}\n' + SUITE
+    fixture = PREFIX + helpers + '\nvoid actual_boot_tail(int group_start=ESP_OK,int activated=ESP_OK){\n' + boot + '\n}\n' + SUITE
     with tempfile.TemporaryDirectory(prefix='matter-boot-') as directory:
         base = Path(directory)
         (base / 'test.cpp').write_text(fixture)

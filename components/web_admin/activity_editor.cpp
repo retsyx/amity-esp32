@@ -68,9 +68,9 @@ cJSON* encode_choices(const std::vector<ae::Choice>& choices){
 
 }
 bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,const std::string& path,esp_err_t& result){
-    constexpr const char* prefix="/api/v2/activity-editor";
+    constexpr const char* prefix="/api/activity-editor";
     for(auto& op:operations)update(control,op);
-    const std::string operation_prefix="/api/v2/operations/";
+    const std::string operation_prefix="/api/operations/";
     if(req->method==HTTP_GET&&path.rfind(operation_prefix,0)==0){const auto requested=m::MessageId::parse(path.substr(operation_prefix.size()));for(const auto& op:operations)if(requested&&op.id==*requested){result=operation_json(req,op);return true;}return false;}
     if(path.rfind(prefix,0)!=0)return false;
     const auto config=control.active_configuration();
@@ -89,24 +89,24 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         result=respond(req,root.get());return true;
     }
     if(req->method==HTTP_GET&&path==std::string(prefix)+"/status"){
-        const auto legacy=control.snapshot();Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddStringToObject(root.get(),"version",esp_app_get_description()->version);cJSON_AddBoolToObject(root.get(),"ready",legacy.ready);cJSON_AddBoolToObject(root.get(),"activity_settling",state.activity_settling);cJSON_AddStringToObject(root.get(),"activity_error",state.error.c_str());decimal(root.get(),"expected_config_revision",config->config_revision);decimal(root.get(),"expected_presentation_revision",config->presentation_revision);decimal(root.get(),"expected_state_revision",state.state_revision);cJSON_AddStringToObject(root.get(),"expected_boot_id",current_boot().str().c_str());
+        const auto snapshot=control.snapshot();Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddStringToObject(root.get(),"version",esp_app_get_description()->version);cJSON_AddBoolToObject(root.get(),"ready",snapshot.ready);cJSON_AddBoolToObject(root.get(),"activity_settling",state.activity_settling);cJSON_AddStringToObject(root.get(),"activity_error",state.error.c_str());decimal(root.get(),"expected_config_revision",config->config_revision);decimal(root.get(),"expected_presentation_revision",config->presentation_revision);decimal(root.get(),"expected_state_revision",state.state_revision);cJSON_AddStringToObject(root.get(),"expected_boot_id",current_boot().str().c_str());
         cJSON_AddStringToObject(root.get(),"hostname",device_settings::hostname());cJSON_AddStringToObject(root.get(),"front_physical_address",device_settings::format_physical_address(device_settings::front_physical_address()).c_str());
-        if(legacy.front_physical_address==0xffff)cJSON_AddNullToObject(root.get(),"determined_front_physical_address");else cJSON_AddStringToObject(root.get(),"determined_front_physical_address",device_settings::format_physical_address(legacy.front_physical_address).c_str());
+        if(snapshot.front_physical_address==0xffff)cJSON_AddNullToObject(root.get(),"determined_front_physical_address");else cJSON_AddStringToObject(root.get(),"determined_front_physical_address",device_settings::format_physical_address(snapshot.front_physical_address).c_str());
         cJSON_AddNumberToObject(root.get(),"free_heap",esp_get_free_heap_size());cJSON_AddNumberToObject(root.get(),"free_internal_heap",heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));cJSON_AddNumberToObject(root.get(),"largest_internal_block",heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
         wifi_ap_record_t ap{};const bool connected=esp_wifi_sta_get_ap_info(&ap)==ESP_OK;cJSON_AddBoolToObject(root.get(),"wifi_connected",connected);if(connected){cJSON_AddNumberToObject(root.get(),"wifi_rssi",ap.rssi);cJSON_AddNumberToObject(root.get(),"wifi_channel",ap.primary);}cJSON_AddStringToObject(root.get(),"hardware","Amity Board / Fin");
         const auto projection=ae::projected_activities(*config);int current=-1;for(const auto& session:state.sessions)for(size_t n=0;n<projection.size();++n)if(projection[n]==session.activity_id)current=static_cast<int>(n);cJSON_AddNumberToObject(root.get(),"current_activity",current);
-        bool scanning=legacy.discovering;for(const auto& owner:control.owned_snapshots())scanning=scanning||owner.discovering;cJSON_AddBoolToObject(root.get(),"discovering",scanning);cJSON_AddNumberToObject(root.get(),"discovery_generation",scan_generation+legacy.discovery_generation);cJSON_AddNumberToObject(root.get(),"activity_generation",legacy.activity_generation);cJSON_AddNumberToObject(root.get(),"front_address",legacy.front_address);cJSON_AddNumberToObject(root.get(),"back_address",legacy.back_address);cJSON_AddNumberToObject(root.get(),"tx_errors",legacy.tx_errors);cJSON_AddNumberToObject(root.get(),"rx_dropped",legacy.rx_dropped);
+        bool scanning=snapshot.discovering;for(const auto& owner:control.owned_snapshots())scanning=scanning||owner.discovering;cJSON_AddBoolToObject(root.get(),"discovering",scanning);cJSON_AddNumberToObject(root.get(),"discovery_generation",scan_generation+snapshot.discovery_generation);cJSON_AddNumberToObject(root.get(),"activity_generation",snapshot.activity_generation);cJSON_AddNumberToObject(root.get(),"front_address",snapshot.front_address);cJSON_AddNumberToObject(root.get(),"back_address",snapshot.back_address);cJSON_AddNumberToObject(root.get(),"tx_errors",snapshot.tx_errors);cJSON_AddNumberToObject(root.get(),"rx_dropped",snapshot.rx_dropped);
         auto* devices=cJSON_AddArrayToObject(root.get(),"devices");for(const auto& c:choices)if(c.observation){const auto& o=*c.observation;auto* item=cJSON_CreateObject();cJSON_AddItemToArray(devices,item);cJSON_AddStringToObject(item,"name",c.value.c_str());cJSON_AddStringToObject(item,"title",c.title.c_str());cJSON_AddStringToObject(item,"location",c.location.c_str());cJSON_AddStringToObject(item,"bus",o.endpoint.port.side==m::Side::front?"front":"back");cJSON_AddNumberToObject(item,"address",o.endpoint.logical_address);cJSON_AddNumberToObject(item,"physical_address",o.physical_address);cJSON_AddNumberToObject(item,"type",o.device_type);cJSON_AddNumberToObject(item,"vendor_id",o.vendor_id);}cJSON_AddItemToObject(root.get(),"device_choices",encode_choices(choices));result=respond(req,root.get());return true;
     }
     if(req->method!=HTTP_POST||(path!=prefix&&path!=std::string(prefix)+"/discover"&&path!=std::string(prefix)+"/activity"&&path!=std::string(prefix)+"/restore")){result=reject(req,"Unknown activity editor operation","404 Not Found");return true;}
     std::string body;if(!web::body(req,body)){result=ESP_FAIL;return true;}Json root(parse_json_input(body),cJSON_Delete);
-    if(!root||body.size()>cs::configuration_compatibility_limit||body.find('\0')!=std::string::npos){result=reject(req,"Invalid activity editor JSON","400 Bad Request");return true;}
+    if(!root||body.find('\0')!=std::string::npos){result=reject(req,"Invalid activity editor JSON","400 Bad Request");return true;}
     const auto request=m::MessageId::parse(text(root.get(),"request_id"));const auto digest=cs::sha256_hex(path+body);if(!request){result=reject(req,"An activity request identity is required","400 Bad Request");return true;}
     for(const auto& op:operations)if(op.id==*request){result=op.digest==digest?operation_json(req,op):reject(req,"The request identity already describes a different action");return true;}
     if(operations.size()>=32){const auto done=std::find_if(operations.begin(),operations.end(),[](const auto& op){return !pending(op.stage);});if(done==operations.end()){result=reject(req,"Activity administration is busy","503 Service Unavailable");return true;}operations.erase(done);}
     Operation op;op.id=*request;op.digest=digest;op.revisions=config->revisions();op.boot=current_boot();
     if(path==std::string(prefix)+"/restore"){
-        cs::ConfigurationV2 backup,candidate;std::string error;
+        cs::Configuration backup,candidate;std::string error;
         if(!state.sessions.empty()||state.activity_settling){result=reject(req,"Stop playback before restoring a saved configuration");return true;}
         if(!ae::parse_restore_request(root.get(),*config,current_boot(),backup,error)||!cs::restore_main_configuration(backup,*config,true,candidate,op.unresolved,error)){result=reject(req,error,"400 Bad Request");return true;}
         if(amity::activate_distributed_configuration(std::move(candidate),config->revisions(),op.id)!=ESP_OK){result=reject(req,"The backup could not be saved");return true;}op.kind="config";op.stage="configuring";
@@ -118,7 +118,7 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
     }else if(path==prefix){
         ae::Submission submission;std::string parse_error;if(!ae::parse_submission(body,*config,submission,parse_error)){result=reject(req,parse_error);return true;}
         const auto& edits=submission.rows;
-        cs::ConfigurationV2 candidate;std::string error;if(!ae::edit(*config,edits,choices,[](uint8_t* data,size_t size){esp_fill_random(data,size);return true;},candidate,op.unresolved,error)){result=reject(req,error);return true;}
+        cs::Configuration candidate;std::string error;if(!ae::edit(*config,edits,choices,[](uint8_t* data,size_t size){esp_fill_random(data,size);return true;},candidate,op.unresolved,error)){result=reject(req,error);return true;}
         if(amity::activate_distributed_configuration(std::move(candidate),config->revisions(),op.id)!=ESP_OK){result=reject(req,"The activity configuration could not be saved");return true;}op.kind="config";op.stage="configuring";
     }else{
         uint64_t revision_value,semantic;if(!keys(root.get(),{"request_id","activity_id","expected_config_revision","expected_state_revision","expected_boot_id"})||!revision(root.get(),"expected_config_revision",semantic)||semantic!=config->config_revision||!revision(root.get(),"expected_state_revision",revision_value)||revision_value!=state.state_revision||text(root.get(),"expected_boot_id")!=current_boot().str()){result=reject(req,"Playback changed. Review the current activity before continuing");return true;}
@@ -129,7 +129,7 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         }else{
             const auto id=m::ActivityId::parse(text(root.get(),"activity_id"));const auto activity=std::find_if(config->activities.begin(),config->activities.end(),[&](const auto& a){return id&&a.activity_id==*id;});
             if(activity==config->activities.end()){result=reject(req,"The selected activity no longer exists");return true;}
-            admitted=control.request_activity_v2(activity->zone_id,activity->activity_id,op.id,revision_value);op.kind="activity";
+            admitted=control.request_activity(activity->zone_id,activity->activity_id,op.id,revision_value);op.kind="activity";
         }
         if(admitted!=ESP_OK){result=reject(req,admitted==ESP_ERR_TIMEOUT?"System is settling. Try again shortly.":"The activity request could not be admitted");return true;}
         update(control,op);

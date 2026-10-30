@@ -24,7 +24,7 @@ BOOT,REMOTE_BOOT,RENAMED_BOOT='a'*32,'b'*32,'c'*32
 fixture=dict(hostname='amity-dut',boot_id=BOOT,hostname_probes=0,hostname_ready=False,early_navigation=False,determined=None,calls=[],gets=[],fail=False,
              settings_fail=False,settings_outcome='applied',settings_http500=False,remote_status='ready',named=True,operations={},next_id=100)
 editor=dict(version=1,activities=[],device_choices=[],expected_config_revision='1',expected_presentation_revision='1')
-configuration=dict(version=2,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],zones=[],
+configuration=dict(version=3,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],zones=[],
                    octopuses=[dict(octopus_id=MAIN,supported_tentacles=1),dict(octopus_id=MEMBER,supported_tentacles=4)])
 def adapter(slot,presence='present',configured=True,default='1.0.0.0',observed=None):
     return dict(tentacle_id=slot,name=f'HDMI adapter {slot+1}',configured=configured,presence=presence,presence_generation=str(slot+1),
@@ -49,14 +49,14 @@ class Handler(SimpleHTTPRequestHandler):
         system=dict(octopus_id=MAIN,hostname=fixture['hostname'],named_devices=[dict(octopus_id=MAIN,hostname=fixture['hostname'])],
                     membership=dict(peers=[dict(octopus_id=MEMBER,enrolled=True,ready=fixture['remote_status']=='ready')]))
         if fixture['named']:system['named_devices'].append(dict(octopus_id=MEMBER,hostname='amity-bedroom'))
-        values={'/api/setup':dict(required=False,hostname=fixture['hostname']),'/api/v2/activity-editor':editor,
-                '/api/v2/activity-editor/status':status,'/api/v2/config':configuration,'/api/v2/system':system,
+        values={'/api/setup':dict(required=False,hostname=fixture['hostname']),'/api/activity-editor':editor,
+                '/api/activity-editor/status':status,'/api/config':configuration,'/api/system':system,
                 '/api/remotes':dict(bonded=False,ready=True,devices=[]),'/api/matter':dict(fabrics=[]),'/api/homekit':dict(available=False)}
         if self.path in values:return self.reply(deepcopy(values[self.path]))
-        if self.path.startswith('/api/v2/devices/') and self.path.endswith('/settings'):
-            owner=self.path.split('/')[4];state='ready' if owner==MAIN else fixture['remote_status']
+        if self.path.startswith('/api/devices/') and self.path.endswith('/settings'):
+            owner=self.path.removeprefix('/api/devices/').split('/',1)[0];state='ready' if owner==MAIN else fixture['remote_status']
             return self.reply(dict(status=state,settings=deepcopy(settings[owner]) if state!='unsupported' else None,error=''))
-        if self.path.startswith('/api/v2/operations/'):
+        if self.path.startswith('/api/operations/'):
             operation=fixture['operations'][self.path.rsplit('/',1)[-1]];operation['polls']+=1
             stage='admitted' if operation['polls']==1 else operation['outcome']
             return self.reply(dict(operation_id=operation['id'],stage=stage,rebooting=stage=='applied'))
@@ -70,8 +70,8 @@ class Handler(SimpleHTTPRequestHandler):
             previous=fixture['boot_id'];fixture['hostname']=data['hostname'].lower();fixture['boot_id']=RENAMED_BOOT;settings[MAIN]['boot_id']=RENAMED_BOOT
             fixture['hostname_probes']=0;fixture['hostname_ready']=fixture['early_navigation']=False
             return self.reply(dict(hostname=fixture['hostname'],rebooting=True,previous_boot_id=previous,device_id=MAIN))
-        if self.path.startswith('/api/v2/devices/') and self.path.endswith('/settings'):
-            owner=self.path.split('/')[4];current=settings[owner]
+        if self.path.startswith('/api/devices/') and self.path.endswith('/settings'):
+            owner=self.path.removeprefix('/api/devices/').split('/',1)[0];current=settings[owner]
             if fixture['settings_fail']:return self.reply(dict(stage='failed',message='Stop activities before saving.',rebooting=False))
             if data['expected_boot_id']!=current['boot_id'] or data['expected_settings_revision']!=current['settings_revision']:
                 return self.reply(dict(stage='failed',message='Settings changed. Refresh before saving.',rebooting=False))
@@ -140,7 +140,7 @@ def main():
             expect(page.locator('#advanced')).not_to_contain_text('Front physical address');passed('global address control moved out of Advanced; firmware and remote diagnostics retained')
             before=deepcopy(fixture['calls']);d=open_settings(0);expect(d.locator('h3')).to_have_text('living-room settings');expect(input_for(d,0)).to_be_enabled()
             expect(d).to_contain_text('HDMI adapter 1');expect(d).to_contain_text('Detected front address: Unavailable');expect(d).to_contain_text('Selected front address: 1.0.0.0');assert fixture['calls']==before
-            passed('fixed legacy adapter remains editable; opening named device settings sends no mutation or scan');close(d)
+            passed('fixed adapter remains editable; opening named device settings sends no mutation or scan');close(d)
             d=open_settings();expect(d.locator('h3')).to_have_text('amity-bedroom settings');expect(d).to_contain_text('HDMI adapter 4')
             for slot in (0,3):expect(input_for(d,slot)).to_be_enabled()
             for slot in (1,2):expect(input_for(d,slot)).to_be_disabled()
@@ -158,7 +158,7 @@ def main():
             fixture['settings_fail']=True;save.click();expect(d.get_by_role('status')).to_contain_text('Stop activities before saving');expect(input_for(d,3)).to_have_value('b.c.0.0');expect(save).to_be_enabled();assert len(settings_posts())==start+1
             passed('failed quiescence/save preserves edit and controls without automatic retry')
             fixture['settings_fail']=False;captured=deepcopy(settings[MEMBER]);save.click();expect(d.get_by_role('status')).to_contain_text('Settings saved. Restarting amity-bedroom')
-            path,body=settings_posts()[-1];assert path==f'/api/v2/devices/{MEMBER}/settings'
+            path,body=settings_posts()[-1];assert path==f'/api/devices/{MEMBER}/settings'
             assert body['expected_boot_id']==captured['boot_id'] and body['expected_settings_revision']==captured['settings_revision']
             assert body['confirm_restart'] is True and body['changes']==[dict(tentacle_id=3,expected_presence_generation=captured['adapters'][3]['presence_generation'],default_front_physical_address='B.C.0.0')]
             assert settings[MEMBER]['adapters'][1]['default_front_physical_address']=='4.0.0.0' and settings[MAIN]['settings_revision']=='1'

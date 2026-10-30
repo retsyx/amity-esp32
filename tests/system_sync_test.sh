@@ -16,7 +16,7 @@ cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$j
     -I"$root/components/config_store/include" -I"$root/components/amity_system/include" \
     -I"$root/components/system_sync/include" -I"$root/components/consortium/include" \
     "$root/components/amity_system/model.cpp" "$root/components/config_store/system_configuration.cpp" \
-    "$root/components/config_store/configuration_journal.cpp" "$root/components/config_store/configuration_migration.cpp" \
+    "$root/components/config_store/configuration_journal.cpp" \
     "$root/components/consortium/json.cpp" "$root/components/consortium/wire.cpp" "$root/components/consortium/owned_intent.cpp" \
     "$root/components/consortium/settings.cpp" \
     "$root/components/consortium/update.cpp" "$root/components/consortium/transfer.cpp" \

@@ -9,7 +9,7 @@ struct ConfigurationActivationStatus {
     std::string phase="idle",error;
 };
 esp_err_t start_configuration_synchronization(SystemControl&);
-esp_err_t activate_distributed_configuration(config_store::ConfigurationV2,config_store::RevisionPair,system::MessageId);
+esp_err_t activate_distributed_configuration(config_store::Configuration,config_store::RevisionPair,system::MessageId);
 ConfigurationActivationStatus configuration_activation_status();
 std::vector<system::CecObservation> discovered_equipment();
 esp_err_t request_equipment_scan();

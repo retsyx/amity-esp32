@@ -29,8 +29,6 @@ public:
     esp_err_t set_presence_reader(std::function<int(int)> f){return local_.set_presence_reader(std::move(f));}
     std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const{return local_.adapter_runtime_snapshot();}
     esp_err_t commit_adapter_settings(system::BootId boot,std::vector<std::pair<uint8_t,uint64_t>> presence,uint64_t deadline,std::function<esp_err_t()> persist){return local_.commit_adapter_settings(boot,std::move(presence),deadline,std::move(persist));}
-    bool configure(std::vector<Activity> activities){return local_.configure(std::move(activities));}
-    esp_err_t configure_with_commit(std::vector<Activity> activities,std::function<esp_err_t()> commit){return local_.configure_with_commit(std::move(activities),std::move(commit));}
     bool accepts_local_input()const;
     esp_err_t request_activity(int index);
     bool select_activity(int index){return request_activity(index)==ESP_OK;}
@@ -56,13 +54,13 @@ public:
     bool refresh_owned_context(system::OctopusId owner){return local_.refresh_owned_context(owner);}
     Snapshot snapshot()const{return local_.snapshot();}
     void on_change(std::function<void(const Snapshot&)> f){local_.on_change(std::move(f));}
-    esp_err_t configure_v2(config_store::ConfigurationV2,std::function<esp_err_t()> commit={});
-    esp_err_t configure_passive_metadata(const config_store::ConfigurationV2&);
-    esp_err_t request_activity_v2(system::ZoneId,system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
-    esp_err_t stop_zone_v2(system::ZoneId);
+    esp_err_t configure(config_store::Configuration,std::function<esp_err_t()> commit={});
+    esp_err_t configure_passive_metadata(const config_store::Configuration&);
+    esp_err_t request_activity(system::ZoneId,system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
+    esp_err_t stop_zone(system::ZoneId);
     system::ExecutionSnapshot execution_snapshot()const;
     std::vector<system::CecObservation> native_observations()const;
-    std::optional<config_store::ConfigurationV2> active_configuration()const{auto p=std::atomic_load(&active_);return p?std::optional<config_store::ConfigurationV2>(*p):std::nullopt;}
+    std::optional<config_store::Configuration> active_configuration()const{auto p=std::atomic_load(&active_);return p?std::optional<config_store::Configuration>(*p):std::nullopt;}
     std::optional<config_store::ConfiguredActivity> external_activity(unsigned)const;
     std::optional<config_store::ExternalSlot> external_slot(unsigned)const;
     std::optional<unsigned> external_activity_index(const Snapshot&)const;
@@ -85,15 +83,15 @@ public:
     bool maintenance_ready()const{return local_.maintenance_ready();}
 private:
     bool dispatch_owned(const system::OwnedIntent&);
-    std::vector<Activity> activities(const config_store::ConfigurationV2&)const;
-    void update_outcomes_locked(const Snapshot&,const config_store::ConfigurationV2*)const;
+    std::vector<Activity> activities(const config_store::Configuration&)const;
+    void update_outcomes_locked(const Snapshot&,const config_store::Configuration*)const;
     void refresh_outcomes()const;
     HubService local_;
     cec::BoardProfile profile_=cec::legacy_board2_profile;
     system::ConsortiumId consortium_;
     system::OctopusId octopus_;
     system::BootId boot_;
-    std::shared_ptr<const config_store::ConfigurationV2> active_;
+    std::shared_ptr<const config_store::Configuration> active_;
     std::shared_ptr<const std::string> hardware_error_;
     std::shared_ptr<const OwnedSender> sender_;
     std::atomic<bool> local_coordinator_{true},maintenance_{false};

@@ -125,7 +125,7 @@ class Activity:
             raise ActivityConflict("Activity configuration writes require the DUT to be in standby")
 
     def _full_configuration(self, document):
-        full = self.dut.request("/api/v2/config")
+        full = self.dut.request("/api/config")
         if (not isinstance(full, dict) or not isinstance(full.get("components"), list)
                 or full.get("config_revision") != document["expected_config_revision"]
                 or full.get("presentation_revision") != document["expected_presentation_revision"]):
@@ -245,7 +245,7 @@ class Activity:
                          expected_presentation_revision=payload["expected_presentation_revision"])
             self._write_attempted = True
             self._creation_request_id = payload["request_id"]
-            self._write("/api/v2/activity-editor", payload, deadline, trace, stage="applied")
+            self._write("/api/activity-editor", payload, deadline, trace, stage="applied")
             document, state = self._view()
             if not self._recognize(document, state):
                 raise AssertionError("The created activity did not appear in the UI")
@@ -278,7 +278,7 @@ class Activity:
             self._needs_standby = True  # Admission may succeed even if its HTTP reply is lost.
             self._last_start_request, self._last_start_terminal = action.request_id, False
         try:
-            action.operation = self._write("/api/v2/activity-editor/activity", payload, deadline, trace, stage="complete")
+            action.operation = self._write("/api/activity-editor/activity", payload, deadline, trace, stage="complete")
             if kind == "start":
                 self._last_start_terminal = True
 
@@ -351,7 +351,7 @@ class Activity:
                 rows = [row for row in document["activities"] if row.get("activity_id") != self.activity_id]
                 self._require_standby(state)
                 trace = self._record("remove_activity")
-                self._write("/api/v2/activity-editor", self._editor_payload(document, rows), deadline, trace, stage="applied")
+                self._write("/api/activity-editor", self._editor_payload(document, rows), deadline, trace, stage="applied")
                 if any(row.get("activity_id") == self.activity_id for row in self._view(check_health=False)[0]["activities"]):
                     raise AssertionError("The created activity remains after cleanup")
                 self._row_removed = True
@@ -365,7 +365,7 @@ class Activity:
             return
         operation = self._creation_operation
         if operation is None:
-            operation = self.dut.request("/api/v2/operations/" + self._creation_request_id)
+            operation = self.dut.request("/api/operations/" + self._creation_request_id)
         result = self.dut.wait_operation(operation, timeout=self._remaining(deadline))
         if result.get("operation_id") != self._creation_request_id or result.get("stage") != "applied":
             raise AssertionError("The partial activity creation outcome is unconfirmed")
@@ -394,7 +394,7 @@ class Activity:
                     payload = {"request_id": uuid4().hex, "expected_config_revision": full["config_revision"],
                                "expected_presentation_revision": full["presentation_revision"], "configuration": candidate}
                     trace = self._record("remove_equipment", removed_equipment=sorted(removable))
-                    self._write("/api/v2/config", payload, deadline, trace, stage="applied")
+                    self._write("/api/config", payload, deadline, trace, stage="applied")
                     after = self._full_configuration(self._view(check_health=False)[0])
                     if any(record.get("component_id") in removable for record in after["components"]):
                         raise AssertionError("New fixture equipment remains after cleanup")
@@ -413,7 +413,7 @@ class Activity:
             # needs the ordinary standby cancellation before row removal.
             terminal = self._last_start_terminal
             if not terminal and self._last_start_request:
-                operation = self.dut.request("/api/v2/operations/" + self._last_start_request)
+                operation = self.dut.request("/api/operations/" + self._last_start_request)
                 if operation.get("operation_id") != self._last_start_request:
                     raise AssertionError("Cleanup cannot identify the pending activity request")
                 terminal = operation.get("stage") in {"complete", "failed", "rejected", "cancelled"}

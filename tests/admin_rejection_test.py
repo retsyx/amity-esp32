@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the structured v2 rejection response before any body is consumed."""
+"""Exercise the structured administration rejection response before any body is consumed."""
 from pathlib import Path
 import os
 import shlex
@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    source = (ROOT / 'components/web_admin/v2_admin.cpp').read_text()
+    source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
     actual = function(source, 'std::string json(cJSON* root)') + function(
         source, 'esp_err_t error(httpd_req_t* req,')
     fixture = r'''
@@ -60,7 +60,7 @@ int main(){
             '-I' + str(cjson), str(output / 'test.cpp'), str(output / 'cjson.o'),
             '-o', str(output / 'test')], check=True)
         subprocess.run([str(output / 'test')], check=True)
-    print('PASS structured v2 rejection closes unread requests and preserves escaped error fields')
+    print('PASS structured administration rejection closes unread requests and preserves escaped error fields')
 
 
 if __name__ == '__main__':

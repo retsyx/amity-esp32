@@ -90,7 +90,10 @@ function assertOriginalReferences(document){
  await assert.rejects(()=>failed.load(applied),/Activities changed in another session/);
 
  const restore=fixture(),imported=await restore.load(original);
- assert.throws(()=>restore.adapter.route('restore',imported),/Choose display/);
+ const restored=restore.adapter.route('restore',{configuration:{version:3,activities:[]},expected_boot_id:'c'.repeat(32)});
+ assert.equal(restored.path,'activity-editor/restore');
+ assert.equal(restored.data.configuration.version,3);
+ assert.equal(restored.data.expected_boot_id,'c'.repeat(32));
  restore.adapter.close();
  await restore.load({...original,activities:[]});
  assert.throws(()=>restore.save(imported),/Choose display/);

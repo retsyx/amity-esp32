@@ -1,6 +1,6 @@
 # Current machine-readable contracts
 
-These closed contracts describe qualified saved intent and owner delivery. Schema IDs are local identifiers, not a deployed service. [Addressing](../03-domain-model-and-addressing.md), [storage](../11-config-storage-and-migration.md) and [transport](../08-consortium-transport-and-routing.md) own the semantics.
+These closed contracts describe qualified saved intent and owner delivery. Schema IDs are local identifiers, not a deployed service. [Addressing](../03-domain-model-and-addressing.md), [storage](../11-configuration-storage.md) and [transport](../08-consortium-transport-and-routing.md) own the semantics.
 
 | Contract | Scope |
 |---|---|

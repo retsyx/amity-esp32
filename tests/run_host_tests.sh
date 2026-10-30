@@ -67,9 +67,9 @@ json="$root/managed_components/espressif__cjson/cJSON"
 test -f "$json/cJSON.c" || json="$root/managed_components/espressif__cjson"
 cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$json/cJSON.c" -o "$out/cjson.o"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-  -I"$json" -I"$root/components/web_admin/include" -I"$root/components/amity_system/include" -I"$root/components/cec/include" -I"$root/components/amity_hub/include" \
-  "$root/components/web_admin/configuration.cpp" "$root/tests/configuration_test.cpp" "$out/cjson.o" -o "$out/configuration_test"
-"$out/configuration_test"
+  -I"$json" -I"$root/components/web_admin/include" \
+  "$root/tests/json_input_test.cpp" "$out/cjson.o" -o "$out/json_input_test"
+"$out/json_input_test"
 node --check "$root/components/web_admin/assets/app.js"
 node --check "$root/components/web_admin/assets/system.js"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \

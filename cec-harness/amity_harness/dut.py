@@ -229,15 +229,15 @@ class DUT:
             self._token = None
 
     def get_state(self):
-        return self.request("/api/v2/activity-editor/status")
+        return self.request("/api/activity-editor/status")
 
     def get_system(self):
         """Read the existing UI system snapshot, including this DUT's identity."""
-        return self.request("/api/v2/system")
+        return self.request("/api/system")
 
     def get_configuration(self):
         """Return the same activity editor document used by the ordinary UI."""
-        return self.request("/api/v2/activity-editor")
+        return self.request("/api/activity-editor")
 
     def set_configuration(self, configuration, *, timeout=40):
         """Save an activity editor document using its existing revision checks.
@@ -249,7 +249,7 @@ class DUT:
         payload = dict(configuration)
         payload.pop("device_choices", None)
         payload["request_id"] = uuid4().hex
-        response = self.request("/api/v2/activity-editor", payload)
+        response = self.request("/api/activity-editor", payload)
         return self.wait_operation(response, timeout=timeout)
 
     def wait_operation(self, operation, *, timeout=40, poll_interval=0.25):
@@ -261,14 +261,14 @@ class DUT:
             if time.monotonic() >= deadline:
                 raise TimeoutError("Amity UI operation did not complete")
             time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
-            operation = self.request("/api/v2/operations/" + operation["operation_id"])
+            operation = self.request("/api/operations/" + operation["operation_id"])
         if operation.get("stage") in {"failed", "rejected", "cancelled", "unknown"}:
             raise RuntimeError(operation.get("message") or "Amity UI operation failed")
         return operation
 
     def start_hdmi_scan(self):
         """Submit the UI's HDMI scan; its response acknowledges submission only."""
-        return self.request("/api/v2/activity-editor/discover", {"request_id": uuid4().hex})
+        return self.request("/api/activity-editor/discover", {"request_id": uuid4().hex})
 
     def wait_for(self, predicate, *, timeout=60, poll_interval=0.25):
         """Poll existing UI status until ``predicate(state)`` is true."""

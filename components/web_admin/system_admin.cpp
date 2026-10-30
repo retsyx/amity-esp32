@@ -1,6 +1,5 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
-#include "v2_admin.hpp"
-#include "configuration.hpp"
+#include "system_admin.hpp"
 #include "system_configuration.hpp"
 #include "configuration_replacement.hpp"
 #include "config_store.hpp"
@@ -34,11 +33,10 @@ void wipe_json(cJSON* value){if(!value)return;for(auto* child=value->child;child
 struct SensitiveRequest {std::string& body;cJSON* json;bool enabled;~SensitiveRequest(){if(enabled){wipe(body);wipe_json(json);}}};
 struct SensitiveString {std::string& value;~SensitiveString(){wipe(value);}};
 amity::SystemControl* control=nullptr;
-std::optional<config_store::ConfigurationV2> active;
+std::optional<config_store::Configuration> active;
 bool configuration_passive=false;
-std::optional<config_store::ConfigurationV2> deferred_migration;
+std::optional<config_store::Configuration> deferred_configuration;
 uint64_t deferred_epoch=1;
-std::vector<std::string> migration_tasks;
 struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;};
 bool operation_pending(const Tracked& operation){return operation.status=="admitted"||operation.status=="configuring"||operation.status=="preparing"||operation.status=="activating";}
 std::vector<Tracked> operations;
@@ -127,7 +125,7 @@ esp_err_t admission_response(httpd_req_t* req){
     return send(req,result.get());
 }
 std::optional<std::string> device_settings_target(const std::string& path){
-    const std::string prefix="/api/v2/devices/",suffix="/settings";
+    const std::string prefix="/api/devices/",suffix="/settings";
     if(path.size()!=prefix.size()+32+suffix.size()||path.compare(0,prefix.size(),prefix)||path.compare(path.size()-suffix.size(),suffix.size(),suffix))return {};
     const auto id=path.substr(prefix.size(),32);
     if(!std::all_of(id.begin(),id.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');})||id==std::string(32,'0'))return {};
@@ -135,20 +133,25 @@ std::optional<std::string> device_settings_target(const std::string& path){
 }
 std::optional<std::vector<std::string>> request_fields(const std::string& path){
     std::vector<std::string> allowed{"request_id"};
-    if(path=="/api/v2/config"||path=="/api/v2/config/validate")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","configuration"});
-    else if(path=="/api/v2/replacements/preview"||path=="/api/v2/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
-    else if(path=="/api/v2/membership/scan"){}
-    else if(path=="/api/v2/membership/cancel")allowed.push_back("scan_id");
-    else if(path=="/api/v2/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","setup_code","name"});
-    else if(path=="/api/v2/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id"});
-    else if(path=="/api/v2/updates/validate")allowed.insert(allowed.end(),{"manifest","signature"});
-    else if(path=="/api/v2/updates/cohort")allowed.insert(allowed.end(),{"manifest","signature","targets"});
-    else if(path=="/api/v2/updates/chunk")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id","offset","data_hex"});
-    else if(path=="/api/v2/updates/install")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id"});
-    else if(path=="/api/v2/updates/cancel")allowed.push_back("cohort_job_id");
+    if(path=="/api/config"||path=="/api/config/validate")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","configuration"});
+    else if(path=="/api/replacements/preview"||path=="/api/replacements/apply")allowed.insert(allowed.end(),{"expected_config_revision","expected_presentation_revision","previous_octopus_id","replacement_octopus_id","old_hardware_isolated","ports","equipment"});
+    else if(path=="/api/membership/scan"){}
+    else if(path=="/api/membership/cancel")allowed.push_back("scan_id");
+    else if(path=="/api/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","setup_code","name"});
+    else if(path=="/api/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id"});
+    else if(path=="/api/updates/validate")allowed.insert(allowed.end(),{"manifest","signature"});
+    else if(path=="/api/updates/cohort")allowed.insert(allowed.end(),{"manifest","signature","targets"});
+    else if(path=="/api/updates/chunk")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id","offset","data_hex"});
+    else if(path=="/api/updates/install")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id"});
+    else if(path=="/api/updates/cancel")allowed.push_back("cohort_job_id");
     else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","confirm_restart","changes"});
     else return {};
     return allowed;
+}
+bool administrative_path(const std::string& path){
+    for(const auto* exact:{"/api/system","/api/config","/api/config/validate","/api/backup"})if(path==exact)return true;
+    for(const auto* prefix:{"/api/devices/","/api/membership/","/api/operations/","/api/updates","/api/replacements/"})if(path.rfind(prefix,0)==0)return true;
+    return false;
 }
 void publish_inputs(){
     if(!active)return;
@@ -163,7 +166,7 @@ void publish_inputs(){
 }
 void update_operation(Tracked& operation){
     if(!operation_pending(operation))return;
-    if(operation.path=="/api/v2/membership/remove"){
+    if(operation.path=="/api/membership/remove"){
         Json status(cJSON_Parse(amity::consortium::runtime_removal_operation(operation.candidate,*m::MessageId::parse(operation.id)).c_str()),cJSON_Delete);
         if(!status)return;
         const auto stage=string(status.get(),"stage");
@@ -179,12 +182,12 @@ void update_operation(Tracked& operation){
         operation.error=string(status.get(),"message");operation.rebooting=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(status.get(),"rebooting"));
         return;
     }
-    if(operation.path=="/api/v2/config"||operation.path=="/api/v2/replacements/apply"){
+    if(operation.path=="/api/config"||operation.path=="/api/replacements/apply"){
         const auto status=amity::configuration_activation_status();
         if(status.request_id.str()==operation.id){operation.status=status.phase;operation.error=status.error;}
         return;
     }
-    if(operation.path=="/api/v2/membership/add"){
+    if(operation.path=="/api/membership/add"){
         const auto state=amity::consortium::runtime_admission_status();
         if(state.scan_id!=operation.scan_id){
             const auto peers=amity::consortium::runtime_peers();
@@ -212,7 +215,7 @@ esp_err_t operation_response(httpd_req_t* req,Tracked& operation){
     cJSON_AddBoolToObject(result.get(),"retryable",false);
     cJSON_AddStringToObject(result.get(),"boot_id",system_services::boot_id());
     cJSON_AddBoolToObject(result.get(),"rebooting",operation.rebooting);
-    if(operation.path=="/api/v2/membership/remove")cJSON_AddStringToObject(result.get(),"reset",operation.reset.c_str());
+    if(operation.path=="/api/membership/remove")cJSON_AddStringToObject(result.get(),"reset",operation.reset.c_str());
     const auto sent=send(req,result.get());
     if(device_settings_target(operation.path))amity::consortium::runtime_device_settings_response_attempted(operation.candidate,*m::MessageId::parse(operation.id));
     return sent;
@@ -222,7 +225,7 @@ esp_err_t snapshot(httpd_req_t* req){
     const auto state=control->snapshot();const auto execution=control->execution_snapshot();
     const auto group=amity::consortium::runtime_status();
     cJSON_AddNumberToObject(result.get(),"api_version",2);
-    cJSON_AddStringToObject(result.get(),"mode",configuration_is_passive()?"passive":active?"coordinator":"migration_pending");
+    cJSON_AddStringToObject(result.get(),"mode",configuration_is_passive()?"passive":active?"coordinator":"configuration_pending");
     cJSON_AddStringToObject(result.get(),"consortium_id",control->consortium_id().str().c_str());
     cJSON_AddStringToObject(result.get(),"octopus_id",control->octopus_id().str().c_str());
     cJSON_AddStringToObject(result.get(),"boot_id",system_services::boot_id());
@@ -242,7 +245,7 @@ esp_err_t snapshot(httpd_req_t* req){
     cJSON_AddStringToObject(result.get(),"activity_error",state.activity_error.c_str());
     cJSON_AddStringToObject(result.get(),"hardware_error",control->hardware_error().c_str());
     auto* capabilities=cJSON_AddObjectToObject(result.get(),"capabilities");
-    cJSON_AddNumberToObject(capabilities,"configuration_schema",active?3:1);
+    cJSON_AddNumberToObject(capabilities,"configuration_schema",config_store::current_configuration_version);
     cJSON_AddNumberToObject(capabilities,"supported_tentacles",control->supported_tentacles());
     cJSON_AddNumberToObject(capabilities,"configured_tentacles_mask",control->configured_tentacles_mask());
     auto* connectors=cJSON_AddArrayToObject(capabilities,"connectors");
@@ -280,8 +283,6 @@ esp_err_t snapshot(httpd_req_t* req){
         cJSON_AddStringToObject(record,"firmware_identity",peer.firmware_identity.c_str());
         cJSON_AddStringToObject(record,"hostname",peer.hostname.c_str());
     }
-    auto* tasks=cJSON_AddArrayToObject(result.get(),"setup_tasks");
-    for(const auto& task:migration_tasks)cJSON_AddItemToArray(tasks,cJSON_CreateString(task.c_str()));
     auto* sessions=cJSON_AddArrayToObject(result.get(),"sessions");
     for(const auto& session:execution.sessions){
         auto* item=cJSON_CreateObject();cJSON_AddItemToArray(sessions,item);
@@ -312,74 +313,57 @@ esp_err_t snapshot(httpd_req_t* req){
 }
 }
 
-std::string active_v2_json(){return active?config_store::serialize_configuration_v2(*active):"";}
+std::string active_configuration_json(){return active?config_store::serialize_configuration(*active):"";}
 bool configuration_is_passive(){const auto membership=amity::consortium::runtime_status();return configuration_passive||!membership.coordinator||!membership.authority_ready;}
-esp_err_t load_v2(amity::SystemControl& service,bool defer_configuration){
+esp_err_t load_configuration(amity::SystemControl& service,bool defer_configuration){
     control=&service;std::string message;
     configuration_passive=defer_configuration;
     if(configuration_passive)return ESP_OK;
-    config_store::ConfigurationV2 configuration;
-    auto result=config_store::load_system_configuration(configuration,message);
-    const bool migration=result==ESP_ERR_NVS_NOT_FOUND;
-    const bool schema_upgrade=result==ESP_OK&&configuration.legacy_encoding;
-    bool staged_configuration=migration;
-    if(migration){
-        std::string original;result=config_store::read("config",original);
-        if(result==ESP_ERR_NVS_NOT_FOUND)original="{\"version\":1,\"activities\":[]}";
-        else if(result!=ESP_OK)return result;
-        Configuration legacy;if(!parse_configuration(original,legacy,message))return ESP_ERR_INVALID_ARG;
-        config_store::LegacyConfiguration old;
-        for(const auto& activity:legacy.activities)old.activities.push_back({activity.name,activity.display,activity.source,activity.audio,activity.switch_device,activity.switch_input});
-        // The saved local name already identifies its original owner/adapter.
-        // Available observations refine that address; missing equipment never
-        // postpones migration or adds an availability veto.
-        std::vector<config_store::LegacyEvidence> evidence;
-        const auto observed=service.snapshot();
-        for(const auto& device:observed.devices)if(device.resolved){
-            const auto count=std::count_if(observed.devices.begin(),observed.devices.end(),[&](const auto& other){return other.resolved&&other.bus==device.bus&&other.name==device.name;});
-            evidence.push_back({{service.port(device.bus),device.name},true,count==1});
-        }
-        result=config_store::migrate_system_configuration(original,old,service.consortium_id(),service.octopus_id(),evidence,configuration,migration_tasks,message);
-    }
-    if(result!=ESP_OK)return result;
     amity::consortium::RuntimeStartup original;
     if(amity::consortium::runtime_read_startup(service.octopus_id(),original)!=ESP_OK || original.passive() || original.epoch>1)return ESP_ERR_INVALID_STATE;
     const auto controller=original.authority_id?original.authority_id:service.octopus_id();
     if(controller!=service.octopus_id())return ESP_ERR_INVALID_STATE;
-    bool controller_bound=false;
-    if(!config_store::bind_original_controller(configuration,controller,controller_bound,message))return ESP_ERR_INVALID_STATE;
-    const auto expected=migration?config_store::RevisionPair{}:configuration.revisions();bool hardware_changed=false;
+    config_store::Configuration configuration;
+    auto result=config_store::load_system_configuration(configuration,message);
+    const bool initialize=result==ESP_ERR_NVS_NOT_FOUND;
+    if(initialize){
+        if(!config_store::initialize_configuration(service.consortium_id(),controller,service.supported_tentacles(),
+            [](uint8_t* bytes,size_t size){esp_fill_random(bytes,size);return true;},configuration,message))return ESP_ERR_INVALID_STATE;
+    }else if(result!=ESP_OK)return result;
+    if(configuration.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
+    const auto expected=initialize?config_store::RevisionPair{}:configuration.revisions();
+    bool hardware_changed=false;
     if(!config_store::reconcile_hardware_profile(configuration,service.octopus_id(),service.supported_tentacles(),hardware_changed,message))return ESP_ERR_INVALID_STATE;
-    if(hardware_changed||controller_bound||schema_upgrade){
-        if(staged_configuration)config_store::cancel_staged_configuration();
+    const bool staged_configuration=initialize||hardware_changed;
+    if(staged_configuration){
         result=config_store::stage_system_configuration(configuration,expected,message);if(result!=ESP_OK)return result;
-        result=config_store::staged_system_configuration(configuration);if(result!=ESP_OK)return result;staged_configuration=true;
+        result=config_store::staged_system_configuration(configuration);if(result!=ESP_OK)return result;
     }
     esp_ota_img_states_t boot_state{};const auto* running=esp_ota_get_running_partition();
     if(staged_configuration&&running&&esp_ota_get_state_partition(running,&boot_state)==ESP_OK&&boot_state==ESP_OTA_IMG_PENDING_VERIFY){
-        // Preserve the prior active record until this image has confirmed
-        // protected local health; only then activate the intent-only format.
+        // Initial or hardware configuration writes wait for this image's
+        // protected local health before replacing the current active record.
         amity::consortium::RuntimeStartup startup;if(amity::consortium::runtime_read_startup(service.octopus_id(),startup)!=ESP_OK)return ESP_ERR_INVALID_STATE;deferred_epoch=startup.epoch?startup.epoch:1;
         result=service.transition_coordinator_authority(false,deferred_epoch);if(result!=ESP_OK)return result;
         result=service.configure_passive_metadata(configuration);if(result!=ESP_OK)return result;
-        deferred_migration=configuration;active=configuration;configuration_passive=true;return ESP_OK;
+        deferred_configuration=configuration;active=configuration;configuration_passive=true;return ESP_OK;
     }
-    result=service.configure_v2(configuration,staged_configuration?std::function<esp_err_t()>([&]{return config_store::activate_system_configuration(configuration,message);}):std::function<esp_err_t()>{});
+    result=service.configure(configuration,staged_configuration?std::function<esp_err_t()>([&]{return config_store::activate_system_configuration(configuration,message);}):std::function<esp_err_t()>{});
     if(result!=ESP_OK)return result;
     active=std::move(configuration);publish_inputs();return ESP_OK;
 }
 
-esp_err_t finish_migration_bridge(){
-    if(!deferred_migration)return ESP_OK;
+esp_err_t finish_configuration_activation(){
+    if(!deferred_configuration)return ESP_OK;
     if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;
-    auto candidate=*deferred_migration;const auto enabled=control->transition_coordinator_authority(true,deferred_epoch);if(enabled!=ESP_OK)return enabled;
-    const auto activated=control->configure_v2(candidate,[candidate]() mutable {std::string message;return config_store::activate_system_configuration(candidate,message);});
+    auto candidate=*deferred_configuration;const auto enabled=control->transition_coordinator_authority(true,deferred_epoch);if(enabled!=ESP_OK)return enabled;
+    const auto activated=control->configure(candidate,[candidate]() mutable {std::string message;return config_store::activate_system_configuration(candidate,message);});
     if(activated!=ESP_OK){control->transition_coordinator_authority(false,deferred_epoch);return activated;}
-    deferred_migration.reset();configuration_passive=false;active=std::move(candidate);publish_inputs();return ESP_OK;
+    deferred_configuration.reset();configuration_passive=false;active=std::move(candidate);publish_inputs();return ESP_OK;
 }
 
-bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
-    if(path.rfind("/api/v2/",0)!=0)return false;
+bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
+    if(!administrative_path(path))return false;
     const uint64_t admitted_until_ms=static_cast<uint64_t>(esp_timer_get_time()/1000)+5000;
     if(!control){result=error(req,"not_ready","System configuration is not ready.","503 Service Unavailable",true);return true;}
     if(!configuration_passive){const auto configured=control->active_configuration();if(configured&&(!active||configured->revisions()!=active->revisions())){active=*configured;publish_inputs();}}
@@ -390,29 +374,30 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
             else result=web::json(req,amity::consortium::runtime_device_settings(owner));
             return true;
         }
-        if(path=="/api/v2/system"){result=snapshot(req);return true;}
-        if(path=="/api/v2/membership/admission"){result=admission_response(req);return true;}
-        if(path=="/api/v2/config"){result=active?web::json(req,active_v2_json()):error(req,"migration_pending","Equipment configuration needs recovery.","409 Conflict");return true;}
-        if(path=="/api/v2/updates"){result=web::json(req,system_services::updates::status_json());return true;}
-        if(path=="/api/v2/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}
-        if(path=="/api/v2/backups/pre-migration"){
-            std::string backup;const auto loaded=config_store::read("config",backup);
-            result=loaded==ESP_OK?web::json(req,backup):error(req,"backup_unavailable","No pre-migration configuration is retained.","404 Not Found");return true;
+        if(path=="/api/system"){result=snapshot(req);return true;}
+        if(path=="/api/membership/admission"){result=admission_response(req);return true;}
+        if(path=="/api/config"){result=active?web::json(req,active_configuration_json()):error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
+        if(path=="/api/updates"){result=web::json(req,system_services::updates::status_json());return true;}
+        if(path=="/api/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}
+        if(path=="/api/backup"){
+            if(!active){result=error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
+            httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity-config.json");
+            result=web::json(req,active_configuration_json());return true;
         }
-        if(path.rfind("/api/v2/operations/",0)==0){
-            const auto id=path.substr(19);auto found=std::find_if(operations.begin(),operations.end(),[&](const auto& o){return o.id==id;});
+        if(path.rfind("/api/operations/",0)==0){
+            const auto id=path.substr(std::strlen("/api/operations/"));auto found=std::find_if(operations.begin(),operations.end(),[&](const auto& o){return o.id==id;});
             result=found==operations.end()?error(req,"unknown_operation","This operation is no longer retained. Check current state before retrying.","404 Not Found"):operation_response(req,*found);return true;
         }
         result=error(req,"not_found","Unknown operation.","404 Not Found");return true;
     }
     if(req->method!=HTTP_POST){result=error(req,"method_not_allowed","Use GET or POST.","405 Method Not Allowed");return true;}
-    if(configuration_is_passive()&&path!="/api/v2/updates/validate"){
+    if(configuration_is_passive()&&path!="/api/updates/validate"){
         result=error(req,"coordinator_required","This Amity is passive. Open the system coordinator for equipment and activity changes.","403 Forbidden");return true;
     }
     const auto fields=request_fields(path);if(!fields){result=error(req,"not_found","Unknown operation.","404 Not Found");return true;}
     std::string data;if(!web::body(req,data)){result=ESP_FAIL;return true;}
     Json root(parse_json_input(data),cJSON_Delete);
-    SensitiveRequest sensitive{data,root.get(),path=="/api/v2/membership/add"};
+    SensitiveRequest sensitive{data,root.get(),path=="/api/membership/add"};
     if(!root||!cJSON_IsObject(root.get())||!unique_keys(root.get())){result=error(req,"invalid_json","Expected an object with unique, supported fields.");return true;}
     for(auto* field=root->child;field;field=field->next)if(std::find(fields->begin(),fields->end(),field->string)==fields->end()){result=error(req,"invalid_json","Expected supported fields only.");return true;}
     const auto id=string(root.get(),"request_id");
@@ -440,19 +425,19 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         operation.status="admitted";
         finish();return true;
     }
-    if(path=="/api/v2/updates/validate"){
+    if(path=="/api/updates/validate"){
         std::string message;const auto e=system_services::updates::stage_release(string(root.get(),"manifest"),string(root.get(),"signature"),message);
         if(e!=ESP_OK){result=error(req,"incompatible_release",message,"409 Conflict");return true;}
         finish();return true;
     }
-    if(path=="/api/v2/updates/cohort"){
+    if(path=="/api/updates/cohort"){
         auto* values=cJSON_GetObjectItemCaseSensitive(root.get(),"targets");std::vector<m::OctopusId> targets;
         if(!cJSON_IsArray(values)||cJSON_GetArraySize(values)<1||cJSON_GetArraySize(values)>3){result=error(req,"invalid_targets","Choose one to three Amity boards.");return true;}
         for(auto* value=values->child;value;value=value->next){const auto owner=cJSON_IsString(value)?m::OctopusId::parse(value->valuestring):std::nullopt;if(!owner){result=error(req,"invalid_targets","Choose a valid Amity board.");return true;}targets.push_back(*owner);}
         std::string message;const auto e=system_services::updates::stage_cohort(string(root.get(),"manifest"),string(root.get(),"signature"),std::move(targets),message);
         if(e!=ESP_OK){result=error(req,"update_unavailable",message,"409 Conflict",true);return true;}finish();return true;
     }
-    if(path=="/api/v2/updates/chunk"){
+    if(path=="/api/updates/chunk"){
         uint64_t offset=0;const auto encoded=string(root.get(),"data_hex");std::string bytes,message;
         const auto job=m::MessageId::parse(string(root.get(),"cohort_job_id"));const auto target=m::OctopusId::parse(string(root.get(),"target_octopus_id"));
         const auto digit=[](char b){return b>='0'&&b<='9'?b-'0':b>='a'&&b<='f'?b-'a'+10:-1;};
@@ -460,13 +445,13 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         for(size_t n=0;n<encoded.size();n+=2){const int a=digit(encoded[n]),b=digit(encoded[n+1]);if(a<0||b<0){result=error(req,"invalid_chunk","Image blocks use lowercase hexadecimal.");return true;}bytes+=char(a*16+b);}
         const auto e=system_services::updates::cohort_chunk(*job,*target,offset,bytes,message);if(e!=ESP_OK){result=error(req,"update_checkpoint",message,"409 Conflict",true);return true;}finish();return true;
     }
-    if(path=="/api/v2/updates/install"||path=="/api/v2/updates/cancel"){
+    if(path=="/api/updates/install"||path=="/api/updates/cancel"){
         const auto job=m::MessageId::parse(string(root.get(),"cohort_job_id"));const auto target=m::OctopusId::parse(string(root.get(),"target_octopus_id"));
-        if(!job||(path=="/api/v2/updates/install"&&!target)){result=error(req,"invalid_job","Choose the current update job and target.");return true;}
-        std::string message;const auto e=path=="/api/v2/updates/install"?system_services::updates::cohort_install(*job,*target,message):system_services::updates::cancel_cohort(*job,message);
+        if(!job||(path=="/api/updates/install"&&!target)){result=error(req,"invalid_job","Choose the current update job and target.");return true;}
+        std::string message;const auto e=path=="/api/updates/install"?system_services::updates::cohort_install(*job,*target,message):system_services::updates::cancel_cohort(*job,message);
         if(e!=ESP_OK){result=error(req,"update_uncertain",message,"409 Conflict",true);return true;}finish();return true;
     }
-    if(path=="/api/v2/replacements/preview"||path=="/api/v2/replacements/apply"){
+    if(path=="/api/replacements/preview"||path=="/api/replacements/apply"){
         config_store::RevisionPair expected;std::string message;
         if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()){result=error(req,"stale_revision","Equipment or configuration changed. Review the replacement mapping.","409 Conflict");return true;}
         config_store::ReplacementApproval approval;
@@ -492,37 +477,37 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
             if(!component||!from||!to){result=error(req,"invalid_mapping","Choose the intended equipment location on the mapped connector.");return true;}
             approval.equipment.push_back({*component,*from,*to,bool(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(item,"same_equipment_confirmed")))});
         }
-        config_store::ConfigurationV2 candidate;std::vector<m::ActivityId> affected;
+        config_store::Configuration candidate;std::vector<m::ActivityId> affected;
         if(!config_store::propose_octopus_replacement(*active,approval,candidate,affected,message)){result=error(req,"replacement_not_ready",message,"409 Conflict");return true;}
-        if(path=="/api/v2/replacements/apply"){
+        if(path=="/api/replacements/apply"){
             const auto queued=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id));
             if(queued!=ESP_OK){result=error(req,"activation_pending","The replacement configuration could not be saved. Reload before retrying.","409 Conflict",true);return true;}
             operation.status="configuring";finish();return true;
         }
-        Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddItemToObject(response.get(),"configuration",cJSON_Parse(config_store::serialize_configuration_v2(candidate).c_str()));cJSON_AddStringToObject(response.get(),"canonical_configuration",config_store::serialize_configuration_v2(candidate).c_str());
+        Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddItemToObject(response.get(),"configuration",cJSON_Parse(config_store::serialize_configuration(candidate).c_str()));cJSON_AddStringToObject(response.get(),"canonical_configuration",config_store::serialize_configuration(candidate).c_str());
         auto* ids=cJSON_AddArrayToObject(response.get(),"affected_activity_ids");for(auto activity:affected)cJSON_AddItemToArray(ids,cJSON_CreateString(activity.str().c_str()));
         cJSON_AddStringToObject(response.get(),"pairing_notice","Reconnect and review the equipment on the replacement Amity before starting playback.");result=send(req,response.get());return true;
     }
-    if(path=="/api/v2/config"||path=="/api/v2/config/validate"){
-        config_store::RevisionPair expected;config_store::ConfigurationV2 candidate;std::string message;
+    if(path=="/api/config"||path=="/api/config/validate"){
+        config_store::RevisionPair expected;config_store::Configuration candidate;std::string message;
         auto* document=cJSON_GetObjectItemCaseSensitive(root.get(),"configuration");
         if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()){result=error(req,"stale_revision","Configuration changed. Reload the current choices.","409 Conflict");return true;}
-        if(!document||!config_store::parse_configuration_v2(json(document),candidate,message)||!config_store::reconcile_external_slots(*active,candidate,message)){
+        if(!document||!config_store::parse_configuration(json(document),candidate,message)||!config_store::reconcile_external_slots(*active,candidate,message)){
             result=error(req,"invalid_configuration",message.empty()?"A valid configuration is required.":message);return true;
         }
         if(candidate.consortium_id!=active->consortium_id||candidate.controller_octopus_id!=active->controller_octopus_id||candidate.primary_zone_id!=active->primary_zone_id){result=error(req,"identity_change","System identity and the home-app screen cannot change through an ordinary configuration edit.","409 Conflict");return true;}
-        if(path=="/api/v2/config/validate"){finish();return true;}
+        if(path=="/api/config/validate"){finish();return true;}
         const auto e=amity::activate_distributed_configuration(std::move(candidate),expected,*m::MessageId::parse(id));
         if(e!=ESP_OK){result=error(req,"activation_pending","A configuration activation is already in progress or its revision changed.","409 Conflict",true);return true;}
         operation.status="configuring";
         finish();return true;
     }
-    if(path=="/api/v2/membership/scan"){
+    if(path=="/api/membership/scan"){
         const auto e=amity::consortium::runtime_scan_admission(*m::MessageId::parse(id));
         if(e!=ESP_OK){result=error(req,"scan_unavailable","The search could not start. Close this window and try again.","409 Conflict",true);return true;}
         finish();return true;
     }
-    if(path=="/api/v2/membership/cancel"){
+    if(path=="/api/membership/cancel"){
         const auto scan=m::MessageId::parse(string(root.get(),"scan_id"));
         if(!scan){result=error(req,"invalid_scan","Choose the current search.");return true;}
         const auto e=amity::consortium::runtime_cancel_admission(*scan);
@@ -533,7 +518,7 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         }
         finish();return true;
     }
-    if(path=="/api/v2/membership/add"){
+    if(path=="/api/membership/add"){
         AdmissionSelection selection;std::string message;
         const auto state=amity::consortium::runtime_admission_status();
         if(!admission_selection(root.get(),state.requires_setup_code,selection,message)){result=error(req,"invalid_addition",message);return true;}
@@ -545,7 +530,7 @@ bool v2_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         if(e!=ESP_OK){result=error(req,"enrollment_unavailable","Adding this Amity could not start. Check the selected device and its setup window, then try again.","409 Conflict",true);return true;}
         operation.scan_id=selection.scan_id;operation.name=selection.name;operation.status="admitted";finish();return true;
     }
-    if(path=="/api/v2/membership/remove"){
+    if(path=="/api/membership/remove"){
         const auto owner=m::OctopusId::parse(string(root.get(),"octopus_id"));
         uint64_t membership_revision=0;std::optional<m::BootId> target_boot;
         auto* reviewed_boot=cJSON_GetObjectItemCaseSensitive(root.get(),"expected_target_boot_id");
