@@ -18,7 +18,8 @@ public:
     ~BoundedSetupTimings(){for(size_t i=0;i<size_;++i){if(!entries_[i].finished)finish(i,false);emit_setup_timing(area_,entries_[i],peer,link,scan);}}
     size_t begin(const char *stage){if(size_==entries_.size())return size_;auto& entry=entries_[size_];entry.stage=stage;entry.at_ms=clock_();return size_++;}
     void finish(size_t index,bool good,uint32_t count=0,uint64_t call=0,uint64_t wait=0,int code=0){
-        if(index>=size_)return;auto& entry=entries_[index];if(entry.finished)return;
+        if(index>=size_)return;
+        auto& entry=entries_[index];if(entry.finished)return;
         const auto now=clock_();entry.elapsed_ms=now>=entry.at_ms?now-entry.at_ms:0;entry.at_ms=now;
         entry.result=good?"ok":"failed";entry.count=count;entry.call_ms=call;entry.wait_ms=wait;entry.code=code;entry.finished=true;
     }

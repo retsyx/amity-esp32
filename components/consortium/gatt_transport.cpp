@@ -203,11 +203,13 @@ struct GattTiming {
     bool await(uint64_t submitted,uint32_t timeout){
         const bool result=wait(timeout);const auto elapsed=now_ms()-submitted;
         att_wait_ms+=elapsed;att_max_ms=std::max(att_max_ms,elapsed);
-        if(!result)status=client_error.load();return result;
+        if(!result)status=client_error.load();
+        return result;
     }
     void done(){successful=true;failure="none";emit();}
     void emit(){
-        if(emitted)return;emitted=true;const auto at=now_ms();
+        if(emitted)return;
+        emitted=true;const auto at=now_ms();
         if(exchange)ESP_LOGI("setup_timing","area=gatt stage=%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s record=%u endpoint=%u request_ms=%llu reply_ms=%llu writes=%u cursors=%u reads=%u pending=%u fragments=%u att_wait_ms=%llu att_max_ms=%llu mtu=%u interval_units=%u latency=%u status=%d",
             stage,static_cast<unsigned long long>(at),static_cast<unsigned long long>(at-started),successful?"ok":"failed",failure,unsigned(record),endpoint,
             static_cast<unsigned long long>((reply_started?reply_started:at)-started),static_cast<unsigned long long>(reply_started?at-reply_started:0),
