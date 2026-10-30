@@ -20,6 +20,16 @@ Retain in-place Matter/HomeKit endpoint/accessory identities and pairings. Exist
 
 Use the approved tabs: Activities, Remote, Matter, HomeKit, Amity devices, Advanced. Preserve existing login, password/hostname, diagnostics, logs, firmware, backup/restore, restart and reset workflows. Browser bearer sessions stay on the original controller and are never sent to peers. Keep HTTPS/CSP, strict JSON/bounds, authentication and no-secret-cache rules. Browser certificate trust is separate from peer trust.
 
+Shared `web::response` bounds application writes to 512 bytes: bodies at or
+below that size use the direct response; larger JSON, assets and logs use
+standard HTTP chunked encoding with chunks no larger than 512 bytes. Preserve
+the exact body, status and security headers. Propagate a failed chunk without
+sending a success terminator; send the final zero-length chunk only after all
+body chunks succeed. Global TLS output/input capacities remain 4,096/16,384
+bytes so certificate handshake and authentication behavior remain intact.
+The write bound reduces PSRAM-to-DMA AES bounce pressure, without changing
+receive limits, timeouts or functional assertions.
+
 The Amity devices tab lists the main first as `<hostname> (this device)` with Settings in the same title row. Added devices have actual hostnames, Settings and appropriate Remove/Replace actions; their firmware updates go through the main. No main Remove/Replace action, independent Location alias, member UI, remote-owner mapping or primary-zone chooser is added.
 
 Add scans directly from the main for unclaimed candidates with physically opened setup windows. The user chooses a candidate if several appear, supplies a valid unique Name, and adds it. Only the stricter matched build profile asks for the candidate’s existing printed Matter manual code or QR payload. The required name becomes its persistent lowercase hostname through the encrypted admission session. Renaming a network endpoint does not change the stable device ID or equipment selections. An unavailable device name displays Name unavailable; cosmetic aliases cannot rename hardware.
@@ -47,3 +57,10 @@ Restore uses the existing Advanced workflow and saves original activity selector
 ## Evidence
 
 Browser fixtures must verify original field/order/workflow behavior with local and remote qualified choices, AVR audio/switch fields, retained missing choices and no enabled/approved-path UI. Service tests must verify real original algorithm dispatch and backend stale/auth rejection. A screenshot or retained JSON fields alone does not establish CEC parity.
+
+The [actual SDK response-write regression](../tests/https_response_write_test.py)
+executes the shared response helper, pinned HTTP/TLS send path and AES bounce
+allocation logic under a controlled internal-DMA allocation limit. It proves
+the bounded-write mechanism, not the exact heap state at the failed physical
+write. Physical qualification of the 0.1.104 correction remains pending; see
+[the retained failure and current evidence](VALIDATION.md).

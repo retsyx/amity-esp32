@@ -69,7 +69,20 @@ bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool
 bool TlsLink::handshake(){const auto deadline=now_ms()+10000;while(now_ms()<deadline){int r=mbedtls_ssl_handshake(&ssl);if(!r)return authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0;if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE){reject_handshake(ssl,socket,server,r);return false;}vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}return false;}
 bool TlsLink::extended_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&(strcmp(profile,"amity-consortium-v1.extended")==0||strcmp(profile,"amity-consortium-v1.hardware")==0);}
 bool TlsLink::hardware_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&strcmp(profile,"amity-consortium-v1.hardware")==0;}
-bool TlsLink::send(std::string_view body){auto bytes=frame(body);if(bytes.empty())return false;size_t offset=0;const auto deadline=now_ms()+3000;while(offset<bytes.size()&&now_ms()<deadline){int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,bytes.size()-offset);if(n>0)offset+=n;else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;else vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}return offset==bytes.size();}
+bool TlsLink::send(std::string_view body){
+    auto bytes=frame(body);if(bytes.empty())return false;
+    size_t offset=0;const auto deadline=now_ms()+3000;
+    // Bound PSRAM-to-DMA AES bounce allocations for application data without
+    // reducing the TLS buffers used by certificates or incoming records.
+    while(offset<bytes.size()&&now_ms()<deadline){
+        const auto count=std::min(size_t{512},bytes.size()-offset);
+        const int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,count);
+        if(n>0)offset+=n;
+        else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;
+        else vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
+    }
+    return offset==bytes.size();
+}
 TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
     if(incoming_failed)return ReceiveResult::failed;
     uint8_t bytes[512];

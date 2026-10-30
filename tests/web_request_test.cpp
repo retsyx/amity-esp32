@@ -75,6 +75,7 @@ esp_err_t httpd_resp_set_status(httpd_req_t *req,const char *value) {req->status
 esp_err_t httpd_resp_set_type(httpd_req_t *,const char *) {return ESP_OK;}
 esp_err_t httpd_resp_set_hdr(httpd_req_t *req,const char *key,const char *value) {req->headers[key]=value;return ESP_OK;}
 esp_err_t httpd_resp_send(httpd_req_t *req,const char *value,size_t size) {req->response.assign(value,size);return ESP_OK;}
+esp_err_t httpd_resp_send_chunk(httpd_req_t *req,const char *value,size_t size) {if(size)req->response.append(value,size);return ESP_OK;}
 esp_err_t httpd_resp_sendstr(httpd_req_t *req,const char *value) {return httpd_resp_send(req,value,strlen(value));}
 const esp_app_desc_t *esp_app_get_description() {return &running;}
 const esp_partition_t *esp_ota_get_running_partition() {return &partition;}

@@ -33,6 +33,7 @@ esp_err_t httpd_resp_set_status(httpd_req_t *,const char *);
 esp_err_t httpd_resp_set_type(httpd_req_t *,const char *);
 esp_err_t httpd_resp_set_hdr(httpd_req_t *,const char *,const char *);
 esp_err_t httpd_resp_send(httpd_req_t *,const char *,size_t);
+esp_err_t httpd_resp_send_chunk(httpd_req_t *,const char *,size_t);
 esp_err_t httpd_resp_sendstr(httpd_req_t *,const char *);
 
 struct esp_timer;

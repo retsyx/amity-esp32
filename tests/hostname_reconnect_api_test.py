@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PREFIX = r'''
 #include "cJSON.h"
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <cstdlib>
@@ -45,7 +46,9 @@ int httpd_resp_set_status(httpd_req_t* req,const char* value){req->status=value;
 int httpd_resp_set_type(httpd_req_t* req,const char* value){req->type=value;return ESP_OK;}
 int httpd_resp_set_hdr(httpd_req_t* req,const char* name,const char* value){req->headers[name]=value;return ESP_OK;}
 int httpd_resp_send(httpd_req_t* req,const char* data,size_t size){req->response.assign(data,size);return ESP_OK;}
+int httpd_resp_send_chunk(httpd_req_t* req,const char* data,size_t size){if(size)req->response.append(data,size);return ESP_OK;}
 namespace web {
+int response(httpd_req_t*,const char*,size_t);
 int json(httpd_req_t*,const std::string&,const char* status="200 OK");
 int error(httpd_req_t* req,const char*,const char* status="400 Bad Request"){req->status=status;return ESP_FAIL;}
 bool authenticated(httpd_req_t* req){++auth_checks;return req->authenticated;}
@@ -98,7 +101,8 @@ def main():
     public += guard + '\n++downstream;return ESP_OK;\n}\n'
     branch = function(source, 'else if(path=="/api/hostname")')
     save = 'esp_err_t hostname_save(httpd_req_t* req,cJSON* parsed){Json root(parsed,cJSON_Delete);esp_err_t e=ESP_OK;\n' + branch[branch.index('{') + 1:]
-    actual = ('namespace web {\n' + function((ROOT / 'components/web/request.cpp').read_text(), 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
+    request = (ROOT / 'components/web/request.cpp').read_text()
+    actual = ('namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
               + function(source, 'esp_err_t send(httpd_req_t *req,cJSON *root)')
               + public + save + function(source, 'esp_err_t asset(httpd_req_t *req)'))
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'

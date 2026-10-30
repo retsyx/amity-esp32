@@ -15,6 +15,75 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## 0.1.103 HTTPS memory failure; 0.1.104 correction pending — 30 October 2026
+
+All four DUTs were deployed and verified on exact 0.1.103 / Matter software 104
+from firmware commit `1680c85781b4e310d7a163d4cbc9326ec908caff`, with
+`source_dirty=true`. The 2,436,624-byte image has SHA-256
+`9d99ea1bde67647b33f3d83a251bd0c645292240db5123a045f200c050648890`;
+ELF SHA-256 is
+`f0424e1ceacdf4c634bf51f8da0c383f35d3b95527d52e0cef53bfdecba74fe8`.
+Main used authenticated application OTA without USB, passing 13 preservation
+checks. Each of the three candidates passed 18 checks after a MAC-locked
+application-only USB update without erasing flash. The complete host suite,
+339 framework units, native build with 36 public-record layout checks and
+contracts passed. Evidence is under
+`test-results/consortium-empty-context-fix-2026-10-30/`.
+
+The physical Add case passed in 111.719 seconds including cleanup. It verified
+the exact member identity, boot, ready state and settings, then removed only the
+known added member with a fresh reviewed request and confirmed scheduled reset.
+No cleanup errors remained. Independent saved-report verification passed all
+20 checks in `add-amity-verification.json`. Measured from same-run monotonic
+trace events, helper entry to first verified readiness was 87.832 seconds;
+Add POST to operation completion was 50.421 seconds and to first verified
+readiness was 59.855 seconds. These intervals include host HTTP time.
+
+The three-owner run failed and remains failed. All nine identities and typed
+owner/adapter/side locations passed over six isolated wires with three proven
+owner boots. After saving the main activity, `GET /api/system` returned a
+truncated response while preparing the second activity, before that activity's
+POST. No activity power, routing or theft stage ran. The failure report is
+`consortium-three-duts.json`; the separate
+`consortium-three-duts-failure-analysis.json` passes 16 analysis checks while
+retaining `functional_passed=false`. All fixture activity cleanup completed,
+both members were removed with acknowledged scheduled resets, and cleanup had
+no errors. The immediate snapshot retained the main boot, image, hostname and
+unrelated configuration, except authorized cleanup and revision changes.
+
+Later inspection of `three-owner-failure-immediate-logs.txt` identifies the
+HTTPS write failure: `esp-aes` failed to allocate memory, followed by TLS write
+error `-0x0084` at the same firmware timestamp. For PSRAM input and output, the
+pinned SDK's hardware AES path allocates needed DMA bounce buffers of
+`min(1600, length)` bytes each. The 1,600-byte value is a cap, not a minimum;
+a 512-byte write bounds each required bounce allocation to 512 bytes. General
+free PSRAM does not establish that the required internal DMA memory is
+available. The physical log does not identify which allocation or size failed;
+`-0x0084` is a generic mapped write error rather than a memory-specific code,
+and the framework did not retain the exact physical response cutoff. This
+later log diagnosis extends the original saved failure analysis, whose
+interpretation left the connection-closure cause unresolved.
+
+The accepted correction targets 0.1.104 / Matter software 105. Shared
+`web::response` sends bodies larger than 512 bytes as HTTP chunks of at most
+512 bytes and sends smaller bodies directly; JSON, assets and logs use that
+helper. Peer TLS writes likewise use chunks of at most 512 bytes, retaining
+the existing three-second send budget and WANT handling. Global TLS output
+capacity remains 4,096 bytes and input capacity remains 16,384 bytes, preserving
+certificate handshake capacity and authentication. Receive semantics,
+timeouts and functional assertions are unchanged. Actual-source host regressions
+exercise the SDK's HTTP framing, TLS write loop and AES bounce sizing with
+controlled allocator/device seams: the old response and peer paths fail the
+same assertions, while bounded writes preserve exact bytes and propagate
+failures. The modeled 1,024-byte DMA block limit is not a measurement of the
+physical failure. Targeted deadline, authentication and production-profile
+checks also pass. Results are in `bounded-application-write-regression.json`
+under the new evidence directory. No completed 0.1.104 build,
+deployment or physical pass is claimed. New evidence belongs under
+`test-results/consortium-tls-memory-fix-2026-10-30/`. The 0.1.103 Add and scan
+results do not qualify three-owner activity or source-theft behavior, and do
+not supersede the failed 0.1.102 bench attempt or earlier physical failures.
+
 ## Consortium activities and live discovery — 29 October 2026
 
 Firmware 0.1.98/Matter software 99 adds the two-Amity functional scenario in
@@ -133,9 +202,9 @@ current-context capture emitted no message, so no FIFO admission cleared the
 refresh flag and reviewed Remove rejected the otherwise-ready added member.
 The narrow correction clears refresh-pending on exact-current successful
 completion without granting context readiness or repeating an empty capture.
-Actual owner-task and runtime-removal before/after regressions pass. Target
-0.1.103 requires fresh deployment and physical qualification; no later pass is
-claimed here.
+Actual owner-task and runtime-removal before/after regressions pass. The later
+0.1.103 deployment, Add pass and failed three-owner run are recorded above;
+this 0.1.102 bench attempt remains failed.
 
 ## 0.1.101 connection failure reproduced — 30 October 2026
 

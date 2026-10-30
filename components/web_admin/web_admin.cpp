@@ -216,7 +216,7 @@ esp_err_t api(httpd_req_t *req) {
         if(path=="/api/homekit")return homekit(req);
         if(path=="/api/logs") {
             auto data=system_services::logs();httpd_resp_set_type(req,"text/plain");httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity.log");httpd_resp_set_hdr(req,"Cache-Control","no-store");
-            return httpd_resp_send(req,data.data(),data.size());
+            return web::response(req,data.data(),data.size());
         }
     }
     if(req->method==HTTP_POST) {
@@ -301,7 +301,7 @@ esp_err_t asset(httpd_req_t *req) {
     httpd_resp_set_type(req,mime);httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
     httpd_resp_set_hdr(req,"Cache-Control","no-cache");
     httpd_resp_set_hdr(req,"Content-Security-Policy","default-src 'self'; connect-src 'self' https://*.local; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
-    return httpd_resp_send(req,reinterpret_cast<const char *>(begin),end-begin);
+    return web::response(req,reinterpret_cast<const char *>(begin),end-begin);
 }
 }
 esp_err_t load(amity::SystemControl &service,bool defer_configuration) {

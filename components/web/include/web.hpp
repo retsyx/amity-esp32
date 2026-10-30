@@ -35,6 +35,8 @@ private:
     bool valid_=false;
 };
 bool body(httpd_req_t *request,std::string &out,size_t limit=32768);
+// Bound application TLS records without reducing certificate/handshake capacity.
+esp_err_t response(httpd_req_t *request,const char *data,size_t size);
 esp_err_t json(httpd_req_t *request,const std::string &body,const char *status="200 OK");
 // Sends an error and returns ESP_FAIL so HTTPD closes instead of draining an unread body.
 esp_err_t error(httpd_req_t *request,const char *message,const char *status="400 Bad Request");

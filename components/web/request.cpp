@@ -8,6 +8,7 @@
 
 #include "web.hpp"
 #include "freertos/FreeRTOS.h"
+#include <algorithm>
 #include <sys/socket.h>
 
 namespace web {
@@ -52,11 +53,26 @@ bool body(httpd_req_t *request,std::string &out,size_t limit) {
     }
     return true;
 }
+esp_err_t response(httpd_req_t *req,const char *data,size_t size) {
+    // ESP32-S3 AES copies PSRAM records through scarce internal DMA buffers.
+    // Keep application writes small while retaining the SDK's full TLS
+    // handshake buffers and incoming-record capacity. Large bodies use HTTP's
+    // standard chunk framing; never terminate a response after a failed write.
+    constexpr size_t chunk_size=512;
+    if(size<=chunk_size)return httpd_resp_send(req,data,size);
+    for(size_t offset=0;offset<size;) {
+        const auto count=std::min(chunk_size,size-offset);
+        const auto result=httpd_resp_send_chunk(req,data+offset,count);
+        if(result!=ESP_OK)return result;
+        offset+=count;
+    }
+    return httpd_resp_send_chunk(req,nullptr,0);
+}
 esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) {
     httpd_resp_set_status(req,status);httpd_resp_set_type(req,"application/json");
     httpd_resp_set_hdr(req,"Cache-Control","no-store");
     httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
-    return httpd_resp_send(req,data.data(),data.size());
+    return response(req,data.data(),data.size());
 }
 esp_err_t error(httpd_req_t *req,const char *message,const char *status) {
     // Callers supply static messages or ESP-IDF error names, never unescaped user data.

@@ -33,8 +33,10 @@ void vTaskDelay(unsigned ticks){waits.push_back(ticks);clock_ms+=std::max(1u,tic
 struct Byte{uint64_t at;uint8_t value;};
 std::vector<Byte> incoming;size_t cursor=0;unsigned reads=0;std::optional<int> read_error;
 uint64_t writable_at=0;std::vector<uint8_t> written;const uint8_t* blocked_pointer=nullptr;size_t blocked_size=0;
+size_t maximum_write=0,partial_write=3;unsigned write_calls=0,write_elapsed=0;
+std::optional<int> write_error;unsigned error_after=0;bool want_read=false;
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
-void reset(){clock_ms=0;waits.clear();incoming.clear();cursor=0;reads=0;read_error.reset();recv_flags=send_flags=0;writable_at=0;written.clear();blocked_pointer=nullptr;blocked_size=0;}
+void reset(){clock_ms=0;waits.clear();incoming.clear();cursor=0;reads=0;read_error.reset();recv_flags=send_flags=0;writable_at=0;written.clear();blocked_pointer=nullptr;blocked_size=0;maximum_write=0;partial_write=3;write_calls=write_elapsed=error_after=0;write_error.reset();want_read=false;}
 void append(const std::string& body,uint64_t prefix_at=0,uint64_t body_at=0){
     const auto bytes=frame(body);for(size_t i=0;i<bytes.size();++i)incoming.push_back({i<4?prefix_at:body_at,bytes[i]});
 }
@@ -44,9 +46,11 @@ int mbedtls_ssl_read(int*,uint8_t* bytes,size_t capacity){
     return size?static_cast<int>(size):MBEDTLS_ERR_SSL_WANT_READ;
 }
 int mbedtls_ssl_write(int*,const uint8_t* bytes,size_t size){
+    ++write_calls;maximum_write=std::max(maximum_write,size);clock_ms+=write_elapsed;
     if(blocked_pointer)check(blocked_pointer==bytes&&blocked_size==size,"WANT_WRITE changed its original buffer");
-    if(clock_ms<writable_at){blocked_pointer=bytes;blocked_size=size;return MBEDTLS_ERR_SSL_WANT_WRITE;}
-    blocked_pointer=nullptr;const auto count=std::min(size,size_t{3});written.insert(written.end(),bytes,bytes+count);return static_cast<int>(count);
+    if(clock_ms<writable_at){blocked_pointer=bytes;blocked_size=size;return want_read?MBEDTLS_ERR_SSL_WANT_READ:MBEDTLS_ERR_SSL_WANT_WRITE;}
+    if(write_error&&write_calls>error_after)return *write_error;
+    blocked_pointer=nullptr;const auto count=std::min(size,partial_write);written.insert(written.end(),bytes,bytes+count);return static_cast<int>(count);
 }
 struct TlsLink {
     int ssl=0;
@@ -134,10 +138,29 @@ void blocking_wrapper_and_nonblocking_socket(){
     check(!waits.empty()&&std::all_of(waits.begin(),waits.end(),[](unsigned ticks){return ticks>=1;}),"send wrapper busy-spun at100Hz");
     reset();TlsLink blocked;writable_at=3100;check(!blocked.send("late")&&clock_ms==3000&&written.empty(),"existing three-second write budget was extended");
 }
+void bounded_application_writes(){
+    for(size_t size:{size_t{1},size_t{508},size_t{509},max_frame_bytes}){
+        reset();TlsLink link;partial_write=97;writable_at=30;const std::string body(size,'x');
+        check(link.send(body)&&written==frame(body),"bounded/partial application writes changed frame bytes");
+        check(maximum_write<=512&&clock_ms==30,"application write exceeded512 bytes or changed WANT deadline");
+    }
+    reset();TlsLink want;want_read=true;writable_at=20;
+    check(want.send(std::string(600,'x'))&&maximum_write==512&&clock_ms==20,"WANT_READ did not retain original write parameters");
+    for(int error:{0,-99}){
+        reset();TlsLink failed;write_error=error;error_after=1;partial_write=17;
+        const std::string body(1000,'x');const auto bytes=frame(body);
+        check(!failed.send(body)&&write_calls==2&&written==std::vector<uint8_t>(bytes.begin(),bytes.begin()+17),"fatal/zero write retried or reported complete");
+    }
+    reset();TlsLink slow;write_elapsed=20;
+    check(!slow.send(std::string(max_frame_bytes,'x'))&&clock_ms==3000&&write_calls==150,"partial progress renewed the three-second budget");
+    for(const std::string &body:{std::string{},std::string(max_frame_bytes+1,'x')}){
+        reset();TlsLink invalid;check(!invalid.send(body)&&write_calls==0,"invalid/oversized frame reached TLS");
+    }
+}
 }
 int main(){using namespace amity::consortium::platform;try{
-    ipc_during_partial_frame();fragments_and_frame_boundaries();unchanged_terminal_deadlines_and_errors();blocking_wrapper_and_nonblocking_socket();
-    std::cout<<"PASS actual TLS receive: partial input yields to existing IPC, bounded nonblocking reads, exact frame boundaries/size/deadlines, terminal errors and bounded handshake wrapper\n";
+    ipc_during_partial_frame();fragments_and_frame_boundaries();unchanged_terminal_deadlines_and_errors();blocking_wrapper_and_nonblocking_socket();bounded_application_writes();
+    std::cout<<"PASS actual TLS receive/send: partial input yields to existing IPC, bounded nonblocking reads and512-byte app writes, exact frame boundaries/deadlines, partial/WANT same-buffer continuation, terminal errors and bounded handshake wrapper\n";
     return 0;
 }catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''

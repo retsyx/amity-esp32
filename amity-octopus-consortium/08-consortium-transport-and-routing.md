@@ -100,6 +100,14 @@ snapshot wrappers retain their own bounded waits and yield at least one RTOS
 tick while waiting. The existing send budget is unchanged. This incoming
 communication state is not an outgoing CEC queue.
 
+Application TLS writes are capped at 512 bytes to bound the pinned SDK's
+PSRAM-to-DMA AES bounce allocations; the global TLS output/input capacities
+remain 4,096/16,384 bytes, preserving certificate handshake and authentication
+behavior. Peer frame bytes and parsing, admitted FIFO order, message lifetimes
+and the existing three-second send budget/WANT handling remain unchanged.
+This caps each write without introducing a queue or retry policy. Large
+received TLS records may still require larger DMA bounce allocations.
+
 Unexpected operational link closures emit one bounded diagnostic summary with a
 static reason and phase, protocol error, peer/link/boot/revision identities and,
 for expired causal IPC, its original kind, age and TTL. Admission-side expiry
@@ -130,6 +138,11 @@ Per-device adapter settings continue to use the selected owner's current boot, s
 ## 7. Validation
 
 Test wrong owner/installation/controller, old boot/configuration/input, replay, malformed selectors, link loss, queue pressure and exact held cleanup without changing baseline CEC behavior. Compare local delivery with fake authenticated remote delivery of the same original intents. Management/security tests do not substitute for activity/CEC parity or real multi-device radio/CEC qualification.
+
+The [actual TLS send regression](../tests/consortium_tls_receive_test.py)
+checks the 512-byte write bound, exact frame bytes, partial writes, WANT
+continuations and failures under the unchanged three-second total budget.
+This source-level evidence does not qualify the pending physical 0.1.104 run.
 
 The 30 October runtime regressions execute the actual peer projection, link-task queue pump/admission and synchronization code: `python3 tests/runtime_peer_status_test.py`, `python3 tests/consortium_live_configuration_test.py`, `python3 tests/consortium_owner_repeat_test.py` and `sh tests/system_sync_test.sh`. They cover partial/obsolete peer status, snapshot versus typed-result expiry, final completion recapture, exact recovery fences and a newer observation arriving during an older failed send. Before/after failures are preserved under `test-results/device-removal-2026-10-29/{peer-status,causal-snapshot}-{before,after}-fix.log`; the concurrent-send regression is `test-results/consortium-runtime-fix-2026-10-29/snapshot-send-overwrite-{before,after}-fix.log`. These establish the transport invariants; they do not establish the cause or resolution of the physical three-owner source-theft failure.
 
