@@ -15,15 +15,121 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
-## Local-network readiness fix — 30 October 2026
+## Final enrollment fixes and physical qualification — 30 October 2026
 
-Firmware 0.1.109 / Matter software 110 waits for an up station interface with a
-nonzero IPv4 address before a disconnected member attempts its first known
-controller address. Waiting preserves the original hint/discovery/backoff state
-and advances the existing 100 ms worker turns, radio cleanup and lifecycle
-checks. Pinned TLS remains the authority check. Build, all-DUT deployment, timing
-and full physical-suite results are pending under
+All four DUTs run exact 0.1.109 / Matter software 110 from
+`6a94762a1e32c80230290d2f1b8f65b93696d1e1`, with the frozen release recording
+`source_dirty=true` for the unrelated preexisting `hw/case` files. The
+2,450,048-byte image has SHA-256
+`ef397341d5e417f7d4a13141ed033830d8c6b9de005989a00c2669fb644818cf`;
+ELF SHA-256 is `496867936d7fc6d8ffb5e90ba76b33f192620ba1e59d51d2df7964ca632862ac`.
+Main authenticated OTA passed 13 preservation checks without opening main USB.
+Each candidate passed 18 application-only update checks with full backups,
+retained provisioning and closed USB before measurement. Ten firmware artifacts,
+58 framework files locally/on the Pi and five asset references are hash-verified.
+The complete host suite including 355 framework units, actual pinned-Mbed-TLS
+security tests, boot/Matter tests and full contracts passed. Live web verification
+passed 29 checks and all 11 response bodies completed. Evidence is under
 `test-results/add-network-ready-fix-2026-10-30/`.
+
+The fixes remove the minimum 20-second BLE discovery wait while retaining the
+bounded collection window and later candidates; avoid repeated cursor writes at
+an unchanged offset; remove operational TLS signature checks on exact already
+validated credentials while preserving all untrusted ingress and mutual TLS;
+reuse each DUT's authenticated HTTPS connection without redirects or resends;
+remove headless admission tests and duplicate validation inside runtime startup;
+and preserve the first known controller-address attempt until the station is up
+with usable IPv4. Pre-IP waiting consumes no hint, mDNS query or retry backoff,
+and still advances the existing 100 ms lifecycle/radio turns. Real post-IP
+failures retain the original backoff, discovery and exact pinned authentication.
+
+All seven physical cases passed in one 553.289206-second run, compared with
+1,373.775839 seconds for the earlier complete 0.1.105 run:
+
+| Case | Current duration |
+| --- | --- |
+| HDMI scan | 17.578577 s |
+| Activity power cycle | 32.218851 s |
+| Explicit switch input | 33.073205 s |
+| Shared-wire source theft | 40.445718 s |
+| Add Amity | 55.571156 s |
+| Two-owner consortium | 145.136993 s |
+| Three-owner consortium | 229.225704 s |
+
+`functional.json`, faithful extracted cases and `functional-verification.json`
+record seven clean testbeds, nine fixture activities created/deleted, four
+completed Add transactions, four reviewed removals with acknowledged scheduled
+resets and 28 typed scan locations. Independent two-owner/three-owner verifiers
+pass 21 checks each; shared-wire theft passes 20. The consortium cases contain
+38 fresh physical power assertions, 15 typed locations, five initial routes and
+all eight cross-owner theft directions. Their slowest thief Standby was
+69.450009 ms. Shared-wire thief Standby took 68.550109 ms and selected-route
+restoration 186.550521 ms from the same successful physical Active Source
+trigger. Every response met the unchanged one-second limit; selected activity,
+owner boots and unaffected active routes remained correct.
+
+The four full-run Adds compare the same test/candidate pairs with 0.1.105:
+
+| Add | Earlier helper to verified | Current helper to verified | Current POST to observed completion |
+| --- | --- | --- | --- |
+| Standalone member 2 | 79.202 s | 50.056 s | 35.474 s |
+| Two-owner member 2 | 79.083 s | 47.045 s | 33.655 s |
+| Three-owner member 2 | 80.022 s | 41.928 s | 31.271 s |
+| Three-owner member 3 | 84.557 s | 43.241 s | 33.621 s |
+
+A separate complete Add-only phase diagnostic measured helper-to-verified time
+44.578 seconds against clean 0.1.106 A2's 80.323 seconds; exact accepted-Add to
+firmware-ready time was 34.380 seconds against 39.520 seconds. It retained both
+clock anchors, exact image/boot proof, all preservation checks and acknowledged
+reset cleanup. The main-clock partition accounts for every millisecond once:
+
+| Disjoint wall interval | Duration |
+| --- | --- |
+| BLE connection/service setup | 0.996 s |
+| Admission/identity/certificate/proposal/prepare | 6.866 s |
+| Wi-Fi RPC through usable-network acknowledgment | 6.635 s |
+| Both TLS setups and handshakes | 5.764 s |
+| Hello/link/LAN proof/storage/hostname | 2.441 s |
+| Final enrollment store to next TCP accept, including restart/rejoin | 6.881 s |
+| Final configuration/owner synchronization | 1.688 s |
+| Other unassigned transitions | 3.109 s |
+| Total | 34.380 s |
+
+Nested stages, the old prepared-link hostname timeout, callback sums and
+concurrent HTTP times are not added again. These are elapsed wall measurements,
+not CPU times or direct browser measurements. Wi-Fi RPC and restart/rejoin are
+not subdivided without candidate-clock evidence, and unassigned transitions
+remain unassigned. The combined firmware/framework comparison does not assign
+its total gain to either alone. Samples are observations, not a latency
+percentile or guaranteed bound; the 0.1.107 sample was faster than this sample.
+`A1-phase-breakdown.json`, `A1-timing-comparison.json` and
+`functional-add-timing-comparison.json` preserve clocks, hashes and these limits.
+
+The final authenticated postcheck passes all 26 checks and logs out. Main boot
+`5c10cc6c003ba549fe1ba5849ba4f252`, identity/group/original authority, exact saved
+values, all 16 prior slot records, names, hostname, capabilities, Matter fabrics
+and HomeKit pairing remain preserved apart from authorized revisions/cleanup.
+The main is ready and idle with no peers, saved fixture equipment/activities,
+removed-owner observations or pending configuration. Three main-owned discovery
+observations remain independently cached as required. A historical membership
+diagnostic remains; cumulative TX errors are 2,733 and RX drops zero. These
+checks do not claim zero historical errors or diagnose that retained diagnostic.
+
+The historical 0.1.106 A1 timing capture remains incomplete, and its extra
+synchronization failure remains an unresolved historical cause. No additional
+synchronization retry appears in the complete final Add-only phase trace; a
+full-suite pass alone does not count internal reconnects. The first aggregate
+summary attempt is also
+preserved: a checker compared native tuple pairs with their JSON list form;
+JSON-normalizing the recomputed dictionary fixes that representation mismatch
+without changing any wire proof, assertion, deadline or saved result.
+
+This qualifies the exercised normal admission profile, original main and up to
+two added owners, one adapter per owner, isolated front/back wires and simulated
+TV/AVR/player CEC responders. Strict physical admission, four-owner activity,
+loss/adversarial/load testing, four-adapter electrical behavior and real picture/
+audio hardware remain outside this evidence. All historical failed reports
+retain their original outcomes.
 
 ## Headless startup delay fix — 30 October 2026
 
