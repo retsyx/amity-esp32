@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def timing_support():
-    return '#include "' + str(ROOT / 'components/consortium/setup_timing.hpp') + '"\n' + r'''
+    return '#include "' + str(ROOT / 'components/consortium/setup_timing.hpp') + '"\n#include "' + str(ROOT / 'components/consortium/tls_receive_trace.hpp') + '"\n' + r'''
 #include <vector>
 namespace amity::consortium::platform {
 struct RecordedSetupTiming {const char *area;SetupTimingEntry entry;model::OctopusId peer;model::LinkId link;model::MessageId scan;};

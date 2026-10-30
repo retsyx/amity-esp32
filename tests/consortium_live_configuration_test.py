@@ -12,6 +12,7 @@ from setup_timing_support import timing_support
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/runtime.hpp"
+#include "tls_receive_trace.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/transfer.hpp"
 #include "amity/consortium/settings.hpp"
@@ -110,6 +111,18 @@ void unchanged(const Active& active,const LinkScope& original,const FakeTls* tls
 '''
 SUITE = r'''
 namespace amity::consortium {
+
+void terminal_receive_trace(){
+ auto a=start(true);LinkTrace trace;trace.phase="owner_state_receive";trace.fail("synchronization_receive");
+ trace.receive={TlsReceiveDiagnostic::Cause::progress_timeout,-123,4,8196,2169,2169,2100,1400};
+ {DeferredLinkTrace deferred;
+  {std::lock_guard<std::mutex> guard(lock);deferred.capture(*a,trace,clock_ms);trace.receive={};assert(diagnostic_logs.empty());}
+  assert(diagnostic_logs.empty());
+ }
+ assert(diagnostic_logs.size()==2&&diagnostic_logs[1].find("cause=frame_progress_timeout code=-123 bytes=4 expected=8196 progress_ms=2169 total_ms=2169 poll_gap_ms=2100 read_ms=1400")!=std::string::npos);
+ diagnostic_logs.clear();trace.receive={TlsReceiveDiagnostic::Cause::wrapper_timeout,INT32_MIN,UINT32_MAX,UINT32_MAX,UINT64_MAX,UINT64_MAX,UINT64_MAX,UINT64_MAX};
+ trace_link_closed(*a,trace,clock_ms);assert(diagnostic_logs.size()==2&&diagnostic_logs[1].size()<384);
+}
 void coordinator_refresh(){
  auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
  const auto oldlease=a->own_control;unsigned applied=0,delivered=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
@@ -282,7 +295,7 @@ void observation_expiry_is_not_lost_causal_work(){
  assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_result age_ms=1100 ttl_ms=1000")!=std::string::npos);
 }
 }
-int main(){using namespace amity::consortium;coordinator_refresh();member_refresh();future_context_recaptures_after_slow_refresh();rejected_frames();rejected_interleaved_input_results();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope input result delivered once before revision advance; strict identity/boot/replay and missing/rejected callback fences; old-scope completion then new owner state; lease invalidation and original queued revision/deadline; snapshot expiry independent of causal input results\n";}
+int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_slow_refresh();rejected_frames();rejected_interleaved_input_results();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope input result delivered once before revision advance; strict identity/boot/replay and missing/rejected callback fences; old-scope completion then new owner state; lease invalidation and original queued revision/deadline; snapshot expiry independent of causal input results\n";}
 '''
 
 

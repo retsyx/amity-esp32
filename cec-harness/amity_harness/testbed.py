@@ -281,7 +281,9 @@ class TestBed:
                 else:
                     event("testbed.cleanup.cec.complete")
             for dut in reversed(self._owned):
-                if dut not in (*self.control_only, *self.members) and getattr(dut, "_token", None):
+                if dut in (*self.control_only, *self.members):
+                    continue
+                if getattr(dut, "_token", None):
                     event("testbed.cleanup.logout.start", dut=dut.name)
                     try:
                         dut.logout()
@@ -291,6 +293,12 @@ class TestBed:
                               dut=dut.name, error_type=type(error).__name__)
                     else:
                         event("testbed.cleanup.logout.complete", dut=dut.name)
+                try:
+                    dut.close()
+                except BaseException as error:
+                    errors.append(error)
+                    event("testbed.cleanup.http.failed", level=logging.ERROR,
+                          dut=dut.name, error_type=type(error).__name__)
         finally:
             self._member_proofs.clear()
             self._closed = True

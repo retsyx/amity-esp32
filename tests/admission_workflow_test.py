@@ -45,12 +45,18 @@ void vTaskDelay(unsigned ms){clock_ms+=ms;if(during_wait)during_wait();}
 bool spawn_ok=true,discover_ok=true,exchange_ok=true,networked=false,bad_identity=false,bad_certificate=false;
 std::string fail_phase;
 unsigned discoveries=0,reservations=0,releases=0,disconnects=0,wifi_exports=0,encrypted_exchanges=0,saves=0,certificates=0;
+unsigned candidate_snapshots=0;bool early_candidate_published=false;
 void* task_argument=nullptr;
 void invite_worker(void*){}
 int xTaskCreateWithCaps(void(*)(void*),const char*,unsigned,void* arg,unsigned,void*,unsigned){if(!spawn_ok)return 0;task_argument=arg;return pdPASS;}
 void gatt_client_disconnect(){++disconnects;}
 void defer_radio_release(uint64_t generation){assert(generation==77);++releases;}
-int gatt_client_discover(uint64_t generation,std::vector<RuntimeAdmissionCandidate>& out){assert(generation==77);++discoveries;if(discover_ok&&discoveries>1)out={{"one","Amity-123456"},{"two","Amity-654321"}};clock_ms+=20000;return ESP_OK;}
+int gatt_client_discover(uint64_t generation,std::vector<RuntimeAdmissionCandidate>& out){assert(generation==77);++discoveries;if(discover_ok&&discoveries>1){out={{"one","Amity-123456"}};clock_ms+=100;}else clock_ms+=20000;return ESP_OK;}
+int gatt_client_candidates(uint64_t generation,std::vector<RuntimeAdmissionCandidate>& out){
+ assert(generation==77);++candidate_snapshots;
+ if(candidate_snapshots==1)early_candidate_published=admission.view.phase=="found"&&admission.view.candidates.size()==1&&admission.view.candidates[0].token=="one";
+ out={{"one","Amity-123456"},{"two","Amity-654321"}};return ESP_OK;
+}
 int gatt_client_connect_candidate(const std::string& token,uint64_t generation){assert(token=="two"&&generation==77);return ESP_OK;}
 std::string hex(std::string_view value){std::string out;for(uint8_t c:value){out+="0123456789abcdef"[c>>4];out+="0123456789abcdef"[c&15];}return out;}
 bool unhex(std::string_view text,std::string& value,size_t){if(text==hex("candidate-leaf")){value="candidate-leaf";return true;}return false;}
@@ -93,7 +99,7 @@ void reset(){
     identity={};identity.id=group.authority;identity.der="controller-leaf";identity.spki=std::string(64,'a');status={};status.authority_ready=status.crypto_ready=true;
     admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();
     fail_phase.clear();clock_ms=100;during_wait={};mode=AdmissionMode::button;spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
-    discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;
+    discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;candidate_snapshots=0;early_candidate_published=false;
     platform::recorded_setup_timings.clear();
     radio.reserve=[](bool inviter,uint64_t& generation){assert(inviter);++reservations;generation=77;return ESP_OK;};
     network.get_hostname=[]{return "main-amity";};
@@ -129,6 +135,7 @@ int run_tests(){
         assert(runtime_admission_status().phase=="scanning");assert(runtime_admission_status().requires_setup_code==(mode==AdmissionMode::setup_code));
         assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE);
         during_wait=select;run();assert(discoveries==2&&reservations==1&&releases==1&&wifi_exports==1&&encrypted_exchanges==3&&saves==1);
+        assert(early_candidate_published&&candidate_snapshots>=2&&clock_ms<21000); // Later candidate remained selectable without another full scan.
         assert(certificates==1); // Verify the untrusted candidate once, reuse exact validated records.
         for(const char* stage:{"worker_selected","selected_total","gatt_connect","crypto_handshake","identify_rpc","peer_validation","proposal_store","prepare_rpc","prepare_ack","wifi_rpc","finishing"}){
             const auto found=std::find_if(platform::recorded_setup_timings.begin(),platform::recorded_setup_timings.end(),[&](const auto& row){return std::string(row.area)=="invite"&&std::string(row.entry.stage)==stage;});

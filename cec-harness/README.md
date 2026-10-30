@@ -89,6 +89,16 @@ access on the main alone. Both modes require the named physical DUT to belong
 to that same bed. Exit attempts registered UI
 resource cleanup, CEC cleanup and logout on success, assertion failure or
 exception, in that order.
+
+HTTP requests on each DUT reuse one authenticated HTTPS connection with the
+configured TLS verification. The framework fully receives each response before
+reusing the socket, expires connections after two idle seconds, and closes them
+on logout or testbed cleanup, including failed authentication. A failed request
+or redirect is reported without an automatic resend; mutations are never retried
+by the transport. Existing per-request deadlines include transport-lock waiting,
+connection setup and response reads. Connection events appear at DEBUG level
+without credentials, bearer tokens, URLs or HTTP bodies.
+
 `DUT.scan_hdmi()` uses the existing UI scan operations and returns a
 `ScanResult`; `assert_contains()` checks the requested component identities and
 fresh physical exchanges through the common discovery implementation.

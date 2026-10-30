@@ -14,6 +14,13 @@ At boot, automatically open the bounded Matter setup window when the current fab
 
 On the original main, open **Amity devices → Add** to scan directly for nearby unclaimed boards. Hold the candidate's **FW RESET** for at least three seconds and release before ten seconds. Choose the candidate if several are found, enter a valid unique **Name**, then add it. The candidate must remain within the existing bounded physical setup window. A ten-second hold retains its factory-reset meaning; the shorter setup action must not fire first.
 
+The main publishes candidates as soon as discovery finds them. The same bounded
+scan continues collecting other candidates while the dialog remains open; the
+user can select an available board immediately. Selecting a candidate fences
+and cancels that scan before connecting to the exact selected token/address.
+Retain the scan generation, cancellation, radio ownership and physical-window
+checks. The 20-second collection duration is not a minimum wait before Add.
+
 Both hold thresholds use the same accepted physical press edge. Debounce confirms
 that edge without shifting the hold clock, and the release edge stops the clock
 before release debounce. A 9.999-second release opens Add; a 10-second release or
@@ -75,6 +82,13 @@ generation. Retain the five-second GATT-step bound and the 30-second record
 assembly deadline; do not extend those limits to mask fragmentation failures.
 The negotiated MTU determines fragment payload size within the ATT value limit.
 
+The BLE response cursor is written once for each new requested fragment offset.
+Pending reads at that same offset do not rewrite it; the server publishes each
+complete reply atomically without changing the cursor. Keep the original ATT
+and reply deadlines, pending-read delay, record/framing/authentication checks and
+exact fragment bytes. This removes redundant writes, without claiming a smaller
+total radio-operation count while a long candidate operation is pending.
+
 The CHIP Wi-Fi driver's successful connection callback can precede DHCP. Network
 staging therefore awaits a usable IPv4 address within the same total 35-second
 connection budget, measured before dispatching the driver request. Association
@@ -109,6 +123,26 @@ current membership and settings still require their own live checks. This adds
 no durable activity journal, execution approval or new API.
 
 Cancellation and restart follow actual pre- or post-commit state. Abort removes provisional trust before commit; post-commit removal remains explicit. Prepared exact-pin LAN transactions may reconcile without reopening BLE. New admission sessions still require a physically opened candidate window. Scanning and admission run directly on the main; another member does not relay them.
+
+## Operational TLS validation
+
+Full certificate signature validation remains at every untrusted ingress:
+identity/group storage load, candidate identity admission and candidate-side
+preparation of the authority record. Operational TLS receives only those exact
+validated peer records. Setup still parses and checks the required leaf profile,
+qualified DNS identity, client/server usages and derived SPKI pin. Its callback
+matches the presented leaf byte-for-byte to the captured allowlist and expected
+peer identity; it does not repeat the expensive full self-signature verification.
+The SDK still requires mutual TLS, certificate verification, the configured
+hostname/profile and private-key possession. Preserve chain/depth rejection,
+non-clock verification flags and current runtime DER/pin/authority fences.
+This introduces no alternative trust source or admission fallback.
+
+Terminal TLS receive diagnostics report a static failure category and numeric
+SDK/progress metadata in the existing link-closure log. They contain no frame
+contents and do not change assembly, inactivity or whole-operation deadlines.
+The outer operational five-second guard retains its existing static timeout
+reason and may fire before a numeric TLS receive record is captured.
 
 ## Setup timing diagnostics
 

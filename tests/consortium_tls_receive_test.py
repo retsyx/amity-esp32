@@ -12,6 +12,7 @@ from consortium_gatt_callback_test import function
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/json.hpp"
+#include "tls_receive_trace.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
@@ -25,8 +26,9 @@ int recv(int,void*,size_t,int flags){recv_flags=flags;errno=EAGAIN;return -1;}
 int send(int,const void*,size_t,int flags){send_flags=flags;errno=EAGAIN;return -1;}
 namespace amity::consortium::platform {
 constexpr int MBEDTLS_ERR_SSL_WANT_READ=-1,MBEDTLS_ERR_SSL_WANT_WRITE=-2,MBEDTLS_ERR_NET_RECV_FAILED=-3,MBEDTLS_ERR_NET_SEND_FAILED=-4;
-uint64_t clock_ms=0;
-uint64_t now_ms(){return clock_ms;}
+uint64_t clock_ms=0,read_elapsed=0;
+unsigned clock_reads=0,jump_on_clock=0;uint64_t jump_to=0;
+uint64_t now_ms(){if(++clock_reads==jump_on_clock)clock_ms=jump_to;return clock_ms;}
 unsigned pdMS_TO_TICKS(unsigned ms){return ms/10;} // Real firmware tick is 100 Hz.
 std::vector<unsigned> waits;
 void vTaskDelay(unsigned ticks){waits.push_back(ticks);clock_ms+=std::max(1u,ticks)*10;}
@@ -36,12 +38,12 @@ uint64_t writable_at=0;std::vector<uint8_t> written;const uint8_t* blocked_point
 size_t maximum_write=0,partial_write=3;unsigned write_calls=0,write_elapsed=0;
 std::optional<int> write_error;unsigned error_after=0;bool want_read=false;
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
-void reset(){clock_ms=0;waits.clear();incoming.clear();cursor=0;reads=0;read_error.reset();recv_flags=send_flags=0;writable_at=0;written.clear();blocked_pointer=nullptr;blocked_size=0;maximum_write=0;partial_write=3;write_calls=write_elapsed=error_after=0;write_error.reset();want_read=false;}
+void reset(){clock_ms=read_elapsed=jump_to=0;clock_reads=jump_on_clock=0;waits.clear();incoming.clear();cursor=0;reads=0;read_error.reset();recv_flags=send_flags=0;writable_at=0;written.clear();blocked_pointer=nullptr;blocked_size=0;maximum_write=0;partial_write=3;write_calls=write_elapsed=error_after=0;write_error.reset();want_read=false;}
 void append(const std::string& body,uint64_t prefix_at=0,uint64_t body_at=0){
     const auto bytes=frame(body);for(size_t i=0;i<bytes.size();++i)incoming.push_back({i<4?prefix_at:body_at,bytes[i]});
 }
 int mbedtls_ssl_read(int*,uint8_t* bytes,size_t capacity){
-    ++reads;if(read_error)return *read_error;
+    ++reads;clock_ms+=read_elapsed;if(read_error)return *read_error;
     size_t size=0;while(cursor<incoming.size()&&incoming[cursor].at<=clock_ms&&size<capacity)bytes[size++]=incoming[cursor++].value;
     return size?static_cast<int>(size):MBEDTLS_ERR_SSL_WANT_READ;
 }
@@ -62,6 +64,11 @@ struct TlsLink {
     uint8_t incoming_prefix[4]{};
     size_t incoming_size=0,incoming_expected=4;
     bool incoming_failed=false;
+    uint64_t incoming_last_poll_end=0,incoming_max_poll_gap=0,incoming_max_read_ms=0;
+    TlsReceiveDiagnostic incoming_diagnostic;
+    const TlsReceiveDiagnostic& receive_diagnostic()const{return incoming_diagnostic;}
+    ReceiveResult receive_failed(TlsReceiveDiagnostic::Cause,int,uint64_t);
+
 };
 '''
 SUITE = r'''
@@ -157,9 +164,33 @@ void bounded_application_writes(){
         reset();TlsLink invalid;check(!invalid.send(body)&&write_calls==0,"invalid/oversized frame reached TLS");
     }
 }
+
+void terminal_receive_diagnostics(){
+    using Cause=TlsReceiveDiagnostic::Cause;
+    reset();TlsLink starved;append("buffered body",0,100);std::string body;
+    check(starved.poll_receive(body)==TlsLink::ReceiveResult::pending,"starvation fixture prefix missing");clock_ms=2300;
+    check(starved.poll_receive(body)==TlsLink::ReceiveResult::failed,"existing progress timeout changed");
+    const auto captured=starved.receive_diagnostic();
+    check(captured.cause==Cause::progress_timeout&&captured.bytes==4&&captured.expected==17&&captured.progress_ms==2300&&captured.total_ms==2300&&captured.poll_gap_ms==2300&&captured.read_ms==0,"progress/poll-gap diagnostics did not capture exact failure");
+    clock_ms=9900;check(starved.poll_receive(body)==TlsLink::ReceiveResult::failed&&starved.receive_diagnostic().progress_ms==captured.progress_ms,"terminal diagnostics changed after closure");
+    reset();TlsLink preempted;append("body after preemption",0,1);
+    check(preempted.poll_receive(body)==TlsLink::ReceiveResult::pending,"preemption fixture missing prefix");clock_ms=1;clock_reads=0;jump_on_clock=5;jump_to=2100;
+    check(preempted.poll_receive(body)==TlsLink::ReceiveResult::failed&&preempted.receive_diagnostic().cause==Cause::progress_timeout,"preemption before parser feed reused an earlier deadline sample");
+    reset();TlsLink blocked;append("blocked inside SDK");read_elapsed=2100;
+    check(blocked.poll_receive(body)==TlsLink::ReceiveResult::failed&&blocked.receive_diagnostic().cause==Cause::progress_timeout&&blocked.receive_diagnostic().read_ms==2100&&blocked.receive_diagnostic().poll_gap_ms==0,"SDK read wall time confused with an unserviced worker");
+    reset();TlsLink wrapper;check(!wrapper.receive(body,100)&&wrapper.receive_diagnostic().cause==Cause::wrapper_timeout&&wrapper.receive_diagnostic().bytes==0,"outer timeout cause missing");
+    reset();TlsLink eof;read_error=0;check(eof.poll_receive(body)==TlsLink::ReceiveResult::failed&&eof.receive_diagnostic().cause==Cause::tls_eof&&eof.receive_diagnostic().code==0,"EOF cause missing");
+    reset();TlsLink fatal;read_error=-123;check(fatal.poll_receive(body)==TlsLink::ReceiveResult::failed&&fatal.receive_diagnostic().cause==Cause::tls_error&&fatal.receive_diagnostic().code==-123,"fatal SDK code missing");
+    reset();TlsLink invalid;for(unsigned i=0;i<4;++i)incoming.push_back({0,0});check(invalid.poll_receive(body)==TlsLink::ReceiveResult::failed&&invalid.receive_diagnostic().cause==Cause::invalid_length&&invalid.receive_diagnostic().bytes==4,"malformed frame cause missing");
+    reset();TlsLink reversed;clock_ms=100;append("later",100,3000);check(reversed.poll_receive(body)==TlsLink::ReceiveResult::pending,"clock fixture missing prefix");clock_ms=99;
+    check(reversed.poll_receive(body)==TlsLink::ReceiveResult::failed&&reversed.receive_diagnostic().cause==Cause::clock_reversed,"clock reversal cause missing");
+    reset();TlsLink total;const auto bytes=frame(std::string(20,'x'));for(size_t i=0;i<bytes.size();++i)incoming.push_back({i*1000,bytes[i]});
+    for(clock_ms=0;clock_ms<10000;clock_ms+=1000)check(total.poll_receive(body)==TlsLink::ReceiveResult::pending,"total timeout fired early");
+    check(total.poll_receive(body)==TlsLink::ReceiveResult::failed&&total.receive_diagnostic().cause==Cause::frame_timeout&&total.receive_diagnostic().total_ms==10000,"total frame deadline cause missing");
+}
 }
 int main(){using namespace amity::consortium::platform;try{
-    ipc_during_partial_frame();fragments_and_frame_boundaries();unchanged_terminal_deadlines_and_errors();blocking_wrapper_and_nonblocking_socket();bounded_application_writes();
+    ipc_during_partial_frame();fragments_and_frame_boundaries();unchanged_terminal_deadlines_and_errors();blocking_wrapper_and_nonblocking_socket();bounded_application_writes();terminal_receive_diagnostics();
     std::cout<<"PASS actual TLS receive/send: partial input yields to existing IPC, bounded nonblocking reads and512-byte app writes, exact frame boundaries/deadlines, partial/WANT same-buffer continuation, terminal errors and bounded handshake wrapper\n";
     return 0;
 }catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
@@ -173,7 +204,7 @@ def main():
     actual = (function(source, 'int receive_socket(') + function(source, 'int send_socket(')
               + function(source, 'bool TlsLink::receive(') + function(source, 'bool TlsLink::send('))
     if 'TlsLink::ReceiveResult TlsLink::poll_receive(' in source:
-        actual += function(source, 'TlsLink::ReceiveResult TlsLink::poll_receive(')
+        actual += (function(source, 'TlsLink::ReceiveResult TlsLink::receive_failed(') if 'TlsLink::ReceiveResult TlsLink::receive_failed(' in source else '') + function(source, 'TlsLink::ReceiveResult TlsLink::poll_receive(')
     else:
         # Before/after regression: exercise the previous actual blocking read
         # through the same worker-turn seam, rather than fail at extraction.
@@ -183,7 +214,7 @@ def main():
         cpp.write_text(PREFIX + actual + SUITE)
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
             '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
-            '-I' + str(ROOT / 'components/consortium/include'), str(cpp),
+            '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/consortium'), str(cpp),
             str(ROOT / 'components/consortium/json.cpp'), '-o', str(binary)], check=True)
         return subprocess.run([str(binary)], check=False).returncode
 

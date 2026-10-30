@@ -56,6 +56,7 @@ struct LinkTrace {
     uint32_t ttl=0;
     int action_code=-1;
     int socket_error=0;
+    platform::TlsReceiveDiagnostic receive;
     bool fail(const char* why,Error result=Error::none){reason=why;error=result;unexpected=true;return false;}
     void queued(const Queued& value){kind=value.kind;has_kind=has_queue=true;created=value.created;ttl=value.ttl;queued_revision=value.revision;action_code=value.owned?static_cast<int>(value.owned->kind):-1;}
 };
@@ -582,6 +583,10 @@ void emit_link_trace(const LinkTraceSnapshot& captured){
         ESP_LOGI("consortium","Link closed reason=%s phase=%s link=%s",trace.reason,trace.phase,scope.link_id.str().c_str());
     ESP_LOGI("consortium","Link scope peer=%s authenticated_peer=%s link=%s local_boot=%s peer_boot=%s revision=%llu",
         captured.peer.str().c_str(),captured.authenticated_peer.str().c_str(),scope.link_id.str().c_str(),scope.local_boot_id.str().c_str(),scope.peer_boot_id.str().c_str(),static_cast<unsigned long long>(scope.config_revision));
+    if(trace.receive.cause!=platform::TlsReceiveDiagnostic::Cause::none)
+        ESP_LOGW("consortium","TLS receive failed cause=%s code=%d bytes=%u expected=%u progress_ms=%llu total_ms=%llu poll_gap_ms=%llu read_ms=%llu link=%s",
+            trace.receive.name(),trace.receive.code,trace.receive.bytes,trace.receive.expected,static_cast<unsigned long long>(trace.receive.progress_ms),static_cast<unsigned long long>(trace.receive.total_ms),
+            static_cast<unsigned long long>(trace.receive.poll_gap_ms),static_cast<unsigned long long>(trace.receive.read_ms),scope.link_id.str().c_str());
 }
 void trace_link_closed(const Active& active,const LinkTrace& trace,uint64_t now){emit_link_trace(snapshot_link_trace(active,trace,now));}
 struct DeferredLinkTrace {
@@ -770,6 +775,7 @@ void active_loop_work(void *arg){
     if(server&&active->retiring&&!retirement_attempted)finish_retirement(*active);
     if(active->update_begin_id) {RuntimeUpdateHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=updates;}if(hooks.disconnected) hooks.disconnected(active->peer,active->update_begin_id);}
     if(!trace.unexpected&&active->retiring)trace.reason="retired";
+    trace.receive=active->tls->receive_diagnostic();
     trace_link_closed(*active,trace,now_ms());
     active->cancelled=true;
     const bool fenced=notify_link_closed(*active);
@@ -933,7 +939,9 @@ void invite_worker_work(void *arg){
     }
     std::string token,hostname;uint32_t pin=0;bool submitted=false;
     while(current()){
-        {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan)return;if(admission.submitted){token=admission.selected_token;hostname=admission.hostname;pin=admission.pin;admission.pin=0;submitted=true;break;}}
+        std::vector<RuntimeAdmissionCandidate> candidates;
+        if(gatt_client_candidates(generation,candidates)!=ESP_OK)break;
+        {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan)return;if(admission.submitted){token=admission.selected_token;hostname=admission.hostname;pin=admission.pin;admission.pin=0;submitted=true;break;}if(invitation_cancelled)break;admission.view.candidates=std::move(candidates);admission.view.phase="found";}
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     if(!submitted){admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;}

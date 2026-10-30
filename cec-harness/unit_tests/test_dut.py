@@ -2,6 +2,7 @@
 
 import io
 import json
+import ssl
 from pathlib import Path
 import sys
 import tempfile
@@ -111,6 +112,39 @@ class DUTTests(unittest.TestCase):
             dut.get_state()
         self.assertFalse(opener.requests)
 
+    def test_default_transport_keeps_selected_TLS_verification_context(self):
+        dut = DUT("amity-dut", wiring=self.wiring)
+        self.assertTrue(dut._opener._context.check_hostname)
+        self.assertEqual(dut._opener._context.verify_mode, ssl.CERT_REQUIRED)
+        other = DUT("amity-dut", wiring=self.wiring, insecure=True)
+        self.assertFalse(other._opener._context.check_hostname)
+        self.assertEqual(other._opener._context.verify_mode, ssl.CERT_NONE)
+        self.assertIsNot(dut._opener, other._opener)
+        self.assertIsNot(dut._opener._context, other._opener._context)
+        self.assertIsNone(dut._opener._connection)
+        dut.close();other.close()
+
+    def test_login_failure_and_logout_failure_close_transport(self):
+        class ClosingOpener(Opener):
+            closed = 0
+            def close(self):
+                self.closed += 1
+        error = lambda: HTTPError("https://amity.local/api/login", 401, "Unauthorized", {},
+                                  io.BytesIO(b'{"error":"Login required"}'))
+        opener = ClosingOpener(error())
+        dut = DUT("amity-dut", wiring=self.wiring, opener=opener)
+        with self.assertRaises(AmityHTTPError):
+            dut.login("secret")
+        self.assertIsNone(dut._token)
+        self.assertEqual(opener.closed, 2)  # New login boundary and its failure.
+        opener = ClosingOpener({"token": "session"}, error())
+        dut = DUT("amity-dut", wiring=self.wiring, opener=opener)
+        dut.login("secret")
+        with self.assertRaises(AmityHTTPError):
+            dut.logout()
+        self.assertIsNone(dut._token)
+        self.assertEqual(opener.closed, 2)
+
     def test_name_supplies_origin_without_network_until_login(self):
         opener = Opener({"token": "session"}, {"octopus_id": self.wiring.identities["amity-dut"].device_id})
         dut = DUT("amity-dut", wiring=self.wiring, opener=opener)
@@ -146,6 +180,7 @@ class DUTTests(unittest.TestCase):
         with self.assertRaises(AmityHTTPError) as failure:
             dut.get_state()
         self.assertEqual(failure.exception.status, 401)
+        self.assertTrue(error.closed)
         with self.assertRaises(RuntimeError):
             dut.get_state()
 

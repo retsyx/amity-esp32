@@ -166,6 +166,28 @@ class TestBedLifetimeTests(unittest.TestCase):
         self.assertIsNone(dut._token)
         self.assertIsNone(dut._testbed)
 
+    def test_auth_failure_before_token_still_closes_HTTP_transport(self):
+        dut = UnitDUT("first-board", self.log)
+        dut._opener = SimpleNamespace(close=lambda: self.log.append((dut.name, "http_close")))
+        def fail_auth():
+            raise ValueError("PRIVATE_AUTH_FAILURE")
+        dut.authenticate = fail_auth
+        with self.assertRaises(ValueError):
+            with TestBed(dut, session_factory=self.factory()):
+                self.fail("Authentication must fail before entry")
+        self.assertIn((dut.name, "http_close"), self.log)
+        self.assertNotIn((dut.name, "logout"), self.log)
+
+    def test_logout_failure_still_closes_HTTP_transport(self):
+        dut = UnitDUT("first-board", self.log, logout_error=True)
+        dut._opener = SimpleNamespace(close=lambda: self.log.append((dut.name, "http_close")))
+        bed = TestBed(dut, session_factory=self.factory())
+        with self.assertRaises(TestBedCleanupError):
+            with bed:
+                pass
+        self.assertEqual(self.log[-1], (dut.name, "http_close"))
+        self.assertIn("ValueError", bed.report["cleanup_errors"])
+
     def test_control_only_candidate_is_owned_and_reported_without_any_http(self):
         main = UnitDUT("first-board", self.log)
         candidate = UnitDUT("second-board", self.log, auth_error=True, wrong_identity=True)

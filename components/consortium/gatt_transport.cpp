@@ -253,6 +253,12 @@ esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler
 }
 void gatt_server_close(){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;server_pin=0;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_server=server_connection;ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}server_connection=BLE_HS_CONN_HANDLE_NONE;if(was_open||channel_live){Work work;work.close=true;post_work(work);}srv_response.clear();server_handler={};}
 void gatt_server_seal(){std::lock_guard<std::mutex> guard(state_mutex);server_sealed=true;if(ble_gap_adv_active())ble_gap_adv_stop();}
+esp_err_t gatt_client_candidates(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){
+    output.clear();std::lock_guard<std::mutex> guard(client_mutex);
+    if(!gen||!client_workflow||client_stopping||client_generation!=gen||client_connection!=BLE_HS_CONN_HANDLE_NONE)return ESP_ERR_INVALID_STATE;
+    for(const auto& candidate:discovered)output.push_back(candidate.public_value);
+    return ESP_OK;
+}
 esp_err_t gatt_client_discover(uint64_t gen,std::vector<RuntimeAdmissionCandidate>& output){
     output.clear();if(!registered||!gen)return ESP_ERR_INVALID_STATE;
     void* token=nullptr;
@@ -262,20 +268,38 @@ esp_err_t gatt_client_discover(uint64_t gen,std::vector<RuntimeAdmissionCandidat
         discovered.clear();client_discovery_waiting=true;client_record=0;clear_done();
     }
     ble_gap_disc_params params{};params.passive=0;params.filter_duplicates=1;
-    if(ble_gap_disc(BLE_OWN_ADDR_PUBLIC,20000,&params,client_gap,token)||!wait(21000)){gatt_client_disconnect();return ESP_FAIL;}
-    std::lock_guard<std::mutex> guard(client_mutex);if(!current(token)||client_generation!=gen||client_stopping)return ESP_ERR_INVALID_STATE;
-    for(const auto& candidate:discovered)output.push_back(candidate.public_value);
-    return ESP_OK;
+    if(ble_gap_disc(BLE_OWN_ADDR_PUBLIC,20000,&params,client_gap,token)){gatt_client_disconnect();return ESP_FAIL;}
+    const auto until=now_ms()+21000;
+    while(now_ms()<until){
+        {std::lock_guard<std::mutex> guard(client_mutex);
+            if(!current(token)||client_generation!=gen||client_stopping)return ESP_ERR_INVALID_STATE;
+            output.clear();for(const auto& candidate:discovered)output.push_back(candidate.public_value);
+            // Return selectable candidates promptly while the same bounded
+            // scan continues collecting other boards for the open dialog.
+            if(!output.empty()||!client_discovery_waiting)return ESP_OK;
+        }
+        xSemaphoreTake(client_done,pdMS_TO_TICKS(100));
+    }
+    gatt_client_disconnect();return ESP_FAIL;
 }
 esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
     GattTiming connection_timing("connect");
-    void* token=nullptr;
+    void* token=nullptr;bool scanning=false;
     {std::lock_guard<std::mutex> guard(client_mutex);
-        if(!client_workflow||client_stopping||client_generation!=gen||client_discovery_waiting||client_connection!=BLE_HS_CONN_HANDLE_NONE||client_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
+        if(!client_workflow||client_stopping||client_generation!=gen||client_connection!=BLE_HS_CONN_HANDLE_NONE||client_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
         const auto found=std::find_if(discovered.begin(),discovered.end(),[&](const auto& value){return value.public_value.token==selected;});if(found==discovered.end())return ESP_ERR_INVALID_ARG;
+        scanning=client_discovery_waiting;client_discovery_waiting=false;
         candidate_address=found->address;discovered.clear();++client_callback_cookie;token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));
         client_service_start=client_service_end=client_attribute=0;client_record=0;clear_done();
     }
+    if(scanning){
+        // The pinned SDK guarantees that successful cancellation fully stops
+        // discovery and permits an immediate connection. Explicit cancellation
+        // does not produce DISC_COMPLETE; fence its old callback cookie first.
+        const auto stopped=ble_gap_disc_cancel();
+        if(stopped&&stopped!=BLE_HS_EALREADY){connection_timing.status=stopped;connection_timing.failure="scan_cancel";return ESP_FAIL;}
+    }
+    {std::lock_guard<std::mutex> guard(client_mutex);if(!current(token)||client_stopping||client_generation!=gen)return ESP_ERR_INVALID_STATE;}
     ble_gap_conn_params connect{};connect.scan_itvl=0x10;connect.scan_window=0x10;connect.itvl_min=24;connect.itvl_max=40;connect.supervision_timeout=400;
     connection_timing.failure="connect";const auto connecting=now_ms();
     if(!connection_timing.issued(ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,&connect,client_gap,token))||!connection_timing.await(connecting,11000))return ESP_FAIL;
@@ -308,10 +332,15 @@ bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &r
     // write request's three-byte ATT header.
     const size_t fragment=mtu>13?std::min<size_t>(mtu-13,BLE_ATT_ATTR_MAX_LEN-10):7;
     for(size_t offset=0;offset<request.size();offset+=fragment){auto count=std::min(fragment,request.size()-offset);uint8_t bytes[BLE_ATT_ATTR_MAX_LEN]={1,uint8_t(encrypted),uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(request.size()>>8),uint8_t(request.size()),uint8_t(offset>>8),uint8_t(offset)};memcpy(bytes+10,request.data()+offset,count);clear_done();timing.failure="request_write";++timing.request_writes;const auto submitted=now_ms();if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,bytes,count+10,on_write,token))||!timing.await(submitted,5000))return false;}
-    const auto end=now_ms()+45000;timing.reply_started=now_ms();size_t offset=0,total=0;response.clear();
+    const auto end=now_ms()+45000;timing.reply_started=now_ms();size_t offset=0,total=0;bool cursor_needed=true;response.clear();
     while(now_ms()<end){
-        uint8_t cursor[7]={2,uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(offset>>8),uint8_t(offset)};
-        clear_done();timing.failure="cursor_write";++timing.cursor_writes;const auto positioning=now_ms();if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,cursor,sizeof(cursor),on_write,token))||!timing.await(positioning,5000))return false;
+        if(cursor_needed){
+            uint8_t cursor[7]={2,uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(offset>>8),uint8_t(offset)};
+            clear_done();timing.failure="cursor_write";++timing.cursor_writes;const auto positioning=now_ms();if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,cursor,sizeof(cursor),on_write,token))||!timing.await(positioning,5000))return false;
+            // Publishing a response does not alter the server cursor. Pending
+            // reads retain this position until a validated fragment advances it.
+            cursor_needed=false;
+        }
         clear_done();timing.failure="response_read";++timing.reads;const auto reading=now_ms();if(!timing.issued(ble_gattc_read(client_connection,client_attribute,on_read_fragment,token))||!timing.await(reading,5000))return false;
         std::string bytes;{std::lock_guard<std::mutex> guard(client_mutex);bytes=client_response;}
         if(bytes.size()>=12&&uint8_t(bytes[0])==1){
@@ -320,7 +349,7 @@ bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &r
             const size_t cursor=(uint16_t(uint8_t(bytes[10]))<<8)|uint8_t(bytes[11]);
             if(returned==rid&&uint8_t(bytes[8])==uint8_t(encrypted)){
                 if(uint8_t(bytes[1])==2){timing.failure="response_rejected";return false;}
-                if(uint8_t(bytes[1])==1){timing.failure="response_frame";if(length>4096||!length||cursor!=offset||(total&&total!=length)||bytes.size()-12>length-offset)return false;total=length;if(bytes.size()==12)return false;response.append(bytes.data()+12,bytes.size()-12);++timing.response_fragments;offset=response.size();if(offset==total){timing.done();return true;}continue;}
+                if(uint8_t(bytes[1])==1){timing.failure="response_frame";if(length>4096||!length||cursor!=offset||(total&&total!=length)||bytes.size()-12>length-offset)return false;total=length;if(bytes.size()==12)return false;response.append(bytes.data()+12,bytes.size()-12);++timing.response_fragments;offset=response.size();if(offset==total){timing.done();return true;}cursor_needed=true;continue;}
             }
         }
         ++timing.pending_reads;vTaskDelay(pdMS_TO_TICKS(25));

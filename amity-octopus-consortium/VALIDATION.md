@@ -15,15 +15,91 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Enrollment latency fixes — 30 October 2026
+
+Firmware 0.1.107 / Matter software 108 removes the discovery collection gate and
+repeated operational certificate signature checks. The shared functional HTTP
+transport reuses a connection for the configured DUT origin and closes it during
+cleanup; it never automatically resends a request. Detailed build, deployment,
+timing and physical-suite results are pending under
+`test-results/add-phase-fix-2026-10-30/`. The completed 0.1.106 investigation below
+remains an immutable baseline, including its failed timing capture.
+
 ## Enrollment phase investigation — 30 October 2026
 
-Firmware 0.1.106 / Matter software 107 adds bounded ordinary setup-phase timing
-logs without changing admission or transport policy. Native fixtures verify
-unchanged GATT record bytes, operation counts, deadlines and callbacks, along
-with logging outside transport locks. The new measurements use the existing
-authenticated UI endpoints and normal reviewed fixture removal. No USB monitor
-is used during enrollment. Build, deployment and measured results are pending;
-the complete physical-suite qualification below remains specific to 0.1.105.
+All four DUTs received exact 0.1.106 / Matter software 107 from
+`d150022f0752ac23968da65cf12b2f4644302f70`: image SHA-256
+`9b192c3558f512579fc2768431d474685e6c77bd21af96ae7d358725168dbd75`,
+ELF SHA-256 `4a67a4137ee2dc3d3bbc21639b4c1afad30270099f2440c41b994b4a3f7c6cbf`,
+2,447,056 bytes. Main OTA passed 13 preservation checks; each candidate's
+application-only update passed 18 checks, retained provisioning and closed USB.
+The complete host suite, 340 framework units, focused timing/GATT tests and full
+contracts passed. The initial firmware build failed strict indentation warnings;
+`build-first-attempt.log` retains that failure before the committed formatting
+fix and successful build. Evidence is under
+`test-results/add-phase-timing-2026-10-30/`.
+
+Three Add-only physical diagnostics use the unchanged shipping endpoints,
+documented 3.5-second physical gesture and normal reviewed removal/reset.
+All three functional reports passed, all resets were acknowledged `scheduled`,
+and all main preservation checks passed. No USB monitor was opened during these
+runs. The ordinary logs distinguish actual device monotonic stage times from
+host HTTP observation and later identity/configuration/settings proof:
+
+| Sample | Operation polling | Accepted Add to ready | Worker selection to ready | Timing result |
+| --- | --- | --- | --- | --- |
+| A1 | Original 0.4 s after response | Unavailable | 52.634 s | Incomplete: submission marker rolled out |
+| B | 2 s after response, exact Add GET only | 37.688 s | 37.605 s | Complete |
+| A2 | Original 0.4 s after response | 39.520 s | 39.518 s | Complete |
+
+A1's functional pass does not repair its failed timing diagnostic. Its retained
+24,576-byte log lacks the exact admission marker, so no accepted-Add total is
+invented. It shows an extra failed post-reboot connection: configuration transfer
+succeeded, then owner-state receive failed after 2.169 seconds; a subsequent TLS
+connection and synchronization succeeded. The extra connection interval between
+those two TCP accepts is 13.023 seconds. Existing logging does not distinguish
+TLS EOF/error, frame rejection or frame-progress timeout. A2 succeeded with the
+same standard polling, so these samples do not prove polling caused A1's failure.
+
+The complete B trace accounts for every millisecond without adding overlapping
+parents and children:
+
+| Sequential wall interval | Duration |
+| --- | --- |
+| Dispatch to selected worker | 0.083 s |
+| BLE connection, key exchange, identity/proposal preparation | 8.284 s |
+| Wi-Fi credential RPC through usable-network acknowledgment | 6.485 s |
+| First LAN connection, TLS, challenge and durable enrollment | 8.011 s |
+| Committed enrollment to next TCP connection, including restart/rejoin | 8.694 s |
+| Final TLS, Hello/hostname and configuration synchronization | 6.131 s |
+| Total | 37.688 s |
+
+The old link's 5.015-second hostname failure overlaps the restart/rejoin interval;
+it is not an additional five seconds on this critical path. TLS setup alone
+repeats full certificate checks, and its two main-side setup spans total 1.669
+seconds; the two handshake spans total 7.982 seconds and include further
+certificate checks, SDK work, scheduling and explicit waits. These are wall
+intervals, not CPU attribution. Candidate association/DHCP and restart internals
+are not separately measured by main-only logs.
+
+A separate read-only six-request probe measured fresh HTTPS GETs at
+1.056–1.429 seconds, versus 64.6–66.7 ms after the first request on one reused
+connection. The framework currently opens a new TLS connection for every request,
+including its seven final proof requests. This explains much of that roughly
+nine-second proof cost; the probe approximates reuse and does not measure actual
+browser Add latency. The fixed 20-second discovery collection gate precedes
+these enrollment intervals. `add-phase-analysis.json` preserves all three
+reports, their hashes, explicit missing evidence, overlaps and disjoint bins.
+
+Timing logging itself has unmeasured overhead. The pinned USB-JTAG polling sink
+can wait until 50 ms since its last successful write when the connected host does
+not drain its FIFO, then drop bytes until progress resumes; formatting, ring-copy
+and log-lock costs also remain. `observer-overhead.json` and
+`scheduling-analysis.json` preserve exact source/config references. Do not treat
+instrumented measurements as guaranteed production latency or infer CPU
+starvation from task priority on a dual-core system. These diagnostics qualify
+only the exercised normal-profile Add/removal paths. The complete CEC-suite
+qualification below remains specific to 0.1.105.
 
 ## 0.1.105 complete functional suite and Add timing — 30 October 2026
 

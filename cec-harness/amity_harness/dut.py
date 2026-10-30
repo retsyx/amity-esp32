@@ -16,12 +16,13 @@ import subprocess
 import time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
-from urllib.request import Request, build_opener, HTTPSHandler
+from urllib.request import Request
 from uuid import uuid4
 
 from .wiring import Wiring
 from .config import current_config
 from .trace import event
+from .http_transport import HTTPSOpener
 
 
 class AmityHTTPError(RuntimeError):
@@ -130,7 +131,7 @@ class DUT:
         if insecure:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-        self._opener = opener if opener is not None else build_opener(HTTPSHandler(context=context))
+        self._opener = opener if opener is not None else HTTPSOpener(self.url, context, dut=self.name)
         self._token = None
         if credentials is not None:
             if password is not None:
@@ -213,6 +214,8 @@ class DUT:
                 message = payload.get("error") or payload.get("message") or "Request failed"
             except (ValueError, AttributeError):
                 message = "Request failed"
+            finally:
+                error.close()
             raise AmityHTTPError(error.code, message) from None
         except BaseException as error:
             event("http.request.failed", level=logging.DEBUG, **trace,
@@ -225,6 +228,7 @@ class DUT:
             raise ValueError("An admin password is required")
         # Discard a previous session before attempting a new login.
         self._token = None
+        self.close()
         event("auth.login.start", dut=self.name, device_id=self.identity.device_id)
         try:
             response = self.request("/api/login", {"password": password})
@@ -233,6 +237,11 @@ class DUT:
                 raise RuntimeError("Amity did not return an authenticated session")
             self._token = token
         except BaseException as error:
+            try:
+                self.close()
+            except Exception as close_error:
+                event("http.connection.close.failed", level=logging.ERROR, dut=self.name,
+                      error_type=type(close_error).__name__)
             event("auth.login.failed", level=logging.ERROR, dut=self.name, error_type=type(error).__name__)
             raise
         event("auth.login.complete", dut=self.name)
@@ -294,6 +303,13 @@ class DUT:
             event("auth.logout.complete", dut=self.name)
         finally:
             self._token = None
+            self.close()
+
+    def close(self):
+        """Close this DUT's HTTP transport, including partially authenticated use."""
+        close = getattr(getattr(self, "_opener", None), "close", None)
+        if callable(close):
+            close()
 
     def get_state(self):
         return self.request("/api/activity-editor/status")

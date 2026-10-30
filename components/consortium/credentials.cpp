@@ -24,9 +24,11 @@ esp_err_t erase_record(const char *space,const char *key){
     esp_err_t result=ESP_FAIL;const bool completed=config_store::with_internal_flash_stack([&]{nvs_handle_t handle;result=nvs_open_from_partition("amity_cfg",space,NVS_READWRITE,&handle);if(result!=ESP_OK)return;result=key?nvs_erase_key(handle,key):nvs_erase_all(handle);if(result==ESP_ERR_NVS_NOT_FOUND)result=ESP_OK;if(result==ESP_OK)result=nvs_commit(handle);nvs_close(handle);});return completed?result:ESP_FAIL;
 }
 esp_err_t erase_namespace(const char *space){return erase_record(space,nullptr);}
-namespace {
-bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt &crt,std::string &pin){
-    if(der.empty()||der.size()>1024||!id||mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(der.data()),der.size()))return false;
+// A parsed leaf can be rebound to an already authenticated membership record
+// without repeating its self-signature checks. This checks the entire local
+// leaf profile and derives the pin; it does not authenticate untrusted input.
+bool certificate_binding(const mbedtls_x509_crt &crt,model::OctopusId id,std::string &pin){
+    if(!id)return false;
     const int required_extensions=MBEDTLS_X509_EXT_BASIC_CONSTRAINTS|MBEDTLS_X509_EXT_KEY_USAGE|MBEDTLS_X509_EXT_EXTENDED_KEY_USAGE|MBEDTLS_X509_EXT_SUBJECT_ALT_NAME;
     if((crt.MBEDTLS_PRIVATE(ext_types)&required_extensions)!=required_extensions||crt.issuer_raw.len!=crt.subject_raw.len||memcmp(crt.issuer_raw.p,crt.subject_raw.p,crt.subject_raw.len)||mbedtls_pk_get_key_type(&crt.pk)!=PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1))return false;
     if(crt.next||crt.MBEDTLS_PRIVATE(ca_istrue)||crt.version!=3||crt.MBEDTLS_PRIVATE(key_usage)!=MBEDTLS_X509_KU_DIGITAL_SIGNATURE||mbedtls_pk_get_bitlen(&crt.pk)!=256||!mbedtls_pk_can_do_psa(&crt.pk,PSA_ALG_ECDSA(PSA_ALG_SHA_256),PSA_KEY_USAGE_VERIFY_HASH))return false;
@@ -34,12 +36,19 @@ bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt
     bool san=false;
     for(auto entry=&crt.subject_alt_names;entry&&entry->buf.p;entry=entry->next){if(san)return false;mbedtls_x509_subject_alternative_name name{};if(mbedtls_x509_parse_subject_alt_name(&entry->buf,&name)||name.type!=MBEDTLS_X509_SAN_DNS_NAME)return false;auto &value=name.san.unstructured_name;if(value.len!=expected.size()||std::memcmp(value.p,expected.data(),value.len))return false;san=true;}
     if(!san||mbedtls_x509_crt_check_extended_key_usage(&crt,MBEDTLS_OID_SERVER_AUTH,MBEDTLS_OID_SIZE(MBEDTLS_OID_SERVER_AUTH))||mbedtls_x509_crt_check_extended_key_usage(&crt,MBEDTLS_OID_CLIENT_AUTH,MBEDTLS_OID_SIZE(MBEDTLS_OID_CLIENT_AUTH)))return false;
+    if(crt.MBEDTLS_PRIVATE(sig_md)!=MBEDTLS_MD_SHA256)return false;
+    uint8_t spki[128];int length=mbedtls_pk_write_pubkey_der(&crt.pk,spki,sizeof(spki));if(length<=0)return false;
+    pin=sha256(std::string_view(reinterpret_cast<char*>(spki+sizeof(spki)-length),length));return pin.size()==64;
+}
+namespace {
+bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt &crt,std::string &pin){
+    if(der.empty()||der.size()>1024||!id||mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(der.data()),der.size())||!certificate_binding(crt,id,pin))return false;
+    const std::string expected="o-"+id.str()+".amity.invalid";
     uint32_t flags=0;int result=mbedtls_x509_crt_verify(&crt,&crt,nullptr,expected.c_str(),&flags,nullptr,nullptr);
     if(result&&((flags&~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE))||!flags))return false;
     uint8_t digest[32];size_t hash_size=0;
-    if(psa_hash_compute(PSA_ALG_SHA_256,crt.tbs.p,crt.tbs.len,digest,sizeof(digest),&hash_size)!=PSA_SUCCESS||hash_size!=32||crt.MBEDTLS_PRIVATE(sig_md)!=MBEDTLS_MD_SHA256||mbedtls_pk_verify(&crt.pk,MBEDTLS_MD_SHA256,digest,hash_size,crt.MBEDTLS_PRIVATE(sig).p,crt.MBEDTLS_PRIVATE(sig).len))return false;
-    uint8_t spki[128];int length=mbedtls_pk_write_pubkey_der(&crt.pk,spki,sizeof(spki));if(length<=0)return false;
-    pin=sha256(std::string_view(reinterpret_cast<char*>(spki+sizeof(spki)-length),length));return pin.size()==64;
+    return psa_hash_compute(PSA_ALG_SHA_256,crt.tbs.p,crt.tbs.len,digest,sizeof(digest),&hash_size)==PSA_SUCCESS&&hash_size==32&&
+        !mbedtls_pk_verify(&crt.pk,MBEDTLS_MD_SHA256,digest,hash_size,crt.MBEDTLS_PRIVATE(sig).p,crt.MBEDTLS_PRIVATE(sig).len);
 }
 bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){Json json;JsonError err;if(!parse_json(record,json,err)||!closed(json,{"version","octopus_id","leaf","key"}))return false;uint64_t version=0;model::OctopusId stored;if(!json_uint(json.get("version"),version,1,1)||!consortium::id(json.get("octopus_id"),stored)||stored!=id)return false;std::string leaf,key;if(!json.get("leaf")||json.get("leaf")->type!=Json::Type::string||!json.get("key")||json.get("key")->type!=Json::Type::string||!unhex(json.get("leaf")->string,leaf,1024)||!unhex(json.get("key")->string,key,512))return false;std::string pin;if(!certificate(leaf,id,pin))return false;mbedtls_pk_context parsed;mbedtls_pk_init(&parsed);mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);bool valid=mbedtls_pk_parse_key(&parsed,reinterpret_cast<const uint8_t*>(key.data()),key.size(),nullptr,0)==0&&mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(leaf.data()),leaf.size())==0&&mbedtls_pk_check_pair(&crt.pk,&parsed)==0;mbedtls_x509_crt_free(&crt);mbedtls_pk_free(&parsed);if(!valid)return false;out={id,std::move(leaf),std::move(key),std::move(pin)};return true;}
 }

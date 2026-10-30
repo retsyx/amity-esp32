@@ -59,21 +59,28 @@ int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){
     struct TimedVerify{TlsLink& link;uint64_t began;~TimedVerify(){++link.timing_verify_calls;link.timing_verify_ms+=now_ms()-began;}} timed{self,now_ms()};
     if(depth!=0||crt->next){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}
     const std::string_view der(reinterpret_cast<const char*>(crt->raw.p),crt->raw.len);
-    for(const auto &peer:self.allowed){if(der!=peer.der)continue;std::string pin;if(!certificate(der,peer.id,pin)||pin!=peer.pin){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}if(self.authenticated&&self.authenticated!=peer.id){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}self.authenticated=peer.id;*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE);return 0;}
+    // setup captured the exact validated membership leaf and bound its SPKI
+    // pin/profile. The standard TLS verifier and CertificateVerify still run;
+    // repeating the same leaf's self-signatures here adds no authentication.
+    for(const auto &peer:self.allowed){if(der!=peer.der)continue;if(self.authenticated&&self.authenticated!=peer.id){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}self.authenticated=peer.id;*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE);return 0;}
     *flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;
 }
 bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){
     BoundedSetupTimings<5> timing("tls_setup",now_ms);timing.peer=expected;timing.begin("total");
     socket=fd;server=is_server;if(peers.empty()||peers.size()>7)return false;allowed=peers;authenticated=expected;
     if(!timing.step("own_credentials",[&]{return !mbedtls_x509_crt_parse_der(&own,reinterpret_cast<const uint8_t*>(identity.der.data()),identity.der.size())&&!mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0);}))return timing.done(false);
-    uint64_t certificate_ms=0,anchor_ms=0;uint32_t certificates=0,anchors_parsed=0;
+    // The only callers copy Group peers, validated by load_group or the
+    // authenticated bootstrap ingress. Retain local profile/id/pin binding on
+    // these exact DER bytes, without redoing their verified self-signatures.
+    uint64_t binding_ms=0,anchor_ms=0;uint32_t bindings=0,anchors_parsed=0;
     for(const auto &peer:allowed){
-        std::string pin;auto began=now_ms();const bool valid=certificate(peer.der,peer.id,pin);certificate_ms+=now_ms()-began;++certificates;
-        if(!valid||pin!=peer.pin){timing.sum("peer_validation",certificate_ms,certificates,false);timing.sum("anchor_parse",anchor_ms,anchors_parsed);return timing.done(false);}
-        began=now_ms();const auto parsed=mbedtls_x509_crt_parse_der(&anchors,reinterpret_cast<const uint8_t*>(peer.der.data()),peer.der.size());anchor_ms+=now_ms()-began;++anchors_parsed;
-        if(parsed){timing.sum("peer_validation",certificate_ms,certificates);timing.sum("anchor_parse",anchor_ms,anchors_parsed,false);return timing.done(false);}
+        auto began=now_ms();const auto parsed=mbedtls_x509_crt_parse_der(&anchors,reinterpret_cast<const uint8_t*>(peer.der.data()),peer.der.size());anchor_ms+=now_ms()-began;++anchors_parsed;
+        if(parsed){timing.sum("peer_validation",binding_ms,bindings);timing.sum("anchor_parse",anchor_ms,anchors_parsed,false);return timing.done(false);}
+        const auto *anchor=&anchors;while(anchor->next)anchor=anchor->next;
+        std::string pin;began=now_ms();const bool valid=peer.der.size()<=1024&&certificate_binding(*anchor,peer.id,pin)&&pin==peer.pin;binding_ms+=now_ms()-began;++bindings;
+        if(!valid){timing.sum("peer_validation",binding_ms,bindings,false);timing.sum("anchor_parse",anchor_ms,anchors_parsed);return timing.done(false);}
     }
-    timing.sum("peer_validation",certificate_ms,certificates);timing.sum("anchor_parse",anchor_ms,anchors_parsed);
+    timing.sum("peer_validation",binding_ms,bindings);timing.sum("anchor_parse",anchor_ms,anchors_parsed);
     const auto configured=timing.begin("configure");
     if(mbedtls_ssl_config_defaults(&config,is_server?MBEDTLS_SSL_IS_SERVER:MBEDTLS_SSL_IS_CLIENT,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT))return false;
     static const int suites[]={MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,0};
@@ -116,31 +123,52 @@ bool TlsLink::send(std::string_view body){
     }
     return offset==bytes.size();
 }
+TlsLink::ReceiveResult TlsLink::receive_failed(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){
+    incoming_failed=true;
+    if(incoming_diagnostic.cause==TlsReceiveDiagnostic::Cause::none){
+        const auto progress=incoming_reader.progress(now);
+        incoming_diagnostic={cause,code,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),
+            progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};
+    }
+    return ReceiveResult::failed;
+}
 TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
     if(incoming_failed)return ReceiveResult::failed;
+    const auto began=now_ms();
+    if(incoming_size&&began>=incoming_last_poll_end)incoming_max_poll_gap=std::max(incoming_max_poll_gap,began-incoming_last_poll_end);
+    struct PollFinished{TlsLink& link;~PollFinished(){link.incoming_last_poll_end=now_ms();}} finished{*this};
     uint8_t bytes[512];
     // Bound CPU work even when an entire maximum-size frame is buffered. Never
     // consume bytes from the next frame or wait for another network fragment.
     for(unsigned turn=0;turn<16;++turn){
-        if(incoming_reader.check_deadline(now_ms())!=FrameReader::Result::incomplete){incoming_failed=true;return ReceiveResult::failed;}
+        auto now=now_ms();
+        if(incoming_reader.check_deadline(now)!=FrameReader::Result::incomplete){
+            const auto progress=incoming_reader.progress(now);
+            return receive_failed(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
+                progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);
+        }
         const auto request=std::min(incoming_expected-incoming_size,sizeof(bytes));
-        const int count=mbedtls_ssl_read(&ssl,bytes,request);
+        const auto read_at=now_ms();const int count=mbedtls_ssl_read(&ssl,bytes,request);now=now_ms();
+        if(now>=read_at)incoming_max_read_ms=std::max(incoming_max_read_ms,now-read_at);
         if(count==MBEDTLS_ERR_SSL_WANT_READ||count==MBEDTLS_ERR_SSL_WANT_WRITE)return ReceiveResult::pending;
-        if(count<=0||static_cast<size_t>(count)>request){incoming_failed=true;return ReceiveResult::failed;}
+        if(count<=0||static_cast<size_t>(count)>request)return receive_failed(count==0?TlsReceiveDiagnostic::Cause::tls_eof:TlsReceiveDiagnostic::Cause::tls_error,count,now);
         if(incoming_size<4)std::copy(bytes,bytes+count,incoming_prefix+incoming_size);
         incoming_size+=count;
         if(incoming_size==4&&incoming_expected==4){
             const uint32_t length=(uint32_t(incoming_prefix[0])<<24)|(uint32_t(incoming_prefix[1])<<16)|
                 (uint32_t(incoming_prefix[2])<<8)|incoming_prefix[3];
-            if(!length||length>max_frame_bytes){incoming_failed=true;return ReceiveResult::failed;}
+            if(!length||length>max_frame_bytes)return receive_failed(TlsReceiveDiagnostic::Cause::invalid_length,0,now);
             incoming_expected=4+length;
         }
-        size_t used=0;const auto result=incoming_reader.feed(bytes,count,used,now_ms());
+        size_t used=0;const auto fed_at=now_ms();const auto result=incoming_reader.feed(bytes,count,used,fed_at);
         if(used!=static_cast<size_t>(count)||(result!=FrameReader::Result::incomplete&&result!=FrameReader::Result::frame)){
-            incoming_failed=true;return ReceiveResult::failed;
+            const auto progress=incoming_reader.progress(fed_at);
+            return receive_failed(result==FrameReader::Result::timed_out?(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
+                progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout):TlsReceiveDiagnostic::Cause::parser_rejected,static_cast<int>(result),fed_at);
         }
         if(result==FrameReader::Result::frame){
             out=std::string(incoming_reader.body());incoming_reader.reset();incoming_size=0;incoming_expected=4;
+            incoming_max_poll_gap=incoming_max_read_ms=0;
             return ReceiveResult::frame;
         }
     }
@@ -156,7 +184,7 @@ bool TlsLink::receive(std::string &out,uint32_t duration){
         // handshake/snapshot callers must let other tasks run while waiting.
         vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
     }
-    incoming_failed=true;return false;
+    receive_failed(TlsReceiveDiagnostic::Cause::wrapper_timeout,0,now_ms());return false;
 }
 std::string envelope_json(const Envelope &e,std::string_view payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"message_id\":\""+e.message_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+std::string(payload)+"}";}
 } // namespace

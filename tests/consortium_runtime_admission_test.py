@@ -12,6 +12,7 @@ from consortium_gatt_callback_test import function
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/session.hpp"
+#include "tls_receive_trace.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include <algorithm>
@@ -155,7 +156,7 @@ def main():
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
-                        '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include')] +
+                        '-I' + str(ROOT / 'components/consortium'), '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include')] +
                        [str(path) for path in sources] + [str(cpp), '-o', str(binary)], check=True)
         return subprocess.run([str(binary)], check=False).returncode
 

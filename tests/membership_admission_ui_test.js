@@ -24,14 +24,14 @@ function fixture(options={}){
  const document={createElement(tag){return new Element(tag,this);}};document.body=new Element('body',document);const addButton=document.createElement('button');addButton.id='addAmity';document.body.append(addButton);
  let now=0,nextTimer=0;const timers=new Map(),posts=[],messages=[],errors=[],held=[],heldScans=[];
  const state={scan_id:null,phase:'idle',error:'',requires_setup_code:!!options.strict,candidates:options.candidates??[{token:'opaque-one',label:'Amity A1B2'}],candidate_id:null};
- let operationStage='admitted',operationId=null,holdStatus=!!options.holdStatus;
+ let operationStage='admitted',operationId=null,holdStatus=!!options.holdStatus,admissionReads=0;
  const main='1'.repeat(32),member='2'.repeat(32),management=document.createElement('div');management.id='managedAmityList';document.body.append(management);
  const request=async(path,data)=>{
   if(data!==undefined)posts.push([path,structuredClone(data)]);
   if(path==='backup')return {controller_octopus_id:main,octopuses:[{octopus_id:main,supported_tentacles:1}]};
   if(path==='system')return {octopus_id:main,hostname:'amity-main',membership:{peers:[{octopus_id:member,hostname:'amity-office',enrolled:true,ready:true,supported_tentacles:1}]}};
   if(path==='membership/scan'){const activate=()=>{state.scan_id=data.request_id;state.phase=options.scanning?'scanning':'found';return {operation_id:data.request_id,stage:'complete'};};if(options.holdScanStart)return new Promise(resolve=>heldScans.push(()=>resolve(activate())));return activate();}
-  if(path==='membership/admission'){const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
+  if(path==='membership/admission'){admissionReads++;const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
   if(path==='membership/cancel'){if(data.scan_id!==state.scan_id)throw Object.assign(Error('This search is no longer active.'),{status:409});state.phase='cancelled';return {stage:'complete'};}
   if(path==='membership/add'){if(options.failAdd)throw Object.assign(Error('The setup code could not be verified'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
   if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage};
@@ -51,7 +51,7 @@ function fixture(options={}){
  const input=title=>label(title).children.find(node=>node.tag==='input');
  const button=title=>walk(dialog()).find(node=>node.tag==='button'&&node.textContent===title);
  const tick=async()=>{now+=400;const due=[...timers].filter(([,timer])=>timer.at<=now);for(const [id,timer] of due){timers.delete(id);await timer.callback();}await flush();};
- return {context,document,state,posts,messages,errors,held,dialog,label,input,button,click,fill,tick,open:async()=>{await click(addButton);return dialog();},setStage:value=>operationStage=value,releaseScanStart:()=>{for(const resolve of heldScans.splice(0))resolve();},releaseStatus:()=>{holdStatus=false;for(const resolve of held.splice(0))resolve();}};
+ return {context,document,state,posts,messages,errors,held,dialog,label,input,button,click,fill,tick,clock:()=>now,pollCount:()=>admissionReads,open:async()=>{await click(addButton);return dialog();},setStage:value=>operationStage=value,releaseScanStart:()=>{for(const resolve of heldScans.splice(0))resolve();},releaseStatus:()=>{holdStatus=false;for(const resolve of held.splice(0))resolve();}};
 }
 (async()=>{
  const normal=fixture();await normal.open();assert.match(normal.dialog().textContent,/Hold the Reset button on the new Amity for 3 seconds\./);
@@ -75,6 +75,13 @@ function fixture(options={}){
  const unknown=fixture();await unknown.open();await unknown.fill(unknown.input('Name'),'office');await unknown.click(unknown.button('Add'));unknown.state.scan_id='e'.repeat(32);unknown.setStage('unknown');await unknown.tick();assert.match(unknown.dialog().textContent,/Check the Amity devices list/);assert.equal(unknown.button('Add').disabled,true);assert.equal(unknown.posts.filter(([path])=>path.endsWith('/add')).length,1);
  const listed=fixture();await listed.context.window.amityInterface.route('config').decode(new Response(JSON.stringify({version:1,device_choices:[],activities:[]})));await listed.context.window.amityInterface.refresh();assert.equal(listed.document.body.children.find(node=>node.id==='managedAmityList').children.length,2);assert.match(listed.document.body.textContent,/amity-office/);
  const collecting=fixture({scanning:true});await collecting.open();assert.equal(collecting.button('Add').disabled,true);collecting.state.phase='found';await collecting.tick();assert.equal(collecting.label('Name').hidden,false);
- assert.deepEqual([...normal.errors,...strict.errors,...multiple.errors,...cancel.errors,...stale.errors,...collecting.errors,...unknown.errors,...listed.errors,...lateScan.errors],[]);
- console.log('PASS actual admission UI: immediate scan, normal/strict code profile, validated names, multiple candidates, scoped cancel, late/stale dialogs, and admitted connection cleanup');
+ const liveChoices=fixture({scanning:true,candidates:[]});await liveChoices.open();assert.equal(liveChoices.button('Add').disabled,true);
+ liveChoices.state.phase='found';liveChoices.state.candidates=[{token:'early-board',label:'Amity A1B2'}];await liveChoices.tick();await liveChoices.fill(liveChoices.input('Name'),'office');assert.equal(liveChoices.button('Add').disabled,false);assert.ok(liveChoices.clock()<20000);
+ liveChoices.state.candidates.push({token:'later-board',label:'Amity C3D4'});await liveChoices.tick();
+ const liveSelect=walk(liveChoices.dialog()).find(node=>node.tag==='select');assert.deepEqual(liveSelect.children.map(option=>option.value),['','early-board','later-board']);assert.equal(liveSelect.value,'early-board');assert.equal(liveChoices.input('Name').value,'office');
+ liveSelect.value='later-board';await liveSelect.dispatch('change');await liveChoices.click(liveChoices.button('Add'));assert.equal(liveChoices.posts.find(([path])=>path==='membership/add')[1].candidate_token,'later-board');assert.ok(liveChoices.clock()<20000);
+ const ongoing=fixture({scanning:true,candidates:[]});await ongoing.open();ongoing.state.phase='found';ongoing.state.candidates=[{token:'first',label:'Amity A1B2'}];await ongoing.tick();const initialPolls=ongoing.pollCount();for(let n=0;n<51;n++)await ongoing.tick();assert.ok(ongoing.pollCount()>initialPolls+49);assert.equal(ongoing.dialog().open,true);
+ ongoing.state.candidates.push({token:'second',label:'Amity C3D4'});await ongoing.tick();assert.equal(walk(ongoing.dialog()).find(node=>node.tag==='select').children.length,3);await ongoing.click(ongoing.button('Cancel'));ongoing.state.phase='found';ongoing.state.candidates.push({token:'late-after-close',label:'Amity E5F6'});await ongoing.tick();assert.equal(ongoing.dialog(),undefined);assert.equal(ongoing.posts.filter(([path])=>path==='membership/add').length,0);assert.equal(ongoing.posts.filter(([path])=>path==='membership/cancel').length,1);
+ assert.deepEqual([...normal.errors,...strict.errors,...multiple.errors,...cancel.errors,...stale.errors,...collecting.errors,...unknown.errors,...listed.errors,...lateScan.errors,...liveChoices.errors,...ongoing.errors],[]);
+ console.log('PASS actual admission UI: immediate scan/early selection, live later candidates throughout the bounded search, normal/strict code profile, validated names, scoped cancel, late/stale dialogs, and admitted connection cleanup');
 })().catch(error=>{console.error(error);process.exitCode=1;});

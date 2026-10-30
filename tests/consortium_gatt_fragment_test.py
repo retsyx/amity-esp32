@@ -40,12 +40,41 @@ unsigned fake_mtu = 23;
 uint32_t request_record = 0;
 unsigned request_endpoint = 0;
 size_t response_offset = 0, max_write = 0, max_read = 0;
+uint32_t response_record = 0;
+uint8_t response_endpoint = 0, response_status = 1;
+uint16_t server_connection = 31;
+uint64_t generation = 7, server_session = 9, deadline = 100000000;
+bool server_open = true;
+std::atomic_uint failed_proofs{0};
+std::string srv_response;
+constexpr int BLE_GATT_ACCESS_OP_WRITE_CHR = 1, BLE_GATT_ACCESS_OP_READ_CHR = 2;
+constexpr int BLE_ATT_ERR_INSUFFICIENT_AUTHEN = 11, BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN = 12,
+              BLE_ATT_ERR_UNLIKELY = 13, BLE_ATT_ERR_INSUFFICIENT_RES = 14, BLE_ATT_ERR_INVALID_OFFSET = 15;
+struct os_mbuf { std::string bytes; };
+#define OS_MBUF_PKTLEN(value) ((value)->bytes.size())
+int os_mbuf_copydata(os_mbuf* value, size_t offset, size_t count, void* out) {
+    if (offset > value->bytes.size() || count > value->bytes.size() - offset) return 1;
+    memcpy(out, value->bytes.data() + offset, count); return 0;
+}
+int os_mbuf_append(os_mbuf* value, const void* data, size_t count) {
+    value->bytes.append(static_cast<const char*>(data), count); return 0;
+}
+struct ble_gatt_access_ctxt { int op; os_mbuf* om; unsigned offset = 0; };
+struct Work {
+    uint64_t generation = 0, session = 0;
+    uint16_t connection = 0, total = 0, offset = 0, length = 0;
+    uint32_t record = 0; uint8_t endpoint = 0, bytes[512]{};
+};
+void* work_queue = nullptr;
+unsigned uxQueueMessagesWaiting(void*) { return 0; }
+bool post_work(const Work&) { return true; }
+int access(uint16_t, uint16_t, ble_gatt_access_ctxt*, void*);
 std::string received, answer;
 bool bad_attribute = false, bad_frame = false;
 uint64_t clock_ms = 100;
 unsigned operations = 0, request_writes = 0, cursor_writes = 0, reads = 0, waits = 0;
 unsigned pending_reads_left = 0, fail_operation = 0, fail_wait = 0, wait_ms = 11;
-bool rejected_response = false, malformed_response = false;
+bool rejected_response = false, malformed_response = false, publish_before_cursor = false;
 std::vector<unsigned> wait_limits;
 std::vector<std::string> timing_lines;
 uint64_t now_ms() { return clock_ms; }
@@ -88,26 +117,35 @@ int ble_gattc_write_flat(uint16_t, uint16_t, const void *input, size_t length, i
     if (length == 7 && bytes[0] == 2) {
         ++cursor_writes;
         if (u32(bytes + 1) != request_record) { bad_frame = true; return 91; }
-        response_offset = u16(bytes + 5); return 0;
+        os_mbuf value{std::string(static_cast<const char*>(input), length)};
+        ble_gatt_access_ctxt context{BLE_GATT_ACCESS_OP_WRITE_CHR, &value};
+        return access(client_connection, 17, &context, nullptr);
     }
     ++request_writes;
     if (length <= 10 || bytes[0] != 1 || u16(bytes + 8) != received.size()) { bad_frame = true; return 91; }
     request_record = u32(bytes + 2); request_endpoint = bytes[1];
     received.append(reinterpret_cast<const char *>(bytes + 10), length - 10);
     if (received.size() > u16(bytes + 6)) { bad_frame = true; return 91; }
+    if (publish_before_cursor && received.size() == u16(bytes + 6)) {
+        response_record = request_record; response_endpoint = uint8_t(request_endpoint);
+        response_status = 1; srv_response = answer;
+    }
     return 0;
 }
 int ble_gattc_read(uint16_t, uint16_t, int, void *) {
     clock_ms += 7; ++reads; if (++operations == fail_operation) return 90;
-    const size_t count = std::min<size_t>({500, fake_mtu - 13, answer.size() - response_offset});
-    uint8_t header[12] = {1, 1, uint8_t(request_record >> 24), uint8_t(request_record >> 16),
-        uint8_t(request_record >> 8), uint8_t(request_record), uint8_t(answer.size() >> 8),
-        uint8_t(answer.size()), uint8_t(request_endpoint), 0, uint8_t(response_offset >> 8), uint8_t(response_offset)};
-    client_response.assign(reinterpret_cast<char *>(header), sizeof(header));
-    client_response.append(answer, response_offset, count);
-    if (pending_reads_left) { --pending_reads_left; client_response[1] = 0; }
-    else if (rejected_response) client_response[1] = 2;
-    else if (malformed_response) client_response[11] = 1;
+    if (pending_reads_left) --pending_reads_left;
+    else if (response_record != request_record) {
+        // Match actual worker publication: record/endpoint/status/body change,
+        // but the cursor set before publication is deliberately untouched.
+        response_record = request_record; response_endpoint = uint8_t(request_endpoint);
+        response_status = rejected_response ? 2 : 1; srv_response = answer;
+    }
+    os_mbuf value; ble_gatt_access_ctxt context{BLE_GATT_ACCESS_OP_READ_CHR, &value};
+    const auto error = access(client_connection, 17, &context, nullptr);
+    if (error) return error;
+    client_response = std::move(value.bytes);
+    if (malformed_response && response_record == request_record) client_response[11] = 1;
     max_read = std::max(max_read, client_response.size());
     return 0;
 }
@@ -123,7 +161,9 @@ uint64_t metric(const std::string& line, const std::string& key) {
 void reset(unsigned mtu = 527) {
     fake_mtu = mtu; client_record = request_record = 0; client_error = 0;
     received.clear(); client_response.clear(); max_write = max_read = response_offset = 0;
-    bad_attribute = bad_frame = rejected_response = malformed_response = false;
+    response_record = 0; response_endpoint = 0; response_status = 1;
+    srv_response = "old-private-reply"; response_offset = 5;
+    bad_attribute = bad_frame = rejected_response = malformed_response = publish_before_cursor = false;
     clock_ms = 100; operations = request_writes = cursor_writes = reads = waits = 0;
     pending_reads_left = fail_operation = fail_wait = 0; wait_ms = 11;
     wait_limits.clear(); timing_lines.clear();
@@ -139,16 +179,21 @@ void timing_tests() {
         check(line.find(secret) == std::string::npos && line.find(answer) == std::string::npos,
               "timing disclosed request or response content");
         check(metric(line, "record") == 1 && metric(line, "endpoint") == unsigned(encrypted) &&
-              metric(line, "writes") == 1 && metric(line, "cursors") == 4 && metric(line, "reads") == 4 &&
+              metric(line, "writes") == 1 && metric(line, "cursors") == 2 && metric(line, "reads") == 4 &&
               metric(line, "pending") == 2 && metric(line, "fragments") == 2,
               "timing counters do not match actual unchanged ATT operations");
-        check(cursor_writes == 4 && reads == 4, "baseline cursor polling was optimized before timing");
-        check(metric(line, "att_wait_ms") == 162 && metric(line, "att_max_ms") == 18 &&
-              metric(line, "elapsed_ms") == 212 && metric(line, "request_ms") == 18 &&
-              metric(line, "reply_ms") == 194 && metric(line, "at_ms") == 312,
+        check(cursor_writes == 2 && reads == 4 && response_record == 1 && response_offset == 500,
+              "pending reads rewrote the same cursor or late publication changed its position");
+        check(metric(line, "att_wait_ms") == 126 && metric(line, "att_max_ms") == 18 &&
+              metric(line, "elapsed_ms") == 176 && metric(line, "request_ms") == 18 &&
+              metric(line, "reply_ms") == 158 && metric(line, "at_ms") == 276,
               "timing did not measure SDK submission, callback wait and pending delay separately");
-        check(wait_limits == std::vector<unsigned>(9, 5000), "ATT wait bounds changed");
+        check(wait_limits == std::vector<unsigned>(7, 5000), "ATT wait bounds changed");
     }
+    reset(); publish_before_cursor = true; answer.assign(900, 'z'); std::string ready_response;
+    check(gatt_client_exchange(true, secret, ready_response) && ready_response == answer &&
+          cursor_writes == 2 && reads == 2 && response_offset == 500,
+          "already-published response did not reset its stale cursor before the first read");
     for (unsigned failure = 0; failure < 5; ++failure) {
         reset(); answer = "reply"; std::string response;
         if (failure == 0) fail_operation = 1;
@@ -170,7 +215,7 @@ void timing_tests() {
     check(!gatt_client_exchange(true, "", response) && response == "unchanged" && operations == 0 &&
           timing_lines.size() == 1 && timing_lines.front().find("failure=precondition") != std::string::npos,
           "invalid-record timing changed precondition behavior");
-    std::cout << "PASS bounded record timing: exact counters/wall durations, no secrets/locked logs, original cursor behavior/bytes/deadlines and fail-fast outcomes\n";
+    std::cout << "PASS actual client/server cursor: late publication preserves offset, one write per advanced position, exact bytes/deadlines, safe timing and fail-fast outcomes\n";
 }
 int main() {
     int failures = 0;
@@ -203,12 +248,13 @@ def main():
     args = parser.parse_args()
     source = args.source.read_text()
     timing = function(source, 'struct GattTiming {').rstrip() + ';\n' + function(source, 'void capture_gatt_link(')
+    server = function(source, 'int access(uint16_t connection,')
     actual = function(source, 'bool gatt_client_exchange(bool encrypted,')
     with tempfile.TemporaryDirectory(prefix='amity-gatt-fragment-') as directory:
         cpp = Path(directory) / 'actual_fragment_test.cpp'
         binary = Path(directory) / 'actual_fragment_test'
         # The actual exchange references its discovered attribute handle.
-        cpp.write_text(PREFIX + '\nuint16_t client_attribute = 17;\n' + timing + actual + SUITE)
+        cpp.write_text(PREFIX + '\nuint16_t client_attribute = 17;\n' + timing + server + actual + SUITE)
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
                         str(cpp), '-o', str(binary)], check=True)

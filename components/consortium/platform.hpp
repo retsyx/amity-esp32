@@ -3,6 +3,7 @@
 #include "amity/consortium/runtime.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include "setup_timing.hpp"
+#include "tls_receive_trace.hpp"
 #include "mbedtls/ssl.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
@@ -20,6 +21,8 @@ esp_err_t erase_record(const char *space,const char *key);
 esp_err_t erase_namespace(const char *space);
 esp_err_t load_identity(model::OctopusId,Identity &);
 bool certificate(std::string_view der,model::OctopusId,std::string &pin);
+// Structural identity/pin binding only; untrusted leaves still use certificate().
+bool certificate_binding(const mbedtls_x509_crt &,model::OctopusId,std::string &pin);
 esp_err_t load_group(Group &);
 esp_err_t save_group(const Group &);
 struct TlsLink {
@@ -42,12 +45,16 @@ struct TlsLink {
     // One bounded nonblocking turn; partial framing belongs to this TLS link.
     ReceiveResult poll_receive(std::string &);
     bool receive(std::string &,uint32_t timeout_ms=5000);
+    const TlsReceiveDiagnostic& receive_diagnostic()const{return incoming_diagnostic;}
     static int verify(void *,mbedtls_x509_crt *,int,uint32_t *);
 private:
     FrameReader incoming_reader;
     uint8_t incoming_prefix[4]{};
     size_t incoming_size=0,incoming_expected=4;
     bool incoming_failed=false;
+    uint64_t incoming_last_poll_end=0,incoming_max_poll_gap=0,incoming_max_read_ms=0;
+    TlsReceiveDiagnostic incoming_diagnostic;
+    ReceiveResult receive_failed(TlsReceiveDiagnostic::Cause,int,uint64_t);
 };
 std::string envelope_json(const Envelope &,std::string_view payload);
 } // namespace
@@ -61,6 +68,7 @@ void gatt_server_close();
 // A durable prepared decision permits only this already connected workflow.
 void gatt_server_seal();
 esp_err_t gatt_client_discover(uint64_t generation,std::vector<RuntimeAdmissionCandidate>&);
+esp_err_t gatt_client_candidates(uint64_t generation,std::vector<RuntimeAdmissionCandidate>&);
 esp_err_t gatt_client_connect_candidate(std::string_view token,uint64_t generation);
 bool gatt_client_exchange(bool encrypted,std::string_view,std::string &);
 void gatt_client_disconnect();
