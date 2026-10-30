@@ -386,6 +386,25 @@ interruption. A three-to-below-ten-second hold has the existing Add gesture
 meaning; ten seconds has the existing factory-reset meaning. The HDMI scan
 test does not press FW RESET, commission, rename, or change saved activities.
 
+For a standalone button hold on the Pi, run from the checkout root:
+
+```sh
+./cec-harness/fw-reset amity-dut-2 3.5
+```
+
+Add the harness directory to your shell's `PATH` to use `fw-reset` directly:
+
+```sh
+export PATH="$PWD/cec-harness:$PATH"
+fw-reset amity-dut-2 3.5
+```
+
+The command uses `DUT.press_fw_reset()` and the same wiring lookup and GPIO
+release handling as the functional tests. It needs `pinctrl` but no DUT HTTP
+credentials. It retains the framework's duration limits: positive, finite holds
+up to 60 seconds, excluding holds longer than 8 and shorter than 10 seconds.
+An explicit hold of 10 seconds or more retains the factory-reset gesture.
+
 ## Components and topology
 
 Each `Component` attaches to a tentacle endpoint or another component's HDMI

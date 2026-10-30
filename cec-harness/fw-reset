@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Hold a named DUT's FW RESET button using the functional harness wiring."""
+
+import argparse
+import subprocess
+
+from amity_harness import DUT
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("dut", help="DUT bench label from TEST-HARNESS.md")
+    parser.add_argument("seconds", type=float, help="button hold duration in seconds")
+    args = parser.parse_args(argv)
+    try:
+        dut = DUT(args.dut)
+        dut.press_fw_reset(args.seconds)
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+        parser.exit(1, f"{parser.prog}: {error}\n")
+    print(f"Released FW RESET on {dut.name} after {args.seconds:g} seconds.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
