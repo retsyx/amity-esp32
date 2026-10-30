@@ -11,7 +11,7 @@ if test -d /opt/homebrew/opt/openssl@3; then
     openssl_lib="-L/opt/homebrew/opt/openssl@3/lib"
 fi
 cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$json/cJSON.c" -o "$out/cjson.o"
-"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -pthread -g -fsanitize=address,undefined \
     $openssl_include -I"$json" -I"$root/tests/system_sync_fakes" -I"$root/tests/cec_hub_fakes" -I"$root/tests/reset_fakes" \
     -I"$root/components/config_store/include" -I"$root/components/amity_system/include" \
     -I"$root/components/system_sync/include" -I"$root/components/consortium/include" \
