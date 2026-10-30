@@ -64,23 +64,31 @@ esp_err_t recovery_usb(model::OctopusId,esp_err_t result,const char*){++recoveri
 int ble_remote_set_controller_enabled(bool enabled){check(!enabled,"headless role enabled remote");++remote_shutdowns;return remote_ok?ESP_OK:ESP_FAIL;}
 void usb_worker(void*){}
 int xTaskCreateWithCaps(void(*)(void*),const char*,unsigned,void*,unsigned,void*,unsigned){++created_tasks;return pdPASS;}
-uint64_t clock_ms=0;
+uint64_t clock_ms=0,netif_exists_at=0,netif_up_at=0,ip_ready_at=0,ip_query_success_at=0;
+unsigned early_connects=0,enrollment_closes=0;
+std::vector<uint64_t> discovery_times;std::function<void()> on_loop_delay;
+struct esp_netif_t{} local_station;
+struct esp_netif_ip_info_t{struct{uint32_t addr=0;}ip;};
+esp_netif_t* esp_netif_get_handle_from_ifkey(const char* key){check(std::string(key)=="WIFI_STA_DEF","wrong local interface checked");return clock_ms>=netif_exists_at?&local_station:nullptr;}
+bool esp_netif_is_netif_up(esp_netif_t* station){check(station==&local_station,"wrong interface checked");return clock_ms>=netif_up_at;}
+esp_err_t esp_netif_get_ip_info(esp_netif_t* station,esp_netif_ip_info_t* info){check(station==&local_station,"wrong interface queried");info->ip.addr=clock_ms>=ip_ready_at?1:0;return clock_ms>=ip_query_success_at?ESP_OK:ESP_FAIL;}
+
 uint64_t transport_idle_at=0;
 uint64_t now_ms(){return clock_ms;}
 unsigned pdMS_TO_TICKS(unsigned value){return value;}
 std::vector<unsigned> delays;
-void vTaskDelay(unsigned value){delays.push_back(value);clock_ms+=value;if(clock_ms>30000)throw std::runtime_error("connection loop exceeded existing bounded schedule");}
+void vTaskDelay(unsigned value){delays.push_back(value);clock_ms+=value;if(on_loop_delay)on_loop_delay();if(clock_ms>30000)throw std::runtime_error("connection loop exceeded existing bounded schedule");}
 bool recover_candidate_network(){return true;}
 bool gatt_candidate_transport_idle(){return clock_ms>=transport_idle_at;}
 bool gatt_quiescent(){return true;}
 void advertise_group_hint(const Group&){}
 void reap_closed_links(){links.erase(std::remove_if(links.begin(),links.end(),[](const auto& active){return active->cancelled;}),links.end());}
-void runtime_close_enrollment(){}
+void runtime_close_enrollment(){++enrollment_closes;candidate_deadline=candidate_generation=0;}
 unsigned discoveries=0,connect_failures=0,setup_failures=0,launch_failures=0,launches=0;
 std::vector<std::string> attempts;
 std::vector<uint64_t> attempt_times;
 std::string resolved;
-std::vector<std::string> discover_group_hints(const Group&){++discoveries;clock_ms+=2000;return {"192.0.2.2"};}
+std::vector<std::string> discover_group_hints(const Group&){++discoveries;discovery_times.push_back(clock_ms);clock_ms+=2000;return {"192.0.2.2"};}
 std::string random_hex(size_t){return "0";}
 int listener=-1;
 int fake_socket(int,int,int){return 42;}
@@ -90,7 +98,7 @@ int fake_getaddrinfo(const char* host,const char* port,const addrinfo* hints,add
     resolved=host;static sockaddr address{};static addrinfo result{};result.ai_addr=&address;result.ai_addrlen=sizeof(address);result.ai_family=AF_INET;*out=&result;return 0;
 }
 void fake_freeaddrinfo(addrinfo*){}
-bool connect_bounded(int,const sockaddr*,socklen_t){attempts.push_back(resolved);attempt_times.push_back(clock_ms);if(connect_failures){--connect_failures;clock_ms+=5000;return false;}return true;}
+bool connect_bounded(int,const sockaddr*,socklen_t){attempts.push_back(resolved);attempt_times.push_back(clock_ms);if(clock_ms<ip_ready_at||clock_ms<netif_exists_at||clock_ms<netif_up_at||clock_ms<ip_query_success_at){++early_connects;return false;}if(connect_failures){--connect_failures;clock_ms+=5000;return false;}return true;}
 struct TlsLink{
     bool setup(const Identity& local,const std::vector<Peer>& peers,bool server,int,model::OctopusId expected={}){
         check(local.der=="validated-leaf"&&!server&&peers.size()==1&&peers[0].id==group.authority&&expected==group.authority,"known endpoint bypassed exact peer setup");
@@ -107,7 +115,7 @@ SUITE = r'''
 void reset(){
     initialized=false;status={};identity={};group={};seed={};hostnames={};singleton={};boot={};configuration=0;candidate_passive=false;
     full_checks=profile_checks=created_tasks=recoveries=group_reads=identity_loads=erases=remote_shutdowns=0;crypto_ok=identity_ok=psa_ok=group_ok=remote_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
-    clock_ms=transport_idle_at=0;delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
+    clock_ms=transport_idle_at=netif_exists_at=netif_up_at=ip_ready_at=ip_query_success_at=0;early_connects=enrollment_closes=0;discovery_times.clear();on_loop_delay={};delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
 }
 void seed_role(Group::Role role){
  seed.role=role;if(role==Group::unclaimed)return;
@@ -185,7 +193,37 @@ void fresh_public_preflight(){
 }
 void setup_member(bool hint=true){reset();group.role=Group::member;group.authority=ident<model::OctopusId>(9);group.authority_host=hint?"192.0.2.1":"";group.peers={{group.authority,"exact-leaf","exact-pin",true}};identity={ident<model::OctopusId>(8),"validated-leaf","key","pin"};}
 void run_network(){try{network_loop(nullptr);}catch(const Connected&){return;}catch(const std::exception& error){throw std::runtime_error(std::string(error.what())+" attempts="+std::to_string(attempts.size())+" discoveries="+std::to_string(discoveries)+" launches="+std::to_string(launches));}throw std::runtime_error("loop returned without authenticated transport setup");}
+void local_ipv4_tests(){
+ for(auto role:{Group::member,Group::prepared}){
+  setup_member();group.role=role;candidate_passive=role==Group::prepared;ip_ready_at=300;
+  unsigned released=0;pending_radio_release=7;radio.release=[&](uint64_t generation){check(generation==7,"wrong radio released");++released;};candidate_generation=8;candidate_deadline=150;
+  run_network();
+  std::cout<<"local_ipv4_role="<<unsigned(role)<<" early_tcp="<<early_connects<<" first_tcp_ms="<<attempt_times.front()<<" last_tcp_ms="<<attempt_times.back()<<" mdns="<<discoveries<<'\n';
+  check(early_connects==0&&attempts==std::vector<std::string>{"192.0.2.1"}&&attempt_times.front()==300&&discoveries==0,"missing local IPv4 consumed known hint/backoff/discovery");
+  check(released==1&&enrollment_closes==1&&delays==std::vector<unsigned>({100,100,100}),"waiting for address blocked radio/deadline work or added a retry schedule");
+  const auto spans=std::count_if(platform::recorded_setup_timings.begin(),platform::recorded_setup_timings.end(),[&](const auto& row){return std::string(row.area)=="network"&&std::string(row.entry.stage)=="local_ipv4_wait"&&row.entry.at_ms==300&&row.entry.elapsed_ms==300&&row.peer==group.authority&&std::string(row.entry.result)=="ok";});
+  check(spans==1,"address wait did not emit exactly one bounded truthful completion span");
+ }
+ for(unsigned missing=0;missing<3;++missing){
+  setup_member();if(missing==0)netif_exists_at=300;if(missing==1)netif_up_at=300;if(missing==2)ip_query_success_at=300;
+  run_network();check(attempt_times.front()==300&&attempts.size()==1&&!early_connects&&!discoveries,"missing/down/query-failed local interface reached TCP");
+ }
+ setup_member(false);ip_ready_at=300;run_network();
+ check(!early_connects&&discovery_times==std::vector<uint64_t>{300}&&attempt_times.front()==2300&&attempts==std::vector<std::string>{"192.0.2.2"},"no-hint member queried before local address or lost bounded discovery");
+ setup_member();ip_ready_at=300;connect_failures=1;run_network();
+ check(!early_connects&&attempts==std::vector<std::string>({"192.0.2.1","192.0.2.2"})&&attempt_times.front()==300&&attempt_times.back()==8448&&discoveries==1,"genuine post-address connection failure lost original backoff/discovered fallback");
+ struct Stopped{};
+ for(bool connected:{false,true}){
+  setup_member();ip_ready_at=UINT64_MAX;if(connected)links.push_back(std::make_shared<Active>());
+  unsigned released=0;pending_radio_release=7;radio.release=[&](uint64_t generation){check(generation==7,"wrong radio release while no address");++released;};candidate_generation=8;candidate_deadline=150;
+  on_loop_delay=[&]{if(clock_ms>=500)throw Stopped{};};
+  try{network_loop(nullptr);}catch(const Stopped&){}
+  check(clock_ms==500&&attempts.empty()&&discoveries==0&&released==1&&enrollment_closes==1,"absent IP blocked bookkeeping or generated TCP/mDNS work");
+  check(links.size()==(connected?1u:0u)&&platform::recorded_setup_timings.empty(),"address wait changed existing connection or produced periodic logs");
+ }
+}
 void connection_tests(){
+    local_ipv4_tests();
     setup_member();run_network();check(attempts==std::vector<std::string>{"192.0.2.1"}&&attempt_times.front()==0&&discoveries==0,"known authority waited for blocking mDNS before first attempt");
     setup_member(false);run_network();check(attempts==std::vector<std::string>{"192.0.2.2"}&&attempt_times.front()==2000&&discoveries==1,"missing hint lost bounded discovery");
     for(unsigned failure=0;failure<3;++failure){
@@ -204,10 +242,11 @@ int main(){using namespace amity::consortium;try{startup_tests();fresh_public_pr
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
-    parser.add_argument('--only', choices=['startup', 'network', 'headless'])
+    parser.add_argument('--only', choices=['startup', 'network', 'headless', 'ipv4'])
     args = parser.parse_args()
     source = args.source.read_text()
     actual = ('#define socket amity::consortium::fake_socket\n#define close amity::consortium::fake_close\n#define getaddrinfo amity::consortium::fake_getaddrinfo\n#define freeaddrinfo amity::consortium::fake_freeaddrinfo\n'
+              + (function(source, 'bool local_ipv4_ready(') if 'bool local_ipv4_ready(' in source else '')
               + function(source, 'void network_loop(')
               + '\n#undef socket\n#undef close\n#undef getaddrinfo\n#undef freeaddrinfo\n'
               + (function(source, 'esp_err_t validate_startup(') if 'esp_err_t validate_startup(' in source else '')
@@ -219,6 +258,8 @@ def main():
         suite = suite.replace('startup_tests();fresh_public_preflight();connection_tests();', 'startup_tests();fresh_public_preflight();')
     if args.only == 'headless':
         suite = suite.replace('startup_tests();fresh_public_preflight();connection_tests();', 'headless_only();')
+    if args.only == 'ipv4':
+        suite = suite.replace('startup_tests();fresh_public_preflight();connection_tests();', 'local_ipv4_tests();')
     if args.only == 'network':
         suite = suite.replace('startup_tests();fresh_public_preflight();connection_tests();', 'connection_tests();')
     with tempfile.TemporaryDirectory(prefix='amity-admission-startup-') as directory:

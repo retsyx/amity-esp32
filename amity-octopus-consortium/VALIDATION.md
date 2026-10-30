@@ -15,14 +15,51 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Local-network readiness fix — 30 October 2026
+
+Firmware 0.1.109 / Matter software 110 waits for an up station interface with a
+nonzero IPv4 address before a disconnected member attempts its first known
+controller address. Waiting preserves the original hint/discovery/backoff state
+and advances the existing 100 ms worker turns, radio cleanup and lifecycle
+checks. Pinned TLS remains the authority check. Build, all-DUT deployment, timing
+and full physical-suite results are pending under
+`test-results/add-network-ready-fix-2026-10-30/`.
+
 ## Headless startup delay fix — 30 October 2026
 
-Firmware 0.1.108 / Matter software 109 removes admission self-tests from validated
-headless prepared/member/retired startup and duplicate credential validation
-within a single runtime startup. Unclaimed/original-main admission self-tests,
-full USB diagnostics and fresh validated storage at every public startup read
-remain. Build, deployment, timing and full physical-suite evidence are pending
-under `test-results/add-member-startup-fix-2026-10-30/`.
+All four DUTs received exact 0.1.108 / Matter software 109 from
+`044d912152a9d844bc221f4c29df587437da0395`: 2,449,632 bytes, image SHA-256
+`7ad5b1404b8d3e98b07cc60af791f586b7ccf5ee07867c6a70d2ece3efea9af3`,
+ELF SHA-256 `0bfe30379724e885c4bda7ef64a2f1940e9c73822268d93c844bc91f3e8a19e4`.
+Main OTA passed 13 checks; each application-only candidate update passed 18
+checks and closed USB. The full host suite with 355 framework units, contracts,
+focused main/Matter boot tests and all 29 web checks passed. Evidence is under
+`test-results/add-member-startup-fix-2026-10-30/`.
+
+Validated prepared/member/retired startup no longer performs admission
+self-tests, keeps admission `crypto_ready=false` and retains PSA/credential/TLS
+validation. Unclaimed/original-main admission failure gates and explicit full USB
+self-tests remain. Each `runtime_start` validates one group and identity rather
+than validating them twice. Every public startup preflight still reads fresh
+storage independently; there is no cross-call cache. Native before-fix tests
+reproduce both duplicate validation and headless self-test blocking; all role,
+profile, journal, authority, local-ID, remote-shutdown and fresh-read denials pass.
+
+One normal-profile Add/removal diagnostic passed with both exact timing anchors,
+zero discarded timing lines, all preservation checks and acknowledged reset.
+Accepted Add to ready took 35.846 seconds, and helper to first verified ready
+46.308 seconds. This single sample was slower than the 0.1.107 sample despite
+less startup work: committed enrollment to next TCP accept took 10.927 seconds,
+versus 7.942 seconds. Neither sample had the extra synchronization retry.
+Do not claim an isolated or guaranteed latency gain for the removed startup work.
+
+Source review then reproduced a reachable pre-IP connection path: committed
+network recovery can return before usable IPv4, consuming the first numeric
+hint on a failed socket, then waiting through existing backoff and a two-second
+mDNS query. That mechanism is independently reproducible; main-only records do
+not establish it as the cause of this particular 0.1.108 sample. The next change
+addresses that path before full-suite qualification. No complete CEC suite was
+run on 0.1.108; `A1-timing-comparison.json` preserves this timing observation.
 
 ## Enrollment latency fixes — 30 October 2026
 

@@ -38,8 +38,8 @@
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 16938,
-      "sha256": "4b29890b42e26f32de60f9e671110f14693fdbee64086d8f2f9922441ab7c629"
+      "size_bytes": 17189,
+      "sha256": "1a6ee5d813ccac0a92055a477ac2911ee7c9395c58cc1893f55d3f57dd71213a"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 80725,
-      "sha256": "b7992d80be2104eab0c2b3d6fced75ba527f64d233f4d6c2e85aa5acc0e8ab1a"
+      "size_bytes": 83123,
+      "sha256": "471b4533dfe8311fcc6cce2941a83c4d843d10106fa1c779bc13fd5a20e8d55f"
     },
     {
       "path": "examples/README.md",

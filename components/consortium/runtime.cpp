@@ -825,8 +825,12 @@ bool recover_candidate_network(){
     const auto result=aborted?(hooks.abort_transaction?hooks.abort_transaction(current.join_id,current.join_digest):ESP_ERR_NOT_SUPPORTED):hooks.recover_transaction(current.join_id,current.join_digest,current.role==Group::member);
     if(result==ESP_OK){candidate_network_recovered=true;return true;}retry_at=now_ms()+5000;error("Candidate network recovery is incomplete; membership remains passive");return false;
 }
+bool local_ipv4_ready(){
+    auto* station=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t address{};
+    return station&&esp_netif_is_netif_up(station)&&esp_netif_get_ip_info(station,&address)==ESP_OK&&address.ip.addr;
+}
 void network_loop(void*){
-    uint32_t backoff=1000;uint64_t next_discovery=0;size_t next_hint=0;std::vector<std::string> discovered;
+    uint32_t backoff=1000;uint64_t next_discovery=0,ipv4_wait_at=0;size_t next_hint=0;std::vector<std::string> discovered;bool ipv4_waiting=false;
     while(true){if(!recover_candidate_network()){vTaskDelay(pdMS_TO_TICKS(100));continue;}Group current;Identity local;bool may_connect;{std::lock_guard<std::mutex> guard(lock);current=group;local=identity;may_connect=current.role!=Group::prepared||(candidate_passive&&gatt_candidate_transport_idle());}
         advertise_group_hint(current);
         reap_closed_links();
@@ -836,23 +840,34 @@ void network_loop(void*){
             bool connected;{std::lock_guard<std::mutex> guard(lock);connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});}
             if(connected)backoff=1000;
             if(!connected&&!current.peers.empty()){
-                // The transaction already supplies a numeric authority hint.
-                // Try it immediately once; failure still reaches the existing
-                // bounded discovery/rotation path. Only pinned TLS grants trust.
-                const bool first_known=next_hint==0&&!current.authority_host.empty();
-                if(!first_known&&now_ms()>=next_discovery){discovered=discover_group_hints(current);next_discovery=now_ms()+10000;}
-                std::vector<std::string> candidates;if(!current.authority_host.empty())candidates.push_back(current.authority_host);
-                for(const auto &hint:discovered)if(std::find(candidates.begin(),candidates.end(),hint)==candidates.end())candidates.push_back(hint);
-                const auto endpoint=candidates.empty()?std::string{}:candidates[next_hint++%candidates.size()];
-                addrinfo hints{};hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_INET;hints.ai_flags=AI_NUMERICHOST;addrinfo *addresses=nullptr;
-                if(!endpoint.empty()&&getaddrinfo(endpoint.c_str(),"7443",&hints,&addresses)==0){
-                    int fd=::socket(addresses->ai_family,SOCK_STREAM,0);
-                    BoundedSetupTimings<1> timing("network",now_ms);timing.peer=current.authority;
-                    if(fd>=0&&timing.step("tcp_connect",[&]{return connect_bounded(fd,addresses->ai_addr,addresses->ai_addrlen);})){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,false,fd,current.authority))launch(tls,endpoint);}
-                    else if(fd>=0)::close(fd);
-                    freeaddrinfo(addresses);
+                // DHCP may still be running after an early headless boot.
+                // Do not turn a missing local address into a failed peer hint,
+                // discovery query or retry backoff. Other loop work still runs.
+                if(!local_ipv4_ready()){
+                    if(!ipv4_waiting){ipv4_waiting=true;ipv4_wait_at=now_ms();}
+                }else{
+                    if(ipv4_waiting){
+                        SetupTimingEntry waited;waited.stage="local_ipv4_wait";waited.at_ms=now_ms();waited.elapsed_ms=waited.at_ms>=ipv4_wait_at?waited.at_ms-ipv4_wait_at:0;waited.result="ok";waited.finished=true;
+                        emit_setup_timing("network",waited,current.authority,{},{});ipv4_waiting=false;
+                    }
+                    // The transaction already supplies a numeric authority hint.
+                    // Try it immediately once; failure still reaches the existing
+                    // bounded discovery/rotation path. Only pinned TLS grants trust.
+                    const bool first_known=next_hint==0&&!current.authority_host.empty();
+                    if(!first_known&&now_ms()>=next_discovery){discovered=discover_group_hints(current);next_discovery=now_ms()+10000;}
+                    std::vector<std::string> candidates;if(!current.authority_host.empty())candidates.push_back(current.authority_host);
+                    for(const auto &hint:discovered)if(std::find(candidates.begin(),candidates.end(),hint)==candidates.end())candidates.push_back(hint);
+                    const auto endpoint=candidates.empty()?std::string{}:candidates[next_hint++%candidates.size()];
+                    addrinfo hints{};hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_INET;hints.ai_flags=AI_NUMERICHOST;addrinfo *addresses=nullptr;
+                    if(!endpoint.empty()&&getaddrinfo(endpoint.c_str(),"7443",&hints,&addresses)==0){
+                        int fd=::socket(addresses->ai_family,SOCK_STREAM,0);
+                        BoundedSetupTimings<1> timing("network",now_ms);timing.peer=current.authority;
+                        if(fd>=0&&timing.step("tcp_connect",[&]{return connect_bounded(fd,addresses->ai_addr,addresses->ai_addrlen);})){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,false,fd,current.authority))launch(tls,endpoint);}
+                        else if(fd>=0)::close(fd);
+                        freeaddrinfo(addresses);
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(backoff+(uint8_t(random_hex(1)[0])%100)));backoff=std::min<uint32_t>(backoff*2,10000);
                 }
-                vTaskDelay(pdMS_TO_TICKS(backoff+(uint8_t(random_hex(1)[0])%100)));backoff=std::min<uint32_t>(backoff*2,10000);
             }
         }
         uint64_t generation=0;{std::lock_guard<std::mutex> guard(lock);if(candidate_deadline&&now_ms()>=candidate_deadline)generation=candidate_generation;}

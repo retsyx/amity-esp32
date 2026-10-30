@@ -109,8 +109,11 @@ existing rollback; this adds no second connection timeout or retry.
 
 When a prepared/member device already has the authority's numeric IP, its
 first connection attempt uses that address before a blocking mDNS query.
-Failure retains the existing discovery, address rotation, backoff and exact
-pinned TLS authentication. The required member restart and enrollment handshake
+The member first waits for its own station interface to be up with nonzero
+IPv4. Those existing worker turns do not consume the known hint, perform mDNS
+or advance retry backoff; they still advance lifecycle and radio cleanup.
+After a real connection failure, retain the existing discovery, address rotation,
+backoff and exact pinned TLS authentication. The required member restart and enrollment handshake
 remain unchanged. This avoids an initial discovery delay without treating an
 IP address as authority or skipping a failed-route fallback.
 

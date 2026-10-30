@@ -5,8 +5,8 @@
 # License, or (at your option) any later version.
 
 cmake_minimum_required(VERSION 3.22)
-set(PROJECT_VER "0.1.108")
-set(PROJECT_VER_NUMBER 109)
+set(PROJECT_VER "0.1.109")
+set(PROJECT_VER_NUMBER 110)
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Source tools/env.sh before building")
 endif()
