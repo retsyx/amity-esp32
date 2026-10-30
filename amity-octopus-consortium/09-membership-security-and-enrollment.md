@@ -138,4 +138,6 @@ The actual-source admission regressions are
 and [`admission_workflow_test.py`](../tests/admission_workflow_test.py).
 They cover selected-profile boot/failure gates, full explicit self-tests, exact
 validated proposal records and known-address connection with authenticated
-fallback. Physical 0.1.105 timing and enrollment qualification remain pending.
+fallback. The complete 0.1.105 physical suite and four clean Add timing samples
+are recorded in [validation](VALIDATION.md), with the failed diagnostic baseline
+retained separately.

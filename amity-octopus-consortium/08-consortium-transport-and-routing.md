@@ -147,7 +147,9 @@ apply. The receiver and acknowledgment retain their exact existing fences;
 ordinary work remains revoked. The
 [actual removal regression](../tests/consortium_removal_test.py) covers this
 publication interleaving and stale, foreign, replaced and expired permits.
-Physical 0.1.105 reset acknowledgment remains pending.
+The complete 0.1.105 physical suite acknowledges scheduled reset for all four
+fixture removals;
+see [validation](VALIDATION.md) for its scope and retained failed baseline.
 
 ## 7. Validation
 

@@ -15,56 +15,118 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
-## 0.1.105 Add latency and removal correction pending — 30 October 2026
+## 0.1.105 complete functional suite and Add timing — 30 October 2026
 
-The current target is 0.1.105 / Matter software 106. Latest deployed firmware
-remains verified 0.1.104 on all four DUTs. Three avoidable costs are corrected
-in source: boot tests only the configured admission profile while explicit
-USB/native self-tests retain both; proposal construction reuses exact validated
-`Identity`/`Peer` records instead of repeating two certificate signature checks;
-and the first known numeric authority-IP attempt precedes blocking mDNS while
-retaining pinned TLS and existing failed-route discovery/rotation/backoff.
-The first untrusted certificate checks, profile matching, required member
-restart, handshake and authority rules remain unchanged. Actual-source crypto,
-startup/network and admission workflow regressions pass. They prove the
-mechanisms, not a measured physical latency improvement.
+All four DUTs run exact 0.1.105 / Matter software 106 from firmware commit
+`33208f41923db9f88eec093940d5f096266fd47b`, with `source_dirty=true` as recorded
+in the frozen release. The 2,437,744-byte image has SHA-256
+`eeb7ff3f5674d8cd0a33d48d4fb0ce9cc6a5d3a2e938e81cd68c1ae4d1acc8dd`;
+ELF SHA-256 is
+`702a1fe78af38dbc3f913b1c6b7ff9cd74e97701310751feae8714997bc7940e`.
+Main authenticated OTA passed 13 preservation checks without USB; each of the
+three candidates passed 18 application-only USB update checks without erasing
+flash. The complete host suite with 340 framework units, native build with
+36 public-record layout checks and contracts passed. Live web verification
+passed 29 checks and all 11 bodies completed, including four exact build assets,
+large JSON/log responses and preserved security headers. Evidence is under
+`test-results/add-latency-fix-2026-10-30/`.
 
-The new 0.1.104 Add timing baseline remains failed. Admission completed
-53.704 seconds after Add POST; helper entry to first verified readiness was
-92.051 seconds. Initial USB monitor attachment caused a candidate reboot
-41.879 seconds before the POST, so this is diagnostic timing evidence rather
-than clean qualification. Cleanup received `reset=unconfirmed`. The saved
-main/candidate logs and immediate snapshot expose a separate race: Remove
-admitted terminal retirement under link configuration 196, then its saved-owner
-cleanup published local configuration 197 before the link worker sent the
-request. The old global-revision equality check rejected that already-admitted
-exchange; the candidate received no retirement and closed the link.
+All seven physical cases passed in one 1,373.775839-second run:
 
-The correction retains an immutable admitted scope/revision permit for the
-exact pending removal request through its own configuration publication. It
-validates original authority, authenticated full link/boot/group/epoch scope,
-mutation/digest, target absence and the original two-second reset lifetime
-without advancing or restamping the request. Receiver and ACK checks remain.
-The actual removal regression reproduces the old failure and passes the new
-publication interleaving plus 19 denied stale/foreign/expired permit cases.
-These reset-exchange seconds are separate from the current one-second
-source-theft response contract.
+| Case | Duration |
+| --- | --- |
+| HDMI scan | 24.987485 s |
+| Activity power cycle | 81.845978 s |
+| Explicit switch input | 86.399398 s |
+| Shared-wire source theft | 134.279441 s |
+| Add Amity | 104.581229 s |
+| Original two-owner consortium | 337.588307 s |
+| Three-owner consortium | 604.059135 s |
 
-Baseline evidence is under `test-results/add-latency-2026-10-30/` in
-`baseline-add.json`, `baseline-add.log`, `baseline-candidate.log` and
-`removal-config-publish-before-fix.log`; main failure captures are
-`latency-baseline-failure-{snapshot.json,logs.txt}` under the 0.1.104 TLS-memory
-fix directory. Separate post-failure recovery held only the known fixture
-`amity-dut-2` reset button for 10.5 seconds and acknowledged release, recorded
-in `baseline-physical-recovery.json`. It does not repair the failed report or
-establish a pre-test reset requirement.
+`functional.json` and `functional-verification.json` record seven clean
+entered testbeds, nine fixture activities created and deleted, four completed
+Add transactions, four reviewed removals with scheduled-reset acknowledgments,
+28 typed scan locations and no cleanup errors. Independent two-owner and
+three-owner verifiers pass 21 checks each; the shared-wire verifier passes 20.
+The consortium cases contain 38 fresh physical power assertions, 15 typed
+locations, five initial routes and all eight cross-owner theft directions.
+Their slowest Standby response was 69.750020 ms under the current one-second
+limit. Shared-wire thief Standby completed in 66.950012 ms and selected-route
+restoration in 183.450030 ms from the same physical trigger, both inside that
+same one-second window. Selected activity and main boot remained unchanged.
 
-New evidence belongs under `test-results/add-latency-fix-2026-10-30/`.
-The 0.1.105 complete host suite, build, deployment and physical results are
-pending. All seven functional cases are planned; no result is claimed for
-them. The one-second source-theft contract and its separate 340-unit host pass
-remain current; historical physical reports below retain their recorded
-two-second limits.
+Four clean Add samples in `add-timings.json` distinguish operation completion
+from the later authenticated identity/configuration/settings proof:
+
+| Add sample | POST to operation complete | Helper entry to first verified ready |
+| --- | --- | --- |
+| Standalone member 2 | 42.014 s | 79.202 s |
+| Two-owner member 2 | 41.702 s | 79.083 s |
+| Three-owner member 2 | 41.977 s | 80.022 s |
+| Three-owner member 3 | 46.899 s | 84.557 s |
+
+Matched clean 0.1.104 consortium samples improved by 9.173–10.270 seconds
+(about 18–19%) from Add POST to operation completion, and by about 10–11%
+from helper entry to first verified readiness. The clean 0.1.103 standalone
+reference improved by 8.407 seconds from POST to completion. These are four
+observations on this bench, not a latency distribution or guaranteed bound.
+The 20-second discovery window still collects multiple candidates; final HTTP
+proof takes about nine seconds after operation completion. Polling runs
+concurrently with firmware progress, so accumulated HTTP request times are not
+subtracted from the Add duration.
+
+The changes remove three avoidable costs: boot tests only the configured
+admission profile while explicit USB/native self-tests retain both; proposal
+construction reuses exact validated `Identity`/`Peer` records instead of two
+repeated signature checks; and the first known numeric authority-IP attempt
+precedes blocking mDNS while retaining pinned TLS and failed-route fallback.
+Untrusted certificate checks, profile matching, required member restart and
+handshake remain. Separate boot-uptime measurements on three unclaimed boards
+show Ready at 4.933–4.969 seconds, previously 10.643–10.679 seconds, about
+5.7 seconds faster. `boot-startup-timing.json` records these update-time startup
+measurements before the later explicit full USB self-test; they are not Add
+elapsed times.
+
+Remove now retains the exact admitted request/scope/revision permit when its
+own saved-owner deletion publishes a newer local configuration. The terminal
+exchange preserves original authority, full link/boot/group/epoch scope,
+mutation/digest, target absence and its original two-second reset lifetime;
+it never restamps the request. Native proof covers publication before terminal
+send and 19 denied stale/foreign/expired permit cases. All four physical fixture
+removals acknowledged scheduled reset. This reset lifetime is separate from
+the one-second source-theft contract.
+
+The final shipping-UI postcheck passes all 26 checks in
+`main-final-postcheck.json`. Main boot `58584933c4556412aad1391c3b0de029`,
+original authority/group, saved values, all 16 existing slot records and
+metadata, names, hostname, hardware capabilities, Matter fabrics and HomeKit
+pairing state were preserved except authorized cleanup and revision changes.
+The main is ready and idle, without enrolled peers, removed-owner observations,
+pending configuration/discovery, activity error or hardware error. A membership
+diagnostic remains, and cumulative TX errors increased from 114 to 4,694;
+RX drops remain zero. These scoped checks do not assert an absence of transport
+or CEC transmission failures.
+
+The earlier 0.1.104 timing baseline remains failed: Add completed 53.704 seconds
+after POST and first verified readiness took 92.051 seconds from helper entry,
+but reset acknowledgment was unconfirmed. Initial USB monitor attachment caused
+a candidate reboot 41.879 seconds before POST. The saved logs expose the
+retirement/configuration race (admitted link revision 196, cleanup revision 197);
+this diagnostic sample is not the headline clean performance comparison.
+`test-results/add-latency-2026-10-30/` retains `baseline-add.json`, its trace,
+candidate log and native before-fix proof. Main failure captures remain in
+`test-results/consortium-tls-memory-fix-2026-10-30/latency-baseline-failure-{snapshot.json,logs.txt}`.
+Separate known-fixture post-failure recovery held member 2's reset button for
+10.5 seconds and acknowledged release in `baseline-physical-recovery.json`;
+it does not repair the failed report or create a pre-test reset requirement.
+No USB/serial monitor was part of the 0.1.105 qualification run.
+
+This qualifies all seven exercised cases on the normal admission profile,
+main `amity-dut` and up to members `amity-dut-2`/`amity-dut-3`, one adapter per
+owner, isolated front/back wires and simulated TV/AVR/player CEC responders.
+Strict admission, four owners, adversarial radio/reconnect/loss/load,
+four-adapter electrical timing and real picture/audio equipment remain outside
+this evidence. Earlier failed physical reports remain failed.
 
 ## Current source-theft deadline — 30 October 2026
 
@@ -77,11 +139,11 @@ rejection of a response one nanosecond late. Command:
 `PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q`;
 the 14.088-second run is recorded in
 `test-results/source-theft-one-second-2026-10-30/framework-tests.log`.
-Physical tests were not rerun for this framework-only change. The prior results
-below retain their then-current two-second contract and recorded 2,000 ms
-bounds; their observed latencies do not retroactively establish a run under
-the new contract. The earlier complete 0.1.104 host suite remains the separate
-339-unit result recorded below.
+The subsequent complete 0.1.105 physical suite above exercises this one-second
+contract, including both consortium sizes and shared-wire route restoration.
+Earlier results below retain their then-current two-second contract and
+recorded 2,000 ms bounds; they are not retroactively relabeled. The earlier
+complete 0.1.104 host suite remains the separate 339-unit result recorded below.
 
 ## 0.1.104 deployment and physical qualification — 30 October 2026
 
