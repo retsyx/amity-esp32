@@ -3,6 +3,7 @@
 import os
 import argparse
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import tempfile
@@ -11,8 +12,10 @@ from consortium_gatt_callback_test import function
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/session.hpp"
+#include "amity/consortium/owned_intent.hpp"
 #include <algorithm>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -21,6 +24,7 @@ using namespace amity::consortium;
 namespace m=amity::system;
 uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms++;}
+struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls {
     std::vector<std::string> frames;size_t next=0;uint32_t largest_timeout=0;
     bool receive(std::string &out,uint32_t timeout){largest_timeout=std::max(largest_timeout,timeout);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}
@@ -60,7 +64,8 @@ void heartbeat_tests(){
     check(!dispatch_heartbeat(active,valid),"duplicate heartbeat accepted");
     for(unsigned failure=0;failure<7;++failure){auto bad=envelope(Kind::heartbeat,30+failure);
         switch(failure){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 3:bad.consortium_id=ident<m::ConsortiumId>(99);break;case 4:bad.config_revision=8;break;case 5:bad.coordinator_epoch=2;break;case 6:bad.origin_octopus_id=ident<m::OctopusId>(99);break;}
-        check(!dispatch_heartbeat(active,bad),"foreign heartbeat bypassed actual runtime admission");
+        LinkTrace trace;check(!dispatch_heartbeat(active,bad,&trace),"foreign heartbeat bypassed actual runtime admission");
+        check(trace.unexpected&&trace.error!=Error::none&&std::string(trace.reason)=="heartbeat_admit","heartbeat rejection lost its admission diagnostic");
     }
     // A committed new config must not relabel an existing TLS link: old-scope
     // heartbeats remain valid until reconnect; the new link accepts only8.
@@ -120,13 +125,25 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
     source=parser.parse_args().source.read_text()
-    # Extract the actual branch, including its break-on-rejection behavior.
-    branch = next(line.strip() for line in source.splitlines() if line.strip().startswith('else if(active->session.admit(envelope,received,received)'))
-    dispatch = '\nbool dispatch_heartbeat(Active &storage,Envelope envelope){Active *active=&storage;const auto received=now_ms();while(true){if(false){}' + branch + 'return true;}return false;}\n'
+    # The heartbeat fallback follows the non-heartbeat control branch. Locate
+    # that structural boundary, then retain the entire actual fallback body,
+    # including diagnostics and break-on-rejection, regardless of line layout.
+    loop = function(source, 'void active_loop_work(')
+    control = re.search(r'else\s+if\s*\(\s*envelope\.kind\s*!=\s*Kind::heartbeat\s*\)\s*\{', loop)
+    if control is None:
+        raise ValueError('The runtime non-heartbeat control branch was not found')
+    control_body = function(loop, control.group()).rstrip('\n')
+    tail = loop[control.start() + len(control_body):]
+    fallback = re.match(r'\s*(else\s*\{)', tail)
+    if fallback is None:
+        raise ValueError('The runtime heartbeat fallback was not found after control dispatch')
+    branch = function(tail, fallback.group(1))
+    trace = function(source, 'struct LinkTrace {').rstrip() + ';\n'
+    dispatch = '\nbool dispatch_heartbeat(Active &storage,Envelope envelope,LinkTrace* diagnostic=nullptr){Active *active=&storage;LinkTrace local;auto& trace=diagnostic?*diagnostic:local;const auto received=now_ms();while(true){if(false){}' + branch + 'return true;}return false;}\n'
     actual = function(source, 'bool lifecycle_receive(Active &active,') + function(source, 'bool finish_retirement(Active &active)')
     with tempfile.TemporaryDirectory(prefix='amity-runtime-admission-') as directory:
         cpp = Path(directory) / 'test.cpp'; binary = Path(directory) / 'test'
-        cpp.write_text(PREFIX + dispatch + actual + SUITE)
+        cpp.write_text(PREFIX + trace + dispatch + actual + SUITE)
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
