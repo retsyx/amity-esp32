@@ -23,9 +23,9 @@ namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
-struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;};
+struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct Tls{int socket=-1;model::OctopusId authenticated;};
-struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,closed_notified=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
+struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
 std::mutex lock;std::vector<std::shared_ptr<Active>> links;RuntimeControlHooks controls;RuntimeStatus status;Group group;
 struct Identity{model::OctopusId id;}identity;
 model::BootId boot;uint64_t configuration=1;
@@ -35,12 +35,12 @@ esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){return
 SUITE=r'''
 namespace amity::consortium {
 std::shared_ptr<Active> connection(unsigned link=7){
- auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(3);a->status.id=a->peer;a->status.boot_id=ident<model::BootId>(8);a->status.negotiated_capabilities=known_capabilities;a->status.control_lease=ident<model::ExecutionLeaseId>(11);a->status.realtime_lease=ident<model::ExecutionLeaseId>(12);a->status.control_usable_until_ms=a->status.realtime_usable_until_ms=5100;
+ auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(3);a->status.id=a->peer;a->status.boot_id=ident<model::BootId>(8);a->status.config_revision=1;a->status.negotiated_capabilities=known_capabilities;a->status.control_lease=ident<model::ExecutionLeaseId>(11);a->status.realtime_lease=ident<model::ExecutionLeaseId>(12);a->status.control_usable_until_ms=a->status.realtime_usable_until_ms=5100;
  const LinkScope scope{ident<model::LinkId>(link),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),a->peer,ident<model::OctopusId>(2),ident<model::BootId>(4),a->status.boot_id,1,1};
  assert(a->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);return a;
 }
 void reset(){links.clear();controls={};status={};status.authority_ready=true;group={};group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);clock_ms=100;}
-model::OwnedIntent down(unsigned sequence=1){model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_down;i.target={{ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::back},"Player"};i.generation=2;i.sequence=sequence;i.token=ident<model::HoldToken>(50+sequence);i.key=0x41;i.repeat=true;return i;}
+model::OwnedIntent down(unsigned sequence=1){model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_down;i.target={{ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::back},"Player"};i.generation=2;i.sequence=sequence;i.config_revision=1;i.token=ident<model::HoldToken>(50+sequence);i.key=0x41;i.repeat=true;return i;}
 void closure(){
  reset();auto old=connection(),current=connection(9);links={old,current};unsigned calls=0;
  controls.disconnected=[&](auto owner,auto boot,auto link){++calls;assert(owner==old->peer&&boot==old->status.boot_id&&link==ident<model::LinkId>(7));return true;};
@@ -76,7 +76,7 @@ void initial_context(){
  unsigned refreshes=0;controls.ready=[&](auto owner){++refreshes;assert(owner==a->peer&&!a->context_ready);assert(runtime_send_owned(down(2))==ESP_ERR_INVALID_STATE);return true;};
  assert(initialize_context(*a)&&initialize_context(*a)&&refreshes==1);
  assert(runtime_send_owned(down(2))==ESP_OK&&a->queue.size()==2);
- Json first;JsonError error;assert(parse_json(a->queue[0].payload,first,error)&&first.get("action")->string=="context");
+ assert(a->queue[0].owned&&a->queue[0].owned->kind==model::OwnedIntentKind::context&&a->queue[0].revision==1);
  reset();a=connection();links={a};a->context_ready=false;assert(!initialize_context(*a)&&!a->context_ready);controls.ready=[](auto){return false;};assert(!initialize_context(*a)&&!a->context_ready);
 }
 void authorization(){

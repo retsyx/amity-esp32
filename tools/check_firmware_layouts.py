@@ -22,6 +22,7 @@ RECORDS={
     'amity::system::Coordinator::Lane','amity::system::Coordinator::WireAdapter',
     'amity::consortium::RuntimeStatus','amity::consortium::RuntimePeerStatus',
     'amity::consortium::RuntimeControlHooks','amity::consortium::RuntimeNetworkHooks','amity::consortium::Envelope',
+    'amity::system::OwnedIntent',
     'amity::consortium::Operation','config_store::Configuration',
     'config_store::ConfiguredComponent',
     'amity::Snapshot','cec::ExecutionFence','cec::Completion','cec::Submission','cec::Engine',

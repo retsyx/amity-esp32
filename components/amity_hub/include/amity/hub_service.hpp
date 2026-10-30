@@ -29,6 +29,9 @@ public:
     bool select_activity(int);bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
     uint32_t activity_generation()const;bool release_key(uint8_t);bool release_key();bool standby();bool discover();
     Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
+    // User-selection/configuration setup only; the original long-Power repair
+    // neither selects an activity nor arms its input release gate.
+    bool activity_setup_in_progress()const;
     void set_system_identity(system::ConsortiumId,system::OctopusId);void set_boot_identity(system::BootId);
     void set_coordinator_authority(bool,uint64_t);esp_err_t transition_coordinator_authority(bool,uint64_t);
     esp_err_t retire_membership();esp_err_t begin_maintenance();void end_maintenance();bool maintenance_ready()const;
@@ -47,6 +50,7 @@ public:
     bool fence_owned(system::OctopusId controller,system::LinkId link);
     bool discover_owned(system::OctopusId owner,uint8_t adapter);
     uint64_t applied_configuration_revision()const;
+    uint64_t executing_configuration_revision()const;
     bool owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
 private:
     esp_err_t request_activity(int,bool notify_selection,uint32_t* accepted_selection);struct Impl;std::unique_ptr<Impl> impl_;

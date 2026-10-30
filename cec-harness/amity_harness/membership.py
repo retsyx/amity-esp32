@@ -1,7 +1,7 @@
 """Add/remove a test-owned Amity through the shipping main-device UI.
 
-The candidate is a control-only DUT: GPIO and documented identity, never an
-HTTP client. Remove intentionally revokes it and schedules its factory reset.
+The candidate is control-only or a headless member with CEC components,
+never an HTTP client. Remove revokes it and schedules its factory reset.
 No setup codes, bearer tokens or opaque discovery tokens enter reports.
 """
 
@@ -26,8 +26,9 @@ class AddedAmity:
     def __init__(self, main, candidate, *, name=None, timeout=None, setup_code=None):
         bed = getattr(main, "_testbed", None)
         if (bed is None or not bed._entered or bed._closed or candidate._testbed is not bed
-                or candidate not in bed.control_only or main in bed.control_only):
-            raise RuntimeError("Add Amity needs an active main and a control-only candidate in the same TestBed")
+                or candidate not in (*bed.control_only, *getattr(bed, "members", ()))
+                or main in (*bed.control_only, *getattr(bed, "members", ()))):
+            raise RuntimeError("Add Amity needs an active main and an explicit headless candidate in the same TestBed")
         if main is candidate or main.identity.device_id == candidate.identity.device_id:
             raise ValueError("An Amity cannot add itself")
         name = candidate.name if name is None else name
@@ -119,6 +120,8 @@ class AddedAmity:
             raise MembershipConflict("The main returned an invalid saved configuration")
         if self._baseline is not None:
             for key, value in self._baseline.items():
+                if key == "external_slots" and self._owned_retired_slots(value, config.get(key)):
+                    continue
                 if key not in {"config_revision", "presentation_revision", "octopuses", "adapter_settings"} and config.get(key) != value:
                     raise MembershipConflict("Existing saved activity/equipment configuration changed")
             for key in ("octopuses", "adapter_settings"):
@@ -127,6 +130,32 @@ class AddedAmity:
                 if not isinstance(original, list) or not isinstance(current, list) or any(record not in current for record in original):
                     raise MembershipConflict("Existing Amity settings changed")
         return config
+
+    def _owned_retired_slots(self, before, after):
+        """Allow only completed fixture activities' newly retired home slots."""
+        if not isinstance(before, list) or not isinstance(after, list):
+            return False
+        if after == before:
+            return True
+        if after[:len(before)] != before:
+            return False
+        bed = self.main._testbed
+        start = getattr(bed, "_initial_activity_counts", {}).get(id(self.main), 0)
+        operations = self.main.activity_operations[start:]
+        created = {op.get("activity_id") for op in operations if op.get("phase") == "create"
+                   and op.get("operation", {}).get("stage") == "applied"}
+        removed = {op.get("activity_id") for op in operations if op.get("phase") == "cleanup"
+                   and op.get("removed_activity") is True and not op.get("retained_equipment")}
+        owned = {identity for identity in created & removed if _identifier(identity)}
+        extras = after[len(before):]
+        next_slot = max((slot.get("slot", -1) for slot in before), default=-1) + 1
+        return (len({slot.get("slot") for slot in after if isinstance(slot, dict)}) == len(after)
+                and len({slot.get("activity_id") for slot in extras if isinstance(slot, dict)}) == len(extras)
+                and all(isinstance(slot, dict) and set(slot) == {"slot", "activity_id", "tombstone", "hidden", "alias"}
+                        and type(slot["slot"]) is int and slot["slot"] == next_slot + index and slot["slot"] < 16
+                        and slot.get("activity_id") in owned
+                        and slot.get("tombstone") is True and slot.get("hidden") is False
+                        and slot.get("alias") == "" for index, slot in enumerate(extras)))
 
     def _preserved_members(self, system, *, added):
         active = self._active(system)
@@ -304,6 +333,10 @@ class AddedAmity:
                                 raise MembershipConflict("The added Amity restarted during verification")
                             if current and self._settings_match(settings, confirmed):
                                 self.member_boot = confirmed["boot_id"]
+                                bed = self.main._testbed
+                                if not hasattr(bed, "_member_proofs"):
+                                    bed._member_proofs = {}
+                                bed._member_proofs[self.device_id] = self
                                 record.update(member_boot=self.member_boot,
                                               membership_revision=system["membership"].get("membership_revision"))
                                 return self
@@ -317,6 +350,9 @@ class AddedAmity:
     def close(self):
         if self._closed:
             return
+        proofs = getattr(self.main._testbed, "_member_proofs", {})
+        if proofs.get(self.device_id) is self:
+            del proofs[self.device_id]
         deadline = time.monotonic() + self.timeout
         record = self._record("cleanup", retained_member=False)
         try:

@@ -18,7 +18,7 @@ using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char v[33];snprintf(v,sizeof(v),"%032x",n);return *T::parse(v);}
 template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++);}
-struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;};
+struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls{model::OctopusId authenticated;};
 struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false;RuntimePeerStatus status;};
 std::mutex lock;Group group;Identity identity;RuntimeStatus status;model::BootId boot=ident<model::BootId>(6);uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;

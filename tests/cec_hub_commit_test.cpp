@@ -8,6 +8,15 @@
 
 #include "cec_hub_fixture.hpp"
 static std::vector<amity::Activity> config() { return {{"Saved", "TV", "Source", "Audio", "", 0}}; }
+static void finish_activity(amity::HubService& hub,int target,bool manual=false){
+    const auto selection=hub.activity_selection();
+    for(unsigned n=0;n<2000;++n){
+        const auto state=hub.snapshot();
+        if(state.current_activity==target&&state.processed_activity_selection==selection)return;
+        if(manual)fixture_complete_all();run_idle(1);
+    }
+    assert(false&&"Sequential activity did not finish its original continuation");
+}
 int main() {
     { // An unstarted service must not persist a configuration it cannot run.
         amity::HubService hub; bool committed = false;
@@ -66,7 +75,10 @@ int main() {
         const auto discovered = hub.snapshot().discovery_generation;
         fixture_present = true; fixture_sent.clear(); fixture_time += 120000000;
         assert(hub.select_activity(0)); run_one_command();
-        fixture_finish_discovery(hub, discovered); run_idle(1);
+        fixture_finish_discovery(hub, discovered);
+        // The original activity resolves its recipients in sequence: the
+        // front lookup/command can finish before the back lookup even starts.
+        finish_activity(hub,0);
         bool tv_on = false, source_on = false, route = false;
         for (const auto &sent : fixture_sent) {
             const auto &frame = sent.frame;
@@ -114,7 +126,7 @@ int main() {
         fixture_sent.clear();
         assert(hub.select_activity(1));
         assert(hub.press_key_for_activity(0x41, first));
-        run_one_command(); run_one_command();
+        run_one_command(); run_idle(1); // Transition-time down was never enqueued/registered.
         assert(hub.activity_generation() != first);
         for (const auto &sent : fixture_sent)
             assert(!(sent.frame.size == 3 && sent.frame.data[1] == 0x44 && sent.frame.data[2] == 0x41));
@@ -147,7 +159,7 @@ int main() {
         fixture_sent.clear(); fixture_completed.clear();
         assert(hub.select_activity(1));
         assert(hub.press_key_for_activity(0x01, first, true));
-        run_one_command(); run_one_command(); run_idle(3);
+        run_one_command(); run_idle(3); // No pressed state/IPC exists for the ignored down.
         for (const auto &sent : fixture_sent)
             assert(!(sent.frame.size == 3 && sent.frame.data[1] == 0x44 && sent.frame.data[2] == 0x01));
         // A current generation retains normal held repeats and reliable release.
@@ -351,9 +363,11 @@ int main() {
         assert(hub.press_key(0x42, true)); run_one_command();
         assert(fixture_completed.empty() && fixture_pending.size() == 1);
         assert(hub.select_activity(1)); run_one_command();
-        assert(hub.snapshot().current_activity == 1 && fixture_completed.empty());
+        assert(hub.snapshot().current_activity == 0 && fixture_completed.empty());
         assert(fixture_complete_next()); run_idle(3);
-        assert(fixture_completed.size() == 1 && fixture_pending.empty());
+        finish_activity(hub,1,true);
+        assert(std::count_if(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x42;})==1);
+        assert(fixture_pending.empty());
         fixture_async_autocomplete = true; fixture_present = false;
     }
     { // Matching releases and power commands survive activity changes but
@@ -470,9 +484,9 @@ int main() {
         const auto pending_before_switch = fixture_pending.size();
         const auto sent_before_switch = fixture_sent.size();
         assert(pending_before_switch > 0 && hub.select_activity(1)); run_one_command();
-        assert(hub.snapshot().current_activity == 1 && fixture_sent.size() > sent_before_switch);
+        assert(hub.snapshot().current_activity == 0 && fixture_sent.size() > sent_before_switch);
         for (const auto &sent : fixture_sent) assert(sent.timeout_ms == 0);
-        fixture_complete_all(); fixture_async_autocomplete = true; run_idle(2);
+        finish_activity(hub,1,true);fixture_async_autocomplete = true; run_idle(2);
         assert(presses(0x41) == 2 && presses(0x04) == 1);
         fixture_present = false;
     }
@@ -507,7 +521,7 @@ int main() {
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
-                              {"Second", "TV", "Source", "TV", "", 0}}));
+                              {"Second", "TV", "TV", "TV", "Source", 0}}));
         run_one_command(); fixture_finish_discovery(hub);
         assert(hub.select_activity(0)); run_one_command();
         fixture_sent.clear(); fixture_async_autocomplete = false;
@@ -527,6 +541,11 @@ int main() {
         assert(volume_presses(2) == 1 && volume_pending(2) == 1);
         assert(hub.release_key(0x41)); run_one_command();
         assert(hub.select_activity(1)); run_one_command();
+        // The new recipe uses only front-side commands. Its input/status
+        // completions must finish in order without completing the old back key.
+        for(unsigned n=0;n<32&&hub.snapshot().processed_activity_selection!=hub.activity_selection();++n){
+            while(fixture_complete_next(cec::TxResult::Success,1)){}run_idle(1);
+        }
         assert(hub.snapshot().current_activity == 1);
         assert(hub.press_key(0x41, true)); run_one_command();
         assert(volume_presses(1) == 1 && volume_pending(1) == 1 && volume_pending(2) == 1);

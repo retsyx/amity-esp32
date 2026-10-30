@@ -87,6 +87,9 @@ struct RuntimeControlHooks {
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;
     // Queue current nonemitting context before the first positive owner action.
     std::function<bool(model::OctopusId)> ready = {};
+    // Current locally executing configuration; no owner-task or network wait.
+    std::function<uint64_t()> configuration_revision = {};
+    std::function<std::string(model::OctopusId,uint64_t)> configuration_snapshot = {};
 };
 void runtime_control_hooks(RuntimeControlHooks);
 struct RuntimeLifecycleHooks {
@@ -139,7 +142,7 @@ std::vector<RuntimePeerStatus> runtime_peers();
 std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames();
 // Delivery and live authorization for original Amity actions.
 esp_err_t runtime_send_owned(const model::OwnedIntent&);
-esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,std::string payload,uint32_t ttl_ms=1000);
+esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,std::string payload,uint32_t ttl_ms=1000,uint64_t config_revision=0);
 void runtime_fence_owned_link(model::OctopusId,model::LinkId);
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);

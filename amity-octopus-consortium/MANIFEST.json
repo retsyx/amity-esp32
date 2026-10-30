@@ -8,33 +8,33 @@
   "files": [
     {
       "path": "03-domain-model-and-addressing.md",
-      "size_bytes": 5166,
-      "sha256": "127ab4d6f2353e77efbd424fdffd67a57e69f87614fc71bd810033cd0e3a84d1"
+      "size_bytes": 6018,
+      "sha256": "20a68c29901e2f5723b37a5779b1cf5cac497a658017c1087df2ead0406f9c77"
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 5444,
-      "sha256": "a6b0f32264aa2639d27526fb7611c2a4d1af0867d7783708d46bfed678126a79"
+      "size_bytes": 6792,
+      "sha256": "0fded094ec8369f0dc8e3de758af0218a1fe7c37a48511986f225fa0b486983b"
     },
     {
       "path": "05-discovery-and-topology.md",
-      "size_bytes": 4375,
-      "sha256": "5e519d7fe82c37aab53bcd2b45c4bf8f0a357c1f9b32e220a7118942d6130733"
+      "size_bytes": 10024,
+      "sha256": "79eded99e50ba146f94363f4ca7e435234de3d02cbe229372c3e49f5c8e64be7"
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 5437,
-      "sha256": "9fd8cad75bb3ff390b110c18222e575b46f447e0b201e72764eb1676f85d1f4b"
+      "size_bytes": 9298,
+      "sha256": "9c18503895fcf22a5dec01131e602d1cdcd68e5d2403bd180c4ac01aada21ebb"
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 7529,
-      "sha256": "0d6cba13881861d7b6b62e952c616c2ecd67f1016e06305192335b0435dceb6b"
+      "size_bytes": 11600,
+      "sha256": "3e6ce50e22c647c9ef549d41f5ae0568d0c975168b369355f74d09bbdd784a3e"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 7870,
-      "sha256": "e25f8eb65ecebd902fa95b912499827848a7f6ca771179ecd626ff24ff0e6bdd"
+      "size_bytes": 9579,
+      "sha256": "1ea05518f656bc60520b15c3f5f845702038108efb74883ff5ee557f015a7be8"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -48,18 +48,18 @@
     },
     {
       "path": "11-configuration-storage.md",
-      "size_bytes": 4545,
-      "sha256": "92a7bfdb5259e65e9057c1258c2262526e5e50dc3a4a8054b63f88d184f120ed"
+      "size_bytes": 7051,
+      "sha256": "7a93d3f3bc7488eeffac5844b609f4ccff96da6b9ba20cb6eaf22ab074ec1a7e"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 7606,
-      "sha256": "c489694972267d556d1f527cedb6f9296e9a92593ccf0a85288526bdb665cf6e"
+      "size_bytes": 7996,
+      "sha256": "8199756312c6f2feae88f5710edcf2696eb912b7540cead6c8b51cb4876c0a61"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
-      "size_bytes": 5619,
-      "sha256": "ee9be6ee4e6d6f2509db5c19cf4d3d6aba3480386266c9e45f8dccf68154b5bd"
+      "size_bytes": 6187,
+      "sha256": "1e0fb5b7e137cdb73539322f47f0a6af4096557d4c21a924eb588bcc1544324d"
     },
     {
       "path": "14-ota-and-compatibility.md",
@@ -73,28 +73,28 @@
     },
     {
       "path": "19-source-baseline.md",
-      "size_bytes": 2684,
-      "sha256": "defe0b7598462da6310520c4f495b2c2db3607bb692e539bbcb1af5aa6142798"
+      "size_bytes": 5434,
+      "sha256": "8edc464bea0076c6e9ee8572ffe8c9318214dc743bce17a0622bd03647c8c17f"
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 28196,
-      "sha256": "60a4696241a7b9cccf56ecfb5d8ccd74685c38e5a523f00a3fde8e189ba01229"
+      "size_bytes": 28937,
+      "sha256": "a880db2a12a7d7762367eb92040ec1ac885183dd7c1b84bedfbdec7768d16e15"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 8650,
-      "sha256": "f225b74485c30927a1b24591df6fe68a42dcf88f12d7ad79a2a24c4d36593b3d"
+      "size_bytes": 9997,
+      "sha256": "0944c43d67e9e739584ad0d1a3ee0462e26eb773b5f2bea963968c29b11d4ee7"
     },
     {
       "path": "README.md",
-      "size_bytes": 4430,
-      "sha256": "adfb757051de8883e8c390787823545cc851f1af6d0f79ee1ddc6e2d36fbdbd7"
+      "size_bytes": 6333,
+      "sha256": "ce0cc30150f3901a45b493000c289da0a867fdb2abd682b05c1aab903763dac9"
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 35295,
-      "sha256": "be30fc43e54094ce73720ec67af9aca941c5178d87c2b84efceeb798b48b60b4"
+      "size_bytes": 40153,
+      "sha256": "f469dea95e7d16b81ca358c7bd47ac7479841fa0f1a97791ab3c5121cfe1af36"
     },
     {
       "path": "examples/README.md",
@@ -173,8 +173,8 @@
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 17273,
-      "sha256": "1c3a1d4f93e2af4f69e449d9e9ad1444cc8eb5e97f738b5a82206a125c03b3d4"
+      "size_bytes": 18292,
+      "sha256": "c0234eebb2015120cd59ea038676a478a60c5f5184bd3ee8522f5bb7a41883b9"
     }
   ]
 }

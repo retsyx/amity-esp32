@@ -52,6 +52,7 @@ bool payload(Kind kind,const Json &v) {
     return false;
 }
 }
+bool valid_envelope_payload(Kind kind,const Json& value){return payload(kind,value);}
 const char *error_name(Error v) {
     switch(v) {
 #define E(a,b) case Error::a:return b

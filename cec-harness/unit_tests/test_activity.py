@@ -9,6 +9,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.activity import Activity, ActivityCleanupError, ActivityConflict
+from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, TvComponent, assign_addresses
 from amity_harness.dut import AmityHTTPError
 import test_scan_assertions as scan_fixture
 
@@ -42,6 +43,63 @@ class Fixture:
         self.dut.wait_operation = lambda result, **kwargs: self.operations[result["operation_id"]]
         self.dut.get_system = lambda: deepcopy(source.system)
         self.sync_full()
+
+    def add_member(self):
+        self.member = DUT("amity-dut-2")
+        self.member._testbed = self.bed
+        self.bed.duts, self.bed.members = (self.dut, self.member), (self.member,)
+        self.member_boot = "d" * 32
+        proof = SimpleNamespace(main=self.dut, candidate=self.member, session=self.session,
+                                device_id=self.member.identity.device_id, boot=self.source.boot,
+                                group=self.source.group, member_boot=self.member_boot, _created=True, _closed=False)
+        self.bed._member_proofs = {self.member.identity.device_id: proof}
+        self.source.system.update(mode="coordinator", ready=True,
+                                  membership={"coordinator": True, "authority_ready": True, "member": False,
+                                              "peers": [{"octopus_id": self.member.identity.device_id,
+                                                         "boot_id": self.member_boot, "enrolled": True,
+                                                         "ready": True, "provisional": False}]})
+        connector = self.member.tentacle(0)
+        self.member_tv = TvComponent(connector.front, "Other TV")
+        self.member_avr = AvrComponent(connector.back, "Other AVR")
+        self.member_player = PlaybackComponent(self.member_avr, "Other Player", port=1)
+        added = (self.member_tv, self.member_avr, self.member_player)
+        originals = self.source.components
+        assign_addresses((*originals, *added))
+        records = list(self.source.result.records)
+        for index, (old, component) in enumerate(zip(originals, added)):
+            component._session = self.session
+            name = deepcopy(self.source.system["observations"][index]["qualified_name"])
+            name.update(octopus_id=self.member.identity.device_id, osd_name=component.name)
+            runtime = {key: value for key, value in name.items() if key != "osd_name"}
+            runtime["logical_address"] = component.address.logical
+            self.source.system["observations"].append({"qualified_name": name, "runtime_address": runtime,
+                                                       "kind": component.device_type, "resolved": True, "stale": False})
+            row = {**self.source.rows[index], "name": scan_fixture.native_selector(name), "title": component.name}
+            self.source.rows.append(row)
+            self.selectors[component.name] = row["name"]
+            self.choice_roles[component.name] = self.choice_roles[old.name]
+            for original in self.source.result.records:
+                if original["component"] == old.name:
+                    record = {**original, "component": component.name, "gpio": component.gpio}
+                    if record["direction"] == "tx" and record["opcode"] == 0x47:
+                        record["frame"] = Frame(record["source"], record["destination"], 0x47,
+                                                component.name.encode("ascii")).raw.hex(":")
+                    records.append(record)
+        self.source.components = (*originals, *added)
+        scan = self.source.result
+        scan.expected, scan.records = self.source.components, tuple(records)
+        scan.initiators.update({c.gpio: 4 if c.direction == "front" else 0 for c in added})
+        scan.owner_boots = {self.dut.identity.device_id: self.source.boot,
+                            self.member.identity.device_id: self.member_boot}
+        scan.owner_duts = {self.dut.identity.device_id: self.dut, self.member.identity.device_id: self.member}
+        scan._testbed, scan._group = self.bed, self.source.group
+        self.session.components = self.source.components
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("Headless activity owner received an HTTP request")
+
+        self.member.get_state = self.member.get_system = self.member.get_configuration = self.member.request = forbidden
+        return self.member
 
     def health(self):
         if not self.healthy:
@@ -473,6 +531,99 @@ class ActivityTests(unittest.TestCase):
         f.callbacks[0]()
         self.assertEqual([row["name"] for row in f.rows], ["Existing activity"])
         self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32])
+
+    def test_member_activity_uses_main_ui_and_carries_both_owner_boots(self):
+        f = self.fixture
+        f.add_member()
+        original = deepcopy(f.rows)
+        with f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr) as activity:
+            started = activity.start()
+            self.assertIs(started.dut, f.dut)
+            self.assertIs(started.scan, f.dut.last_scan)
+            self.assertIs(started.testbed, f.bed)
+            self.assertEqual(started.owner_boots, f.dut.last_scan.owner_boots)
+            self.assertIs(started.owner_duts[f.member.identity.device_id], f.member)
+            self.assertIs(activity.assert_active(), activity)
+            stopped = activity.standby()
+            self.assertEqual(stopped.owner_boots, started.owner_boots)
+        self.assertEqual(f.rows, original)
+        self.assertEqual([r["component_id"] for r in f.full["components"]], ["f" * 32])
+        self.assertEqual(len([r for r in f.dut.activity_operations if r["phase"] == "start"]), 1)
+
+    def test_mixed_owner_activity_matches_actual_owner_selectors(self):
+        f = self.fixture
+        f.add_member()
+        with f.activity(display=f.tv, source=f.member_player, audio=f.member_avr) as activity:
+            records = {record["component_id"]: record for record in f.full["components"]}
+            row = f.rows[-1]
+            for role, owner in (("display", f.dut), ("source", f.member), ("audio", f.member)):
+                selector = records[row[role].removeprefix("component:")]["qualified_names"][0]
+                self.assertEqual(selector["octopus_id"], owner.identity.device_id)
+            activity.start()
+            activity.assert_active()
+
+    def test_member_boot_or_membership_changes_reject_activity_without_mutating_main(self):
+        for phase in ("create", "start", "assert_active"):
+            for field, value in (("boot_id", "e" * 32), ("ready", False), ("enrolled", False)):
+                with self.subTest(phase=phase, field=field):
+                    f = Fixture()
+                    f.add_member()
+                    if phase != "create":
+                        activity = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+                        if phase == "assert_active":
+                            activity.start()
+                    f.source.system["membership"]["peers"][0][field] = value
+                    mutations = len([data for _, data in f.calls if data is not None])
+                    with self.assertRaises(AssertionError):
+                        if phase == "create":
+                            f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+                        else:
+                            getattr(activity, phase)()
+                    self.assertEqual(len([data for _, data in f.calls if data is not None]), mutations)
+
+    def test_foreign_member_or_session_has_no_cross_owner_activity_permission(self):
+        for failure in ("proof", "bed", "session", "owner_object"):
+            with self.subTest(failure=failure):
+                f = Fixture()
+                f.add_member()
+                if failure == "proof":
+                    f.bed._member_proofs.clear()
+                elif failure == "bed":
+                    f.member._testbed = SimpleNamespace()
+                elif failure == "session":
+                    f.member_player._session = object()
+                else:
+                    f.dut.last_scan.owner_duts[f.member.identity.device_id] = DUT("amity-dut-2")
+                with self.assertRaises((ValueError, AssertionError)):
+                    f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+                self.assertFalse(any(data is not None for _, data in f.calls))
+
+    def test_other_owner_fresh_ui_cannot_replace_member_wire_discovery(self):
+        for mutation in ({"transport": "virtual"}, {"wire_timestamp_ns": 1}):
+            with self.subTest(mutation=mutation):
+                f = Fixture()
+                f.add_member()
+                remote_pins = {c.gpio for c in (f.member_tv, f.member_avr, f.member_player)}
+                f.dut.last_scan.records = tuple({**record, **mutation} if record["gpio"] in remote_pins else record
+                                                for record in f.dut.last_scan.records)
+                with self.assertRaisesRegex(AssertionError, "fresh physical"):
+                    f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+                self.assertFalse(any(data is not None for _, data in f.calls))
+
+    def test_member_reboot_while_start_settles_never_returns_an_authorized_boundary(self):
+        f = self.fixture
+        f.add_member()
+        activity = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+        wait = f.dut.wait_for
+
+        def reboot_after_settle(*args, **kwargs):
+            state = wait(*args, **kwargs)
+            f.source.system["membership"]["peers"][0]["boot_id"] = "e" * 32
+            return state
+
+        f.dut.wait_for = reboot_after_settle
+        with self.assertRaisesRegex(AssertionError, "changed boot"):
+            activity.start()
 
 
 if __name__ == "__main__":

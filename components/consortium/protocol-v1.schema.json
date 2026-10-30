@@ -176,6 +176,390 @@
             {
               "minimum": 253952,
               "maximum": 258047
+            },
+            {
+              "minimum": 262144,
+              "maximum": 266239
+            },
+            {
+              "minimum": 270336,
+              "maximum": 274431
+            },
+            {
+              "minimum": 278528,
+              "maximum": 282623
+            },
+            {
+              "minimum": 286720,
+              "maximum": 290815
+            },
+            {
+              "minimum": 294912,
+              "maximum": 299007
+            },
+            {
+              "minimum": 303104,
+              "maximum": 307199
+            },
+            {
+              "minimum": 311296,
+              "maximum": 315391
+            },
+            {
+              "minimum": 319488,
+              "maximum": 323583
+            },
+            {
+              "minimum": 327680,
+              "maximum": 331775
+            },
+            {
+              "minimum": 335872,
+              "maximum": 339967
+            },
+            {
+              "minimum": 344064,
+              "maximum": 348159
+            },
+            {
+              "minimum": 352256,
+              "maximum": 356351
+            },
+            {
+              "minimum": 360448,
+              "maximum": 364543
+            },
+            {
+              "minimum": 368640,
+              "maximum": 372735
+            },
+            {
+              "minimum": 376832,
+              "maximum": 380927
+            },
+            {
+              "minimum": 385024,
+              "maximum": 389119
+            },
+            {
+              "minimum": 393216,
+              "maximum": 397311
+            },
+            {
+              "minimum": 401408,
+              "maximum": 405503
+            },
+            {
+              "minimum": 409600,
+              "maximum": 413695
+            },
+            {
+              "minimum": 417792,
+              "maximum": 421887
+            },
+            {
+              "minimum": 425984,
+              "maximum": 430079
+            },
+            {
+              "minimum": 434176,
+              "maximum": 438271
+            },
+            {
+              "minimum": 442368,
+              "maximum": 446463
+            },
+            {
+              "minimum": 450560,
+              "maximum": 454655
+            },
+            {
+              "minimum": 458752,
+              "maximum": 462847
+            },
+            {
+              "minimum": 466944,
+              "maximum": 471039
+            },
+            {
+              "minimum": 475136,
+              "maximum": 479231
+            },
+            {
+              "minimum": 483328,
+              "maximum": 487423
+            },
+            {
+              "minimum": 491520,
+              "maximum": 495615
+            },
+            {
+              "minimum": 499712,
+              "maximum": 503807
+            },
+            {
+              "minimum": 507904,
+              "maximum": 511999
+            },
+            {
+              "minimum": 516096,
+              "maximum": 520191
+            },
+            {
+              "minimum": 524288,
+              "maximum": 528383
+            },
+            {
+              "minimum": 532480,
+              "maximum": 536575
+            },
+            {
+              "minimum": 540672,
+              "maximum": 544767
+            },
+            {
+              "minimum": 548864,
+              "maximum": 552959
+            },
+            {
+              "minimum": 557056,
+              "maximum": 561151
+            },
+            {
+              "minimum": 565248,
+              "maximum": 569343
+            },
+            {
+              "minimum": 573440,
+              "maximum": 577535
+            },
+            {
+              "minimum": 581632,
+              "maximum": 585727
+            },
+            {
+              "minimum": 589824,
+              "maximum": 593919
+            },
+            {
+              "minimum": 598016,
+              "maximum": 602111
+            },
+            {
+              "minimum": 606208,
+              "maximum": 610303
+            },
+            {
+              "minimum": 614400,
+              "maximum": 618495
+            },
+            {
+              "minimum": 622592,
+              "maximum": 626687
+            },
+            {
+              "minimum": 630784,
+              "maximum": 634879
+            },
+            {
+              "minimum": 638976,
+              "maximum": 643071
+            },
+            {
+              "minimum": 647168,
+              "maximum": 651263
+            },
+            {
+              "minimum": 655360,
+              "maximum": 659455
+            },
+            {
+              "minimum": 663552,
+              "maximum": 667647
+            },
+            {
+              "minimum": 671744,
+              "maximum": 675839
+            },
+            {
+              "minimum": 679936,
+              "maximum": 684031
+            },
+            {
+              "minimum": 688128,
+              "maximum": 692223
+            },
+            {
+              "minimum": 696320,
+              "maximum": 700415
+            },
+            {
+              "minimum": 704512,
+              "maximum": 708607
+            },
+            {
+              "minimum": 712704,
+              "maximum": 716799
+            },
+            {
+              "minimum": 720896,
+              "maximum": 724991
+            },
+            {
+              "minimum": 729088,
+              "maximum": 733183
+            },
+            {
+              "minimum": 737280,
+              "maximum": 741375
+            },
+            {
+              "minimum": 745472,
+              "maximum": 749567
+            },
+            {
+              "minimum": 753664,
+              "maximum": 757759
+            },
+            {
+              "minimum": 761856,
+              "maximum": 765951
+            },
+            {
+              "minimum": 770048,
+              "maximum": 774143
+            },
+            {
+              "minimum": 778240,
+              "maximum": 782335
+            },
+            {
+              "minimum": 786432,
+              "maximum": 790527
+            },
+            {
+              "minimum": 794624,
+              "maximum": 798719
+            },
+            {
+              "minimum": 802816,
+              "maximum": 806911
+            },
+            {
+              "minimum": 811008,
+              "maximum": 815103
+            },
+            {
+              "minimum": 819200,
+              "maximum": 823295
+            },
+            {
+              "minimum": 827392,
+              "maximum": 831487
+            },
+            {
+              "minimum": 835584,
+              "maximum": 839679
+            },
+            {
+              "minimum": 843776,
+              "maximum": 847871
+            },
+            {
+              "minimum": 851968,
+              "maximum": 856063
+            },
+            {
+              "minimum": 860160,
+              "maximum": 864255
+            },
+            {
+              "minimum": 868352,
+              "maximum": 872447
+            },
+            {
+              "minimum": 876544,
+              "maximum": 880639
+            },
+            {
+              "minimum": 884736,
+              "maximum": 888831
+            },
+            {
+              "minimum": 892928,
+              "maximum": 897023
+            },
+            {
+              "minimum": 901120,
+              "maximum": 905215
+            },
+            {
+              "minimum": 909312,
+              "maximum": 913407
+            },
+            {
+              "minimum": 917504,
+              "maximum": 921599
+            },
+            {
+              "minimum": 925696,
+              "maximum": 929791
+            },
+            {
+              "minimum": 933888,
+              "maximum": 937983
+            },
+            {
+              "minimum": 942080,
+              "maximum": 946175
+            },
+            {
+              "minimum": 950272,
+              "maximum": 954367
+            },
+            {
+              "minimum": 958464,
+              "maximum": 962559
+            },
+            {
+              "minimum": 966656,
+              "maximum": 970751
+            },
+            {
+              "minimum": 974848,
+              "maximum": 978943
+            },
+            {
+              "minimum": 983040,
+              "maximum": 987135
+            },
+            {
+              "minimum": 991232,
+              "maximum": 995327
+            },
+            {
+              "minimum": 999424,
+              "maximum": 1003519
+            },
+            {
+              "minimum": 1007616,
+              "maximum": 1011711
+            },
+            {
+              "minimum": 1015808,
+              "maximum": 1019903
+            },
+            {
+              "minimum": 1024000,
+              "maximum": 1028095
+            },
+            {
+              "minimum": 1032192,
+              "maximum": 1036287
+            },
+            {
+              "minimum": 1040384,
+              "maximum": 1044479
             }
           ]
         },

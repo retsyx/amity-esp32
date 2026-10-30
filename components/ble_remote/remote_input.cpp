@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "remote_input.hpp"
+#include <algorithm>
 
 namespace ble {
 namespace {
@@ -55,13 +56,26 @@ bool RemoteInputController::synchronize(uint32_t generation, int target) {
 
 void RemoteInputController::tick(uint64_t now) {
     if (now > now_) now_ = now;
-    if (wait_for_release_ && now_ >= wait_until_) wait_for_release_ = false;
+    if (wait_for_release_ && !activity_setup_ && now_ >= wait_until_) wait_for_release_ = false;
 }
 
 void RemoteInputController::set_wait_for_release(uint64_t now) {
     tick(now);
     wait_for_release_ = true;
     wait_until_ = now_ + wait_for_release_us;
+}
+
+bool RemoteInputController::activity_setup(bool in_progress,uint64_t now) {
+    tick(now);
+    if(activity_setup_==in_progress)return false;
+    activity_setup_=in_progress;
+    set_wait_for_release(now);
+    if(in_progress)suppress_held();
+    else{
+        setup_finished_=now_;
+        if(std::none_of(held_.begin(),held_.end(),[](const auto& key){return key.down;}))wait_for_release_=false;
+    }
+    return true;
 }
 
 bool RemoteInputController::activity_selected(uint32_t selection, uint64_t now) {
@@ -88,7 +102,7 @@ bool RemoteInputController::activity_selected(uint32_t selection, uint64_t now) 
 
 bool RemoteInputController::accepts(InputStamp stamp) const {
     return initialized_ && !transition_pending_ && !wait_for_release_ &&
-        stamp.generation == generation_ && stamp.target == target_;
+        (!setup_finished_||stamp.timestamp>setup_finished_)&&stamp.generation == generation_ && stamp.target == target_;
 }
 
 void RemoteInputController::reconcile() {
@@ -141,7 +155,7 @@ void RemoteInputController::release(size_t index, bool stale) {
     const auto started = key.stamp.timestamp;
     const auto button = key.button;
     const auto profile = bindings(key.profile, atomic_long_activity_offset_);
-    const bool suppressed = key.suppressed || stale || transition_pending_;
+    const bool suppressed = key.suppressed || stale || transition_pending_ || activity_setup_;
     key.down = false;
     if (suppressed) return;
     if (macro_executed_) return;
@@ -179,8 +193,12 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
     report_stamp_ = stamp;
     report_action_ = false;
     const bool stale = stamp.generation != generation_ || stamp.target != target_;
+    const bool setup_blocked=activity_setup_||(setup_finished_&&stamp.timestamp<=setup_finished_);
     for (size_t i = 0; i < count; ++i) {
         const auto &event = events[i];
+        // Physical adapters already retain edge state. A transition down is
+        // discarded before any pressed registration; an unmatched up is NOP.
+        if(event.down&&setup_blocked)continue;
         Held *key = nullptr, *empty = nullptr;
         for (auto &entry : held_) {
             if (entry.down && entry.profile == profile && entry.physical == event.physical) key = &entry;
@@ -193,7 +211,7 @@ void RemoteInputController::buttons(RemoteProfile profile, const ButtonEvent *ev
                     bool down = false;
                     for (const auto &held : held_) down = down || held.down;
                     if (!down) {
-                        wait_for_release_ = false;
+                        if(!activity_setup_)wait_for_release_ = false;
                         macro_executed_ = false;
                         macro_selector_ = macro_power_ = -1;
                     }

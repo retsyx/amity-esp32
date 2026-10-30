@@ -207,7 +207,7 @@ class RunnerTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
-        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity"]
+        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity", "test_consortium"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])

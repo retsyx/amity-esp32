@@ -44,6 +44,10 @@ Durable device identity, original-controller authority, membership trust, creden
 
 Runtime state includes discovery caches, current activity/input generation, exact held recipients, CEC completions, ordered IPC and authenticated transport replay/stale-work fences. Keep only state needed by the original algorithms or message authorization. Do not add a durable current-activity resume journal or restore live addresses, holds or grants after boot.
 
+**29 October 2026 scan/cache amendment.** Activity edits retain owner-local device records and remote observations even when no saved activity references them. Cache age is not an availability gate. Device enumeration follows only the three triggers and side-local 120-second lookup cooldown in [discovery](05-discovery-and-topology.md#2-scan-triggers-and-retained-discovery); it is not periodic cache expiry or configuration-driven invalidation.
+
+Valid device announcements populate that owner/adapter/side's runtime records independently of saved or selected activities. Ingestion records observed identity before current-activity response policy; a Standby response does not evict the announced device. [Discovery](05-discovery-and-topology.md#announcements-are-independent-of-activities) owns announcement validation and peer metadata completion.
+
 ## 5. Acceptance
 
 - The same activity and observations produce equivalent local and remote CEC frames, order, attempt budgets and key lifecycle.

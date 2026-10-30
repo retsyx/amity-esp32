@@ -1,6 +1,8 @@
 """Power assertions require actual handled DUT commands, not UI/model labels."""
 
 from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 import sys
 import threading
@@ -13,6 +15,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrComponent, CecError, CecSession, DUT, Frame, Hooks,
                            PlaybackComponent, PowerState, RunConfig, TvComponent,
                            TxResult, use_config)
+from test_activity import Fixture as ActivityFixture
+
+
+def distributed_activity_fixture():
+    """Current coordinator/member evidence with direct hardware-free RX."""
+    fixture = ActivityFixture()
+    fixture.add_member()
+    fixture.session._lock = threading.RLock()
+    fixture.session._stop = threading.Event()
+    fixture.session._record = lambda *args, **kwargs: None
+    fixture.session.power_changed = lambda *args, **kwargs: None
+    return fixture
 
 
 class IdleWire:
@@ -62,6 +76,65 @@ class ComponentPowerAssertionTests(unittest.TestCase):
     def missing(self, component, state, boundary):
         with self.assertRaises(TimeoutError):
             component.wait_for_power(state, since=boundary, timeout=0.005)
+
+    def test_main_action_authorizes_only_proven_member_wire_power_and_checkpoint(self):
+        f = distributed_activity_fixture()
+        activity = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+        action = activity.start()
+        self.receive(f.member_tv, 4, 0x04)
+        self.assertIs(f.member_tv.wait_for_power("on", since=action), f.member_tv)
+        marker = f.member_tv.checkpoint()
+        self.receive(f.member_tv, 4, 0x36)
+        self.assertIs(f.member_tv.wait_for_power("standby", since=marker, command="standby"), f.member_tv)
+
+    def test_member_wire_assertions_reject_foreign_action_owner_boot_maps_and_session(self):
+        f = distributed_activity_fixture()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        self.receive(f.member_tv, 4, 0x04)
+        wrong_boots = {**action.owner_boots, f.member.identity.device_id: "e" * 32}
+        wrong_owners = {**action.owner_duts, f.member.identity.device_id: DUT("amity-dut-2")}
+        for changed in (dict(dut=f.member), dict(session=object()), dict(testbed=object()), dict(scan=object()),
+                        dict(boot="e" * 32), dict(owner_boots=wrong_boots), dict(owner_duts=wrong_owners),
+                        dict(initiators={**action.initiators, f.member_tv.gpio: 8})):
+            with self.subTest(changed=tuple(changed)), self.assertRaises(AssertionError):
+                f.member_tv.wait_for_power("on", since=replace(action, **changed), timeout=0.01)
+        f.bed._closed = True
+        with self.assertRaises(AssertionError):
+            f.member_tv.wait_for_power("on", since=action, timeout=0.01)
+
+    def test_virtual_or_stale_member_power_cannot_satisfy_main_action(self):
+        f = distributed_activity_fixture()
+        old = time.monotonic_ns()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        self.receive(f.member_tv, 4, 0x04, transport="virtual")
+        self.missing(f.member_tv, "on", action)
+        f.member_tv.hooks.before_rx = lambda component, frame: Frame(
+            frame.source, frame.destination, frame.opcode, timestamp_ns=time.monotonic_ns())
+        self.receive(f.member_tv, 4, 0x04, timestamp=old)
+        self.missing(f.member_tv, "on", action)
+
+    def test_current_member_and_main_boots_are_rechecked_before_accepting_power(self):
+        for owner in ("main", "member"):
+            with self.subTest(owner=owner):
+                f = distributed_activity_fixture()
+                action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+                self.receive(f.member_tv, 4, 0x04)
+                calls = []
+
+                def snapshot():
+                    self.assertFalse(f.session._lock._is_owned())
+                    self.assertFalse(f.member_tv._power_condition._is_owned())
+                    calls.append(None)
+                    current = deepcopy(f.source.system)
+                    if len(calls) > 1:
+                        target = current if owner == "main" else current["membership"]["peers"][0]
+                        target["boot_id"] = "e" * 32
+                    return current
+
+                f.dut.get_system = snapshot
+                with self.assertRaises(AssertionError):
+                    f.member_tv.wait_for_power("on", since=action, timeout=0.05)
+                self.assertEqual(len(calls), 2)
 
     def test_initial_assertions_and_physical_activity_start_and_standby_commands(self):
         with self.fixture() as (dut, tv, avr, player, session):

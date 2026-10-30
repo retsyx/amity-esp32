@@ -279,8 +279,9 @@ void input_task(void *) {
     uint16_t siri_logged_buttons=0;
     ESP_LOGI("remote_input","Key press/release logging enabled");
     auto sync_activity=[&] {
+        const bool setup=controller.activity_setup(hub.activity_setup_in_progress(),esp_timer_get_time());
         const bool selected=controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
-        if(controller.synchronize(hub.remote_activity_generation(),hub.remote_activity_target())||selected) {
+        if(controller.synchronize(hub.remote_activity_generation(),hub.remote_activity_target())||selected||setup) {
             swipes.cancel();siri.activity_changed();
         }
     };

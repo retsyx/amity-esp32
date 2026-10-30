@@ -8,6 +8,15 @@
 
 #include "cec_hub_fixture.hpp"
 #include <algorithm>
+static void finish_selection(amity::HubService& hub,int target){
+    for(unsigned pass=0;pass<64;++pass){
+        run_idle(1);
+        if(hub.snapshot().current_activity==target&&fixture_pending.empty()){
+            run_idle(2);return;
+        }
+    }
+    assert(false&&"Accepted activity did not finish its original steps");
+}
 int main() {
     fixture_present = true;
     amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
@@ -18,10 +27,12 @@ int main() {
     assert(hub.activity_target() == 0);
     assert(hub.request_activity(1) == ESP_ERR_TIMEOUT);
     assert(hub.request_activity(-1) == ESP_ERR_TIMEOUT);
-    assert(!hub.press_key(0x40)); // Raw CEC power cannot bypass the guard.
+    const auto before_ignored_key=fixture_sent.size();
+    assert(hub.press_key(0x40)); // Setup discards a new down before registration.
+    assert(fixture_sent.size()==before_ignored_key); // Raw CEC power cannot bypass the guard.
     assert(hub.request_activity(0) == ESP_OK); // Repair can queue behind initial setup.
     fixture_completed.clear(); fixture_async_autocomplete = false; run_one_command();
-    assert(hub.snapshot().current_activity == 0 && hub.snapshot().activity_settling);
+    assert(hub.snapshot().current_activity == -1 && hub.snapshot().activity_settling);
     assert(fixture_completed.empty() && !fixture_pending.empty());
     fixture_tick = 0;
     fixture_time += 10000000;
@@ -29,6 +40,7 @@ int main() {
     // Elapsed quiet time cannot finish setup while its admitted CEC frames
     // still await completion. The owner remains available for the repair.
     fixture_complete_all(); fixture_async_autocomplete = true; run_one_command();
+    finish_selection(hub,0);
     assert(!fixture_completed.empty() && fixture_pending.empty());
     assert(hub.snapshot().activity_settling);
     cec::Frame source; source.size = 4; source.data[0] = 0x4f; source.data[1] = 0x82; source.data[2] = 0x10;
@@ -43,7 +55,7 @@ int main() {
     fixture_time = reserved + 6000000; // Five seconds after matched replies, despite the intervening repair.
     assert(hub.request_activity(1) == ESP_OK);
     // The ignored standby must not appear later in the queue.
-    fixture_tick = 100000; run_one_command(); fixture_tick = 0;
+    fixture_tick = 100000; run_one_command(); fixture_tick = 0;finish_selection(hub,1);
     assert(hub.snapshot().current_activity == 1);
     assert(hub.request_activity(0) == ESP_ERR_TIMEOUT);
     // Even at queue saturation, an ignored transition consumes no slots.
@@ -52,19 +64,19 @@ int main() {
     for (int i = 0; i < 32; ++i) run_one_command();
     fixture_time += 8000000;
     assert(hub.request_activity(-1) == ESP_OK);
-    fixture_tick = 100000; run_one_command(); fixture_tick = 0;
+    fixture_tick = 100000; run_one_command(); fixture_tick = 0;finish_selection(hub,-1);
     assert(hub.snapshot().current_activity == -1 && hub.snapshot().activity_settling);
     const auto off = fixture_time;
     assert(hub.request_activity(0) == ESP_ERR_TIMEOUT);
     assert(hub.request_activity(-1) == ESP_OK); run_one_command(); // Standby repair bypasses guard.
     fixture_time = off + 5000000;
     assert(hub.request_activity(0) == ESP_OK); // Standby expects ACKs only, no reply timeout.
-    fixture_tick = 100000; run_one_command(); fixture_tick = 0;
+    fixture_tick = 100000; run_one_command(); fixture_tick = 0;finish_selection(hub,0);
     assert(hub.snapshot().current_activity == 0);
     // Configuration replacement is administrative and clears stale reservations.
     assert(hub.configure({{"Replacement", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
     assert(hub.request_activity(0) == ESP_OK);
-    fixture_tick = 100000; run_one_command(); fixture_tick = 0;
+    fixture_tick = 100000; run_one_command(); fixture_tick = 0;finish_selection(hub,0);
     assert(hub.snapshot().current_activity == 0);
     fixture_time += 10000000; run_idle(1);
     assert(!hub.snapshot().activity_settling);

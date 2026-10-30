@@ -6,11 +6,48 @@
 
 Each configured HDMI adapter runs the original front playback/back TV handling, including allocation, back-first scanning, front physical-address selection, identity announcements, received-frame handling and source isolation. Added Amity devices remain headless and act only for their authenticated original controller. They do not infer an independent activity or promote themselves after link loss.
 
+The current activity is the source of truth for source isolation, with the
+existing global standby activity as its special case. Compare its assigned
+source by owning Amity, adapter and isolated CEC side, then by the ordinary
+owner-local name/address lookup. Equal OSD names or logical addresses on
+different wires do not identify the same source. A local source announcing
+against a foreign assigned source receives directed Standby locally; its
+announcement did not change the foreign wire, so no input repair is sent
+there or substituted on this adapter. No separate active/inactive owner
+flag, cached availability permission or cross-owner repair protocol is used.
+
+Announcement ingestion precedes this response policy and never depends on
+activity configuration. An early player may announce while a future activity
+is still in flight and validly receive Standby under the current activity.
+Its device record remains cached, and the normal activity sequence powers it
+when that sequence reaches it. This accepted race does not justify a context
+handoff workaround, pending-source immunity or additional coordination.
+
+Saving activity configuration does not disconnect an Amity, discard native
+HDMI device objects or remote adapter observations, or restart discovery. Device
+identity, discovery progress and current wire state belong to the owner/adapter,
+independently of saved activity references. Actual hardware, owner lifetime and
+explicit discovery events retain their existing invalidation rules.
+The only device-scan triggers are boot, an explicit UI request, and an actual
+communication cache miss. Lookup scans have a two-minute cooldown independently
+per owner/adapter/side; boot and UI scans bypass it. See [discovery](05-discovery-and-topology.md).
+
+All device access uses the same cache-first owner-local resolver, including
+source comparison and power/audio-status handlers. On a miss it applies the
+same lookup cooldown and rechecks the same cache after an admitted scan. No
+caller selects a cache-only variant or performs a cache-availability preflight.
+Opaque lookup continuation preserves the original operation without blocking
+the owner loop or requiring another received event. This follows Python
+`ControllerImpl.get_device`; [discovery](05-discovery-and-topology.md#one-device-access-path)
+owns the permanent encapsulation rule.
+
 Moving equipment to another Amity must preserve every CEC frame, wire order, attempt budget, admission decision, repeat/release decision and existing timing. Transport and compatibility labels cannot select different algorithms. Preserve the baseline's existing reaction to received frames and discovery; do not replace it with a new mandatory verified-path policy.
 
 ## 2. Original activity operations
 
 Use the original Hub decisions for selective power changes, same-target repair, standby, source input selection, explicit switch-input fallback and audio status. The owner obtains current LA/PA/type/vendor from ordinary local lookup and translates the original operation there.
+
+The **29 October 2026 sequencing amendment** makes each Start/Standby sequence advance through the original Python recipient/command order, awaiting each lookup and actual transmission completion on that Amity. A later activity cannot overtake a paused sequence. Other Amities and the owner loop keep advancing. Key presses during activity setting are ignored before pressed-state registration; releases for those unregistered presses are no-ops. Add no ignored-press bookkeeping or replay. Preserve the existing startup/accepted-selection `wait_for_release` physical-input gate; after it clears, normal independent keys resume. Keys are never buffered behind an activity. The transient continuation and completion scope are defined in [activity execution](07-activity-planning-and-execution.md#2-reuse-the-original-decisions).
 
 Power uses standard commands only: TV On sends Image View On (`04`), other
 devices receive Power On Function (`44:6d`) and Released (`45`), and Off sends
@@ -42,3 +79,14 @@ Authenticate the original controller and selected owner, reject stale boot/confi
 ## 6. Validation
 
 Compare baseline and scoped-owner transcripts for TV/source power, separate AVR audio, explicit input selection, source absence, received frames, same-target repair, independent held keys, finite taps, failed presses, FIFO saturation and releases. Host evidence must assert frames/order/attempts/admission, not only Ready or storage equality. Physical CEC captures remain necessary for timing qualification.
+
+`tests/owned_source_theft_test.cpp` exercises the actual two-owner HubService
+receive/admission path in both directions and direct Hub contexts with equal
+source names/addresses across owners, adapters and sides. It checks local
+directed Standby without a foreign input command or activity change, and
+retains selected local-source acceptance, absent local-source handling,
+empty-source switch fallback and the original global standby response.
+
+`tests/owned_hub_test.cpp` checks that configuration edits retain native device
+records and an in-progress scan, preserve selected and unselected remote adapter
+snapshots, and submit no new discovery polls or identity queries.

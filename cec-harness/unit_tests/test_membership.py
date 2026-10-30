@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 import json
 import sys
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -424,6 +425,50 @@ class MembershipTests(unittest.TestCase):
                     f.added().create()
                 self.assertEqual(f.calls, [])
                 self.assertEqual(f.gpio.calls, [])
+
+    def test_headless_component_member_registers_only_verified_boot_and_loses_proof_on_removal(self):
+        f = Fixture()
+        f.bed.control_only = ()
+        f.bed.members = (f.candidate,)
+        member = f.added().create()
+        self.assertIs(f.bed._member_proofs[f.candidate.identity.device_id], member)
+        self.assertEqual(member.member_boot, f.member_boot)
+        member.close()
+        self.assertEqual(f.bed._member_proofs, {})
+        self.assertIsNone(f.candidate._token)
+
+    def test_membership_cleanup_accepts_only_exact_retired_completed_fixture_slots(self):
+        f = Fixture()
+        member = f.added().create()
+        activity_id = "7" * 32
+        f.main.activity_operations.extend([
+            {"phase": "create", "activity_id": activity_id, "operation": {"stage": "applied"}},
+            {"phase": "cleanup", "activity_id": activity_id, "removed_activity": True, "retained_equipment": []}])
+        f.config["external_slots"].append({"slot": 1, "activity_id": activity_id,
+                                            "tombstone": True, "hidden": False, "alias": ""})
+        member.close()
+        self.assertEqual(f.posts("remove")[0]["octopus_id"], f.candidate.identity.device_id)
+
+    def test_retired_fixture_slot_exception_rejects_foreign_edits_and_incomplete_cleanup(self):
+        for change in ("foreign_id", "not_retired", "alias", "position", "old_slot", "not_removed", "retained_equipment"):
+            with self.subTest(change=change):
+                f = Fixture()
+                member = f.added().create()
+                activity_id = "7" * 32
+                f.main.activity_operations.extend([
+                    {"phase": "create", "activity_id": activity_id, "operation": {"stage": "applied"}},
+                    {"phase": "cleanup", "activity_id": activity_id, "removed_activity": True, "retained_equipment": []}])
+                slot = {"slot": 1, "activity_id": activity_id, "tombstone": True, "hidden": False, "alias": ""}
+                f.config["external_slots"].append(slot)
+                if change == "foreign_id": slot["activity_id"] = "8" * 32
+                elif change == "not_retired": slot["tombstone"] = False
+                elif change == "alias": slot["alias"] = "User edited"
+                elif change == "position": slot["slot"] = 4
+                elif change == "old_slot": f.config["external_slots"][0]["alias"] = "User edited"
+                elif change == "not_removed": f.main.activity_operations[-1]["removed_activity"] = False
+                else: f.main.activity_operations[-1]["retained_equipment"] = ["9" * 32]
+                with self.assertRaises(MembershipConflict):
+                    member._config(deadline=time.monotonic() + 1)
 
     def test_wrong_main_role_or_existing_target_is_rejected_before_gpio_or_mutations(self):
         cases = ("member", "no_authority", "wrong_main_id", "preexisting_target", "preexisting_name")

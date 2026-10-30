@@ -188,10 +188,10 @@ static void discovery_tests() {
     const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
     h.configure({{"Watch", "Screen", "Source", "Source", "", 0}});
-    assert(h.activity_needs_discovery(0));
+    assert(!h.find_device("Source",B));
     device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x1000, 4, "Source");
-    assert(!h.activity_needs_discovery(0));
-    h.select_activity(0); assert(!h.key_needs_discovery(0));
+    assert(h.find_device("Source",B));
+    h.select_activity(0); assert(h.find_device("Source",B));
     // Discovery leaves the working cache and selected-source power response
     // intact until all metadata has been collected into its replacement.
     h.begin_discovery();
@@ -222,7 +222,7 @@ static void discovery_tests() {
     h.receive(B, frame({0x4f, 0x84, 0x40, 0, 4}));
     assert(t.contains(B, 15, {0x86, 0x40, 0}));
     assert(h.snapshot().devices.size() == 2);
-    h.clear_devices(); assert(h.key_needs_discovery(0));
+    h.clear_devices(); assert(!h.find_device("Source",B));
 }
 static void shared_power_tests() {
     const auto F = amity::BusSide::Front, B = amity::BusSide::Back;

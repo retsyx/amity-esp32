@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Run the actual in-place synchronizer against scripted authenticated TLS I/O."""
+from pathlib import Path
+import os
+import shlex
+import subprocess
+import tempfile
+from consortium_gatt_callback_test import function
+
+ROOT = Path(__file__).resolve().parents[1]
+PREFIX = r'''
+#include "amity/consortium/runtime.hpp"
+#include "amity/consortium/owned_intent.hpp"
+#include "amity/consortium/transfer.hpp"
+#include "amity/consortium/settings.hpp"
+#include "controller_policy.hpp"
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <deque>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <sys/socket.h>
+namespace amity::consortium {
+using namespace platform;
+uint64_t clock_ms=100;
+uint64_t now_ms(){return clock_ms;}
+template<class T>T ident(unsigned value){char text[33];snprintf(text,sizeof(text),"%032x",value);return *T::parse(text);}
+template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++);}
+// Cryptography has independent coverage; this lower-layer fixture gives the
+// real SnapshotTransfer a deterministic digest and still checks its binding.
+std::string sha256(std::string_view){return std::string(64,'a');}
+struct Queued{Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
+struct FakeTls{
+ int socket=-1;std::deque<std::string> incoming;std::vector<Envelope> sent;unsigned receives=0;
+ std::function<void()> before_receive;
+ bool receive(std::string& value,uint32_t timeout=10000){++receives;if(before_receive)before_receive();if(incoming.empty()){clock_ms+=timeout;return false;}value=std::move(incoming.front());incoming.pop_front();return true;}
+};
+struct Active{
+ Session session;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();model::OctopusId peer;
+ std::mutex mutex;bool cancelled=false,retiring=false,management_ready=false,ready=true,context_ready=true,refreshing=false;
+ RuntimePeerStatus status;std::deque<Queued> queue;model::ExecutionLeaseId own_control,own_realtime;
+ std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::string endpoint_hint;
+};
+std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;
+uint64_t configuration=7;std::string configuration_hash=std::string(64,'a');
+std::vector<std::shared_ptr<Active>> links;
+unsigned shutdowns=0;
+esp_err_t save_group(const Group&){return ESP_OK;}
+std::function<void(Active&,const Envelope&)> on_send;
+bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);
+}
+int capture_shutdown(int,int){++amity::consortium::shutdowns;return 0;}
+#define shutdown capture_shutdown
+'''
+SUPPORT = r'''
+namespace amity::consortium {
+std::string packet(const Envelope& e){
+ return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"message_id\":\""+e.message_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
+}
+bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
+ auto e=outgoing(active,kind,ttl);JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));
+ active.tls->sent.push_back(e);if(on_send)on_send(active,e);return true;
+}
+Envelope inbound(const LinkScope& scope,uint64_t revision,Kind kind,std::string_view payload){
+ Envelope e;e.consortium_id=scope.consortium_id;e.message_id=random_id<model::MessageId>();e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;
+ e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=scope.epoch;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;
+ JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));return e;
+}
+void feed(Active& active,const Envelope& e){active.tls->incoming.push_back(packet(e));}
+SnapshotManifest manifest(model::OctopusId owner,model::BootId boot,uint64_t revision,std::string_view kind,std::string_view payload){
+ SnapshotManifest m;m.transfer_id=random_id<model::MessageId>();m.owner_octopus_id=owner;m.owner_boot_id=boot;m.config_revision=revision;m.total_length=payload.size();m.payload_hash=sha256(payload);m.document_kind=kind;return m;
+}
+std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
+ auto a=std::make_shared<Active>();
+ const auto coordinator=ident<model::OctopusId>(2),member=ident<model::OctopusId>(3);const auto mainboot=ident<model::BootId>(4),memberboot=ident<model::BootId>(5);
+ LinkScope scope{ident<model::LinkId>(6),ident<model::ConsortiumId>(1),server?coordinator:member,server?member:coordinator,coordinator,server?mainboot:memberboot,server?memberboot:mainboot,1,7};
+ a->peer=scope.peer_id;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;a->status.negotiated_capabilities=caps;
+ HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=caps;
+ assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
+ a->own_control=ident<model::ExecutionLeaseId>(70);a->own_control_deadline=5000;a->status.control_lease=a->own_control;a->status.control_usable_until_ms=4900;
+ assert(a->session.execution_leases().issue(a->own_control,LeaseClass::control,5000,clock_ms)==Error::none);
+ clock_ms=100;controls={};configuration=7;configuration_hash=std::string(64,'a');status={};group={};group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;
+ return a;
+}
+std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
+const std::string owner_state="{\"adapters\":[]}";
+const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
+void unchanged(const Active& active,const LinkScope& original,const FakeTls* tls){
+ auto expected=original;expected.config_revision=active.session.scope().config_revision;
+ assert(active.tls.get()==tls&&active.session.scope()==expected&&active.ready&&active.status.ready&&!active.cancelled&&!active.retiring&&active.session.state()==ConnectionState::ready);
+}
+}
+'''
+SUITE = r'''
+namespace amity::consortium {
+void coordinator_refresh(){
+ auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
+ const auto oldlease=a->own_control;unsigned applied=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale;
+ controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8);return controller_slice(original,revision);};
+ controls.synchronize=[&](auto owner,const Json& value){++applied;assert(owner==a->peer&&value.type==Json::Type::string&&value.string==owner_state&&cached.size()==3);return Error::none;};
+ a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==3);};
+ on_send=[&](Active& active,const Envelope& e){
+  unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
+  if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
+   if(m.document_kind=="configuration"){assert(phase=="begin"&&e.config_revision==7&&m.config_revision==8);config_manifest=m;feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
+   else assert(e.config_revision==8&&m.config_revision==8&&(phase=="ack"||phase=="complete"));
+  }else{assert(config_manifest&&e.kind==Kind::snapshot_chunk&&e.config_revision==7);
+   feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
+   // Already-in-flight obsolete messages are safely discarded after advance,
+   // including a replay; they cannot masquerade as the new owner-state slice.
+   stale=inbound(original,7,Kind::heartbeat,heartbeat);feed(active,*stale);feed(active,*stale);
+   const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);
+   feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));
+   feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));
+  }
+ };
+ runtime_configuration_changed(8,std::string(64,'b'));
+ assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&applied==0&&cached.size()==3);
+ assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
+ assert(a->session.execution_leases().live(LeaseClass::control,clock_ms)==0&&!a->own_control&&!a->status.control_lease&&a->own_control_deadline==0&&!a->context_ready);
+ assert(!a->session.execution_leases().valid(oldlease,LeaseClass::control,a->session.scope(),clock_ms));
+ assert(stale&&a->session.discard_stale(*stale,clock_ms,clock_ms)==Error::duplicate);stale->config_revision=8;assert(a->session.admit(*stale,clock_ms,clock_ms)==Error::duplicate);
+ assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
+ runtime_configuration_changed(6,std::string(64,'c'));assert(configuration==8&&shutdowns==0);
+}
+void member_refresh(){
+ auto a=start(false);const auto original=a->session.scope();const auto* tls=a->tls.get();unsigned applied=0;std::vector<std::string> cached={"Member TV","Member Player"};
+ const auto payload=controller_slice(original,8);const auto incoming=manifest(original.local_id,original.local_boot_id,8,"configuration",payload);
+ const auto first=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(incoming,"begin",0));
+ assert(a->session.admit(first,clock_ms,clock_ms)==Error::none); // The real outer loop pre-admits the first manifest.
+ feed(*a,inbound(original,7,Kind::snapshot_chunk,snapshot_chunk_json(incoming,0,payload)));
+ controls.snapshot=[&](auto){assert(cached.size()==2);return owner_state;};controls.synchronize=[&](auto owner,const Json& value){assert(owner==a->peer&&value.string==payload&&a->session.scope()==original&&cached.size()==2);++applied;return Error::none;};
+ a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==2);};
+ std::optional<SnapshotManifest> outgoing_state;
+ on_send=[&](Active& active,const Envelope& e){
+  unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
+  if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
+   if(m.document_kind=="configuration"){assert(e.config_revision==7&&m.config_revision==8&&(phase=="ack"||phase=="complete"));if(phase=="complete")assert(applied==1&&active.session.scope()==original);}
+   else{assert(e.config_revision==8&&phase=="begin");outgoing_state=m;feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
+  }else{assert(outgoing_state&&e.kind==Kind::snapshot_chunk&&e.config_revision==8);feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(*outgoing_state,"complete",1)));}
+ };
+ assert(synchronize(*a,false,true,8,&first));unchanged(*a,original,tls);assert(configuration==8&&applied==1&&cached.size()==2&&shutdowns==0);
+ assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
+ assert(a->session.execution_leases().live(LeaseClass::control,clock_ms)==0&&!a->own_control&&!a->status.control_lease);
+}
+void rejected_frames(){
+ for(unsigned failure=0;failure<5;++failure){auto a=start(false);const auto original=a->session.scope();unsigned applied=0;
+  controls.snapshot=[](auto){return owner_state;};controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
+  const auto value=controller_slice(original,8);auto m=manifest(original.local_id,original.local_boot_id,8,"configuration",value);auto e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));
+  switch(failure){case 0:e.origin_boot_id=ident<model::BootId>(99);break;case 1:e.origin_octopus_id=ident<model::OctopusId>(99);break;case 2:e.config_revision=9;break;case 3:e.consortium_id=ident<model::ConsortiumId>(99);break;case 4:m.owner_octopus_id=original.peer_id;e=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"begin",0));break;}
+  feed(*a,e);assert(!synchronize(*a,false,true,8)&&applied==0&&a->session.scope()==original);
+ }
+ auto old=start(false,known_capabilities&~live_configuration);controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
+ assert(!synchronize(*old,false,true,8)&&old->tls->sent.empty()&&old->session.scope().config_revision==7);
+}
+void immutable_queue(){
+ auto a=start(true);on_send={};const auto original=a->session.scope();
+ model::OwnedIntent i;i.kind=model::OwnedIntentKind::power;i.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};i.generation=i.sequence=1;i.on=true;i.config_revision=8;
+ auto owned=std::make_shared<const model::OwnedIntent>(i);Queued queued{Kind::scoped_intent,{},500,100,8,owned};a->queue.push_back(queued);
+ runtime_configuration_changed(8,std::string(64,'b'));assert(a->queue.size()==1&&a->queue.front().owned==owned&&a->queue.front().created==100&&a->queue.front().ttl==500&&a->session.scope()==original&&shutdowns==0);
+ std::string payload;assert(prepare_queued(*a,queued,120,payload)==QueuedState::stale&&payload.empty());
+ assert(a->session.advance_configuration(8)==Error::none);a->status.config_revision=8;a->status.control_lease={};a->status.control_usable_until_ms=0;a->context_ready=false;
+ assert(prepare_queued(*a,queued,120,payload)==QueuedState::waiting);
+ a->context_ready=true;assert(prepare_queued(*a,queued,120,payload)==QueuedState::waiting);
+ const auto fresh=ident<model::ExecutionLeaseId>(88);a->status.control_lease=fresh;a->status.control_usable_until_ms=900;
+ assert(prepare_queued(*a,queued,120,payload)==QueuedState::ready);
+ Json parsed;JsonError error;model::OwnedIntent decoded;model::ExecutionLeaseId lease;assert(parse_json(payload,parsed,error)&&parse_owned_intent(parsed,decoded,lease)==Error::none&&lease==fresh);
+ assert(queued.owned==owned&&queued.revision==8&&queued.created==100&&queued.ttl==500&&owned->config_revision==8);
+ auto stale=queued;stale.revision=7;assert(prepare_queued(*a,stale,120,payload)==QueuedState::stale);
+ // The actual worker block expires the admitted IPC item at its original
+ // deadline, even if context/fresh leases were unavailable during refresh.
+ clock_ms=600;a->context_ready=false;assert(!pump(*a)&&a->tls->sent.empty()&&a->queue.empty());
+ auto settings=Queued{Kind::settings_read,"{\"request_id\":\""+ident<model::MessageId>(91).str()+"\"}",1000,600,7,{}};
+ a->queue.push_back(settings);clock_ms=601;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()); // no old management-payload restamp
+ a->context_ready=true;clock_ms=650;queued.created=650;a->queue.push_back(queued);assert(pump(*a)&&a->tls->sent.size()==1&&a->tls->sent.back().config_revision==8);
+}
+}
+int main(){using namespace amity::consortium;coordinator_refresh();member_refresh();rejected_frames();immutable_queue();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope completion then new owner state; strict obsolete/future frames, replay, lease invalidation and original queued revision/deadline\n";}
+'''
+
+
+def main():
+    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
+    # Run the same queue block as the link task, including break-on-expired-
+    # causal-work and send-time TTL reduction; no copy of its decisions.
+    start = source.index('        Queued queued;std::string payload;')
+    end = source.index('        fd_set reads;', start)
+    pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();while(true){' + source[start:end] + 'return true;}return false;}\n'
+    actual = ''.join(function(source, name) for name in (
+        'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(',
+        'void runtime_configuration_changed(', 'static bool queued_causal('))
+    queued = source[source.index('enum class QueuedState'):source.index('void active_loop_work(')]
+    with tempfile.TemporaryDirectory(prefix='amity-live-configuration-') as directory:
+        temp = Path(directory)
+        (temp / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
+        cpp, binary = temp / 'test.cpp', temp / 'test'
+        cpp.write_text(PREFIX + 'namespace amity::consortium {\n' + actual + queued + pump + '\n}\n' + SUPPORT + SUITE)
+        sources = [ROOT / 'components/consortium' / name for name in
+                   ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
+        sources.append(ROOT / 'components/amity_system/model.cpp')
+        subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
+                       ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined',
+                        '-I' + str(temp), '-I' + str(ROOT / 'components/consortium'),
+                        '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include')] +
+                       list(map(str, [cpp] + sources)) + ['-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)
+
+
+if __name__ == '__main__':
+    main()

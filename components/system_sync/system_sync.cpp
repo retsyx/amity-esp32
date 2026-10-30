@@ -20,6 +20,7 @@ struct State {
     SystemControl* control=nullptr;
     ConfigurationActivationStatus activation;
     bool activating=false;
+    uint64_t published_revision=0,owner_revision=0;
     std::vector<s::OwnedAdapterSnapshot> reports,pending_reports;
     std::set<s::OctopusId> maintenance;
 } state;
@@ -52,6 +53,18 @@ std::string snapshot(s::OctopusId){
     }
     return out+"]}";
 }
+std::string configuration_snapshot(s::OctopusId,uint64_t revision){
+    if(!revision||!c::runtime_status().coordinator)return {};
+    return "{\"controller\":\""+state.control->octopus_id().str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";
+}
+void publish_configuration_revision(){
+    if(!c::runtime_status().coordinator)return;
+    const auto config=state.control->active_configuration();if(!config)return;
+    const auto applied=state.control->execution_snapshot();
+    if(applied.applied_config_revision!=config->config_revision||applied.applied_presentation_revision!=config->presentation_revision)return;
+    {std::lock_guard<std::mutex> guard(state.mutex);if(state.published_revision==config->config_revision)return;state.published_revision=config->config_revision;}
+    c::runtime_configuration_changed(config->config_revision,cs::executable_policy_hash(*config));
+}
 c::Error synchronize(s::OctopusId sender,const c::Json& value){
     if(value.type!=c::Json::Type::string)return c::Error::invalid_message;
     c::Json document;c::JsonError error;if(!c::parse_json(value.string,document,error,32768,2048))return c::Error::invalid_message;
@@ -63,13 +76,16 @@ c::Error synchronize(s::OctopusId sender,const c::Json& value){
     }
     s::OctopusId controller;uint64_t revision=0;
     if(!group.member||!c::closed(document,{"controller","config_revision"})||!c::id(document.get("controller"),controller)||controller!=sender||!c::decimal(document.get("config_revision"),revision)||!revision)return c::Error::unauthorized_role;
-    return state.control->bind_owned_controller(controller,revision)==ESP_OK?c::Error::none:c::Error::not_ready;
+    if(state.control->bind_owned_controller(controller,revision)!=ESP_OK)return c::Error::not_ready;
+    {std::lock_guard<std::mutex> guard(state.mutex);state.owner_revision=revision;}
+    return c::Error::none;
 }
 bool input_result(const s::OwnedIntent& intent,const s::OwnedAuthorization& auth,const s::AdmissionResult& result){
     if(intent.kind!=s::OwnedIntentKind::source_input||result.code==s::AdmissionCode::pending)return true;
+    {std::lock_guard<std::mutex> guard(state.mutex);if(auth.config_revision<state.owner_revision)return true;}
     if(!result.source_present){c::runtime_fence_owned_link(auth.controller_id,auth.link_id);return false;}
     const auto payload="{\"input_result\":{\"generation\":\""+std::to_string(intent.generation)+"\",\"sequence\":\""+std::to_string(intent.sequence)+"\",\"source_present\":"+(*result.source_present?"true":"false")+"}}";
-    if(c::runtime_send_owned_result(auth.controller_id,auth.link_id,payload,1000)==ESP_OK)return true;
+    if(c::runtime_send_owned_result(auth.controller_id,auth.link_id,payload,1000,auth.config_revision)==ESP_OK)return true;
     c::runtime_fence_owned_link(auth.controller_id,auth.link_id);return false;
 }
 c::Error receive(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadline,s::LinkId link){
@@ -125,7 +141,7 @@ void adopt_owners(){
 }
 void worker(void*){
     uint64_t next_state=0;
-    for(;;){flush_reports();const auto now=static_cast<uint64_t>(esp_timer_get_time()/1000);
+    for(;;){publish_configuration_revision();flush_reports();const auto now=static_cast<uint64_t>(esp_timer_get_time()/1000);
         if(now>=next_state){if(c::runtime_status().coordinator)adopt_owners();next_state=now+1500;}
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -144,7 +160,7 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     }
     control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);control.set_owned_deadline(c::runtime_owned_deadline);
     control.set_owned_input_observer([](const auto& intent,const auto& auth,const auto& result){input_result(intent,auth,result);});
-    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner){return state.control->refresh_owned_context(owner);}});return ESP_OK;
+    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner){return state.control->refresh_owned_context(owner);},[]{return state.control->executing_configuration_revision();},configuration_snapshot});return ESP_OK;
 }
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request){
     SystemControl* control=nullptr;
@@ -155,13 +171,14 @@ esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::Rev
         result=cs::stage_system_configuration(std::move(candidate),expected,error);
         if(result==ESP_OK)result=cs::staged_system_configuration(candidate);
         if(result==ESP_OK)result=control->configure(candidate,[&]{return cs::activate_system_configuration(candidate,error);});
-        if(result==ESP_OK)c::runtime_configuration_changed(candidate.config_revision,cs::executable_policy_hash(candidate));
+        if(result==ESP_OK)publish_configuration_revision();
     }
     if(result!=ESP_OK)cs::cancel_staged_configuration();
     {std::lock_guard<std::mutex> guard(state.mutex);state.activation={request,candidate.config_revision,candidate.presentation_revision,result==ESP_OK?"configuring":"failed",result==ESP_OK?std::string{}:error.empty()?"Configuration could not be saved":error};}
     return result;
 }
 ConfigurationActivationStatus configuration_activation_status(){
+    if(state.control)publish_configuration_revision();
     std::lock_guard<std::mutex> guard(state.mutex);
     if(state.control&&state.activation.phase=="configuring"){
         const auto applied=state.control->execution_snapshot();

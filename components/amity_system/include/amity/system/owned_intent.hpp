@@ -19,6 +19,8 @@ struct OwnedIntent {
     // leave osd_name empty. All component/key actions require an actual name.
     QualifiedDeviceName target;
     uint64_t generation = 0, sequence = 0;
+    // Local IPC metadata. The authenticated envelope carries this on wire.
+    uint64_t config_revision = 0;
     uint32_t setup_generation = 0;
     HoldToken token;
     uint8_t key = 0, input = 0;

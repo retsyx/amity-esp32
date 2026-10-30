@@ -15,7 +15,7 @@ std::vector<c::RuntimePeerStatus> peers;
 std::vector<s::OwnedIntent> sent;
 struct Packet {s::OctopusId owner;c::Kind kind;std::string payload;uint32_t ttl;};
 std::vector<Packet> packets;
-struct ResultPacket {s::OctopusId owner;s::LinkId link;std::string payload;uint32_t ttl;};
+struct ResultPacket {s::OctopusId owner;s::LinkId link;std::string payload;uint32_t ttl;uint64_t revision;};
 std::vector<ResultPacket> result_packets;
 std::vector<std::pair<s::OctopusId,s::LinkId>> result_fences;
 std::vector<s::OwnedAuthorization> deadline_queries;
@@ -34,7 +34,7 @@ std::unique_ptr<ConfigurationStore> journal;
 void reset(){
     {std::lock_guard<std::mutex> guard(amity::state.mutex);
         amity::state.control=nullptr;amity::state.activating=false;amity::state.activation={};
-        amity::state.reports.clear();amity::state.pending_reports.clear();amity::state.maintenance.clear();}
+        amity::state.reports.clear();amity::state.pending_reports.clear();amity::state.maintenance.clear();amity::state.published_revision=amity::state.owner_revision=0;}
     role={};role.coordinator=true;role.authority_ready=true;role.initialized=true;role.epoch=1;
     peers.clear();sent.clear();packets.clear();result_packets.clear();result_fences.clear();deadline_queries.clear();current_result_link={};configuration_changes.clear();hooks={};
     send_result=ESP_OK;report_result=ESP_OK;task_ok=true;auth_allowed=true;now=100;
@@ -86,7 +86,7 @@ void runtime_control_hooks(RuntimeControlHooks hooks){fixture::hooks=std::move(h
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){fixture::sent.push_back(intent);return fixture::send_result;}
 bool runtime_owned_authorized(const model::OwnedAuthorization&){++fixture::authorization_checks;return fixture::auth_allowed;}
 esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});return fixture::report_result;}
-esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl){fixture::result_packets.push_back({owner,link,std::move(payload),ttl});return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
+esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){fixture::result_packets.push_back({owner,link,std::move(payload),ttl,revision});return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){fixture::result_fences.push_back({owner,link});}
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){fixture::deadline_queries.push_back(auth);return fixture::refreshed_deadline;}
 void runtime_configuration_changed(uint64_t revision,const std::string& hash){fixture::configuration_changes.push_back({revision,hash});}
@@ -185,6 +185,7 @@ void source_lookup_results_preserve_original_fallback(){
     const auto pending_auth=member.authorizations.back();assert(pending_auth.authority==s::OwnedAuthority::control);
     s::AdmissionResult located{s::AdmissionCode::accepted,{}};located.source_present=false;
     member.input_observer(input,pending_auth,located);
+    assert(result_packets.back().revision==pending_auth.config_revision);
     assert(result_packets.size()==deferred+1&&result_packets.back().link==link);
     assert(!json(result_packets.back().payload).get("input_result")->get("source_present")->boolean);
     // Once the authenticated link is replaced, an old asynchronous lookup
@@ -198,6 +199,10 @@ void source_lookup_results_preserve_original_fallback(){
     member.admission=s::AdmissionCode::accepted;member.source_present=true;report_result=ESP_FAIL;
     const auto failed=result_fences.size();assert(hooks.control(original,received,123456,link)==c::Error::queue_full);
     assert(result_fences.size()==failed+1&&result_fences.back()==std::make_pair(original,link));
+    const auto obsolete_packets=result_packets.size(),obsolete_fences=result_fences.size();
+    assert(hooks.synchronize(original,string_document("{\"controller\":\""+original.str()+"\",\"config_revision\":\"24\"}"))==c::Error::none);
+    member.input_observer(input,pending_auth,located);
+    assert(result_packets.size()==obsolete_packets&&result_fences.size()==obsolete_fences); // Old-revision continuations never disconnect the live replacement scope.
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);peers={remote()};const auto owner=peers[0].id;
     c::Envelope result;result.kind=c::Kind::scoped_result;result.origin_boot_id=peers[0].boot_id;
     result.payload=json("{\"input_result\":{\"generation\":\"7\",\"sequence\":\"11\",\"source_present\":false}}");
@@ -262,11 +267,14 @@ void scans_and_saved_intent_without_peer_ack(){
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
     auto candidate=active;candidate.activities[0].audio=candidate.activities[0].source;candidate.activities[0].label="Renamed";candidate.activities[0].label_override=true;main.auto_apply=false;const auto began=now;const auto request=id<s::MessageId>(100);
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),request)==ESP_OK&&now==began);
+    assert(configuration_changes.empty()); // Admission cannot invalidate old-recipe cleanup.
     const auto status=amity::configuration_activation_status();assert(status.request_id==request&&status.phase=="configuring"&&status.config_revision==2&&status.presentation_revision==2);
     main.applied.applied_config_revision=status.config_revision;
     assert(amity::configuration_activation_status().phase=="configuring");
+    assert(configuration_changes.empty());
     main.applied.applied_presentation_revision=status.presentation_revision;
     assert(amity::configuration_activation_status().phase=="applied");
+    assert(configuration_changes.size()==1&&configuration_changes[0].first==status.config_revision);
     assert(main.configuration.activities[0].audio==candidate.activities[0].source&&packets.empty()&&sent.empty()&&configuration_changes.size()==1);
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos);
     const auto saved=serialize_configuration(main.configuration);const auto committed=memory.values;candidate=main.configuration;candidate.activities[0].audio=candidate.activities[0].display;

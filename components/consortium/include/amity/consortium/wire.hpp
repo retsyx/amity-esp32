@@ -32,6 +32,7 @@ struct Envelope {
 };
 // Supported kinds all have closed payload validators. Retired numeric slots reject.
 Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = nullptr);
+bool valid_envelope_payload(Kind, const Json&);
 bool parse_address(const Json &, model::FullyQualifiedCecAddress &);
 bool parse_name(const Json &, model::QualifiedDeviceName &);
 bool decimal(const Json *, uint64_t &);
@@ -43,8 +44,9 @@ template<class Id> bool id(const Json *v, Id &out) {
 enum Capability : uint32_t { token_holds=2u, lifecycle_journal=8u,
     chunked_snapshots=64u, peer_firmware_update=512u,
     original_controller_only=8192u, hostname_metadata=16384u, per_adapter_settings=32768u,
-    factory_reset_removal=65536u, owner_repeated_keys=131072u, qualified_lookup=262144u };
-constexpr uint32_t known_capabilities = token_holds|lifecycle_journal|chunked_snapshots|peer_firmware_update|original_controller_only|hostname_metadata|per_adapter_settings|factory_reset_removal|owner_repeated_keys|qualified_lookup;
+    factory_reset_removal=65536u, owner_repeated_keys=131072u, qualified_lookup=262144u,
+    live_configuration=524288u };
+constexpr uint32_t known_capabilities = token_holds|lifecycle_journal|chunked_snapshots|peer_firmware_update|original_controller_only|hostname_metadata|per_adapter_settings|factory_reset_removal|owner_repeated_keys|qualified_lookup|live_configuration;
 struct HelloFrame {
     uint8_t protocol_min = 1, protocol_max = 1;
     model::ConsortiumId consortium_id;

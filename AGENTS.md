@@ -207,6 +207,94 @@ identity/authority, credentials, Matter setup, original CEC behavior and journal
 integrity. Numeric current-protocol metadata and external SDK standard names
 retain their actual meaning.
 
+## Activity edits and live discovery — 29 October 2026
+
+Saving or applying activity configuration must not disconnect Amity devices or
+clear their HDMI discovery caches. Keep authenticated member connections and
+observed equipment independent of saved activity selections, including adapters
+with no selected equipment. Preserve the exact revision, boot, link, authority,
+lease and replay checks that reject stale work while updating configuration on
+the existing connection. The current activity is the sole source of truth for
+source-theft handling, with the special standby activity when the whole system
+is in standby; do not add an active/inactive owner flag.
+
+Valid CEC device announcements populate or update the device cache regardless
+of activity configuration, including standby and devices absent from every
+saved activity. Learn the announcing address and reported information and query
+that peer for missing identity metadata without requiring a full bus scan.
+Activity policy may respond to the announcement, but must not determine whether
+the device is cached or erase its observation.
+
+An activity still in flight is not an active activity. A device announcing
+before its Amity receives/applies the start may validly be put in standby under
+the current activity; the normal start sequence supplies the power commands.
+Do not add a pending-source exception, announcement/configuration coordination
+or a test guarantee that prevents this valid timing outcome.
+
+## HDMI scan triggers — 29 October 2026
+
+HDMI device enumeration is permitted for exactly three reasons: board boot,
+an explicit scan requested by the user in the UI, or an actual communication
+attempt whose target device is missing from the cache. Do not add periodic,
+reconnection, configuration-change or activity-change scan triggers. Keep
+passive received-device observations and the adapter's own CEC logical-address
+maintenance separate from device enumeration.
+
+Cache-miss lookup scans have a 120-second cooldown independently for every
+Amity / tentacle / CEC side. Scan only the missing recipient's side and preserve
+the opposite side's cache. Repeated misses during cooldown remain unresolved;
+do not defer or queue another scan for later. Boot and explicit UI scans bypass
+that lookup cooldown and refresh the scanned sides' cooldown timestamps. A
+real communication miss during activity cleanup still
+qualifies; editing configuration alone does not. Retain HDMI caches through
+activity edits and connection/configuration updates.
+
+All device access goes through one resolver. That function
+checks the cache, performs a throttled scan on a miss, then checks the same cache
+again. The resolver owns the cache and all lookup/scan/cooldown decisions.
+Callers must not know whether a result was cached, inspect cache availability,
+preflight whether discovery is needed, or request a lookup scan themselves.
+Do not introduce passive-handler, cache-only or cache-bypassing lookup paths.
+Boot and explicit UI scan requests may force enumeration; ordinary device
+access must always use the shared resolver.
+
+The ESP32 owner task must stay responsive while resolution waits for scanning.
+Resume the original operation after the resolver completes, rather than require
+a second input event or duplicate already-emitted commands. Keep asynchronous
+lookup continuation inside the shared mechanism and existing bounded typed IPC;
+do not add an outgoing CEC queue. Preserve exact recipient and activity/boot
+fences when resuming work. Tests must exercise the actual callers with a cold
+cache, successful scan, repeated miss/cooldown, and independent tentacle sides.
+
+## Sequential activity execution — 29 October 2026
+
+Activity start/standby sequences run sequentially on each Amity. Follow the
+original `ControllerImpl.set_activity()` in `~/projects-other/amity/hdmi.py`:
+resolve the device, complete that step's original CEC work, then advance to the
+next power/input step. Do not pre-resolve every activity device or let another
+activity action overtake a sequence waiting for lookup or transmission
+completion. Different Amities may execute their own sequences in parallel.
+
+While an activity is being set, user key presses are discarded through the
+existing `wait_for_release` gate before pressed-state registration. Keep that
+gate effective throughout pending lookup and transmission steps; do not queue
+presses, register ignored keys/tokens or create an ignored-press lifecycle.
+A release with no registered pressed key is a no-op. Releases and exact cleanup
+for keys registered before the transition retain their normal behavior. Keep
+the adapters' existing physical edge recognition; unchanged held reports and
+queued transition-period input must never replay a discarded press.
+Once setup completes, retain the gate's original all-buttons-up clearing and
+one-second fallback. Normal independent multi-key handling resumes after the
+gate clears; do not serialize independent keys during normal operation.
+
+The owner task must keep advancing incoming CEC, device resolution, completions
+and release cleanup while the activity waits. Preserve the explicit per-key
+amendments above. Store only transient operation progress
+in the existing bounded typed communication mechanism; do not add an executor
+queue of outgoing CEC frames, a hidden retry backlog or a persistent plan.
+Test actual completion ordering across an Amity's front/back sides, a cold
+lookup, start followed by standby, parallel owners and independent keys.
+
 ## Functional test framework
 
 Harness code and bench wiring live in `cec-harness/`. The Python functional
@@ -219,13 +307,16 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The framework has
-four functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
+five functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
 playback device; `activity.py`, which reuses that scan to create, start and
 standby an activity; `source_theft.py`, which adds a second playback device
 on AVR input 2 to check recovery from its Active Source announcement while the
-input-1 player's activity remains selected; and `add_amity.py`, which uses
-`amity-dut` to add, verify, remove and reset the second board `amity-dut-2`.
-`--test add_amity` selects that scenario; `--test all` runs all four.
+input-1 player's activity remains selected; `add_amity.py`, which uses
+`amity-dut` to add, verify, remove and reset the second board `amity-dut-2`;
+and `consortium.py`, which adds that headless member and exercises one
+TV/AVR/player triple on each owner in both activity/theft directions.
+`--test consortium` selects the distributed scenario; `--test all` runs all
+five scenarios, comprising six test cases because `activity` has two cases.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 
@@ -239,6 +330,22 @@ wiring parsers, credentials, CLI/report helpers or protocol handlers into a
 functional scenario. `TestBed` supports multiple DUTs through the same resource
 interface and always attempts cleanup; component `handle()` implementations
 remain in the common framework.
+
+`TestBed(..., members=(secondary,))` permits components on an explicitly named
+headless member without authenticating or contacting that board's HTTP UI.
+`control_only` remains physical-button control without CEC components.
+The main and member must belong to the same active bed and shared CEC session.
+Before including remote components in the main's scan, use the existing Add
+flow and `member.assert_connected()` to prove the member's exact identity,
+boot, assigned name, ready membership, configuration and settings. Capture
+`ScanResult.owner_boots` for the main and member; recheck current main/group and
+member readiness/boot against that proof for distributed scan/activity evidence.
+Require each component's fresh discovery exchanges on its actual owner's GPIO
+and correlate the existing UI's typed owner/tentacle/side observations. Another
+owner's matching label, address or cached observation cannot prove that wire.
+Activity boundaries and remote power/routing assertions retain the same owner
+boots and initiators. These are test-evidence checks, not additional runtime
+availability gates or firmware APIs.
 
 Model actual HDMI attachments explicitly: the TV connects to a tentacle's
 front endpoint, the AVR to its back endpoint, and playback to an AVR input.
@@ -313,6 +420,38 @@ member, and do not add a ten-second factory reset before the test. Uncertain
 ownership or a missing reset acknowledgment fails cleanup and must be reported.
 An Add-only result with mixed firmware versions does not qualify distributed
 power behavior; do not invent a global firmware-version equality gate.
+
+The consortium scenario uses `amity-dut` and `amity-dut-2`, each with a TV on
+tentacle 0/front and an AVR plus input-1 player on tentacle 0/back. Scan exactly
+all six identities over the four isolated wires, then save one activity per
+triple. Exercise main-active/member-inactive and member-active/main-inactive.
+For each cycle assert all six begin in Standby, the active three receive fresh
+physical power-on commands, and the active AVR selects its player. After the
+other owner's player sends a physical Active Source announcement, require a
+fresh physical directed CEC Standby to that thief and assert all three of that
+owner's components are in Standby. The only source of truth is the current
+activity, with the special standby activity when the whole system is in standby.
+Its assigned qualified source determines the owner-local thief mismatch;
+global standby permits no active source. Do not add per-owner inactive state
+or flags. The active owner must retain its power, route, active player and
+selected UI activity/boot; isolated inactive
+wires do not require a new Set Stream Path on the unaffected active owner.
+Returning the selected activity to standby requires fresh CEC Standby on its
+active three and leaves all six in Standby. Keep the existing shared-wire
+source-theft test's directed Standby and route-restoration requirements.
+Clean up both activities and unreferenced fixture equipment before removing
+the known added member, with responders still running. Preserve normal reserved
+activity-slot tombstones; accept only new default-metadata tombstones for known
+successfully created and removed fixture activity IDs, without altering prior
+slots or user metadata. On 29 October 2026 all six functional cases passed on
+`test2` against exact firmware 0.1.98 on all four bench DUTs, including both
+directions of this two-owner scenario, six typed scan locations and fourteen
+fresh physical power-command assertions. All testbeds cleaned up without
+errors, including acknowledged member removal/reset. Evidence is
+`test-results/consortium-live-config-2026-10-29/functional.json`; its deployment
+and final main preservation reports are alongside it. This qualifies only the
+exercised normal-profile two-board, one-adapter-per-board simulated CEC setup;
+do not extend historical Add-only results or this result to other hardware.
 
 The initial physical qualification on 29 October 2026 failed when the
 candidate's 0.1.84 `fw_reset` task overflowed during the 3.5-second gesture;

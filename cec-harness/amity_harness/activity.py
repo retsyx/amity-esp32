@@ -38,6 +38,10 @@ class ActivityAction:
     activity_id: str | None
     operation: dict = field(default_factory=dict)
     state: dict = field(default_factory=dict)
+    scan: object = field(default=None, repr=False)
+    testbed: object = field(default=None, repr=False)
+    owner_boots: dict = field(default_factory=dict)
+    owner_duts: dict = field(default_factory=dict, repr=False)
 
     @property
     def started(self):
@@ -63,7 +67,7 @@ class Activity:
             raise ValueError("Switch input must be an integer between 0 and 255")
         if switch_device is None and switch_input != 0:
             raise ValueError("A switch input requires a switch device")
-        self.dut, self.name, self.session = dut, name, bed.session
+        self.dut, self.name, self.session, self._testbed = dut, name, bed.session, bed
         self.timeout = dut._runtime.timeout if timeout is None else timeout
         _positive_seconds(self.timeout, "Activity timeout")
         self.components = {"display": display, "source": source, "audio": audio, "switch": switch_device}
@@ -77,11 +81,15 @@ class Activity:
         for component in self.components.values():
             if component is None:
                 continue
-            if component.dut is not dut or component._session is not self.session or component not in self.scan.expected:
-                raise ValueError("Activity equipment must belong to this DUT's current scanned fixture")
+            if (component._session is not self.session or component not in self.scan.expected
+                    or getattr(component.dut, "_testbed", None) is not bed):
+                raise ValueError("Activity equipment must belong to this TestBed's current scanned fixture")
+            if component.dut is not dut and not any(component.dut is owner for owner in getattr(bed, "duts", ())):
+                raise ValueError("Activity equipment belongs to an unrelated owner")
             initiator = self.scan.initiators.get(component.gpio)
             if initiator is None or not _fresh_discovery(self.scan.records, component, initiator, self.scan.started):
                 raise AssertionError("Activity equipment has no fresh physical discovery evidence")
+        self._validate_owners()
         self.activity_id = None
         self._before_ids, self._before_equipment = set(), set()
         self._new_equipment = {}
@@ -106,6 +114,19 @@ class Activity:
         if remaining <= 0:
             raise TimeoutError("Activity operation deadline expired")
         return remaining
+
+    def _validate_owners(self):
+        equipment = tuple(component for component in self.components.values() if component is not None)
+        if not any(component.dut is not self.dut for component in equipment):
+            return
+        if (getattr(self.scan, "_testbed", None) is not self._testbed
+                or self._testbed.session is not self.session or self._testbed._closed
+                or not self._testbed._entered or getattr(self.dut, "_testbed", None) is not self._testbed):
+            raise AssertionError("Activity owner evidence belongs to a different TestBed")
+        validator = getattr(self.scan, "validate_owners", None)
+        if not callable(validator):
+            raise AssertionError("Activity equipment has no verified owner boot evidence")
+        validator(equipment)
 
     def _view(self, *, check_health=True):
         if check_health:
@@ -133,6 +154,7 @@ class Activity:
         return full
 
     def _selectors(self, document, state):
+        self._validate_owners()
         catalog = _ObservedEquipment(self.dut, state)
         resolved = [catalog.resolve(row) for row in state.get("devices", [])]
         selections = {}
@@ -258,6 +280,8 @@ class Activity:
     def _action(self, kind, *, check_health=True):
         if self._closed or not self._created:
             raise RuntimeError("The test activity is not available")
+        if check_health:
+            self._validate_owners()
         deadline = time.monotonic() + self.timeout
         document, state = self._view(check_health=check_health)
         matches = [index for index, row in enumerate(document["activities"]) if row.get("activity_id") == self.activity_id]
@@ -271,7 +295,10 @@ class Activity:
                    "expected_config_revision": document["expected_config_revision"],
                    "expected_state_revision": state["expected_state_revision"], "expected_boot_id": self.boot}
         action = ActivityAction(self.dut, self.session, time.monotonic_ns(), self.boot,
-                                deepcopy(self.scan.initiators), kind, payload["request_id"], payload["activity_id"])
+                                deepcopy(self.scan.initiators), kind, payload["request_id"], payload["activity_id"],
+                                scan=self.scan, testbed=self._testbed,
+                                owner_boots=dict(getattr(self.scan, "owner_boots", {})),
+                                owner_duts=dict(getattr(self.scan, "owner_duts", {})))
         trace = self._record(kind, request_id=action.request_id, started_monotonic_ns=action.started_ns,
                              boot=self.boot, expected_config_revision=payload["expected_config_revision"])
         if kind == "start":
@@ -295,6 +322,8 @@ class Activity:
                 return not current.get("activity_settling", False) and current.get("current_activity") == target
 
             action.state = self.dut.wait_for(settled, timeout=self._remaining(deadline))
+            if check_health:
+                self._validate_owners()
             if kind == "standby":
                 self._needs_standby = False
             return action

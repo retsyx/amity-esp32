@@ -202,6 +202,18 @@ def main():
     kinds=re.search(r'enum class Kind\s*\{([^}]+)\}',source).group(1)
     require(set(re.findall(r'(\w+)\s*=\s*[0-9]+',kinds))==set(wire['properties']['kind']['enum']),'Design kind registry differs from implementation')
     require(re.search(r'\bqualified_lookup\s*=\s*262144u\b',source),'Missing qualified-lookup capability')
+    require(re.search(r'\blive_configuration\s*=\s*524288u\b',source),'Missing live configuration capability')
+    hello_validator = Draft202012Validator({'$ref': production['$id']+'#/$defs/Hello'}, registry=registry)
+    hello = dict(type='hello', protocol_min=1, protocol_max=1, consortium_id='1'*32,
+                 octopus_id='2'*32, boot_id='3'*32, coordinator_epoch='1', config_revision='7',
+                 config_hash='a'*64, firmware_identity='current', required_capabilities=0,
+                 optional_capabilities=0, frame_cap=8192)
+    for capabilities in (401472, 524288, 262144 | 524288, 1040970):
+        candidate = dict(hello, required_capabilities=capabilities)
+        require(hello_validator.is_valid(candidate),'Schema rejects current configuration capabilities')
+    for capabilities in (4096, 1048576, 2147483648):
+        candidate = dict(hello, required_capabilities=capabilities)
+        require(not hello_validator.is_valid(candidate),'Schema accepts an unsupported required capability')
     manifest=read('MANIFEST.json');paths=set()
     for entry in manifest['files']:
         name=entry['path'];require(name not in paths and name!='MANIFEST.json','Duplicate manifest path');paths.add(name);data=(ROOT/name).read_bytes()

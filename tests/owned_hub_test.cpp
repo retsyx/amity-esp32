@@ -54,7 +54,7 @@ static void first_matching_osd(){
     }
     original_wire.sent.clear();owner_wire.sent.clear();assert(original.select_activity(0));
     m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.target=named(member,m::Side::back,"TV");intent.on=true;
-    assert(owner.owned_target_available(intent.target));assert(owner.execute_owned(intent));
+    assert(owner.execute_owned(intent));
     assert(!original_wire.sent.empty()&&!owner_wire.sent.empty());
     assert(original_wire.sent.front().address==4&&owner_wire.sent.front().address==4);
     assert(original_wire.sent.front().bytes==owner_wire.sent.front().bytes);
@@ -77,14 +77,18 @@ static std::vector<SentFrame> startup_trace(bool scoped){
     else assert(hub.configure({{"Watch","TV","Source","Source","",0}}));
     run_one_command();fixture_sent.clear();
     assert(hub.select_activity(0));assert(hub.press_key(4,true));assert(hub.release_key(4));
-    run_one_command();run_one_command();run_one_command();fixture_finish_discovery(hub);run_idle(3);
+    // The setup-time down was ignored before IPC/pressed registration; only
+    // the selection and unmatched (no-op) release were queued.
+    run_one_command();run_one_command();fixture_finish_discovery(hub);run_idle(3);
     const auto sent=fixture_sent;
     const auto key=std::count_if(sent.begin(),sent.end(),[](const auto& frame){return frame.frame.size==3&&frame.frame.data[1]==0x44&&frame.frame.data[2]==4;});
     assert(key==0);return sent;
 }
 static void startup_parity(){
     auto select_frames=[](const auto& sent){std::vector<SentFrame> result;for(const auto& f:sent)if(f.frame.size>1&&(f.frame.data[1]==0x44||f.frame.data[1]==0x45||f.frame.data[1]==0x86||f.frame.data[1]==0x82||f.frame.data[1]==0x04||f.frame.data[1]==0x71))result.push_back(f);return result;};
-    const auto baseline=select_frames(startup_trace(false)),owned=select_frames(startup_trace(true));assert(baseline.size()==owned.size());
+    const auto baseline=select_frames(startup_trace(false)),owned=select_frames(startup_trace(true));
+    if(baseline.size()!=owned.size())for(const auto* trace:{&baseline,&owned}){std::fprintf(stderr,"startup trace size=%zu\n",trace->size());for(const auto& sent:*trace){std::fprintf(stderr,"gpio%d:",sent.gpio);for(unsigned n=0;n<sent.frame.size;++n)std::fprintf(stderr," %02x",sent.frame.data[n]);std::fprintf(stderr,"\n");}}
+    assert(baseline.size()==owned.size());
     for(size_t i=0;i<baseline.size();++i){const auto& a=baseline[i];const auto& b=owned[i];assert(a.gpio==b.gpio&&a.attempts==b.attempts&&a.frame.size==b.frame.size&&std::memcmp(a.frame.data,b.frame.data,a.frame.size)==0);}
 }
 static void observation_pressure(){
@@ -270,4 +274,71 @@ static void remote_receiver_parity(){
     const auto local=receiver_transcript(false),remote=receiver_transcript(true);assert(local.size()==remote.size());
     for(size_t phase=0;phase<local.size();++phase){if(local[phase].size()!=remote[phase].size()){for(const auto* trace:{&local[phase],&remote[phase]}){std::fprintf(stderr,"phase=%zu trace=%zu\n",phase,trace->size());for(const auto& f:*trace){std::fprintf(stderr,"gpio%d attempts%u:",f.gpio,f.attempts);for(unsigned j=0;j<f.frame.size;++j)std::fprintf(stderr," %02x",f.frame.data[j]);std::fprintf(stderr,"\n");}}}assert(local[phase].size()==remote[phase].size());for(size_t i=0;i<local[phase].size();++i){const auto& a=local[phase][i];const auto& b=remote[phase][i];assert(a.gpio==b.gpio&&a.attempts==b.attempts&&a.frame.size==b.frame.size);assert(std::memcmp(a.frame.data,b.frame.data,a.frame.size)==0);}}
 }
-int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();rejected_local_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();std::puts("Original local/owned start/standby frame parity, queued request lifetime, rejected local hold/reconnect, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}
+static void configuration_preserves_discovery(){
+    struct Wire:Transport{
+        bool send(BusSide,uint8_t,const uint8_t*,size_t)override{return true;}
+        void request_scan()override{assert(false&&"Activity configuration requested discovery");}
+    } wire;
+    Hub original(wire);original.set_addresses(4,0);
+    original.discovered(BusSide::Back,4);
+    original.receive(BusSide::Back,{{0x4f,0x84,0x10,0,4},5});
+    original.receive(BusSide::Back,{{0x40,0x47,'S','o','u','r','c','e'},8});
+    original.receive(BusSide::Back,{{0x4f,0x87,1,2,3},5});
+    const auto original_devices=original.snapshot().devices;
+    assert(original_devices.size()==1&&original_devices[0].physical_address==0x1000&&original_devices[0].vendor_id==0x010203);
+    const auto same_native_cache=[&]{
+        const auto current=original.snapshot().devices;assert(current.size()==original_devices.size());
+        for(size_t n=0;n<current.size();++n){const auto& a=current[n];const auto& b=original_devices[n];assert(a.name==b.name&&a.bus==b.bus&&a.address==b.address&&a.physical_address==b.physical_address&&a.type==b.type&&a.vendor_id==b.vendor_id&&a.resolved==b.resolved);}
+    };
+    original.configure({{"Changed","","Source","Source","",0}});
+    same_native_cache();
+    assert(original.select_activity(0));
+    // An independently requested scan remains in progress across an edit; it
+    // alone replaces its staged device set when it actually finishes.
+    original.begin_discovery();original.discovered(BusSide::Back,8);
+    original.receive(BusSide::Back,{{0x80,0x47,'N','e','w'},5});
+    original.configure({{"Another edit","","Source","Source","",0}});
+    same_native_cache();
+    original.finish_discovery();const auto scanned=original.snapshot().devices;assert(scanned.size()==1&&scanned[0].name=="New");
+
+    fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    const auto local_display=named(controller,m::Side::front,"TV"),local_source=named(controller,m::Side::back,"Source");
+    const auto remote_source=named(member,m::Side::back,"Remote");
+    assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
+        {{"display",local_display},{"source",local_source},{"remote",remote_source}},[](const auto&){return true;},controller,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);
+    m::OwnedAdapterSnapshot remote;remote.owner=member;remote.boot=controller_boot;remote.adapter=0;remote.ready=true;remote.discovery_generation=7;
+    remote.front_address=4;remote.back_address=0;remote.front_physical_address=0x2000;remote.audio_status_known=true;remote.volume=33;
+    remote.devices={{m::Side::back,"Remote",4,4,0x2100,0x010203,true}};
+    auto unselected=remote;unselected.adapter=1;unselected.discovery_generation=11;unselected.devices[0].osd_name="Unselected";
+    assert(hub.update_owned_snapshot(remote)&&hub.update_owned_snapshot(unselected));run_idle(1);
+    assert(hub.select_activity(0));run_one_command();run_idle(1);
+    const auto fingerprint=[](const m::OwnedAdapterSnapshot& report){
+        std::string value=report.owner.str()+report.boot.str()+":"+std::to_string(report.adapter)+":"+
+            std::to_string(report.front_address)+":"+std::to_string(report.back_address)+":"+std::to_string(report.front_physical_address)+":"+
+            std::to_string(report.ready)+":"+std::to_string(report.discovering)+":"+std::to_string(report.discovery_generation)+":"+
+            std::to_string(report.audio_status_known)+":"+std::to_string(report.muted)+":"+std::to_string(report.volume);
+        for(const auto& d:report.devices)value+=":"+std::to_string(int(d.side))+":"+d.osd_name+":"+
+            std::to_string(d.logical_address)+":"+std::to_string(d.device_type)+":"+std::to_string(d.physical_address)+":"+
+            std::to_string(d.vendor_id)+":"+std::to_string(d.resolved);
+        return value;
+    };
+    const auto before=hub.owned_snapshots();const auto scan_generation=hub.snapshot().discovery_generation;
+    assert(before.size()==3&&!hub.snapshot().discovering);
+    const auto verify=[&]{
+        const auto after=hub.owned_snapshots();assert(after.size()==before.size());
+        for(const auto& prior:before){const auto found=std::find_if(after.begin(),after.end(),[&](const auto& current){return current.owner==prior.owner&&current.adapter==prior.adapter;});assert(found!=after.end()&&fingerprint(*found)==fingerprint(prior));}
+        assert(!hub.snapshot().discovering&&hub.snapshot().discovery_generation==scan_generation);
+        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.frame.size==1||(tx.frame.size>1&&(tx.frame.data[1]==0x83||tx.frame.data[1]==0x46||tx.frame.data[1]==0x8c));}));
+    };
+    fixture_sent.clear();
+    // Removing the last saved reference to an owner/adapter does not remove
+    // that owner's physical observations, or force any native discovery.
+    assert(hub.configure_scoped({{"Renamed","display","source","source","",0}},
+        {{"display",local_display},{"source",local_source}},[](const auto&){return true;},controller,2)==ESP_OK);
+    run_one_command();run_idle(2);verify();
+    assert(hub.configure_scoped({}, {},[](const auto&){return true;},controller,3)==ESP_OK);
+    run_one_command();run_idle(2);verify();
+    std::puts("Activity configuration preserves native device records/discovery and selected/unselected remote HDMI snapshots without rediscovery");
+}
+int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();rejected_local_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();std::puts("Original local/owned start/standby frame parity, queued request lifetime, rejected local hold/reconnect, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}

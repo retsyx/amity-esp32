@@ -35,6 +35,7 @@ public:
     int activity_target()const{return local_.activity_target();}
     uint32_t activity_generation()const{return local_.activity_generation();}
     uint32_t activity_selection()const{return local_.activity_selection();}
+    bool activity_setup_in_progress()const{return local_.activity_setup_in_progress();}
     bool press_key(uint8_t key,bool repeat=false);
     bool press_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return accepts_local_input()&&local_.press_key_for_activity(key,generation,repeat);}
     bool release_key(uint8_t key=0xff);
@@ -77,6 +78,7 @@ public:
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const{return local_.owned_snapshots();}
     bool fence_owned(system::OctopusId controller,system::LinkId link){return local_.fence_owned(controller,link);}
     bool owned_input_result(system::OctopusId owner,uint64_t generation,uint64_t sequence,bool present){return local_.owned_input_result(owner,generation,sequence,present);}
+    uint64_t executing_configuration_revision()const{return local_.executing_configuration_revision();}
     esp_err_t retire_membership(){local_coordinator_.store(false);return local_.retire_membership();}
     esp_err_t begin_maintenance(){const auto result=local_.begin_maintenance();if(result==ESP_OK)maintenance_.store(true);return result;}
     void end_maintenance(){local_.end_maintenance();maintenance_.store(false);}

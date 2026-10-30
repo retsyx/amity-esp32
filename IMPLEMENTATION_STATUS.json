@@ -1,7 +1,7 @@
 {
-  "status": "PASS: all four bench DUTs run exact 0.1.96/Matter software 97. Native 35-layout, full-host 259-unit and browser 90/27/14/21 checks pass. The five-scenario physical suite passes HDMI scan, activity power, explicit switch input, source theft and normal two-board Add/removal, with no testbed cleanup errors. Add proves the exact candidate, two same-member-boot connected/settings assertions and completed removal with reset scheduled/no retained member. Final main preservation passes 23 checks on the unchanged post-OTA boot, preserving authority, settings, two fabrics, HomeKit and all saved values except normal revisions and three exact fixture-owned retired slots; all thirteen baseline slots remain identical. Intermediate 0.1.95 failures and separately verified equipment recovery remain preserved. No strict-profile, distributed CEC actuation, real AV or all-board interoperability qualification is claimed.",
+  "status": "PASS: all four bench DUTs run exact 0.1.98/Matter software 99. Native build passes 36 public layouts; the complete host suite passes, including 287 framework units. All six physical functional cases pass on test2 with no cleanup errors, including two-owner consortium activity/source-theft/standby in both directions. Final read-only main preservation passes 23 checks on the unchanged post-OTA boot. Activity edits retain member TLS links and HDMI caches; one resolver owns cache lookup and throttled scans, and activity work is sequential per Amity. Pending activity context does not exempt an announcing source from current-activity policy. Scope is two Amities, one adapter each and simulated AV equipment; broader qualification remains open.",
   "audit_date": "2026-10-29",
-  "firmware_version": "0.1.96",
+  "firmware_version": "0.1.98",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -17,7 +17,10 @@
     "configuration_schema": 3,
     "saved_intent": "Original activity role/switch fields, qualified selectors, IDs, labels/order/slots",
     "removed": "Persistent enabled, executable route/binding/domain/resource/capability/PA approvals, prepared execution plans, global owner-profile approval and durable current-activity resume ledger",
-    "retained_state": "Durable identity/trust/original role and configuration/reset journals; runtime discovery, exact held recipients, input/completion state and message authorization"
+    "retained_state": "Durable identity/trust/original role and configuration/reset journals; runtime discovery, exact held recipients, input/completion state and message authorization",
+    "discovery": "One owner-local find_device: cache, cache-miss scan subject to 120s owner/adapter/side cooldown, same-cache re-read. Only boot and explicit UI scans force enumeration. Announcements update the cache independently of activity configuration.",
+    "activity_execution": "Sequential just-in-time lookup and completion-paced CEC steps per Amity; distinct Amities may progress concurrently. User presses during activity setup are discarded before pressed-state registration by the original wait-for-release gate.",
+    "source_policy": "Current activity is the sole authority; global standby has no allowed source. Owner-local qualified source comparison rejects other sources. An activity in flight is not active; an early announcing device may legitimately receive Standby before later normal activation powers it on."
   },
   "software_profile": {
     "configuration_schema": 3,
@@ -32,12 +35,14 @@
     "qualified_lookup_capability": 262144,
     "scoped_intent_kind": 41,
     "scoped_result_kind": 42,
-    "known_protocol_capabilities": 516682,
+    "known_protocol_capabilities": 1040970,
     "minimum_execution_capabilities": 401472,
     "admission_require_setup_code_default": false,
     "saved_configuration_read_version": 3,
     "saved_configuration_write_version": 3,
-    "configuration_storage_version": 2
+    "configuration_storage_version": 2,
+    "live_configuration_capability": 524288,
+    "execution_capabilities_note": "Live configuration is additionally required by execution-profile compatibility; old peers remain management/update-only. Installer required-capability bitmap remains 401472."
   },
   "controller_policy": {
     "original": "Immutable original controller, only UI/admin/remote/Matter/HomeKit owner",
@@ -46,63 +51,48 @@
   },
   "current_task_validation": {
     "design_contracts": {
-      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
       "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "report": "test-results/consortium-live-config-2026-10-29/contracts-complete.json",
       "checks": {
         "manifest_entries_checked": 34,
         "schemas_checked": 6,
         "positive_schema_vectors": 17,
-        "negative_schema_vectors": 55,
+        "negative_schema_vectors": 59,
         "configured_selectors_checked": 4,
-        "current_wire_kinds_checked": 23,
+        "current_wire_kinds_checked": 19,
         "markdown_files_checked": 20,
-        "local_links_checked": 119,
+        "local_links_checked": 140,
         "firmware_or_hardware_tests_run": false
       }
     },
     "software_tests": {
       "result": "PASS (exit 0)",
       "command": "sh tests/run_host_tests.sh",
-      "log": "test-results/host/intent-full-suite.log",
-      "environment": "Pinned ESP-IDF SDK Python 3.14 on PATH and local contracts Python 3.14 site-packages on PYTHONPATH",
-      "scope": "Complete retained host runner including original/qualified CEC behavior, owner delivery, facade/configuration/migration/storage faults, input/remote, protocol/membership/settings/updates/security, 27 local hardware-harness tests and offline production-security profile"
+      "log": "test-results/consortium-live-config-2026-10-29/host-tests-complete.log",
+      "framework_unit_tests": 287,
+      "environment": "Pinned ESP-IDF SDK Python 3.14 and toolchain",
+      "scope": "Complete retained host runner including actual Hub/SystemSync/Session paths, ASan/UBSan CEC activity sequencing, cache-miss scan throttling, unsolicited announcement ingestion, live TLS configuration revisions, owner-local source theft, original input/gesture/held-key lifecycle and 287 framework units."
     },
     "native_firmware_build": {
       "result": "PASS",
       "command": "idf.py build provisioning-package (pinned SDK environment)",
-      "log": "build/qualified-lookup-build.log",
-      "image": "build/amity.bin",
-      "image_bytes": 2420848,
-      "image_sha256": "f7a28b2ff519eacc32e3a7ed3550eff2d39d9c27f7c21cc0cad6e54fe306e5af",
+      "log": "test-results/consortium-live-config-2026-10-29/build-complete.log",
+      "firmware_version": "0.1.98",
+      "matter_software_version": 99,
+      "image_bytes": 2414032,
+      "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
+      "image_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
       "ota_partition_bytes": 3997696,
-      "free_bytes": 1576848,
-      "free_percent_reported": 39,
-      "layout_checks": "35 public records consistent; provisioning package/browser update bundle generated",
-      "source_freshness": "Final production sources frozen; build includes final baseline first-name lookup correction",
-      "device_deployment": false,
-      "firmware_version": "0.1.81",
-      "matter_software_version": 82
+      "free_bytes": 1583664,
+      "free_percent_reported": 40,
+      "public_record_layouts": 36,
+      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+      "source_dirty": true,
+      "frozen_artifacts": "test-results/consortium-live-config-2026-10-29/firmware-0.1.98-final"
     },
-    "physical_devices": "No new deployment, CEC/AV or radio qualification claimed by this implementation task",
-    "focused_synchronization": {
-      "command": "sh tests/system_sync_test.sh",
-      "result": "PASS with warnings-as-errors and ASan/UBSan",
-      "scope": "Actual system_sync.cpp and codecs plus real ConfigurationStore: minimal handshake/no owner replica, first-lease nonemitting context hook and failed snapshot IPC admission, derived authority and exact receiver authorization/deadline handoff, callback cleanup on failed task allocation, deferred source lookup pinned to exact link with failure fencing, actual presence versus IPC failure, scoped snapshots/setup completion and pending expected-reply union for original controller settling, completed owner-task disconnect cleanup/failure retry, exact boot/link disconnect/no replay, sparse scans, saved capacity retention, both applied revisions and offline-peer-independent journal commit/failure",
-      "limitation": "SystemControl is a spy boundary; actual owner/facade CEC behavior is tested separately"
-    },
-    "final_focused_cec": {
-      "result": "PASS after final duplicate-name lookup simplification",
-      "commands": [
-        "sh tests/cec_hub_test.sh",
-        "sh tests/owned_hub_test.sh"
-      ],
-      "scope": "All five baseline CEC suites; original/local/owned frame traces including two-owner AVR/switch, first OSD match and side isolation, no coordinator cache veto, startup taps, observation IPC pressure, independent keys, authorization/all-adapter discovery and nonzero global completion-paced settling",
-      "logs": [
-        "test-results/host/intent-final-cec.log",
-        "test-results/host/intent-final-owned.log"
-      ]
-    },
-    "scope": "Previous qualified-lookup refactor at firmware 0.1.81/software 82; retained as context, not evidence for the new admission workflow."
+    "physical_devices": "All four DUTs updated and verified. All six physical functional cases pass on test2; both activity roles in the two-board consortium scenario are exercised. No broader real-AV/electrical qualification claimed.",
+    "scope": "Current consortium/live configuration/cache/scan/sequential activity/input changes. Earlier qualified-lookup records are preserved separately."
   },
   "historical_evidence": {
     "release": "0.1.80",
@@ -112,7 +102,7 @@
     "earlier_history": "Earlier detailed release/graph-model records remain in repository history and their original test-results artifacts; they are not current execution contracts."
   },
   "qualification_gates": [
-    "Actual ESP32-to-ESP32 radio/CEC and owner delivery",
+    "Broader ESP32 radio/CEC owner delivery beyond the passing main/member2, one-adapter simulated-AV consortium scenario (three owners, reconnect/loss/load and strict admission profile)",
     "Real Siri/Atomic gestures, held/failure/FIFO/loss behavior under radio/HTTPS/scan load",
     "Four-adapter GPIO/electrical/simultaneous eight-wire timing and detachable hardware",
     "Real AVR/display/source picture/audio and source isolation",
@@ -120,7 +110,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 97,
+  "matter_software_version": 99,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -194,8 +184,8 @@
   "latest_deployment": {
     "date": "2026-10-29",
     "result": "PASS",
-    "firmware_version": "0.1.96",
-    "matter_software_version": 97,
+    "firmware_version": "0.1.98",
+    "matter_software_version": 99,
     "device_count": 4,
     "updated_device_count": 4,
     "bench_labels": [
@@ -204,9 +194,9 @@
       "amity-dut-3",
       "amity-dut-4"
     ],
-    "image_sha256": "27f600378f0e663a64de79104516e90b47f32083b6798d8cf0e08b8abd69ed02",
-    "running_elf_sha256": "e3fd9fe9b3e6be1e1b4ad46dcf7d72516de3383c06bc7afe1e2d025b40b29622",
-    "image_bytes": 2401632,
+    "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
+    "running_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+    "image_bytes": 2414032,
     "hardware_profile": "esp32s3-development-4t-v1",
     "hardware_mapping_sha256": "1b756583cfd9c09b5ceb9db4573bc4bc6a3808d2799453e8f3749a24e2564f6e",
     "configuration_formats": {
@@ -219,16 +209,25 @@
       "read_min": "2",
       "write": "2"
     },
-    "source_commit": "bf973d780df6141fc0f1e8355733efebeb5d7e77",
+    "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
     "source_dirty": true,
-    "artifact_provenance": "Built from parent bf973d7 with a dirty working tree; final code commit will follow qualification. Do not relabel as a clean committed-source build.",
-    "report": "test-results/current-format-final-2026-10-29/deployment.json",
-    "transport": "Authenticated application OTA on main; USB application-only updates on boards 2/3/4",
+    "artifact_provenance": "Frozen artifact built from parent 1be1436 with source_dirty=true before the final change commit. Preserve that original provenance; this is not a clean final-commit rebuild.",
+    "frozen_artifacts": "test-results/consortium-live-config-2026-10-29/firmware-0.1.98-final",
+    "report": "test-results/consortium-live-config-2026-10-29/deployment.json",
+    "transport": "Existing authenticated POST /api/firmware on main; exact-MAC application-only USB writes on boards 2/3/4 with full backups and protected-flash comparison before reboot",
     "main_usb_opened": false,
     "flash_erased": false,
+    "factory_reset_during_updates": false,
     "main": {
-      "previous_boot": "6c6e86de88c6d4e31643645acd42ca10",
-      "boot_id": "5542bba1eda203612d8e5e5b0af2c95c",
+      "firmware_version": "0.1.98",
+      "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
+      "image_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+      "source_dirty": true,
+      "previous_boot": "38461dd607330cb488c540cfefa5ce62",
+      "boot_id": "ff485359980e6139df1b3c2bbd1ab468",
+      "route": "POST /api/firmware",
+      "main_usb_opened": false,
       "checks": {
         "exact_version": true,
         "exact_elf": true,
@@ -244,47 +243,107 @@
         "local_update_healthy": true,
         "no_peers": true
       },
-      "report": "test-results/current-format-final-2026-10-29/main-0.1.96-deployment.json",
-      "before": "test-results/current-format-final-2026-10-29/main-0.1.96-before-update.json",
-      "after": "test-results/current-format-final-2026-10-29/main-0.1.96-after-update.json"
+      "passed": true,
+      "report": "test-results/consortium-live-config-2026-10-29/main-0.1.98-deployment.json",
+      "before": "test-results/consortium-live-config-2026-10-29/main-0.1.98-before-update.json",
+      "after": "test-results/consortium-live-config-2026-10-29/main-0.1.98-after-update.json"
     },
     "updated_devices": [
       {
-        "bench_label": "amity-dut-2",
-        "device_id": "7468ba8afeb9ffad49eb57b3ba0a3288",
-        "firmware_version": "0.1.96",
-        "previous_firmware_version": "0.1.95",
-        "boot_role": "unclaimed",
-        "checks_passed": 18,
-        "report": "test-results/current-format-final-2026-10-29/44b176aec5e0/deployment.json",
-        "result": "PASS"
+        "bench_label": "amity-dut-3",
+        "usb_mac": "44:B1:76:AE:C2:AC",
+        "device_id": "fad293fe0f3b513a10e027a20cb3b7c8",
+        "version": "0.1.98",
+        "previous_version": "0.1.97",
+        "elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+        "checks": {
+          "exact_usb_and_chip_mac": true,
+          "partition_table_matches": true,
+          "factory_record_matches_previous_card": true,
+          "exact_application_written": true,
+          "non_application_flash_unchanged": true,
+          "ota_metadata_unchanged": true,
+          "expected_unclaimed_role": true,
+          "version_running": true,
+          "exact_elf_running": true,
+          "ready": true,
+          "factory_credentials_retained": true,
+          "no_panic": true,
+          "no_identity_recovery_errors": true,
+          "matter_setup_automatic": true,
+          "matter_window_open": true,
+          "matter_ble_advertising": true,
+          "origin_identity_retained": true,
+          "sdk_admission_selftest": true
+        },
+        "passed": true,
+        "report": "test-results/consortium-live-config-2026-10-29/44b176aec2ac/deployment.json"
       },
       {
-        "bench_label": "amity-dut-3",
-        "device_id": "fad293fe0f3b513a10e027a20cb3b7c8",
-        "firmware_version": "0.1.96",
-        "previous_firmware_version": "0.1.95",
-        "boot_role": "unclaimed",
-        "checks_passed": 18,
-        "report": "test-results/current-format-final-2026-10-29/44b176aec2ac/deployment.json",
-        "result": "PASS"
+        "bench_label": "amity-dut-2",
+        "usb_mac": "44:B1:76:AE:C5:E0",
+        "device_id": "7468ba8afeb9ffad49eb57b3ba0a3288",
+        "version": "0.1.98",
+        "previous_version": "0.1.97",
+        "elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+        "checks": {
+          "exact_usb_and_chip_mac": true,
+          "partition_table_matches": true,
+          "factory_record_matches_previous_card": true,
+          "exact_application_written": true,
+          "non_application_flash_unchanged": true,
+          "ota_metadata_unchanged": true,
+          "expected_unclaimed_role": true,
+          "version_running": true,
+          "exact_elf_running": true,
+          "ready": true,
+          "factory_credentials_retained": true,
+          "no_panic": true,
+          "no_identity_recovery_errors": true,
+          "matter_setup_automatic": true,
+          "matter_window_open": true,
+          "matter_ble_advertising": true,
+          "origin_identity_retained": true,
+          "sdk_admission_selftest": true
+        },
+        "passed": true,
+        "report": "test-results/consortium-live-config-2026-10-29/44b176aec5e0/deployment.json"
       },
       {
         "bench_label": "amity-dut-4",
+        "usb_mac": "44:B1:76:AE:CF:64",
         "device_id": "e453c2c503e55e5f6fe6ab7976c6f1d0",
-        "firmware_version": "0.1.96",
-        "previous_firmware_version": "0.1.95",
-        "boot_role": "unclaimed",
-        "checks_passed": 18,
-        "report": "test-results/current-format-final-2026-10-29/44b176aecf64/deployment.json",
-        "result": "PASS"
+        "version": "0.1.98",
+        "previous_version": "0.1.97",
+        "elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+        "checks": {
+          "exact_usb_and_chip_mac": true,
+          "partition_table_matches": true,
+          "factory_record_matches_previous_card": true,
+          "exact_application_written": true,
+          "non_application_flash_unchanged": true,
+          "ota_metadata_unchanged": true,
+          "expected_unclaimed_role": true,
+          "version_running": true,
+          "exact_elf_running": true,
+          "ready": true,
+          "factory_credentials_retained": true,
+          "no_panic": true,
+          "no_identity_recovery_errors": true,
+          "matter_setup_automatic": true,
+          "matter_window_open": true,
+          "matter_ble_advertising": true,
+          "origin_identity_retained": true,
+          "sdk_admission_selftest": true
+        },
+        "passed": true,
+        "report": "test-results/consortium-live-config-2026-10-29/44b176aecf64/deployment.json"
       }
     ],
-    "qualification_scope": "Exact 0.1.96 updates/startup and retained provisioning/state on all four DUTs, plus exercised local CEC scan/activity/switch-input/source-theft and two-board normal-profile Add/removal. Main configuration is identical through OTA; after tests all saved values and thirteen baseline slots are preserved except normal revisions and three exact test-owned retired slots. No strict-profile, distributed CEC actuation, real AV or all-board interoperability qualification.",
-    "functional_verification": "PASS: all five scenarios/all testbeds completed without cleanup errors; final main preservation passes 23 checks",
-    "functional_report": "test-results/current-format-final-2026-10-29/functional.json",
-    "factory_reset_during_updates": false,
-    "post_functional_report": "test-results/current-format-final-2026-10-29/main-final-postcheck.json"
+    "functional_verification": "PASS: all six cases and all testbeds; no cleanup errors",
+    "functional_report": "test-results/consortium-live-config-2026-10-29/functional.json",
+    "post_functional_report": "test-results/consortium-live-config-2026-10-29/main-final-postcheck.json",
+    "qualification_scope": "Exact-image update/startup/provisioning retention on four DUTs. Exercised local CEC and normal two-board membership plus distributed CEC activities and source-theft suppression on main/member2, one adapter each with simulated equipment. No strict-profile, three-owner, four-adapter electrical, real AV/remote or production-security qualification."
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -740,6 +799,114 @@
       "image_sha256": "6e6444ac2e90e8bbd8168640e67917a67d57fa2f6f6b19dadeacf75906e618f5",
       "running_elf_sha256": "8ca3b6332824dadb6a03daf5d07deed519fed43fe107599b00ffdb6f2e9d89d3",
       "qualification_scope": "Intermediate current-format cleanup image/startup deployment only. Functional run interrupted; failed initial slot-removal check and separate equipment recovery remain in current_format_cleanup_validation.intermediate_history."
+    },
+    {
+      "date": "2026-10-29",
+      "result": "PASS",
+      "firmware_version": "0.1.96",
+      "matter_software_version": 97,
+      "device_count": 4,
+      "updated_device_count": 4,
+      "bench_labels": [
+        "amity-dut",
+        "amity-dut-2",
+        "amity-dut-3",
+        "amity-dut-4"
+      ],
+      "image_sha256": "27f600378f0e663a64de79104516e90b47f32083b6798d8cf0e08b8abd69ed02",
+      "running_elf_sha256": "e3fd9fe9b3e6be1e1b4ad46dcf7d72516de3383c06bc7afe1e2d025b40b29622",
+      "image_bytes": 2401632,
+      "hardware_profile": "esp32s3-development-4t-v1",
+      "hardware_mapping_sha256": "1b756583cfd9c09b5ceb9db4573bc4bc6a3808d2799453e8f3749a24e2564f6e",
+      "configuration_formats": {
+        "read_max": "3",
+        "read_min": "3",
+        "write": "3"
+      },
+      "storage_formats": {
+        "read_max": "2",
+        "read_min": "2",
+        "write": "2"
+      },
+      "source_commit": "bf973d780df6141fc0f1e8355733efebeb5d7e77",
+      "source_dirty": true,
+      "artifact_provenance": "Built from parent bf973d7 with a dirty working tree; final code commit will follow qualification. Do not relabel as a clean committed-source build.",
+      "report": "test-results/current-format-final-2026-10-29/deployment.json",
+      "transport": "Authenticated application OTA on main; USB application-only updates on boards 2/3/4",
+      "main_usb_opened": false,
+      "flash_erased": false,
+      "main": {
+        "previous_boot": "6c6e86de88c6d4e31643645acd42ca10",
+        "boot_id": "5542bba1eda203612d8e5e5b0af2c95c",
+        "checks": {
+          "exact_version": true,
+          "exact_elf": true,
+          "ready": true,
+          "same_identity": true,
+          "same_group": true,
+          "new_boot": true,
+          "original_main_authority": true,
+          "configuration_unchanged": true,
+          "matter_fabrics_unchanged": true,
+          "homekit_pairing_unchanged": true,
+          "hardware_capabilities_unchanged": true,
+          "local_update_healthy": true,
+          "no_peers": true
+        },
+        "report": "test-results/current-format-final-2026-10-29/main-0.1.96-deployment.json",
+        "before": "test-results/current-format-final-2026-10-29/main-0.1.96-before-update.json",
+        "after": "test-results/current-format-final-2026-10-29/main-0.1.96-after-update.json"
+      },
+      "updated_devices": [
+        {
+          "bench_label": "amity-dut-2",
+          "device_id": "7468ba8afeb9ffad49eb57b3ba0a3288",
+          "firmware_version": "0.1.96",
+          "previous_firmware_version": "0.1.95",
+          "boot_role": "unclaimed",
+          "checks_passed": 18,
+          "report": "test-results/current-format-final-2026-10-29/44b176aec5e0/deployment.json",
+          "result": "PASS"
+        },
+        {
+          "bench_label": "amity-dut-3",
+          "device_id": "fad293fe0f3b513a10e027a20cb3b7c8",
+          "firmware_version": "0.1.96",
+          "previous_firmware_version": "0.1.95",
+          "boot_role": "unclaimed",
+          "checks_passed": 18,
+          "report": "test-results/current-format-final-2026-10-29/44b176aec2ac/deployment.json",
+          "result": "PASS"
+        },
+        {
+          "bench_label": "amity-dut-4",
+          "device_id": "e453c2c503e55e5f6fe6ab7976c6f1d0",
+          "firmware_version": "0.1.96",
+          "previous_firmware_version": "0.1.95",
+          "boot_role": "unclaimed",
+          "checks_passed": 18,
+          "report": "test-results/current-format-final-2026-10-29/44b176aecf64/deployment.json",
+          "result": "PASS"
+        }
+      ],
+      "qualification_scope": "Exact 0.1.96 updates/startup and retained provisioning/state on all four DUTs, plus exercised local CEC scan/activity/switch-input/source-theft and two-board normal-profile Add/removal. Main configuration is identical through OTA; after tests all saved values and thirteen baseline slots are preserved except normal revisions and three exact test-owned retired slots. No strict-profile, distributed CEC actuation, real AV or all-board interoperability qualification.",
+      "functional_verification": "PASS: all five scenarios/all testbeds completed without cleanup errors; final main preservation passes 23 checks",
+      "functional_report": "test-results/current-format-final-2026-10-29/functional.json",
+      "factory_reset_during_updates": false,
+      "post_functional_report": "test-results/current-format-final-2026-10-29/main-final-postcheck.json"
+    },
+    {
+      "date": "2026-10-29",
+      "firmware_version": "0.1.97",
+      "matter_software_version": 98,
+      "result": "PASS (image updates/startup only)",
+      "device_count": 4,
+      "report": "test-results/consortium-2026-10-29/deployment.json",
+      "image_sha256": "0f9b738a8cfb12de609678c00c380189316d36562e22a91ea5fda11afe2c9022",
+      "running_elf_sha256": "b3154ec054e783d45a2700869c4166be19e4204acf30c3d524d7b84f6de80eb4",
+      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+      "source_dirty": true,
+      "qualification_scope": "Intermediate deployment. First five functional cases passed; consortium failed during configuration/member readiness and cleanup. Separate fixture recovery retained all baseline configuration values except normal revisions. This is not a passing consortium qualification; original failure/recovery reports remain private under test-results/consortium-2026-10-29."
     }
   ],
   "standby_stack_fix_validation": {
@@ -1788,5 +1955,210 @@
         }
       }
     }
+  },
+  "previous_qualified_lookup_task_validation": {
+    "design_contracts": {
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "result": "PASS",
+      "checks": {
+        "manifest_entries_checked": 34,
+        "schemas_checked": 6,
+        "positive_schema_vectors": 17,
+        "negative_schema_vectors": 55,
+        "configured_selectors_checked": 4,
+        "current_wire_kinds_checked": 23,
+        "markdown_files_checked": 20,
+        "local_links_checked": 119,
+        "firmware_or_hardware_tests_run": false
+      }
+    },
+    "software_tests": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/host/intent-full-suite.log",
+      "environment": "Pinned ESP-IDF SDK Python 3.14 on PATH and local contracts Python 3.14 site-packages on PYTHONPATH",
+      "scope": "Complete retained host runner including original/qualified CEC behavior, owner delivery, facade/configuration/migration/storage faults, input/remote, protocol/membership/settings/updates/security, 27 local hardware-harness tests and offline production-security profile"
+    },
+    "native_firmware_build": {
+      "result": "PASS",
+      "command": "idf.py build provisioning-package (pinned SDK environment)",
+      "log": "build/qualified-lookup-build.log",
+      "image": "build/amity.bin",
+      "image_bytes": 2420848,
+      "image_sha256": "f7a28b2ff519eacc32e3a7ed3550eff2d39d9c27f7c21cc0cad6e54fe306e5af",
+      "ota_partition_bytes": 3997696,
+      "free_bytes": 1576848,
+      "free_percent_reported": 39,
+      "layout_checks": "35 public records consistent; provisioning package/browser update bundle generated",
+      "source_freshness": "Final production sources frozen; build includes final baseline first-name lookup correction",
+      "device_deployment": false,
+      "firmware_version": "0.1.81",
+      "matter_software_version": 82
+    },
+    "physical_devices": "No new deployment, CEC/AV or radio qualification claimed by this implementation task",
+    "focused_synchronization": {
+      "command": "sh tests/system_sync_test.sh",
+      "result": "PASS with warnings-as-errors and ASan/UBSan",
+      "scope": "Actual system_sync.cpp and codecs plus real ConfigurationStore: minimal handshake/no owner replica, first-lease nonemitting context hook and failed snapshot IPC admission, derived authority and exact receiver authorization/deadline handoff, callback cleanup on failed task allocation, deferred source lookup pinned to exact link with failure fencing, actual presence versus IPC failure, scoped snapshots/setup completion and pending expected-reply union for original controller settling, completed owner-task disconnect cleanup/failure retry, exact boot/link disconnect/no replay, sparse scans, saved capacity retention, both applied revisions and offline-peer-independent journal commit/failure",
+      "limitation": "SystemControl is a spy boundary; actual owner/facade CEC behavior is tested separately"
+    },
+    "final_focused_cec": {
+      "result": "PASS after final duplicate-name lookup simplification",
+      "commands": [
+        "sh tests/cec_hub_test.sh",
+        "sh tests/owned_hub_test.sh"
+      ],
+      "scope": "All five baseline CEC suites; original/local/owned frame traces including two-owner AVR/switch, first OSD match and side isolation, no coordinator cache veto, startup taps, observation IPC pressure, independent keys, authorization/all-adapter discovery and nonzero global completion-paced settling",
+      "logs": [
+        "test-results/host/intent-final-cec.log",
+        "test-results/host/intent-final-owned.log"
+      ]
+    },
+    "scope": "Previous qualified-lookup refactor at firmware 0.1.81/software 82; retained as context, not evidence for the new admission workflow."
+  },
+  "consortium_functional_validation": {
+    "date": "2026-10-29",
+    "result": "PASS",
+    "firmware_version": "0.1.98",
+    "matter_software_version": 99,
+    "test": "cec-harness/functional_tests/consortium.py",
+    "harness_host": "test2",
+    "baseline": "Original Python Amity hdmi.py ControllerImpl.get_device and sequential activity start/standby; CEC completion behavior and original wait_for_release input gate, with explicit user amendments in AGENTS.md.",
+    "contract": {
+      "current_activity_only": true,
+      "per_owner_inactive_flag": false,
+      "pending_activity_is_not_active": true,
+      "early_announcement_standby_is_valid": true,
+      "source_theft_owner_local": true,
+      "configuration_preserves_member_links_and_hdmi_cache": true,
+      "scan_reasons": [
+        "boot",
+        "explicit UI request",
+        "required device lookup cache miss"
+      ],
+      "cache_miss_cooldown_seconds_per_owner_adapter_side": 120,
+      "single_cache_owning_lookup": "Hub::find_device",
+      "callers_know_cache": false,
+      "activity_steps_sequential_per_owner": true,
+      "owners_may_progress_in_parallel": true,
+      "activity_setup_discards_presses_before_registration": true,
+      "announcement_cache_independent_of_activity_configuration": true,
+      "new_apis_for_tests": false,
+      "saved_selector_cache_loss_workaround_retained": false,
+      "pending_context_timing_workaround_retained": false
+    },
+    "build": {
+      "result": "PASS",
+      "command": "idf.py build provisioning-package (pinned SDK environment)",
+      "log": "test-results/consortium-live-config-2026-10-29/build-complete.log",
+      "firmware_version": "0.1.98",
+      "matter_software_version": 99,
+      "image_bytes": 2414032,
+      "image_sha256": "383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560",
+      "image_elf_sha256": "de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739",
+      "ota_partition_bytes": 3997696,
+      "free_bytes": 1583664,
+      "free_percent_reported": 40,
+      "public_record_layouts": 36,
+      "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
+      "source_dirty": true,
+      "frozen_artifacts": "test-results/consortium-live-config-2026-10-29/firmware-0.1.98-final"
+    },
+    "software_tests": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/consortium-live-config-2026-10-29/host-tests-complete.log",
+      "framework_unit_tests": 287,
+      "environment": "Pinned ESP-IDF SDK Python 3.14 and toolchain",
+      "scope": "Complete retained host runner including actual Hub/SystemSync/Session paths, ASan/UBSan CEC activity sequencing, cache-miss scan throttling, unsolicited announcement ingestion, live TLS configuration revisions, owner-local source theft, original input/gesture/held-key lifecycle and 287 framework units."
+    },
+    "contracts": {
+      "result": "PASS",
+      "command": ".cache/contracts-python/bin/python amity-octopus-consortium/validate_contracts.py",
+      "report": "test-results/consortium-live-config-2026-10-29/contracts-complete.json",
+      "checks": {
+        "manifest_entries_checked": 34,
+        "schemas_checked": 6,
+        "positive_schema_vectors": 17,
+        "negative_schema_vectors": 59,
+        "configured_selectors_checked": 4,
+        "current_wire_kinds_checked": 19,
+        "markdown_files_checked": 20,
+        "local_links_checked": 140,
+        "firmware_or_hardware_tests_run": false
+      }
+    },
+    "functional": {
+      "result": "PASS",
+      "report": "test-results/consortium-live-config-2026-10-29/functional.json",
+      "cases": [
+        "test_hdmi_scan",
+        "test_activity",
+        "test_activity_switch_input",
+        "test_source_theft",
+        "test_add_amity",
+        "test_consortium"
+      ],
+      "all_testbeds_passed": true,
+      "cleanup_errors": [],
+      "consortium": {
+        "main": "amity-dut",
+        "member": "amity-dut-2",
+        "component_count": 6,
+        "topology_per_owner": "TV adapter0/front, AVR adapter0/back, player behind AVR input1",
+        "exact_scan_membership_and_typed_locations": 6,
+        "physical_wires": 4,
+        "saved_activities": 2,
+        "both_activity_roles_exercised": true,
+        "fresh_wire_power_assertions": 14,
+        "initial_avr_route_assertions": 2,
+        "active_route_and_source_retained_after_thief": true,
+        "all_components_standby_after_each_cycle": true,
+        "connected_member_assertions": 3,
+        "remove_reset": "scheduled",
+        "retained_member": false,
+        "all_fixture_activities_equipment_removed_before_member_cleanup": true
+      }
+    },
+    "post_functional_verification": {
+      "result": "PASS",
+      "report": "test-results/consortium-live-config-2026-10-29/main-final-postcheck.json",
+      "checks_passed": 23,
+      "checks": {
+        "expected_identity": true,
+        "same_firmware": true,
+        "same_main_boot": true,
+        "ready": true,
+        "original_main_authority": true,
+        "same_group": true,
+        "all_saved_values_preserved_except_exact_test_metadata": true,
+        "all_sixteen_baseline_slots_preserved": true,
+        "expected_no_new_reserved_slots": true,
+        "configuration_snapshot_complete": true,
+        "activities_preserved": true,
+        "equipment_preserved": true,
+        "saved_configuration_adapter_settings_preserved": true,
+        "hardware_capabilities_preserved": true,
+        "matter_fabrics_preserved": true,
+        "two_current_matter_fabrics": true,
+        "homekit_pairing_preserved": true,
+        "no_active_peers": true,
+        "no_active_candidate": true,
+        "idle": true,
+        "not_discovering": true,
+        "no_pending_configuration": true,
+        "no_activity_or_hardware_error": true
+      },
+      "same_main_boot": "ff485359980e6139df1b3c2bbd1ab468",
+      "logged_out": true,
+      "saved_values_identical_excluding_normal_revisions": true,
+      "all_sixteen_baseline_slots_identical": true,
+      "new_slots": [],
+      "current_matter_fabrics": 2,
+      "homekit_pairing_preserved": true,
+      "no_active_peers": true,
+      "verifier_history": "First read-only postcheck retained an obsolete 13-slot/3-new expectation from the previous task despite the captured 16-slot baseline. Original failed verifier report remains private; corrected baseline expectations pass without any DUT mutation."
+    },
+    "qualification_scope": "Exact-image update/startup/provisioning retention on four DUTs. Exercised local CEC and normal two-board membership plus distributed CEC activities and source-theft suppression on main/member2, one adapter each with simulated equipment. No strict-profile, three-owner, four-adapter electrical, real AV/remote or production-security qualification."
   }
 }

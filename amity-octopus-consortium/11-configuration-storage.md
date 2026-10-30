@@ -22,6 +22,32 @@ Validate syntax, identities, selector scope, adapter bounds, references, field l
 
 The controller saves valid intent independently of offline peers. Owner application reports both revisions through volatile status; enqueue success is not proof of application. Preserve unconditional configure-to-standby/generation behavior even for presentation edits. Presentation changes cannot rewrite OSD selectors or pairing ownership.
 
+Activity edits preserve established authenticated connections and the HDMI
+device observations at every owner. Publish a new transport revision after
+the local Hub has applied the configuration and completed this Amity's original
+old-recipe cleanup; local completion does not wait for a member acknowledgment.
+Live members advance the exact revision over their existing TLS link using
+the bounded configuration/owner-state snapshot exchange. This does not invoke
+discovery or clear caches, change link/boot identity, or reset replay history.
+
+The existing bounded network IPC retains immutable typed requests with their
+original revision and deadline. Old-revision work is never relabeled; a new
+revision uses fresh scope-bound grants after the in-place exchange. Expired,
+wrong-scope and unauthorized work remains rejected. No encoded CEC backlog,
+durable activity-resume journal or retry queue is added. An explicit destructive request made
+while its reviewed link is still changing revision fails before roster/storage
+mutation; a configuration save does not extend a reset or settings deadline.
+
+Each owner completes its already-admitted old-recipe activity steps before
+binding the replacement revision. The existing bounded typed IPC holds the
+semantic continuation while CEC transmits; it does not hold encoded frames or
+retry failed FIFO admission. The existing input release gate ignores new key
+presses during selection/configuration setup; normal independent keys resume
+after that gate clears. The original long-Power repair does not arm this gate.
+The member's local bind
+boundary does not delay the main's own configuration application or create a
+cross-owner activity barrier.
+
 A newly staged initial configuration or current hardware-capacity update may remain pending until protected local OTA boot health is confirmed. This is current-format transaction activation, not a format conversion. Keep its authority and flash-safety fences.
 
 ## Backup, restore and replacement
@@ -35,3 +61,15 @@ Identity, membership trust, credentials, durable original-controller role, reset
 ## Evidence
 
 Exercise current-format round trips, strict version/obsolete-field rejection, actual blank-storage startup, original authority, qualified selectors and storage cuts. Compare original local and remote AVR/audio, switch fallback, missing equipment/return and key behavior. Counts, labels and Ready alone do not establish behavioral parity.
+
+The actual-runtime live-configuration test drives both sides of the existing
+snapshot exchange over scripted authenticated TLS I/O, including old-scope
+completion followed by new-scope owner state, unchanged connection/readiness
+and observations, replay/obsolete-frame handling and fresh lease requirements.
+The owner configuration-boundary test verifies old-recipe cleanup retains its
+executing revision before the new context is stamped. Synchronization and
+removal tests cover local application without member acknowledgments and
+safe rejection of a destructive request crossing the revision boundary.
+The actual-worker activity sequence regression also holds two old-recipient
+Standby transmissions through completion before permitting a new owner bind,
+then verifies that the old authorization is rejected.

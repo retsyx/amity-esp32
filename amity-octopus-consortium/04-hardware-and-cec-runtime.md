@@ -1,6 +1,6 @@
 # HDMI adapters and the local CEC runtime
 
-This document owns hardware scope and the unchanged local runtime. [Addressing](03-domain-model-and-addressing.md), [discovery](05-discovery-and-topology.md), [CEC behavior](06-cec-roles-and-message-policy.md) and [AGENTS.md](../AGENTS.md) define the operating model.
+This document owns hardware scope and the original local runtime with explicit user amendments. [Addressing](03-domain-model-and-addressing.md), [discovery](05-discovery-and-topology.md), [CEC behavior](06-cec-roles-and-message-policy.md) and [AGENTS.md](../AGENTS.md) define the operating model.
 
 ## Hardware scope
 
@@ -13,6 +13,8 @@ The wires use external pull-ups with internal GPIO pulls disabled. Preserve the 
 ## One original local runtime per adapter
 
 Each configured adapter uses the same original front playback/back TV behavior and CEC algorithms. The owner task handles input, received frames, allocation/discovery, setup and completions while transmissions remain outstanding. Preserve original logical-address candidates, poll/announcement budgets, back-first scan, lowest usable back-device PA or saved fallback and fixed-for-boot selected front PA.
+
+The **29 October 2026 scan/cache amendment** limits enumeration to boot, explicit UI scans and actual communication cache misses. Lookup cooldowns are 120 seconds independently per adapter side; boot/UI scans bypass eligibility and refresh their side timestamps. Logical-address claiming remains electrical maintenance and does not itself request a device scan. Activity edits preserve caches and active discovery progress without disconnecting an Amity; a side-only lookup scan retains the other side's records. [Discovery](05-discovery-and-topology.md) owns the full rule.
 
 The distribution layer does not allocate identities from a persistent electrical-domain or proxy-resource graph. It selects an owner and adapter; the owner applies the original local algorithm there. Settings and actual hardware availability are separate from a stored approval to use an activity.
 
@@ -40,6 +42,8 @@ or change CEC behavior, IPC admission, deadlines or task ownership.
 CEC mechanically transmits supplied frames and attempt budgets through one FIFO per wire, with eight queued-plus-active messages total. Releases share those eight slots. Full admission drops the submitted frame and logs it; every member of a rejected atomic batch is logged. No reserved release slot, executor outgoing backlog or later retry of a dropped release exists.
 
 State and completion trackers belong to the original executor. Each held key continues after its own successful attempt; failed key TX ends it. New commands submit immediately without waiting for another key's ACK or queue capacity. Bounded task IPC remains appropriate where needed for causal request/state handoff.
+
+The **29 October 2026 activity-sequencing amendment** requires a Start/Standby sequence to await each original lookup/command completion before its next step on the same Amity. Other owners and the owner loop may advance in parallel. During activity setting, ignore key presses before registering them; a release for an unregistered press is a no-op. Preserve the existing physical-input gate, with no ignored-press lifecycle or replay; normal independent keys resume after it clears. The continuation retains an original-function program counter in bounded semantic IPC, not CEC frames or a second transmit queue. [Activity execution](07-activity-planning-and-execution.md#2-reuse-the-original-decisions) owns this explicit sequencing rule.
 
 ## Presence and per-device settings
 

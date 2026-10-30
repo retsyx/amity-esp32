@@ -183,6 +183,36 @@ class TestBedLifetimeTests(unittest.TestCase):
             {"name": main.name, "device_id": main.identity.device_id, "control_only": False},
             {"name": candidate.name, "device_id": candidate.identity.device_id, "control_only": True}])
 
+    def test_headless_member_hosts_components_without_http_and_loses_proof_at_exit(self):
+        main = UnitDUT("first-board", self.log)
+        member = UnitDUT("second-board", self.log, auth_error=True, wrong_identity=True)
+        tv = TvComponent(member, "Member TV", address=CecAddress(0, 0))
+        bed = TestBed(main, member, tv, members=(member,), session_factory=self.factory())
+        with bed:
+            self.assertEqual(bed.members, (member,))
+            self.assertIsNone(member._token)
+            bed._member_proofs[member.identity.device_id] = object()
+            self.assertEqual(bed.session.components, [tv])
+        self.assertFalse(any(name == member.name for name, _ in self.log))
+        self.assertEqual(bed._member_proofs, {})
+        self.assertIsNone(member._testbed)
+        self.assertTrue(bed.report["passed"])
+        self.assertTrue(bed.report["duts"][1]["member"])
+
+    def test_invalid_headless_member_resources_fail_before_io(self):
+        main = UnitDUT("first-board", self.log)
+        member = UnitDUT("second-board", self.log)
+        for resources, members, controls in (((main,), (member,), ()),
+                                             ((main, member), (member, member), ()),
+                                             ((main, member), (member,), (member,)),
+                                             ((member,), (member,), ())):
+            with self.subTest(members=members), self.assertRaises(ValueError):
+                TestBed(*resources, members=members, control_only=controls, session_factory=self.factory())
+        member._token = "preexisting-private-session"
+        with self.assertRaisesRegex(ValueError, "HTTP"):
+            TestBed(main, member, members=(member,), session_factory=self.factory())
+        self.assertFalse(self.log)
+
     def test_invalid_control_only_resources_fail_before_any_io(self):
         main, candidate = UnitDUT("first-board", self.log), UnitDUT("second-board", self.log)
         for controls in ((candidate,), ("second-board",), (main, main)):

@@ -20,7 +20,7 @@ using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char value[33];snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
 struct FakeTls{bool server=false;int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;std::vector<std::string> frames;size_t next=0;bool receive(std::string& out,uint32_t timeout){assert(timeout<=2000);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false;RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false;RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
 std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;
 void gatt_client_disconnect(){}
@@ -69,6 +69,8 @@ void source_tests(){
  reset(true);assert(runtime_remove_octopus(peer,request,1,{})==ESP_OK&&group.peers.empty());assert(parsed(runtime_removal_operation(peer,request)).get("reset")->string=="offline");assert(links.empty()&&sent.empty());
  reset(true);auto active=connection(false,false,known_capabilities&~factory_reset_removal);assert(runtime_remove_octopus(peer,request,1,{})==ESP_ERR_NOT_SUPPORTED&&group.peers.size()==1&&!group_saves);
  reset(true);active=connection(false);assert(runtime_remove_octopus(peer,request,2,{})==ESP_ERR_INVALID_STATE&&runtime_remove_octopus(peer,request,1,ident<model::BootId>(99))==ESP_ERR_INVALID_STATE&&!group_saves);
+ reset(true);active=connection(false);active->refreshing=true;assert(runtime_remove_octopus(peer,request,1,active->status.boot_id)==ESP_ERR_INVALID_STATE&&!group_saves&&group.peers.size()==1&&!active->retiring);
+ active->refreshing=false;configuration=2;assert(runtime_remove_octopus(peer,request,1,active->status.boot_id)==ESP_ERR_INVALID_STATE&&!group_saves&&group.peers.size()==1);
  reset(true);active=connection(false);disk_ok=false;assert(runtime_remove_octopus(peer,request,1,{})==ESP_FAIL&&group.peers.size()==1&&!active->retiring);
  reset(true);active=connection(false);active->cancelled=true;assert(runtime_remove_octopus(peer,request,1,{})==ESP_OK&&!active->retiring&&parsed(runtime_removal_operation(peer,request)).get("reset")->string=="offline");
  reset(false);assert(runtime_remove_octopus(peer,request,1,{})==ESP_ERR_INVALID_STATE&&!group_saves);

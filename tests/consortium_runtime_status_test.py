@@ -42,17 +42,29 @@ int main(){try{
     const auto first=runtime_status();check(first.connected&&first.synchronized,"healthy link hidden by stale global status");expect(true,true,1);
     auto probe=std::make_shared<Active>();probe->peer=0;probe->status.id=0;probe->status.boot_id=0;probe->ready=false;links.push_back(probe);expect(true,true,1);
     links.pop_back();status.synchronized=false;expect(true,true,1);
-    auto old=std::make_shared<Active>();old->status.config_revision=6;links.push_back(old);expect(true,true,1);
+    // A revision transition changes execution scope, not the health of this
+    // same authenticated TLS connection. Preserve its ready/boot identity
+    // while the link task advances in-band, then catch up without a blink.
+    const auto* tls=healthy->tls.get();const auto boot=healthy->status.boot_id;
+    configuration=8;expect(true,true,1);
+    check(healthy->status.config_revision==7&&healthy->tls.get()==tls&&healthy->status.boot_id==boot,"health snapshot mutated the live revision transition");
+    healthy->status.config_revision=8;expect(true,true,1);
+    configuration=9;status.connected=status.synchronized=false;expect(true,true,1);
+    healthy->status.config_revision=9;expect(true,true,1);
+    auto old=std::make_shared<Active>();old->status.config_revision=6;old->cancelled=true;links.push_back(old);expect(true,true,1);
     links.pop_back();status.synchronized=false;expect(true,true,1);
     auto unready=std::make_shared<Active>();unready->ready=unready->status.ready=false;links.push_back(unready);expect(true,true,2);
     healthy->ready=healthy->status.ready=false;expect(true,false,2); // Management/sync connection has no execution readiness.
     links.clear();status.connected=status.synchronized=true;expect(false,false,0);
-    for(unsigned kind=0;kind<8;++kind){auto link=std::make_shared<Active>();
-        switch(kind){case 0:link->cancelled=true;break;case 1:link->retiring=true;break;case 2:link->status.boot_id=0;break;case 3:link->status.config_revision=8;break;case 4:link->tls->authenticated=99;break;case 5:link->credential_current=false;break;case 6:link->status.id=99;break;case 7:link->tls.reset();break;}
+    // Configuration equality is tested by Session/owned-work admission, not
+    // used as a second connectivity permission. Every identity/credential
+    // rejection below still excludes the link irrespective of its revision.
+    for(unsigned kind=0;kind<7;++kind){auto link=std::make_shared<Active>();
+        switch(kind){case 0:link->cancelled=true;break;case 1:link->retiring=true;break;case 2:link->status.boot_id=0;break;case 3:link->tls->authenticated=99;break;case 4:link->credential_current=false;break;case 5:link->status.id=99;break;case 6:link->tls.reset();break;}
         links={link};expect(false,false,0);
     }
     check(status.connected&&status.synchronized,"snapshot rewrote stored authority or transition state");
-    std::cout<<"PASS actual runtime health: healthy current link survives probe/old-link close; any-ready, zero/unready/cancelled/retiring/config/auth cases and authority unchanged\n";
+    std::cout<<"PASS actual runtime health: same TLS/boot/readiness survives live revision advance and old-link close; probe/unready/cancelled/retiring/identity/auth fences and authority unchanged\n";
     return 0;
 }catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
 '''

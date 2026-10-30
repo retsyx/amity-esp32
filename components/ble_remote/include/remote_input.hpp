@@ -49,6 +49,9 @@ public:
     // Successful activity selections (including same-target selections) gate
     // fresh input until every button is up, with Python's one-second fallback.
     bool activity_selected(uint32_t selection, uint64_t now);
+    // Keep the existing release gate armed while the original recipe awaits
+    // recipient lookup or CEC completion. This excludes settling quiet time.
+    bool activity_setup(bool in_progress,uint64_t now);
     void set_wait_for_release(uint64_t now);
     void tick(uint64_t now);
     bool waiting_for_release() const { return wait_for_release_; }
@@ -78,9 +81,9 @@ private:
     int target_ = -1, macro_selector_ = -1, macro_power_ = -1;
     bool macro_executed_ = false;
     bool initialized_ = false, transition_pending_ = false, report_action_ = false;
-    bool wait_for_release_ = true, selection_initialized_ = false, local_selection_pending_ = false;
+    bool wait_for_release_ = true, selection_initialized_ = false, local_selection_pending_ = false,activity_setup_=false;
     uint32_t selection_ = 0;
-    uint64_t now_ = 0, wait_until_ = wait_for_release_us;
+    uint64_t now_ = 0, wait_until_ = wait_for_release_us,setup_finished_ = 0;
     InputStamp report_stamp_{};
     bool emit(RemoteCommandType type, int value = 0, uint8_t count = 0);
     void suppress_held();

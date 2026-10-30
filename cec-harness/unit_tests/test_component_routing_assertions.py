@@ -1,6 +1,8 @@
 """Routing assertions require a fresh, applied physical DUT command."""
 
 from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 import queue
 import sys
@@ -14,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrComponent, CecSession, DUT, Frame, Hooks,
                            PlaybackComponent, PowerState, RunConfig, TvComponent,
                            TestBed, TxResult, use_config)
+from test_component_power_assertions import distributed_activity_fixture
 
 
 class IdleWire:
@@ -77,6 +80,53 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
     def missing(self, component, physical, boundary):
         with self.assertRaises(TimeoutError):
             component.wait_for_input(physical, since=boundary, timeout=0.005)
+
+    def test_member_routing_and_numeric_input_accept_proven_main_action(self):
+        f = distributed_activity_fixture()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        self.receive(f.member_avr, 0, f.member_player.address.physical)
+        self.assertIs(f.member_avr.wait_for_input(f.member_player, since=action), f.member_avr)
+        marker = f.member_avr.checkpoint()
+        self.switch_command(f.member_avr, number=7)
+        self.assertIs(f.member_avr.wait_for_switch_input(7, since=marker), f.member_avr)
+
+    def test_member_routing_requires_fresh_actual_owner_wire_and_authorized_boundary(self):
+        f = distributed_activity_fixture()
+        old = time.monotonic_ns()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        target = f.member_player.address.physical
+        self.receive(f.member_avr, 0, target, transport="virtual")
+        self.missing(f.member_avr, target, action)
+        self.receive(f.member_avr, 0, target, timestamp=old)
+        self.missing(f.member_avr, target, action)
+        self.receive(f.member_avr, 0, target)
+        for changed in (dict(dut=f.member), dict(session=object()), dict(testbed=object()),
+                        dict(owner_boots={**action.owner_boots, f.member.identity.device_id: "e" * 32})):
+            with self.subTest(changed=tuple(changed)), self.assertRaises(AssertionError):
+                f.member_avr.wait_for_input(target, since=replace(action, **changed), timeout=0.01)
+        f.bed._member_proofs.clear()
+        with self.assertRaises(AssertionError):
+            f.member_avr.wait_for_input(target, since=action, timeout=0.01)
+
+    def test_member_routing_rechecks_boot_outside_cec_delivery_lock_before_return(self):
+        f = distributed_activity_fixture()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        self.receive(f.member_avr, 0, f.member_player.address.physical)
+        calls = []
+
+        def snapshot():
+            self.assertFalse(f.session._lock._is_owned())
+            self.assertFalse(f.member_avr._power_condition._is_owned())
+            calls.append(None)
+            system = deepcopy(f.source.system)
+            if len(calls) > 1:
+                system["membership"]["peers"][0]["boot_id"] = "e" * 32
+            return system
+
+        f.dut.get_system = snapshot
+        with self.assertRaises(AssertionError):
+            f.member_avr.wait_for_input(f.member_player, since=action, timeout=0.05)
+        self.assertEqual(len(calls), 2)
 
     def test_fresh_physical_set_stream_path_proves_tv_and_avr_routing(self):
         with self.fixture() as (dut, tv, avr, player, session):

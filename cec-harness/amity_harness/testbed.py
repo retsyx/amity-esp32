@@ -83,6 +83,7 @@ def _scan_report(dut, scan):
     state["devices"] = [_select(row, _DEVICE_FIELDS)
                         for row in getattr(scan, "status", {}).get("devices", [])]
     return {"dut": dut.name, "started_monotonic_ns": getattr(scan, "started", 0),
+            "owner_boots": deepcopy(getattr(scan, "owner_boots", {})),
             "operation": _select(getattr(scan, "operation", {}), _OPERATION_FIELDS),
             "devices": devices, "last_state": state,
             "dut_cec_initiators": deepcopy(getattr(scan, "initiators", {})),
@@ -98,8 +99,9 @@ class TestBed:
 
     Accept DUTs and/or Components in any order; a component implies its DUT.
     Authentication and documented identity checks precede CEC adapter mutation.
-    ``control_only`` DUTs are owned physical resources without HTTP access;
-    unclaimed/headless boards need no login and cannot host CEC components here.
+    ``control_only`` DUTs are physical resources without HTTP or components.
+    ``members`` DUTs can host CEC components without a member HTTP session;
+    their owner identity is verified through the main's Add Amity flow.
     Each owned login is logged out after session cleanup, including failures.
     Foreign active DUTs are rejected before this bed acquires any resource.
     Reports retain only selected fixture/UI/CEC evidence, never runtime config,
@@ -108,7 +110,7 @@ class TestBed:
 
     __test__ = False
 
-    def __init__(self, *resources, session_factory=None, control_only=()):
+    def __init__(self, *resources, session_factory=None, control_only=(), members=()):
         self.session = None
         self.duts = ()
         self.components = ()
@@ -126,6 +128,7 @@ class TestBed:
         self._initial_scans = {}
         self._initial_activity_counts = {}
         self._initial_membership_counts = {}
+        self._member_proofs = {}
         if not resources:
             raise ValueError("A test bed needs at least one DUT or component")
         explicit, duts, components = set(), [], []
@@ -152,15 +155,25 @@ class TestBed:
             identities.add(dut.identity.device_id)
         self.duts, self.components = tuple(duts), tuple(components)
         self.control_only = tuple(control_only)
+        self.members = tuple(members)
         if any(not isinstance(dut, DUT) or not any(dut is member for member in self.duts)
                for dut in self.control_only):
             raise ValueError("Control-only DUTs must be resources owned by this TestBed")
         if len({id(dut) for dut in self.control_only}) != len(self.control_only):
             raise ValueError("A control-only DUT was supplied more than once")
+        if any(not isinstance(dut, DUT) or not any(dut is member for member in self.duts)
+               for dut in self.members):
+            raise ValueError("Headless members must be resources owned by this TestBed")
+        if len({id(dut) for dut in self.members}) != len(self.members):
+            raise ValueError("A headless member was supplied more than once")
+        if any(dut in self.control_only for dut in self.members):
+            raise ValueError("A DUT cannot be both control-only and a headless member")
+        if self.members and not any(dut not in (*self.members, *self.control_only) for dut in self.duts):
+            raise ValueError("Headless members require a main DUT in the same TestBed")
         if any(component.dut in self.control_only for component in self.components):
             raise ValueError("Control-only DUTs cannot host CEC components in this TestBed")
-        if any(getattr(dut, "_token", None) for dut in self.control_only):
-            raise ValueError("Control-only DUTs must not have an authenticated HTTP session")
+        if any(getattr(dut, "_token", None) for dut in (*self.control_only, *self.members)):
+            raise ValueError("Control-only DUTs and headless members must not have an authenticated HTTP session")
         register_testbed(self)
 
     def _claim_duts(self):
@@ -183,7 +196,7 @@ class TestBed:
         try:
             self._claim_duts()
             for dut in self.duts:
-                if dut in self.control_only:
+                if dut in (*self.control_only, *self.members):
                     continue
                 dut.authenticate()
                 system = dut.get_system()
@@ -230,12 +243,13 @@ class TestBed:
                 except BaseException as error:
                     errors.append(error)
             for dut in reversed(self._owned):
-                if dut not in self.control_only and getattr(dut, "_token", None):
+                if dut not in (*self.control_only, *self.members) and getattr(dut, "_token", None):
                     try:
                         dut.logout()
                     except BaseException as error:
                         errors.append(error)
         finally:
+            self._member_proofs.clear()
             self._closed = True
             self._closing = False
             with _ownership_lock:
@@ -306,7 +320,8 @@ class TestBed:
         result = {"passed": self._finished and self._failure is None and not self._cleanup_errors,
                   "entered": self._entered,
                   "duts": [{"name": dut.name, "device_id": dut.identity.device_id,
-                            "control_only": dut in self.control_only} for dut in self.duts],
+                            "control_only": dut in self.control_only,
+                            **({"member": dut in self.members} if self.members else {})} for dut in self.duts],
                   "components": components, "scans": scans,
                   "activities": [_activity_report(dut, record) for dut in self._owned
                                  for record in getattr(dut, "activity_operations", ())[self._initial_activity_counts[id(dut)]:]],

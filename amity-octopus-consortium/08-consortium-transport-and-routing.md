@@ -18,6 +18,31 @@ Transport scope includes the current installation, original controller, target o
 
 The production wire codec and its closed schema own numeric kinds and bounds. Deprecated prepared-plan/profile/binding graph contracts are not a second path for actuation. Remove unused contracts with their implementation; unknown or unsupported kinds reject rather than silently reinterpret. Version/capability negotiation must not accidentally authorize an older incompatible behavioral policy.
 
+Activity configuration saves preserve authenticated TLS links and HDMI discovery
+observations. Peers negotiate `live_configuration` (bit `524288`) before using
+the existing snapshot request/chunk exchange on a ready link. The controller
+sends its current controller/revision slice using the previous envelope scope,
+with the new revision in the bounded manifest. The member binds that revision
+and sends its completion acknowledgment in the previous scope. Both then advance
+the same session, and the member's owner-state slice uses the new scope. Link
+ID, installation, controller/member identities, boots and replay history remain
+unchanged. Applying the controller's local configuration does not wait for a
+member acknowledgment or authorize replay of uncertain work.
+
+Revision advance invalidates old positive-work leases; normal fresh grants use
+the same existing issuance cadence and bounds. Queued work retains its original
+configuration revision, creation time and deadline, and cannot be restamped into
+the new scope. Obsolete in-flight frames may be discarded only after strict
+identity, boot, epoch, role, capability, closed-payload, TTL and replay checks;
+future revisions and mismatched scope remain rejected. A successful stale-frame
+check means discard, never execution or lease renewal. These changes add no wire
+kind, HTTP endpoint, ordinary command retry or alternate CEC policy.
+
+Live configuration support is part of the execution capability floor. A peer
+without it remains eligible for existing management/firmware-update operations,
+not ordinary equipment execution. The release installer's existing required
+capability floor remains unchanged so an older peer can install the update.
+
 ## 3. Ordering, input state and uncertainty
 
 The first control-lease handshake queues the current nonemitting activity context before positive owner actions. This synchronizes ordinary follower replies/playback context without replaying an activity recipe or missed commands.

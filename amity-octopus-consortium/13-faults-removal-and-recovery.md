@@ -14,6 +14,8 @@ A member does not host a fallback UI, accept a remote, elect/promote itself or c
 
 Reconnect establishes current authenticated identity and transport context. Old messages cannot acquire a new lifetime or target. Equipment returning allows ordinary current lookup; it does not replay uncertain work or transfer controller authority.
 
+Under the **29 October 2026 scan/cache amendment**, reconnect itself does not enumerate HDMI devices. Activity configuration changes do not disconnect members or clear their device caches/observations. Actual owner removal or boot replacement retains the necessary identity invalidation; boot is one of the three allowed scan triggers. An uncached communication recipient follows its owner/adapter/side's 120-second lookup cooldown, while explicit UI scans and boot bypass eligibility and refresh their side timestamps. See [discovery](05-discovery-and-topology.md).
+
 ## Intentional removal
 
 Only an explicit original-controller Remove command revokes a selected member. Keep reviewed membership revision and target boot checks. Prevent stale queued positive work, drain the owner's bounded current wire/cleanup state, then commit the established reset journal on a responding target before acknowledging reset scheduling. The selected target restarts only after the response transmission attempt.

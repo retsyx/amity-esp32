@@ -53,6 +53,9 @@ public:
     Error authenticate(const LinkScope &, model::OctopusId authenticated_peer,PeerRole,bool active_membership);
     Error hello(const HelloFrame &,uint32_t supported_capabilities);
     Error synchronized(uint64_t applied_config_revision,bool membership_current,bool owner_metadata_current);
+    // Called by the owning link task after an authenticated in-place snapshot.
+    // Preserve peer/boot/link identity and replay history; require fresh leases.
+    Error advance_configuration(uint64_t revision);
     void disconnect();
     void restrict_lifecycle();
     void restrict_management();
@@ -61,9 +64,14 @@ public:
     LeaseBook<model::ExecutionLeaseId> &execution_leases(){return execution_;}
     // Recheck positive work both on receipt and immediately before execution.
     Error admit(const Envelope &,uint64_t received_at_ms,uint64_t now_ms,bool remember_message=true);
+    // Validate and remember obsolete in-flight frames without applying them.
+    // Success is a discard, never permission to execute or renew old authority.
+    Error discard_stale(const Envelope &,uint64_t received_at_ms,uint64_t now_ms,bool remember_message=true);
     uint32_t negotiated_capabilities() const {return capabilities_;}
 private:
-    Error common(const Envelope &,uint64_t,uint64_t) const;
+    Error common(const Envelope &,uint64_t,uint64_t,bool stale=false) const;
+    Error typed(const Envelope &,uint64_t,bool leases) const;
+    Error replay(const Envelope &,uint64_t,bool);
     Error admit_checked(const Envelope &,uint64_t,uint64_t,bool);
     bool permitted(Kind) const;
     struct Seen {model::MessageId id;uint64_t at=0;bool valid=false;};

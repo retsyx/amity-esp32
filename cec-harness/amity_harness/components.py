@@ -207,8 +207,9 @@ class Component:
         timeout = self._power_timeout if timeout is None else timeout
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Power assertion timeout must be a positive finite number")
-        session, started, source = self._wire_context(since)
+        session, started, source, owner_scan = self._wire_context(since)
         deadline = time.monotonic() + timeout
+        owner_checked = owner_scan is None
         while True:
             session.assert_healthy()
             stopped = getattr(session, "_stop", None)
@@ -225,7 +226,8 @@ class Component:
                                  and event["requested_power"] == power.value
                                  and event["after"] == power.value
                                  and event["state_revision"] == self._power_revision), None)
-                if self.power == power and matching is not None:
+                ready = self.power == power and matching is not None
+                if ready and owner_checked:
                     self._power_checks.append({"kind": "wire_command", "power": power.value,
                                                "timestamp_ns": time.monotonic_ns(),
                                                "since_monotonic_ns": started,
@@ -234,12 +236,74 @@ class Component:
                                                "wire_timestamp_ns": matching["wire_timestamp_ns"],
                                                "command": matching["command"]})
                     return self
+                if ready:
+                    # Verify the owner outside component/session locks, then
+                    # inspect the unchanged physical effect again before return.
+                    recheck_owner = True
+                else:
+                    recheck_owner = False
+                    owner_checked = owner_scan is None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(f"{self.name} did not handle a fresh DUT {power.value} command and remain {power.value}")
                 # Wake on evidence; periodically check responder health even if
                 # a failing worker produces no further component callbacks.
-                self._power_condition.wait(min(remaining, 0.05))
+                if not recheck_owner:
+                    self._power_condition.wait(min(remaining, 0.05))
+            if recheck_owner:
+                self._wire_context(since)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"{self.name} owner verification exceeded the power assertion deadline")
+                owner_checked = True
+
+    def _checkpoint_scan(self, session):
+        """Locate an explicitly proven coordinator scan for a headless owner."""
+        bed = getattr(self.dut, "_testbed", None)
+        if bed is not None and getattr(bed, "session", None) is session:
+            candidates = []
+            for dut in getattr(bed, "duts", ()):
+                scan = getattr(dut, "last_scan", None)
+                if (scan is not None and getattr(scan, "_session", None) is session
+                        and getattr(scan, "_testbed", None) is bed and self in getattr(scan, "expected", ())
+                        and getattr(scan, "owner_duts", {}).get(self.dut.identity.device_id) is self.dut
+                        and not any(scan is other for other in candidates)):
+                    candidates.append(scan)
+            if len(candidates) > 1:
+                raise AssertionError("The component has ambiguous coordinator scan evidence")
+            if candidates:
+                return candidates[0]
+        return getattr(self.dut, "last_scan", None)
+
+    def _validate_action_owners(self, since, scan, session):
+        bed = getattr(scan, "_testbed", None)
+        coordinator = getattr(scan, "dut", None)
+        owner = self.dut.identity.device_id
+        main = getattr(getattr(coordinator, "identity", None), "device_id", None)
+        boots = getattr(scan, "owner_boots", {})
+        owners = getattr(scan, "owner_duts", {})
+        if (bed is None or getattr(bed, "session", None) is not session
+                or not getattr(bed, "_entered", False) or getattr(bed, "_closed", True)
+                or getattr(self.dut, "_testbed", None) is not bed
+                or getattr(coordinator, "_testbed", None) is not bed
+                or getattr(coordinator, "last_scan", None) is not scan
+                or getattr(scan, "_session", None) is not session
+                or self not in getattr(scan, "expected", ())
+                or owners.get(owner) is not self.dut or owners.get(main) is not coordinator
+                or boots.get(main) != getattr(scan, "_boot", None)
+                or not boots.get(owner)):
+            raise AssertionError("Wire owner evidence belongs to a different active TestBed or scan")
+        if not isinstance(since, int):
+            if (getattr(since, "scan", None) is not scan or getattr(since, "testbed", None) is not bed
+                    or getattr(since, "dut", None) is not coordinator
+                    or getattr(since, "boot", None) != boots.get(main)
+                    or getattr(since, "owner_boots", None) != boots
+                    or getattr(since, "owner_duts", None) != owners
+                    or getattr(since, "initiators", None) != scan.initiators):
+                raise AssertionError("The action has no matching coordinator and member boot evidence")
+        validator = getattr(scan, "validate_owners", None)
+        if not callable(validator):
+            raise AssertionError("The scan cannot verify the current physical owner")
+        validator((self,))
 
     def _wire_context(self, since):
         """Validate a boundary and the scan-proven initiator on this wire."""
@@ -248,13 +312,14 @@ class Component:
             raise AssertionError("Wire command assertions need an active CEC session")
         if isinstance(since, int) and not isinstance(since, bool):
             started = since
-            scan = getattr(self.dut, "last_scan", None)
+            scan = self._checkpoint_scan(session)
             initiators = getattr(scan, "initiators", {})
             if getattr(scan, "_session", session) is not session:
                 raise AssertionError("The DUT identity scan belongs to a different CEC session")
         else:
             started = getattr(since, "started_ns", getattr(since, "started", None))
-            if getattr(since, "dut", None) is not self.dut or getattr(since, "session", None) is not session:
+            scan = getattr(since, "scan", None)
+            if getattr(since, "session", None) is not session:
                 raise AssertionError("The action boundary belongs to a different DUT or CEC session")
             initiators = getattr(since, "initiators", {})
         if isinstance(started, bool) or not isinstance(started, int) or started <= 0:
@@ -263,7 +328,12 @@ class Component:
         occupied = {component.address.logical for component in session.components if component.gpio == self.gpio}
         if isinstance(source, bool) or not isinstance(source, int) or not 0 <= source < 15 or source in occupied:
             raise AssertionError("A wire assertion needs the DUT initiator verified by its HDMI scan")
-        return session, started, source
+        remote = scan is not None and getattr(scan, "dut", self.dut) is not self.dut
+        if remote:
+            self._validate_action_owners(since, scan, session)
+        elif not isinstance(since, int) and getattr(since, "dut", None) is not self.dut:
+            raise AssertionError("The action boundary belongs to a different DUT or CEC session")
+        return session, started, source, scan if remote else None
 
     @property
     def active_input(self):
@@ -334,7 +404,7 @@ class Component:
         return self._wait_for_routing(number, since=since, timeout=timeout, command="select_av_input")
 
     def _wait_for_routing(self, expected, *, since, timeout, command):
-        session, started, source = self._wire_context(since)
+        session, started, source, owner_scan = self._wire_context(since)
         switch = command == "select_av_input"
         field = "input" if switch else "physical_address"
         timeout = self._power_timeout if timeout is None else timeout
@@ -343,6 +413,7 @@ class Component:
         deadline = time.monotonic() + timeout
         requested = f"Select AV Input Function for input {expected}" if switch else f"Set Stream Path for {expected:04x}"
         missing = f"{self.name} did not handle a fresh DUT {requested}"
+        owner_checked = owner_scan is None
         while True:
             stopped = getattr(session, "_stop", None)
             if self._session is not session or stopped is not None and stopped.is_set():
@@ -366,18 +437,26 @@ class Component:
                                      and event["wire_timestamp_ns"] >= started
                                      and event["processed_monotonic_ns"] >= started
                                      and event["state_revision"] == revision), None)
-                    if self.power != PowerState.OFF and actual == expected and matching is not None:
+                    ready = self.power != PowerState.OFF and actual == expected and matching is not None
+                    if ready and owner_checked:
                         self._routing_checks.append({"kind": "wire_command", field: expected, "command": command,
                                                      "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": started,
                                                      "frame": matching["frame"], "source": source,
                                                      "destination": matching["destination"],
                                                      "wire_timestamp_ns": matching["wire_timestamp_ns"]})
                         return self
+                    recheck_owner = ready
+                    if not ready:
+                        owner_checked = owner_scan is None
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise TimeoutError(missing)
             finally:
                 session._lock.release()
+            if recheck_owner:
+                self._wire_context(since)
+                owner_checked = True
+                continue
             with self._power_condition:
                 self._power_condition.wait(min(remaining, 0.05))
 

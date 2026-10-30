@@ -28,6 +28,9 @@ membership behavior remains unchanged.
   input 2 and verifies that Amity restores the first player after source theft.
 - `functional_tests/add_amity.py`: adds the second bench board through the main
   Amity, verifies its membership, then removes and resets that added board.
+- `functional_tests/consortium.py`: scans equipment on the main and a headless
+  member, then checks activity power and source-theft suppression in both
+  ownership directions.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -76,11 +79,14 @@ handling belong in the common framework. The TV, AVR and playback models keep
 their existing `handle()` protocol behavior.
 
 `TestBed` accepts DUTs and components in any order, and infers each component's
-DUT. It supports several DUTs and configurations through the same interface;
-this does not add another functional scenario. On entry it authenticates the
-HTTP DUTs, checks their documented identities and opens their component session.
-DUTs listed in `control_only` supply documented physical button control without
-HTTP authentication or a Wi-Fi/UI prerequisite. Exit attempts registered UI
+DUT. It supports several DUTs and configurations through the same interface.
+On entry it authenticates the HTTP DUTs, checks their documented identities and
+opens their component session. DUTs listed in `control_only` supply documented
+physical button control without HTTP authentication or a Wi-Fi/UI prerequisite,
+and do not host CEC components. `members=(secondary,)` instead permits a
+headless candidate's CEC components in the shared session while keeping HTTP
+access on the main alone. Both modes require the named physical DUT to belong
+to that same bed. Exit attempts registered UI
 resource cleanup, CEC cleanup and logout on success, assertion failure or
 exception, in that order.
 `DUT.scan_hdmi()` uses the existing UI scan operations and returns a
@@ -94,6 +100,16 @@ number and front/back side using the existing UI's qualified equipment
 observations. It does not infer the reported connection from the fixture's
 attachment or parse a display label. The initial scenario requires exactly
 these three devices: TV on tentacle 0/front, AVR and player on tentacle 0/back.
+For a distributed scan, `member.assert_connected()` must first establish the
+member's inventory ID, boot, name and ready settings through the main UI.
+`ScanResult.owner_boots` records the main and explicitly proven member boots;
+`validate_owners()` checks the current main identity, group and ready membership
+against those proofs in the same active testbed and CEC session. Each fixture
+must independently provide fresh wire discovery on its own owner's GPIO.
+Matching names, logical addresses or coordinator observations cannot substitute
+for another owner's wire evidence. Activity boundaries retain these owner boots
+and initiators, and component command assertions recheck remote-owner proof.
+These checks qualify test evidence; they add no firmware availability policy.
 
 `activity.py` extends this same scan and its assertions:
 
@@ -275,6 +291,51 @@ debug directory. This qualifies this pair's normal-profile Add/removal path,
 not CEC/AV or the strict setup-code profile. Boards 3/4 remain on 0.1.88, and
 the earlier failed runs are preserved.
 
+`consortium.py` uses `DUT("amity-dut")` as the original main and
+`DUT("amity-dut-2")` as a headless member. Each has one TV on tentacle 0/front,
+one AVR on tentacle 0/back, and one playback device on AVR input 1. The six
+components share one `TestBed` with `members=(secondary,)`, using four isolated
+CEC wires. The main's existing Add flow enrolls the second board before a
+coordinator scan must find exactly all six identities on their actual owners,
+tentacles and CEC sides. Only the main uses HTTP credentials.
+
+The scenario saves one activity for each TV/AVR/player triple. It first starts
+the main's activity, then the member's, with a standby cycle between them.
+Each cycle starts with all six components in Standby and requires fresh
+physical power-on commands for the selected three and correct initial AVR
+routing. The other owner's player then sends its own physical Active Source
+announcement. That owner must send a fresh physical directed CEC Standby to
+the thief because it differs from the selected source; its TV and AVR must
+remain in Standby. The active three must remain On with their selected
+input and player active, and the main UI must retain the same activity and boot.
+The current activity is the sole source of truth, with the special standby
+activity when the whole system is in standby. The activity's qualified source
+determines the owner-local mismatch; global standby permits no active source.
+There is no separate per-owner inactive state or flag.
+The wires are isolated, so this theft does not require a new Set Stream Path
+on the unaffected active owner. This differs from the shared-wire
+`source_theft.py` scenario, which requires physical route restoration.
+
+Returning each selected activity to standby requires fresh CEC Standby on its
+three components and leaves all six in Standby. Both temporary activities and
+their unreferenced fixture equipment are cleaned up before the member is
+removed with a scheduled reset, while component responders remain available.
+Normal reserved activity-slot tombstones are retained; cleanup accepts only
+new default-metadata tombstones tied to successfully created and removed
+fixture activity IDs, preserving existing slots and user metadata.
+
+On 29 October 2026, all six functional cases passed on `test2` with firmware
+0.1.98, including both directions of `consortium.py`. Its scan proved exactly
+six typed equipment locations across the four wires; fourteen fresh physical
+power-command assertions covered both activity cycles and the two thieves.
+Both activities/equipment were removed and member removal acknowledged its
+scheduled reset, with no cleanup errors. All four bench DUTs run the same
+verified image. Reports are in
+`test-results/consortium-live-config-2026-10-29/functional.json` and
+`deployment.json`. This qualifies the exercised two-board, one-adapter-per-board
+normal-profile scenarios with simulated CEC equipment; historical records above
+retain their original scope.
+
 ## DUTs and wiring
 
 `DUT("amity-dut")` implicitly reads `TEST-HARNESS.md`.
@@ -433,8 +494,9 @@ python3 cec-harness/run.py \
 
 The default remains `hdmi_scan`. Select `--test activity` for both the activity
 power-cycle and explicit switch-input sub-tests, `--test source_theft` for unselected-source recovery,
-`--test add_amity` for adding and removing the second board, or `--test all`
-for all four registered scenarios (five test cases). The same credentials, TLS, SSH and output
+`--test add_amity` for adding and removing the second board, `--test consortium`
+for the two-owner equipment scenario, or `--test all` for all five registered
+scenarios (six test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
 The Add Amity test uses only the main's credentials in the normal admission

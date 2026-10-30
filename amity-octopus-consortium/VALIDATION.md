@@ -15,6 +15,77 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Consortium activities and live discovery — 29 October 2026
+
+Firmware 0.1.98/Matter software 99 adds the two-Amity functional scenario in
+[`consortium.py`](../cec-harness/functional_tests/consortium.py). Main
+`amity-dut` and member `amity-dut-2` each have a TV on adapter 0/front, an AVR
+on adapter 0/back and a player behind AVR input 1. Both activity roles are
+exercised. The scan asserts exact membership and six typed owner/adapter/side
+locations. Fourteen fresh physical power-command assertions cover start,
+directed source-theft suppression and standby, with AVR routing and retained
+active-source checks. Virtual traffic cannot satisfy those assertions.
+
+Activity saves preserve member TLS connections and HDMI caches. Only boot,
+explicit UI requests and required-device cache misses initiate enumeration.
+`Hub::find_device` alone owns cached lookup, per-owner/adapter/side two-minute
+miss throttling and the subsequent lookup. Valid announcements update the
+cache independently of saved configuration. Source policy uses the current
+activity, including global standby, without an owner inactive flag. An activity
+still in flight is not active: an early announcement may legitimately receive
+Standby, and the normal activation sequence later powers that device on. No
+pending-context timing exception or saved-selector cache-loss workaround remains.
+
+Activity start and standby steps execute sequentially within each Amity, waiting
+for each lookup and admitted transmission before the next step; different
+Amities may progress concurrently. The original wait-for-release input gate
+discards presses during setup before pressed-state registration. Unregistered
+releases are no-ops; preexisting key cleanup, normal independent keys and the
+ungated long-Power repair remain. Baseline comparisons use Python Amity's
+`ControllerImpl.get_device`, sequential activity methods and CEC completion
+behavior. Host regressions exercise actual Hub, HubService, SystemSync and
+Session code, unsolicited device announcements, live revision changes over one
+TLS link, owner-local source policy, scan throttling and frame ordering.
+
+The complete host runner passes with 287 framework units and the native build
+passes 36 public-record layout checks. Evidence is private under
+`test-results/consortium-live-config-2026-10-29/`: `host-tests-complete.log`,
+`build-complete.log` and `contracts-complete.json`. The frozen application in
+`firmware-0.1.98-final/` is 2,414,032 bytes in the 3,997,696-byte slot (40% free),
+SHA-256 `383ceed1c39eacc6423fc893361343a828f78bdb04616ebbe20f8726ff94f560`,
+ELF SHA-256 `de300e3e6b7c4ec75b5eaa9a935ca44e307e78c914ae08260efa11216d3f5739`.
+Its provenance remains parent `1be1436` with `source_dirty=true`; the later
+change commit does not make this a clean committed-source build.
+
+All four DUTs run that exact image. Main used existing authenticated application
+OTA, passing 13 preservation checks, without USB access. Boards 2/3/4 used
+MAC-locked application-only USB writes, full backups and protected-flash
+comparisons before reboot; each passes 18 checks, including factory identity,
+automatic Matter setup and the SDK admission self-test. Updates used no full
+erase or factory reset. `deployment.json` and the four individual deployment
+reports retain the evidence. The intermediate 0.1.97 deployment and failing
+consortium attempts remain separately recorded, not relabeled as passes.
+
+Final `functional.json` passes all six cases: HDMI scan, activity, explicit
+switch input, source theft, Add Amity and consortium. Every testbed passes with
+no cleanup errors. The consortium run removes its two activities and six
+equipment records before removing the member; removal completes with reset
+scheduled and no retained member. Final `main-final-postcheck.json` passes 23
+read-only checks and logs out. Main retains its post-OTA boot, original
+authority, all saved values except normal revision metadata, two Matter fabrics,
+HomeKit state and all sixteen preexisting reserved slots. No new slots or
+active fixture peers remain. An initial read-only verifier retained the previous
+task's thirteen-slot/three-new-slot expectations; its failed report is preserved.
+Correcting those baseline expectations required no DUT mutation.
+
+Physical scope is normal admission and distributed activity/source suppression
+on these two Amities with one adapter each and simulated HDMI-CEC equipment.
+Three-owner operation, strict-profile enrollment, real AV/remote behavior,
+four-adapter electrical/load timing and production security remain separate
+qualification gates. No new firmware API or functional-test control surface was
+introduced. Permanent behavior requirements are recorded in
+[AGENTS.md](../AGENTS.md).
+
 ## Current saved format only — 29 October 2026
 
 Firmware 0.1.96/Matter software 97 removes older saved-format readers, migration
@@ -444,4 +515,4 @@ The earlier graph-model schema/vector counts and firmware checks belong to their
 
 ## Physical scope
 
-Documentation and host tests do not establish physical qualification. The local scan/activity result above is limited to amity-dut and one adapter with simulated HDMI-CEC equipment; it does not establish ESP32 radio delivery, real AV/remote behavior, four-adapter timing, ecosystem retention or production security. Record actual device identity, image/source, configuration, input/observations and wire captures separately for each physical result.
+Documentation and host tests do not establish physical qualification. The latest consortium result above covers main/member2 radio delivery and distributed activity/source policy on one adapter each with simulated HDMI-CEC equipment. Earlier local-only results retain their narrower scope. These results do not establish real AV/remote behavior, three-owner operation, four-adapter timing, complete ecosystem recovery or production security. Record actual device identity, image/source, configuration, input/observations and wire captures separately for each physical result.

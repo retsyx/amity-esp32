@@ -246,10 +246,98 @@ class ScanResult:
     started: int = 0
     initiators: dict = field(default_factory=dict)
     locations: list = field(default_factory=list)
+    owner_boots: dict = field(default_factory=dict)
+    owner_duts: dict = field(default_factory=dict, repr=False, compare=False)
     _session: object = field(default=None, repr=False, compare=False)
+    _testbed: object = field(default=None, repr=False, compare=False)
     _deadline: float = field(default=0, repr=False, compare=False)
     _boot: str = field(default="", repr=False, compare=False)
+    _group: str = field(default="", repr=False, compare=False)
     _generation: object = field(default=None, repr=False, compare=False)
+
+    def _capture_owners(self, system):
+        """Capture only members explicitly proven by this active test bed."""
+        local = self.dut.identity.device_id
+        self.owner_duts = {local: self.dut}
+        self.owner_boots = {local: self._boot}
+        bed = self._testbed
+        proofs = getattr(bed, "_member_proofs", {}) if bed is not None else {}
+        expected_owners = {component.dut.identity.device_id for component in self.expected}
+        for owner, proof in proofs.items():
+            if owner not in expected_owners or getattr(proof, "main", None) is not self.dut:
+                continue
+            candidate = getattr(proof, "candidate", None)
+            if owner != getattr(getattr(candidate, "identity", None), "device_id", None):
+                raise AssertionError("The scan member proof has a mismatched DUT identity")
+            self.owner_duts[owner] = candidate
+            self.owner_boots[owner] = getattr(proof, "member_boot", None)
+        self._group = system.get("consortium_id", "")
+        self.validate_owners(_system=system)
+
+    def validate_owners(self, components=None, *, _system=None):
+        """Fence captured owners using the main's existing UI membership data.
+
+        A member has no HTTP session. Its identity and boot must have been
+        proven by Add Amity in this same bed and must still be enrolled and
+        ready in a fresh coordinator snapshot. These are test-evidence fences,
+        not permissions or a discovery policy installed in the firmware.
+        """
+        requested = self.expected if components is None else tuple(components)
+        local = self.dut.identity.device_id
+        if any(component not in self.expected for component in requested):
+            raise AssertionError("The scan owner assertion includes an unknown component")
+        system = self.dut.get_system() if _system is None else _system
+        if (not isinstance(system, dict) or system.get("octopus_id") != local
+                or system.get("boot_id") != self._boot
+                or self._group and system.get("consortium_id") != self._group):
+            raise AssertionError("The scan coordinator changed boot or system identity")
+        if self.owner_boots.get(local, self._boot) != self._boot:
+            raise AssertionError("The captured coordinator boot does not match the scan")
+        remote = {component.dut.identity.device_id for component in requested if component.dut is not self.dut}
+        if not remote:
+            return dict(self.owner_boots or {local: self._boot})
+        bed = self._testbed
+        if (bed is None or not getattr(bed, "_entered", False) or getattr(bed, "_closed", True)
+                or getattr(bed, "session", None) is not self._session
+                or getattr(self.dut, "_testbed", None) is not bed):
+            raise AssertionError("Distributed scan owners need the same active TestBed and CEC session")
+        wires = {}
+        for component in self.expected:
+            wires.setdefault(component.gpio, set()).add(component.dut.identity.device_id)
+        if any(len(owners) != 1 for owners in wires.values()):
+            raise AssertionError("A scan GPIO cannot belong to different DUT owners")
+        membership = system.get("membership", {})
+        peers = membership.get("peers")
+        if (not _identifier(self._boot) or not _identifier(self._group)
+                or system.get("mode") != "coordinator" or system.get("ready") is not True
+                or membership.get("coordinator") is not True or membership.get("authority_ready") is not True
+                or membership.get("member") is not False or not isinstance(peers, list)
+                or any(not isinstance(peer, dict) or not _identifier(peer.get("octopus_id")) for peer in peers)
+                or len({peer["octopus_id"] for peer in peers}) != len(peers)):
+            raise AssertionError("The scan has no valid ready coordinator membership snapshot")
+        proofs = getattr(bed, "_member_proofs", {})
+        for owner in remote:
+            owner_dut, proof = self.owner_duts.get(owner), proofs.get(owner)
+            boot = self.owner_boots.get(owner)
+            current = [peer for peer in peers if peer["octopus_id"] == owner]
+            if (owner_dut is None or not _identifier(boot) or proof is None
+                    or getattr(owner_dut, "_testbed", None) is not bed
+                    or not any(owner_dut is dut for dut in bed.duts)
+                    or not any(owner_dut is dut for dut in getattr(bed, "members", ()))
+                    or getattr(proof, "main", None) is not self.dut
+                    or getattr(proof, "candidate", None) is not owner_dut
+                    or getattr(proof, "session", None) is not self._session
+                    or getattr(proof, "device_id", None) != owner
+                    or getattr(proof, "_created", False) is not True or getattr(proof, "_closed", True)
+                    or getattr(proof, "boot", None) != self._boot or getattr(proof, "group", None) != self._group
+                    or getattr(proof, "member_boot", None) != boot
+                    or len(current) != 1 or current[0].get("enrolled") is not True
+                    or current[0].get("ready") is not True or current[0].get("boot_id") != boot):
+                raise AssertionError("The scan member is unproven, unready, retired or changed boot")
+            for component in requested:
+                if component.dut.identity.device_id == owner and component.dut is not owner_dut:
+                    raise AssertionError("The scan component has a different owner DUT object")
+        return dict(self.owner_boots)
 
     def _retain(self, state=None):
         if state is not None:
@@ -267,16 +355,21 @@ class ScanResult:
         return remaining
 
     def _matching_rows(self, components):
-        matches = _matching_devices(self.status, components)
+        distributed = any(component.dut is not self.dut for component in self.expected)
+        matches = None if distributed else _matching_devices(self.status, components)
         if matches is not None:
             return matches
         # Persisted equipment labels are UI presentation, not the OSD selector.
         # Only those rows need the existing config API to recover the name.
         rows = self.status.get("devices", [])
-        if not any(isinstance(row, dict) and str(row.get("name", "")).startswith("component:") for row in rows):
+        if not distributed and not any(isinstance(row, dict) and str(row.get("name", "")).startswith("component:") for row in rows):
             return None
         catalog = _ObservedEquipment(self.dut, self.status)
+        if distributed:
+            self.validate_owners(_system=catalog.system)
         resolved = [catalog.resolve(row) for row in rows]
+        if distributed and any(name["octopus_id"] not in self.owner_boots for _, name, _ in resolved):
+            raise AssertionError("The HDMI scan contains an unsolicited equipment owner")
         matches = []
         for component in components:
             candidates = [row for row, name, runtime in resolved
@@ -299,6 +392,8 @@ class ScanResult:
         self._retain(state)
         if state.get("expected_boot_id") != self._boot:
             raise AssertionError("DUT restarted during the HDMI scan")
+        if any(component.dut is not self.dut for component in self.expected):
+            self.validate_owners()
 
     def assert_contains(self, *components):
         """Require requested identities and fresh physical RX/TX, awaiting late metadata.
@@ -310,8 +405,8 @@ class ScanResult:
         if not self.started:
             raise AssertionError("The HDMI scan has not started")
         for component in components:
-            if component not in self.expected or component.dut is not self.dut:
-                raise AssertionError(f"{component.name} was not a powered component attached to {self.dut.name} for this scan")
+            if component not in self.expected:
+                raise AssertionError(f"{component.name} was not a powered component of an authorized scan owner")
         if (not self.status.get("discovering", False)
                 and self.status.get("discovery_generation") != self._generation
                 and self.status.get("expected_boot_id") == self._boot
@@ -346,6 +441,8 @@ class ScanResult:
         if not rows:
             return self
         catalog = _ObservedEquipment(self.dut, self.status)
+        if any(component.dut is not self.dut for component in self.expected):
+            self.validate_owners(components, _system=catalog.system)
         resolved = [catalog.resolve(row) for row in rows]
         selected = []
         for component in components:
@@ -369,6 +466,8 @@ class ScanResult:
         if not isinstance(rows, list):
             raise AssertionError("The HDMI scan has no equipment list")
         catalog = _ObservedEquipment(self.dut, self.status)
+        if any(component.dut is not self.dut for component in self.expected):
+            self.validate_owners((component,), _system=catalog.system)
         resolved = [catalog.resolve(row) for row in rows]
         matches = [item for item in resolved if _observed_matches(item, component, endpoint)]
         if len(matches) != 1:
@@ -389,9 +488,13 @@ def scan_hdmi(dut, session, *, timeout=90):
     """
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Scan timeout must be positive and finite")
+    bed = getattr(dut, "_testbed", None)
+    proofs = getattr(bed, "_member_proofs", {}) if bed is not None else {}
     expected = tuple(component for component in session.components
-                     if component.dut is dut and component.power.value != "off")
+                     if (component.dut is dut or component.dut.identity.device_id in proofs)
+                     and component.power.value != "off")
     result = ScanResult(dut, expected=expected, _session=session,
+                        _testbed=bed,
                         _deadline=time.monotonic() + timeout)
     dut.last_scan = result
 
@@ -409,6 +512,14 @@ def scan_hdmi(dut, session, *, timeout=90):
         before = dut.wait_for(idle, timeout=result._remaining())
         result._generation = before["discovery_generation"]
         result._boot = before["expected_boot_id"]
+        # Local discovery retains its status boot fence; distributed evidence
+        # additionally captures each explicitly proven member's current boot.
+        if any(component.dut is not dut for component in expected):
+            result._capture_owners(dut.get_system())
+        else:
+            result.owner_duts = {dut.identity.device_id: dut}
+            result.owner_boots = {dut.identity.device_id: result._boot}
+            result._group = system.get("consortium_id", "")
         result.started = time.monotonic_ns()
         result.operation = dut.start_hdmi_scan()
         saw_discovering = False

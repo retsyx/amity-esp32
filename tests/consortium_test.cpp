@@ -88,6 +88,72 @@ void original_controller_tests(){
     for(auto role:{Group::member,Group::prepared,Group::retired}){group.role=role;assert(controller_membership_compatible(group)&&!original_controller(group,local));}group.role=Group::coordinator;group.epoch=2;assert(!controller_membership_compatible(group));
     for(auto role:{PeerRole::coordinator,PeerRole::actuator}){const auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(unsigned number:{2u,3u,4u,5u,6u,12u,13u,18u,19u,20u,21u,22u,23u,24u,25u,26u,33u,34u,35u,36u}){auto e=envelope(sc);e.kind=static_cast<Kind>(number);assert(retired_kind(e.kind)&&session.admit(e,100,100,false)==Error::unauthorized_role);}}}
     auto profile=hello(scope());assert(execution_profile_supported(profile,true,true,4,15));profile.required_capabilities&=~qualified_lookup;assert(!execution_profile_supported(profile,true,true,1,1));profile.optional_capabilities|=qualified_lookup;assert(execution_profile_supported(profile,true,true,1,1));assert(!execution_profile_supported(profile,false,true,1,1)&&!execution_profile_supported(profile,true,false,4,15));
+    profile.required_capabilities&=~live_configuration;assert(!execution_profile_supported(profile,true,true,4,15));profile.optional_capabilities|=live_configuration;assert(execution_profile_supported(profile,true,true,4,15));
+}
+void live_configuration_tests(){
+    const auto old=scope();Session session;JsonError detail;
+    const auto start=[&](Session& value,PeerRole role=PeerRole::coordinator,uint32_t caps=known_capabilities){
+        auto h=hello(old);h.required_capabilities=caps;
+        assert(value.authenticate(old,old.peer_id,role,true)==Error::none&&value.hello(h,known_capabilities)==Error::none&&value.synchronized(old.config_revision,true,true)==Error::none);
+    };
+    start(session);
+    auto heartbeat=envelope(old);assert(parse_json("{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}",heartbeat.payload,detail));
+    assert(session.admit(heartbeat,100,100)==Error::none);
+    const auto prior=ident<m::ExecutionLeaseId>(71);assert(session.execution_leases().issue(prior,LeaseClass::control,5000,100)==Error::none);
+    for(auto invalid:{0u,6u,7u})assert(session.advance_configuration(invalid)==Error::stale_config);
+    assert(session.advance_configuration(8)==Error::none);
+    auto current=old;current.config_revision=8;assert(session.scope()==current&&session.state()==ConnectionState::ready);
+    assert(session.execution_leases().live(LeaseClass::control,101)==0&&!session.execution_leases().valid(prior,LeaseClass::control,current,101));
+    assert(session.discard_stale(heartbeat,100,101)==Error::duplicate); // Replay history survived the revision change.
+    heartbeat.config_revision=8;assert(session.admit(heartbeat,100,101)==Error::duplicate);
+    auto intent=envelope(current);intent.message_id=ident<m::MessageId>(72);intent.kind=Kind::scoped_intent;
+    assert(parse_json(owned_intent_json(action(current),prior),intent.payload,detail));
+    assert(session.admit(intent,101,101,false)==Error::lease_expired); // No lease transplant.
+    const auto fresh=ident<m::ExecutionLeaseId>(73);assert(session.execution_leases().issue(fresh,LeaseClass::control,5000,101)==Error::none);
+    assert(parse_json(owned_intent_json(action(current),fresh),intent.payload,detail));assert(session.admit(intent,101,102)==Error::none);
+    auto stale=envelope(old);stale.message_id=ident<m::MessageId>(74);stale.payload=heartbeat.payload;
+    assert(session.admit(stale,100,102)==Error::stale_config);
+    assert(session.discard_stale(stale,100,102,false)==Error::none&&session.discard_stale(stale,100,102)==Error::none);
+    assert(session.discard_stale(stale,100,103)==Error::duplicate);
+    stale.config_revision=8;assert(session.admit(stale,100,103)==Error::duplicate);
+    stale.message_id=ident<m::MessageId>(75);
+    for(auto invalid:{0u,8u,9u}){stale.config_revision=invalid;assert(session.discard_stale(stale,100,103,false)==Error::stale_config);}
+    stale.config_revision=7;
+    for(unsigned field=0;field<9;++field){auto bad=stale;switch(field){
+        case 0:bad.consortium_id=ident<m::ConsortiumId>(99);break;
+        case 1:bad.origin_octopus_id=ident<m::OctopusId>(99);break;
+        case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
+        case 3:bad.origin_boot_id=ident<m::BootId>(99);break;
+        case 4:bad.destination_boot_id=ident<m::BootId>(99);break;
+        case 5:bad.coordinator_epoch=2;break;
+        case 6:bad.message_id={};break;
+        case 7:bad.ttl_ms=0;break;
+        case 8:bad.ttl_ms=10001;break;
+    }assert(session.discard_stale(bad,100,103,false)!=Error::none);}
+    assert(session.discard_stale(stale,100,99,false)==Error::invalid_message&&session.discard_stale(stale,100,10100,false)==Error::invalid_message);
+    auto malformed=stale;malformed.payload.object.emplace_back("unknown",Json{});assert(session.discard_stale(malformed,100,103,false)==Error::invalid_message);
+    auto foreign=envelope(old);foreign.message_id=ident<m::MessageId>(76);foreign.kind=Kind::scoped_intent;auto target=action(old);target.target.port.octopus_id=old.peer_id;
+    assert(parse_json(owned_intent_json(target,prior),foreign.payload,detail));assert(session.discard_stale(foreign,100,103,false)==Error::target_not_local);
+    target=action(old);assert(parse_json(owned_intent_json(target,prior),foreign.payload,detail));
+    assert(session.discard_stale(foreign,100,103)==Error::none); // Discarding obsolete work grants no execution authority.
+    assert(session.execution_leases().live(LeaseClass::control,104)==1);
+    auto snapshot=envelope(current);snapshot.message_id=ident<m::MessageId>(77);snapshot.kind=Kind::snapshot_request;
+    assert(session.admit(snapshot,100,104,false)==Error::none);snapshot.kind=Kind::snapshot_chunk;assert(session.admit(snapshot,100,104,false)==Error::none);
+    Session missing;start(missing,PeerRole::coordinator,known_capabilities&~live_configuration);
+    assert(missing.advance_configuration(8)==Error::unsupported_kind&&missing.admit(snapshot,100,104,false)==Error::stale_config);
+    snapshot.config_revision=7;assert(missing.admit(snapshot,100,104,false)==Error::unauthorized_role);
+    missing.restrict_management();auto update=envelope(old);update.kind=Kind::update_begin;assert(missing.admit(update,100,104,false)==Error::none);
+    assert(missing.advance_configuration(8)==Error::not_ready); // Older peers remain update-capable, never operational.
+    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.admit(snapshot,100,104,false)==Error::unsupported_kind);
+    Session actuator;start(actuator,PeerRole::actuator);assert(actuator.advance_configuration(8)==Error::none);
+    auto wrong_role=foreign;assert(actuator.discard_stale(wrong_role,100,104,false)==Error::unauthorized_role);
+    auto lease_frame=envelope(old);lease_frame.kind=Kind::execution_lease;lease_frame.message_id=ident<m::MessageId>(78);
+    assert(parse_json("{\"lease_id\":\""+prior.str()+"\",\"link_id\":\""+old.link_id.str()+"\",\"class\":\"control\",\"validity_ms\":1000}",lease_frame.payload,detail));
+    assert(actuator.discard_stale(lease_frame,100,104,false)==Error::none);lease_frame.payload.get("link_id")->string=ident<m::LinkId>(99).str();assert(actuator.discard_stale(lease_frame,100,104,false)==Error::identity_conflict);
+    Session no_hostname;start(no_hostname,PeerRole::actuator,known_capabilities&~hostname_metadata);assert(no_hostname.advance_configuration(8)==Error::none);
+    auto name=envelope(old);name.kind=Kind::device_status;assert(parse_json("{\"hostname\":\"member\"}",name.payload,detail));assert(no_hostname.discard_stale(name,100,104,false)==Error::unsupported_kind);
+    session.restrict_lifecycle();assert(session.advance_configuration(9)==Error::not_ready&&session.discard_stale(stale,100,104,false)==Error::not_ready);
+    Session negotiating;assert(negotiating.authenticate(old,old.peer_id,PeerRole::coordinator,true)==Error::none);assert(negotiating.advance_configuration(8)==Error::not_ready);
 }
 void hello_profile_tests(){
     auto value=hello(scope());value.firmware_identity=std::string(64,'a');value.config_hash=std::string(64,'b');
@@ -232,4 +298,4 @@ void bootstrap_tests(){
     records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());EnrollmentWindow window;assert(!window.open(false,0));assert(window.open(true,0));for(int i=0;i<5;++i){assert(window.admit(i));assert(!window.admit(i));window.failed_proof();}assert(!window.available(100));assert(window.open(true,100));assert(!window.available(180100));
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope()),ident<m::ExecutionLeaseId>(14)));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, exact authority/boots/config/lease/replay fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope()),ident<m::ExecutionLeaseId>(14)));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();live_configuration_tests();update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, exact authority/boots/config/lease/replay fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

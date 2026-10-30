@@ -55,6 +55,9 @@ public:
     virtual ~Transport() = default;
     virtual bool send(BusSide side, uint8_t destination, const uint8_t *data, size_t size) = 0;
     virtual void request_scan() = 0;
+    // A failed recipient lookup must not enumerate the other isolated wire.
+    virtual bool request_scan(BusSide) { request_scan(); return false; }
+    virtual bool activity_step_pending() const { return false; }
     // Fence queued wire work before an endpoint can identify another appliance.
     virtual void invalidate_binding(BusSide, uint8_t) {}
 };
@@ -62,7 +65,8 @@ public:
 class Hub {
 public:
     explicit Hub(Transport &transport) : transport_(transport) {}
-    void configure(std::vector<Activity> activities);
+    using ActionReady = std::function<void()>;
+    bool configure(std::vector<Activity> activities, ActionReady ready = {});
     using OwnedSender = std::function<system::OwnedDispatchResult(const system::OwnedIntent&)>;
     // Dispatch stamps the caller's request synchronously; senders only read it.
     // A callback retaining work beyond the call must own its own copy.
@@ -76,7 +80,6 @@ public:
     bool held_recipient(uint8_t key,BusSide side,uint8_t address)const;
     // Owner-local actions reuse the same original translation and held state.
     bool execute_owned(const system::OwnedIntent&);
-    bool owned_target_available(const system::QualifiedDeviceName&);
     void owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
     void fence_owned_owner(system::OctopusId);
     bool refresh_owned_context(system::OctopusId owner){return publish_owned_context(false,owner);}
@@ -84,7 +87,7 @@ public:
     void scoped_audio_status(bool known, bool muted, uint8_t volume);
     void set_addresses(uint8_t front, uint8_t back, uint16_t physical = 0x1000);
     void announce(BusSide side);
-    bool select_activity(int index);
+    bool select_activity(int index, ActionReady ready = {});
     bool press_key(uint8_t key, bool repeat = false);
     // Admit the operand-free final release when this recipient's last held
     // key ends. Releasing one raw key never changes another key's state.
@@ -92,22 +95,26 @@ public:
     // Activity changes and explicit global cancellation release every key.
     bool release_key();
     void tick(uint64_t now_us);
-    void standby();
+    bool standby(ActionReady ready = {});
     void force_standby();
     void fix_current_activity();
-    void receive(BusSide side, const cec::Frame &frame);
+    enum class ReceiveStep : uint8_t { Frame, Input, Switch, Announce, ForceBack, Done };
+    uint8_t receive(BusSide side, const cec::Frame &frame, ReceiveStep step = ReceiveStep::Frame);
+    ReceiveStep receive_step() const { return receive_step_; }
     void discovered(BusSide side, uint8_t address);
     void clear_devices();
-    void begin_discovery();
+    void begin_discovery(uint8_t sides = 3);
     void determine_front_physical_address(uint16_t fallback);
     void finish_discovery();
-    bool activity_needs_discovery(int index) const;
-    bool key_needs_discovery(uint8_t key) const;
+    // Callers submit the same operation again only when this opaque lookup
+    // continuation is ready. Cache access and scan throttling stay in get_device.
+    uint8_t pending_resolution() const { return pending_resolution_; }
+    bool activity_pending() const { return activity_execution_.has_value(); }
+    Device *find_device(const std::string &name, std::optional<BusSide> side = {});
     Snapshot snapshot() const;
     uint32_t activity_generation() const { return activity_generation_; }
 private:
-    Device *find(const std::string &name);
-    const Device *known(const std::string &name) const;
+    BusSide lookup_side(const std::string &name) const;
     Device *discovery_device(BusSide side, uint8_t address);
     void resolve_device(BusSide side, uint8_t address, bool restore_route);
     void invalidate_endpoint(BusSide side, uint8_t address);
@@ -119,9 +126,9 @@ private:
     void active_source(const std::string& display = {});
     void identity(BusSide side, const cec::Frame &frame);
     void source_thief(const cec::Frame&);
+    uint8_t resume_received();
     void request_audio_status(bool resolved_input = false);
     bool audio_key_held() const;
-    Device *find_on_side(BusSide, const std::string&);
     bool press_device(const Device*, uint8_t key, bool repeat);
     bool finite_press(const Device&, const uint8_t*, size_t);
     std::optional<system::QualifiedDeviceName> target(const std::string&) const;
@@ -136,13 +143,23 @@ private:
     std::vector<PendingInput> pending_inputs_;
     uint64_t current_input_sequence_=0;
     bool qualified_names_=false;
-    mutable Device scoped_device_;
+    Device scoped_device_;
     uint64_t owned_generation_ = 1;
     std::optional<BusSide> owner_source_side_, owner_audio_side_;
     std::vector<Activity> activities_;
+    // The original activity function's local variables survive an async
+    // device lookup/TX wait. No CEC frame or executable plan is retained.
+    struct ActivityExecution {
+        enum class Step { Off, On, Source, Switch, Announce, Commit, Audio, ForceFront, ForceBack, Finish };
+        Activity before,after;std::vector<std::string> before_names,after_names;
+        int target=-1;size_t cursor=0;Step step=Step::Off;bool repair=false,waiting_tx=false;
+    };
+    std::optional<ActivityExecution> activity_execution_;
     std::vector<Device> devices_;
     std::vector<Device> discovery_;
     bool discovering_ = false;
+    uint8_t pending_resolution_ = 0;
+    ReceiveStep receive_step_ = ReceiveStep::Frame;
     int selected_ = -1;
     std::optional<int> lookup_previous_selection_;
     uint32_t lookup_previous_generation_=0;
