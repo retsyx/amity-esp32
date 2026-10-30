@@ -3,6 +3,7 @@
 from pathlib import Path
 import os,shlex,subprocess,tempfile
 from consortium_gatt_callback_test import function
+from setup_timing_support import timing_support
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
 #include "hostname_registry.hpp"
@@ -82,7 +83,7 @@ def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()
  actual=function(source,'esp_err_t bootstrap_request(')+function(source,'bool exchange_hostname(')
  with tempfile.TemporaryDirectory(prefix='amity-hostname-') as directory:
-  cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(PREFIX+actual+SUITE)
+  cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+SUITE)
   sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp','enrollment.cpp']]+[ROOT/'components/amity_system/model.cpp']
   subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined']+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+[str(cpp)]+list(map(str,sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)

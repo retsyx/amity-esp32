@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import tempfile
 from consortium_gatt_callback_test import function
+from setup_timing_support import timing_support
 
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
@@ -18,6 +19,7 @@ PREFIX=r'''
 #define MBEDTLS_PRIVATE(value) value
 constexpr int MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE=-0x7480;
 constexpr int MBEDTLS_ERR_SSL_WANT_READ=-1,MBEDTLS_ERR_SSL_WANT_WRITE=-2;
+constexpr int MBEDTLS_ERR_SSL_TIMEOUT=-5;
 constexpr int MBEDTLS_SSL_ALERT_LEVEL_FATAL=2,MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE=40;
 constexpr int SHUT_WR=1,MSG_DONTWAIT=64,F_GETFL=3,F_SETFL=4,O_NONBLOCK=2048;
 struct mbedtls_ssl_context{size_t out_left=0;};
@@ -42,7 +44,7 @@ int recv(int,void*,size_t size,int flags){
     if(available_bytes){const auto count=std::min(available_bytes,size);available_bytes-=count;received_bytes+=count;return static_cast<int>(count);}
     errno=EAGAIN;return -1;
 }
-struct TlsLink{mbedtls_ssl_context ssl;int socket=31;bool server=true,authenticated=true;bool handshake();};
+struct TlsLink{mbedtls_ssl_context ssl;int socket=31;bool server=true;amity::system::OctopusId authenticated=*amity::system::OctopusId::parse("00000000000000000000000000000001");uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;bool handshake();};
 void reset(){clock_ms=0;handshake_error=handshake_calls=verify_flags=alerts=flushes=shutdowns=fcntl_flags=0;available_bytes=received_bytes=0;blocked_alert=fcntl_failure=false;}
 void check(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 '''
@@ -59,7 +61,7 @@ int main(){try{
     {reset();TlsLink link;handshake_error=MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE;fcntl_failure=true;
      check(!link.handshake()&&alerts==0&&shutdowns==0&&clock_ms==0,"failed nonblocking setup allowed potentially blocking reject path");}
     {reset();TlsLink link;check(link.handshake()&&alerts==0&&shutdowns==0,"valid authenticated TLS no longer succeeds");}
-    {reset();TlsLink link;link.authenticated=false;check(!link.handshake(),"unrecognized leaf gained authentication");}
+    {reset();TlsLink link;link.authenticated={};check(!link.handshake(),"unrecognized leaf gained authentication");}
     {reset();TlsLink link;verify_flags=1;check(!link.handshake(),"bad verification flags gained authentication");}
     std::cout<<"PASS actual TLS rejection/handshake: exact missing-cert alert, pending-alert flush, nonblocking4KiB/250ms drain, no auth bypass or handshake retry\n";
     return 0;
@@ -71,8 +73,8 @@ def main():
     source=(ROOT/'components/consortium/tls_link.cpp').read_text()
     actual=function(source,'void reject_handshake(mbedtls_ssl_context &ssl,')+function(source,'bool TlsLink::handshake()')
     with tempfile.TemporaryDirectory(prefix='amity-tls-reject-') as directory:
-        cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(PREFIX+actual+SUITE)
-        subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',str(cpp),'-o',str(binary)],check=True)
+        cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+SUITE)
+        subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(ROOT/'components/consortium/include'),'-I'+str(ROOT/'components/amity_system/include'),str(cpp),'-o',str(binary)],check=True)
         return subprocess.run([str(binary)],check=False).returncode
 
 

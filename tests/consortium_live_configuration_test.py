@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import tempfile
 from consortium_gatt_callback_test import function
+from setup_timing_support import timing_support
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
@@ -311,7 +312,7 @@ def main():
         cpp, binary = temp / 'test.cpp', temp / 'test'
         trace = function(source, 'struct LinkTrace {').rstrip() + ';\n'
         prefix = PREFIX.replace('struct Active{', trace + 'struct Active{')
-        cpp.write_text(prefix + 'namespace amity::consortium {\n' + actual + queued + pump + refresh + '\n}\n' + SUPPORT + SUITE)
+        cpp.write_text(timing_support() + prefix + 'namespace amity::consortium {\n' + actual + queued + pump + refresh + '\n}\n' + SUPPORT + SUITE)
         sources = [ROOT / 'components/consortium' / name for name in
                    ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')

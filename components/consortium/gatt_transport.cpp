@@ -12,6 +12,7 @@
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 extern "C" {
 #include "host/ble_att.h"
 #include "host/ble_gap.h"
@@ -188,6 +189,43 @@ int on_read_fragment(uint16_t,const ble_gatt_error *error,ble_gatt_attr *attribu
 }
 bool wait(uint32_t ms){return !client_stopping.load()&&xSemaphoreTake(client_done,pdMS_TO_TICKS(ms))==pdTRUE&&!client_stopping.load()&&client_error.load()==0;}
 void clear_done(){while(xSemaphoreTake(client_done,0)==pdTRUE){}if(!client_stopping.load())client_error=0;}
+// One scalar summary per stage/record. Submission-to-completion wall time
+// includes SDK work, semaphore waits and scheduling; it is not CPU time.
+struct GattTiming {
+    const char* stage;const char* failure="precondition";
+    uint64_t started=now_ms(),reply_started=0,att_wait_ms=0,att_max_ms=0;
+    uint32_t record=0,request_writes=0,cursor_writes=0,reads=0,pending_reads=0,response_fragments=0;
+    uint16_t mtu=0,interval=0,latency=0;int status=0;unsigned endpoint=0;
+    bool exchange=false,successful=false,emitted=false;
+    explicit GattTiming(const char* value):stage(value){}
+    ~GattTiming(){emit();}
+    bool issued(int result){status=result;return result==0;}
+    bool await(uint64_t submitted,uint32_t timeout){
+        const bool result=wait(timeout);const auto elapsed=now_ms()-submitted;
+        att_wait_ms+=elapsed;att_max_ms=std::max(att_max_ms,elapsed);
+        if(!result)status=client_error.load();return result;
+    }
+    void done(){successful=true;failure="none";emit();}
+    void emit(){
+        if(emitted)return;emitted=true;const auto at=now_ms();
+        if(exchange)ESP_LOGI("setup_timing","area=gatt stage=%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s record=%u endpoint=%u request_ms=%llu reply_ms=%llu writes=%u cursors=%u reads=%u pending=%u fragments=%u att_wait_ms=%llu att_max_ms=%llu mtu=%u interval_units=%u latency=%u status=%d",
+            stage,static_cast<unsigned long long>(at),static_cast<unsigned long long>(at-started),successful?"ok":"failed",failure,unsigned(record),endpoint,
+            static_cast<unsigned long long>((reply_started?reply_started:at)-started),static_cast<unsigned long long>(reply_started?at-reply_started:0),
+            unsigned(request_writes),unsigned(cursor_writes),unsigned(reads),unsigned(pending_reads),unsigned(response_fragments),
+            static_cast<unsigned long long>(att_wait_ms),static_cast<unsigned long long>(att_max_ms),unsigned(mtu),unsigned(interval),unsigned(latency),status);
+        else ESP_LOGI("setup_timing","area=gatt stage=%s at_ms=%llu elapsed_ms=%llu result=%s failure=%s att_wait_ms=%llu mtu=%u interval_units=%u latency=%u status=%d",
+            stage,static_cast<unsigned long long>(at),static_cast<unsigned long long>(at-started),successful?"ok":"failed",failure,
+            static_cast<unsigned long long>(att_wait_ms),unsigned(mtu),unsigned(interval),unsigned(latency),status);
+    }
+};
+void capture_gatt_link(GattTiming& timing){
+    uint16_t connection;
+    {std::lock_guard<std::mutex> guard(client_mutex);connection=client_connection;}
+    if(connection==BLE_HS_CONN_HANDLE_NONE)return;
+    ble_gap_conn_desc description{};
+    if(ble_gap_conn_find(connection,&description)==0){timing.interval=description.conn_itvl;timing.latency=description.conn_latency;}
+    timing.mtu=ble_att_mtu(connection);
+}
 }
 esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=xQueueCreate(16,sizeof(Work));client_done=xSemaphoreCreateBinary();if(!work_queue||!client_done)return ESP_ERR_NO_MEM;
     static ble_gatt_chr_def chars[2]{};chars[0].uuid=&record_uuid.u;chars[0].access_cb=access;chars[0].flags=BLE_GATT_CHR_F_READ|BLE_GATT_CHR_F_WRITE;chars[0].val_handle=&attribute_handle;
@@ -228,6 +266,7 @@ esp_err_t gatt_client_discover(uint64_t gen,std::vector<RuntimeAdmissionCandidat
     return ESP_OK;
 }
 esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
+    GattTiming connection_timing("connect");
     void* token=nullptr;
     {std::lock_guard<std::mutex> guard(client_mutex);
         if(!client_workflow||client_stopping||client_generation!=gen||client_discovery_waiting||client_connection!=BLE_HS_CONN_HANDLE_NONE||client_callback_cookie==UINT32_MAX)return ESP_ERR_INVALID_STATE;
@@ -236,10 +275,13 @@ esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
         client_service_start=client_service_end=client_attribute=0;client_record=0;clear_done();
     }
     ble_gap_conn_params connect{};connect.scan_itvl=0x10;connect.scan_window=0x10;connect.itvl_min=24;connect.itvl_max=40;connect.supervision_timeout=400;
-    if(ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,&connect,client_gap,token)||!wait(11000))return ESP_FAIL;
+    connection_timing.failure="connect";const auto connecting=now_ms();
+    if(!connection_timing.issued(ble_gap_connect(BLE_OWN_ADDR_PUBLIC,&candidate_address,10000,&connect,client_gap,token))||!connection_timing.await(connecting,11000))return ESP_FAIL;
+    capture_gatt_link(connection_timing);connection_timing.done();
+    GattTiming mtu_timing("mtu");mtu_timing.failure="mtu";
     // Preferred MTU is not negotiated automatically. At the default 23 bytes,
     // real certificate proposals can exceed the bounded record assembly time.
-    clear_done();const auto mtu_status=ble_gattc_exchange_mtu(client_connection,on_mtu,token);
+    clear_done();const auto negotiating=now_ms();const auto mtu_status=ble_gattc_exchange_mtu(client_connection,on_mtu,token);
     if(mtu_status==BLE_HS_EALREADY){
         // NimBLE reports EALREADY once a request was sent, even while its reply
         // is pending. Use the exact connection's ATT event, not that status, as
@@ -247,35 +289,41 @@ esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
         std::lock_guard<std::mutex> guard(client_mutex);
         if(!current(token)||client_stopping||client_connection==BLE_HS_CONN_HANDLE_NONE)return ESP_FAIL;
         if(client_mtu_ready)complete(0);else client_mtu_waiting=true;
-    }else if(mtu_status)return ESP_FAIL;
-    if(!wait(5000))return ESP_FAIL;
-    clear_done();if(ble_gattc_disc_svc_by_uuid(client_connection,&service_uuid.u,on_service,token)||!wait(5000)||!client_service_start)return ESP_FAIL;
-    clear_done();if(ble_gattc_disc_chrs_by_uuid(client_connection,client_service_start,client_service_end,&record_uuid.u,on_characteristic,token)||!wait(5000)||!client_attribute)return ESP_FAIL;
+    }else if(!mtu_timing.issued(mtu_status))return ESP_FAIL;
+    if(!mtu_timing.await(negotiating,5000))return ESP_FAIL;
+    capture_gatt_link(mtu_timing);mtu_timing.done();
+    GattTiming service_timing("service");service_timing.failure="service";clear_done();const auto discovering_service=now_ms();
+    if(!service_timing.issued(ble_gattc_disc_svc_by_uuid(client_connection,&service_uuid.u,on_service,token))||!service_timing.await(discovering_service,5000)||!client_service_start)return ESP_FAIL;
+    capture_gatt_link(service_timing);service_timing.done();
+    GattTiming characteristic_timing("characteristic");characteristic_timing.failure="characteristic";clear_done();const auto discovering_characteristic=now_ms();
+    if(!characteristic_timing.issued(ble_gattc_disc_chrs_by_uuid(client_connection,client_service_start,client_service_end,&record_uuid.u,on_characteristic,token))||!characteristic_timing.await(discovering_characteristic,5000)||!client_attribute)return ESP_FAIL;
+    capture_gatt_link(characteristic_timing);characteristic_timing.done();
     return ESP_OK;
 }
-bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){if(request.empty()||request.size()>4096||client_connection==BLE_HS_CONN_HANDLE_NONE||client_record==UINT32_MAX)return false;const auto rid=++client_record;void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));const auto mtu=ble_att_mtu(client_connection);
+bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){GattTiming timing("exchange");timing.exchange=true;timing.endpoint=encrypted?1:0;if(request.empty()||request.size()>4096||client_connection==BLE_HS_CONN_HANDLE_NONE||client_record==UINT32_MAX)return false;const auto rid=++client_record;timing.record=rid;capture_gatt_link(timing);void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));const auto mtu=ble_att_mtu(client_connection);
     // The ATT value limit is 512 even when the negotiated MTU is 517 or 527.
     // Leave room for this protocol's ten-byte fragment header as well as the
     // write request's three-byte ATT header.
     const size_t fragment=mtu>13?std::min<size_t>(mtu-13,BLE_ATT_ATTR_MAX_LEN-10):7;
-    for(size_t offset=0;offset<request.size();offset+=fragment){auto count=std::min(fragment,request.size()-offset);uint8_t bytes[BLE_ATT_ATTR_MAX_LEN]={1,uint8_t(encrypted),uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(request.size()>>8),uint8_t(request.size()),uint8_t(offset>>8),uint8_t(offset)};memcpy(bytes+10,request.data()+offset,count);clear_done();if(ble_gattc_write_flat(client_connection,client_attribute,bytes,count+10,on_write,token)||!wait(5000))return false;}
-    const auto end=now_ms()+45000;size_t offset=0,total=0;response.clear();
+    for(size_t offset=0;offset<request.size();offset+=fragment){auto count=std::min(fragment,request.size()-offset);uint8_t bytes[BLE_ATT_ATTR_MAX_LEN]={1,uint8_t(encrypted),uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(request.size()>>8),uint8_t(request.size()),uint8_t(offset>>8),uint8_t(offset)};memcpy(bytes+10,request.data()+offset,count);clear_done();timing.failure="request_write";++timing.request_writes;const auto submitted=now_ms();if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,bytes,count+10,on_write,token))||!timing.await(submitted,5000))return false;}
+    const auto end=now_ms()+45000;timing.reply_started=now_ms();size_t offset=0,total=0;response.clear();
     while(now_ms()<end){
         uint8_t cursor[7]={2,uint8_t(rid>>24),uint8_t(rid>>16),uint8_t(rid>>8),uint8_t(rid),uint8_t(offset>>8),uint8_t(offset)};
-        clear_done();if(ble_gattc_write_flat(client_connection,client_attribute,cursor,sizeof(cursor),on_write,token)||!wait(5000))return false;
-        clear_done();if(ble_gattc_read(client_connection,client_attribute,on_read_fragment,token)||!wait(5000))return false;
+        clear_done();timing.failure="cursor_write";++timing.cursor_writes;const auto positioning=now_ms();if(!timing.issued(ble_gattc_write_flat(client_connection,client_attribute,cursor,sizeof(cursor),on_write,token))||!timing.await(positioning,5000))return false;
+        clear_done();timing.failure="response_read";++timing.reads;const auto reading=now_ms();if(!timing.issued(ble_gattc_read(client_connection,client_attribute,on_read_fragment,token))||!timing.await(reading,5000))return false;
         std::string bytes;{std::lock_guard<std::mutex> guard(client_mutex);bytes=client_response;}
         if(bytes.size()>=12&&uint8_t(bytes[0])==1){
             const uint32_t returned=(uint32_t(uint8_t(bytes[2]))<<24)|(uint32_t(uint8_t(bytes[3]))<<16)|(uint32_t(uint8_t(bytes[4]))<<8)|uint8_t(bytes[5]);
             const size_t length=(uint16_t(uint8_t(bytes[6]))<<8)|uint8_t(bytes[7]);
             const size_t cursor=(uint16_t(uint8_t(bytes[10]))<<8)|uint8_t(bytes[11]);
             if(returned==rid&&uint8_t(bytes[8])==uint8_t(encrypted)){
-                if(uint8_t(bytes[1])==2)return false;
-                if(uint8_t(bytes[1])==1){if(length>4096||!length||cursor!=offset||(total&&total!=length)||bytes.size()-12>length-offset)return false;total=length;if(bytes.size()==12)return false;response.append(bytes.data()+12,bytes.size()-12);offset=response.size();if(offset==total)return true;continue;}
+                if(uint8_t(bytes[1])==2){timing.failure="response_rejected";return false;}
+                if(uint8_t(bytes[1])==1){timing.failure="response_frame";if(length>4096||!length||cursor!=offset||(total&&total!=length)||bytes.size()-12>length-offset)return false;total=length;if(bytes.size()==12)return false;response.append(bytes.data()+12,bytes.size()-12);++timing.response_fragments;offset=response.size();if(offset==total){timing.done();return true;}continue;}
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(25));
+        ++timing.pending_reads;vTaskDelay(pdMS_TO_TICKS(25));
     }
+    timing.failure="response_deadline";
     return false;
 }
 void gatt_client_disconnect(){std::lock_guard<std::mutex> guard(client_mutex);if(!client_workflow)return;client_stopping=true;client_workflow=false;client_discovery_waiting=false;client_mtu_ready=client_mtu_waiting=false;discovered.clear();ble_gap_disc_cancel();ble_gap_conn_cancel();if(client_connection!=BLE_HS_CONN_HANDLE_NONE){cancelled_client=client_connection;ble_gap_terminate(client_connection,BLE_ERR_REM_USER_CONN_TERM);}client_connection=BLE_HS_CONN_HANDLE_NONE;if(client_callback_cookie<UINT32_MAX)++client_callback_cookie;complete(BLE_HS_ENOTCONN);}

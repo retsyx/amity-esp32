@@ -15,6 +15,16 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Enrollment phase investigation — 30 October 2026
+
+Firmware 0.1.106 / Matter software 107 adds bounded ordinary setup-phase timing
+logs without changing admission or transport policy. Native fixtures verify
+unchanged GATT record bytes, operation counts, deadlines and callbacks, along
+with logging outside transport locks. The new measurements use the existing
+authenticated UI endpoints and normal reviewed fixture removal. No USB monitor
+is used during enrollment. Build, deployment and measured results are pending;
+the complete physical-suite qualification below remains specific to 0.1.105.
+
 ## 0.1.105 complete functional suite and Add timing — 30 October 2026
 
 All four DUTs run exact 0.1.105 / Matter software 106 from firmware commit

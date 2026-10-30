@@ -110,6 +110,26 @@ no durable activity journal, execution approval or new API.
 
 Cancellation and restart follow actual pre- or post-commit state. Abort removes provisional trust before commit; post-commit removal remains explicit. Prepared exact-pin LAN transactions may reconcile without reopening BLE. New admission sessions still require a physically opened candidate window. Scanning and admission run directly on the main; another member does not relay them.
 
+## Setup timing diagnostics
+
+Ordinary `setup_timing` logs trace admission submission/worker dispatch, BLE
+connection and record exchanges, prepared LAN authentication, durable enrollment,
+member restart/reconnection and initial configuration synchronization. Stage
+records use monotonic device milliseconds with static stage/result labels,
+peer/link/scan identifiers and bounded scalar counters. BLE summaries report
+negotiated connection parameters and ATT operation/wait counts; TLS summaries
+separate setup validation, SDK-call wall intervals and explicit retry waits.
+They contain no setup codes, keys, credentials, certificates or record contents.
+Timing emission occurs after transport/runtime guards release.
+
+These are elapsed wall intervals, including scheduling and concurrent work,
+not CPU measurements. Nested stages overlap and must not be added together;
+summed callback/validation intervals are explicitly distinguished from contiguous
+spans. The original authentication, record bytes, polling, deadlines, restart,
+trust validation and enrollment decisions remain unchanged. Read the existing
+authenticated UI log endpoint; USB monitor attachment can reset a candidate and
+is not an observationally neutral enrollment measurement.
+
 ## Original-controller authority and operation
 
 The first successful Matter setup establishes the original controller only after committed fabric, disarmed fail-safe and checked persistent connected Wi-Fi, or proven retained original authority. Receiving Wi-Fi, entering a setup code or reading a portable document cannot create that role. Reboot and last-fabric removal retain it.

@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import tempfile
 from consortium_gatt_callback_test import function
+from setup_timing_support import timing_support
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
@@ -93,6 +94,7 @@ void reset(){
     admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();
     fail_phase.clear();clock_ms=100;during_wait={};mode=AdmissionMode::button;spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
     discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;
+    platform::recorded_setup_timings.clear();
     radio.reserve=[](bool inviter,uint64_t& generation){assert(inviter);++reservations;generation=77;return ESP_OK;};
     network.get_hostname=[]{return "main-amity";};
     network.export_credentials=[](std::string& ssid,std::string& password){++wifi_exports;ssid="private-network";password="private-password";return true;};
@@ -128,6 +130,10 @@ int run_tests(){
         assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE);
         during_wait=select;run();assert(discoveries==2&&reservations==1&&releases==1&&wifi_exports==1&&encrypted_exchanges==3&&saves==1);
         assert(certificates==1); // Verify the untrusted candidate once, reuse exact validated records.
+        for(const char* stage:{"worker_selected","selected_total","gatt_connect","crypto_handshake","identify_rpc","peer_validation","proposal_store","prepare_rpc","prepare_ack","wifi_rpc","finishing"}){
+            const auto found=std::find_if(platform::recorded_setup_timings.begin(),platform::recorded_setup_timings.end(),[&](const auto& row){return std::string(row.area)=="invite"&&std::string(row.entry.stage)==stage;});
+            assert(found!=platform::recorded_setup_timings.end()&&std::string(found->entry.result)=="ok"&&found->scan==ident<model::MessageId>(1)&&found->peer==ident<model::OctopusId>(3));
+        }
         assert(admission.view.phase=="finishing"&&admission.pin==0&&group.joining_id==ident<model::OctopusId>(3)&&hostnames.lookup(group.joining_id)=="room");
         assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE);
         auto link=std::make_shared<Active>();links={link};admission.view.error="The result was not confirmed yet.";
@@ -180,7 +186,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='amity-admission-workflow-') as directory:
         cpp = Path(directory) / 'test.cpp'
         binary = Path(directory) / 'test'
-        cpp.write_text(PREFIX + actual + SUITE)
+        cpp.write_text(timing_support() + PREFIX + actual + SUITE)
         include = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include',
                    'components/amity_system/include', 'components/device_settings/include']
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']

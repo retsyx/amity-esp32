@@ -2,6 +2,7 @@
 #ifdef ESP_PLATFORM
 #include "amity/consortium/runtime.hpp"
 #include "amity/consortium/credential_types.hpp"
+#include "setup_timing.hpp"
 #include "mbedtls/ssl.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
@@ -30,6 +31,7 @@ struct TlsLink {
     std::vector<Peer> allowed;
     model::OctopusId authenticated;
     bool server=false;
+    uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;
     TlsLink();~TlsLink();
     bool setup(const Identity &,const std::vector<Peer>&,bool is_server,int fd,model::OctopusId expected={});
     bool handshake();

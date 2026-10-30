@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from consortium_gatt_callback_test import function
+from setup_timing_support import timing_support
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,7 +120,7 @@ def main():
         (directory / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_FAIL=-1;\n')
         cpp = directory / 'test.cpp'
         binary = directory / 'test'
-        cpp.write_text(PREFIX + encoder + actual + SUITE)
+        cpp.write_text(timing_support() + PREFIX + encoder + actual + SUITE)
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',

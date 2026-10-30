@@ -6,11 +6,22 @@
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_log.h"
 #include <cerrno>
 #include <algorithm>
 #include <cstring>
 #include <fcntl.h>
 namespace amity::consortium::platform {
+void emit_setup_timing(const char *area,const SetupTimingEntry& entry,model::OctopusId peer,model::LinkId link,model::MessageId scan){
+    if(scan){
+        ESP_LOGI("setup_timing","area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s scan=%s peer=%s code=%d",area,entry.stage,
+            static_cast<unsigned long long>(entry.at_ms),static_cast<unsigned long long>(entry.elapsed_ms),entry.result,scan.str().c_str(),peer.str().c_str(),entry.code);
+        return;
+    }
+    ESP_LOGI("setup_timing","area=%s stage=%s at_ms=%llu elapsed_ms=%llu result=%s peer=%s link=%s count=%u call_ms=%llu wait_ms=%llu code=%d metric=%s",area,entry.stage,
+        static_cast<unsigned long long>(entry.at_ms),static_cast<unsigned long long>(entry.elapsed_ms),entry.result,peer.str().c_str(),link.str().c_str(),unsigned(entry.count),
+        static_cast<unsigned long long>(entry.call_ms),static_cast<unsigned long long>(entry.wait_ms),entry.code,entry.summed?"sum":"span");
+}
 namespace {
 int send_socket(void *ctx,const uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::send(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;}
 int receive_socket(void *ctx,uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::recv(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;}
@@ -45,15 +56,25 @@ TlsLink::TlsLink(){mbedtls_ssl_init(&ssl);mbedtls_ssl_config_init(&config);mbedt
 TlsLink::~TlsLink(){if(socket>=0){::shutdown(socket,SHUT_RDWR);::close(socket);}mbedtls_ssl_free(&ssl);mbedtls_ssl_config_free(&config);mbedtls_x509_crt_free(&own);mbedtls_x509_crt_free(&anchors);mbedtls_pk_free(&key);}
 int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){
     auto &self=*static_cast<TlsLink*>(ctx);
+    struct TimedVerify{TlsLink& link;uint64_t began;~TimedVerify(){++link.timing_verify_calls;link.timing_verify_ms+=now_ms()-began;}} timed{self,now_ms()};
     if(depth!=0||crt->next){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}
     const std::string_view der(reinterpret_cast<const char*>(crt->raw.p),crt->raw.len);
     for(const auto &peer:self.allowed){if(der!=peer.der)continue;std::string pin;if(!certificate(der,peer.id,pin)||pin!=peer.pin){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}if(self.authenticated&&self.authenticated!=peer.id){*flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;}self.authenticated=peer.id;*flags&=~uint32_t(MBEDTLS_X509_BADCERT_EXPIRED|MBEDTLS_X509_BADCERT_FUTURE);return 0;}
     *flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;
 }
 bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){
+    BoundedSetupTimings<5> timing("tls_setup",now_ms);timing.peer=expected;timing.begin("total");
     socket=fd;server=is_server;if(peers.empty()||peers.size()>7)return false;allowed=peers;authenticated=expected;
-    if(mbedtls_x509_crt_parse_der(&own,reinterpret_cast<const uint8_t*>(identity.der.data()),identity.der.size())||mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0))return false;
-    for(const auto &peer:allowed){std::string pin;if(!certificate(peer.der,peer.id,pin)||pin!=peer.pin||mbedtls_x509_crt_parse_der(&anchors,reinterpret_cast<const uint8_t*>(peer.der.data()),peer.der.size()))return false;}
+    if(!timing.step("own_credentials",[&]{return !mbedtls_x509_crt_parse_der(&own,reinterpret_cast<const uint8_t*>(identity.der.data()),identity.der.size())&&!mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0);}))return timing.done(false);
+    uint64_t certificate_ms=0,anchor_ms=0;uint32_t certificates=0,anchors_parsed=0;
+    for(const auto &peer:allowed){
+        std::string pin;auto began=now_ms();const bool valid=certificate(peer.der,peer.id,pin);certificate_ms+=now_ms()-began;++certificates;
+        if(!valid||pin!=peer.pin){timing.sum("peer_validation",certificate_ms,certificates,false);timing.sum("anchor_parse",anchor_ms,anchors_parsed);return timing.done(false);}
+        began=now_ms();const auto parsed=mbedtls_x509_crt_parse_der(&anchors,reinterpret_cast<const uint8_t*>(peer.der.data()),peer.der.size());anchor_ms+=now_ms()-began;++anchors_parsed;
+        if(parsed){timing.sum("peer_validation",certificate_ms,certificates);timing.sum("anchor_parse",anchor_ms,anchors_parsed,false);return timing.done(false);}
+    }
+    timing.sum("peer_validation",certificate_ms,certificates);timing.sum("anchor_parse",anchor_ms,anchors_parsed);
+    const auto configured=timing.begin("configure");
     if(mbedtls_ssl_config_defaults(&config,is_server?MBEDTLS_SSL_IS_SERVER:MBEDTLS_SSL_IS_CLIENT,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT))return false;
     static const int suites[]={MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,0};
     mbedtls_ssl_conf_min_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_2);mbedtls_ssl_conf_max_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_2);mbedtls_ssl_conf_ciphersuites(&config,suites);mbedtls_ssl_conf_authmode(&config,MBEDTLS_SSL_VERIFY_REQUIRED);mbedtls_ssl_conf_ca_chain(&config,&anchors,nullptr);mbedtls_ssl_conf_verify(&config,verify,this);
@@ -64,9 +85,21 @@ bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool
     if(mbedtls_ssl_conf_alpn_protocols(&config,profiles))return false;
     if(mbedtls_ssl_conf_own_cert(&config,&own,&key)||mbedtls_ssl_setup(&ssl,&config))return false;
     if(!is_server){if(!expected)return false;const std::string dns="o-"+expected.str()+".amity.invalid";if(mbedtls_ssl_set_hostname(&ssl,dns.c_str()))return false;}
-    struct timeval timeout{0,100000};setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));mbedtls_ssl_set_bio(&ssl,&socket,send_socket,receive_socket,nullptr);return true;
+    struct timeval timeout{0,100000};setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));mbedtls_ssl_set_bio(&ssl,&socket,send_socket,receive_socket,nullptr);timing.finish(configured,true);return timing.done(true);
 }
-bool TlsLink::handshake(){const auto deadline=now_ms()+10000;while(now_ms()<deadline){int r=mbedtls_ssl_handshake(&ssl);if(!r)return authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0;if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE){reject_handshake(ssl,socket,server,r);return false;}vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}return false;}
+bool TlsLink::handshake(){
+    BoundedSetupTimings<3> timing("tls_handshake",now_ms);const auto total=timing.begin("handshake");
+    timing_verify_ms=0;timing_verify_calls=0;uint64_t call_ms=0,wait_ms=0;uint32_t calls=0;
+    auto finished=[&](bool good,int code){timing.peer=authenticated;timing.finish(total,good,calls,call_ms,wait_ms,code);timing.sum("verify_callback",timing_verify_ms,timing_verify_calls,good);return good;};
+    const auto deadline=now_ms()+10000;
+    while(now_ms()<deadline){
+        auto began=now_ms();const int r=mbedtls_ssl_handshake(&ssl);call_ms+=now_ms()-began;++calls;
+        if(!r)return finished(authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0,r);
+        if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE){const auto rejection=timing.begin("reject_alert");reject_handshake(ssl,socket,server,r);timing.finish(rejection,false,0,0,0,r);return finished(false,r);}
+        began=now_ms();vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));wait_ms+=now_ms()-began;
+    }
+    return finished(false,MBEDTLS_ERR_SSL_TIMEOUT);
+}
 bool TlsLink::extended_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&(strcmp(profile,"amity-consortium-v1.extended")==0||strcmp(profile,"amity-consortium-v1.hardware")==0);}
 bool TlsLink::hardware_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&strcmp(profile,"amity-consortium-v1.hardware")==0;}
 bool TlsLink::send(std::string_view body){

@@ -18,6 +18,8 @@ PREFIX = r'''
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <functional>
@@ -26,6 +28,7 @@ PREFIX = r'''
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 constexpr int BLE_GAP_EVENT_DISC=1,BLE_GAP_EVENT_DISC_COMPLETE=2,BLE_GAP_EVENT_CONNECT=3,BLE_GAP_EVENT_DISCONNECT=4,BLE_GAP_EVENT_MTU=15;
 constexpr int BLE_HS_ENOTCONN=12,BLE_HS_EDONE=14,BLE_HS_EINVAL=3,BLE_HS_EALREADY=2;
@@ -76,6 +79,18 @@ struct ble_gatt_error{int status=0;};
 struct ble_gatt_svc{uint16_t start_handle=0,end_handle=0;};
 struct ble_gatt_chr{uint16_t val_handle=0;};
 struct ble_gap_conn_params{unsigned scan_itvl=0,scan_window=0,itvl_min=0,itvl_max=0,supervision_timeout=0;};
+struct ble_gap_conn_desc{uint16_t conn_itvl=32,conn_latency=1;};
+int ble_gap_conn_find(uint16_t handle,ble_gap_conn_desc* out){if(handle!=31)return -1;*out={};return 0;}
+uint16_t ble_att_mtu(uint16_t);
+std::vector<std::string>timing_lines;
+void timing_log(const char* tag,const char* format,...){
+ bool unlocked=false;std::thread probe([&]{if(client_mutex.try_lock()){client_mutex.unlock();if(state_mutex.try_lock()){state_mutex.unlock();unlocked=true;}}});probe.join();
+ if(!unlocked)throw std::runtime_error("timing logger ran under a client/state lock");
+ char text[768];va_list args;va_start(args,format);const auto size=vsnprintf(text,sizeof(text),format,args);va_end(args);
+ if(std::string(tag)!="setup_timing"||size<0||size>=384)throw std::runtime_error("unbounded timing output");
+ timing_lines.emplace_back(text);
+}
+#define ESP_LOGI(...) timing_log(__VA_ARGS__)
 using GapCallback=int(*)(ble_gap_event*,void*);
 using MtuCallback=int(*)(uint16_t,const ble_gatt_error*,uint16_t,void*);
 using ServiceCallback=int(*)(uint16_t,const ble_gatt_error*,const ble_gatt_svc*,void*);
@@ -89,6 +104,7 @@ int ble_gattc_disc_chrs_by_uuid(uint16_t,uint16_t,uint16_t,const ble_uuid_t*,Cha
 CONNECTION_SEAMS = r'''
 enum class MtuMode{normal,already_complete,already_pending,start_error,callback_error,invalid_mtu,no_reply,stale_cookie,wrong_connection,cancelled};
 MtuMode mtu_mode=MtuMode::normal;uint16_t negotiated_mtu=527;
+uint16_t ble_att_mtu(uint16_t){return client_mtu_ready?negotiated_mtu:23;}
 std::vector<std::string>connection_steps;
 void mtu_event(uint16_t connection,void* token,uint16_t channel=BLE_L2CAP_CID_ATT,uint16_t value=0){
  ble_gap_event event;event.type=BLE_GAP_EVENT_MTU;event.mtu={connection,channel,value?value:negotiated_mtu};client_gap(&event,token);
@@ -125,7 +141,7 @@ int ble_gattc_disc_chrs_by_uuid(uint16_t connection,uint16_t,uint16_t,const ble_
 
 SUITE = r'''
 void check(bool condition,const char* message){if(!condition)throw std::runtime_error(message);}
-void reset(){client_generation=7;client_callback_cookie=7;client_connection=cancelled_client=BLE_HS_CONN_HANDLE_NONE;candidate_address={};discovered.clear();client_workflow=client_discovery_waiting=true;client_stopping=false;client_error=0;wakes=cancellations=connection_cancellations=terminations=0;terminated_handle=BLE_HS_CONN_HANDLE_NONE;server_open=true;server_sealed=false;server_connection=BLE_HS_CONN_HANDLE_NONE;server_session=0;advertising=true;advert_starts=advert_stops=closed_work=0;failed_proofs=0;client_service_start=client_service_end=client_attribute=0;client_record=0;client_mtu_ready=client_mtu_waiting=false;pending_notifications=0;during_wait={};bounded_waits.clear();connection_steps.clear();mtu_mode=MtuMode::normal;negotiated_mtu=527;}
+void reset(){client_generation=7;client_callback_cookie=7;client_connection=cancelled_client=BLE_HS_CONN_HANDLE_NONE;candidate_address={};discovered.clear();client_workflow=client_discovery_waiting=true;client_stopping=false;client_error=0;wakes=cancellations=connection_cancellations=terminations=0;terminated_handle=BLE_HS_CONN_HANDLE_NONE;server_open=true;server_sealed=false;server_connection=BLE_HS_CONN_HANDLE_NONE;server_session=0;advertising=true;advert_starts=advert_stops=closed_work=0;failed_proofs=0;client_service_start=client_service_end=client_attribute=0;client_record=0;client_mtu_ready=client_mtu_waiting=false;pending_notifications=0;during_wait={};bounded_waits.clear();connection_steps.clear();timing_lines.clear();mtu_mode=MtuMode::normal;negotiated_mtu=527;}
 void* token(uintptr_t value=7){return reinterpret_cast<void*>(value);}
 void advertise(const std::string& name,unsigned address=42,bool real_service=true,uintptr_t cookie=7){
  std::string data(reinterpret_cast<const char*>(service_uuid.u.bytes),16);if(!real_service)data[0]^=1;data+=name;
@@ -214,7 +230,21 @@ void seal_prepared(){
  check(server_connection==BLE_HS_CONN_HANDLE_NONE&&closed_work==1&&advert_starts==0,"prepared candidate re-advertised after disconnect");
  event.type=BLE_GAP_EVENT_CONNECT;event.connect.conn_handle=42;server_gap(&event,token(9));check(terminations==1&&terminated_handle==42&&server_connection==BLE_HS_CONN_HANDLE_NONE,"sealed candidate accepted another connection");
 }
-int main(){struct Test{const char* name;void(*run)();};int failed=0;for(auto test:{Test{"collect multiple real-service candidates",collection},Test{"service filtering, address dedup, bounded list",service_and_bounds},Test{"exact callback cookie independent of radio generation",stale},Test{"cancel wakes failure and fences callbacks",cancellation},Test{"only exact connection disconnect completes",exact_disconnect},Test{"negotiate full/default MTU before discovery",mtu_negotiation},Test{"already-sent MTU awaits exact ATT completion",mtu_already_sent},Test{"MTU initiation/error/timeout/stale/cancel failure fences",mtu_failures},Test{"MTU callback session/connection/status fences",mtu_callback_fences},Test{"automatic MTU event session/connection/channel fences",mtu_event_fences},Test{"prepared seal keeps active channel, blocks reconnect",seal_prepared}}){reset();try{test.run();std::cout<<"PASS "<<test.name<<'\n';}catch(const std::exception& error){++failed;std::cerr<<"FAIL "<<test.name<<": "<<error.what()<<'\n';}}return failed?1:0;}
+void timing_stages(){
+ check(connect_candidate()==ESP_OK&&timing_lines.size()==4,"connection emitted more than one summary per stage");
+ for(size_t i=0;i<4;++i){
+  const std::string stage=std::vector<std::string>{"connect","mtu","service","characteristic"}[i];
+  check(timing_lines[i].find("area=gatt stage="+stage+" ")==0&&timing_lines[i].find("result=ok failure=none")!=std::string::npos,"successful stage timing lost its controlled result");
+  check(timing_lines[i].find("interval_units=32 latency=1")!=std::string::npos,"actual connection parameters were not captured");
+  check(timing_lines[i].find("chosen")==std::string::npos,"candidate token leaked into timing output");
+ }
+ check(timing_lines[1].find("mtu=527")!=std::string::npos,"MTU timing did not record negotiated value");
+ reset();mtu_mode=MtuMode::callback_error;
+ check(connect_candidate()==ESP_FAIL&&timing_lines.size()==2&&timing_lines.back().find("stage=mtu ")!=std::string::npos&&timing_lines.back().find("result=failed failure=mtu")!=std::string::npos,"failed MTU timing changed failure or continued discovery");
+ reset();client_workflow=false;
+ check(connect_candidate()==ESP_ERR_INVALID_STATE&&timing_lines.size()==1&&timing_lines.front().find("failure=precondition")!=std::string::npos,"precondition failure was not logged after its lock released");
+}
+int main(){struct Test{const char* name;void(*run)();};int failed=0;for(auto test:{Test{"collect multiple real-service candidates",collection},Test{"service filtering, address dedup, bounded list",service_and_bounds},Test{"exact callback cookie independent of radio generation",stale},Test{"cancel wakes failure and fences callbacks",cancellation},Test{"only exact connection disconnect completes",exact_disconnect},Test{"negotiate full/default MTU before discovery",mtu_negotiation},Test{"already-sent MTU awaits exact ATT completion",mtu_already_sent},Test{"MTU initiation/error/timeout/stale/cancel failure fences",mtu_failures},Test{"MTU callback session/connection/status fences",mtu_callback_fences},Test{"automatic MTU event session/connection/channel fences",mtu_event_fences},Test{"prepared seal keeps active channel, blocks reconnect",seal_prepared},Test{"bounded controlled stage timing outside callback locks",timing_stages}}){reset();try{test.run();std::cout<<"PASS "<<test.name<<'\n';}catch(const std::exception& error){++failed;std::cerr<<"FAIL "<<test.name<<": "<<error.what()<<'\n';}}return failed?1:0;}
 '''
 
 def function(source: str, declaration: str) -> str:
@@ -240,10 +270,11 @@ def main():
         'int on_service(', 'int on_characteristic(', 'bool wait(', 'void clear_done()', 'void gatt_client_disconnect()',
         'int advertise_remaining()', 'int server_gap(ble_gap_event *event,void *token)', 'void gatt_server_seal()'))
     connection = function(source, 'esp_err_t gatt_client_connect_candidate(')
+    timing = function(source, 'struct GattTiming {').rstrip() + ';\n' + function(source, 'void capture_gatt_link(')
     with tempfile.TemporaryDirectory(prefix='amity-gatt-callback-') as directory:
         cpp = Path(directory) / 'actual_callback_test.cpp'
         binary = Path(directory) / 'actual_callback_test'
-        cpp.write_text(PREFIX + actual + CONNECTION_SEAMS + connection + SUITE)
+        cpp.write_text(PREFIX + actual + timing + CONNECTION_SEAMS + connection + SUITE)
         compiler = shlex.split(os.environ.get('CXX', 'c++'))
         subprocess.run(compiler + ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g',
                                   '-fsanitize=address,undefined', str(cpp), '-o', str(binary)], check=True)

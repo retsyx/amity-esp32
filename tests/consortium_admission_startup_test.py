@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 from consortium_gatt_callback_test import function
+from setup_timing_support import timing_support
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
@@ -152,7 +153,7 @@ def main():
         suite = suite.replace('startup_tests();connection_tests();', 'connection_tests();')
     with tempfile.TemporaryDirectory(prefix='amity-admission-startup-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
-        cpp.write_text(PREFIX + actual + suite)
+        cpp.write_text(timing_support() + PREFIX + actual + suite)
         includes = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include', 'components/amity_system/include']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
             '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',

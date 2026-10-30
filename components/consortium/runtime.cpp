@@ -229,9 +229,10 @@ bool abort_candidate_enrollment(Active& active,model::JoinId join,const std::str
     active.lifecycle_only=true;runtime_close_enrollment();return false;
 }
 bool enroll_lan(Active &active,bool server){
+    BoundedSetupTimings<5> timing("enrollment",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("total");
     std::lock_guard<std::mutex> transaction(enrollment_lock);
     Group current;{std::lock_guard<std::mutex> guard(lock);current=group;}
-    if(!current.join_id||(server&&current.joining_id!=active.peer))return current.role!=Group::prepared;
+    if(!current.join_id||(server&&current.joining_id!=active.peer))return timing.done(current.role!=Group::prepared);
     const auto digest=current.join_digest;std::string incoming;Envelope envelope;auto receive=[&](){
         while(active.tls->receive(incoming)){
             const auto received=now_ms();if(parse_envelope(incoming,envelope)!=Error::none||active.session.admit(envelope,received,received)!=Error::none||envelope.kind!=Kind::enrollment_control||envelope.payload.get("join_id")->string!=current.join_id.str()||envelope.payload.get("join_digest")->string!=digest)return false;
@@ -245,13 +246,18 @@ bool enroll_lan(Active &active,bool server){
     if(server){
         auto interrupted=[&](){return enrollment_abort_pending(active)?finish_enrollment_abort(active):false;};
         if(enrollment_abort_pending(active))return finish_enrollment_abort(active);
+        const auto proof=timing.begin("challenge_prove");
         auto nonce=random_id<model::MessageId>();if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"challenge",",\"challenge_nonce\":\""+nonce.str()+"\""))||!receive()||envelope.payload.get("phase")->string!="prove"||envelope.payload.get("challenge_nonce")->string!=nonce.str())return interrupted();
+        timing.finish(proof,true);const auto store=timing.begin("membership_store");
         bool removed=false;
         {std::lock_guard<std::mutex> guard(lock);removed=abort_peer_credential(active,group);if(!removed){if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;bool found=false;for(auto &peer:next.peers)if(peer.id==active.peer){peer.active=true;found=true;}if(!found)return false;next.revision=std::max(next.revision,next.join_revision);if(save_group(next)!=ESP_OK)return false;group=std::move(next);status.membership_revision=group.revision;}}
-        if(removed)return finish_enrollment_abort(active);
+        timing.finish(store,!removed);if(removed)return finish_enrollment_abort(active);
+        const auto acknowledgement=timing.begin("commit_ack");
         if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"commit",",\"membership_revision\":\""+std::to_string(current.join_revision)+"\",\"ready\":false"))||!receive()||envelope.payload.get("phase")->string!="ack")return interrupted();
         uint64_t acknowledged=0;if(!decimal(envelope.payload.get("membership_revision"),acknowledged)||acknowledged!=current.join_revision)return false;
+        timing.finish(acknowledgement,true);const auto finalize=timing.begin("finalize_store");
         {std::lock_guard<std::mutex> guard(lock);removed=abort_peer_credential(active,group);if(!removed){if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;if(save_group(next)!=ESP_OK)return false;group=std::move(next);}}
+        timing.finish(finalize,!removed);
         if(removed)return finish_enrollment_abort(active);
     }else{
         if(!receive()||envelope.payload.get("phase")->string!="challenge")return false;
@@ -275,12 +281,13 @@ bool enroll_lan(Active &active,bool server){
         }
     }
     if(!server)runtime_close_enrollment();
-    return true;
+    return timing.done(true);
 }
 bool same_manifest(const SnapshotManifest &a,const SnapshotManifest &b){
     return a.transfer_id==b.transfer_id&&a.owner_octopus_id==b.owner_octopus_id&&a.owner_boot_id==b.owner_boot_id&&a.config_revision==b.config_revision&&a.total_length==b.total_length&&a.payload_hash==b.payload_hash&&a.document_kind==b.document_kind;
 }
 bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t revision=0,const Envelope* first=nullptr,LinkTrace* diagnostic=nullptr){
+    BoundedSetupTimings<5> timing("synchronize",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("total");
     LinkTrace local;auto& trace=diagnostic?*diagnostic:local;trace.phase="synchronization";trace.has_kind=trace.has_queue=false;trace.error=Error::none;
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
     if(!hooks.snapshot||!hooks.synchronize)return trace.fail("synchronization_hooks",Error::not_ready);
@@ -318,7 +325,9 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
     };
     auto send_slice=[&](){
         trace.phase=server?"configuration_send":"owner_state_send";
-        std::string payload=server&&hooks.configuration_snapshot?hooks.configuration_snapshot(active.peer,target):hooks.snapshot(active.peer);if(payload.empty()||payload.size()>32768)return trace.fail("synchronization_payload");
+        const auto captured=timing.begin(server?"config_capture":"owner_capture");
+        std::string payload=server&&hooks.configuration_snapshot?hooks.configuration_snapshot(active.peer,target):hooks.snapshot(active.peer);timing.finish(captured,!payload.empty()&&payload.size()<=32768);if(payload.empty()||payload.size()>32768)return trace.fail("synchronization_payload");
+        const auto transfer_stage=timing.begin(server?"config_transfer":"owner_transfer");
         SnapshotManifest manifest;manifest.transfer_id=random_id<model::MessageId>();manifest.owner_octopus_id=server?scope.peer_id:scope.local_id;manifest.owner_boot_id=server?scope.peer_boot_id:scope.local_boot_id;manifest.config_revision=target;manifest.total_length=payload.size();manifest.payload_hash=sha256(payload);manifest.document_kind=server?"configuration":"owner_state";
         if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,"begin",0)))return trace.fail("synchronization_begin_send");
         Envelope reply;SnapshotManifest ack;std::string phase;uint32_t next=0;
@@ -329,11 +338,12 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
             if(!receive(reply,i+1==manifest.chunk_count()?40000:10000))return false;
             if(reply.kind!=Kind::snapshot_request||parse_snapshot_manifest(reply.payload,ack,phase,next)!=Error::none||!same_manifest(ack,manifest)||next!=i+1||phase!=(i+1==manifest.chunk_count()?"complete":"ack"))return trace.fail("synchronization_chunk_ack");
         }
-        return true;
+        timing.finish(transfer_stage,true,manifest.chunk_count());return true;
     };
     auto receive_slice=[&](){
         trace.phase=server?"owner_state_receive":"configuration_receive";
         Envelope envelope;SnapshotManifest manifest;std::string phase;uint32_t next=0;
+        const auto received_stage=timing.begin(server?"owner_receive":"config_receive");
         if(!receive(envelope))return false;
         if(envelope.kind!=Kind::snapshot_request||parse_snapshot_manifest(envelope.payload,manifest,phase,next)!=Error::none||phase!="begin"||manifest.document_kind!=(server?"owner_state":"configuration"))return trace.fail("synchronization_begin_manifest");
         SnapshotTransfer transfer([](std::string_view value){return sha256(value);});
@@ -344,11 +354,11 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
             if(envelope.kind!=Kind::snapshot_chunk)return trace.fail("synchronization_chunk_kind");
             const auto result=transfer.accept(envelope.payload,now_ms());if(result!=Error::none&&result!=Error::duplicate)return trace.fail("synchronization_transfer_chunk",result);
             bool applied=true;
-            if(transfer.complete()){Json document;document.type=Json::Type::string;document.string=transfer.payload();applied=hooks.synchronize(active.peer,document)==Error::none;}
+            if(transfer.complete()){const auto apply=timing.begin(server?"owner_apply":"config_apply");Json document;document.type=Json::Type::string;document.string=transfer.payload();applied=hooks.synchronize(active.peer,document)==Error::none;timing.finish(apply,applied);}
             if(!send(active,Kind::snapshot_request,snapshot_manifest_json(manifest,applied?(transfer.complete()?"complete":"ack"):"reject",transfer.next_index())))return trace.fail("synchronization_chunk_ack_send");
             if(!applied)return trace.fail("synchronization_apply");
         }
-        return true;
+        timing.finish(received_stage,true,manifest.chunk_count());return true;
     };
     auto advance=[&](){
         if(!refresh)return true;
@@ -365,7 +375,7 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
     if(server?(!send_slice()||!advance()||!receive_slice()):(!receive_slice()||!advance()||!send_slice()))return false;
     if(!refresh){const auto synchronized=active.session.synchronized(scope.config_revision,true,true);if(synchronized!=Error::none)return trace.fail("synchronization_ready",synchronized);}
     {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;}if(!server){std::lock_guard<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(save_group(next)==ESP_OK)group=std::move(next);}}
-    return true;
+    return timing.done(true);
 }
 bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
     const auto deadline=now_ms()+timeout;
@@ -394,7 +404,8 @@ bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
     return false;
 }
 bool exchange_hostname(Active& active,const std::string& expected) {
-    if(!(active.session.negotiated_capabilities()&hostname_metadata))return expected.empty();
+    BoundedSetupTimings<1> timing("hostname",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("exchange");
+    if(!(active.session.negotiated_capabilities()&hostname_metadata))return timing.done(expected.empty());
     RuntimeNetworkHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=network;}
     if(!hooks.get_hostname)return false;
     const auto local=hooks.get_hostname();if(!valid_hostname(local))return false;
@@ -406,7 +417,7 @@ bool exchange_hostname(Active& active,const std::string& expected) {
     if(!expected.empty()&&name!=expected)return false;
     std::lock_guard<std::mutex> guard(lock);
     if(!current_peer_credential(active,group)||remember_hostname(active.peer,name)!=Error::none)return false;
-    std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;return true;
+    std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;return timing.done(true);
 }
 bool notify_link_closed(Active& active){
     std::lock_guard<std::mutex> once(active.close_mutex);
@@ -428,6 +439,7 @@ void reap_closed_links(){
     for(const auto& active:pending)if(notify_link_closed(*active)){std::lock_guard<std::mutex> guard(lock);links.erase(std::remove(links.begin(),links.end(),active),links.end());}
 }
 bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
+    BoundedSetupTimings<7> timing("establish",now_ms);timing.begin("total");
     LinkTrace fallback;auto& trace=diagnostic?*diagnostic:fallback;trace.phase="hello";
     Group current;Identity local;uint64_t config;uint8_t profile_count,profile_mask;std::string policy_hash;std::optional<EnrollmentAbort> cancelled_join;
     {std::lock_guard<std::mutex> guard(lock);current=group;local=identity;config=configuration;policy_hash=configuration_hash;profile_count=hardware_tentacles;profile_mask=hardware_tentacles_mask;if(server&&abort_peer_credential(active,group))cancelled_join=active.enrollment_abort;}
@@ -437,15 +449,18 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     ours.hardware_profile=active.tls->hardware_profile();ours.supported_tentacles=profile_count;ours.configured_tentacles_mask=profile_mask;
     if(active.tls->extended_profile()&&current.join_id&&((!server&&current.role==Group::prepared)||(server&&current.joining_id==active.tls->authenticated))){ours.pending_join_id=current.join_id;ours.join_digest=current.join_digest;}
     if(cancelled_join){if(!active.tls->extended_profile())return trace.fail("enrollment_abort_profile");ours.pending_join_id=cancelled_join->join;ours.join_digest=cancelled_join->digest;}
+    const auto hello=timing.begin("hello_exchange");
     std::string incoming;if(!active.tls->send(hello_json(ours)))return trace.fail("hello_send");if(!active.tls->receive(incoming))return trace.fail("hello_receive");
     HelloFrame peer;const auto parsed=parse_hello(incoming,peer);if(parsed!=Error::none)return trace.fail("hello_parse",parsed);
     if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch||!supports_capabilities(peer,ours.required_capabilities))return trace.fail("hello_validation");
     if(peer.hardware_profile!=active.tls->hardware_profile())return trace.fail("hardware_profile");
+    timing.peer=peer.octopus_id;timing.finish(hello,true);const auto link_stage=timing.begin("link_id");
     {std::lock_guard<std::mutex> guard(lock);if(group.consortium!=current.consortium||group.authority!=current.authority||group.epoch!=current.epoch||group.revision!=current.revision||!current_peer_credential(active,group)){
         if(!(server&&abort_peer_credential(active,group)))return trace.fail("hello_roster_changed");
     }active.peer=peer.octopus_id;}model::LinkId link;trace.phase="link_id";
     if(server){link=random_id<model::LinkId>();if(!active.tls->send("{\"type\":\"link\",\"link_id\":\""+link.str()+"\"}"))return trace.fail("link_id_send");}
     else{Json j;JsonError error;if(!active.tls->receive(incoming)||!parse_json(incoming,j,error)||!closed(j,{"type","link_id"})||j.get("type")->type!=Json::Type::string||j.get("type")->string!="link"||!id(j.get("link_id"),link))return trace.fail("link_id_receive");}
+    timing.link=link;timing.finish(link_stage,true);
     if(peer.pending_join_id&&!server&&(!current.join_id||*peer.pending_join_id!=current.join_id||peer.join_digest!=current.join_digest))return trace.fail("join_scope");
     const bool pending_join=current.join_id&&((server&&current.joining_id==peer.octopus_id)||(!server&&peer.pending_join_id.has_value()));
     const bool aborting=server&&enrollment_abort_pending(active);
@@ -456,16 +471,17 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     trace.phase="session_authentication";
     auto admitted=active.session.authenticate(scope,active.tls->authenticated,role,!provisional);if(admitted!=Error::none)return trace.fail("session_authenticate",admitted);
     admitted=active.session.hello(peer,known_capabilities);if(admitted!=Error::none)return trace.fail("session_hello",admitted);
-    if(aborting){trace.phase="enrollment_abort";const bool finished=finish_enrollment_abort(active);return finished?true:trace.fail("enrollment_abort");}
-    trace.phase="replacement_fence";if(!fence_replaced_links(active))return trace.fail("replacement_fence");
+    if(aborting){trace.phase="enrollment_abort";const bool finished=finish_enrollment_abort(active);return finished?timing.done(true):trace.fail("enrollment_abort");}
+    trace.phase="replacement_fence";if(!timing.step("replacement_fence",[&]{return fence_replaced_links(active);}))return trace.fail("replacement_fence");
     if(provisional){trace.phase="enrollment_commit";if(!enroll_lan(active,server))return trace.fail("enrollment_commit");
         admitted=active.session.authenticate(scope,active.tls->authenticated,operational_role,true);if(admitted!=Error::none)return trace.fail("member_authenticate",admitted);
         admitted=active.session.hello(peer,known_capabilities);if(admitted!=Error::none)return trace.fail("member_hello",admitted);}
     {std::lock_guard<std::mutex> guard(active.mutex);active.status.id=peer.octopus_id;active.status.boot_id=peer.boot_id;active.status.config_revision=scope.config_revision;active.status.negotiated_capabilities=(peer.required_capabilities|peer.optional_capabilities)&known_capabilities;active.status.firmware_identity=peer.firmware_identity;active.status.supported_tentacles=peer.supported_tentacles;active.status.configured_tentacles_mask=peer.configured_tentacles_mask;active.status.hardware_profile=peer.hardware_profile;}
-    trace.phase="hostname";if(!exchange_hostname(active,server&&pending_join?current.join_hostname:std::string{}))return trace.fail("hostname_exchange");
-    if(!execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask)){if(!synchronize(active,server,false,0,nullptr,&trace))return false;active.session.restrict_management();active.management_ready=true;std::lock_guard<std::mutex> guard(active.mutex);active.status.management_ready=true;return true;}
-    if(!synchronize(active,server,true,0,nullptr,&trace))return false;
-    return true;
+    trace.phase="hostname";if(!timing.step("hostname",[&]{return exchange_hostname(active,server&&pending_join?current.join_hostname:std::string{});}))return trace.fail("hostname_exchange");
+    if(!execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask)){if(!synchronize(active,server,false,0,nullptr,&trace))return false;active.session.restrict_management();active.management_ready=true;std::lock_guard<std::mutex> guard(active.mutex);active.status.management_ready=true;return timing.done(true);}
+    if(!timing.step("initial_sync",[&]{return synchronize(active,server,true,0,nullptr,&trace);}))return false;
+    const auto ready=timing.begin("ready_published");timing.finish(ready,true);
+    return timing.done(true);
 }
 std::string retirement_hash(const LinkScope &scope,model::MutationId mutation,uint64_t revision){
     const bool source=scope.local_id==scope.coordinator_id;
@@ -809,7 +825,7 @@ void network_loop(void*){
         advertise_group_hint(current);
         reap_closed_links();
         if(current.role==Group::coordinator){if(listener<0){int fd=::socket(AF_INET,SOCK_STREAM,0);int yes=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_port=htons(7443);addr.sin_addr.s_addr=INADDR_ANY;if(fd<0||::bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))||::listen(fd,2)){if(fd>=0)::close(fd);vTaskDelay(pdMS_TO_TICKS(1000));continue;}listener=fd;timeval timeout{0,200000};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));}
-            int fd=::accept(listener,nullptr,nullptr);if(fd>=0){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,true,fd))launch(tls);}
+            int fd=::accept(listener,nullptr,nullptr);if(fd>=0){BoundedSetupTimings<1> timing("network",now_ms);const auto accepted=timing.begin("tcp_accepted");timing.finish(accepted,true);auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,true,fd))launch(tls);}
         }else if((current.role==Group::member||current.role==Group::prepared)&&may_connect){
             bool connected;{std::lock_guard<std::mutex> guard(lock);connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});}
             if(connected)backoff=1000;
@@ -825,7 +841,8 @@ void network_loop(void*){
                 addrinfo hints{};hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_INET;hints.ai_flags=AI_NUMERICHOST;addrinfo *addresses=nullptr;
                 if(!endpoint.empty()&&getaddrinfo(endpoint.c_str(),"7443",&hints,&addresses)==0){
                     int fd=::socket(addresses->ai_family,SOCK_STREAM,0);
-                    if(fd>=0&&connect_bounded(fd,addresses->ai_addr,addresses->ai_addrlen)){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,false,fd,current.authority))launch(tls,endpoint);}
+                    BoundedSetupTimings<1> timing("network",now_ms);timing.peer=current.authority;
+                    if(fd>=0&&timing.step("tcp_connect",[&]{return connect_bounded(fd,addresses->ai_addr,addresses->ai_addrlen);})){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,false,fd,current.authority))launch(tls,endpoint);}
                     else if(fd>=0)::close(fd);
                     freeaddrinfo(addresses);
                 }
@@ -895,8 +912,9 @@ void admission_failed(model::MessageId scan,const std::string& failure){
 
 }
 void invite_worker_work(void *arg){
+    BoundedSetupTimings<12> timing("invite",now_ms);
     std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));
-    const auto scan=invite->scan_id;invite.reset();
+    const auto scan=invite->scan_id;invite.reset();timing.scan=scan;
     uint64_t generation=0,deadline=0;RuntimeRadioHooks hooks;
     {std::lock_guard<std::mutex> guard(lock);hooks=radio;}
     const bool reserved=!invitation_cancelled&&hooks.reserve&&hooks.reserve(true,generation)==ESP_OK;
@@ -919,22 +937,26 @@ void invite_worker_work(void *arg){
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     if(!submitted){admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;}
-    bool good=current()&&gatt_client_connect_candidate(token,generation)==ESP_OK;
+    const auto selected=timing.begin("worker_selected");timing.finish(selected,true);timing.begin("selected_total");
+    bool good=current()&&timing.step("gatt_connect",[&]{return gatt_client_connect_candidate(token,generation)==ESP_OK;});
     AdmissionClient client(configured_admission_mode(),pin);pin=0;
-    good=good&&client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply)&&current();});
+    good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply)&&current();});});
     auto secure=[&](std::string_view plain,std::string& result){std::string encrypted,reply;return current()&&client.encrypt(plain,encrypted)&&gatt_client_exchange(true,encrypted,reply)&&current()&&client.decrypt(reply,result);};
     std::string response,failure;Json identity_json;JsonError err;Peer peer;bool networked=false;uint64_t bootstrap_profile=0;
-    good=good&&secure("{\"phase\":\"identify\"}",response);
+    good=good&&timing.step("identify_rpc",[&]{return secure("{\"phase\":\"identify\"}",response);});
     if(good){
+        const auto validation=timing.begin("peer_validation");
         const bool parsed=parse_json(response,identity_json,err);
         const bool supported=parsed&&json_uint(identity_json.get("bootstrap_profile"),bootstrap_profile,2,2);
         if(!supported)failure="Update this Amity before adding it so its network name can be set.";
         good=supported&&closed(identity_json,{"phase","bootstrap_profile","octopus_id","leaf","networked"})&&id(identity_json.get("octopus_id"),peer.id)&&peer.id.str()==client.peer_id()&&identity_json.get("leaf")->type==Json::Type::string&&unhex(identity_json.get("leaf")->string,peer.der,1024)&&certificate(peer.der,peer.id,peer.pin)&&json_bool(identity_json.get("networked"),networked);
+        timing.peer=peer.id;timing.finish(validation,good);
     }
     Group current_group;Identity local;
     {std::lock_guard<std::mutex> guard(lock);current_group=group;local=identity;if(good&&admission.view.scan_id==scan){admission.view.candidate_id=peer.id;if(hostnames.lookup(peer.id).empty()&&hostnames.entries().size()>=HostnameRegistry::capacity)good=false;}}
     const auto join=random_id<model::JoinId>();std::string proposal,digest;
     if(good){
+        const auto proposal_stage=timing.begin("proposal_store");
         const auto host=host_ip();good=current()&&!host.empty()&&current_group.role==Group::coordinator&&current_group.peers.size()<maximum_roster_peers&&current_group.revision<UINT64_MAX;
         for(const auto& old:current_group.peers)if(old.id==peer.id||old.pin==peer.pin)good=false;
         if(good){
@@ -944,20 +966,25 @@ void invite_worker_work(void *arg){
             good=current()&&!proposal.empty()&&admission.view.scan_id==scan&&group.role==Group::coordinator&&!group.join_id&&group.revision+1==current_group.join_revision&&save_group(current_group)==ESP_OK;
             if(good)group=current_group;
         }
+        timing.finish(proposal_stage,good);
     }
-    if(good){std::string quoted;quoted.reserve(proposal.size()+128);for(char c:proposal){if(c=='"'||c=='\\')quoted+='\\';quoted+=c;}good=secure("{\"phase\":\"prepare\",\"proposal\":\""+quoted+"\",\"digest\":\""+digest+"\"}",response);}
+    if(good){std::string quoted;quoted.reserve(proposal.size()+128);for(char c:proposal){if(c=='"'||c=='\\')quoted+='\\';quoted+=c;}good=timing.step("prepare_rpc",[&]{return secure("{\"phase\":\"prepare\",\"proposal\":\""+quoted+"\",\"digest\":\""+digest+"\"}",response);});}
     if(good){
+        const auto acknowledged=timing.begin("prepare_ack");
         Json prepared;good=parse_json(response,prepared,err)&&closed(prepared,{"phase","join_id","digest","hostname"})&&prepared.get("phase")->type==Json::Type::string&&prepared.get("phase")->string=="prepared"&&prepared.get("join_id")->type==Json::Type::string&&prepared.get("join_id")->string==join.str()&&prepared.get("digest")->type==Json::Type::string&&prepared.get("digest")->string==digest&&prepared.get("hostname")->type==Json::Type::string&&prepared.get("hostname")->string==hostname;
         if(good){std::lock_guard<std::mutex> guard(lock);good=remember_hostname(peer.id,hostname)==Error::none;}
+        timing.finish(acknowledged,good);
     }
     if(good&&!networked){
+        const auto wifi=timing.begin("wifi_rpc");
         RuntimeNetworkHooks network_hooks;{std::lock_guard<std::mutex> guard(lock);network_hooks=network;status.phase="connecting_wifi";}
         std::string ssid,password;good=network_hooks.export_credentials&&network_hooks.export_credentials(ssid,password)&&!ssid.empty()&&ssid.size()<=32&&password.size()<=64;
         if(good)good=secure("{\"phase\":\"wifi\",\"join_id\":\""+current_group.join_id.str()+"\",\"digest\":\""+digest+"\",\"ssid\":\""+hex(ssid)+"\",\"password\":\""+hex(password)+"\"}",response);
-        mbedtls_platform_zeroize(password.data(),password.size());
+        mbedtls_platform_zeroize(password.data(),password.size());timing.finish(wifi,good);
     }
     if(!good){admission_failed(scan,failure.empty()?"Adding this Amity was interrupted. Check its setup window, firmware and connection, then try again.":failure);return;}
     {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id==scan){admission.view.phase="finishing";admission.deadline=0;}status.phase="finishing_enrollment";}
+    const auto finishing=timing.begin("finishing");timing.finish(finishing,true);timing.done(true);
 }
 void invite_worker(void *arg){invite_worker_work(arg);invitation_running=false;vTaskDeleteWithCaps(nullptr);}
 void usb_worker(void*){
@@ -1140,6 +1167,7 @@ esp_err_t runtime_cancel_admission(model::MessageId scan){
     gatt_client_disconnect();return ESP_OK;
 }
 esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,const std::string& hostname,const std::string& setup_code){
+    BoundedSetupTimings<1> timing("admission",now_ms);timing.scan=scan;const auto selected=timing.begin("selected");
     if(!scan||token.empty()||token.size()>128||!valid_hostname(hostname))return ESP_ERR_INVALID_ARG;
     uint32_t pin=0;
     if(configured_admission_mode()==AdmissionMode::setup_code){if(!parse_admission_setup_code(setup_code,pin))return ESP_ERR_INVALID_ARG;}
@@ -1149,7 +1177,7 @@ esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,con
     if(std::none_of(admission.view.candidates.begin(),admission.view.candidates.end(),[&](const auto& item){return item.token==token;}))return ESP_ERR_INVALID_ARG;
     if(!network.get_hostname||network.get_hostname()==hostname)return ESP_ERR_INVALID_ARG;
     for(const auto& peer:group.peers)if(hostnames.lookup(peer.id)==hostname)return ESP_ERR_INVALID_ARG;
-    admission.selected_token=token;admission.hostname=hostname;admission.pin=pin;admission.submitted=true;admission.view.phase="connecting";
+    admission.selected_token=token;admission.hostname=hostname;admission.pin=pin;admission.submitted=true;admission.view.phase="connecting";timing.finish(selected,true);
     return ESP_OK;
 }
 esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,uint64_t expected_revision,std::optional<model::BootId> expected_target_boot){
