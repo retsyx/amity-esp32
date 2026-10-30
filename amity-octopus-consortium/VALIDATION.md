@@ -15,6 +15,23 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Current source-theft deadline — 30 October 2026
+
+The current functional contract now requires thief Standby and resulting state
+within one second of that component's successful physical Active Source
+transmission. Shared-wire route restoration must complete within the same
+original one-second window. The requested framework change is complete:
+all 340 framework units pass, including exact one-second boundaries and
+rejection of a response one nanosecond late. Command:
+`PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q`;
+the 14.088-second run is recorded in
+`test-results/source-theft-one-second-2026-10-30/framework-tests.log`.
+Physical tests were not rerun for this framework-only change. The prior results
+below retain their then-current two-second contract and recorded 2,000 ms
+bounds; their observed latencies do not retroactively establish a run under
+the new contract. The earlier complete 0.1.104 host suite remains the separate
+339-unit result recorded below.
+
 ## 0.1.104 deployment and physical qualification — 30 October 2026
 
 All four DUTs run exact 0.1.104 / Matter software 105 from firmware commit

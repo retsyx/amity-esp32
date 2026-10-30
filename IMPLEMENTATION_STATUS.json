@@ -1,5 +1,5 @@
 {
-  "status": "PASS within the exercised bench scope: all four DUTs run verified 0.1.104 / Matter software 105. The complete host suite with 339 framework units, native build, contracts and 29 live web checks passed. Three-owner and original two-owner consortium runs passed all activity and cross-owner theft cycles, with 38 fresh power assertions, 15 typed locations, five initial routes, eight theft directions and three acknowledged member reset removals combined. Shared-wire source theft also passed under the unchanged two-second physical deadline. Final preservation passed 26 checks with the same main boot, original saved values and pairings, idle state and no retained added owners. Qualification is limited to normal admission, at most three owners, one adapter per owner and simulated CEC; earlier failed runs remain failed.",
+  "status": "PASS: the requested one-second source-theft limit is implemented and all 340 framework unit tests pass. Physical tests were not rerun for this framework-only change; prior reports retain their two-second limits. Prior evidence passed within the exercised bench scope: all four DUTs run verified 0.1.104 / Matter software 105. The complete host suite with 339 framework units, native build, contracts and 29 live web checks passed. Three-owner and original two-owner consortium runs passed all activity and cross-owner theft cycles, with 38 fresh power assertions, 15 typed locations, five initial routes, eight theft directions and three acknowledged member reset removals combined. Shared-wire source theft also passed under the historical two-second physical deadline. Final preservation passed 26 checks with the same main boot, original saved values and pairings, idle state and no retained added owners. Qualification is limited to normal admission, at most three owners, one adapter per owner and simulated CEC; earlier failed runs remain failed.",
   "audit_date": "2026-10-30",
   "firmware_version": "0.1.104",
   "branch": "consort",
@@ -50,7 +50,7 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
-    "result": "PASS: exact all-four deployment, live web responses, three-owner consortium, original two-owner consortium, shared-wire source theft and final preservation checks",
+    "result": "PASS: requested one-second source-theft contract implemented and validated by 340 framework unit tests. Prior exact 0.1.104 deployment, web, physical and preservation results remain recorded under their then-current two-second source-theft contract.",
     "evidence_directory": "test-results/consortium-tls-memory-fix-2026-10-30",
     "latest_deployed_firmware_version": "0.1.104",
     "latest_deployment_report": "test-results/consortium-tls-memory-fix-2026-10-30/deployment.json",
@@ -191,7 +191,22 @@
       "diagnostic_limits": "The final snapshot retains a nonempty membership last_error and cumulative tx_errors=4035 (before the cases: 129); rx_dropped remains zero. These scoped passing checks do not assert the absence of transport or CEC transmission failures. The membership diagnostic is retained after later successful establishment; its initial handshake/establishment cause is outside the retained log window. That window contains only the expected member-retirement close.",
       "diagnostic_capture": "test-results/consortium-tls-memory-fix-2026-10-30/final-diagnostics-logs.txt"
     },
-    "qualification_scope": "Normal admission profile, main amity-dut with amity-dut-2 and amity-dut-3, one adapter per owner, isolated front/back wires and simulated TV/AVR/player CEC responders. No four-owner, adversarial radio/reconnect/loss/load, strict-profile or real-AV qualification is claimed."
+    "qualification_scope": "Normal admission profile, main amity-dut with amity-dut-2 and amity-dut-3, one adapter per owner, isolated front/back wires and simulated TV/AVR/player CEC responders. No four-owner, adversarial radio/reconnect/loss/load, strict-profile or real-AV qualification is claimed.",
+    "source_theft_deadline_seconds": 1,
+    "source_theft_deadline_validation": {
+      "result": "COMPLETE / PASS: requested one-second source-theft limit implemented and host-validated",
+      "host_validation": {
+        "result": "PASS",
+        "framework_unit_tests": 340,
+        "duration_seconds": 14.088,
+        "command": "PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q",
+        "log": "test-results/source-theft-one-second-2026-10-30/framework-tests.log",
+        "scope": "Exact one-second physical response boundaries accepted; responses one nanosecond late rejected. Same-trigger shared-wire route restoration remains mandatory."
+      },
+      "physical_validation": "Not rerun for this framework-only change; no new physical pass is claimed and prior reports retain their two-second limits.",
+      "scope": "Directed thief Standby and resulting state must complete within one second of the same successful physical Active Source transmission; shared-wire route restoration uses that same trigger and window. Ordinary CEC, operation and settings-cache timeouts remain separate.",
+      "historical_reports": "Retained 0.1.104 and earlier physical reports used the then-current two-second window. Their recorded 2000 ms bounds and outcomes are unchanged."
+    }
   },
   "historical_evidence": {
     "release": "0.1.80",

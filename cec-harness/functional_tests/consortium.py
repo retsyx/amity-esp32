@@ -45,7 +45,7 @@ def test_consortium():
 
                         announcement = thief.activate()
                         assert announcement.ok
-                        thief.wait_for_standby_after(announcement, within=2)
+                        thief.wait_for_standby_after(announcement, within=1)
                         assert active_avr.active_input == active_player.address.physical
                         for component in active:
                             component.assert_power(PowerState.ON)
@@ -104,7 +104,7 @@ def test_consortium_three_duts():
                             thief = system[2]
                             announcement = thief.activate()
                             assert announcement.ok
-                            thief.wait_for_standby_after(announcement, within=2)
+                            thief.wait_for_standby_after(announcement, within=1)
                             assert active_avr.active_input == active_player.address.physical
                             for component in active:
                                 component.assert_power(PowerState.ON)

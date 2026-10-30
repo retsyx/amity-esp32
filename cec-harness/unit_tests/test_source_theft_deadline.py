@@ -34,14 +34,24 @@ class SourceTheftDeadlineTests(unittest.TestCase):
         player.receive(Frame(0, player.address.logical, 0x36,
                              timestamp_ns=announcement.timestamp_ns + elapsed_ns), transport=transport)
 
-    def test_late_standby_already_in_history_cannot_satisfy_the_two_second_bound(self):
+    def test_late_standby_already_in_history_cannot_satisfy_the_one_second_bound(self):
         fixture, announcement = self.fixture()
-        self.standby(fixture, announcement, 2_000_000_001)
+        self.standby(fixture, announcement, 1_000_000_001)
         clock = announcement.timestamp_ns / 1_000_000_000 + 3
         with patch("amity_harness.components.time.monotonic", return_value=clock), self.assertRaises(TimeoutError):
             fixture.member_player.wait_for_standby_after(announcement)
         self.assertEqual(fixture.member_player.power.value, "standby")
         self.assertEqual(fixture.member_player.power_assertions, ())
+
+    def test_standby_accepts_complete_frames_up_to_the_one_second_boundary(self):
+        for elapsed_ns in (999_999_999, 1_000_000_000):
+            with self.subTest(elapsed_ns=elapsed_ns):
+                fixture, announcement = self.fixture()
+                self.standby(fixture, announcement, elapsed_ns)
+                clock = announcement.timestamp_ns / 1_000_000_000 + 3
+                with patch("amity_harness.components.time.monotonic", return_value=clock):
+                    fixture.member_player.wait_for_standby_after(announcement)
+                self.assertEqual(fixture.member_player.power_assertions[-1]["response_latency_ns"], elapsed_ns)
 
     def test_timely_standby_remains_valid_after_slow_real_owner_proof(self):
         fixture, announcement = self.fixture()
@@ -59,7 +69,7 @@ class SourceTheftDeadlineTests(unittest.TestCase):
         assertion = fixture.member_player.power_assertions[-1]
         self.assertEqual(assertion["trigger_wire_timestamp_ns"], announcement.timestamp_ns)
         self.assertEqual(assertion["response_latency_ns"], 125_000_000)
-        self.assertEqual(assertion["max_elapsed_ns"], 2_000_000_000)
+        self.assertEqual(assertion["max_elapsed_ns"], 1_000_000_000)
         self.assertEqual(assertion["destination"], fixture.member_player.address.logical)
 
     def test_virtual_or_local_standby_does_not_prove_remediation(self):
@@ -100,11 +110,12 @@ class SourceTheftDeadlineTests(unittest.TestCase):
         with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
                 patch.object(fixture.member_player._power_condition, "wait", side_effect=wait), self.assertRaises(TimeoutError):
             fixture.member_player.wait_for_standby_after(announcement)
-        self.assertGreaterEqual(clock[0] - beginning, 1.99)
-        self.assertLessEqual(clock[0] - beginning, 2.01)
+        self.assertGreaterEqual(clock[0] - beginning, 0.99)
+        self.assertLessEqual(clock[0] - beginning, 1.01)
 
-    def test_route_restoration_uses_the_same_original_two_second_window(self):
-        for elapsed_ns, expected_success in ((250_000_000, True), (2_000_000_001, False)):
+    def test_route_restoration_uses_the_same_original_one_second_window(self):
+        for elapsed_ns, expected_success in ((250_000_000, True), (1_000_000_000, True),
+                                             (1_000_000_001, False), (1_500_000_000, False)):
             with self.subTest(elapsed_ns=elapsed_ns):
                 fixture, announcement = self.fixture()
                 avr, player = fixture.member_avr, fixture.member_player
@@ -119,17 +130,21 @@ class SourceTheftDeadlineTests(unittest.TestCase):
                 fixture.dut.get_system = slow_system
                 with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
                     if expected_success:
-                        avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=2)
+                        avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=1)
                         self.assertEqual(avr.routing_assertions[-1]["response_latency_ns"], elapsed_ns)
                     else:
                         with self.assertRaises(TimeoutError):
-                            avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=2)
+                            avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=1)
 
-    def test_source_deadline_cannot_be_extended_above_two_seconds(self):
+    def test_source_deadline_cannot_be_extended_above_one_second(self):
         fixture, announcement = self.fixture()
-        for within in (0, -1, True, 2.001, float("inf"), float("nan")):
-            with self.subTest(within=within), self.assertRaises(ValueError):
-                fixture.member_player.wait_for_standby_after(announcement, within=within)
+        for within in (0, -1, True, 1.001, 2, float("inf"), float("nan")):
+            with self.subTest(within=within):
+                with self.assertRaises(ValueError):
+                    fixture.member_player.wait_for_standby_after(announcement, within=within)
+                with self.assertRaises(ValueError):
+                    fixture.member_avr.wait_for_input(fixture.member_player, since=announcement.timestamp_ns,
+                                                      after=announcement, within=within)
 
 
 if __name__ == "__main__":
