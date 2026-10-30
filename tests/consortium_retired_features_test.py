@@ -12,6 +12,7 @@ PREFIX = r'''
 #include "amity/consortium/session.hpp"
 #include "amity/consortium/transfer.hpp"
 #include "controller_policy.hpp"
+#include "setup_timing.hpp"
 #include "amity/consortium/hostname.hpp"
 #include <algorithm>
 #include <cassert>
@@ -81,7 +82,7 @@ def main():
     credentials = (ROOT / 'components/consortium/credentials.cpp').read_text()
     runtime = (ROOT / 'components/consortium/runtime.cpp').read_text()
     actual = function(credentials, 'esp_err_t load_group(Group &out)') + function(credentials, 'esp_err_t save_group(const Group &g)')
-    startup = function(runtime, 'esp_err_t runtime_read_startup(model::OctopusId local,RuntimeStartup &out)')
+    startup = (function(runtime, 'esp_err_t validate_startup(') if 'esp_err_t validate_startup(' in runtime else '') + function(runtime, 'esp_err_t runtime_read_startup(model::OctopusId local,RuntimeStartup &out)')
     with tempfile.TemporaryDirectory(prefix='amity-retired-features-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
         cpp.write_text(PREFIX + actual + MIDDLE + startup + SUITE)

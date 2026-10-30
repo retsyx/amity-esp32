@@ -49,11 +49,23 @@ The normal build uses fresh ephemeral key exchange and AEAD-protected messages d
 
 Both main and candidate must use the same profile. Bind the profile and participants into the exchange and reject profile mismatch, malformed records, bad proofs and replay without downgrade or fallback. Keep setup codes and derived secrets transient; do not write them to browser storage, logs or portable configuration.
 
-Startup runs `admission_crypto_self_test(configured_admission_mode())` so a
-normal-profile boot does not execute the unused strict-profile PAKE test.
-Failure still keeps admission closed. The no-argument self-test used by explicit
-USB diagnostics and native coverage continues to exercise both profiles;
-profile matching and rejection without downgrade remain unchanged.
+Unclaimed and original-main startup runs
+`admission_crypto_self_test(configured_admission_mode())`; failure keeps admission
+closed, and a normal-profile boot does not execute the unused strict-profile
+PAKE test. Validated headless prepared/member/retired roles do not offer admission,
+so they skip this test and keep admission `crypto_ready` false. Operational
+startup still initializes PSA and fully validates stored group credentials and
+its own identity/key pair before authenticated TLS. Reset/reclaim reboots into
+unclaimed startup and therefore runs the admission test before offering Add.
+The no-argument explicit USB self-test and native coverage continue to exercise
+both profiles; profile matching and rejection without downgrade remain unchanged.
+
+A public startup read always loads and validates fresh storage. Within
+`runtime_start`, a private shared validator consumes its already validated group
+and returns the same validated identity instead of loading and verifying both
+again. Keep all authority, local-ID, role, obsolete-record and journal checks;
+an unclaimed read-only preflight still does not create an identity. This is
+transient reuse inside one startup call, not a cross-call credential cache.
 
 ## Commit the existing membership transaction
 

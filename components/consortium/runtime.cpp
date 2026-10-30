@@ -1029,10 +1029,13 @@ esp_err_t runtime_reclaim_membership(model::OctopusId confirmed){
     RuntimeLifecycleHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(!status.initialized||confirmed!=identity.id||(!recovery_console&&group.role==Group::unclaimed))return ESP_ERR_INVALID_STATE;auto result=write_record("amity_reclaim","pending","1:"+confirmed.str());if(result!=ESP_OK)return result;status.phase="reclaim_pending";status.authority_ready=false;status.synchronized=false;for(auto &active:links){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}hooks=lifecycle;}
     runtime_cancel_radio_workflows();if(!hooks.retire)return ESP_ERR_NOT_SUPPORTED;return hooks.retire();
 }
-esp_err_t runtime_read_startup(model::OctopusId local,RuntimeStartup &out){
-    out={};if(!local||psa_crypto_init()!=PSA_SUCCESS){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
-    Group stored;auto result=load_group(stored);
-    if(result!=ESP_OK){out.role=RuntimeStartup::recovery_required;return result;}
+namespace {
+// Each caller first initializes PSA and fully validates its own freshly loaded
+// Group. Reuse only this call's exact verified identity; never cache a boot
+// preflight across calls or generate an identity during an unclaimed preflight.
+esp_err_t validate_startup(model::OctopusId local,const Group& stored,RuntimeStartup& out,Identity* verified_identity=nullptr,BoundedSetupTimings<5>* timing=nullptr){
+    out={};if(verified_identity)*verified_identity={};
+    if(!local){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
     // Obsolete transfer records never restore authority. Any retained marker or
     // proposal (including an interrupted/orphaned write) requires physical reset.
     for(const auto* key:{"active","proposal0","proposal1"}){std::string legacy;if(read_record("amity_handover",key,legacy,1)!=ESP_ERR_NVS_NOT_FOUND){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}}
@@ -1042,9 +1045,20 @@ esp_err_t runtime_read_startup(model::OctopusId local,RuntimeStartup &out){
     if((stored.role==Group::member||stored.role==Group::prepared)&&stored.joining_id!=local){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
     std::string committed,pending;
     if(read_record("amity_group","identity",committed,8192)!=ESP_OK||read_record("amity_group","identity_tmp",pending,8192)!=ESP_OK||committed!=pending){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
-    Identity verified;if(platform::load_identity(local,verified)!=ESP_OK||(stored.role==Group::coordinator&&stored.authority!=local)){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
+    Identity verified;const auto identity_stage=timing?timing->begin("identity_load"):0;
+    const auto loaded=platform::load_identity(local,verified);
+    if(timing)timing->finish(identity_stage,loaded==ESP_OK,1);
+    if(loaded!=ESP_OK||(stored.role==Group::coordinator&&stored.authority!=local)){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
+    if(verified_identity)*verified_identity=std::move(verified);
     out.role=static_cast<RuntimeStartup::Role>(stored.role);out.consortium_id=stored.consortium;out.authority_id=stored.authority;out.epoch=stored.epoch;out.membership_revision=stored.revision;
     return ESP_OK;
+}
+}
+esp_err_t runtime_read_startup(model::OctopusId local,RuntimeStartup &out){
+    out={};if(!local||psa_crypto_init()!=PSA_SUCCESS){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
+    Group stored;auto result=load_group(stored);
+    if(result!=ESP_OK){out.role=RuntimeStartup::recovery_required;return result;}
+    return validate_startup(local,stored,out);
 }
 esp_err_t runtime_set_hardware_profile(uint8_t count,uint8_t mask){
     if(!count||count>amity::max_tentacles||mask>=(1u<<count))return ESP_ERR_INVALID_ARG;
@@ -1052,23 +1066,38 @@ esp_err_t runtime_set_hardware_profile(uint8_t count,uint8_t mask){
     hardware_tentacles=count;hardware_tentacles_mask=mask;return ESP_OK;
 }
 esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,model::BootId current_boot,uint64_t config){
+    BoundedSetupTimings<5> timing("startup",now_ms);timing.peer=octopus;timing.begin("total");
     if(!consortium||!octopus||!current_boot||!config||initialized.exchange(true))return ESP_ERR_INVALID_STATE;
     if(psa_crypto_init()!=PSA_SUCCESS)return recovery_usb(octopus,ESP_FAIL,"Crypto initialization failed; physical recovery only");
-    auto result=load_group(group);if(result!=ESP_OK)return recovery_usb(octopus,result,"Membership journal needs physical recovery");
-    RuntimeStartup startup;if(runtime_read_startup(octopus,startup)!=ESP_OK)return recovery_usb(octopus,ESP_ERR_INVALID_STATE,"Membership authority journal needs physical recovery");
-    result=platform::load_identity(octopus,identity);if(result!=ESP_OK){return recovery_usb(octopus,result,"Operational credential journal needs physical recovery");}singleton=consortium;boot=current_boot;configuration=config;
+    const auto group_stage=timing.begin("load_group");auto result=load_group(group);timing.finish(group_stage,result==ESP_OK,1);
+    if(result!=ESP_OK)return recovery_usb(octopus,result,"Membership journal needs physical recovery");
+    RuntimeStartup startup;const auto validation_stage=timing.begin("startup_validation");
+    const auto validated=validate_startup(octopus,group,startup,&identity,&timing);timing.finish(validation_stage,validated==ESP_OK,1);
+    if(validated!=ESP_OK)return recovery_usb(octopus,ESP_ERR_INVALID_STATE,"Membership authority journal needs physical recovery");
+    if(group.role==Group::unclaimed){
+        const auto identity_stage=timing.begin("identity_load");result=platform::load_identity(octopus,identity);timing.finish(identity_stage,result==ESP_OK,1);
+        if(result!=ESP_OK)return recovery_usb(octopus,result,"Operational credential journal needs physical recovery");
+    }
+    singleton=consortium;boot=current_boot;configuration=config;
     // The former separate Add credential has no role in either admission mode.
     // Its removal must never erase origin identity or factory Matter credentials.
     if(erase_record("amity_origin","bootstrap")!=ESP_OK)ESP_LOGW("consortium","Could not discard an unused setup verifier");
     std::string name_record;const auto name_result=read_record("amity_group","hostnames",name_record,8192);if(name_result!=ESP_ERR_NVS_NOT_FOUND&&(name_result!=ESP_OK||!hostnames.restore(name_record))){hostnames={};status.last_error="Saved device names are unavailable. Names will refresh when devices reconnect.";}
-    status.crypto_ready=admission_crypto_self_test(configured_admission_mode());
-    if(!status.crypto_ready){error("Admission key exchange/encryption self-test failed");return ESP_FAIL;}
+    // Stored headless roles cannot start admission or claim controller status.
+    // Their operational readiness comes from PSA, validated identity and TLS.
+    // Reset/reclaim boots unclaimed and runs the admission test before setup.
+    const bool needs_admission=group.role==Group::unclaimed||original_controller(group,identity.id);
+    status.crypto_ready=false;
+    if(needs_admission){
+        const auto admission_stage=timing.begin("admission_selftest");status.crypto_ready=admission_crypto_self_test(configured_admission_mode());timing.finish(admission_stage,status.crypto_ready,1);
+        if(!status.crypto_ready){error("Admission key exchange/encryption self-test failed");return ESP_FAIL;}
+    }else{const auto skipped=timing.begin("admission_not_needed");timing.finish(skipped,true,0);}
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
     if(group.role==Group::retired){status.member=false;status.phase="retired";if(group.join_id&&group.mutation_id&&group.mutation_digest==group.join_digest){status.phase="enrollment_aborted";status.last_error="Enrollment cancelled; this Amity remains passive. Use physical reclaim to operate independently.";}}
     if(startup.passive()&&ble_remote_set_controller_enabled(false)!=ESP_OK)return recovery_usb(octopus,ESP_FAIL,"Added device remote shutdown needs physical recovery");
     if(xTaskCreateWithCaps(network_loop,"group_net",6144,nullptr,2,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS||xTaskCreateWithCaps(usb_worker,"group_usb",12288,nullptr,1,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
-    return ESP_OK;
+    timing.done(true);return ESP_OK;
 }
 void runtime_configuration_changed(uint64_t revision,const std::string &hash){
     if(!revision||hash.size()!=64)return;

@@ -15,15 +15,66 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Headless startup delay fix — 30 October 2026
+
+Firmware 0.1.108 / Matter software 109 removes admission self-tests from validated
+headless prepared/member/retired startup and duplicate credential validation
+within a single runtime startup. Unclaimed/original-main admission self-tests,
+full USB diagnostics and fresh validated storage at every public startup read
+remain. Build, deployment, timing and full physical-suite evidence are pending
+under `test-results/add-member-startup-fix-2026-10-30/`.
+
 ## Enrollment latency fixes — 30 October 2026
 
-Firmware 0.1.107 / Matter software 108 removes the discovery collection gate and
-repeated operational certificate signature checks. The shared functional HTTP
-transport reuses a connection for the configured DUT origin and closes it during
-cleanup; it never automatically resends a request. Detailed build, deployment,
-timing and physical-suite results are pending under
-`test-results/add-phase-fix-2026-10-30/`. The completed 0.1.106 investigation below
-remains an immutable baseline, including its failed timing capture.
+All four DUTs received exact 0.1.107 / Matter software 108 from
+`2fb1e895ef0581dea62d3b79fae1bb6393f597f4`: 2,449,008 bytes, image SHA-256
+`2319eac138501a4be9c85a33742d261752f13d57c2597b4585cf3bea313c1684`,
+ELF SHA-256 `e3183b6f42dcecbd7f2b6d333401622a1f6f798c309cdac2be70cebe38062aee`.
+Main OTA passed 13 preservation checks, each candidate application-only update
+passed 18 checks, and all USB ports closed before enrollment. The complete host
+suite with 355 framework units, actual pinned-Mbed-TLS tests and full contracts
+passed. Web verification passed 29 checks and all 11 complete bodies. The first
+host run's missing native-fixture include is preserved in
+`host-tests-first-attempt.log`; test-only commit `876be14` fixes it without
+changing the frozen firmware or framework. Evidence is under
+`test-results/add-phase-fix-2026-10-30/`.
+
+The changes publish BLE candidates immediately while collecting later boards in
+the same bounded scan, cancel/fence discovery before exact selected connection,
+omit repeated cursor writes at an unchanged response offset and retain the
+original ATT/reply deadlines. Operational TLS retains full signature validation
+at all untrusted credential ingress plus exact DER/identity/SPKI binding and
+mutual TLS; real native exchanges reduce repeated full validations from four to
+zero. The framework reuses authenticated HTTPS on its one configured DUT origin,
+with two-second idle expiry, complete bodies, bounded request deadlines,
+cleanup closure and no redirects or automatic request resends.
+
+One normal-profile Add-only physical diagnostic passed, including exact
+identity/settings proof, acknowledged removal/reset and all preservation checks:
+
+| Measured interval | Clean 0.1.106 A2 | 0.1.107 A1 |
+| --- | --- | --- |
+| Helper entry to first verified ready | 80.323 s | 39.923 s |
+| Helper entry to Add POST | 28.770 s | 6.196 s |
+| Accepted Add to firmware ready | 39.520 s | 31.194 s |
+| POST to observed operation completion | 42.143 s | 31.471 s |
+| Observed completion to full proof | 9.410 s | 2.256 s |
+
+The helper duration decreased by 40.400 seconds in this observed pair. The
+comparison covers the combined firmware/framework change; it cannot assign the
+total improvement to either alone and is not a latency guarantee. Both exact
+firmware-clock anchors survive with no rejected timing records. The new trace
+includes a 6.434-second Wi-Fi RPC, a 7.942-second committed-enrollment-to-next-TCP
+restart/rejoin interval and two TLS handshakes totaling 6.831 seconds. The
+synchronization retry from 0.1.106 A1 did not recur in this run; its historical
+cause remains unresolved. New terminal receive diagnostics distinguish parser,
+SDK/EOF and wrapper failures if it recurs, while preserving all original limits.
+
+`A1-timing-comparison.json` retains hashes, clocks, disjoint spans and cleanup.
+This qualifies the single normal-profile Add/removal path only; a complete CEC
+suite was not run on 0.1.107 before the further startup change. The 0.1.106
+investigation below remains an immutable baseline, including its failed timing
+capture.
 
 ## Enrollment phase investigation — 30 October 2026
 
