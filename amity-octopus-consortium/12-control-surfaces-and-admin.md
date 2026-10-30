@@ -62,5 +62,5 @@ The [actual SDK response-write regression](../tests/https_response_write_test.py
 executes the shared response helper, pinned HTTP/TLS send path and AES bounce
 allocation logic under a controlled internal-DMA allocation limit. It proves
 the bounded-write mechanism, not the exact heap state at the failed physical
-write. Physical qualification of the 0.1.104 correction remains pending; see
-[the retained failure and current evidence](VALIDATION.md).
+write. The passing 0.1.104 web and physical checks, their scope and the retained
+failed run are recorded in [validation](VALIDATION.md).

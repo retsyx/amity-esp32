@@ -33,8 +33,8 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 17256,
-      "sha256": "86d051ccb5a44ed00c2da9db078d7cd110febdbee290f1b8f205b91ce1895a03"
+      "size_bytes": 17349,
+      "sha256": "65ebb6c83d6418caf147d25f7de82976fe5e30713dba47bfbc0143a58e7558bf"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -54,7 +54,7 @@
     {
       "path": "12-control-surfaces-and-admin.md",
       "size_bytes": 9592,
-      "sha256": "a94f6d2fb0bc1a91e07902a01f77ba70351a4e0417a0c9c0bbbf7d5ad805e63c"
+      "sha256": "6e685cdb933d82775f811b71e7ed3df5c4a5973cbea6b3ed4b697470cab82420"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 60199,
-      "sha256": "2ca7644f6834113814d306202f83eb39d6a6225ce41a57083d4f3f5a7501e734"
+      "size_bytes": 64559,
+      "sha256": "dbda919122a83e1706a8a10a672a5a9fcb6e7245d33a357ddac69d1652d0472f"
     },
     {
       "path": "examples/README.md",

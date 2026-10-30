@@ -15,7 +15,67 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
-## 0.1.103 HTTPS memory failure; 0.1.104 correction pending — 30 October 2026
+## 0.1.104 deployment and physical qualification — 30 October 2026
+
+All four DUTs run exact 0.1.104 / Matter software 105 from firmware commit
+`7d8508ed6bef5055b48fab865681d84456e685db`, with `source_dirty=true` as recorded
+in the frozen release. The 2,436,688-byte image has SHA-256
+`382022e2ed4ae473cbcd2254129a77339c702209bbc03705b78690e1f4981689`;
+ELF SHA-256 is
+`4072b48bba28d6dca717a20519f13dc242c9893fe8e31022d16c6c6ca3b2430f`.
+Authenticated application OTA on the main passed 13 preservation checks without
+USB. Each candidate passed 18 checks after a MAC-locked application-only USB
+update without erasing flash. The complete host suite, 339 framework units,
+native build with 36 public-record layout checks and contracts passed. Evidence
+is under `test-results/consortium-tls-memory-fix-2026-10-30/`.
+
+Live shipping-UI verification passed 29 checks: all 11 response bodies completed,
+four assets matched the frozen build exactly, large JSON and log responses
+completed, and status/security headers and main saved configuration/pairings
+were preserved. `web-verification.json` records these single-attempt checks.
+
+All three physical cases passed with unchanged assertions and deadlines:
+
+| Case | Duration | Fresh physical evidence | Cleanup |
+| --- | --- | --- | --- |
+| Three-owner consortium | 620.437811 s | 24 power assertions, nine typed scan locations, three initial routes and all six cross-owner theft directions; directed Standby responses 66.900010–66.950101 ms | Three activities removed; member 3 then member 2 removed with acknowledged scheduled resets |
+| Original two-owner consortium | 348.054372 s | 14 power assertions, six typed locations, two initial routes and both theft directions; responses 67.049612 and 66.950095 ms | Two activities removed; the known added member removed with acknowledged scheduled reset |
+| Shared-wire source theft | 135.288419 s | Four typed locations, three fresh start power commands, thief Standby at 66.899968 ms and selected-route restoration at 183.349865 ms from the same physical trigger, both within two seconds | Two activities removed; three fresh physical cleanup Standby commands |
+
+The reports are `consortium-three-duts.json`, `consortium.json` and
+`source-theft.json`; their corresponding `*-verification.json` files pass
+21, 21 and 20 independent saved-report checks. Every owner was exercised as
+active, with the selected UI activity and main boot retained through theft
+remediation. No owner-proof or testbed cleanup errors remained. No standalone
+Add case was run on 0.1.104: normal Add and exact connected/settings checks are
+included in the consortium cases; the separate 0.1.103 Add pass remains below.
+
+The final authenticated UI postcheck passes all 26 checks in
+`main-final-postcheck.json`. The two consortium cases together account for
+38 fresh power assertions, 15 typed locations, five initial routes, eight theft
+directions and three acknowledged reset removals. Main boot
+`59c89aa149f680bf357f9a4d220b5dcb` remained stable. Original saved values,
+existing slot metadata, names, hostname, installation/group, authority, hardware
+capabilities, Matter fabrics and HomeKit pairing state were preserved except
+for authorized fixture cleanup and revision changes. The main is ready and
+idle, with no enrolled peers, removed-owner observations, pending configuration,
+discovery, activity error or hardware error. The snapshot still retains a
+nonempty membership diagnostic and cumulative TX errors (129 before the cases,
+4,035 afterward); RX drops remain zero. These passing checks do not assert the
+absence of transport or CEC transmission failures. The membership diagnostic
+is set by an initial handshake/establishment failure and survives later
+successful establishment. Its exact cause is outside the retained log window;
+the remaining window contains only the expected member-retirement close.
+
+This qualifies the exercised normal admission profile with main `amity-dut`,
+added `amity-dut-2` and `amity-dut-3`, one adapter per owner, isolated front/back
+wires and simulated TV/AVR/player CEC responders. It does not qualify four
+owners, adversarial radio/reconnect/loss/load behavior, the strict admission
+profile, four-adapter electrical timing or real picture/audio equipment. The
+0.1.103 HTTPS failure, 0.1.102 bench interruption and all earlier failed
+physical reports remain failed historical evidence.
+
+## Historical 0.1.103 HTTPS memory failure and correction — 30 October 2026
 
 All four DUTs were deployed and verified on exact 0.1.103 / Matter software 104
 from firmware commit `1680c85781b4e310d7a163d4cbc9326ec908caff`, with
@@ -78,11 +138,11 @@ same assertions, while bounded writes preserve exact bytes and propagate
 failures. The modeled 1,024-byte DMA block limit is not a measurement of the
 physical failure. Targeted deadline, authentication and production-profile
 checks also pass. Results are in `bounded-application-write-regression.json`
-under the new evidence directory. No completed 0.1.104 build,
-deployment or physical pass is claimed. New evidence belongs under
-`test-results/consortium-tls-memory-fix-2026-10-30/`. The 0.1.103 Add and scan
-results do not qualify three-owner activity or source-theft behavior, and do
-not supersede the failed 0.1.102 bench attempt or earlier physical failures.
+under `test-results/consortium-tls-memory-fix-2026-10-30/`. The subsequent
+0.1.104 build, deployment and physical results are recorded above. They do not
+change this 0.1.103 three-owner failure or the failed 0.1.102 bench attempt;
+the 0.1.103 Add and scan evidence alone did not qualify activity or source-theft
+behavior.
 
 ## Consortium activities and live discovery — 29 October 2026
 

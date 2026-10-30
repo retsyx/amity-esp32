@@ -1,7 +1,7 @@
 {
-  "status": "IN PROGRESS: all four DUTs run verified 0.1.103 / Matter software 104. The complete host suite, 339 framework units, native build and contracts passed. Physical Add passed, but the three-owner run failed on a truncated HTTPS system response before activity execution; firmware logged AES memory allocation failure and TLS write error -0x0084. All nine scan locations passed and both added members were removed with scheduled resets and no cleanup errors. The accepted 0.1.104 correction bounds application TLS writes to 512 bytes while preserving global TLS record limits and handshake capacity; its build, deployment and physical validation remain pending.",
+  "status": "PASS within the exercised bench scope: all four DUTs run verified 0.1.104 / Matter software 105. The complete host suite with 339 framework units, native build, contracts and 29 live web checks passed. Three-owner and original two-owner consortium runs passed all activity and cross-owner theft cycles, with 38 fresh power assertions, 15 typed locations, five initial routes, eight theft directions and three acknowledged member reset removals combined. Shared-wire source theft also passed under the unchanged two-second physical deadline. Final preservation passed 26 checks with the same main boot, original saved values and pairings, idle state and no retained added owners. Qualification is limited to normal admission, at most three owners, one adapter per owner and simulated CEC; earlier failed runs remain failed.",
   "audit_date": "2026-10-30",
-  "firmware_version": "0.1.103",
+  "firmware_version": "0.1.104",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -50,47 +50,148 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
-    "result": "IN PROGRESS: accepted 0.1.104 application TLS write bound; build, deployment and physical validation pending",
-    "target_firmware_version": "0.1.104",
-    "target_matter_software_version": 105,
+    "result": "PASS: exact all-four deployment, live web responses, three-owner consortium, original two-owner consortium, shared-wire source theft and final preservation checks",
     "evidence_directory": "test-results/consortium-tls-memory-fix-2026-10-30",
-    "latest_deployed_firmware_version": "0.1.103",
-    "latest_deployment_report": "test-results/consortium-empty-context-fix-2026-10-30/deployment.json",
+    "latest_deployed_firmware_version": "0.1.104",
+    "latest_deployment_report": "test-results/consortium-tls-memory-fix-2026-10-30/deployment.json",
     "design": "Shared web::response sends bodies larger than 512 bytes as HTTP chunks of at most 512 bytes and sends smaller bodies directly; JSON, assets and logs use the helper. Peer TLS writes use chunks of at most 512 bytes with the existing 3-second send budget and WANT handling. Global TLS limits remain 4096-byte output and 16384-byte input; authentication, handshake capacity, receive semantics, timeouts and functional assertions remain unchanged.",
     "design_contracts": {
-      "result": "PENDING for 0.1.104"
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/contracts.json"
     },
     "software_tests": {
-      "result": "PENDING for 0.1.104",
-      "previous_pass": "test-results/consortium-empty-context-fix-2026-10-30/host-tests.log",
-      "previous_framework_unit_tests": 339
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/consortium-tls-memory-fix-2026-10-30/host-tests.log",
+      "framework_unit_tests": 339
     },
     "native_firmware_build": {
-      "result": "PENDING",
+      "result": "PASS",
       "firmware_version": "0.1.104",
-      "matter_software_version": 105
+      "matter_software_version": 105,
+      "image_bytes": 2436688,
+      "image_sha256": "382022e2ed4ae473cbcd2254129a77339c702209bbc03705b78690e1f4981689",
+      "image_elf_sha256": "4072b48bba28d6dca717a20519f13dc242c9893fe8e31022d16c6c6ca3b2430f",
+      "source_commit": "7d8508ed6bef5055b48fab865681d84456e685db",
+      "source_dirty": true,
+      "frozen_artifacts": "test-results/consortium-tls-memory-fix-2026-10-30/firmware-0.1.104",
+      "log": "test-results/consortium-tls-memory-fix-2026-10-30/build.log",
+      "public_record_layouts": 36
     },
     "physical_devices": {
-      "result": "PENDING for 0.1.104"
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/deployment.json",
+      "DUTs": 4,
+      "main_checks": 13,
+      "candidate_checks_each": 18,
+      "main_usb_opened": false,
+      "flash_erased": false
     },
     "add_amity_functional": {
-      "result": "PENDING for 0.1.104"
+      "result": "No standalone Add case run on 0.1.104; both passing consortium cases include normal Add and exact connected/settings checks.",
+      "historical_standalone_pass": "test-results/consortium-empty-context-fix-2026-10-30/add-amity.json",
+      "historical_standalone_firmware_version": "0.1.103"
     },
     "three_owner_functional": {
-      "result": "PENDING for 0.1.104"
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/consortium-three-duts.json",
+      "verification": "test-results/consortium-tls-memory-fix-2026-10-30/consortium-three-duts-verification.json",
+      "verification_checks": 21,
+      "duration_seconds": 620.437811,
+      "power_assertions": 24,
+      "typed_locations": 9,
+      "owner_boots": 3,
+      "isolated_wires": 6,
+      "initial_routing_assertions": 3,
+      "theft_directions": 6,
+      "theft_response_ns": [
+        66900028,
+        66900031,
+        66950045,
+        66900012,
+        66950101,
+        66900010
+      ],
+      "minimum_theft_response_ms": 66.90001,
+      "maximum_theft_response_ms": 66.950101,
+      "selected_activity_and_main_boot_retained": true,
+      "fixture_activities_created_and_removed": 3,
+      "acknowledged_member_resets": 2,
+      "owner_failures": [],
+      "cleanup_errors": []
     },
     "two_owner_functional": {
-      "result": "PENDING for 0.1.104"
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/consortium.json",
+      "verification": "test-results/consortium-tls-memory-fix-2026-10-30/consortium-verification.json",
+      "verification_checks": 21,
+      "duration_seconds": 348.054372,
+      "power_assertions": 14,
+      "typed_locations": 6,
+      "owner_boots": 2,
+      "isolated_wires": 4,
+      "initial_routing_assertions": 2,
+      "theft_directions": 2,
+      "theft_response_ns": [
+        66950095,
+        67049612
+      ],
+      "minimum_theft_response_ms": 66.950095,
+      "maximum_theft_response_ms": 67.049612,
+      "selected_activity_and_main_boot_retained": true,
+      "fixture_activities_created_and_removed": 2,
+      "acknowledged_member_resets": 1,
+      "owner_failures": [],
+      "cleanup_errors": []
     },
     "shared_wire_source_theft": {
-      "result": "PENDING for 0.1.104"
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/source-theft.json",
+      "verification": "test-results/consortium-tls-memory-fix-2026-10-30/source-theft-verification.json",
+      "verification_checks": 20,
+      "duration_seconds": 135.288419,
+      "typed_locations": 4,
+      "fresh_start_power_commands": 3,
+      "cleanup_physical_standbys": 3,
+      "thief_standby_response_ms": 66.899968,
+      "selected_route_restored_ms": 183.349865,
+      "same_trigger_deadline_ms": 2000,
+      "selected_activity_and_boot_retained": true,
+      "fixture_activities_created_and_removed": 2,
+      "cleanup_errors": []
     },
     "memory_evidence": "For PSRAM input/output, the pinned SDK uses DMA bounce allocations of min(1600, length) bytes for each needed buffer. The 1600-byte value is a cap, not a minimum; a 512-byte application write bounds each bounce request to 512 bytes. The physical esp-aes allocation failure does not identify which allocation or size failed, and -0x0084 is a generic mapped TLS write error rather than a memory-specific code. The exact physical response cutoff is not retained.",
     "targeted_regressions": {
       "result": "PASS",
       "report": "test-results/consortium-tls-memory-fix-2026-10-30/bounded-application-write-regression.json",
       "scope": "Actual source and pinned SDK functions with controlled allocator/device seams; before/after response and peer writes, exact bytes, partial/WANT progress, failure propagation and unchanged deadlines. This is not a physical heap measurement."
-    }
+    },
+    "firmware_version": "0.1.104",
+    "matter_software_version": 105,
+    "live_web": {
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/web-verification.json",
+      "checks": 29,
+      "complete_response_bodies": 11,
+      "exact_build_assets": 4,
+      "scope": "Single-attempt shipping-UI responses, large JSON/log bodies, exact assets and security headers; saved configuration and pairings preserved."
+    },
+    "final_preservation": {
+      "result": "PASS",
+      "report": "test-results/consortium-tls-memory-fix-2026-10-30/main-final-postcheck.json",
+      "checks": 26,
+      "main_boot": "59c89aa149f680bf357f9a4d220b5dcb",
+      "combined_consortium_power_assertions": 38,
+      "combined_consortium_typed_locations": 15,
+      "combined_consortium_initial_routes": 5,
+      "combined_consortium_theft_directions": 8,
+      "combined_acknowledged_member_resets": 3,
+      "preserved": "Original saved values, existing slot metadata, names, hostname, installation/group, original authority, hardware capabilities, Matter fabrics and HomeKit pairing state; only authorized fixture cleanup and revision changes.",
+      "current_state": "Ready and idle, no enrolled peers or removed-owner observations, no pending configuration or discovery, and no activity or hardware error.",
+      "diagnostic_limits": "The final snapshot retains a nonempty membership last_error and cumulative tx_errors=4035 (before the cases: 129); rx_dropped remains zero. These scoped passing checks do not assert the absence of transport or CEC transmission failures. The membership diagnostic is retained after later successful establishment; its initial handshake/establishment cause is outside the retained log window. That window contains only the expected member-retirement close.",
+      "diagnostic_capture": "test-results/consortium-tls-memory-fix-2026-10-30/final-diagnostics-logs.txt"
+    },
+    "qualification_scope": "Normal admission profile, main amity-dut with amity-dut-2 and amity-dut-3, one adapter per owner, isolated front/back wires and simulated TV/AVR/player CEC responders. No four-owner, adversarial radio/reconnect/loss/load, strict-profile or real-AV qualification is claimed."
   },
   "historical_evidence": {
     "release": "0.1.80",
@@ -100,7 +201,7 @@
     "earlier_history": "Earlier detailed release/graph-model records remain in repository history and their original test-results artifacts; they are not current execution contracts."
   },
   "qualification_gates": [
-    "Broader ESP32 radio/CEC owner delivery beyond the passing main/member2, one-adapter simulated-AV consortium scenario (three owners, reconnect/loss/load and strict admission profile)",
+    "Owner delivery beyond the passing normal-profile, three-owner, one-adapter-per-owner simulated-CEC bench, including larger owner counts and reconnect, loss, load and strict admission profile behavior",
     "Real Siri/Atomic gestures, held/failure/FIFO/loss behavior under radio/HTTPS/scan load",
     "Four-adapter GPIO/electrical/simultaneous eight-wire timing and detachable hardware",
     "Real AVR/display/source picture/audio and source isolation",
@@ -108,7 +209,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 104,
+  "matter_software_version": 105,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -180,15 +281,15 @@
     "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
-    "firmware_version": "0.1.103",
-    "image_sha256": "9d99ea1bde67647b33f3d83a251bd0c645292240db5123a045f200c050648890",
-    "image_elf_sha256": "f0424e1ceacdf4c634bf51f8da0c383f35d3b95527d52e0cef53bfdecba74fe8",
-    "source_commit": "1680c85781b4e310d7a163d4cbc9326ec908caff",
+    "firmware_version": "0.1.104",
+    "image_sha256": "382022e2ed4ae473cbcd2254129a77339c702209bbc03705b78690e1f4981689",
+    "image_elf_sha256": "4072b48bba28d6dca717a20519f13dc242c9893fe8e31022d16c6c6ca3b2430f",
+    "source_commit": "7d8508ed6bef5055b48fab865681d84456e685db",
     "source_dirty": true,
     "result": "PASS",
     "date": "2026-10-30",
-    "matter_software_version": 104,
-    "report": "test-results/consortium-empty-context-fix-2026-10-30/deployment.json",
+    "matter_software_version": 105,
+    "report": "test-results/consortium-tls-memory-fix-2026-10-30/deployment.json",
     "DUTs": 4,
     "main_usb_opened": false,
     "flash_erased": false,

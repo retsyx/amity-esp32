@@ -142,7 +142,9 @@ Test wrong owner/installation/controller, old boot/configuration/input, replay, 
 The [actual TLS send regression](../tests/consortium_tls_receive_test.py)
 checks the 512-byte write bound, exact frame bytes, partial writes, WANT
 continuations and failures under the unchanged three-second total budget.
-This source-level evidence does not qualify the pending physical 0.1.104 run.
+The separate passing 0.1.104 physical runs and their bench limits are recorded
+in [validation](VALIDATION.md); this source-level test alone is not physical
+qualification.
 
 The 30 October runtime regressions execute the actual peer projection, link-task queue pump/admission and synchronization code: `python3 tests/runtime_peer_status_test.py`, `python3 tests/consortium_live_configuration_test.py`, `python3 tests/consortium_owner_repeat_test.py` and `sh tests/system_sync_test.sh`. They cover partial/obsolete peer status, snapshot versus typed-result expiry, final completion recapture, exact recovery fences and a newer observation arriving during an older failed send. Before/after failures are preserved under `test-results/device-removal-2026-10-29/{peer-status,causal-snapshot}-{before,after}-fix.log`; the concurrent-send regression is `test-results/consortium-runtime-fix-2026-10-29/snapshot-send-overwrite-{before,after}-fix.log`. These establish the transport invariants; they do not establish the cause or resolution of the physical three-owner source-theft failure.
 
