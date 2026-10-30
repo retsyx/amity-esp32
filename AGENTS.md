@@ -4,6 +4,22 @@
 
 This project is in early development. There is no need for backward compatibility with prior revisions of the software. This remains true as long as this instruction is in this file. When the software is more mature, this instruction will be replaced with an instruction to ensure backward compatibility between software revisions.
 
+## Lessons — 29 October 2026
+
+I should have followed the original Amity implementation earlier, instead of adding coordination and special cases around valid behavior.
+
+The concrete lessons are:
+
+- **Current means current.** An activity in flight is not active. Early Standby is valid; normal activation later powers the device on.
+- **Discovery is independent of configuration.** Announcements populate the device cache. Editing activities must neither clear it nor disconnect member links.
+- **Device lookup has one path.** Every caller uses `find_device()`. Only that function knows about caching and the two-minute scan cooldown.
+- **Scans have exactly three triggers:** boot, an explicit UI request, or a required-device cache miss.
+- **Activity steps are sequential per Amity.** Different Amities may progress concurrently. User presses during setup are discarded through the existing input gate.
+- **Distribution delivers ownership and messages.** It should not introduce another activity planner or source policy.
+- **Tests should expose problems, not conceal them.** Verify fresh physical commands and resulting state without adding workarounds for legitimate timing differences.
+
+The broader lesson is to identify the actual invariant before “fixing” a race. Not every possible ordering is a bug.
+
 ## Automatic Matter setup at boot — 28 October 2026
 
 Matter commissioning must open automatically at boot when the current Matter
