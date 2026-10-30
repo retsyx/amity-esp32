@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run actual removal admission, dispatch, one-shot permit and result cache with real Session/codecs."""
 from pathlib import Path
-import os,shlex,subprocess,tempfile,json,copy,itertools
+import argparse,os,shlex,subprocess,tempfile,json,copy,itertools
 from consortium_gatt_callback_test import function
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
@@ -26,22 +26,22 @@ std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecy
 // fixture executes the completion and real roster-removal decisions directly.
 struct LinkTrace{const char* phase="";bool fail(const char*){return false;}};
 struct DeferredLinkTrace{void capture(const Active&,const LinkTrace&,uint64_t){}};
-unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;
+unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0,hash_delay=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;std::vector<uint32_t> sent_timeouts;
 void gatt_client_disconnect(){}
 esp_err_t save_group(const Group&){++group_saves;return disk_ok?ESP_OK:ESP_FAIL;}
 bool current_peer_credential(const Active& active,const Group& value){for(const auto& peer:value.peers)if(peer.id==active.peer&&peer.id==active.tls->authenticated)for(const auto& allowed:active.tls->allowed)if(peer.id==allowed.id&&peer.der==allowed.der&&peer.pin==allowed.pin)return true;return false;}
 // The cryptographic primitive is injected, not the production scope/digest
 // construction. Production SHA-256 has separate known-vector tests.
-std::string sha256(std::string_view text){uint64_t h=1469598103934665603ull;for(unsigned char c:text){h^=c;h*=1099511628211ull;}char out[65];snprintf(out,sizeof(out),"%016llx%016llx%016llx%016llx",(unsigned long long)h,(unsigned long long)h,(unsigned long long)h,(unsigned long long)h);return out;}
+std::string sha256(std::string_view text){clock_ms+=hash_delay;uint64_t h=1469598103934665603ull;for(unsigned char c:text){h^=c;h*=1099511628211ull;}char out[65];snprintf(out,sizeof(out),"%016llx%016llx%016llx%016llx",(unsigned long long)h,(unsigned long long)h,(unsigned long long)h,(unsigned long long)h);return out;}
 std::string settings_quote(std::string_view text){return "\""+std::string(text)+"\"";}
 Json parsed(std::string_view text){Json value;JsonError detail;assert(parse_json(text,value,detail));return value;}
-bool send(Active&,Kind kind,std::string_view payload,uint32_t timeout){assert(timeout<=2000);assert(kind==Kind::membership_event||kind==Kind::membership_result);sent.emplace_back(payload);events.push_back(kind==Kind::membership_result?"response_attempt":"request_attempt");return send_ok;}
+bool send(Active&,Kind kind,std::string_view payload,uint32_t timeout){assert(timeout<=2000);assert(kind==Kind::membership_event||kind==Kind::membership_result);sent.emplace_back(payload);sent_timeouts.push_back(timeout);events.push_back(kind==Kind::membership_result?"response_attempt":"request_attempt");return send_ok;}
 }
 '''
 SUITE=r'''
 namespace amity::consortium {
 void reset(bool main){
- clock_ms=100;configuration=1;controls={};group_saves=quiesces=markers=restarts=revocations=0;disk_ok=send_ok=true;failure=0;events.clear();sent.clear();links.clear();removal_operations.clear();removal_authorization={};identity={};group={};status={};boot=ident<model::BootId>(6);identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.consortium=ident<model::ConsortiumId>(2);group.authority=main?identity.id:ident<model::OctopusId>(3);group.epoch=1;group.revision=1;status.authority_ready=main;status.coordinator=main;status.member=!main;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});
+ clock_ms=100;configuration=1;controls={};group_saves=quiesces=markers=restarts=revocations=hash_delay=0;disk_ok=send_ok=true;failure=0;events.clear();sent.clear();sent_timeouts.clear();links.clear();removal_operations.clear();removal_authorization={};identity={};group={};status={};boot=ident<model::BootId>(6);identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.consortium=ident<model::ConsortiumId>(2);group.authority=main?identity.id:ident<model::OctopusId>(3);group.epoch=1;group.revision=1;status.authority_ready=main;status.coordinator=main;status.member=!main;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});
  lifecycle.retire=[]{++quiesces;events.push_back("quiescent");if(failure==1)return ESP_FAIL;if(failure==2)clock_ms+=2000;if(failure==3)links.front()->cancelled=true;if(failure==4)++configuration;return ESP_OK;};
  lifecycle.revoked=[](model::OctopusId){++revocations;};
  lifecycle.factory_reset=[](model::OctopusId issuer){assert(quiesces&&runtime_removed_device_reset_authorized(issuer));events.push_back("marker");if(failure==5)return ESP_FAIL;++markers;return ESP_OK;};
@@ -100,12 +100,47 @@ void empty_context_refresh_allows_reviewed_removal(){
  std::cout<<"PASS empty owner context completes refresh without false input readiness, repeated captures or blocking exact reviewed removal\n";
 }
 void ack_tests(){
+ for(bool publish_cleanup:{false,true}){
  reset(true);auto active=connection(false);const auto request=ident<model::MessageId>(80);assert(runtime_remove_octopus(active->peer,request,1,{})==ESP_OK);auto response=parsed(active->retirement_payload);response.object.emplace_back("result",parsed("\"reset_scheduled\""));const auto sc=active->session.scope();Envelope e;e.kind=Kind::membership_result;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.message_id=ident<model::MessageId>(81);e.ttl_ms=2000;std::string payload=active->retirement_payload;payload.pop_back();payload+=",\"result\":\"reset_scheduled\"}";
+ // The real Remove transaction revokes membership in before_commit, then
+ // publishes its saved-config deletion before this worker necessarily runs.
+ if(publish_cleanup){configuration=2;clock_ms+=100;}
  active->tls->frames.push_back(envelope_json(e,payload));assert(finish_retirement(*active));assert(parsed(runtime_removal_operation(active->peer,request)).get("reset")->string=="scheduled");assert(!markers&&!restarts);
+ assert(active->session.scope().config_revision==1&&sent.front()==active->retirement_payload&&sent_timeouts.front()==(publish_cleanup?1900u:2000u)); // Never restamp original scope/payload/deadline.
+ }
  std::cout<<"PASS exact authenticated durable-marker ACK updates only its removal operation; admission never claims completed reset\n";
 }
+void issued_removal_scope_denials(){
+ for(unsigned fault=0;fault<19;++fault){
+  reset(true);auto active=connection(false);const auto request=ident<model::MessageId>(82);
+  assert(runtime_remove_octopus(active->peer,request,1,active->status.boot_id)==ESP_OK);configuration=2;
+  switch(fault){
+   case 0:{auto scope=active->session.scope();scope.peer_boot_id=ident<model::BootId>(99);assert(active->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);break;}
+   case 1:{auto scope=active->session.scope();scope.link_id=ident<model::LinkId>(99);assert(active->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);break;}
+   case 2:boot=ident<model::BootId>(99);break;
+   case 3:group.epoch=2;break;
+   case 4:group.consortium=ident<model::ConsortiumId>(99);break;
+   case 5:group.authority=ident<model::OctopusId>(99);break;
+   case 6:status.authority_ready=false;break;
+   case 7:active->tls->authenticated=ident<model::OctopusId>(99);break;
+   case 8:active->removal_request=ident<model::MessageId>(99);break;
+   case 9:removal_operations.front().scope.reset();break;
+   case 10:removal_operations.front().complete=true;break;
+   case 11:++active->removal_until;break;
+   case 12:clock_ms+=2000;break;
+   case 13:active->retirement_payload.replace(active->retirement_payload.find(request.str()),32,ident<model::MessageId>(99).str());break;
+   case 14:active->retiring=false;break;
+   case 15:configuration=0;break;
+   case 16:group.peers.push_back({active->peer,"new-leaf","new-pin",true});break;
+   case 17:group.revision=1;break;
+   case 18:hash_delay=2000;break;
+  }
+  assert(!finish_retirement(*active)&&sent.empty()&&!markers&&!restarts);
+ }
+ std::cout<<"PASS issued removal permit survives only local config advance: changed scope/boot/link/epoch/authority/authentication/mutation, unissued/replaced/expired permits and original-deadline exhaustion deny without send\n";
 }
-int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){Envelope value;std::cout<<(parse_envelope(line,value)==Error::none?'1':'0')<<'\n';}return 0;}amity::consortium::receiver_tests();amity::consortium::source_tests();amity::consortium::empty_context_refresh_allows_reviewed_removal();amity::consortium::ack_tests();}
+}
+int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){Envelope value;std::cout<<(parse_envelope(line,value)==Error::none?'1':'0')<<'\n';}return 0;}amity::consortium::receiver_tests();amity::consortium::source_tests();amity::consortium::empty_context_refresh_allows_reviewed_removal();amity::consortium::ack_tests();amity::consortium::issued_removal_scope_denials();}
 '''
 def schema_vectors(binary):
  try:
@@ -142,7 +177,8 @@ def schema_vectors(binary):
  print('PASS actual removal codec/closed schemas:',report)
 
 def main():
- source=(ROOT/'components/consortium/runtime.cpp').read_text();private=(ROOT/'components/consortium/removal_runtime.inc').read_text()
+ parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
+ source=parser.parse_args().source.read_text();private=(ROOT/'components/consortium/removal_runtime.inc').read_text()
  actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'std::string envelope_json(')+''.join(function(source,name) for name in ['void context_capture_completed(', 'bool initialize_context(', 'bool lifecycle_receive(','std::string retirement_hash(','bool finish_retirement(','bool retire_member(','esp_err_t runtime_remove_octopus(','std::string runtime_removal_operation(','bool runtime_removed_device_reset_authorized('])
  with tempfile.TemporaryDirectory(prefix='amity-removal-') as temp:
   temp=Path(temp);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')

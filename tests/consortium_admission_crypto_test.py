@@ -5,6 +5,7 @@ The existing ESP Security2/protocomm and CHIP parsers are explicit host seams;
 this checks the NEW strict transcript-binding state machine, not SRP/CHIP itself.
 Firmware admission_crypto_self_test uses the actual pinned SDK implementations.
 """
+import argparse
 import os
 from pathlib import Path
 import shlex
@@ -38,14 +39,15 @@ struct psa_key_attributes_t{int type=0;};
 struct psa_key_derivation_operation_t{std::string salt,secret,info;};
 #define PSA_KEY_DERIVATION_OPERATION_INIT {}
 struct Key{EVP_PKEY* ec=nullptr;std::vector<unsigned char> aes;};
-std::map<unsigned,Key> key_store;unsigned next_key=0;
+std::map<unsigned,Key> key_store;unsigned next_key=0,srp_verifier_calls=0;
+bool fail_key_generation=false,fail_srp=false;
 int psa_crypto_init(){return 0;}
 void psa_set_key_type(psa_key_attributes_t* a,int type){a->type=type;}
 void psa_set_key_bits(psa_key_attributes_t*,int){}
 void psa_set_key_usage_flags(psa_key_attributes_t*,int){}
 void psa_set_key_algorithm(psa_key_attributes_t*,int){}
 int psa_destroy_key(unsigned id){auto found=key_store.find(id);if(found!=key_store.end()){EVP_PKEY_free(found->second.ec);if(!found->second.aes.empty())OPENSSL_cleanse(found->second.aes.data(),found->second.aes.size());key_store.erase(found);}return 0;}
-int psa_generate_key(const psa_key_attributes_t*,unsigned* id){EVP_PKEY_CTX* context=EVP_PKEY_CTX_new_from_name(nullptr,"EC",nullptr);EVP_PKEY* key=nullptr;bool good=context&&EVP_PKEY_keygen_init(context)>0&&EVP_PKEY_CTX_set_group_name(context,"prime256v1")>0&&EVP_PKEY_generate(context,&key)>0;EVP_PKEY_CTX_free(context);if(!good)return -1;*id=++next_key;key_store[*id].ec=key;return 0;}
+int psa_generate_key(const psa_key_attributes_t*,unsigned* id){if(fail_key_generation)return -1;EVP_PKEY_CTX* context=EVP_PKEY_CTX_new_from_name(nullptr,"EC",nullptr);EVP_PKEY* key=nullptr;bool good=context&&EVP_PKEY_keygen_init(context)>0&&EVP_PKEY_CTX_set_group_name(context,"prime256v1")>0&&EVP_PKEY_generate(context,&key)>0;EVP_PKEY_CTX_free(context);if(!good)return -1;*id=++next_key;key_store[*id].ec=key;return 0;}
 int psa_export_public_key(unsigned id,uint8_t* out,size_t capacity,size_t* size){return EVP_PKEY_get_octet_string_param(key_store.at(id).ec,OSSL_PKEY_PARAM_PUB_KEY,out,capacity,size)>0?0:-1;}
 int psa_generate_random(uint8_t* out,size_t size){return RAND_bytes(out,size)>0?0:-1;}
 int psa_hash_compute(int,const uint8_t* in,size_t size,uint8_t* out,size_t capacity,size_t* length){unsigned count=0;if(capacity<32||EVP_Digest(in,size,out,&count,EVP_sha256(),nullptr)<=0)return -1;*length=count;return 0;}
@@ -94,7 +96,7 @@ void protocomm_delete(protocomm_t* pc){delete pc;}
 int protocomm_close_session(protocomm_t*,int){return 0;}int protocomm_open_session(protocomm_t*,int){return 0;}
 int protocomm_set_security(protocomm_t* pc,const char*,const void*,const protocomm_security2_params_t* p){pc->key.assign(p->verifier,32);return 0;}
 int protocomm_add_endpoint(protocomm_t* pc,const char*,Endpoint endpoint,void* context){pc->endpoint=endpoint;pc->context=context;return 0;}
-int esp_srp_gen_salt_verifier(const char*,int,const char* password,int count,char** salt,int salt_size,char** verifier,int* verifier_size){*salt=static_cast<char*>(malloc(salt_size));RAND_bytes(reinterpret_cast<unsigned char*>(*salt),salt_size);*verifier_size=384;*verifier=static_cast<char*>(calloc(1,384));auto key=mock_hash(std::string_view(password,count));std::memcpy(*verifier,key.data(),32);return 0;}
+int esp_srp_gen_salt_verifier(const char*,int,const char* password,int count,char** salt,int salt_size,char** verifier,int* verifier_size){++srp_verifier_calls;if(fail_srp)return -1;*salt=static_cast<char*>(malloc(salt_size));RAND_bytes(reinterpret_cast<unsigned char*>(*salt),salt_size);*verifier_size=384;*verifier=static_cast<char*>(calloc(1,384));auto key=mock_hash(std::string_view(password,count));std::memcpy(*verifier,key.data(),32);return 0;}
 int protocomm_req_handle(protocomm_t* pc,const char* endpoint,int,const uint8_t* bytes,size_t count,uint8_t** out,ssize_t* size){
  std::string_view input(reinterpret_cast<const char*>(bytes),count);std::string response;
  if(std::string(endpoint)=="session"){
@@ -129,6 +131,17 @@ SUITE = r'''
 using namespace amity::consortium::platform;
 int main(){
  assert(admission_crypto_self_test());
+ assert(srp_verifier_calls==3); // Explicit diagnostics keep the full PAKE suite.
+ srp_verifier_calls=0;
+ assert(admission_crypto_self_test(configured_admission_mode()));
+ assert(srp_verifier_calls==(CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE?3u:0u));
+ assert(!admission_crypto_self_test(static_cast<AdmissionMode>(99)));
+ fail_srp=true;srp_verifier_calls=0;
+ assert(admission_crypto_self_test(AdmissionMode::button)&&srp_verifier_calls==0);
+ assert(!admission_crypto_self_test(AdmissionMode::setup_code));
+ assert(!admission_crypto_self_test()); // An explicit full check cannot skip strict failure.
+ fail_srp=false;fail_key_generation=true;
+ assert(!admission_crypto_self_test(configured_admission_mode()));fail_key_generation=false;
  const std::string id="00000000000000000000000000000001";
  for(auto mode:{AdmissionMode::button,AdmissionMode::setup_code}){
   for(int attack=0;attack<6;++attack){
@@ -147,13 +160,19 @@ int main(){
   assert(!denied.handshake([&](auto in,auto& out){if(!edited.handshake(in,out))return false;if(out.size()==139&&out.substr(0,8)=="AMADMIT3")out.back()^=1;return true;}));
  }
  assert(key_store.empty());
- std::cout<<"PASS actual admission handshake/AEAD both modes: transcript, direction, sequence, replay, cross-session, tamper; PIN-PAKE seam mocked, PSA uses OpenSSL"<<std::endl;
+ std::cout<<"PASS actual admission handshake/AEAD both modes and selected-profile startup checks: transcript, direction, sequence, replay, cross-session, tamper, failure gates; disabled PAKE absent at normal boot, full explicit PAKE retained; PIN-PAKE seam mocked, PSA uses OpenSSL"<<std::endl;
 }
 '''
 
 
 def main():
-    source = (ROOT / 'components/consortium/admission_crypto.cpp').read_text()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/admission_crypto.cpp')
+    source = parser.parse_args().source.read_text()
+    if 'bool admission_crypto_self_test(AdmissionMode mode)' not in source:
+        # Exercise the prior actual full self-test through the startup-profile
+        # seam so before-source failure is a behavioral assertion, not missing API.
+        source = source.replace('} // namespace amity::consortium::platform', 'bool admission_crypto_self_test(AdmissionMode){return admission_crypto_self_test();}\n} // namespace amity::consortium::platform')
     # Replace SDK adapter headers, not any production algorithm or state logic.
     source = '\n'.join(line for line in source.splitlines()
                        if not line.startswith('#include "'))

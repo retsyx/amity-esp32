@@ -4,6 +4,9 @@
 struct RemovalOperation {
     model::OctopusId owner;model::MessageId id;uint64_t until=0;
     std::string reset="pending";bool complete=false;
+    // The already-admitted reset keeps its original authenticated scope while
+    // this same Remove transaction publishes the saved-configuration deletion.
+    std::optional<LinkScope> scope={};uint64_t membership_revision=0;
 };
 std::vector<RemovalOperation> removal_operations;
 struct RemovalAuthorization {

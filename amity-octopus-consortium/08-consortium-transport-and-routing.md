@@ -135,6 +135,20 @@ Keep authenticated enrollment, hostname metadata, peer firmware update, per-devi
 
 Per-device adapter settings continue to use the selected owner's current boot, settings revision and presence generations, durable atomic apply and selected-device restart after result attempt. Explicit Remove retains the original-controller-only retirement/drain/reset-journal contract; offline removal cannot claim a remote reset. Firmware update retains exact release/image/job/target/offset correlation and independent target validation. See [settings/admin](12-control-surfaces-and-admin.md), [recovery](13-faults-removal-and-recovery.md) and [updates](14-ota-and-compatibility.md).
 
+An admitted Remove retains its exact owner/request, full authenticated
+`LinkScope`, membership revision and original two-second reset deadline in
+`RemovalOperation`. Its own saved-configuration deletion may publish a newer
+local revision before `finish_retirement` runs. Validate the issued pending
+permit and original mutation/target/digest against the unchanged link scope;
+do not reject solely because that local publication advanced, or restamp the
+terminal request. Original-controller authority, exact boots/link/group/epoch,
+TLS authentication, target absence from the roster and remaining lifetime still
+apply. The receiver and acknowledgment retain their exact existing fences;
+ordinary work remains revoked. The
+[actual removal regression](../tests/consortium_removal_test.py) covers this
+publication interleaving and stale, foreign, replaced and expired permits.
+Physical 0.1.105 reset acknowledgment remains pending.
+
 ## 7. Validation
 
 Test wrong owner/installation/controller, old boot/configuration/input, replay, malformed selectors, link loss, queue pressure and exact held cleanup without changing baseline CEC behavior. Compare local delivery with fake authenticated remote delivery of the same original intents. Management/security tests do not substitute for activity/CEC parity or real multi-device radio/CEC qualification.

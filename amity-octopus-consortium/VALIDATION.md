@@ -15,6 +15,57 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## 0.1.105 Add latency and removal correction pending — 30 October 2026
+
+The current target is 0.1.105 / Matter software 106. Latest deployed firmware
+remains verified 0.1.104 on all four DUTs. Three avoidable costs are corrected
+in source: boot tests only the configured admission profile while explicit
+USB/native self-tests retain both; proposal construction reuses exact validated
+`Identity`/`Peer` records instead of repeating two certificate signature checks;
+and the first known numeric authority-IP attempt precedes blocking mDNS while
+retaining pinned TLS and existing failed-route discovery/rotation/backoff.
+The first untrusted certificate checks, profile matching, required member
+restart, handshake and authority rules remain unchanged. Actual-source crypto,
+startup/network and admission workflow regressions pass. They prove the
+mechanisms, not a measured physical latency improvement.
+
+The new 0.1.104 Add timing baseline remains failed. Admission completed
+53.704 seconds after Add POST; helper entry to first verified readiness was
+92.051 seconds. Initial USB monitor attachment caused a candidate reboot
+41.879 seconds before the POST, so this is diagnostic timing evidence rather
+than clean qualification. Cleanup received `reset=unconfirmed`. The saved
+main/candidate logs and immediate snapshot expose a separate race: Remove
+admitted terminal retirement under link configuration 196, then its saved-owner
+cleanup published local configuration 197 before the link worker sent the
+request. The old global-revision equality check rejected that already-admitted
+exchange; the candidate received no retirement and closed the link.
+
+The correction retains an immutable admitted scope/revision permit for the
+exact pending removal request through its own configuration publication. It
+validates original authority, authenticated full link/boot/group/epoch scope,
+mutation/digest, target absence and the original two-second reset lifetime
+without advancing or restamping the request. Receiver and ACK checks remain.
+The actual removal regression reproduces the old failure and passes the new
+publication interleaving plus 19 denied stale/foreign/expired permit cases.
+These reset-exchange seconds are separate from the current one-second
+source-theft response contract.
+
+Baseline evidence is under `test-results/add-latency-2026-10-30/` in
+`baseline-add.json`, `baseline-add.log`, `baseline-candidate.log` and
+`removal-config-publish-before-fix.log`; main failure captures are
+`latency-baseline-failure-{snapshot.json,logs.txt}` under the 0.1.104 TLS-memory
+fix directory. Separate post-failure recovery held only the known fixture
+`amity-dut-2` reset button for 10.5 seconds and acknowledged release, recorded
+in `baseline-physical-recovery.json`. It does not repair the failed report or
+establish a pre-test reset requirement.
+
+New evidence belongs under `test-results/add-latency-fix-2026-10-30/`.
+The 0.1.105 complete host suite, build, deployment and physical results are
+pending. All seven functional cases are planned; no result is claimed for
+them. The one-second source-theft contract and its separate 340-unit host pass
+remain current; historical physical reports below retain their recorded
+two-second limits.
+
 ## Current source-theft deadline — 30 October 2026
 
 The current functional contract now requires thief Standby and resulting state

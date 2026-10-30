@@ -477,8 +477,27 @@ bool finish_retirement(Active &active){
     struct Result{Active& active;model::MessageId request;bool& acknowledged;~Result(){removal_finish(active.peer,request,acknowledged);}} result{active,request,acknowledged};
     active.session.restrict_lifecycle();
     const auto now=now_ms();if(!request||payload.empty()||now>=until||until-now>2000||active.cancelled)return false;
-    {std::lock_guard<std::mutex> guard(lock);if(!original_controller(group,identity.id)||!status.authority_ready||configuration!=active.session.scope().config_revision)return false;}
-    if(!send(active,Kind::membership_event,payload,static_cast<uint32_t>(until-now)))return false;
+    LinkScope scope;uint64_t revision=0;
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        const auto issued=std::find_if(removal_operations.begin(),removal_operations.end(),[&](const auto& operation){return operation.owner==active.peer&&operation.id==request&&!operation.complete;});
+        if(issued==removal_operations.end()||!issued->scope||issued->until!=until)return false;
+        scope=*issued->scope;revision=issued->membership_revision;
+        // Admission required the then-current revision. Its terminal reset is
+        // bound to that exact link/boot/scope, even after this Remove commits a
+        // newer local configuration. Never advance or restamp the old request.
+        if(!(active.session.scope()==scope)||!active.retiring||!active.tls->server||active.tls->authenticated!=scope.peer_id||active.peer!=scope.peer_id||
+           !original_controller(group,identity.id)||!status.authority_ready||identity.id!=scope.local_id||boot!=scope.local_boot_id||
+           group.consortium!=scope.consortium_id||group.authority!=scope.coordinator_id||group.epoch!=scope.epoch||group.revision<revision||
+           configuration<scope.config_revision||std::any_of(group.peers.begin(),group.peers.end(),[&](const auto& peer){return peer.id==scope.peer_id;}))return false;
+    }
+    Json checked;JsonError detail;model::MutationId mutation;uint64_t requested_revision=0;model::BootId target;
+    if(!parse_json(payload,checked,detail)||!closed(checked,{"mutation_id","proposal_digest","phase","membership_revision","expected_boot_id"})||
+       !id(checked.get("mutation_id"),mutation)||mutation.str()!=request.str()||!decimal(checked.get("membership_revision"),requested_revision)||requested_revision!=revision||
+       !id(checked.get("expected_boot_id"),target)||target!=scope.peer_boot_id||!checked.get("phase")||checked.get("phase")->type!=Json::Type::string||checked.get("phase")->string!="factory_reset"||
+       !checked.get("proposal_digest")||checked.get("proposal_digest")->type!=Json::Type::string||checked.get("proposal_digest")->string!=retirement_hash(scope,mutation,revision))return false;
+    const auto sending=now_ms();if(sending>=until)return false;
+    if(!send(active,Kind::membership_event,payload,static_cast<uint32_t>(until-sending)))return false;
     const auto sent=now_ms();if(sent>=until)return false;
     Envelope response;if(!lifecycle_receive(active,response,static_cast<uint32_t>(until-sent))||response.kind!=Kind::membership_result)return false;
     Json requested;JsonError error;if(!parse_json(payload,requested,error))return false;
@@ -791,16 +810,39 @@ void network_loop(void*){
         reap_closed_links();
         if(current.role==Group::coordinator){if(listener<0){int fd=::socket(AF_INET,SOCK_STREAM,0);int yes=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_port=htons(7443);addr.sin_addr.s_addr=INADDR_ANY;if(fd<0||::bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))||::listen(fd,2)){if(fd>=0)::close(fd);vTaskDelay(pdMS_TO_TICKS(1000));continue;}listener=fd;timeval timeout{0,200000};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));}
             int fd=::accept(listener,nullptr,nullptr);if(fd>=0){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,true,fd))launch(tls);}
-        }else if((current.role==Group::member||current.role==Group::prepared)&&may_connect){bool connected;{std::lock_guard<std::mutex> guard(lock);connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});}if(connected)backoff=1000;if(!connected&&!current.peers.empty()){if(now_ms()>=next_discovery){discovered=discover_group_hints(current);next_discovery=now_ms()+10000;}std::vector<std::string> candidates;if(!current.authority_host.empty())candidates.push_back(current.authority_host);for(const auto &hint:discovered)if(std::find(candidates.begin(),candidates.end(),hint)==candidates.end())candidates.push_back(hint);const auto endpoint=candidates.empty()?std::string{}:candidates[next_hint++%candidates.size()];addrinfo hints{};hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_INET;hints.ai_flags=AI_NUMERICHOST;addrinfo *addresses=nullptr;if(!endpoint.empty()&&getaddrinfo(endpoint.c_str(),"7443",&hints,&addresses)==0){int fd=::socket(addresses->ai_family,SOCK_STREAM,0);if(fd>=0&&connect_bounded(fd,addresses->ai_addr,addresses->ai_addrlen)){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,false,fd,current.authority))launch(tls,endpoint);}else if(fd>=0)::close(fd);freeaddrinfo(addresses);}vTaskDelay(pdMS_TO_TICKS(backoff+(uint8_t(random_hex(1)[0])%100)));backoff=std::min<uint32_t>(backoff*2,10000);}}
+        }else if((current.role==Group::member||current.role==Group::prepared)&&may_connect){
+            bool connected;{std::lock_guard<std::mutex> guard(lock);connected=std::any_of(links.begin(),links.end(),[](const auto& link){return !link->cancelled;});}
+            if(connected)backoff=1000;
+            if(!connected&&!current.peers.empty()){
+                // The transaction already supplies a numeric authority hint.
+                // Try it immediately once; failure still reaches the existing
+                // bounded discovery/rotation path. Only pinned TLS grants trust.
+                const bool first_known=next_hint==0&&!current.authority_host.empty();
+                if(!first_known&&now_ms()>=next_discovery){discovered=discover_group_hints(current);next_discovery=now_ms()+10000;}
+                std::vector<std::string> candidates;if(!current.authority_host.empty())candidates.push_back(current.authority_host);
+                for(const auto &hint:discovered)if(std::find(candidates.begin(),candidates.end(),hint)==candidates.end())candidates.push_back(hint);
+                const auto endpoint=candidates.empty()?std::string{}:candidates[next_hint++%candidates.size()];
+                addrinfo hints{};hints.ai_socktype=SOCK_STREAM;hints.ai_family=AF_INET;hints.ai_flags=AI_NUMERICHOST;addrinfo *addresses=nullptr;
+                if(!endpoint.empty()&&getaddrinfo(endpoint.c_str(),"7443",&hints,&addresses)==0){
+                    int fd=::socket(addresses->ai_family,SOCK_STREAM,0);
+                    if(fd>=0&&connect_bounded(fd,addresses->ai_addr,addresses->ai_addrlen)){auto tls=std::make_shared<TlsLink>();if(tls->setup(local,current.peers,false,fd,current.authority))launch(tls,endpoint);}
+                    else if(fd>=0)::close(fd);
+                    freeaddrinfo(addresses);
+                }
+                vTaskDelay(pdMS_TO_TICKS(backoff+(uint8_t(random_hex(1)[0])%100)));backoff=std::min<uint32_t>(backoff*2,10000);
+            }
+        }
         uint64_t generation=0;{std::lock_guard<std::mutex> guard(lock);if(candidate_deadline&&now_ms()>=candidate_deadline)generation=candidate_generation;}
         if(generation)runtime_close_enrollment();
         if(gatt_quiescent()){RuntimeRadioHooks hooks;uint64_t release=0;{std::lock_guard<std::mutex> guard(lock);release=pending_radio_release;pending_radio_release=0;hooks=radio;}if(release&&hooks.release)hooks.release(release);}
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
-std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,model::OctopusId coordinator,model::OctopusId candidate,uint64_t epoch,uint64_t revision,std::string_view coordinator_leaf,std::string_view candidate_leaf,const std::string &host,const std::string &hostname){
-    JoinProposal p;p.join_id=join;p.consortium_id=consortium;p.coordinator_id=coordinator;p.candidate_id=candidate;p.epoch=epoch;p.revision=revision;p.coordinator_leaf=coordinator_leaf;p.candidate_leaf=candidate_leaf;p.host=host;p.candidate_hostname=hostname;
-    if(!certificate(coordinator_leaf,coordinator,p.coordinator_pin)||!certificate(candidate_leaf,candidate,p.candidate_pin))return {};
+std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,const Identity& coordinator,const Peer& candidate,uint64_t epoch,uint64_t revision,const std::string &host,const std::string &hostname){
+    // The boot identity and this transaction's just-verified candidate already
+    // contain their derived pins. Copy those exact records, without repeating
+    // signatures or trusting pins supplied by an unauthenticated document.
+    JoinProposal p;p.join_id=join;p.consortium_id=consortium;p.coordinator_id=coordinator.id;p.candidate_id=candidate.id;p.epoch=epoch;p.revision=revision;p.coordinator_leaf=coordinator.der;p.candidate_leaf=candidate.der;p.coordinator_pin=coordinator.spki;p.candidate_pin=candidate.pin;p.host=host;p.candidate_hostname=hostname;
     return encode_join_proposal(p);
 }
 std::string host_ip(){auto iface=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};if(!iface||esp_netif_get_ip_info(iface,&ip)!=ESP_OK||!ip.ip.addr)return {};char text[16];snprintf(text,sizeof(text),IPSTR,IP2STR(&ip.ip));return text;}
@@ -896,7 +938,7 @@ void invite_worker_work(void *arg){
         const auto host=host_ip();good=current()&&!host.empty()&&current_group.role==Group::coordinator&&current_group.peers.size()<maximum_roster_peers&&current_group.revision<UINT64_MAX;
         for(const auto& old:current_group.peers)if(old.id==peer.id||old.pin==peer.pin)good=false;
         if(good){
-            proposal=proposal_json(join,current_group.consortium,local.id,peer.id,current_group.epoch,current_group.revision+1,local.der,peer.der,host,hostname);digest=sha256(proposal);
+            proposal=proposal_json(join,current_group.consortium,local,peer,current_group.epoch,current_group.revision+1,host,hostname);digest=sha256(proposal);
             current_group.join_id=join;current_group.joining_id=peer.id;current_group.join_digest=digest;current_group.join_hostname=hostname;current_group.join_revision=current_group.revision+1;current_group.peers.push_back(peer);
             std::lock_guard<std::mutex> guard(lock);
             good=current()&&!proposal.empty()&&admission.view.scan_id==scan&&group.role==Group::coordinator&&!group.join_id&&group.revision+1==current_group.join_revision&&save_group(current_group)==ESP_OK;
@@ -984,7 +1026,7 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     // Its removal must never erase origin identity or factory Matter credentials.
     if(erase_record("amity_origin","bootstrap")!=ESP_OK)ESP_LOGW("consortium","Could not discard an unused setup verifier");
     std::string name_record;const auto name_result=read_record("amity_group","hostnames",name_record,8192);if(name_result!=ESP_ERR_NVS_NOT_FOUND&&(name_result!=ESP_OK||!hostnames.restore(name_record))){hostnames={};status.last_error="Saved device names are unavailable. Names will refresh when devices reconnect.";}
-    status.crypto_ready=admission_crypto_self_test();
+    status.crypto_ready=admission_crypto_self_test(configured_admission_mode());
     if(!status.crypto_ready){error("Admission key exchange/encryption self-test failed");return ESP_FAIL;}
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
@@ -1135,7 +1177,7 @@ esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,ui
         if(next.joining_id==id){next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;}
         ++next.revision;const auto saved=save_group(next);if(saved!=ESP_OK)return saved;
         group=std::move(next);status.membership_revision=group.revision;hooks=lifecycle;
-        removal_operations.push_back({id,request,now+2000,target?"pending":pending?"unconfirmed":"offline",!target});
+        removal_operations.push_back({id,request,now+2000,target?"pending":pending?"unconfirmed":"offline",!target,target?std::optional<LinkScope>(target->session.scope()):std::nullopt,group.revision});
         const auto mutation=*model::MutationId::parse(request.str());
         for(auto& active:links){
             bool held=false;

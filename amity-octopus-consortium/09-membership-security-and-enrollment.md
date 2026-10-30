@@ -42,6 +42,12 @@ The normal build uses fresh ephemeral key exchange and AEAD-protected messages d
 
 Both main and candidate must use the same profile. Bind the profile and participants into the exchange and reject profile mismatch, malformed records, bad proofs and replay without downgrade or fallback. Keep setup codes and derived secrets transient; do not write them to browser storage, logs or portable configuration.
 
+Startup runs `admission_crypto_self_test(configured_admission_mode())` so a
+normal-profile boot does not execute the unused strict-profile PAKE test.
+Failure still keeps admission closed. The no-argument self-test used by explicit
+USB diagnostics and native coverage continues to exercise both profiles;
+profile matching and rejection without downgrade remain unchanged.
+
 ## Commit the existing membership transaction
 
 After the selected profile establishes the encrypted session, retain the existing bounded enrollment transaction:
@@ -51,6 +57,15 @@ After the selected profile establishes the encrypted session, retain the existin
 3. Commit supported network credentials through the existing CHIP Wi-Fi owner when needed, then prove the prepared exact-pin LAN path with a fresh challenge.
 4. Commit membership durably and idempotently on both sides before reporting ready. A lost acknowledgment reconciles the same transaction.
 5. Close the setup advertisement and clear ephemeral admission secrets.
+
+Proposal construction uses the exact boot-validated `Identity` and the
+candidate `Peer` just verified in the authenticated admission exchange. Copy
+their unchanged IDs, DER and derived pins into the canonical proposal instead
+of repeating two public-key signature checks. Untrusted candidate identity and
+certificate validation still happens before constructing or saving the proposal;
+the candidate still compares its own exact identity/DER/pin and validates the
+new authority certificate. No credential cache or alternative trust path is
+introduced.
 
 The main explicitly completes ATT MTU negotiation on the selected live
 connection before discovering its GATT service and exchanging records. A
@@ -65,6 +80,13 @@ staging therefore awaits a usable IPv4 address within the same total 35-second
 connection budget, measured before dispatching the driver request. Association
 alone cannot acknowledge a usable prepared LAN path. Failure retains the
 existing rollback; this adds no second connection timeout or retry.
+
+When a prepared/member device already has the authority's numeric IP, its
+first connection attempt uses that address before a blocking mDNS query.
+Failure retains the existing discovery, address rotation, backoff and exact
+pinned TLS authentication. The required member restart and enrollment handshake
+remain unchanged. This avoids an initial discovery delay without treating an
+IP address as authority or skipping a failed-route fallback.
 
 A prepared candidate retains the existing durable acknowledgment and 500 ms
 handoff delay before rebuilding under its member identity. Its link task uses a
@@ -109,3 +131,11 @@ traffic fails the exchange rather than loosening its authorization.
 ## Evidence
 
 Test direct discovery and exact candidate selection, physical-window eligibility, both profiles, mismatched-profile rejection, wrong-code/proof/replay failure, encrypted credential transfer, exact-pin LAN proof, storage cuts and role-before-service boot. Physical radio interoperability and production secret storage require separate evidence. Peer reports are not hardware attestation or proof of HDMI response.
+
+The actual-source admission regressions are
+[`consortium_admission_startup_test.py`](../tests/consortium_admission_startup_test.py),
+[`consortium_admission_crypto_test.py`](../tests/consortium_admission_crypto_test.py)
+and [`admission_workflow_test.py`](../tests/admission_workflow_test.py).
+They cover selected-profile boot/failure gates, full explicit self-tests, exact
+validated proposal records and known-address connection with authenticated
+fallback. Physical 0.1.105 timing and enrollment qualification remain pending.

@@ -35,5 +35,7 @@ public:
 private:
     struct State;std::unique_ptr<State> state_;
 };
+// Startup checks the active profile; explicit diagnostics exercise both.
+bool admission_crypto_self_test(AdmissionMode);
 bool admission_crypto_self_test();
 } // namespace amity::consortium::platform

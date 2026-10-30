@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/session.hpp"
 #include "amity/consortium/owned_intent.hpp"
+#include "amity/consortium/credential_types.hpp"
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -26,25 +27,31 @@ uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms++;}
 struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls {
+    bool server=true;model::OctopusId authenticated;
     std::vector<std::string> frames;size_t next=0;uint32_t largest_timeout=0;
     bool receive(std::string &out,uint32_t timeout){largest_timeout=std::max(largest_timeout,timeout);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}
 };
 struct Active {
     model::OctopusId peer;model::MessageId removal_request;uint64_t removal_until=0;bool management_ready=false;
-    Session session;FakeTls transport;FakeTls *tls=&transport;bool cancelled=false,ready=true;
+    Session session;FakeTls transport;FakeTls *tls=&transport;bool cancelled=false,ready=true,retiring=true;
     struct {bool ready=true,management_ready=false;} status;std::mutex mutex;std::vector<int> queue{1};
     std::string retirement_payload;
 };
-std::mutex lock;struct{}group;struct{model::OctopusId id;}identity;struct{bool authority_ready=true;}status;uint64_t configuration=7;
-bool original_controller(decltype(group)&,model::OctopusId){return true;}
+std::mutex lock;platform::Group group;struct{model::OctopusId id;}identity;struct{bool authority_ready=true;}status;uint64_t configuration=7;model::BootId boot;
+// REMOVAL_OPERATION
+bool original_controller(decltype(group)& value,model::OctopusId owner){return value.role==platform::Group::coordinator&&value.authority==owner;}
+std::string sha256(std::string_view){return std::string(64,'a');} // Digest scope construction is tested with nonconstant vectors in consortium_removal_test.
 void removal_finish(model::OctopusId,model::MessageId,bool){}
 bool send(Active &,Kind kind,std::string_view,uint32_t){return kind==Kind::membership_event;}
 void check(bool value,const char *message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned n){char text[33];std::snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 LinkScope scope(uint64_t config=7){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(3),ident<m::BootId>(5),ident<m::BootId>(6),1,config};}
 void start(Active &active,uint64_t config=7,uint32_t capabilities=known_capabilities){
-    active.removal_request=ident<m::MessageId>(1000);active.removal_until=clock_ms+2000;configuration=config;
+    active.removal_request=ident<m::MessageId>(32);active.removal_until=clock_ms+2000;configuration=config;
     const auto sc=scope(config);HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=sc.epoch;hello.config_revision=sc.config_revision;hello.required_capabilities=capabilities;
+    active.peer=sc.peer_id;active.tls->authenticated=sc.peer_id;identity.id=sc.local_id;boot=sc.local_boot_id;
+    group={};group.role=platform::Group::coordinator;group.authority=sc.coordinator_id;group.consortium=sc.consortium_id;group.epoch=sc.epoch;group.revision=2;
+    removal_operations.clear();removal_operations.push_back({active.peer,active.removal_request,active.removal_until,"pending",false,sc,2});
     check(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none,"authenticate failed");
     check(active.session.hello(hello,known_capabilities)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
 }
@@ -140,10 +147,11 @@ def main():
     branch = function(tail, fallback.group(1))
     trace = function(source, 'struct LinkTrace {').rstrip() + ';\n'
     dispatch = '\nbool dispatch_heartbeat(Active &storage,Envelope envelope,LinkTrace* diagnostic=nullptr){Active *active=&storage;LinkTrace local;auto& trace=diagnostic?*diagnostic:local;const auto received=now_ms();while(true){if(false){}' + branch + 'return true;}return false;}\n'
-    actual = function(source, 'bool lifecycle_receive(Active &active,') + function(source, 'bool finish_retirement(Active &active)')
+    actual = function(source, 'bool lifecycle_receive(Active &active,') + function(source, 'std::string retirement_hash(') + function(source, 'bool finish_retirement(Active &active)')
+    operation = function((ROOT / 'components/consortium/removal_runtime.inc').read_text(), 'struct RemovalOperation {').rstrip() + ';\nstd::vector<RemovalOperation> removal_operations;\n'
     with tempfile.TemporaryDirectory(prefix='amity-runtime-admission-') as directory:
         cpp = Path(directory) / 'test.cpp'; binary = Path(directory) / 'test'
-        cpp.write_text(PREFIX + trace + dispatch + actual + SUITE)
+        cpp.write_text(PREFIX.replace('// REMOVAL_OPERATION', operation) + trace + dispatch + actual + SUITE)
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',

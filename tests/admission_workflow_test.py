@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run actual discovery/admission runtime against deterministic task/radio seams."""
+import argparse
 from pathlib import Path
 import os
 import shlex
@@ -12,6 +13,7 @@ PREFIX = r'''
 #include "amity/consortium/runtime.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/credential_types.hpp"
+#include "amity/consortium/enrollment.hpp"
 #include "hostname_registry.hpp"
 #include <algorithm>
 #include <atomic>
@@ -39,9 +41,9 @@ uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms;}
 std::function<void()> during_wait;
 void vTaskDelay(unsigned ms){clock_ms+=ms;if(during_wait)during_wait();}
-bool spawn_ok=true,discover_ok=true,exchange_ok=true,networked=false,bad_identity=false;
+bool spawn_ok=true,discover_ok=true,exchange_ok=true,networked=false,bad_identity=false,bad_certificate=false;
 std::string fail_phase;
-unsigned discoveries=0,reservations=0,releases=0,disconnects=0,wifi_exports=0,encrypted_exchanges=0,saves=0;
+unsigned discoveries=0,reservations=0,releases=0,disconnects=0,wifi_exports=0,encrypted_exchanges=0,saves=0,certificates=0;
 void* task_argument=nullptr;
 void invite_worker(void*){}
 int xTaskCreateWithCaps(void(*)(void*),const char*,unsigned,void* arg,unsigned,void*,unsigned){if(!spawn_ok)return 0;task_argument=arg;return pdPASS;}
@@ -52,11 +54,10 @@ int gatt_client_connect_candidate(const std::string& token,uint64_t generation){
 std::string hex(std::string_view value){std::string out;for(uint8_t c:value){out+="0123456789abcdef"[c>>4];out+="0123456789abcdef"[c&15];}return out;}
 bool unhex(std::string_view text,std::string& value,size_t){if(text==hex("candidate-leaf")){value="candidate-leaf";return true;}return false;}
 std::string sha256(std::string_view){return std::string(64,'d');}
-bool certificate(std::string_view leaf,model::OctopusId,std::string& pin){pin=std::string(64,'c');return leaf=="candidate-leaf";}
+bool certificate(std::string_view leaf,model::OctopusId,std::string& pin){++certificates;pin=std::string(64,leaf=="controller-leaf"?'a':'c');return leaf=="controller-leaf"||(leaf=="candidate-leaf"&&!bad_certificate);}
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 template<class T>T random_id(){return ident<T>(90);}
 std::string host_ip(){return "192.0.2.1";}
-std::string proposal_json(model::JoinId,model::ConsortiumId,model::OctopusId,model::OctopusId,uint64_t,uint64_t,std::string_view,std::string_view,const std::string&,const std::string&){return "{}";}
 int save_group(const Group&){++saves;return ESP_OK;}
 Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view){return true;});}
 void mbedtls_platform_zeroize(void* data,size_t count){std::fill_n(static_cast<char*>(data),count,0);}
@@ -74,7 +75,12 @@ bool gatt_client_exchange(bool encrypted,std::string_view input,std::string& out
     const auto phase=request.get("phase")->string;
     if(phase==fail_phase)return false;
     if(phase=="identify")out="{\"phase\":\"identity\",\"bootstrap_profile\":2,\"octopus_id\":\""+ident<model::OctopusId>(bad_identity?4:3).str()+"\",\"leaf\":\""+hex("candidate-leaf")+"\",\"networked\":"+(networked?"true":"false")+"}";
-    else if(phase=="prepare")out="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+admission.hostname+"\"}";
+    else if(phase=="prepare"){
+        JoinProposal proposal;assert(decode_join_proposal(request.get("proposal")->string,proposal));
+        assert(proposal.coordinator_id==identity.id&&proposal.coordinator_leaf==identity.der&&proposal.coordinator_pin==identity.spki);
+        assert(proposal.candidate_id==ident<model::OctopusId>(3)&&proposal.candidate_leaf=="candidate-leaf"&&proposal.candidate_pin==std::string(64,'c'));
+        out="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+admission.hostname+"\"}";
+    }
     else {assert(phase=="wifi");assert(request.get("ssid")->string==hex("private-network"));assert(request.get("password")->string==hex("private-password"));out="{\"phase\":\"networked\",\"ready\":true}";}
     out="encrypted:"+out;return true;
 }
@@ -83,10 +89,10 @@ SUITE = r'''
 void reset(){
     if(task_argument){delete static_cast<InviteRequest*>(task_argument);task_argument=nullptr;}
     group={};group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(1);group.authority=ident<model::OctopusId>(2);group.epoch=group.revision=1;
-    identity={};identity.id=group.authority;identity.der="controller-leaf";status={};status.authority_ready=status.crypto_ready=true;
+    identity={};identity.id=group.authority;identity.der="controller-leaf";identity.spki=std::string(64,'a');status={};status.authority_ready=status.crypto_ready=true;
     admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();
-    fail_phase.clear();clock_ms=100;during_wait={};mode=AdmissionMode::button;spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=false;
-    discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=0;
+    fail_phase.clear();clock_ms=100;during_wait={};mode=AdmissionMode::button;spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
+    discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;
     radio.reserve=[](bool inviter,uint64_t& generation){assert(inviter);++reservations;generation=77;return ESP_OK;};
     network.get_hostname=[]{return "main-amity";};
     network.export_credentials=[](std::string& ssid,std::string& password){++wifi_exports;ssid="private-network";password="private-password";return true;};
@@ -103,12 +109,25 @@ void select(){
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room",mode==AdmissionMode::setup_code?"valid-matter-code":"")==ESP_OK);
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_ERR_INVALID_STATE || mode==AdmissionMode::setup_code);
 }
+void proposal_record_lifetime(){
+    reset();auto local=identity;Peer peer{ident<model::OctopusId>(3),"candidate-leaf",std::string(64,'c'),false};
+    const auto bytes=proposal_json(ident<model::JoinId>(90),group.consortium,local,peer,1,2,"192.0.2.1","room");
+    assert(!bytes.empty()&&certificates==0); // No repeat signature or global cache.
+    local.der="changed-local";local.spki=std::string(64,'b');peer.der="changed-peer";peer.pin=std::string(64,'d');
+    JoinProposal decoded;assert(decode_join_proposal(bytes,decoded));
+    assert(decoded.coordinator_leaf=="controller-leaf"&&decoded.coordinator_pin==std::string(64,'a')&&decoded.candidate_leaf=="candidate-leaf"&&decoded.candidate_pin==std::string(64,'c'));
+    peer.der="candidate-leaf";peer.pin.clear();
+    assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,1,2,"192.0.2.1","room").empty());
+    peer.pin=identity.spki;assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,1,2,"192.0.2.1","room").empty());
+}
 int run_tests(){
+    proposal_record_lifetime();
     for(auto selected_mode:{AdmissionMode::button,AdmissionMode::setup_code}){
         reset();mode=selected_mode;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
         assert(runtime_admission_status().phase=="scanning");assert(runtime_admission_status().requires_setup_code==(mode==AdmissionMode::setup_code));
         assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE);
         during_wait=select;run();assert(discoveries==2&&reservations==1&&releases==1&&wifi_exports==1&&encrypted_exchanges==3&&saves==1);
+        assert(certificates==1); // Verify the untrusted candidate once, reuse exact validated records.
         assert(admission.view.phase=="finishing"&&admission.pin==0&&group.joining_id==ident<model::OctopusId>(3)&&hostnames.lookup(group.joining_id)=="room");
         assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE);
         auto link=std::make_shared<Active>();links={link};admission.view.error="The result was not confirmed yet.";
@@ -130,6 +149,7 @@ int run_tests(){
     reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=[](){if(admission.view.phase=="found")assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_OK);};run();assert(releases==1&&saves==0&&encrypted_exchanges==0);
     reset();discover_ok=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);run();assert(admission.view.phase=="failed"&&releases==1&&saves==0&&wifi_exports==0&&discoveries<=9);
     reset();bad_identity=true;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();assert(admission.view.phase=="failed"&&saves==0&&wifi_exports==0);
+    reset();bad_certificate=true;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();assert(certificates==1&&admission.view.phase=="failed"&&saves==0&&wifi_exports==0);
     reset();networked=true;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();assert(admission.view.phase=="finishing"&&wifi_exports==0&&encrypted_exchanges==2);
     for(const std::string phase:{"prepare","wifi"}){
         reset();fail_phase=phase;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();
@@ -149,20 +169,25 @@ int main(){return amity::consortium::run_tests();}
 
 
 def main():
-    source = (ROOT / 'components/consortium/runtime.cpp').read_text()
-    names = ['void admission_failed(', 'void invite_worker_work(', 'RuntimeAdmissionStatus runtime_admission_status(',
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, default=ROOT / 'components/consortium/runtime.cpp')
+    source = parser.parse_args().source.read_text()
+    names = ['std::string proposal_json(', 'void admission_failed(', 'void invite_worker_work(', 'RuntimeAdmissionStatus runtime_admission_status(',
              'esp_err_t runtime_scan_admission(', 'esp_err_t runtime_cancel_admission(', 'esp_err_t runtime_add_octopus(']
     actual = ''.join(function(source, name) for name in names)
+    if 'const Identity& coordinator,const Peer& candidate' not in source:
+        actual += 'std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,const Identity& local,const Peer& peer,uint64_t epoch,uint64_t revision,const std::string& host,const std::string& name){return proposal_json(join,consortium,local.id,peer.id,epoch,revision,local.der,peer.der,host,name);}\n'
     with tempfile.TemporaryDirectory(prefix='amity-admission-workflow-') as directory:
         cpp = Path(directory) / 'test.cpp'
         binary = Path(directory) / 'test'
         cpp.write_text(PREFIX + actual + SUITE)
         include = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include',
                    'components/amity_system/include', 'components/device_settings/include']
+        sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined'] +
                        ['-I' + str(ROOT / path) for path in include] +
-                       [str(cpp), str(ROOT / 'components/consortium/json.cpp'), str(ROOT / 'components/amity_system/model.cpp'), '-o', str(binary)], check=True)
+                       [str(cpp)] + [str(path) for path in sources] + ['-o', str(binary)], check=True)
         return subprocess.run([str(binary)], check=False).returncode
 
 

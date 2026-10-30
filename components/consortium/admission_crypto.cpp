@@ -181,10 +181,11 @@ failed:
 }
 bool AdmissionServer::encrypt(std::string_view value,std::string& out){return authenticated()&&state_->channel.seal(value,out);}
 bool AdmissionServer::decrypt(std::string_view value,std::string& out){return authenticated()&&state_->channel.open(value,out);}
-bool admission_crypto_self_test(){
+bool admission_crypto_self_test(AdmissionMode mode){
+    if(mode!=AdmissionMode::button&&mode!=AdmissionMode::setup_code)return false;
     uint32_t parsed=0;if(!parse_admission_setup_code("3497-011-2332",parsed)||parsed!=20202021||!parse_admission_setup_code("MT:Y.K9042C00KA0648G00",parsed)||parsed!=20202021||parse_admission_setup_code("3497-011-2333",parsed)||parse_admission_setup_code("00000000000",parsed))return false;
     const std::string id="00000000000000000000000000000001";
-    for(auto mode:{AdmissionMode::button,AdmissionMode::setup_code}){
+    {
         AdmissionServer server(mode,id,20202021);AdmissionClient client(mode,20202021);
         if(!client.handshake([&](auto input,auto& output){return server.handshake(input,output);})||client.peer_id()!=id||!server.authenticated())return false;
         std::string request,response,plain;if(!client.encrypt("client message",request)||!server.decrypt(request,plain)||plain!="client message"||!server.encrypt("server message",response)||!client.decrypt(response,plain)||plain!="server message")return false;
@@ -199,5 +200,6 @@ bool admission_crypto_self_test(){
     }
     return true;
 }
+bool admission_crypto_self_test(){return admission_crypto_self_test(AdmissionMode::button)&&admission_crypto_self_test(AdmissionMode::setup_code);}
 } // namespace amity::consortium::platform
 #endif
