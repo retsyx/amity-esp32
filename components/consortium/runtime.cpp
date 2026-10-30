@@ -53,7 +53,17 @@ static bool queued_cleanup(const Queued& queued){
 }
 // Losing an accepted action would break causal context or leave its lookup
 // continuation waiting forever. Fence this link instead of replaying work.
-static bool queued_causal(const Queued& queued){return queued.kind==Kind::scoped_intent||queued.kind==Kind::scoped_result;}
+static bool queued_causal(const Queued& queued){
+    if(queued.kind==Kind::scoped_intent)return true;
+    if(queued.kind!=Kind::scoped_result)return false;
+    Json value;JsonError error;
+    // An owner snapshot is replaceable observation state. Its expiry must not
+    // tear down an otherwise healthy member link during discovery. Typed
+    // source-input results still complete a waiting operation and remain
+    // causal; unknown/malformed result shapes fail closed as causal work.
+    model::OwnedAdapterSnapshot snapshot;
+    return !parse_json(queued.payload,value,error)||!closed(value,{"snapshot"})||!parse_owned_snapshot(*value.get("snapshot"),snapshot);
+}
 struct Active {
     std::shared_ptr<TlsLink> tls;
     Session session;
@@ -463,6 +473,25 @@ bool initialize_context(Active& active){
     if(!hooks.ready||!hooks.ready(active.peer))return false;
     active.context_ready=true;active.refreshing=false;return true;
 }
+std::optional<RuntimeSnapshotRetry> snapshot_retry(const Active& active,const Queued& queued){
+    if(queued.kind!=Kind::scoped_result||active.cancelled||active.retiring||!active.ready)return {};
+    const auto scope=active.session.scope();
+    if(scope.peer_id!=scope.coordinator_id||queued.revision!=scope.config_revision)return {};
+    Json value;JsonError error;model::OwnedAdapterSnapshot snapshot;
+    if(!parse_json(queued.payload,value,error)||!closed(value,{"snapshot"})||!parse_owned_snapshot(*value.get("snapshot"),snapshot)||
+       snapshot.owner!=scope.local_id||snapshot.boot!=scope.local_boot_id)return {};
+    return RuntimeSnapshotRetry{scope.peer_id,scope.local_boot_id,scope.peer_boot_id,scope.link_id,scope.config_revision,snapshot.adapter};
+}
+void notify_snapshot_retry(const RuntimeSnapshotRetry& retry){
+    RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
+    if(hooks.snapshot_retry)hooks.snapshot_retry(retry);
+}
+struct SnapshotRetryBatch {
+    std::vector<RuntimeSnapshotRetry> requests;
+    void dropped(const Active& active,const Queued& queued){if(auto retry=snapshot_retry(active,queued))requests.push_back(*retry);}
+    // Declared before queue/global guards, so callbacks execute after unlock.
+    ~SnapshotRetryBatch(){for(const auto& retry:requests)notify_snapshot_retry(retry);}
+};
 enum class QueuedState {ready,waiting,stale,invalid};
 QueuedState prepare_queued(Active& active,const Queued& queued,uint64_t now,std::string& payload){
     if(queued.revision!=active.session.scope().config_revision)return QueuedState::stale;
@@ -508,6 +537,8 @@ void active_loop_work(void *arg){
             }}
         if(invalid)break;
         if(have&&queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl))break;
+        if(have&&!queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl))
+            if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
         if(have&&now>=queued.created&&now-queued.created<queued.ttl){
             if(!send(*active,queued.kind,payload,queued.ttl-static_cast<uint32_t>(now-queued.created)))break;
         }
@@ -1119,13 +1150,18 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
     if(is_update_kind(kind))return runtime_send_update(owner,kind,std::move(payload),ttl);
     if(retired_kind(kind))return ESP_ERR_NOT_SUPPORTED;
     if(!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;
+    SnapshotRetryBatch retries;
     std::lock_guard<std::mutex> guard(lock);if(!status.authority_ready&&group.role==Group::coordinator)return ESP_ERR_INVALID_STATE;
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
         std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();
         const bool expired_cleanup=std::any_of(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl);});
         if(expired_cleanup){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);return ESP_ERR_INVALID_STATE;}
-        active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[now](const auto& queued){return now<queued.created||now-queued.created>=queued.ttl;}),active->queue.end());
+        active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[&](const auto& queued){
+            const bool expired=now<queued.created||now-queued.created>=queued.ttl;
+            if(expired)retries.dropped(*active,queued);
+            return expired;
+        }),active->queue.end());
         const bool cleanup=queued_cleanup({kind,payload,ttl,now,revision,owned});
         if(active->queue.size()>=(cleanup?16u:15u)){
             if(cleanup){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
@@ -1197,8 +1233,19 @@ uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){
 bool runtime_owned_authorized(const model::OwnedAuthorization& auth){return runtime_owned_deadline(auth)!=0;}
 std::vector<RuntimePeerStatus> runtime_peers(){
     std::lock_guard<std::mutex> guard(lock);std::vector<RuntimePeerStatus> out;
-    for(const auto &peer:group.peers){RuntimePeerStatus result;result.id=peer.id;result.hostname=hostnames.lookup(peer.id);result.enrolled=peer.active;result.provisional=!peer.active;
-        for(const auto &active:links)if(!active->cancelled&&active->peer==peer.id){std::lock_guard<std::mutex> qguard(active->mutex);result=active->status;result.hostname=hostnames.lookup(peer.id);result.enrolled=peer.active;result.provisional=!peer.active;break;}
+    for(const auto &peer:group.peers){RuntimePeerStatus result;unsigned selected=0;
+        for(const auto &active:links)if(!active->cancelled&&!active->retiring&&active->peer==peer.id&&active->tls&&
+            active->tls->authenticated==peer.id&&current_peer_credential(*active,group)){
+            std::lock_guard<std::mutex> qguard(active->mutex);
+            const auto scope=active->session.scope();
+            if(active->status.id!=peer.id||!active->status.boot_id||active->status.boot_id!=scope.peer_boot_id)continue;
+            const bool ready=active->ready&&active->status.ready,management=active->management_ready&&active->status.management_ready;
+            const unsigned rank=ready?3:management?2:1;
+            if(rank>selected){result=active->status;result.ready=ready;result.management_ready=management;selected=rank;}
+        }
+        // Enrollment identity belongs to the durable roster. A TLS handshake
+        // with a partial status object cannot replace it with an all-zero ID.
+        result.id=peer.id;result.hostname=hostnames.lookup(peer.id);result.enrolled=peer.active;result.provisional=!peer.active;
         out.push_back(result);
     }
     return out;

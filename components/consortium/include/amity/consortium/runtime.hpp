@@ -82,6 +82,14 @@ struct RuntimeNetworkHooks {
     std::function<std::string()> get_hostname;
 };
 void runtime_network_hooks(RuntimeNetworkHooks);
+// Volatile recapture request, never an expired payload or queued CEC work.
+struct RuntimeSnapshotRetry {
+    model::OctopusId controller;
+    model::BootId owner_boot,controller_boot;
+    model::LinkId link;
+    uint64_t config_revision=0;
+    uint8_t adapter=0;
+};
 struct RuntimeControlHooks {
     std::function<std::string(model::OctopusId)> snapshot;
     std::function<Error(model::OctopusId,const Json &)> synchronize;
@@ -93,6 +101,7 @@ struct RuntimeControlHooks {
     // Current locally executing configuration; no owner-task or network wait.
     std::function<uint64_t()> configuration_revision = {};
     std::function<std::string(model::OctopusId,uint64_t)> configuration_snapshot = {};
+    std::function<void(const RuntimeSnapshotRetry&)> snapshot_retry = {};
 };
 void runtime_control_hooks(RuntimeControlHooks);
 struct RuntimeLifecycleHooks {

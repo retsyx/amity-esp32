@@ -43,9 +43,9 @@ def test_consortium():
                         active_avr.wait_for_input(active_player, since=started)
                         activity.assert_active()
 
-                        stolen = thief.checkpoint()
-                        assert thief.activate().ok
-                        thief.wait_for_power(PowerState.STANDBY, since=stolen, command="standby", directed=True)
+                        announcement = thief.activate()
+                        assert announcement.ok
+                        thief.wait_for_standby_after(announcement, within=2)
                         assert active_avr.active_input == active_player.address.physical
                         for component in active:
                             component.assert_power(PowerState.ON)
@@ -102,10 +102,9 @@ def test_consortium_three_duts():
 
                         for system in inactive:
                             thief = system[2]
-                            stolen = thief.checkpoint()
-                            assert thief.activate().ok
-                            thief.wait_for_power(PowerState.STANDBY, since=stolen,
-                                                 command="standby", directed=True)
+                            announcement = thief.activate()
+                            assert announcement.ok
+                            thief.wait_for_standby_after(announcement, within=2)
                             assert active_avr.active_input == active_player.address.physical
                             for component in active:
                                 component.assert_power(PowerState.ON)

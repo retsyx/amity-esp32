@@ -1,7 +1,7 @@
 {
-  "status": "PASS: all four bench DUTs run exact 0.1.98/Matter software 99. Native build passes 36 public layouts; the complete host suite passes, including 287 framework units. All six physical functional cases pass on test2 with no cleanup errors, including two-owner consortium activity/source-theft/standby in both directions. Final read-only main preservation passes 23 checks on the unchanged post-OTA boot. Activity edits retain member TLS links and HDMI caches; one resolver owns cache lookup and throttled scans, and activity work is sequential per Amity. Pending activity context does not exempt an announcing source from current-activity policy. Scope is two Amities, one adapter each and simulated AV equipment; broader qualification remains open.",
+  "status": "IN PROGRESS: all four bench DUTs run exact 0.1.99/Matter software 100. Remove and Replace changes passed host and UI checks; physical two-owner consortium failed during scan readiness and three-owner consortium failed after a main-player Active Source received no physical response. Historical 0.1.98 passes remain historical. Reconnect identity and diagnostic snapshot expiry firmware defects are under regression verification for 0.1.100, with focused source/context traces and a hard two-second physical source-theft deadline. No new physical qualification is claimed.",
   "audit_date": "2026-10-29",
-  "firmware_version": "0.1.98",
+  "firmware_version": "0.1.99",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -110,7 +110,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 99,
+  "matter_software_version": 100,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -2160,5 +2160,27 @@
       "verifier_history": "First read-only postcheck retained an obsolete 13-slot/3-new expectation from the previous task despite the captured 16-slot baseline. Original failed verifier report remains private; corrected baseline expectations pass without any DUT mutation."
     },
     "qualification_scope": "Exact-image update/startup/provisioning retention on four DUTs. Exercised local CEC and normal two-board membership plus distributed CEC activities and source-theft suppression on main/member2, one adapter each with simulated equipment. No strict-profile, three-owner, four-adapter electrical, real AV/remote or production-security qualification."
+  },
+  "consortium_runtime_fix_validation": {
+    "result": "IN PROGRESS",
+    "firmware_target": "0.1.100",
+    "matter_software_version_target": 101,
+    "deployment_to_be_repeated_on_all_duts": true,
+    "previous_deployment": "test-results/device-removal-2026-10-29/deployment.json",
+    "previous_physical_results": {
+      "two_owner": "test-results/device-removal-2026-10-29/consortium.json",
+      "three_owner": "test-results/device-removal-2026-10-29/consortium-three-duts.json",
+      "result": "FAIL; preserved without relabeling"
+    },
+    "enrollment": {
+      "report": "test-results/device-removal-2026-10-29/enrollment-measurement.json",
+      "helper_start_to_verified_ready_seconds": 95.494,
+      "add_submit_to_operation_complete_seconds": 59.272,
+      "add_submit_to_verified_ready_seconds": 67.94,
+      "passed": true
+    },
+    "source_theft_deadline_seconds": 2,
+    "ordinary_cec_assertion_default_seconds": 5,
+    "physical_source_theft_cause": "Unresolved: wire TX success is a broadcast result and does not prove the DUT decoded that frame. Native three-owner current-activity policy regression passes; focused receipt/context/admission firmware traces will distinguish the next failure."
   }
 }

@@ -13,6 +13,7 @@ PREFIX = r'''
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/transfer.hpp"
 #include "amity/consortium/settings.hpp"
+#include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
 #include <algorithm>
 #include <atomic>
@@ -49,6 +50,7 @@ uint64_t configuration=7;std::string configuration_hash=std::string(64,'a');
 std::vector<std::shared_ptr<Active>> links;
 unsigned shutdowns=0;
 esp_err_t save_group(const Group&){return ESP_OK;}
+esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){assert(false);return ESP_ERR_NOT_SUPPORTED;}
 std::function<void(Active&,const Envelope&)> on_send;
 bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);
 }
@@ -177,8 +179,31 @@ void immutable_queue(){
  a->queue.push_back(settings);clock_ms=601;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()); // no old management-payload restamp
  a->context_ready=true;clock_ms=650;queued.created=650;a->queue.push_back(queued);assert(pump(*a)&&a->tls->sent.size()==1&&a->tls->sent.back().config_revision==8);
 }
+void observation_expiry_is_not_lost_causal_work(){
+ auto a=start(false);on_send={};const auto scope=a->session.scope();
+ std::vector<RuntimeSnapshotRetry> retries;controls.snapshot_retry=[&](const auto& request){retries.push_back(request);};
+ model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.adapter=0;report.ready=true;
+ const auto snapshot="{\"snapshot\":"+owned_snapshot_json(report)+"}";
+ const auto typed="{\"input_result\":{\"generation\":\"1\",\"sequence\":\"2\",\"source_present\":true}}";
+ const auto observation=Queued{Kind::scoped_result,snapshot,1000,100,scope.config_revision,{}};
+ const auto input_result=Queued{Kind::scoped_result,typed,1000,100,scope.config_revision,{}};
+ assert(!queued_causal(observation)&&queued_causal(input_result));
+ auto malformed=observation;malformed.payload="{\"snapshot\":{}}";assert(queued_causal(malformed));
+ malformed.payload="{}";assert(queued_causal(malformed));malformed.payload="invalid";assert(queued_causal(malformed));
+ a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled);
+ assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
+ // Admission performs the same expiry distinction before submitting new IPC.
+ a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_result,typed,1000,{},scope.config_revision)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
+ assert(retries.size()==2); // Same scoped recapture from admission-side expiry.
+ assert(a->queue.front().payload==typed);
+ a->queue.clear();a->queue.push_back(input_result);
+ assert(queue_control(a->peer,Kind::scoped_result,snapshot,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE&&a->cancelled&&shutdowns==1);
+ // A typed source lookup result is still causal even when it reaches the
+ // worker instead of a later admission call; expiry must fence its old link.
+ a=start(false);a->queue.push_back(input_result);clock_ms=1200;assert(!pump(*a)&&a->queue.empty()&&a->tls->sent.empty());
 }
-int main(){using namespace amity::consortium;coordinator_refresh();member_refresh();rejected_frames();immutable_queue();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope completion then new owner state; strict obsolete/future frames, replay, lease invalidation and original queued revision/deadline\n";}
+}
+int main(){using namespace amity::consortium;coordinator_refresh();member_refresh();rejected_frames();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope completion then new owner state; strict obsolete/future frames, replay, lease invalidation and original queued revision/deadline; snapshot expiry independent of causal input results\n";}
 '''
 
 
@@ -191,7 +216,9 @@ def main():
     pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();while(true){' + source[start:end] + 'return true;}return false;}\n'
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(',
-        'void runtime_configuration_changed(', 'static bool queued_causal('))
+        'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal('))
+    actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
+    actual += function(source, 'static esp_err_t queue_control(')
     queued = source[source.index('enum class QueuedState'):source.index('void active_loop_work(')]
     with tempfile.TemporaryDirectory(prefix='amity-live-configuration-') as directory:
         temp = Path(directory)

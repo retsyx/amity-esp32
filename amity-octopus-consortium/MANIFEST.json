@@ -23,8 +23,8 @@
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 9298,
-      "sha256": "9c18503895fcf22a5dec01131e602d1cdcd68e5d2403bd180c4ac01aada21ebb"
+      "size_bytes": 10479,
+      "sha256": "fd149bde368c1edc6de3394c9fa6f81d63a1e48155046b5ded9dae849244d51e"
     },
     {
       "path": "07-activity-planning-and-execution.md",
@@ -33,8 +33,8 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 9579,
-      "sha256": "1ea05518f656bc60520b15c3f5f845702038108efb74883ff5ee557f015a7be8"
+      "size_bytes": 11803,
+      "sha256": "b554ad58d00e7015f618922e1428afe6bf7eba311e9bf21af4c7b51f427ba0af"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 43990,
-      "sha256": "030f647cdbea50dbc22cc318e054de3f46c5a2a6049c38e6d6af79dbd9936bc0"
+      "size_bytes": 49139,
+      "sha256": "952d6b97bfc3eebe1d65f72ada71b3bae86df1501cfa04b131b22bcecbbf2475"
     },
     {
       "path": "examples/README.md",

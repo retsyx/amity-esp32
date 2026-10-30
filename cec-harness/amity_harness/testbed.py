@@ -39,12 +39,14 @@ _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "des
                            "wire_timestamp_ns", "processed_monotonic_ns", "before", "after",
                            "state_changed", "state_revision", "payload_modified", "applied"))
 _POWER_ASSERTION_FIELDS = frozenset(("kind", "power", "timestamp_ns", "since_monotonic_ns", "frame",
-                                     "source", "destination", "wire_timestamp_ns", "command"))
+                                     "source", "destination", "wire_timestamp_ns", "command",
+                                     "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns"))
 _ROUTING_FIELDS = frozenset(("opcode", "physical_address", "input", "command", "frame", "source", "destination", "transport",
                             "wire_timestamp_ns", "processed_monotonic_ns", "state_revision",
                             "payload_modified", "applied"))
 _ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "input", "command", "timestamp_ns", "since_monotonic_ns",
-                                      "frame", "source", "destination", "wire_timestamp_ns"))
+                                      "frame", "source", "destination", "wire_timestamp_ns",
+                                      "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns"))
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
                               "removed_activity", "removed_equipment", "retained_equipment"))

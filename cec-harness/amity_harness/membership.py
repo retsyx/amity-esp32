@@ -496,5 +496,14 @@ class AddedAmity:
         return self.create()
 
     def __exit__(self, exc_type, exc, traceback):
-        self.close()
+        try:
+            self.close()
+        except Exception as cleanup_error:
+            if exc is None:
+                raise
+            self._log("membership.cleanup.deferred", level=logging.ERROR,
+                      error_type=type(cleanup_error).__name__, primary_error_type=type(exc).__name__)
+            note = getattr(exc, "add_note", None)
+            if callable(note):
+                note("Amity removal cleanup failed; the registered TestBed cleanup will retry it.")
         return False

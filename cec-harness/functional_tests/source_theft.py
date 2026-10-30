@@ -20,9 +20,10 @@ def test_source_theft():
                 activity.assert_active()
 
                 stolen = other.checkpoint()
-                assert other.activate().ok
-                other.wait_for_power(PowerState.STANDBY, since=stolen, command="standby", directed=True)
-                avr.wait_for_input(player, since=stolen)
+                announcement = other.activate()
+                assert announcement.ok
+                other.wait_for_standby_after(announcement, within=2)
+                avr.wait_for_input(player, since=stolen, after=announcement, within=2)
                 for component in (tv, avr, player):
                     component.assert_power(PowerState.ON)
                 assert player.active and not other.active

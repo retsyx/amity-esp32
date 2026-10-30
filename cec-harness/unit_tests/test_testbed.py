@@ -110,9 +110,10 @@ class RunConfigTests(unittest.TestCase):
         self.assertEqual(outer_beds, [one])
 
     def test_invalid_timeout_and_conflicting_tls_fail_without_io(self):
-        for timeout in (0, -1, True, float("nan"), float("inf")):
-            with self.subTest(timeout=timeout), self.assertRaises(ValueError):
-                RunConfig(timeout=timeout)
+        for setting in ("timeout", "cec_timeout"):
+            for timeout in (0, -1, True, float("nan"), float("inf")):
+                with self.subTest(setting=setting, timeout=timeout), self.assertRaises(ValueError):
+                    RunConfig(**{setting: timeout})
         with self.assertRaises(ValueError):
             RunConfig(cafile=Path("/tmp/ca.pem"), insecure=True)
         with self.assertRaises(ValueError):

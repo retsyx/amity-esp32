@@ -9,6 +9,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -316,13 +317,29 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             tv.wait_for_power("on", since=start)
 
     def test_checkpoint_and_managed_timeout_work_without_user_polling_or_hooks(self):
-        with use_config(RunConfig(timeout=0.01)), self.fixture() as (dut, tv, avr, player, session):
+        with use_config(RunConfig(cec_timeout=0.01)), self.fixture() as (dut, tv, avr, player, session):
             marker = tv.checkpoint()
             with self.assertRaises(TimeoutError):
                 tv.wait_for_power("on", since=marker)
             marker = tv.checkpoint()
             self.receive(tv, 4, 0x04)
             tv.wait_for_power("on", since=marker)
+
+    def test_long_operation_timeout_keeps_missing_cec_power_wait_at_five_seconds(self):
+        with use_config(RunConfig(timeout=180)), self.fixture() as (dut, tv, avr, player, session):
+            marker = tv.checkpoint()
+            clock = [10.0]
+
+            def wait(seconds):
+                clock[0] += seconds
+
+            with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(tv._power_condition, "wait", side_effect=wait):
+                with self.assertRaises(TimeoutError):
+                    tv.wait_for_power("on", since=marker)
+            self.assertEqual(dut._runtime.timeout, 180)
+            self.assertGreaterEqual(clock[0] - 10, 5)
+            self.assertLess(clock[0] - 10, 5.1)
 
     def test_wait_wakes_for_background_wire_delivery_and_keeps_bounded_snapshot_evidence(self):
         with self.fixture() as (dut, tv, avr, player, session):

@@ -104,4 +104,84 @@ static void distributed_source_comparison(){
     assert(count(1,15,0x36)==1&&count(2,15,0x36)==1); // Existing global standby response.
     fixture_peer_address={};
 }
-int main(){original_and_context_source_comparison();distributed_source_comparison();std::puts("PASS assigned-source comparison: same-name/LA cross-owner/adapter/side suppression, no foreign route repair, local absence/fallback and original global standby");}
+static void three_owner_standby_cycles(){
+    const auto third=identity<m::OctopusId>('7');
+    const auto third_boot=identity<m::BootId>('8');
+    const auto third_link=identity<m::LinkId>('9');
+    fixture_present=true;fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
+    HubService primary,second,tertiary;
+    primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(primary.start(1,2)==ESP_OK);auto* primary_task=latest_task;
+    second.set_system_identity(group,member);second.set_boot_identity(member_boot);second.set_coordinator_authority(false,1);assert(second.start(3,4)==ESP_OK);auto* second_task=latest_task;assert(second.bind_owned_controller(controller,1)==ESP_OK);
+    tertiary.set_system_identity(group,third);tertiary.set_boot_identity(third_boot);tertiary.set_coordinator_authority(false,1);assert(tertiary.start(5,6)==ESP_OK);auto* third_task=latest_task;assert(tertiary.bind_owned_controller(controller,1)==ESP_OK);
+    for(auto* owner:{&second,&tertiary})owner->set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
+    second.set_owned_input_observer([&](const auto& intent,const auto&,const auto& result){if(result.source_present)assert(primary.owned_input_result(member,intent.generation,intent.sequence,*result.source_present));});
+    tertiary.set_owned_input_observer([&](const auto& intent,const auto&,const auto& result){if(result.source_present)assert(primary.owned_input_result(third,intent.generation,intent.sequence,*result.source_present));});
+    latest_task=primary_task;
+    // All three activities exist before the first cycle, just as on the bench.
+    assert(primary.configure_scoped({{"Main","tv-a","player-a","avr-a","",0},{"Member2","tv-b","player-b","avr-b","",0},{"Member3","tv-c","player-c","avr-c","",0}},
+       {{"tv-a",name(controller,m::Side::front,"TV")},{"player-a",name(controller,m::Side::back,"Source")},{"avr-a",name(controller,m::Side::back,"AVR")},
+        {"tv-b",name(member,m::Side::front,"TV")},{"player-b",name(member,m::Side::back,"Source")},{"avr-b",name(member,m::Side::back,"AVR")},
+        {"tv-c",name(third,m::Side::front,"TV")},{"player-c",name(third,m::Side::back,"Source")},{"avr-c",name(third,m::Side::back,"AVR")}},
+       [&](const m::OwnedIntent& intent){
+          const bool is_third=intent.target.port.octopus_id==third;assert(is_third||intent.target.port.octopus_id==member);
+          auto* previous=latest_task;latest_task=is_third?third_task:second_task;
+          m::OwnedAuthorization auth{controller,controller_boot,is_third?third_boot:member_boot,is_third?third_link:link,1,0};auth.authority=m::OwnedAuthority::control;
+          const auto result=(is_third?tertiary:second).submit_owned(intent,auth);latest_task=previous;
+          if(intent.kind==m::OwnedIntentKind::source_input&&result.source_present)assert(primary.owned_input_result(is_third?third:member,intent.generation,intent.sequence,*result.source_present));
+          return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::overloaded||result.code==m::AdmissionCode::unresolved;
+       },controller,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(primary);
+    latest_task=second_task;fixture_finish_discovery(second);
+    latest_task=third_task;fixture_finish_discovery(tertiary);
+    auto advance=[&](unsigned passes){
+        for(unsigned i=0;i<passes;++i)for(auto* task:{primary_task,second_task,third_task}){latest_task=task;run_idle(1);}
+        latest_task=primary_task;
+    };
+    // Each isolated back bus has an AVR at 1.0.0.0 and its player at 1.1.0.0.
+    for(int gpio:{2,4,6}){
+        fixture_incoming.push_back({gpio,{{0x4f,0x84,0x11,0,4},5}});
+        fixture_incoming.push_back({gpio,{{0x5f,0x84,0x10,0,5},5}});
+        fixture_incoming.push_back({gpio,{{0x50,0x47,'A','V','R'},5}});
+    }
+    advance(4);assert(primary.snapshot().devices.size()==9);
+    auto count=[](int gpio,uint8_t destination,uint8_t opcode){
+        return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){
+            return sent.gpio==gpio&&sent.frame.destination()==destination&&sent.frame.size>=2&&sent.frame.data[1]==opcode;
+        });
+    };
+    const cec::Frame player_active{{0x4f,0x82,0x11,0},4};
+    for(int selected:{0,1,2}){
+        fixture_sent.clear();assert(primary.select_activity(selected));run_one_command();advance(4);
+        assert(primary.snapshot().current_activity==selected);
+        const auto generation=primary.activity_generation();
+        for(int owner:{0,1,2}){
+            const int front=1+2*owner,back=2+2*owner;
+            assert(count(front,0,0x04)==(owner==selected));
+            assert(count(back,4,0x44)==(owner==selected));
+            assert(count(back,5,0x44)==(owner==selected));
+            assert(count(back,15,0x86)==(owner==selected));
+        }
+        for(int thief:{0,1,2})if(thief!=selected){
+            fixture_sent.clear();fixture_incoming.push_back({2+2*thief,player_active});advance(2);
+            for(int owner:{0,1,2}){
+                assert(count(2+2*owner,4,0x36)==(owner==thief));
+                assert(count(2+2*owner,15,0x86)==0);
+                assert(count(1+2*owner,15,0x82)==0);
+            }
+            assert(primary.snapshot().current_activity==selected&&primary.activity_generation()==generation);
+        }
+        fixture_sent.clear();fixture_incoming.push_back({2+2*selected,player_active});advance(2);
+        for(int owner:{0,1,2})assert(count(2+2*owner,4,0x36)==0&&count(2+2*owner,15,0x86)==0);
+        assert(primary.snapshot().current_activity==selected&&primary.activity_generation()==generation);
+        assert(primary.snapshot().devices.size()==9);
+        fixture_sent.clear();assert(primary.standby());run_one_command();advance(4);
+        assert(primary.snapshot().current_activity==-1);
+        for(int owner:{0,1,2}){
+            assert(count(1+2*owner,0,0x36)==(owner==selected));
+            assert(count(2+2*owner,4,0x36)==(owner==selected));
+            assert(count(2+2*owner,5,0x36)==(owner==selected));
+        }
+    }
+    fixture_peer_address={};
+}
+int main(){original_and_context_source_comparison();distributed_source_comparison();three_owner_standby_cycles();std::puts("PASS assigned-source comparison: same-name/LA cross-owner/adapter/side suppression, no foreign route repair, local absence/fallback and original global standby");}

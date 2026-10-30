@@ -363,6 +363,24 @@ runs all six scenarios, comprising seven test cases because `activity` has two.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 
+Keep enrollment/scan/activity operation deadlines separate from CEC assertions.
+`RunConfig.timeout` / `--timeout` defaults to 180 seconds, based on the measured
+95.494-second fully verified Add;
+`RunConfig.cec_timeout` / `--cec-timeout` independently defaults to five seconds
+for ordinary fresh power/routing waits. Raising the operation budget must not
+raise the CEC wait budget. Source-theft remediation has a hard two-second
+physical wire-completion limit, not the operation or ordinary CEC timeout.
+The directed Standby and resulting state must be proven within two seconds of
+the same component's successful physical Active Source transmission. The
+shared-wire scenario also requires route restoration within that same original
+window; isolated consortium wires do not add a route-restoration requirement.
+Use complete Linux CEC TX/RX timestamps from the same wire and correlate the
+trigger to its exact component/session. Record actual response latency. A late
+response already in history, virtual traffic or a local state change cannot
+pass. Slow authenticated owner proof may validate timely evidence later, but
+must not extend or restart the physical response window. Two seconds is an
+absolute maximum; expected normal remediation is substantially faster.
+
 Keep functional test bodies limited to equipment, topology and behavior:
 construct named DUTs/components, enter `TestBed`, then call operations such as
 `dut.scan_hdmi().assert_contains(...)`. Named DUT construction parses wiring
@@ -435,7 +453,7 @@ player's activity, then use the second player's `activate()` to send a physical
 Active Source broadcast. `Component.activate()` returns the transmission
 result. The DUT must issue a fresh directed Standby to the second player and a
 fresh Set Stream Path to the first player's physical address;
-`avr.wait_for_input(player, since=boundary)` must verify actual DUT wire
+`avr.wait_for_input(player, since=boundary, after=announcement, within=2)` must verify actual DUT wire
 evidence. The first player must be active again, and `activity.assert_active()`
 verifies its selected UI activity and DUT boot did not change. Clean up both
 test-owned activities before component responders close. Keep raw CEC and
@@ -454,6 +472,16 @@ The normal admission profile uses no setup code. Keep HTTP and protocol details
 in shared helpers. `member.assert_connected()` must verify full inventory ID,
 assigned name, ready membership, configuration and device settings while
 preserving the original main, its authority and existing activities.
+
+A single normal-profile Add-only physical measurement on 29 October 2026 with
+firmware 0.1.99 took 95.494 seconds from helper entry to fully verified ready,
+59.272 seconds from Add POST to membership-operation completion and 67.940
+seconds from Add POST to verified settings/ready. It used the original main and
+`amity-dut-2`, without CEC component traffic, included host HTTP time, and ended
+with reset `scheduled` cleanup. Evidence is
+`test-results/device-removal-2026-10-29/enrollment-measurement.json` and
+`enrollment-timing.json`. This enrollment timing does not relax CEC deadlines
+or qualify distributed power/source-theft behavior.
 
 The user explicitly authorized reset on removal as this test's cleanup. Remove
 only the known newly added member through the existing UI Remove API, with the

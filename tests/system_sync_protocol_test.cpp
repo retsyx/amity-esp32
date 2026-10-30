@@ -22,6 +22,7 @@ std::vector<s::OwnedAuthorization> deadline_queries;
 s::LinkId current_result_link;
 uint64_t refreshed_deadline=654321;
 esp_err_t send_result=ESP_OK,report_result=ESP_OK;
+std::function<void()> on_report_send;
 std::vector<std::pair<uint64_t,std::string>> configuration_changes;
 struct JournalMemory:Memory {
     bool fail_marker=false;
@@ -34,10 +35,11 @@ std::unique_ptr<ConfigurationStore> journal;
 void reset(){
     {std::lock_guard<std::mutex> guard(amity::state.mutex);
         amity::state.control=nullptr;amity::state.activating=false;amity::state.activation={};
-        amity::state.reports.clear();amity::state.pending_reports.clear();amity::state.maintenance.clear();amity::state.published_revision=amity::state.owner_revision=0;}
+        amity::state.reports.clear();amity::state.pending_reports.clear();amity::state.retry_reports={};amity::state.maintenance.clear();amity::state.published_revision=amity::state.owner_revision=0;}
     role={};role.coordinator=true;role.authority_ready=true;role.initialized=true;role.epoch=1;
     peers.clear();sent.clear();packets.clear();result_packets.clear();result_fences.clear();deadline_queries.clear();current_result_link={};configuration_changes.clear();hooks={};
     send_result=ESP_OK;report_result=ESP_OK;task_ok=true;auth_allowed=true;now=100;
+    on_report_send={};
     task_creations=authorization_checks=0;memory=JournalMemory{};journal=std::make_unique<ConfigurationStore>(memory);
 }
 amity::SystemControl control(bool member=false){
@@ -85,8 +87,9 @@ std::vector<RuntimePeerStatus> runtime_peers(){return fixture::peers;}
 void runtime_control_hooks(RuntimeControlHooks hooks){fixture::hooks=std::move(hooks);}
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){fixture::sent.push_back(intent);return fixture::send_result;}
 bool runtime_owned_authorized(const model::OwnedAuthorization&){++fixture::authorization_checks;return fixture::auth_allowed;}
-esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});return fixture::report_result;}
-esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){fixture::result_packets.push_back({owner,link,std::move(payload),ttl,revision});return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
+esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});if(fixture::on_report_send)fixture::on_report_send();return fixture::report_result;}
+esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){fixture::result_packets.push_back({owner,link,std::move(payload),ttl,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
+std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;return {};}
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){fixture::result_fences.push_back({owner,link});}
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){fixture::deadline_queries.push_back(auth);return fixture::refreshed_deadline;}
 void runtime_configuration_changed(uint64_t revision,const std::string& hash){fixture::configuration_changes.push_back({revision,hash});}
@@ -247,8 +250,8 @@ void report_coalescing_and_no_intent_backlog(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
     auto local=report(member.identity,member.boot);member.snapshots={local};const auto snapshot=json(hooks.snapshot({}));assert(c::closed(snapshot,{"adapters"})&&snapshot.get("adapters")->array.size()==1);
     const auto original=*member.configuration.controller_octopus_id;peers={remote(2,12,1,1)};assert(peers[0].id==original);
-    member.observer(local);local.discovery_generation=4;member.observer(local);assert(amity::state.pending_reports.size()==1);
-    report_result=ESP_FAIL;amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.size()==1&&sent.empty());
+    member.observer(local);local.discovery_generation=4;member.snapshots={local};member.observer(local);assert(amity::state.pending_reports.size()==1);
+    report_result=ESP_FAIL;amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty()&&amity::state.retry_reports[0]&&sent.empty());
     report_result=ESP_OK;amity::flush_reports();assert(packets.size()==2&&amity::state.pending_reports.empty());
     assert(packets.back().kind==c::Kind::scoped_result&&packets.back().owner==original&&packets.back().ttl==1000);
     auto body=json(packets.back().payload);s::OwnedAdapterSnapshot actual;assert(c::parse_owned_snapshot(*body.get("snapshot"),actual)&&actual.discovery_generation==4&&actual.setup_generation==3&&actual.setup_last_sequence==11&&actual.setup_pending==2&&actual.setup_replies_pending);
@@ -257,6 +260,43 @@ void report_coalescing_and_no_intent_backlog(){
     amity::set_owner_maintenance(intent.target.port.octopus_id,true);assert(!main.sender(intent)&&sent.size()==1);
     amity::set_owner_maintenance(intent.target.port.octopus_id,false);send_result=ESP_OK;assert(main.sender(intent)&&sent.size()==2);
     assert(sent.back().generation==intent.generation&&sent.back().sequence==intent.sequence&&sent.back().token==intent.token);
+}
+void dropped_snapshot_recaptures_latest_without_regression(){
+    reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
+    const auto controller=*member.configuration.controller_octopus_id;peers={remote(2,12,1,1)};current_result_link=id<s::LinkId>(71);
+    assert(hooks.synchronize(controller,string_document("{\"controller\":\""+controller.str()+"\",\"config_revision\":\"23\"}"))==c::Error::none);
+    c::RuntimeSnapshotRetry retry{controller,member.boot,peers[0].boot_id,current_result_link,23,0};
+    auto latest=report(member.identity,member.boot);latest.setup_pending=0;latest.setup_replies_pending=false;
+    member.snapshots={latest};member.observer(latest);amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty());
+    // The admitted final pending=0 snapshot expired on TLS. Only its adapter
+    // and immutable scope return; the worker recaptures the current cache.
+    hooks.snapshot_retry(retry);assert(result_packets.empty());amity::flush_reports();assert(result_packets.size()==1);
+    auto decoded=[&](const std::string& payload){s::OwnedAdapterSnapshot value;const auto body=json(payload);assert(c::parse_owned_snapshot(*body.get("snapshot"),value));return value;};
+    assert(decoded(result_packets.back().payload).setup_pending==0&&result_packets.back().link==retry.link&&result_packets.back().revision==23&&result_packets.back().ttl==1000);
+    // A cache update can precede its observer. Recovery reads that latest state,
+    // rather than replaying the payload which originally expired.
+    latest.discovery_generation=4;latest.setup_pending=5;member.snapshots={latest};hooks.snapshot_retry(retry);amity::flush_reports();
+    assert(decoded(result_packets.back().payload).discovery_generation==4&&decoded(result_packets.back().payload).setup_pending==5);
+    // A newer observation arrives while the old publication fails. It must
+    // remain pending; the failed payload must never overwrite it.
+    report_result=ESP_FAIL;on_report_send=[&]{latest.discovery_generation=5;latest.setup_pending=0;member.snapshots={latest};member.observer(latest);};
+    hooks.snapshot_retry(retry);amity::flush_reports();assert(amity::state.pending_reports.size()==1&&!amity::state.retry_reports[0]);
+    assert(amity::state.pending_reports[0].discovery_generation==5&&amity::state.pending_reports[0].setup_pending==0);
+    report_result=ESP_OK;on_report_send={};amity::flush_reports();assert(decoded(packets.back().payload).discovery_generation==5&&decoded(packets.back().payload).setup_pending==0);
+    // The same race on the ordinary observer path also preserves the newer
+    // pending observation, with no hidden typed intent or old-payload replay.
+    member.observer(latest);report_result=ESP_FAIL;on_report_send=[&]{latest.discovery_generation=6;member.snapshots={latest};member.observer(latest);};
+    amity::flush_reports();assert(amity::state.pending_reports[0].discovery_generation==6&&!amity::state.retry_reports[0]);
+    report_result=ESP_OK;on_report_send={};amity::flush_reports();assert(decoded(packets.back().payload).discovery_generation==6&&sent.empty());
+    // Failed recapture retains only a flag. A later pass reads newer completion.
+    hooks.snapshot_retry(retry);report_result=ESP_FAIL;amity::flush_reports();assert(amity::state.retry_reports[0]&&amity::state.pending_reports.empty());
+    latest.discovery_generation=7;member.snapshots={latest};report_result=ESP_OK;amity::flush_reports();assert(decoded(result_packets.back().payload).discovery_generation==7&&!amity::state.retry_reports[0]);
+    const auto count=result_packets.size();
+    auto stale=retry;stale.owner_boot=id<s::BootId>(100);hooks.snapshot_retry(stale);amity::flush_reports();
+    stale=retry;stale.controller_boot=id<s::BootId>(100);hooks.snapshot_retry(stale);amity::flush_reports();
+    stale=retry;stale.link=id<s::LinkId>(100);hooks.snapshot_retry(stale);amity::flush_reports();
+    stale=retry;stale.config_revision=22;hooks.snapshot_retry(stale);amity::flush_reports();
+    assert(result_packets.size()==count&&sent.empty());
 }
 void scans_and_saved_intent_without_peer_ack(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
@@ -315,4 +355,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();report_coalescing_and_no_intent_backlog();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, scoped snapshots, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, latest snapshot recapture without failed-send regression, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

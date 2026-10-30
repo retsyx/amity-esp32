@@ -8,6 +8,7 @@
 #include "freertos/task.h"
 #include <mutex>
 #include <set>
+#include <array>
 #ifdef ESP_PLATFORM
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
@@ -22,16 +23,26 @@ struct State {
     bool activating=false;
     uint64_t published_revision=0,owner_revision=0;
     std::vector<s::OwnedAdapterSnapshot> reports,pending_reports;
+    std::array<std::optional<c::RuntimeSnapshotRetry>,amity::max_tentacles> retry_reports;
     std::set<s::OctopusId> maintenance;
 } state;
 template<class T>T fresh(){return T::generate([](uint8_t* data,size_t size){esp_fill_random(data,size);return true;}).value_or(T{});}
 std::optional<c::RuntimePeerStatus> peer(s::OctopusId id){for(const auto& p:c::runtime_peers())if(p.id==id)return p;return {};}
 void observe(const s::OwnedAdapterSnapshot& report){
-    if(report.owner!=state.control->octopus_id()||!c::runtime_status().member)return;
+    if(report.owner!=state.control->octopus_id()||report.adapter>=amity::max_tentacles||!c::runtime_status().member)return;
     std::lock_guard<std::mutex> guard(state.mutex);
     auto prior=std::find_if(state.pending_reports.begin(),state.pending_reports.end(),[&](const auto& p){return p.adapter==report.adapter;});
     if(prior!=state.pending_reports.end())*prior=report;
     else if(state.pending_reports.size()<amity::max_tentacles)state.pending_reports.push_back(report);
+    state.retry_reports[report.adapter].reset();
+}
+void retry_report(const c::RuntimeSnapshotRetry& retry){
+    if(retry.adapter>=amity::max_tentacles)return;
+    std::lock_guard<std::mutex> guard(state.mutex);
+    // A fresh owner observation supersedes a failed/expired publication. Never
+    // put its older payload back over an observation arriving during send.
+    if(std::none_of(state.pending_reports.begin(),state.pending_reports.end(),[&](const auto& p){return p.adapter==retry.adapter;}))
+        state.retry_reports[retry.adapter]=retry;
 }
 bool accept_report(s::OctopusId sender,const s::OwnedAdapterSnapshot& report){
     const auto remote=peer(sender);
@@ -122,11 +133,29 @@ bool send(const s::OwnedIntent& intent){
 }
 void flush_reports(){
     std::vector<s::OwnedAdapterSnapshot> reports;
-    {std::lock_guard<std::mutex> guard(state.mutex);reports.swap(state.pending_reports);}
+    decltype(state.retry_reports) retries;
+    uint64_t revision;
+    {std::lock_guard<std::mutex> guard(state.mutex);reports.swap(state.pending_reports);retries.swap(state.retry_reports);revision=state.owner_revision;}
+    if(reports.empty()&&std::none_of(retries.begin(),retries.end(),[](const auto& retry){return retry.has_value();}))return;
+    if(!c::runtime_status().member)return;
+    // This facade cache is updated before the owner observer runs. Publication
+    // and recovery always recapture it on this task, never on the TLS task.
+    const auto latest=state.control->owned_snapshots();
     const auto peers=c::runtime_peers();
-    for(const auto& report:reports){bool sent=false;const auto payload="{\"snapshot\":"+c::owned_snapshot_json(report)+"}";
-        for(const auto& remote:peers)if(remote.ready){sent=c::runtime_send_control(remote.id,c::Kind::scoped_result,payload,1000)==ESP_OK;break;}
-        if(!sent)observe(report); // Bounded latest observation, never executable work.
+    for(uint8_t adapter=0;adapter<amity::max_tentacles;++adapter){
+        const bool observed=std::any_of(reports.begin(),reports.end(),[&](const auto& p){return p.adapter==adapter;});
+        if(!observed&&!retries[adapter])continue;
+        auto retry=observed?c::RuntimeSnapshotRetry{}:*retries[adapter];retry.adapter=adapter;
+        const auto local_boot=state.control->boot_identity();
+        if(retry.owner_boot&&retry.owner_boot!=local_boot)continue;
+        if(retry.link&&(retry.config_revision!=revision||c::runtime_link_id(retry.controller,retry.controller_boot)!=retry.link))continue;
+        const auto report=std::find_if(latest.begin(),latest.end(),[&](const auto& p){return p.adapter==adapter&&p.owner==state.control->octopus_id()&&p.boot==local_boot;});
+        if(report==latest.end())continue;
+        const auto bytes=c::owned_snapshot_json(*report);if(bytes.empty())continue;
+        const auto payload="{\"snapshot\":"+bytes+"}";bool sent=false;
+        if(retry.link)sent=c::runtime_send_owned_result(retry.controller,retry.link,payload,1000,retry.config_revision)==ESP_OK;
+        else for(const auto& remote:peers)if(remote.ready){sent=c::runtime_send_control(remote.id,c::Kind::scoped_result,payload,1000)==ESP_OK;break;}
+        if(!sent){retry.owner_boot=local_boot;retry_report(retry);} // Bounded recapture flag, never expired payload or executable work.
     }
 }
 void adopt_owners(){
@@ -160,7 +189,7 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     }
     control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);control.set_owned_deadline(c::runtime_owned_deadline);
     control.set_owned_input_observer([](const auto& intent,const auto& auth,const auto& result){input_result(intent,auth,result);});
-    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner){return state.control->refresh_owned_context(owner);},[]{return state.control->executing_configuration_revision();},configuration_snapshot});return ESP_OK;
+    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner){return state.control->refresh_owned_context(owner);},[]{return state.control->executing_configuration_revision();},configuration_snapshot,retry_report});return ESP_OK;
 }
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,
     std::function<esp_err_t()> before_commit){

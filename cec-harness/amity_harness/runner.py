@@ -84,7 +84,10 @@ def main(test, argv=None):
     tls = parser.add_mutually_exclusive_group()
     tls.add_argument("--cafile", type=Path)
     tls.add_argument("--insecure", action="store_true", help="accept the bench's self-signed TLS certificate")
-    parser.add_argument("--timeout", type=float, default=90)
+    parser.add_argument("--timeout", type=float, default=180,
+                        help="scan, membership and activity operation timeout in seconds (default: 180)")
+    parser.add_argument("--cec-timeout", type=float, default=5,
+                        help="fresh CEC power/routing assertion wait in seconds (default: 5); independent of --timeout")
     parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
@@ -92,8 +95,9 @@ def main(test, argv=None):
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO",
                         help="stderr detail: INFO progress (default), DEBUG also HTTP and CEC traffic")
     args = parser.parse_args(argv)
-    if not math.isfinite(args.timeout) or args.timeout <= 0:
-        parser.error("--timeout must be positive and finite")
+    for option, value in (("--timeout", args.timeout), ("--cec-timeout", args.cec_timeout)):
+        if not math.isfinite(value) or value <= 0:
+            parser.error(f"{option} must be positive and finite")
     credentials = _named_options(parser, args.dut_credentials, "PATH", Path)
     urls = _named_options(parser, args.dut_url, "URL")
     if args.credentials is None and not credentials:
@@ -111,13 +115,15 @@ def main(test, argv=None):
     config = RunConfig(credentials=credentials, default_credentials=args.credentials,
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
-                       timeout=args.timeout, session_factory=session_factory, gpio_factory=gpio_factory)
+                       timeout=args.timeout, cec_timeout=args.cec_timeout,
+                       session_factory=session_factory, gpio_factory=gpio_factory)
     selected = tests if args.test == "all" else {args.test: tests[args.test]}
     with stdio_logging(args.log_level):
         started = time.monotonic()
         event("run.start", groups=list(selected),
               tests=[scenario.__name__ for group in selected.values() for scenario in group],
-              log_level=args.log_level)
+              log_level=args.log_level, operation_timeout_seconds=config.timeout,
+              cec_timeout_seconds=config.cec_timeout)
         try:
             reports = []
             for group in selected.values():

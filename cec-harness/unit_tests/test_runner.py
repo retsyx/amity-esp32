@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from amity_harness import DUT, RunConfig, TestBed
-from amity_harness.config import current_config
+from amity_harness import DUT, RunConfig, TestBed, TvComponent
+from amity_harness.config import current_config, use_config
 from amity_harness.runner import main, run_test
 from amity_harness.gpio import SSHPinctrlGPIO
 
@@ -145,6 +145,34 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(main(scenario, ["--credentials", "/private/main.json",
                                             "--harness-host", "pi@bench.example",
                                             "--harness-root", "/bench/harness root", "--ssh-port", "2222"]), 0)
+
+    def test_cli_keeps_cec_assertions_independent_from_long_operation_timeouts(self):
+        def scenario():
+            pass
+
+        for options, operation_timeout, expected in (([], 180, 5), (["--timeout", "300"], 300, 5),
+                (["--cec-timeout", "0.25"], 180, 0.25), (["--timeout", "300", "--cec-timeout", "0.25"], 300, 0.25)):
+            with self.subTest(options=options):
+                def capture(test, config):
+                    self.assertEqual(config.timeout, operation_timeout)
+                    self.assertEqual(config.cec_timeout, expected)
+                    with use_config(config):
+                        dut = DUT("amity-dut")
+                        component = TvComponent(dut.tentacle(0).front, "CEC timeout TV")
+                        self.assertEqual(component._power_timeout, expected)
+                    return {"test": test.__name__, "passed": True, "testbeds": []}
+
+                with patch("amity_harness.runner.run_test", side_effect=capture), \
+                        redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    self.assertEqual(main(scenario, ["--credentials", "/private/main.json", *options]), 0)
+
+    def test_invalid_cec_timeout_is_rejected_before_running_a_scenario(self):
+        for value in ("0", "-1", "nan", "inf", "-inf"):
+            with self.subTest(value=value), patch("amity_harness.runner.run_test") as execute, \
+                    redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+                main(lambda: None, ["--credentials", "/private/main.json", f"--cec-timeout={value}"])
+            self.assertEqual(exited.exception.code, 2)
+            execute.assert_not_called()
 
     def test_activity_group_retains_independent_failure_cleanup_and_evidence(self):
         called, logged_out, duts = [], [], []

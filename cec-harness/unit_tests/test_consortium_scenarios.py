@@ -147,6 +147,12 @@ class Scenario:
         self.events.append(("power.wait", since.kind, component.dut.name, component.name))
         return component
 
+    def standby_after(self, component, announcement, *, within):
+        if announcement.thief is not component or within != 2:
+            raise AssertionError("Theft remediation must use this player's actual announcement and two-second bound")
+        return self.wait_power(component, PowerState.STANDBY, since=announcement,
+                               command="standby", directed=True)
+
     def route(self, avr, player, *, since):
         if avr.dut is not player.dut or since.kind != "start" or since.owner != avr.dut.name:
             raise AssertionError("Routing must use the active owner's start boundary")
@@ -163,7 +169,7 @@ class Scenario:
         if self.failed_theft:
             raise TimeoutError("source theft failed")
         player._power, player.active = PowerState.STANDBY, False
-        return SimpleNamespace(ok=True)
+        return SimpleNamespace(ok=True, kind="theft", thief=player)
 
     def run(self):
         with ExitStack() as patches:
@@ -173,6 +179,7 @@ class Scenario:
             patches.enter_context(patch.object(DUT, "create_activity", lambda main, name, **kwargs: self.activity(main, name, **kwargs)))
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kwargs: self.wait_power(component, power, **kwargs)))
+            patches.enter_context(patch.object(Component, "wait_for_standby_after", lambda component, announcement, **kwargs: self.standby_after(component, announcement, **kwargs)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kwargs: self.route(avr, player, **kwargs)))
             patches.enter_context(patch.object(Component, "checkpoint", lambda component: SimpleNamespace(kind="theft", thief=component)))
             patches.enter_context(patch.object(PlaybackComponent, "activate", lambda player: self.activate(player)))

@@ -112,6 +112,84 @@ The ESP-IDF build passes 36 public record layout checks. Logs are under
 execution of the new removal behavior; deployment and functional evidence must
 be recorded separately after running.
 
+## Enrollment timing, CEC deadlines and 0.1.99 bench results — 29 October 2026
+
+All four bench DUTs were updated and verified against the exact 0.1.99 image:
+2,423,968 bytes, image SHA-256
+`308cc76b072a995cc1077234af7b2d1b33a963a21eabadbb3f4ae1fae97491d4`,
+ELF SHA-256
+`e1e52d22fad8918f3803b1c7526ca47e3114e4e7759719b5098451fca9fc5787`.
+Main used authenticated application OTA without USB access; the other three
+used MAC-locked application-only writes with backups and protected-flash
+comparisons. No full erase was used. `deployment.json` under
+`test-results/device-removal-2026-10-29/` passes and retains source commit
+`636a4fc3ad4f490d3310651a76ab9fc16552eda8` with `source_dirty=true`.
+This establishes deployment, not functional parity or source-theft timing.
+
+Both physical consortium cases on that image failed. `consortium.json` failed
+during scan verification, before creating activities; its initial cleanup also
+failed and required separately recorded recovery. `consortium-three-duts.json`
+proved all nine typed locations and three owner boots, then reached activity
+and theft checks. While the member-2 activity was selected, the main's player
+successfully transmitted Active Source but did not receive the required
+directed Standby and remained On. The then-shared 180-second timeout expired.
+The cause of the missing source-theft response, including whether the DUT
+received that announcement, remains unresolved. Do not infer a received DUT
+frame from the harness's successful physical transmission alone.
+
+That primary power timeout was masked in the outer result by cleanup failures:
+the unused innermost activity was initially closed while another fixture
+activity was active, so its existing standby-only edit fence rejected removal.
+The TestBed later retried the registered cleanups, removed all fixture
+activities/equipment, and received reset `scheduled` for both members.
+Framework context exits now preserve an already-propagating primary failure
+when an early cleanup attempt fails, while retaining its diagnostic record and
+the registered TestBed retry. A cleanup failure after a successful body still
+fails the test; unresolved final cleanup still fails and chains the original
+cause. Host regressions exercise the actual standby fence and those retry paths.
+`main-final-postcheck.json` remains failed because the functional coverage did
+not pass. Its preservation checks pass: the main retains its post-OTA boot,
+authority, group, Matter fabrics, HomeKit state and capabilities, with no active
+peers, removed owner names/observations or unexpected saved-value changes.
+The authorized full removal of saved owner-2/3 records and normal fixture
+tombstones are the only allowed configuration changes. Earlier failed reports
+and `manual-cleanup/cleanup.json` are retained separately.
+
+A separate unchanged normal-profile Add-only run, without CEC component
+traffic, passed on the original main and `amity-dut-2`. It measured 95.494
+seconds from helper entry to verified ready, 59.272 seconds from Add POST to
+membership-operation completion, and 67.940 seconds from Add POST to verified
+settings/ready. The measurement includes host HTTP timing; cleanup acknowledged
+reset `scheduled`. Evidence is `enrollment-timing.json`, `enrollment-timing.log`
+and `enrollment-measurement.json` in the same directory. This single enrollment
+measurement does not set an acceptable CEC remediation delay.
+
+The framework now separates the operation budget (`--timeout`, default 180
+seconds, accommodating the measured 95.494-second Add) from ordinary fresh CEC
+power/routing waits (`--cec-timeout`, default
+five seconds). Source-theft remediation has an independent hard two-second
+window: complete directed Standby and resulting state after that component's
+complete physical Active Source transmission, plus complete Set Stream Path
+restoration on the same original window in the shared-wire case. Isolated
+consortium wires retain their existing absence of a route-restoration command
+requirement. The maximum is two seconds; normal remediation should be much
+faster.
+
+The deadline uses correlated same-session/same-wire physical TX/RX timestamps.
+[Linux CEC defines those timestamps at the last transmitted/received byte](https://www.kernel.org/doc/html/v6.19/userspace-api/media/cec/cec-ioc-receive.html).
+The Pi mapping applies the same constant offset to both events, so subtracting
+them preserves that wire interval. Timely history can be validated after a slow
+owner-boot HTTP proof, but a late frame cannot pass or restart the deadline.
+Reports retain the measured response latency. The deadline checkpoint passed
+328 Python framework tests, including late-history rejection, successful
+delayed owner proof, exact
+trigger provenance, the shared routing deadline and independent timeout
+settings. After the five cleanup-preservation regressions were added, the full
+Python framework suite passed 333 tests. These stricter bounds were added after
+the failed 0.1.99 runs and
+have not yet been physically qualified. Do not relabel the historical failures
+or the older two-owner success as a pass for this stricter timing contract.
+
 ## Three-Amity physical attempts — 29 October 2026
 
 The new `test_consortium_three_duts` case was run on `test2` with `amity-dut`

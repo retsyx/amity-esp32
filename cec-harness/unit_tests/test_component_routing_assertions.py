@@ -10,6 +10,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -528,13 +529,29 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
             avr.wait_for_input(player.address.physical, since=start)
 
     def test_checkpoint_and_managed_timeout_need_no_user_polling(self):
-        with use_config(RunConfig(timeout=0.01)), self.fixture() as (dut, tv, avr, player, session):
+        with use_config(RunConfig(cec_timeout=0.01)), self.fixture() as (dut, tv, avr, player, session):
             marker = avr.checkpoint()
             with self.assertRaises(TimeoutError):
                 avr.wait_for_input(player, since=marker)
             marker = avr.checkpoint()
             self.receive(avr, 0, player.address.physical)
             avr.wait_for_input(player, since=marker)
+
+    def test_long_operation_timeout_keeps_missing_cec_route_wait_at_five_seconds(self):
+        with use_config(RunConfig(timeout=180)), self.fixture() as (dut, tv, avr, player, session):
+            marker = avr.checkpoint()
+            clock = [10.0]
+
+            def wait(seconds):
+                clock[0] += seconds
+
+            with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(avr._power_condition, "wait", side_effect=wait):
+                with self.assertRaises(TimeoutError):
+                    avr.wait_for_input(player, since=marker)
+            self.assertEqual(dut._runtime.timeout, 180)
+            self.assertGreaterEqual(clock[0] - 10, 5)
+            self.assertLess(clock[0] - 10, 5.1)
 
     def test_background_delivery_and_bounded_immutable_evidence_snapshots(self):
         with self.fixture() as (dut, tv, avr, player, session):

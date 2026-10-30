@@ -603,7 +603,12 @@ struct HubService::Impl : Transport {
         // Give Physical Address accepts an unregistered initiator because its
         // response is broadcast. This still permits startup determination if
         // all back logical-address candidates are occupied or allocation is busy.
-        if (address == 15 && !(side == BusSide::Back && destination < 15 && size == 1 && data[0] == 0x83)) return false;
+        if (address == 15 && !(side == BusSide::Back && destination < 15 && size == 1 && data[0] == 0x83)) {
+            if(pacing_receive&&(data[0]==0x36||data[0]==0x86))ESP_LOGI(TAG,
+                "Source policy TX adapter=%u side=%s destination=%u opcode=%02x admitted=0 reason=unregistered",
+                adapter_id,side==BusSide::Front?"front":"back",destination,data[0]);
+            return false;
+        }
         cec::Frame frame; frame.size = static_cast<uint8_t>(size + 1);
         frame.data[0] = static_cast<uint8_t>((address << 4) | destination);
         for (size_t i = 0; i < size; ++i) frame.data[i + 1] = data[i];
@@ -641,6 +646,9 @@ struct HubService::Impl : Transport {
         auto *flight = sending_key && data[0] == 0x44 ? sending_key : paced ? reserve_flight() : nullptr;
         const bool sent = flight ? bus.send_async_guarded(frame, fence, flight->completion, attempts) :
             !paced && bus.send_guarded(frame, fence, attempts);
+        if(pacing_receive&&(data[0]==0x36||data[0]==0x86))ESP_LOGI(TAG,
+            "Source policy TX adapter=%u side=%s destination=%u opcode=%02x admitted=%d",
+            adapter_id,side==BusSide::Front?"front":"back",destination,data[0],sent);
         if (flight && !sent) flight->used = false;
         if (sent && data[0] == 0x44 && destination < 15)
             release_binding_generation[port][destination] = binding_wire_generation[port][destination].load();
@@ -682,6 +690,9 @@ struct HubService::Impl : Transport {
             for (unsigned n = 0; n < 32 && bus.receive(frame); ++n) {
                 ESP_LOGD(TAG, "%s RX %02x:%02x (%u)", side == BusSide::Front ? "front" : "back",
                          frame.data[0], frame.size > 1 ? frame.data[1] : 0, frame.size);
+                if(frame.size>=4&&frame.data[1]==0x82&&frame.destination()==15&&frame.source()<15)
+                    ESP_LOGI(TAG,"CEC Active Source RX adapter=%u side=%s sender=%u front=%u back=%u",
+                        adapter_id,side==BusSide::Front?"front":"back",frame.source(),front_address,back_address);
                 xSemaphoreTake(lock, portMAX_DELAY);
                 settling.received(side, frame, side == BusSide::Front ? front_address : back_address, esp_timer_get_time());
                 owned_settling.received(side,frame,side==BusSide::Front?front_address:back_address,esp_timer_get_time(),true);

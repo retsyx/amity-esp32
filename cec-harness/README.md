@@ -177,9 +177,21 @@ announcement. `Component.activate()` returns the transmission's `TxResult`;
 the scenario requires a successful physical announcement.
 
 Amity must then send a fresh directed Standby command to the second player and
-a fresh Set Stream Path restoring the first player's physical address.
-`avr.wait_for_input(player, since=boundary)` checks that routing command using
-real DUT wire evidence. The first player must be active again;
+a fresh Set Stream Path restoring the first player's physical address. Both
+must finish within two seconds of the physical Active Source transmission:
+`other.wait_for_standby_after(announcement, within=2)` checks Standby and the
+resulting state, and
+`avr.wait_for_input(player, since=boundary, after=announcement, within=2)` checks
+route restoration against that same announcement. The two-second bound is an
+absolute maximum; normal remediation is expected to be much faster.
+[Linux CEC timestamps](https://www.kernel.org/doc/html/v6.19/userspace-api/media/cec/cec-ioc-receive.html)
+mark the last transmitted/received byte, so the measured interval
+includes completion of the response frame. The helpers correlate the trigger
+with the exact component, session and wire. Virtual traffic, failed TX results
+and a late frame already in history cannot pass. Assertions and stdio logs
+retain the trigger timestamp, response latency and maximum interval. A slow
+authenticated owner-boot check may finish later, but cannot extend this physical
+window or turn a late response into a pass. The first player must be active again;
 `activity.assert_active()` verifies that its saved UI activity and DUT boot
 remain unchanged. Both test-owned activities are cleaned up before the
 responders close. Shared component and activity helpers perform these checks,
@@ -239,6 +251,16 @@ so the test cannot authorize deleting those activities.
 It does not factory-reset the main, run a ten-second reset before the test,
 or remove a preexisting member. Failures retain/report uncertain ownership
 rather than removing another device.
+
+An Add-only physical timing run on 29 October 2026 with firmware 0.1.99 took
+95.494 seconds from helper entry to fully verified ready state. The Add POST
+to membership-operation completion took 59.272 seconds; Add POST to verified
+settings/ready took 67.940 seconds. This was one normal-profile run on
+`amity-dut`/`amity-dut-2`, without CEC component traffic, and includes host HTTP
+time. Removal acknowledged reset `scheduled`. It measures enrollment and does
+not establish a CEC response allowance. Evidence is
+`test-results/device-removal-2026-10-29/enrollment-measurement.json` and
+`enrollment-timing.json` in that directory.
 
 On 29 October 2026, all 238 framework unit tests passed. Physical validation
 of `add_amity.py` failed during candidate discovery: the 3.5-second gesture on
@@ -309,7 +331,9 @@ Each cycle starts with all six components in Standby and requires fresh
 physical power-on commands for the selected three and correct initial AVR
 routing. The other owner's player then sends its own physical Active Source
 announcement. That owner must send a fresh physical directed CEC Standby to
-the thief because it differs from the selected source; its TV and AVR must
+the thief because it differs from the selected source. The directed Standby
+and resulting state must satisfy the same Active Source-to-response two-second
+wire-completion limit as the shared-wire test; its TV and AVR must
 remain in Standby. The active three must remain On with their selected
 input and player active, and the main UI must retain the same activity and boot.
 The current activity is the sole source of truth, with the special standby
@@ -542,6 +566,16 @@ three-owner scenario, or `--test all` for all six registered scenarios (seven
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
+`--timeout` defaults to 180 seconds for scan, enrollment and activity operations,
+based on the measured 95.494-second verified Add above.
+`--cec-timeout` independently defaults to five seconds for ordinary fresh power
+and routing assertions. Changing the enrollment operation budget does not change
+the CEC budget. Source-theft
+remediation has the stricter two-second physical window described above,
+including both Standby and shared-wire route restoration, regardless of either
+option. Owner identity proof still uses bounded HTTP requests and can extend
+the caller's wall time while a request is in progress; accepted physical
+response timestamps must remain inside their original window.
 The shared framework logs progress to stderr as it runs, with a UTC timestamp,
 elapsed run time, run ID and test name on each line. It records setup, identity
 checks, scans, activity and membership operations, component assertions,

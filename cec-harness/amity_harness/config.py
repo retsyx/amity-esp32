@@ -22,11 +22,13 @@ class RunConfig:
     wiring_path: Path | None = None
     session_factory: Callable = CecSession
     gpio_factory: Callable | None = None
-    timeout: float = 90
+    timeout: float = 180
+    cec_timeout: float = 5
 
     def __post_init__(self):
-        if isinstance(self.timeout, bool) or not isinstance(self.timeout, (int, float)) or not math.isfinite(self.timeout) or self.timeout <= 0:
-            raise ValueError("Run timeout must be a positive finite number")
+        for description, value in (("Run timeout", self.timeout), ("CEC timeout", self.cec_timeout)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{description} must be a positive finite number")
         if not callable(self.session_factory):
             raise ValueError("session_factory must be callable")
         if self.gpio_factory is not None and not callable(self.gpio_factory):

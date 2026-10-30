@@ -86,6 +86,22 @@ source names/addresses across owners, adapters and sides. It checks local
 directed Standby without a foreign input command or activity change, and
 retains selected local-source acceptance, absent local-source handling,
 empty-source switch fallback and the original global standby response.
+Its three-owner regression configures all three TV/AVR/player activities before
+cycling each owner through Start, both foreign-player announcements and Standby.
+It checks power recipients, all six directed suppression responses, unchanged
+selection/generation, selected-source acceptance and no foreign route repair.
+
+The physical 0.1.99 three-owner run on 29 October proved nine typed discoveries
+and passed the main-active cycle. During the member-2 cycle the harness completed
+the main player's Active Source transmission, but observed no DUT response for
+180 seconds. A successful broadcast transmission does not prove that the DUT
+decoded it. That image lacked INFO evidence of receipt, applied owner context
+and source-remediation admission; the missing-response cause remains unresolved.
+See `test-results/device-removal-2026-10-29/consortium-three-duts.json` and its
+wire log. Ordinary INFO traces now record those three boundaries, including
+the current source and immediate Standby/input submission result. They add no
+source-policy exceptions or coordination. Passing native receive-path tests
+does not establish physical receipt or qualify this failed three-owner run.
 
 `tests/owned_hub_test.cpp` checks that configuration edits retain native device
 records and an in-progress scan, preserve selected and unselected remote adapter

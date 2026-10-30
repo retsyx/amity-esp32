@@ -7,6 +7,9 @@
  */
 
 #include "amity/hub.hpp"
+#ifdef ESP_PLATFORM
+#include "esp_log.h"
+#endif
 #include <algorithm>
 #include <utility>
 
@@ -117,6 +120,12 @@ bool Hub::execute_owned(const system::OwnedIntent& intent) {
            previous.switch_input!=context.switch_input||previous_source_side!=owner_source_side_||previous_audio_side!=owner_audio_side_)++activity_generation_;
         owned_generation_=intent.generation;
         if (intent.source_changed||previous.source!=context.source||previous_source_side!=owner_source_side_) playing_ = false;
+#ifdef ESP_PLATFORM
+        ESP_LOGI("amity_hub", "Owner context applied owner=%s adapter=%u selected=%d generation=%llu source=%s source_side=%d",
+            intent.target.port.octopus_id.str().c_str(),intent.target.port.tentacle_id,intent.selected,
+            static_cast<unsigned long long>(intent.generation),context.source.c_str(),
+            owner_source_side_?static_cast<int>(*owner_source_side_):-1);
+#endif
         return true;
     }
     if (intent.kind == system::OwnedIntentKind::announce_active_source) { active_source(); return true; }
@@ -524,6 +533,9 @@ void Hub::discovered(BusSide side, uint8_t address) {
 }
 void Hub::source_thief(const cec::Frame &frame) {
     if (selected_ < 0) {
+#ifdef ESP_PLATFORM
+        ESP_LOGI("amity_hub", "Source policy sender=%u current=standby action=force_standby",frame.source());
+#endif
         if(owned_sender_)force_standby();
         else{send(BusSide::Front,15,{0x36});receive_step_=ReceiveStep::ForceBack;pending_resolution_=resume_received();}
         return;
@@ -533,6 +545,10 @@ void Hub::source_thief(const cec::Frame &frame) {
     // on another Amity/adapter. Its logical address cannot identify a source
     // on this wire, and this announcement did not change its isolated route.
     if(!owner_source_side_&&a.source.size()>42&&a.source[41]==':'&&a.source.rfind("@foreign:",0)==0){
+#ifdef ESP_PLATFORM
+        ESP_LOGI("amity_hub", "Source policy sender=%u current=%d source=%s action=foreign_source_standby",
+            frame.source(),selected_,a.source.c_str());
+#endif
         send(BusSide::Back,frame.source(),{0x36});return;
     }
     if(owner_source_side_==std::optional<BusSide>{BusSide::Front}){
@@ -541,6 +557,11 @@ void Hub::source_thief(const cec::Frame &frame) {
     }
     bool fix = a.source.empty();
     if (auto *d = find_device(a.source)) fix = d->address != frame.source();
+#ifdef ESP_PLATFORM
+    ESP_LOGI("amity_hub", "Source policy sender=%u current=%d source=%s source_side=%d restore=%d lookup_pending=%u",
+        frame.source(),selected_,a.source.c_str(),owner_source_side_?static_cast<int>(*owner_source_side_):-1,
+        fix,pending_resolution_);
+#endif
     if (fix) {
         send(BusSide::Back, frame.source(), {0x36});receive_step_=ReceiveStep::Input;pending_resolution_=resume_received();
     }
@@ -606,6 +627,10 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
     const auto op = frame.data[1];
     const bool active = op == 0x82 && frame.size >= 4 && frame.destination() == 15 && frame.source() < 15 &&
         announced_physical_address(static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]));
+#ifdef ESP_PLATFORM
+    if(active)ESP_LOGI("amity_hub", "Active Source received side=%s sender=%u current=%d source=%s front=%u back=%u",
+        side==BusSide::Front?"front":"back",frame.source(),selected_,current().source.c_str(),front_,back_);
+#endif
     // The Linux CEC core enforces minimum lengths, not exact lengths.
     identity(side, frame);
     if (active) {
