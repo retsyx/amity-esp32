@@ -96,8 +96,9 @@ struct RuntimeControlHooks {
     // Exact receiver-local deadline and immutable authenticated TLS link.
     std::function<Error(model::OctopusId,const Envelope &,uint64_t,model::LinkId)> control;
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;
-    // Queue current nonemitting context before the first positive owner action.
-    std::function<bool(model::OctopusId)> ready = {};
+    // Admit a current-context recapture on the owner task. Acceptance may be
+    // asynchronous; execution is ready only after that context enters the link FIFO.
+    std::function<bool(model::OctopusId,uint64_t,std::function<void(model::OwnedContextResult)>)> ready = {};
     // Current locally executing configuration; no owner-task or network wait.
     std::function<uint64_t()> configuration_revision = {};
     std::function<std::string(model::OctopusId,uint64_t)> configuration_snapshot = {};

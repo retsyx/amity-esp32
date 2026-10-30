@@ -56,6 +56,24 @@ capability floor remains unchanged so an older peer can install the update.
 
 The first control-lease handshake queues the current nonemitting activity context before positive owner actions. This synchronizes ordinary follower replies/playback context without replaying an activity recipe or missed commands.
 
+A context publication for a configuration that is still synchronizing is a
+notification to recapture current nonemitting state after the existing revision
+exchange and fresh lease. Do not retain its old payload in the action FIFO or
+let its one-second action lifetime expire behind that exchange. The existing
+owner-task callback supplies fresh current context; accepting that asynchronous
+callback does not grant context readiness. Only admission of the current-scope
+context to the link FIFO releases dependent actions behind it. Future-scope
+positive work is rejected before admission. Already admitted work retains its
+original FIFO position, lifetime and exact authorization fences; it is never
+restamped or replayed. Current-scope discovery and exact key cleanup remain
+independent of the presence of saved activity context.
+
+The owner request includes its expected revision and reports a local typed
+published/stale/failed completion. A stale revision does not publish or fence
+the link. A genuine late publication failure fences only its still-current
+captured link, boots, configuration, installation and authority scope. The
+callback retains no mutable link pointer or old context payload.
+
 Preserve causal operation order and button down/up state through bounded task/network handoff. Keep request deduplication and stale input/boot fences needed for message delivery; do not turn them into persistent activity approval. Already admitted held recipients and cleanup remain exact. Reconnect or authority refresh does not replay uncertain relative actions or restart a failed key.
 
 Owner snapshots include volatile setup generation/last sequence/pending admitted completions and whether original expected replies remain pending. The controller unions those pending replies and uses the same original ActivitySettling quiet period and two-second deadline measured after the last admitted completion. Owners add no independent quiet period, timer or barrier. A typed source-input result completes a waiting original operation: its expiry fences the exact link. An owner snapshot is replaceable observation state: expiry drops that payload and requests a fresh publication of the latest owner state, including a final pending-zero completion. That status does not hold back new keys or ordinary commands, wait for CEC capacity or create a new frame queue.
@@ -67,6 +85,16 @@ No durable current-activity resume ledger, global resource-plan reservation, pre
 ## 4. Backpressure and owner progress
 
 Bound communication queues by explicit resource limits and report admission failure. Necessary IPC state handoff is permitted; retained outgoing frames, retry queues and hidden repeat backlogs are not. Keep owner input, RX frames, setup and discovery advancing while CEC transmissions are outstanding.
+
+Operational TLS receive is incremental. Keep one bounded incoming frame/parser
+per link and return to the existing IPC/lease pump while bytes are incomplete.
+Both socket callbacks are nonblocking. Preserve the original 8 KiB frame cap,
+two-second progress and ten-second framing bounds, and the five-second
+operational receive budget beginning at the first socket/TLS readiness event,
+including encrypted fragments that have not produced plaintext. Handshake and
+snapshot wrappers retain their own bounded waits and yield at least one RTOS
+tick while waiting. The existing send budget is unchanged. This incoming
+communication state is not an outgoing CEC queue.
 
 Unexpected operational link closures emit one bounded diagnostic summary with a
 static reason and phase, protocol error, peer/link/boot/revision identities and,

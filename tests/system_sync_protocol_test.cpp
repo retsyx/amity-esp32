@@ -119,8 +119,8 @@ void startup_and_minimal_handshake(){
     assert(document.get("controller")->string==main.octopus_id().str()&&document.get("config_revision")->string=="1");
     assert(!document.get("activities")&&!document.get("components")&&!document.get("configuration"));
     assert(memory.writes==0&&main.configure_calls==0&&fixture::sent.empty());
-    const auto ready_owner=id<s::OctopusId>(9);assert(hooks.ready(ready_owner)&&main.refreshed_context==std::vector<s::OctopusId>{ready_owner});
-    main.refresh_result=false;assert(!hooks.ready(ready_owner)&&main.refreshed_context.size()==2&&memory.writes==0&&fixture::sent.empty());
+    const auto ready_owner=id<s::OctopusId>(9);assert(hooks.ready(ready_owner,1,{})&&main.refreshed_context==std::vector<s::OctopusId>{ready_owner});
+    main.refresh_result=false;assert(!hooks.ready(ready_owner,1,{})&&main.refreshed_context.size()==2&&memory.writes==0&&fixture::sent.empty());
     reset();auto member=control(true);const auto original=*member.configuration.controller_octopus_id;
     assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto saved=serialize_configuration(member.configuration);

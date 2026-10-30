@@ -52,7 +52,7 @@ public:
     int remote_activity_target()const{return accepts_local_input()?activity_target():-1;}
     bool discover(){return local_.discover();}
     bool discover_owned(system::OctopusId owner,uint8_t adapter){return local_.discover_owned(owner,adapter);}
-    bool refresh_owned_context(system::OctopusId owner){return local_.refresh_owned_context(owner);}
+    bool refresh_owned_context(system::OctopusId owner,uint64_t revision,std::function<void(system::OwnedContextResult)> completed){return local_.refresh_owned_context(owner,revision,std::move(completed));}
     Snapshot snapshot()const{return local_.snapshot();}
     void on_change(std::function<void(const Snapshot&)> f){local_.on_change(std::move(f));}
     esp_err_t configure(config_store::Configuration,std::function<esp_err_t()> commit={});

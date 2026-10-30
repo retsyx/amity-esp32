@@ -1,7 +1,7 @@
 {
-  "status": "IN PROGRESS: all four DUTs run verified 0.1.100/Matter software 101 and the full host suite passes including333 framework units. The two-owner consortium passes both 66.9ms theft directions and clean removal. The three-owner run passed nine locations and the main-owner cycle, then failed owner-proof preflight before Member2 start. Its cleanup initially failed; fresh scoped recovery removed both known members with reset scheduled and exact main value/boot preservation. Invalid snapshot/primary exception and link-close reason tracing are being completed before another qualification. No three-owner pass is claimed.",
+  "status": "IN PROGRESS: all four DUTs run verified0.1.101/Matter software102. Full host suite339passes and two-owner physical rerun passes both66.9ms thefts with clean removal. Three-owner101 failed with exactmember2unready proof. Reason-tagged firmware logs plus actual-code native reproduction identify future-revision nonemitting context expiring under its1sTTL during synchronous configuration refresh1150ms, disconnecting the link. A separate partial-frame receive starvation is also reproduced. Fixing both without changingactionTTLs, auth/replay/config fences or2s theftcriteria; target0.1.102 requiresnewdeployment/qualification.",
   "audit_date": "2026-10-29",
-  "firmware_version": "0.1.100",
+  "firmware_version": "0.1.101",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -50,64 +50,53 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
-    "result": "IN PROGRESS: deployment and host/two-owner qualification passed; three-owner running",
+    "result": "IN PROGRESS: all-four deployment and full host suite passed; physical reruns running",
     "design_contracts": {
       "result": "PASS",
-      "report": "test-results/consortium-runtime-fix-2026-10-29/contracts.json"
+      "report": "test-results/consortium-link-trace-2026-10-30/contracts.json"
     },
     "software_tests": {
-      "result": "PASS (exit 0)",
+      "result": "PASS (exit0)",
       "command": "sh tests/run_host_tests.sh",
-      "log": "test-results/consortium-runtime-fix-2026-10-29/host-tests.log",
-      "framework_unit_tests": 333
+      "log": "test-results/consortium-link-trace-2026-10-30/host-tests.log",
+      "framework_unit_tests": 339,
+      "test_fixture_commit": "2e72cc3"
     },
     "native_firmware_build": {
       "result": "PASS",
-      "log": "test-results/consortium-runtime-fix-2026-10-29/build.log",
-      "release_packaging": "Manifest and browser bundle regenerated from the final unchanged binary after hash validation caught a stale earlier bundle; no stale artifact deployed",
-      "firmware_version": "0.1.100",
-      "matter_software_version": 101,
-      "image_bytes": 2428224,
-      "image_sha256": "8175bb7040ac3da56192c821f16e6a847c5371cb18e528a61cea313f5100b9c6",
-      "image_elf_sha256": "a46975167832e538590835e8f830aeecfad4ed3b5b0c927f46a20249b359449d",
-      "source_commit": "291b9239065a8265e137928c05227e7f41293a08",
+      "firmware_version": "0.1.101",
+      "matter_software_version": 102,
+      "image_bytes": 2434208,
+      "image_sha256": "9a3fef17bed1f1da3a84d731ba08c82864e6d98a454c98440ba81d366b9ed5c7",
+      "image_elf_sha256": "ff3a4e3b469b622889058e1d3e0a061842155f764931237430b388b9011d7a7f",
+      "source_commit": "2413ce72259a405aee6620f218a3873cc2432d06",
       "source_dirty": true,
-      "frozen_artifacts": "test-results/consortium-runtime-fix-2026-10-29/firmware-0.1.100",
+      "frozen_artifacts": "test-results/consortium-link-trace-2026-10-30/firmware-0.1.101",
+      "log": "test-results/consortium-link-trace-2026-10-30/build.log",
       "public_record_layouts": 36
     },
     "physical_devices": {
-      "result": "PASS exact-image update/startup/preservation on all four DUTs",
-      "report": "test-results/consortium-runtime-fix-2026-10-29/deployment.json"
+      "result": "PASS",
+      "report": "test-results/consortium-link-trace-2026-10-30/deployment.json"
     },
     "two_owner_functional": {
       "result": "PASS",
-      "report": "test-results/consortium-runtime-fix-2026-10-29/consortium.json",
-      "verification": "test-results/consortium-runtime-fix-2026-10-29/consortium-verification.json",
+      "report": "test-results/consortium-link-trace-2026-10-30/consortium.json",
+      "verification": "test-results/consortium-link-trace-2026-10-30/consortium-verification.json",
       "power_assertions": 14,
       "typed_locations": 6,
       "theft_responses_ms": [
-        66.900096,
-        66.900077
+        66.900023,
+        66.900044
       ],
+      "owner_failures": [],
       "cleanup_errors": []
     },
     "three_owner_functional": {
-      "result": "FAIL: owner-proof preflight before Member2 start; initial member cleanup failed",
-      "report": "test-results/consortium-runtime-fix-2026-10-29/consortium-three-duts.json",
-      "cleanup_recovery": "test-results/consortium-runtime-fix-2026-10-29/manual-cleanup.json",
-      "partial_theft_responses_ms": [
-        69.949991,
-        68.100104
-      ],
-      "typed_locations": 9
-    },
-    "shared_wire_source_theft": {
-      "result": "PASS",
-      "report": "test-results/consortium-runtime-fix-2026-10-29/source-theft.json",
-      "standby_ms": 66.899909,
-      "route_restoration_ms": 183.34999,
-      "same_physical_deadline_ms": 2000,
-      "cleanup_errors": []
+      "result": "FAIL: exactmember2readyfalse bootnull; queuedfuturecontext expired duringconfigurationrefresh",
+      "report": "test-results/consortium-link-trace-2026-10-30/consortium-three-duts.json",
+      "diagnostics": "test-results/consortium-link-trace-2026-10-30/three-owner-failure-immediate-logs.txt",
+      "cleanup_recovery": "test-results/consortium-link-trace-2026-10-30/manual-cleanup.json"
     }
   },
   "historical_evidence": {
@@ -126,7 +115,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 101,
+  "matter_software_version": 102,
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -198,18 +187,20 @@
     "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
+    "firmware_version": "0.1.101",
+    "image_sha256": "9a3fef17bed1f1da3a84d731ba08c82864e6d98a454c98440ba81d366b9ed5c7",
+    "image_elf_sha256": "ff3a4e3b469b622889058e1d3e0a061842155f764931237430b388b9011d7a7f",
+    "source_commit": "2413ce72259a405aee6620f218a3873cc2432d06",
+    "source_dirty": true,
     "result": "PASS",
     "date": "2026-10-30",
-    "firmware_version": "0.1.100",
-    "matter_software_version": 101,
-    "source_commit": "291b9239065a8265e137928c05227e7f41293a08",
-    "source_dirty": true,
-    "image_sha256": "8175bb7040ac3da56192c821f16e6a847c5371cb18e528a61cea313f5100b9c6",
-    "image_elf_sha256": "a46975167832e538590835e8f830aeecfad4ed3b5b0c927f46a20249b359449d",
-    "report": "test-results/consortium-runtime-fix-2026-10-29/deployment.json",
-    "main": "Authenticated OTA with exact retained configuration, pairings, identity and authority",
-    "candidates": "Three MAC-locked application-only writes with private full-flash backups, protected-range and OTA metadata equality, exact running identity/version/hash and 18 checks each",
-    "functional_qualification_separate": true
+    "matter_software_version": 102,
+    "report": "test-results/consortium-link-trace-2026-10-30/deployment.json",
+    "DUTs": 4,
+    "main_usb_opened": false,
+    "flash_erased": false,
+    "all_main_preservation_checks": 13,
+    "candidate_checks_each": 18
   },
   "matter_auto_boot_validation": {
     "requirement": "Permanent boot opening for current fabric count zero on an unclaimed board or proven original main; no button/GPIO, saved-activity/configuration or commissioning-history gate. Headless/prepared/retired/recovery roles and current fabrics prevent automatic opening.",
@@ -2096,5 +2087,75 @@
     },
     "physical_devices": "All four DUTs updated and verified. All six physical functional cases pass on test2; both activity roles in the two-board consortium scenario are exercised. No broader real-AV/electrical qualification claimed.",
     "scope": "Current consortium/live configuration/cache/scan/sequential activity/input changes. Earlier qualified-lookup records are preserved separately."
+  },
+  "previous_runtime_fix_task_validation": {
+    "result": "IN PROGRESS: deployment and host/two-owner qualification passed; three-owner running",
+    "design_contracts": {
+      "result": "PASS",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/contracts.json"
+    },
+    "software_tests": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "log": "test-results/consortium-runtime-fix-2026-10-29/host-tests.log",
+      "framework_unit_tests": 333
+    },
+    "native_firmware_build": {
+      "result": "PASS",
+      "log": "test-results/consortium-runtime-fix-2026-10-29/build.log",
+      "release_packaging": "Manifest and browser bundle regenerated from the final unchanged binary after hash validation caught a stale earlier bundle; no stale artifact deployed",
+      "firmware_version": "0.1.100",
+      "matter_software_version": 101,
+      "image_bytes": 2428224,
+      "image_sha256": "8175bb7040ac3da56192c821f16e6a847c5371cb18e528a61cea313f5100b9c6",
+      "image_elf_sha256": "a46975167832e538590835e8f830aeecfad4ed3b5b0c927f46a20249b359449d",
+      "source_commit": "291b9239065a8265e137928c05227e7f41293a08",
+      "source_dirty": true,
+      "frozen_artifacts": "test-results/consortium-runtime-fix-2026-10-29/firmware-0.1.100",
+      "public_record_layouts": 36
+    },
+    "physical_devices": {
+      "result": "PASS exact-image update/startup/preservation on all four DUTs",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/deployment.json"
+    },
+    "two_owner_functional": {
+      "result": "PASS",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/consortium.json",
+      "verification": "test-results/consortium-runtime-fix-2026-10-29/consortium-verification.json",
+      "power_assertions": 14,
+      "typed_locations": 6,
+      "theft_responses_ms": [
+        66.900096,
+        66.900077
+      ],
+      "cleanup_errors": []
+    },
+    "three_owner_functional": {
+      "result": "FAIL: owner-proof preflight before Member2 start; initial member cleanup failed",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/consortium-three-duts.json",
+      "cleanup_recovery": "test-results/consortium-runtime-fix-2026-10-29/manual-cleanup.json",
+      "partial_theft_responses_ms": [
+        69.949991,
+        68.100104
+      ],
+      "typed_locations": 9
+    },
+    "shared_wire_source_theft": {
+      "result": "PASS",
+      "report": "test-results/consortium-runtime-fix-2026-10-29/source-theft.json",
+      "standby_ms": 66.899909,
+      "route_restoration_ms": 183.34999,
+      "same_physical_deadline_ms": 2000,
+      "cleanup_errors": []
+    }
+  },
+  "consortium_link_trace_validation": {
+    "result": "FAIL physical three-owner; concretefuture-context expiry reproduced natively; fixing for102",
+    "firmware_version": "0.1.101",
+    "source_commit": "2413ce72259a405aee6620f218a3873cc2432d06",
+    "framework_unit_tests": 339,
+    "physical_evidence_directory": "test-results/consortium-link-trace-2026-10-30",
+    "lookup_result_fix": "Admitted old-scope typed lookup results delivered exactly once before revision advance, preserving original session/auth/replay checks; actual before/after ASan/UBSan regression",
+    "scope": "This latent fix is not asserted to explain the prior main-only readiness failure. Physical reruns retain strict identity/boot/ready checks and hard2s theft bounds."
   }
 }

@@ -26,13 +26,13 @@ using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 std::vector<std::string> diagnostic_logs;
 void assert_log_unlocked();
-template<class... Args>void capture_log(const char*,const char* format,Args... args){assert_log_unlocked();char text[1024];snprintf(text,sizeof(text),format,args...);diagnostic_logs.emplace_back(text);}
+template<class... Args>void capture_log(const char*,const char* format,Args... args){assert_log_unlocked();char text[1024];snprintf(text,sizeof(text),format,args...);assert(std::string(text).size()<384);if(std::string(format).find("Link scope")==0)return;diagnostic_logs.emplace_back(text);}
 #define ESP_LOGW capture_log
 #define ESP_LOGI capture_log
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct Tls{int socket=-1;model::OctopusId authenticated;};
-struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
+struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
 constexpr size_t maximum_links=2;
 std::mutex lock;std::vector<std::shared_ptr<Active>> links;RuntimeControlHooks controls;RuntimeStatus status;Group group;
 struct Identity{model::OctopusId id;}identity;
@@ -72,7 +72,7 @@ void queues(){
  assert(runtime_send_control(a->peer,Kind::heartbeat,"first",1000)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.kind=model::OwnedIntentKind::key_up;++i.sequence;assert(runtime_send_owned(i)==ESP_OK);
  assert(a->queue.size()==3&&a->queue[0].payload=="first"&&a->queue[1].kind==Kind::scoped_intent&&queued_cleanup(a->queue[2])); // strict causal FIFO, no cleanup priority reordering
  reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_NO_MEM);i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM&&a->cancelled);
- reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent queue_age_ms=2000 queue_ttl_ms=2000")!=std::string::npos);
+ reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent age_ms=2000 ttl_ms=2000")!=std::string::npos);
  reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);
  reset();a=connection();links={a};const auto result=std::string("{\"input_result\":{\"generation\":\"2\",\"sequence\":\"1\",\"source_present\":true}}");
  assert(runtime_send_owned_result(a->peer,ident<model::LinkId>(99),result)==ESP_ERR_INVALID_STATE&&a->queue.empty());
@@ -86,13 +86,73 @@ void initial_context(){
  reset();auto a=connection();links={a};a->context_ready=false;
  auto i=down();assert(runtime_send_owned(i)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  i.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(i)==ESP_ERR_INVALID_STATE);
- i.kind=model::OwnedIntentKind::context;i.target.osd_name.clear();
- assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==1);
- unsigned refreshes=0;controls.ready=[&](auto owner){++refreshes;assert(owner==a->peer&&!a->context_ready);assert(runtime_send_owned(down(2))==ESP_ERR_INVALID_STATE);return true;};
- assert(initialize_context(*a)&&initialize_context(*a)&&refreshes==1);
- assert(runtime_send_owned(down(2))==ESP_OK&&a->queue.size()==2);
+ unsigned refreshes=0;controls.ready=[&](auto owner,auto,auto){++refreshes;assert(owner==a->peer&&!a->context_ready);assert(runtime_send_owned(down(2))==ESP_ERR_INVALID_STATE);return true;};
+ // True means the recapture entered owner-task IPC, not that it has run.
+ assert(initialize_context(*a)&&initialize_context(*a)&&refreshes==1&&!a->context_ready&&a->context_requested&&a->queue.empty());
+ assert(runtime_send_owned(down(2))==ESP_ERR_INVALID_STATE);
+ i.kind=model::OwnedIntentKind::context;i.target.osd_name.clear();assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==1);
+ assert(a->context_ready&&!a->context_requested&&runtime_send_owned(down(2))==ESP_OK&&a->queue.size()==2);
  assert(a->queue[0].owned&&a->queue[0].owned->kind==model::OwnedIntentKind::context&&a->queue[0].revision==1);
- reset();a=connection();links={a};a->context_ready=false;assert(!initialize_context(*a)&&!a->context_ready);controls.ready=[](auto){return false;};assert(!initialize_context(*a)&&!a->context_ready);
+ reset();a=connection();links={a};a->context_ready=false;assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);controls.ready=[](auto,auto,auto){return false;};assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);
+ // No saved selectors means an admitted recapture may emit no context. Local
+ // discovery and exact key-up cleanup still reach the owner independently.
+ reset();a=connection();links={a};a->context_ready=false;controls.ready=[](auto,auto,auto){return true;};assert(initialize_context(*a));
+ auto scan=down();scan.kind=model::OwnedIntentKind::discover;scan.target.osd_name.clear();assert(runtime_send_owned(scan)==ESP_OK&&!a->context_ready);
+ auto up=down(2);up.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(up)==ESP_OK&&!a->context_ready);
+ assert(runtime_send_owned(down(3))==ESP_ERR_INVALID_STATE);
+}
+void future_context_is_recaptured(){
+ reset();auto a=connection();links={a};configuration=2;
+ auto current=down();current.kind=model::OwnedIntentKind::context;current.target.osd_name.clear();current.config_revision=2;current.generation=8;current.sequence=10;
+ assert(runtime_send_owned(current)==ESP_OK&&a->queue.empty()&&a->context_ready&&!a->cancelled);
+ auto action=down(11);action.config_revision=2;action.generation=8;
+ assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty()&&!a->cancelled);
+ action.kind=model::OwnedIntentKind::power;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
+ // The exchange may take longer than the ordinary action TTL. No old payload
+ // or deadline is retained, so configuration alone cannot expire leased work.
+ clock_ms+=1150;assert(a->queue.empty()&&!a->cancelled);
+ const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
+ assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
+ assert(a->session.advance_configuration(2)==Error::none);a->status.config_revision=2;a->context_ready=false;a->refreshing=true;a->context_requested=false;
+ a->status.control_lease=ident<model::ExecutionLeaseId>(90);a->status.control_usable_until_ms=clock_ms+4900;
+ unsigned requested=0;controls.ready=[&](auto,auto,auto){++requested;return true;};assert(initialize_context(*a)&&requested==1&&!a->context_ready&&a->context_requested);
+ action.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
+ // Recapture reads the current activity now, with a newer generation/sequence.
+ current.generation=9;current.sequence=20;current.selected=true;assert(runtime_send_owned(current)==ESP_OK&&a->context_ready&&!a->refreshing&&a->queue.size()==1);
+ assert(a->queue[0].owned->generation==9&&a->queue[0].owned->sequence==20&&a->queue[0].created==clock_ms&&a->queue[0].revision==2);
+ action.generation=9;action.sequence=21;assert(runtime_send_owned(action)==ESP_OK&&a->queue.size()==2&&a->queue[1].owned->sequence==21);
+ // Once ordinary work is admitted, its original TTL and fence remain intact.
+ a->queue.pop_front();clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&a->cancelled);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired")!=std::string::npos);
+}
+void asynchronous_context_failure_is_scoped(){
+ reset();auto a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
+ std::function<void(model::OwnedContextResult)> done;
+ controls.ready=[&](auto owner,uint64_t revision,auto completed){assert(owner==a->peer&&revision==1);done=std::move(completed);return true;};
+ assert(initialize_context(*a)&&a->context_requested&&!a->context_ready);
+ clock_ms=5101;auto context=down();context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();
+ assert(runtime_send_owned(context)==ESP_ERR_INVALID_STATE&&a->queue.empty()&&!a->cancelled);
+ done(model::OwnedContextResult::failed);assert(a->cancelled&&!a->context_requested&&!a->context_ready&&diagnostic_logs.size()==1);
+ assert(diagnostic_logs[0].find("reason=context_recapture_failed")!=std::string::npos);done(model::OwnedContextResult::failed);assert(diagnostic_logs.size()==1);
+ // A local R+1 configuration may be executing before the runtime publishes
+ // that revision. The old command reports stale, leaving its healthy R link.
+ reset();a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
+ controls.ready=[&](auto,uint64_t,auto completed){done=std::move(completed);return true;};assert(initialize_context(*a));
+ const auto original=a->session.scope();done(model::OwnedContextResult::stale);assert(!a->cancelled&&a->session.scope()==original&&diagnostic_logs.empty());
+ HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
+ assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none&&a->session.advance_configuration(2)==Error::none);
+ configuration=2;a->status.config_revision=2;a->context_requested=false;a->context_ready=false;
+ std::function<void(model::OwnedContextResult)> newer;
+ controls.ready=[&](auto,uint64_t revision,auto completed){assert(revision==2);newer=std::move(completed);return true;};assert(initialize_context(*a));
+ done(model::OwnedContextResult::failed);assert(!a->cancelled&&a->context_requested&&diagnostic_logs.empty());
+ context=down(20);context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();context.config_revision=2;assert(runtime_send_owned(context)==ESP_OK);newer(model::OwnedContextResult::published);
+ assert(a->context_ready&&!a->context_requested&&!a->cancelled&&a->queue.size()==1);
+ // Nor can an old callback fence a replacement authenticated connection.
+ links.clear();auto replacement=connection(9);links={replacement};done(model::OwnedContextResult::failed);assert(!replacement->cancelled&&diagnostic_logs.empty());
+}
+void diagnostic_lines_fit_capture(){
+ reset();auto a=connection();LinkTrace trace;trace.phase="configuration_receive";trace.fail("synchronization_interleaving",Error::unsupported_kind);trace.has_kind=trace.has_queue=true;trace.kind=Kind::execution_lease;trace.created=0;trace.ttl=UINT32_MAX;trace.queued_revision=UINT64_MAX;trace.action_code=INT32_MIN;trace.socket_error=INT32_MIN;
+ auto captured=snapshot_link_trace(*a,trace,UINT64_MAX);captured.scope.config_revision=UINT64_MAX;emit_link_trace(captured);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].size()<384&&diagnostic_logs[0].find("qrev=18446744073709551615")!=std::string::npos);
 }
 void authorization(){
  reset();auto a=connection();links={a};
@@ -125,7 +185,7 @@ void codec_and_session(){
  model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.devices.push_back({model::Side::back,"Player",4,4,0x1000,1,true});text=owned_snapshot_json(report);assert(!text.empty()&&parse_json(text,value,error));model::OwnedAdapterSnapshot decoded;assert(parse_owned_snapshot(value,decoded)&&decoded.devices.front().osd_name=="Player");value.get("devices")->array.push_back(value.get("devices")->array.front());assert(!parse_owned_snapshot(value,decoded));
 }
 }
-int main(){using namespace amity::consortium;closure();queues();initial_context();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, link loss/replacement fences, scoped codecs, stale boots/config, leases and duplicate rejection\\n";}
+int main(){using namespace amity::consortium;closure();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();diagnostic_lines_fit_capture();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, link loss/replacement fences, scoped codecs, stale boots/config, leases and duplicate rejection\\n";}
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()

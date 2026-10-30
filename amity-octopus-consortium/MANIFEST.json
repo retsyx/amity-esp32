@@ -33,8 +33,8 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 14295,
-      "sha256": "7945404166331c392641a82892f062921637db855635ac1821548a055d453f11"
+      "size_bytes": 16160,
+      "sha256": "8157db06c96ebf0657b42db17b025e3ee68d2c46d14cc1a1487140eb8e43fe1b"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 51874,
-      "sha256": "c808eb64de2ac2ba505d47653b7b43c8b7654619ab949cbc9144847c599601f1"
+      "size_bytes": 54001,
+      "sha256": "cd78ee141a74462bf43bee235a253441aff3f00c6b7845b2218d1f081180d5f7"
     },
     {
       "path": "examples/README.md",

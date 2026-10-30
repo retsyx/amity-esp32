@@ -84,7 +84,7 @@ struct HubService::Impl : Transport {
         std::vector<system::ScopedSelector> selectors;OwnedSender sender;
         system::OwnedIntent owned;system::OwnedAuthorization auth;
         system::OctopusId controller;system::LinkId link;uint64_t config_revision=0,presentation_revision=1;
-        std::shared_ptr<Reply> reply;std::function<esp_err_t()> persist;
+        std::shared_ptr<Reply> reply;std::function<esp_err_t()> persist;std::function<void(system::OwnedContextResult)> context_completion;
         system::BootId settings_boot;std::vector<std::pair<uint8_t,uint64_t>> settings_presence;uint64_t settings_deadline=0;
     };
     std::atomic<uint32_t> intent_generation{0},key_generation{0},activity_selection{0},owned_wire_generation{1};
@@ -1380,10 +1380,13 @@ struct HubService::Impl : Transport {
         case K::OwnedDiscover:{system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::discover;
             intent.target.port={consortium,command.controller,static_cast<uint8_t>(command.value),system::Side::front};
             intent.generation=control_hub().scoped_generation();dispatch_owned(intent);return true;}
-        case K::OwnedContext:
-            finish(command.reply,activity_hub.refresh_owned_context(command.controller)?system::AdmissionResult{system::AdmissionCode::accepted,{}}:
+        case K::OwnedContext:{
+            const bool current=command.config_revision==owned_config_revision;
+            const bool published=current&&activity_hub.refresh_owned_context(command.controller);
+            if(command.context_completion)command.context_completion(!current?system::OwnedContextResult::stale:published?system::OwnedContextResult::published:system::OwnedContextResult::failed);
+            finish(command.reply,published?system::AdmissionResult{system::AdmissionCode::accepted,{}}:
                 system::AdmissionResult{system::AdmissionCode::overloaded,"Current equipment context could not enter the owner transport"});
-            return true;
+            return true;}
         case K::OwnedBind:
             if(owned_controller!=command.controller||owned_config_revision!=command.config_revision)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){engine->owned_wire_generation.fetch_add(1);engine->stop_holds();std::fill(engine->owned_keys.begin(),engine->owned_keys.end(),std::nullopt);engine->received_sequence=engine->received_generation=0;}
             owned_controller=command.controller;owned_config_revision=command.config_revision;legacy_enabled=true;
@@ -1750,10 +1753,13 @@ bool HubService::update_owned_snapshot(system::OwnedAdapterSnapshot report){
     else if(admitted)p.pending_reports.push_back(std::move(report));
     xSemaphoreGive(p.lock);return admitted;
 }
-bool HubService::refresh_owned_context(system::OctopusId owner){
-    if(!owner)return false;
-    auto* c=new(std::nothrow)Impl::Command{Impl::Kind::OwnedContext};if(!c)return false;c->controller=owner;
-    return bool(impl_->request(c));
+bool HubService::refresh_owned_context(system::OctopusId owner,uint64_t revision,std::function<void(system::OwnedContextResult)> completed){
+    if(!owner||!revision)return false;
+    auto* c=new(std::nothrow)Impl::Command{Impl::Kind::OwnedContext};if(!c)return false;c->controller=owner;c->config_revision=revision;c->context_completion=std::move(completed);
+    // The link task requests a fresh state capture; it must not wait for the
+    // owner task. Runtime marks context ready only when the resulting current
+    // context is admitted to the authenticated link, ahead of ordinary work.
+    return impl_->submit(c)==ESP_OK;
 }
 std::vector<system::OwnedAdapterSnapshot> HubService::owned_snapshots()const{
     auto& p=*impl_;xSemaphoreTake(p.lock,portMAX_DELAY);auto reports=p.owned_reports;xSemaphoreGive(p.lock);return reports;

@@ -112,6 +112,39 @@ The ESP-IDF build passes 36 public record layout checks. Logs are under
 execution of the new removal behavior; deployment and functional evidence must
 be recorded separately after running.
 
+## 0.1.101 connection failure reproduced — 30 October 2026
+
+All four DUTs were updated and verified on exact 0.1.101 from firmware commit
+`2413ce72259a405aee6620f218a3873cc2432d06`: image SHA-256
+`9a3fef17bed1f1da3a84d731ba08c82864e6d98a454c98440ba81d366b9ed5c7`,
+ELF SHA-256 `ff3a4e3b469b622889058e1d3e0a061842155f764931237430b388b9011d7a7f`.
+The complete host suite passes with 339 framework units after a test-only
+extractor update. The two-owner physical case passes with fourteen fresh power
+assertions, six typed locations, empty owner failures, two theft responses at
+66.900023/66.900044 ms and clean reset cleanup. Evidence is under
+`test-results/consortium-link-trace-2026-10-30/`.
+
+The three-owner run failed and remains failed. Its retained owner snapshot
+shows member 2 still enrolled but unready with no current boot; all main,
+member-3 and proof-object checks passed. The first inactive player's physical
+announcement completed, but the owner check rejected that disconnected member
+before the timed response assertion. Firmware tracing locates the disconnect
+earlier, during the activity-save configuration refresh: the future-revision
+context waited 1,150 ms under its original 1,000 ms lifetime and fenced the link.
+Fresh reviewed removal later acknowledged both fixture resets and restored all
+main saved values except normal revision counters, retaining the same main boot.
+
+The actual-code native reproduction admits only that future nonemitting
+context, delays the real synchronization exchange 1,150 ms and observes its
+causal expiry. The correction uses the existing post-sync current-context
+callback without retaining/replaying the old payload or extending action TTLs.
+A separate actual-source regression proves that the old whole-frame TLS read
+can prevent admitted work from advancing for 1,180 ms; incremental receive
+preserves the original framing/operational deadlines while servicing IPC.
+These corrections target 0.1.102, whose build, deployment and physical results
+must be recorded separately. They do not retroactively prove DUT receipt of
+the original 0.1.99 missing source-theft frame.
+
 ## 0.1.100 deployment and strict-deadline physical rerun — 30 October 2026
 
 All four DUTs run the exact 2,428,224-byte 0.1.100 image from commit

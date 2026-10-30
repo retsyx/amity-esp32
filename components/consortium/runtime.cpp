@@ -86,7 +86,7 @@ struct Active {
     std::mutex mutex;
     std::mutex close_mutex;bool closed_notified=false;
     std::deque<Queued> queue;
-    std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false},refreshing{false};
+    std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false},context_requested{false},refreshing{false};
     // Published and read only under the global runtime lock. The copied old
     // pin is usable only to finish this exact removed enrollment transaction.
     std::optional<EnrollmentAbort> enrollment_abort;
@@ -356,7 +356,7 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
         trace.phase="configuration_advance";
         const auto advanced=active.session.advance_configuration(target);if(advanced!=Error::none)return trace.fail("synchronization_advance",advanced);
         active.status.config_revision=target;active.status.control_lease={};active.status.realtime_lease={};active.status.control_usable_until_ms=active.status.realtime_usable_until_ms=0;
-        active.own_control={};active.own_realtime={};active.own_control_deadline=0;active.own_realtime_deadline=0;active.context_ready=false;
+        active.own_control={};active.own_realtime={};active.own_control_deadline=0;active.own_realtime_deadline=0;active.context_ready=false;active.context_requested=false;
         if(!server)configuration=target;
         return true;
     };
@@ -437,7 +437,7 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     ours.hardware_profile=active.tls->hardware_profile();ours.supported_tentacles=profile_count;ours.configured_tentacles_mask=profile_mask;
     if(active.tls->extended_profile()&&current.join_id&&((!server&&current.role==Group::prepared)||(server&&current.joining_id==active.tls->authenticated))){ours.pending_join_id=current.join_id;ours.join_digest=current.join_digest;}
     if(cancelled_join){if(!active.tls->extended_profile())return trace.fail("enrollment_abort_profile");ours.pending_join_id=cancelled_join->join;ours.join_digest=cancelled_join->digest;}
-    std::string incoming;if(!active.tls->send(hello_json(ours))||!active.tls->receive(incoming))return trace.fail("hello_exchange");
+    std::string incoming;if(!active.tls->send(hello_json(ours)))return trace.fail("hello_send");if(!active.tls->receive(incoming))return trace.fail("hello_receive");
     HelloFrame peer;const auto parsed=parse_hello(incoming,peer);if(parsed!=Error::none)return trace.fail("hello_parse",parsed);
     if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch||!supports_capabilities(peer,ours.required_capabilities))return trace.fail("hello_validation");
     if(peer.hardware_profile!=active.tls->hardware_profile())return trace.fail("hardware_profile");
@@ -511,11 +511,18 @@ bool retire_member(Active &active,const Envelope &envelope,uint64_t received){
     const std::string response="{\"mutation_id\":\""+mutation.str()+"\",\"proposal_digest\":\""+digest+"\",\"phase\":\"factory_reset\",\"membership_revision\":\""+std::to_string(revision)+"\",\"expected_boot_id\":\""+target_boot.str()+"\",\"result\":\"reset_scheduled\"}";
     const bool sent=send(active,Kind::membership_result,response,2000);hooks.after_factory_reset();return sent;
 }
+auto context_capture_failed(const LinkScope&) -> void;
 bool initialize_context(Active& active){
-    if(active.context_ready)return true;
-    RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
-    if(!hooks.ready||!hooks.ready(active.peer))return false;
-    active.context_ready=true;active.refreshing=false;return true;
+    RuntimeControlHooks hooks;LinkScope scope;
+    {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
+        if(active.context_ready||active.context_requested)return true;
+        active.context_requested=true;hooks=controls;scope=active.session.scope();
+    }
+    // The hook may only admit an asynchronous owner-task recapture. Readiness
+    // changes when its fresh current context actually enters this link's FIFO.
+    if(hooks.ready&&hooks.ready(active.peer,scope.config_revision,[scope](model::OwnedContextResult result){if(result==model::OwnedContextResult::failed)context_capture_failed(scope);}))return true;
+    {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);active.context_requested=false;}
+    return false;
 }
 struct LinkTraceSnapshot {
     LinkTrace trace;
@@ -530,13 +537,16 @@ void emit_link_trace(const LinkTraceSnapshot& captured){
     const auto& trace=captured.trace;const auto& scope=captured.scope;
     const auto age=trace.has_queue&&captured.now>=trace.created?captured.now-trace.created:0;
     const bool reversed=trace.has_queue&&captured.now<trace.created;
+    // The shipping log capture bounds each line to 384 bytes. Keep cause and
+    // timing first, with a second bounded identity line correlated by link ID.
     if(trace.unexpected)
-        ESP_LOGW("consortium","Link closed reason=%s phase=%s peer=%s authenticated_peer=%s link=%s local_boot=%s peer_boot=%s revision=%llu error=%s kind=%s queue_age_ms=%llu queue_ttl_ms=%u queue_revision=%llu action_code=%d clock_reversed=%d socket_errno=%d",
-            trace.reason,trace.phase,captured.peer.str().c_str(),captured.authenticated_peer.str().c_str(),scope.link_id.str().c_str(),scope.local_boot_id.str().c_str(),scope.peer_boot_id.str().c_str(),
-            static_cast<unsigned long long>(scope.config_revision),error_name(trace.error),trace.has_kind?kind_name(trace.kind):"none",static_cast<unsigned long long>(age),trace.ttl,static_cast<unsigned long long>(trace.queued_revision),trace.action_code,reversed,trace.socket_error);
+        ESP_LOGW("consortium","Link closed reason=%s phase=%s kind=%s age_ms=%llu ttl_ms=%u qrev=%llu action=%d rev=%llu error=%s errno=%d skew=%d link=%s",
+            trace.reason,trace.phase,trace.has_kind?kind_name(trace.kind):"none",static_cast<unsigned long long>(age),trace.ttl,static_cast<unsigned long long>(trace.queued_revision),trace.action_code,
+            static_cast<unsigned long long>(scope.config_revision),error_name(trace.error),trace.socket_error,reversed,scope.link_id.str().c_str());
     else
-        ESP_LOGI("consortium","Link closed reason=%s phase=%s peer=%s authenticated_peer=%s link=%s local_boot=%s peer_boot=%s revision=%llu",
-            trace.reason,trace.phase,captured.peer.str().c_str(),captured.authenticated_peer.str().c_str(),scope.link_id.str().c_str(),scope.local_boot_id.str().c_str(),scope.peer_boot_id.str().c_str(),static_cast<unsigned long long>(scope.config_revision));
+        ESP_LOGI("consortium","Link closed reason=%s phase=%s link=%s",trace.reason,trace.phase,scope.link_id.str().c_str());
+    ESP_LOGI("consortium","Link scope peer=%s authenticated_peer=%s link=%s local_boot=%s peer_boot=%s revision=%llu",
+        captured.peer.str().c_str(),captured.authenticated_peer.str().c_str(),scope.link_id.str().c_str(),scope.local_boot_id.str().c_str(),scope.peer_boot_id.str().c_str(),static_cast<unsigned long long>(scope.config_revision));
 }
 void trace_link_closed(const Active& active,const LinkTrace& trace,uint64_t now){emit_link_trace(snapshot_link_trace(active,trace,now));}
 struct DeferredLinkTrace {
@@ -547,6 +557,16 @@ struct DeferredLinkTrace {
     // snapshot has no mutable Active pointer, payload or deferred work.
     ~DeferredLinkTrace(){for(size_t i=0;i<size;++i)emit_link_trace(snapshots[i]);}
 };
+void context_capture_failed(const LinkScope& scope){
+    DeferredLinkTrace diagnostics;std::lock_guard<std::mutex> guard(lock);
+    if(!original_controller(group,identity.id)||!status.authority_ready||group.consortium!=scope.consortium_id||group.epoch!=scope.epoch)return;
+    for(auto& active:links)if(!active->cancelled&&!active->retiring&&active->ready){
+        std::lock_guard<std::mutex> queue(active->mutex);
+        if(!(active->session.scope()==scope))continue;
+        LinkTrace trace;trace.phase="owner_context";trace.fail("context_recapture_failed");diagnostics.capture(*active,trace,now_ms());
+        active->context_requested=false;active->context_ready=false;active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);
+    }
+}
 std::optional<RuntimeSnapshotRetry> snapshot_retry(const Active& active,const Queued& queued){
     if(queued.kind!=Kind::scoped_result||active.cancelled||active.retiring||!active.ready)return {};
     const auto scope=active.session.scope();
@@ -572,7 +592,7 @@ QueuedState prepare_queued(Active& active,const Queued& queued,uint64_t now,std:
     if(!queued.owned){payload=queued.payload;return QueuedState::ready;}
     const auto& intent=*queued.owned;
     if(intent.config_revision!=queued.revision)return QueuedState::invalid;
-    if(!active.context_ready&&intent.kind!=model::OwnedIntentKind::context)return QueuedState::waiting;
+    if(!active.context_ready&&intent.kind!=model::OwnedIntentKind::context&&intent.kind!=model::OwnedIntentKind::discover&&intent.kind!=model::OwnedIntentKind::key_up)return QueuedState::waiting;
     const bool key=intent.kind==model::OwnedIntentKind::key_down,cleanup=intent.kind==model::OwnedIntentKind::key_up;
     const auto lease=key?active.status.realtime_lease:active.status.control_lease;
     const auto until=key?active.status.realtime_usable_until_ms:active.status.control_usable_until_ms;
@@ -586,12 +606,12 @@ void active_loop_work(void *arg){
     if(!handshaken||!establish(*active,server,&trace)){if(!active->lifecycle_only)error("Operational authentication or synchronization failed");active->cancelled=true;}else{
         std::lock_guard<std::mutex> guard(lock);status.connected=true;status.synchronized=active->ready.load();status.phase=active->ready?"enrollment_ready":"membership_committed";
     }
-    uint64_t heartbeat=0,renewal=0,control_renewal=0,sequence=0;bool retirement_attempted=false;
+    uint64_t heartbeat=0,renewal=0,control_renewal=0,sequence=0,receive_until=0;bool retirement_attempted=false;
     while(!active->cancelled){
         trace.phase="operational";trace.has_kind=trace.has_queue=false;trace.ttl=0;trace.action_code=-1;trace.queued_revision=0;trace.socket_error=0;
-        if(active->retiring){retirement_attempted=true;finish_retirement(*active);break;}
+        if(active->retiring&&!receive_until){retirement_attempted=true;finish_retirement(*active);break;}
         auto now=now_ms();
-        if(server&&active->ready&&(active->status.negotiated_capabilities&live_configuration)){
+        if(server&&active->ready&&!active->retiring&&!receive_until&&(active->status.negotiated_capabilities&live_configuration)){
             uint64_t target;{std::lock_guard<std::mutex> guard(lock);target=configuration;}
             if(target>active->session.scope().config_revision){
                 bool drain=false;{std::lock_guard<std::mutex> guard(active->mutex);
@@ -601,10 +621,10 @@ void active_loop_work(void *arg){
             }
         }
         trace.phase="operational";trace.has_kind=trace.has_queue=false;
-        if(!server&&active->ready&&now>=renewal){auto realtime=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(realtime,LeaseClass::realtime_input,500,now);if(now>=control_renewal){auto control=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(control,LeaseClass::control,5000,now);active->own_control=control;active->own_control_deadline=now+5000;if(!send(*active,Kind::execution_lease,lease_json(control,active->session.scope().link_id,LeaseClass::control,5000))){trace.fail("control_lease_send");break;}control_renewal=now+4000;}active->own_realtime=realtime;active->own_realtime_deadline=now+500;if(!send(*active,Kind::execution_lease,lease_json(realtime,active->session.scope().link_id,LeaseClass::realtime_input,500))){trace.fail("realtime_lease_send");break;}renewal=now+250;}
-        if(now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}")){trace.fail("heartbeat_send");break;}heartbeat=now+1000;}
+        if(!active->retiring&&!server&&active->ready&&now>=renewal){auto realtime=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(realtime,LeaseClass::realtime_input,500,now);if(now>=control_renewal){auto control=random_id<model::ExecutionLeaseId>();active->session.execution_leases().issue(control,LeaseClass::control,5000,now);active->own_control=control;active->own_control_deadline=now+5000;if(!send(*active,Kind::execution_lease,lease_json(control,active->session.scope().link_id,LeaseClass::control,5000))){trace.fail("control_lease_send");break;}control_renewal=now+4000;}active->own_realtime=realtime;active->own_realtime_deadline=now+500;if(!send(*active,Kind::execution_lease,lease_json(realtime,active->session.scope().link_id,LeaseClass::realtime_input,500))){trace.fail("realtime_lease_send");break;}renewal=now+250;}
+        if(!active->retiring&&now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}")){trace.fail("heartbeat_send");break;}heartbeat=now+1000;}
         now=now_ms();
-        Queued queued;std::string payload;bool have=false,invalid=false;{std::lock_guard<std::mutex> guard(active->mutex);
+        Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
             if(!active->queue.empty()){
                 const auto prepared=prepare_queued(*active,active->queue.front(),now,payload);
@@ -619,8 +639,16 @@ void active_loop_work(void *arg){
         if(have&&now>=queued.created&&now-queued.created<queued.ttl){
             if(!send(*active,queued.kind,payload,queued.ttl-static_cast<uint32_t>(now-queued.created))){trace.queued(queued);trace.fail("queued_send");break;}
         }
-        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}if(!ready&&mbedtls_ssl_check_pending(&active->tls->ssl)==0)continue;
-        std::string text;if(!active->tls->receive(text)){trace.fail("frame_receive");break;}Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
+        fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}
+        // An idle connection has no receive deadline. Once socket/TLS input
+        // begins, retain the original five-second operational bound through
+        // incomplete polls, including encrypted records with no plaintext yet.
+        if(!ready&&mbedtls_ssl_check_pending(&active->tls->ssl)==0&&!receive_until)continue;
+        const auto polled_at=now_ms();if(!receive_until)receive_until=polled_at+5000;
+        if(polled_at>=receive_until){trace.fail("frame_receive_timeout");break;}
+        // Poll even on an idle socket while a frame is in flight, advancing its
+        // existing progress/total deadlines without blocking the IPC pump.
+        std::string text;const auto input=active->tls->poll_receive(text);if(input==TlsLink::ReceiveResult::pending)continue;if(input==TlsLink::ReceiveResult::failed){trace.fail("frame_receive");break;}receive_until=0;Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
         if(envelope.config_revision<active->session.scope().config_revision){
             const auto discarded=active->session.discard_stale(envelope,received,received);
             if(discarded==Error::none||discarded==Error::duplicate)continue;
@@ -1250,7 +1278,9 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
             if(cleanup){LinkTrace trace;trace.phase="queue_admission";trace.kind=kind;trace.has_kind=true;trace.fail("cleanup_queue_full");diagnostics.capture(*active,trace,now);active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}
             return ESP_ERR_NO_MEM;
         }
+        const bool current_context=owned&&owned->kind==model::OwnedIntentKind::context&&owned->config_revision==active->session.scope().config_revision;
         active->queue.push_back({kind,std::move(payload),ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned)});
+        if(current_context){active->context_ready=true;active->context_requested=false;active->refreshing=false;}
         return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
@@ -1280,11 +1310,20 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
         for(const auto& active:links)if(active->peer==intent.target.port.octopus_id&&active->ready&&!active->cancelled){
             std::lock_guard<std::mutex> qguard(active->mutex);peer=active->status;link=active->session.scope().link_id;
             if(intent.config_revision<peer.config_revision)return ESP_ERR_INVALID_STATE;
-            pending=intent.config_revision>peer.config_revision||active->refreshing;
+            pending=intent.config_revision>peer.config_revision;
             if(pending&&!(peer.negotiated_capabilities&live_configuration))return ESP_ERR_INVALID_STATE;
-            if(!active->context_ready&&intent.kind!=model::OwnedIntentKind::context&&!active->refreshing)return ESP_ERR_INVALID_STATE;
-            if(intent.config_revision>peer.config_revision&&intent.kind!=model::OwnedIntentKind::context&&
-               !std::any_of(active->queue.begin(),active->queue.end(),[&](const auto& queued){return queued.owned&&queued.revision==intent.config_revision&&queued.owned->kind==model::OwnedIntentKind::context;}))return ESP_ERR_INVALID_STATE;
+            if(pending&&intent.kind!=model::OwnedIntentKind::context)return ESP_ERR_INVALID_STATE;
+            if(intent.kind==model::OwnedIntentKind::context&&(pending||(active->refreshing&&!active->context_requested))){
+                if(!(peer.negotiated_capabilities&qualified_lookup)||!intent.generation||!intent.sequence||!intent.target.port.valid())return ESP_ERR_INVALID_ARG;
+                // Configuration application already schedules the in-band
+                // revision exchange. Its normal fresh-lease hook recaptures
+                // current context afterward; no old context payload/deadline
+                // waits behind that exchange. Ordinary work is never deferred
+                // this way or replayed after a revision/lease change.
+                return ESP_OK;
+            }
+            const bool independent=intent.kind==model::OwnedIntentKind::discover||intent.kind==model::OwnedIntentKind::key_up;
+            if(!active->context_ready&&intent.kind!=model::OwnedIntentKind::context&&!independent)return ESP_ERR_INVALID_STATE;
             break;}}
     if(!link||!(peer.negotiated_capabilities&qualified_lookup))return ESP_ERR_INVALID_STATE;
     const bool key=intent.kind==model::OwnedIntentKind::key_down;

@@ -65,7 +65,7 @@ public:
         input_results.push_back({owner,generation,sequence,present});return lookup_result;
     }
     bool update_owned_snapshot(system::OwnedAdapterSnapshot report) { updates.push_back(std::move(report));return update_result; }
-    bool refresh_owned_context(system::OctopusId owner) { refreshed_context.push_back(owner);return refresh_result; }
+    bool refresh_owned_context(system::OctopusId owner,uint64_t,std::function<void(system::OwnedContextResult)>) { refreshed_context.push_back(owner);return refresh_result; }
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots() const { return snapshots; }
     std::vector<system::CecObservation> native_observations() const { return observations; }
     bool fence_owned(system::OctopusId owner,system::LinkId link) { fences.push_back({owner,link});return fence_result; }

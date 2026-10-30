@@ -36,8 +36,16 @@ struct TlsLink {
     bool extended_profile()const;
     bool hardware_profile()const;
     bool send(std::string_view);
+    enum class ReceiveResult {pending,frame,failed};
+    // One bounded nonblocking turn; partial framing belongs to this TLS link.
+    ReceiveResult poll_receive(std::string &);
     bool receive(std::string &,uint32_t timeout_ms=5000);
     static int verify(void *,mbedtls_x509_crt *,int,uint32_t *);
+private:
+    FrameReader incoming_reader;
+    uint8_t incoming_prefix[4]{};
+    size_t incoming_size=0,incoming_expected=4;
+    bool incoming_failed=false;
 };
 std::string envelope_json(const Envelope &,std::string_view payload);
 } // namespace

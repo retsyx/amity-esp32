@@ -12,8 +12,8 @@
 #include <fcntl.h>
 namespace amity::consortium::platform {
 namespace {
-int send_socket(void *ctx,const uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::send(fd,data,size,0);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;}
-int receive_socket(void *ctx,uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::recv(fd,data,size,0);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;}
+int send_socket(void *ctx,const uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::send(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_WRITE;return n<0?MBEDTLS_ERR_NET_SEND_FAILED:n;}
+int receive_socket(void *ctx,uint8_t *data,size_t size){int fd=*static_cast<int*>(ctx);int n=::recv(fd,data,size,MSG_DONTWAIT);if(n<0&&(errno==EWOULDBLOCK||errno==EAGAIN||errno==EINTR))return MBEDTLS_ERR_SSL_WANT_READ;return n<0?MBEDTLS_ERR_NET_RECV_FAILED:n;}
 void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason){
     if(!server||socket<0)return;
     const auto flags=::fcntl(socket,F_GETFL,0);
@@ -26,7 +26,7 @@ void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason
     }
     // The SDK may already have queued a certificate-specific alert. Its public
     // send-alert API flushes an outstanding record before creating another.
-    while(ssl.MBEDTLS_PRIVATE(out_left)&&now_ms()<deadline){const int result=mbedtls_ssl_send_alert_message(&ssl,MBEDTLS_SSL_ALERT_LEVEL_FATAL,MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE);if(result!=MBEDTLS_ERR_SSL_WANT_WRITE)break;vTaskDelay(pdMS_TO_TICKS(2));}
+    while(ssl.MBEDTLS_PRIVATE(out_left)&&now_ms()<deadline){const int result=mbedtls_ssl_send_alert_message(&ssl,MBEDTLS_SSL_ALERT_LEVEL_FATAL,MBEDTLS_SSL_ALERT_MSG_HANDSHAKE_FAILURE);if(result!=MBEDTLS_ERR_SSL_WANT_WRITE)break;vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}
     // A fatal certificate alert can otherwise be hidden by a TCP reset when
     // the already-sent client key-exchange flight remains unread. Half-close
     // output and discard a bounded amount only; no handshake resumes here.
@@ -37,7 +37,7 @@ void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason
         if(count>0){drained+=static_cast<size_t>(count);continue;}
         if(!count)break;
         if(errno!=EWOULDBLOCK&&errno!=EAGAIN&&errno!=EINTR)break;
-        vTaskDelay(pdMS_TO_TICKS(2));
+        vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
     }
 }
 }
@@ -66,11 +66,52 @@ bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool
     if(!is_server){if(!expected)return false;const std::string dns="o-"+expected.str()+".amity.invalid";if(mbedtls_ssl_set_hostname(&ssl,dns.c_str()))return false;}
     struct timeval timeout{0,100000};setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));mbedtls_ssl_set_bio(&ssl,&socket,send_socket,receive_socket,nullptr);return true;
 }
-bool TlsLink::handshake(){const auto deadline=now_ms()+10000;while(now_ms()<deadline){int r=mbedtls_ssl_handshake(&ssl);if(!r)return authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0;if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE){reject_handshake(ssl,socket,server,r);return false;}vTaskDelay(pdMS_TO_TICKS(2));}return false;}
+bool TlsLink::handshake(){const auto deadline=now_ms()+10000;while(now_ms()<deadline){int r=mbedtls_ssl_handshake(&ssl);if(!r)return authenticated&&mbedtls_ssl_get_verify_result(&ssl)==0;if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE){reject_handshake(ssl,socket,server,r);return false;}vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}return false;}
 bool TlsLink::extended_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&(strcmp(profile,"amity-consortium-v1.extended")==0||strcmp(profile,"amity-consortium-v1.hardware")==0);}
 bool TlsLink::hardware_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&strcmp(profile,"amity-consortium-v1.hardware")==0;}
-bool TlsLink::send(std::string_view body){auto bytes=frame(body);if(bytes.empty())return false;size_t offset=0;const auto deadline=now_ms()+3000;while(offset<bytes.size()&&now_ms()<deadline){int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,bytes.size()-offset);if(n>0)offset+=n;else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;else vTaskDelay(pdMS_TO_TICKS(2));}return offset==bytes.size();}
-bool TlsLink::receive(std::string &out,uint32_t duration){FrameReader reader;uint8_t bytes[512];size_t expected=4;std::string packet;const auto deadline=now_ms()+duration;while(now_ms()<deadline){size_t request=expected-packet.size();if(request>sizeof(bytes))request=sizeof(bytes);int n=mbedtls_ssl_read(&ssl,bytes,request);if(n>0){packet.append(reinterpret_cast<const char*>(bytes),n);if(packet.size()==4&&expected==4){uint32_t len=(uint32_t(uint8_t(packet[0]))<<24)|(uint32_t(uint8_t(packet[1]))<<16)|(uint32_t(uint8_t(packet[2]))<<8)|uint8_t(packet[3]);if(!len||len>max_frame_bytes)return false;expected=4+len;}size_t used=0;auto result=reader.feed(bytes,n,used,now_ms());if(result==FrameReader::Result::frame){out=std::string(reader.body());return true;}if(result!=FrameReader::Result::incomplete)return false;}else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;else vTaskDelay(pdMS_TO_TICKS(2));if(reader.check_deadline(now_ms())==FrameReader::Result::timed_out)return false;}return false;}
+bool TlsLink::send(std::string_view body){auto bytes=frame(body);if(bytes.empty())return false;size_t offset=0;const auto deadline=now_ms()+3000;while(offset<bytes.size()&&now_ms()<deadline){int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,bytes.size()-offset);if(n>0)offset+=n;else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;else vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));}return offset==bytes.size();}
+TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
+    if(incoming_failed)return ReceiveResult::failed;
+    uint8_t bytes[512];
+    // Bound CPU work even when an entire maximum-size frame is buffered. Never
+    // consume bytes from the next frame or wait for another network fragment.
+    for(unsigned turn=0;turn<16;++turn){
+        if(incoming_reader.check_deadline(now_ms())!=FrameReader::Result::incomplete){incoming_failed=true;return ReceiveResult::failed;}
+        const auto request=std::min(incoming_expected-incoming_size,sizeof(bytes));
+        const int count=mbedtls_ssl_read(&ssl,bytes,request);
+        if(count==MBEDTLS_ERR_SSL_WANT_READ||count==MBEDTLS_ERR_SSL_WANT_WRITE)return ReceiveResult::pending;
+        if(count<=0||static_cast<size_t>(count)>request){incoming_failed=true;return ReceiveResult::failed;}
+        if(incoming_size<4)std::copy(bytes,bytes+count,incoming_prefix+incoming_size);
+        incoming_size+=count;
+        if(incoming_size==4&&incoming_expected==4){
+            const uint32_t length=(uint32_t(incoming_prefix[0])<<24)|(uint32_t(incoming_prefix[1])<<16)|
+                (uint32_t(incoming_prefix[2])<<8)|incoming_prefix[3];
+            if(!length||length>max_frame_bytes){incoming_failed=true;return ReceiveResult::failed;}
+            incoming_expected=4+length;
+        }
+        size_t used=0;const auto result=incoming_reader.feed(bytes,count,used,now_ms());
+        if(used!=static_cast<size_t>(count)||(result!=FrameReader::Result::incomplete&&result!=FrameReader::Result::frame)){
+            incoming_failed=true;return ReceiveResult::failed;
+        }
+        if(result==FrameReader::Result::frame){
+            out=std::string(incoming_reader.body());incoming_reader.reset();incoming_size=0;incoming_expected=4;
+            return ReceiveResult::frame;
+        }
+    }
+    return ReceiveResult::pending;
+}
+bool TlsLink::receive(std::string &out,uint32_t duration){
+    const auto deadline=now_ms()+duration;
+    while(now_ms()<deadline){
+        const auto result=poll_receive(out);
+        if(result==ReceiveResult::frame)return true;
+        if(result==ReceiveResult::failed)return false;
+        // The configured 100 Hz tick would round a 2 ms delay to zero. Blocking
+        // handshake/snapshot callers must let other tasks run while waiting.
+        vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
+    }
+    incoming_failed=true;return false;
+}
 std::string envelope_json(const Envelope &e,std::string_view payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"message_id\":\""+e.message_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+std::string(payload)+"}";}
 } // namespace
 #endif

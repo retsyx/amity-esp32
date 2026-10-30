@@ -30,6 +30,8 @@ struct OwnedIntent {
     bool selected = false, source_changed = false;
     std::optional<QualifiedDeviceName> source, audio, display, switch_device;
 };
+// Local owner-task completion, not a wire message or saved execution state.
+enum class OwnedContextResult {published,stale,failed};
 enum class OwnedAuthority {control,realtime,cleanup};
 struct OwnedAuthorization {
     OctopusId controller_id;

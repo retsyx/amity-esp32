@@ -45,7 +45,7 @@ public:
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)>);
     void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)>);
     bool update_owned_snapshot(system::OwnedAdapterSnapshot);
-    bool refresh_owned_context(system::OctopusId);
+    bool refresh_owned_context(system::OctopusId,uint64_t expected_revision,std::function<void(system::OwnedContextResult)> completed={});
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const;
     bool fence_owned(system::OctopusId controller,system::LinkId link);
     bool discover_owned(system::OctopusId owner,uint8_t adapter);
