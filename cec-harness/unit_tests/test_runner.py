@@ -189,7 +189,8 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("missing physical power command", report["tests"][0]["error"])
         self.assertIn("PASS: activity_switch_input", output.getvalue())
         self.assertIn("FAIL: AssertionError", errors.getvalue())
-        self.assertIn("Evidence:", errors.getvalue())
+        self.assertIn("run.report", errors.getvalue())
+        self.assertIn(str(evidence.resolve()), errors.getvalue())
         self.assertNotIn("private-token", json.dumps(report))
 
     def test_actual_all_registration_runs_both_activity_subtests_once(self):

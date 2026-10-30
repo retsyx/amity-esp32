@@ -7,17 +7,37 @@ virtual component traffic cannot establish a successful physical scan.
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import wraps
 import hashlib
 import json
+import logging
 import math
 import re
 import time
 
 from .connections import TentacleEndpoint
 from .cec import Frame
+from .trace import event
 
 
 _PORT_KEYS = ("consortium_id", "octopus_id", "tentacle_id", "side")
+
+
+def _logged_assertion(method):
+    @wraps(method)
+    def check(self, *args, **kwargs):
+        selected = args[:1] if method.__name__ == "assert_on" else args
+        components = [getattr(component, "name", None) for component in selected]
+        self._log("scan.assertion.start", assertion=method.__name__, components=components)
+        try:
+            result = method(self, *args, **kwargs)
+        except BaseException as error:
+            self._log("scan.assertion.failed", level=logging.ERROR,
+                      assertion=method.__name__, components=components, error_type=type(error).__name__)
+            raise
+        self._log("scan.assertion.passed", assertion=method.__name__, components=components)
+        return result
+    return check
 
 
 def _identifier(value):
@@ -254,6 +274,12 @@ class ScanResult:
     _boot: str = field(default="", repr=False, compare=False)
     _group: str = field(default="", repr=False, compare=False)
     _generation: object = field(default=None, repr=False, compare=False)
+    _logged_state: object = field(default=None, init=False, repr=False, compare=False)
+
+    def _log(self, name, *, level=logging.INFO, **fields):
+        operation_id = self.operation.get("operation_id") if isinstance(self.operation, dict) else None
+        event(name, level=level, dut=self.dut.name, device_id=self.dut.identity.device_id,
+              boot=self._boot, operation_id=operation_id, **fields)
 
     def _capture_owners(self, system):
         """Capture only members explicitly proven by this active test bed."""
@@ -343,6 +369,12 @@ class ScanResult:
         if state is not None:
             self.status = deepcopy(state)
             self.devices = deepcopy(state.get("devices", []))
+            observed = (state.get("discovering"), state.get("discovery_generation"),
+                        len(self.devices) if isinstance(self.devices, list) else None)
+            if observed != self._logged_state:
+                self._logged_state = observed
+                self._log("scan.state", discovering=observed[0], generation=observed[1],
+                          device_count=observed[2])
         if self._session is not None:
             self.records = tuple(dict(record) for record in self._session.records)
         if self.started:
@@ -395,6 +427,7 @@ class ScanResult:
         if any(component.dut is not self.dut for component in self.expected):
             self.validate_owners()
 
+    @_logged_assertion
     def assert_contains(self, *components):
         """Require requested identities and fresh physical RX/TX, awaiting late metadata.
 
@@ -428,6 +461,7 @@ class ScanResult:
         finally:
             self._retain()
 
+    @_logged_assertion
     def assert_contains_only(self, *components):
         """Require exactly the requested devices across the complete UI result."""
         if len({id(component) for component in components}) != len(components):
@@ -455,6 +489,7 @@ class ScanResult:
             raise AssertionError("The HDMI scan equipment identities are not one-to-one")
         return self
 
+    @_logged_assertion
     def assert_on(self, component, endpoint):
         """Assert the observed owner, HDMI adapter and CEC side using typed UI data."""
         if not isinstance(endpoint, TentacleEndpoint):
@@ -476,6 +511,10 @@ class ScanResult:
         location = {"component": component.name, "qualified_name": name, "runtime_address": runtime}
         if location not in self.locations:
             self.locations.append(deepcopy(location))
+        self._log("scan.location.verified", component=component.name,
+                  owner_id=name["octopus_id"], owner_boot=self.owner_boots.get(name["octopus_id"]),
+                  tentacle=name["tentacle_id"], side=name["side"], osd_name=name["osd_name"],
+                  logical_address=runtime["logical_address"])
         return self
 
 
@@ -497,6 +536,7 @@ def scan_hdmi(dut, session, *, timeout=90):
                         _testbed=bed,
                         _deadline=time.monotonic() + timeout)
     dut.last_scan = result
+    result._log("scan.start", components=[component.name for component in expected], timeout_seconds=timeout)
 
     try:
         session.assert_healthy()
@@ -522,6 +562,7 @@ def scan_hdmi(dut, session, *, timeout=90):
             result._group = system.get("consortium_id", "")
         result.started = time.monotonic_ns()
         result.operation = dut.start_hdmi_scan()
+        result._log("scan.submitted", owner_boots=dict(result.owner_boots))
         saw_discovering = False
 
         def complete(state):
@@ -543,6 +584,10 @@ def scan_hdmi(dut, session, *, timeout=90):
 
         dut.wait_for(complete, timeout=result._remaining())
         session.assert_healthy()
+        result._log("scan.complete", device_count=len(result.devices))
         return result
+    except BaseException as error:
+        result._log("scan.failed", level=logging.ERROR, error_type=type(error).__name__)
+        raise
     finally:
         result._retain()

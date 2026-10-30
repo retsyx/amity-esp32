@@ -9,14 +9,18 @@ responses in exclusive passthrough mode. No cec-follower process is used.
 from collections import deque
 import ctypes
 from dataclasses import dataclass
+from contextvars import copy_context
 import errno
 import fcntl
 import glob
+import logging
 import os
 import select
 import sys
 import threading
 import time
+
+from .trace import event
 
 
 class CecError(RuntimeError):
@@ -280,19 +284,33 @@ class CecSession:
 
     def _record(self, component, direction, frame, *, transport="wire", **extra):
         with self._lock:
-            self._records.append({"timestamp": time.monotonic(), "direction": direction,
-                                  "component": component.name, "gpio": component.gpio,
-                                  "frame": frame.raw.hex(":"), "source": frame.source,
-                                  "destination": frame.destination, "opcode": frame.opcode,
-                                  "transport": transport,
-                                  "wire_timestamp_ns": frame.timestamp_ns if transport == "wire" else 0,
-                                  **extra})
+            record = {"timestamp": time.monotonic(), "direction": direction,
+                      "component": component.name, "gpio": component.gpio,
+                      "frame": frame.raw.hex(":"), "source": frame.source,
+                      "destination": frame.destination, "opcode": frame.opcode,
+                      "transport": transport,
+                      "wire_timestamp_ns": frame.timestamp_ns if transport == "wire" else 0,
+                      **extra}
+            self._records.append(record)
+            # Emit every record independently of the bounded evidence ring.
+            # Arbitrary backend exception text is deliberately excluded.
+            event("cec.frame", level=logging.DEBUG,
+                  dut=getattr(getattr(component, "dut", None), "name", None),
+                  tentacle=getattr(component, "tentacle", None),
+                  side=getattr(component, "direction", None),
+                  **{key: record[key] for key in (
+                      "timestamp", "direction", "component", "gpio", "frame", "source",
+                      "destination", "opcode", "transport", "wire_timestamp_ns", "status",
+                      "ok", "recipient", "recipients", "dropped", "handled_frame",
+                      "handled_timestamp_ns") if key in record})
 
     def __enter__(self):
         from .topology import assign_addresses
         if self._started:
             raise CecError("A CEC session cannot be reused")
         self._started = True
+        event("cec.session.start", components=[getattr(component, "name", None)
+                                               for component in self.components])
         assign_addresses(self.components)
         try:
             for component in self.components:
@@ -304,16 +322,25 @@ class CecSession:
                     backend = self.backend_factory(component.gpio)
                     self._backends[component.gpio] = backend
                     backend.open()
+                    event("cec.adapter.open", dut=getattr(getattr(component, "dut", None), "name", None),
+                          gpio=component.gpio, tentacle=getattr(component, "tentacle", None),
+                          side=getattr(component, "direction", None))
             for gpio in self._backends:
                 self._configure(gpio)
             for gpio, backend in self._backends.items():
-                thread = threading.Thread(target=self._run, args=(gpio, backend), daemon=True,
+                # Retain the originating test label even if cleanup fails and
+                # a delayed worker logs after the runner advances.
+                thread = threading.Thread(target=copy_context().run,
+                                          args=(self._run, gpio, backend), daemon=True,
                                           name=f"cec@{gpio}")
                 self._threads.append(thread)
                 thread.start()
             self.assert_healthy()
+            event("cec.session.ready", wires=sorted(self._backends),
+                  components=len(self.components))
             return self
-        except BaseException:
+        except BaseException as error:
+            event("cec.session.failed", level=logging.ERROR, error_type=type(error).__name__)
             self.close()
             raise
 
@@ -326,6 +353,14 @@ class CecSession:
         for component in self.components:
             if component.gpio == gpio:
                 component.cec_version = version
+        event("cec.adapter.configured", gpio=gpio, cec_version=version,
+              components=[{"dut": getattr(getattr(component, "dut", None), "name", None),
+                           "component": getattr(component, "name", None),
+                           "tentacle": getattr(component, "tentacle", None),
+                           "side": getattr(component, "direction", None),
+                           "logical_address": getattr(getattr(component, "address", None), "logical", None),
+                           "physical_address": getattr(getattr(component, "address", None), "physical", None)}
+                          for component in active])
         # Kernel-generated announcements carry the adapter's shared PA. Correct
         # each component's identity before beginning a scan or other scenario.
         for component in active:
@@ -345,6 +380,8 @@ class CecSession:
             with self._lock:
                 self._error = exc
                 self._stop.set()
+                event("cec.worker.failed", level=logging.ERROR, gpio=gpio,
+                      error_type=type(exc).__name__)
 
     def assert_healthy(self):
         with self._lock:
@@ -410,6 +447,11 @@ class CecSession:
             try:
                 result = self._backends[component.gpio].transmit(frame)
             except Exception as wire_error:
+                event("cec.transmit.failed", level=logging.ERROR,
+                      dut=getattr(getattr(component, "dut", None), "name", None), component=component.name,
+                      gpio=component.gpio, tentacle=getattr(component, "tentacle", None),
+                      side=getattr(component, "direction", None),
+                      frame=frame.raw.hex(":"), error_type=type(wire_error).__name__)
                 self._record(component, "tx", frame, status=0, ok=False,
                              error=f"{type(wire_error).__name__}: {wire_error}")
                 if frame.destination == 15:
@@ -437,28 +479,37 @@ class CecSession:
                     # Python power state that no longer matches the wire.
                     self._error = exc
                     self._stop.set()
+                    event("cec.adapter.configure_failed", level=logging.ERROR,
+                          gpio=component.gpio, component=component.name,
+                          error_type=type(exc).__name__)
                     raise
 
     def close(self):
+        event("cec.session.close", wires=sorted(self._backends))
         self._stop.set()
         for thread in self._threads:
             # Remote configuration/TX has a bounded 20-second RPC plus process
             # shutdown. Let admitted I/O finish before closing its descriptor.
             thread.join(30)
             if thread.is_alive():
+                event("cec.worker.stop_failed", level=logging.ERROR, worker=thread.name)
                 raise CecError("CEC worker did not stop; adapter is still in use")
         errors = []
-        for backend in reversed(list(self._backends.values())):
+        for gpio, backend in reversed(list(self._backends.items())):
             try:
                 backend.close()
+                event("cec.adapter.closed", gpio=gpio)
             except BaseException as exc:
                 errors.append(exc)
+                event("cec.adapter.close_failed", level=logging.ERROR,
+                      gpio=gpio, error_type=type(exc).__name__)
         self._backends.clear()
         for component in self.components:
             if component._session is self:
                 component._session = None
         if errors:
             raise CecError("Could not clear a dynamic CEC fixture") from errors[0]
+        event("cec.session.closed")
 
     def __exit__(self, exc_type, exc, traceback):
         self.close()

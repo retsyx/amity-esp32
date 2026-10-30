@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from contextlib import nullcontext
 from collections import deque
 from enum import Enum
+import logging
 import math
 import threading
 import time
@@ -12,6 +13,7 @@ from .cec import CecError, Frame
 from .config import current_config
 from .connections import TentacleEndpoint, hdmi_port
 from .topology import CecAddress
+from .trace import event as trace_event
 
 
 class PowerState(str, Enum):
@@ -176,14 +178,22 @@ class Component:
         """Mark a local monotonic boundary before an action is submitted."""
         return time.monotonic_ns()
 
+    def _trace(self, name, *, level=logging.INFO, **fields):
+        trace_event(name, level=level, dut=getattr(self.dut, "name", None),
+                    component=self.name, tentacle=self.tentacle, side=self.direction,
+                    gpio=self.gpio, **fields)
+
     def assert_power(self, power):
         """Assert current model state only, for example initial Standby."""
         power = PowerState(power)
         with self._power_condition:
             if self.power != power:
+                self._trace("component.power.assert_failed", level=logging.ERROR,
+                            expected=power.value, actual=self.power.value, kind="state")
                 raise AssertionError(f"{self.name} is {self.power.value}, expected {power.value}")
             self._power_checks.append({"kind": "state", "power": power.value,
                                        "timestamp_ns": time.monotonic_ns()})
+            self._trace("component.power.assert_passed", power=power.value, kind="state")
         return self
 
     def wait_for_power(self, power, *, since, timeout=None, command=None, directed=False):
@@ -209,6 +219,9 @@ class Component:
             raise ValueError("Power assertion timeout must be a positive finite number")
         session, started, source, owner_scan = self._wire_context(since)
         deadline = time.monotonic() + timeout
+        self._trace("component.power.wait", power=power.value, command=command,
+                    directed=directed, since_monotonic_ns=started, initiator=source,
+                    timeout=timeout)
         owner_checked = owner_scan is None
         while True:
             session.assert_healthy()
@@ -235,6 +248,12 @@ class Component:
                                                "destination": matching["destination"],
                                                "wire_timestamp_ns": matching["wire_timestamp_ns"],
                                                "command": matching["command"]})
+                    self._trace("component.power.assert_passed", kind="wire_command",
+                                power=power.value, command=matching["command"],
+                                frame=matching["frame"], source=source,
+                                destination=matching["destination"],
+                                since_monotonic_ns=started,
+                                wire_timestamp_ns=matching["wire_timestamp_ns"])
                     return self
                 if ready:
                     # Verify the owner outside component/session locks, then
@@ -245,6 +264,9 @@ class Component:
                     owner_checked = owner_scan is None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    self._trace("component.power.timeout", level=logging.ERROR,
+                                expected=power.value, actual=self.power.value,
+                                command=command, since_monotonic_ns=started)
                     raise TimeoutError(f"{self.name} did not handle a fresh DUT {power.value} command and remain {power.value}")
                 # Wake on evidence; periodically check responder health even if
                 # a failing worker produces no further component callbacks.
@@ -253,6 +275,8 @@ class Component:
             if recheck_owner:
                 self._wire_context(since)
                 if time.monotonic() >= deadline:
+                    self._trace("component.power.owner_timeout", level=logging.ERROR,
+                                expected=power.value, since_monotonic_ns=started)
                     raise TimeoutError(f"{self.name} owner verification exceeded the power assertion deadline")
                 owner_checked = True
 
@@ -411,6 +435,8 @@ class Component:
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Routing assertion timeout must be a positive finite number")
         deadline = time.monotonic() + timeout
+        self._trace("component.routing.wait", command=command, **{field: expected},
+                    since_monotonic_ns=started, initiator=source, timeout=timeout)
         requested = f"Select AV Input Function for input {expected}" if switch else f"Set Stream Path for {expected:04x}"
         missing = f"{self.name} did not handle a fresh DUT {requested}"
         owner_checked = owner_scan is None
@@ -422,10 +448,14 @@ class Component:
             # before exposing the restored route to the scenario.
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not session._lock.acquire(timeout=remaining):
+                self._trace("component.routing.timeout", level=logging.ERROR,
+                            command=command, **{field: expected}, since_monotonic_ns=started)
                 raise TimeoutError(missing)
             try:
                 session.assert_healthy()
                 if time.monotonic() >= deadline:
+                    self._trace("component.routing.timeout", level=logging.ERROR,
+                                command=command, **{field: expected}, since_monotonic_ns=started)
                     raise TimeoutError(missing)
                 with self._power_condition:
                     revision = self._switch_input_revision if switch else self._input_revision
@@ -444,12 +474,19 @@ class Component:
                                                      "frame": matching["frame"], "source": source,
                                                      "destination": matching["destination"],
                                                      "wire_timestamp_ns": matching["wire_timestamp_ns"]})
+                        self._trace("component.routing.assert_passed", kind="wire_command",
+                                    command=command, **{field: expected}, frame=matching["frame"],
+                                    source=source, destination=matching["destination"],
+                                    since_monotonic_ns=started,
+                                    wire_timestamp_ns=matching["wire_timestamp_ns"])
                         return self
                     recheck_owner = ready
                     if not ready:
                         owner_checked = owner_scan is None
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
+                        self._trace("component.routing.timeout", level=logging.ERROR,
+                                    command=command, **{field: expected}, since_monotonic_ns=started)
                         raise TimeoutError(missing)
             finally:
                 session._lock.release()
@@ -482,6 +519,8 @@ class Component:
                 self._power = previous
                 self._power_revision = previous_revision
                 raise
+            self._trace("component.power.changed", before=previous.value, after=power.value,
+                        state_revision=self._power_revision)
 
     def power_on(self):
         self.set_power(PowerState.ON)
@@ -513,6 +552,7 @@ class Component:
 
     def activate(self):
         """Wake and claim Active Source; return the actual transmission result."""
+        self._trace("component.activate", physical_address=self.address.physical)
         self.power_on()
         return self.send(15, 0x82, self.address.physical.to_bytes(2, "big"))
 
@@ -793,6 +833,7 @@ class PlaybackComponent(Component):
             self.active = self.playing = False
 
     def activate(self):
+        self._trace("component.activate", physical_address=self.address.physical)
         self.power_on()
         self.active = True
         return self.send(15, 0x82, self.address.physical.to_bytes(2, "big"))

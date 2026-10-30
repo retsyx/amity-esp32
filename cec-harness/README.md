@@ -499,6 +499,28 @@ for the two-owner equipment scenario, or `--test all` for all five registered
 scenarios (six test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
+The shared framework logs progress to stderr as it runs, with a UTC timestamp,
+elapsed run time, run ID and test name on each line. It records setup, identity
+checks, scans, activity and membership operations, component assertions,
+failures and cleanup. PASS/FAIL summaries go to stdout/stderr after each test.
+After writing the JSON report, the final `run.report` line gives its absolute
+path on successful and failed runs.
+
+Use `--log-level DEBUG` to include HTTP method/route, request duration and
+status, and individual CEC frames with owner, GPIO and wire/virtual transport.
+HTTP bodies, headers, credentials and opaque tokens are excluded. No separate
+log file is created; capture standard output and error to retain the trace:
+
+```sh
+python3 cec-harness/run.py --test all \
+  --credentials /private/path/amity-dut.json --insecure \
+  --log-level DEBUG --output test-results/functional/all.json \
+  > test-results/functional/all.log 2>&1
+```
+
+Create the redirect's parent directory before running that command. Log events
+are flushed as they are emitted, so a redirected trace retains completed steps
+even if the process is interrupted. Existing JSON evidence remains separate.
 The Add Amity test uses only the main's credentials in the normal admission
 profile, for example:
 

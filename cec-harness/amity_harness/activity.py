@@ -7,11 +7,13 @@ unreferenced equipment records allocated while creating its fixture selections.
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+import logging
 import time
 from uuid import uuid4
 
 from .discovery import _ObservedEquipment, _fresh_discovery, _identifier, _observed_matches
 from .dut import AmityHTTPError, _positive_seconds
+from .trace import event
 
 
 class ActivityConflict(RuntimeError):
@@ -107,7 +109,12 @@ class Activity:
     def _record(self, phase, **values):
         record = {"phase": phase, "name": self.name, "activity_id": self.activity_id, **values}
         self.dut.activity_operations.append(record)
+        self._log("activity.phase", phase=phase, request_id=values.get("request_id"))
         return record
+
+    def _log(self, name, *, level=logging.INFO, **fields):
+        event(name, level=level, dut=self.dut.name, device_id=self.dut.identity.device_id,
+              boot=self.boot, activity=self.name, activity_id=self.activity_id, **fields)
 
     def _remaining(self, deadline):
         remaining = deadline - time.monotonic()
@@ -217,6 +224,9 @@ class Activity:
             raise AssertionError("Amity returned a different activity operation identity")
         result = self.dut.wait_operation(response, timeout=self._remaining(deadline))
         trace["operation"] = {key: result[key] for key in _OPERATION if key in result}
+        self._log("activity.operation", phase=trace["phase"], request_id=payload["request_id"],
+                  operation_id=result.get("operation_id"), stage=result.get("stage"),
+                  saved=result.get("saved"), partial=result.get("partial"))
         if result.get("operation_id") != payload["request_id"] or result.get("stage") != stage or result.get("partial"):
             raise AssertionError("The requested activity operation did not complete successfully")
         return result
@@ -267,14 +277,18 @@ class Activity:
                          expected_presentation_revision=payload["expected_presentation_revision"])
             self._write_attempted = True
             self._creation_request_id = payload["request_id"]
+            self._log("activity.create.submit", request_id=self._creation_request_id)
             self._write("/api/activity-editor", payload, deadline, trace, stage="applied")
             document, state = self._view()
             if not self._recognize(document, state):
                 raise AssertionError("The created activity did not appear in the UI")
             trace["activity_id"] = self.activity_id
+            self._log("activity.create.complete", request_id=self._creation_request_id)
             return self
         except BaseException as error:
             trace["error_type"] = type(error).__name__
+            self._log("activity.create.failed", level=logging.ERROR,
+                      request_id=self._creation_request_id, error_type=type(error).__name__)
             raise
 
     def _action(self, kind, *, check_health=True):
@@ -308,8 +322,10 @@ class Activity:
             action.operation = self._write("/api/activity-editor/activity", payload, deadline, trace, stage="complete")
             if kind == "start":
                 self._last_start_terminal = True
+            previous_state = None
 
             def settled(current):
+                nonlocal previous_state
                 if check_health:
                     self.session.assert_healthy()
                 if current.get("expected_boot_id") != self.boot:
@@ -318,6 +334,11 @@ class Activity:
                         or current.get("expected_presentation_revision") != document["expected_presentation_revision"]):
                     raise ActivityConflict("Activity configuration changed before the action settled")
                 trace["state"] = {key: current[key] for key in _STATE if key in current}
+                observed = (current.get("current_activity"), current.get("activity_settling"))
+                if observed != previous_state:
+                    previous_state = observed
+                    self._log("activity.settling", phase=kind, request_id=action.request_id,
+                              current_activity=observed[0], settling=observed[1])
                 target = matches[0] if kind == "start" else -1
                 return not current.get("activity_settling", False) and current.get("current_activity") == target
 
@@ -326,9 +347,13 @@ class Activity:
                 self._validate_owners()
             if kind == "standby":
                 self._needs_standby = False
+            self._log("activity.action.complete", phase=kind, request_id=action.request_id,
+                      current_activity=action.state.get("current_activity"))
             return action
         except BaseException as error:
             trace["error_type"] = type(error).__name__
+            self._log("activity.action.failed", level=logging.ERROR, phase=kind,
+                      request_id=action.request_id, error_type=type(error).__name__)
             raise
 
     def start(self):
@@ -359,9 +384,12 @@ class Activity:
                 raise AssertionError("The test activity has not finished settling")
             if state.get("activity_error") != "":
                 raise AssertionError("The DUT has an activity execution error")
+            self._log("activity.assert_active.passed", current_activity=current)
             return self
         except BaseException as error:
             trace["error_type"] = type(error).__name__
+            self._log("activity.assert_active.failed", level=logging.ERROR,
+                      error_type=type(error).__name__)
             raise
 
     def _remove_row(self, deadline):
@@ -384,8 +412,11 @@ class Activity:
                 if any(row.get("activity_id") == self.activity_id for row in self._view(check_health=False)[0]["activities"]):
                     raise AssertionError("The created activity remains after cleanup")
                 self._row_removed = True
+                self._log("activity.remove.complete")
                 return
             except (ActivityConflict, AmityHTTPError) as error:
+                self._log("activity.remove.conflict", level=logging.WARNING,
+                          attempt=attempt + 1, error_type=type(error).__name__)
                 if attempt == 2 or isinstance(error, AmityHTTPError) and error.status != 409:
                     raise
 
@@ -427,8 +458,11 @@ class Activity:
                     after = self._full_configuration(self._view(check_health=False)[0])
                     if any(record.get("component_id") in removable for record in after["components"]):
                         raise AssertionError("New fixture equipment remains after cleanup")
+                    self._log("activity.equipment.removed", component_ids=sorted(removable))
                 return sorted(set(retained) | (self._allocated_equipment - set(self._new_equipment)))
             except (ActivityConflict, AmityHTTPError) as error:
+                self._log("activity.equipment.conflict", level=logging.WARNING,
+                          attempt=attempt + 1, error_type=type(error).__name__)
                 if attempt == 2 or isinstance(error, AmityHTTPError) and error.status != 409:
                     raise
 
@@ -454,6 +488,7 @@ class Activity:
     def close(self):
         if self._closed:
             return
+        self._log("activity.cleanup.start")
         errors = []
         deadline = time.monotonic() + self.timeout
         self.retained_equipment = sorted(self._allocated_equipment)
@@ -473,8 +508,14 @@ class Activity:
                              retained_equipment=list(self.retained_equipment))
         if errors:
             trace["error_type"] = ",".join(type(error).__name__ for error in errors)
+            self._log("activity.cleanup.failed", level=logging.ERROR,
+                      error_types=[type(error).__name__ for error in errors],
+                      removed_activity=trace["removed_activity"],
+                      retained_equipment=list(self.retained_equipment))
             raise ActivityCleanupError(errors)
         self._closed = True
+        self._log("activity.cleanup.complete", removed_activity=trace["removed_activity"],
+                  retained_equipment=list(self.retained_equipment))
 
     def __enter__(self):
         return self.create()

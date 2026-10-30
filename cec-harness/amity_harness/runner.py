@@ -3,26 +3,39 @@
 import argparse
 from functools import partial
 import json
+import logging
 import math
 import os
 from pathlib import Path
 import sys
+import time
 
 from .cec import CecSession
 from .config import RunConfig, track_testbeds, use_config
+from .trace import event, failure_fields, stdio_logging, test_logging
 
 
 def run_test(test, config):
     """Execute a scenario; resource contexts own cleanup before reporting."""
     report = {"test": test.__name__, "passed": False}
-    with use_config(config), track_testbeds() as beds:
+    started = time.monotonic()
+    with test_logging(test.__name__), use_config(config), track_testbeds() as beds:
+        event("test.start")
         try:
             test()
             report["passed"] = True
         except Exception as exc:
             report["error"] = f"{type(exc).__name__}: {exc}"
+            report["error_type"] = type(exc).__name__
+            event("test.failed", level=logging.ERROR, **failure_fields(exc))
+        except BaseException as exc:
+            event("test.interrupted", level=logging.ERROR, **failure_fields(exc))
+            raise
         finally:
             report["testbeds"] = [bed.report for bed in beds]
+            event("test.finish", passed=report["passed"],
+                  duration_ms=round((time.monotonic() - started) * 1000, 3),
+                  testbeds=len(beds))
     return report
 
 
@@ -76,6 +89,8 @@ def main(test, argv=None):
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
     parser.add_argument("--output", type=Path, help="private JSON evidence under test-results/")
+    parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO",
+                        help="stderr detail: INFO progress (default), DEBUG also HTTP and CEC traffic")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be positive and finite")
@@ -98,16 +113,37 @@ def main(test, argv=None):
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, session_factory=session_factory, gpio_factory=gpio_factory)
     selected = tests if args.test == "all" else {args.test: tests[args.test]}
-    reports = [run_test(scenario, config) for group in selected.values() for scenario in group]
-    report = (reports[0] if len(reports) == 1 else
-              {"passed": all(result["passed"] for result in reports), "tests": reports})
-    if args.output:
-        _write_report(args.output, report)
-    for result in reports:
-        if result["passed"]:
-            print(f"PASS: {result['test']}")
-        else:
-            print("FAIL: " + result.get("error", result["test"]), file=sys.stderr)
-    if not report["passed"] and args.output:
-        print(f"Evidence: {args.output}", file=sys.stderr)
-    return 0 if report["passed"] else 1
+    with stdio_logging(args.log_level):
+        started = time.monotonic()
+        event("run.start", groups=list(selected),
+              tests=[scenario.__name__ for group in selected.values() for scenario in group],
+              log_level=args.log_level)
+        try:
+            reports = []
+            for group in selected.values():
+                for scenario in group:
+                    result = run_test(scenario, config)
+                    reports.append(result)
+                    if result["passed"]:
+                        print(f"PASS: {result['test']}", flush=True)
+                    else:
+                        # Exception text may contain server-echoed secrets or
+                        # private URLs. Detailed errors remain in the private
+                        # JSON report; stdio carries the type and source stack.
+                        print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
+                              file=sys.stderr, flush=True)
+            report = (reports[0] if len(reports) == 1 else
+                      {"passed": all(result["passed"] for result in reports), "tests": reports})
+            if args.output:
+                _write_report(args.output, report)
+            event("run.finish", passed=report["passed"], tests=len(reports),
+                  duration_ms=round((time.monotonic() - started) * 1000, 3))
+            if args.output:
+                # Last line on both successful and failed runs, after the
+                # private report has actually been written.
+                event("run.report", path=str(args.output.resolve()))
+            return 0 if report["passed"] else 1
+        except BaseException as exc:
+            event("run.aborted", level=logging.ERROR, **failure_fields(exc),
+                  duration_ms=round((time.monotonic() - started) * 1000, 3))
+            raise

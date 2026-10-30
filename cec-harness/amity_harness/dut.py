@@ -7,6 +7,7 @@ UI operations; all convenience methods below wrap those existing operations.
 """
 
 import json
+import logging
 import math
 from pathlib import Path
 import ssl
@@ -20,6 +21,7 @@ from uuid import uuid4
 
 from .wiring import Wiring
 from .config import current_config
+from .trace import event
 
 
 class AmityHTTPError(RuntimeError):
@@ -31,6 +33,31 @@ class AmityHTTPError(RuntimeError):
 def _positive_seconds(value, description):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         raise ValueError(f"{description} must be a positive, finite number of seconds")
+
+
+def _http_trace_fields(path, data):
+    """Select route/correlation metadata without recording HTTP contents."""
+    fields = {}
+    if path.startswith("/api/operations/"):
+        route = "/api/operations/{operation_id}"
+        identifier = path.removeprefix("/api/operations/")
+        if len(identifier) == 32 and all(character in "0123456789abcdef" for character in identifier):
+            fields["operation_id"] = identifier
+    elif path.startswith("/api/devices/") and path.endswith("/settings"):
+        route = "/api/devices/{device_id}/settings"
+    elif path in {"/api/login", "/api/logout", "/api/system", "/api/config",
+                  "/api/activity-editor", "/api/activity-editor/status",
+                  "/api/activity-editor/activity", "/api/activity-editor/discover",
+                  "/api/membership/admission", "/api/membership/scan", "/api/membership/add",
+                  "/api/membership/remove", "/api/membership/cancel"}:
+        route = path
+    else:
+        route = "/api/{route}"
+    fields["route"] = route
+    identifier = data.get("request_id") if isinstance(data, dict) else None
+    if isinstance(identifier, str) and len(identifier) == 32 and all(character in "0123456789abcdef" for character in identifier):
+        fields["request_id"] = identifier
+    return fields
 
 
 class PinctrlGPIO:
@@ -130,13 +157,25 @@ class DUT:
         """
         _positive_seconds(seconds, "FW RESET hold")
         gpio = self.wiring.reset_gpio(self.name)
-        if callable(getattr(self.gpio, "hold_low", None)):
-            return self.gpio.hold_low(gpio, seconds)
+        event("gpio.reset.start", dut=self.name, device_id=self.identity.device_id,
+              gpio=gpio, hold_seconds=seconds)
         try:
-            self.gpio.low(gpio)
-            time.sleep(seconds)
-        finally:
-            self.gpio.release(gpio)
+            result = None
+            if callable(getattr(self.gpio, "hold_low", None)):
+                result = self.gpio.hold_low(gpio, seconds)
+            else:
+                try:
+                    self.gpio.low(gpio)
+                    time.sleep(seconds)
+                finally:
+                    self.gpio.release(gpio)
+                    event("gpio.reset.released", dut=self.name, gpio=gpio)
+            event("gpio.reset.complete", dut=self.name, gpio=gpio, released=True)
+            return result
+        except BaseException as error:
+            event("gpio.reset.failed", level=logging.ERROR, dut=self.name, gpio=gpio,
+                  error_type=type(error).__name__)
+            raise
 
     def request(self, path, data=None, *, timeout=15):
         """GET or POST JSON to an existing UI endpoint, with bearer authentication."""
@@ -153,10 +192,20 @@ class DUT:
             body = json.dumps(data, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = Request(self.url + path, headers=headers, data=body)
+        trace = {"dut": self.name, "method": request.get_method(), **_http_trace_fields(path, data)}
+        started = time.monotonic_ns()
+        event("http.request.start", level=logging.DEBUG, **trace)
         try:
             with self._opener.open(request, timeout=timeout) as response:
-                return json.load(response)
+                result = json.load(response)
+                event("http.request.complete", level=logging.DEBUG, **trace,
+                      status=getattr(response, "status", None),
+                      duration_ms=round((time.monotonic_ns() - started) / 1_000_000, 3))
+                return result
         except HTTPError as error:
+            event("http.request.failed", level=logging.DEBUG, **trace, status=error.code,
+                  error_type=type(error).__name__,
+                  duration_ms=round((time.monotonic_ns() - started) / 1_000_000, 3))
             if error.code == 401:
                 self._token = None
             try:
@@ -165,17 +214,28 @@ class DUT:
             except (ValueError, AttributeError):
                 message = "Request failed"
             raise AmityHTTPError(error.code, message) from None
+        except BaseException as error:
+            event("http.request.failed", level=logging.DEBUG, **trace,
+                  error_type=type(error).__name__,
+                  duration_ms=round((time.monotonic_ns() - started) / 1_000_000, 3))
+            raise
 
     def login(self, password):
         if not isinstance(password, str) or not password:
             raise ValueError("An admin password is required")
         # Discard a previous session before attempting a new login.
         self._token = None
-        response = self.request("/api/login", {"password": password})
-        token = response.get("token") if isinstance(response, dict) else None
-        if not isinstance(token, str) or not token:
-            raise RuntimeError("Amity did not return an authenticated session")
-        self._token = token
+        event("auth.login.start", dut=self.name, device_id=self.identity.device_id)
+        try:
+            response = self.request("/api/login", {"password": password})
+            token = response.get("token") if isinstance(response, dict) else None
+            if not isinstance(token, str) or not token:
+                raise RuntimeError("Amity did not return an authenticated session")
+            self._token = token
+        except BaseException as error:
+            event("auth.login.failed", level=logging.ERROR, dut=self.name, error_type=type(error).__name__)
+            raise
+        event("auth.login.complete", dut=self.name)
 
     @staticmethod
     def _read_password(credentials):
@@ -191,6 +251,7 @@ class DUT:
     def authenticate(self):
         """Use runner-provided credentials when a test bed opens this DUT."""
         if self._token:
+            event("auth.session.reused", level=logging.DEBUG, dut=self.name)
             return
         credentials = self._runtime.credentials_for(self.name)
         if credentials is None:
@@ -222,9 +283,15 @@ class DUT:
         return AddedAmity(self, candidate, name=name, timeout=timeout, setup_code=setup_code).create()
 
     def logout(self):
+        event("auth.logout.start", dut=self.name, authenticated=bool(self._token))
         try:
             if self._token:
                 self.request("/api/logout", {})
+        except BaseException as error:
+            event("auth.logout.failed", level=logging.ERROR, dut=self.name, error_type=type(error).__name__)
+            raise
+        else:
+            event("auth.logout.complete", dut=self.name)
         finally:
             self._token = None
 
@@ -257,12 +324,21 @@ class DUT:
         _positive_seconds(poll_interval, "Polling interval")
         pending = {"admitted", "preparing", "executing", "configuring", "activating", "stopping"}
         deadline = time.monotonic() + timeout
+        stage = operation.get("stage")
+        event("operation.stage", dut=self.name, operation_id=operation.get("operation_id"), stage=stage)
         while operation.get("stage") in pending:
             if time.monotonic() >= deadline:
+                event("operation.timeout", level=logging.ERROR, dut=self.name,
+                      operation_id=operation.get("operation_id"), stage=operation.get("stage"))
                 raise TimeoutError("Amity UI operation did not complete")
             time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
             operation = self.request("/api/operations/" + operation["operation_id"])
+            if operation.get("stage") != stage:
+                stage = operation.get("stage")
+                event("operation.stage", dut=self.name, operation_id=operation.get("operation_id"), stage=stage)
         if operation.get("stage") in {"failed", "rejected", "cancelled", "unknown"}:
+            event("operation.failed", level=logging.ERROR, dut=self.name,
+                  operation_id=operation.get("operation_id"), stage=operation.get("stage"))
             raise RuntimeError(operation.get("message") or "Amity UI operation failed")
         return operation
 

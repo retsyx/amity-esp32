@@ -6,12 +6,14 @@ No setup codes, bearer tokens or opaque discovery tokens enter reports.
 """
 
 from copy import deepcopy
+import logging
 import re
 import time
 from uuid import uuid4
 
 from .discovery import _identifier
 from .dut import AmityHTTPError, _positive_seconds
+from .trace import event
 
 
 class MembershipConflict(RuntimeError):
@@ -51,6 +53,7 @@ class AddedAmity:
         self._add_rejected = self._remove_attempted = False
         self._add_operation = self._remove_operation = None
         self._remove_id = None
+        self._admission_phase = None
         self._record("prepare")
         bed.add_cleanup(self.close)
 
@@ -59,7 +62,18 @@ class AddedAmity:
                   "device_id": self.device_id, "name": self.name, **values}
         self.main.membership_operations.append(record)
         self._trace = record
+        self._log("membership.phase", phase=phase)
         return record
+
+    def _log(self, name, *, level=logging.INFO, **fields):
+        event(name, level=level, dut=self.main.name, device_id=self.main.identity.device_id,
+              boot=self.boot, candidate=self.candidate.name, candidate_id=self.device_id,
+              assigned_name=self.name, member_boot=self.member_boot,
+              request_id=self.request_id, scan_id=self.scan_id, **fields)
+
+    def _step(self, record, step, **values):
+        record.update(step=step, **values)
+        self._log("membership.step", phase=record["phase"], step=step)
 
     def _observe_http(self, path, call, *, method="GET"):
         request = {"method": method, "path": path, "started_ns": time.monotonic_ns()}
@@ -70,6 +84,9 @@ class AddedAmity:
                 phase = response.get("phase")
                 if isinstance(phase, str) and phase in {"idle", "scanning", "found", "connecting", "finishing", "complete", "failed", "cancelled"}:
                     request["admission_phase"] = phase
+                    if phase != self._admission_phase:
+                        self._admission_phase = phase
+                        self._log("membership.admission", phase=phase)
             return response
         except BaseException as error:
             request["error_type"] = type(error).__name__
@@ -178,6 +195,7 @@ class AddedAmity:
         return state
 
     def _wait_operation(self, operation, request_id, *, deadline, record):
+        previous_stage = object()
         while True:
             if (not isinstance(operation, dict) or operation.get("operation_id") != request_id
                     or operation.get("boot_id") != self.boot):
@@ -185,6 +203,9 @@ class AddedAmity:
             stage = operation.get("stage")
             if request_id == self.request_id:
                 self._add_operation = operation
+            if previous_stage != stage:
+                self._log("membership.operation", operation_id=request_id, stage=stage)
+                previous_stage = stage
             record["operation_stage"] = stage
             if stage == "complete":
                 return operation
@@ -200,7 +221,7 @@ class AddedAmity:
             raise RuntimeError("An Add Amity attempt cannot be repeated")
         deadline = time.monotonic() + self.timeout
         record = self._record("add", request_id=self.request_id, scan_id=self.scan_id)
-        record["step"] = "preflight"
+        self._step(record, "preflight")
         try:
             system = self._system()
             self.boot, self.group = system["boot_id"], system["consortium_id"]
@@ -226,15 +247,17 @@ class AddedAmity:
                 raise MembershipConflict("Another Add Amity search is in progress")
             self._baseline = deepcopy(self._config(deadline=deadline))
             self._scan_attempted = True
-            record["step"] = "start_scan"
+            self._step(record, "start_scan")
             scan = self._request("/api/membership/scan", {"request_id": self.scan_id}, deadline=deadline)
             self._wait_operation(scan, self.scan_id, deadline=deadline, record=record)
-            record.update(step="open_window", reset_gpio=self.candidate.wiring.reset_gpio(self.candidate.name), hold_seconds=3.5)
+            self._step(record, "open_window", reset_gpio=self.candidate.wiring.reset_gpio(self.candidate.name), hold_seconds=3.5)
+            self._log("membership.window.start", reset_gpio=record["reset_gpio"], hold_seconds=3.5)
             self.candidate.press_fw_reset(3.5)
             record["released"] = True
+            self._log("membership.window.complete", hold_seconds=3.5)
             self._remaining(deadline)
             label = "Amity " + self.device_id[-6:]
-            record["step"] = "discover_candidate"
+            self._step(record, "discover_candidate")
             while True:
                 found = self._admission(deadline=deadline)
                 if found.get("phase") in {"failed", "cancelled"}:
@@ -245,7 +268,7 @@ class AddedAmity:
                         raise MembershipConflict("The documented candidate is missing or ambiguous in the Add search")
                     break
                 time.sleep(min(0.4, self._remaining(deadline)))
-            record["step"] = "confirm_main"
+            self._step(record, "confirm_main")
             self._system()
             required = found.get("requires_setup_code")
             if type(required) is not bool or required and not self._setup_code:
@@ -255,7 +278,7 @@ class AddedAmity:
             if required:
                 payload["setup_code"] = self._setup_code
             self._add_attempted = True
-            record["step"] = "submit_add"
+            self._step(record, "submit_add")
             try:
                 self._add_operation = self._request("/api/membership/add", payload, deadline=deadline)
             except AmityHTTPError as error:
@@ -265,14 +288,18 @@ class AddedAmity:
                 self._setup_code = None
                 payload.clear()
             self._finish_add(deadline=deadline, record=record)
-            return self.assert_connected(timeout=self._remaining(deadline))
+            result = self.assert_connected(timeout=self._remaining(deadline))
+            self._log("membership.add.complete")
+            return result
         except BaseException as error:
             self._setup_code = None
             record["error_type"] = type(error).__name__
+            self._log("membership.add.failed", level=logging.ERROR, step=record.get("step"),
+                      error_type=type(error).__name__)
             raise
 
     def _finish_add(self, *, deadline, record):
-        record["step"] = "confirm_add"
+        self._step(record, "confirm_add")
         operation = self._add_operation
         if operation is None:
             operation = self._request("/api/operations/" + self.request_id, deadline=deadline)
@@ -339,12 +366,16 @@ class AddedAmity:
                                 bed._member_proofs[self.device_id] = self
                                 record.update(member_boot=self.member_boot,
                                               membership_revision=system["membership"].get("membership_revision"))
+                                self._log("membership.assert_connected.passed",
+                                          membership_revision=record["membership_revision"])
                                 return self
                             break
                         time.sleep(min(0.25, self._remaining(deadline)))
                 time.sleep(min(0.25, self._remaining(deadline)))
         except BaseException as error:
             record["error_type"] = type(error).__name__
+            self._log("membership.assert_connected.failed", level=logging.ERROR,
+                      error_type=type(error).__name__)
             raise
 
     def close(self):
@@ -369,6 +400,8 @@ class AddedAmity:
                             self._preserved_members(self._system(), added=False)
                             self._config(deadline=deadline)
                             self._closed = True
+                            self._log("membership.cleanup.complete", retained_member=False,
+                                      add_completed=False)
                             return
                         raise
                 if not self._remove_attempted:
@@ -382,6 +415,9 @@ class AddedAmity:
                                "expected_membership_revision": system["membership"]["membership_revision"],
                                "expected_target_boot_id": peer["boot_id"]}
                     self._remove_attempted = True
+                    self._log("membership.remove.submit", operation_id=self._remove_id,
+                              target_boot=peer["boot_id"],
+                              membership_revision=system["membership"]["membership_revision"])
                     self._remove_operation = self._request("/api/membership/remove", payload, deadline=deadline)
                 if self._remove_operation is None:
                     self._remove_operation = self._request("/api/operations/" + self._remove_id, deadline=deadline)
@@ -389,6 +425,7 @@ class AddedAmity:
                 record["reset"] = operation.get("reset")
                 if operation.get("reset") != "scheduled":
                     raise MembershipConflict("The removed Amity did not acknowledge its scheduled factory reset")
+                self._log("membership.remove.reset_scheduled", operation_id=self._remove_id)
                 while True:
                     system = self._system()
                     if self.device_id not in self._active(system):
@@ -400,11 +437,16 @@ class AddedAmity:
                 state = self._admission(deadline=deadline)
                 if state.get("phase") in {"scanning", "found"}:
                     request_id = uuid4().hex
+                    self._log("membership.scan.cancel", operation_id=request_id)
                     response = self._request("/api/membership/cancel", {"request_id": request_id, "scan_id": self.scan_id}, deadline=deadline)
                     self._wait_operation(response, request_id, deadline=deadline, record=record)
             self._closed = True
+            self._log("membership.cleanup.complete", retained_member=False,
+                      reset_scheduled=record.get("reset") == "scheduled")
         except BaseException as error:
             record.update(error_type=type(error).__name__, retained_member=self._add_attempted and not self._add_rejected)
+            self._log("membership.cleanup.failed", level=logging.ERROR,
+                      error_type=type(error).__name__, retained_member=record["retained_member"])
             raise MembershipCleanupError("Add Amity cleanup could not confirm removal/reset; inspect its report") from error
 
     def __enter__(self):

@@ -1,12 +1,14 @@
 """Generic functional-test resource ownership, authentication and evidence."""
 
 from copy import deepcopy
+import logging
 import threading
 
 from .components import Component
 from .config import current_config, register_testbed
 from .dut import DUT
 from .topology import format_physical_address
+from .trace import event
 
 
 _ownership_lock = threading.RLock()
@@ -175,6 +177,8 @@ class TestBed:
         if any(getattr(dut, "_token", None) for dut in (*self.control_only, *self.members)):
             raise ValueError("Control-only DUTs and headless members must not have an authenticated HTTP session")
         register_testbed(self)
+        event("testbed.created", level=logging.DEBUG, duts=[dut.name for dut in self.duts],
+              components=[component.name for component in self.components])
 
     def _claim_duts(self):
         with _ownership_lock:
@@ -188,28 +192,41 @@ class TestBed:
                 self._initial_scans[id(dut)] = getattr(dut, "last_scan", None)
                 self._initial_activity_counts[id(dut)] = len(getattr(dut, "activity_operations", ()))
                 self._initial_membership_counts[id(dut)] = len(getattr(dut, "membership_operations", ()))
+                event("testbed.dut.claimed", dut=dut.name, device_id=dut.identity.device_id,
+                      control_only=dut in self.control_only, member=dut in self.members)
 
     def __enter__(self):
         if self._started:
             raise RuntimeError("A test bed cannot be reused")
         self._started = True
+        event("testbed.setup.start", duts=[dut.name for dut in self.duts],
+              components=[component.name for component in self.components])
         try:
             self._claim_duts()
             for dut in self.duts:
                 if dut in (*self.control_only, *self.members):
+                    event("testbed.dut.physical_only", dut=dut.name,
+                          member=dut in self.members, control_only=dut in self.control_only)
                     continue
+                event("testbed.dut.authenticate", dut=dut.name)
                 dut.authenticate()
                 system = dut.get_system()
                 if system.get("octopus_id") != dut.identity.device_id:
                     raise AssertionError(f"DUT HTTP identity does not match {dut.name} in TEST-HARNESS.md")
+                event("testbed.dut.verified", dut=dut.name, device_id=dut.identity.device_id,
+                      boot=system.get("boot_id"))
+            event("testbed.cec.start", components=[component.name for component in self.components])
             self.session = self._session_factory(self.components)
             self.session.__enter__()
             self._session_entered = True
             self.session.assert_healthy()
             self._entered = True
+            event("testbed.setup.complete", duts=[dut.name for dut in self.duts])
             return self
         except BaseException as exc:
             self._failure = type(exc).__name__
+            event("testbed.setup.failed", level=logging.ERROR,
+                  duts=[dut.name for dut in self.duts], error_type=self._failure)
             errors = self._cleanup(type(exc), exc, exc.__traceback__)
             if errors:
                 raise TestBedCleanupError(errors) from exc
@@ -222,19 +239,31 @@ class TestBed:
         if not self._entered or self._closed or self._closing:
             raise RuntimeError("Register cleanups inside an active TestBed")
         self._cleanups.append(callback)
+        event("testbed.cleanup.registered", level=logging.DEBUG,
+              callback=getattr(callback, "__qualname__", type(callback).__name__))
 
     def _cleanup(self, exc_type, exc, traceback):
         if self._closed or self._closing:
             return []
         self._closing = True
         errors = []
+        event("testbed.cleanup.start", duts=[dut.name for dut in self._owned],
+              callbacks=len(self._cleanups), failure=self._failure)
         try:
             while self._cleanups:
+                callback = self._cleanups.pop()
+                label = getattr(callback, "__qualname__", type(callback).__name__)
+                event("testbed.cleanup.callback.start", callback=label)
                 try:
-                    self._cleanups.pop()()
+                    callback()
                 except BaseException as error:
                     errors.append(error)
+                    event("testbed.cleanup.callback.failed", level=logging.ERROR,
+                          callback=label, error_type=type(error).__name__)
+                else:
+                    event("testbed.cleanup.callback.complete", callback=label)
             if self.session is not None:
+                event("testbed.cleanup.cec.start")
                 try:
                     if self._session_entered:
                         self.session.__exit__(exc_type, exc, traceback)
@@ -242,12 +271,21 @@ class TestBed:
                         self.session.close()
                 except BaseException as error:
                     errors.append(error)
+                    event("testbed.cleanup.cec.failed", level=logging.ERROR,
+                          error_type=type(error).__name__)
+                else:
+                    event("testbed.cleanup.cec.complete")
             for dut in reversed(self._owned):
                 if dut not in (*self.control_only, *self.members) and getattr(dut, "_token", None):
+                    event("testbed.cleanup.logout.start", dut=dut.name)
                     try:
                         dut.logout()
                     except BaseException as error:
                         errors.append(error)
+                        event("testbed.cleanup.logout.failed", level=logging.ERROR,
+                              dut=dut.name, error_type=type(error).__name__)
+                    else:
+                        event("testbed.cleanup.logout.complete", dut=dut.name)
         finally:
             self._member_proofs.clear()
             self._closed = True
@@ -258,7 +296,11 @@ class TestBed:
                         dut._testbed = None
                     if _owners.get(dut.identity.device_id) is self:
                         del _owners[dut.identity.device_id]
+                    event("testbed.dut.released", dut=dut.name, device_id=dut.identity.device_id)
             self._cleanup_errors.extend(type(error).__name__ for error in errors)
+            event("testbed.cleanup.complete", level=logging.ERROR if errors else logging.INFO,
+                  duts=[dut.name for dut in self._owned],
+                  error_types=[type(error).__name__ for error in errors])
         return errors
 
     def __exit__(self, exc_type, exc, traceback):
@@ -271,8 +313,12 @@ class TestBed:
                 exc_type, exc, traceback = type(error), error, error.__traceback__
         if exc is not None:
             self._failure = type(exc).__name__
+            event("testbed.failed", level=logging.ERROR, duts=[dut.name for dut in self.duts],
+                  error_type=self._failure)
         errors = self._cleanup(exc_type, exc, traceback)
         self._finished = True
+        event("testbed.complete", level=logging.ERROR if self._failure or errors else logging.INFO,
+              duts=[dut.name for dut in self.duts], passed=not self._failure and not errors)
         if errors:
             raise TestBedCleanupError(errors) from exc
         if health_error is not None:
