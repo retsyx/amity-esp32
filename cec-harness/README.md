@@ -31,6 +31,8 @@ membership behavior remains unchanged.
 - `functional_tests/consortium.py`: scans equipment on the main and up to three
   headless members, then checks activity power and source-theft suppression in
   every ownership direction.
+- `functional_tests/dual-display.py`: switches between a TV and projector on
+  one headless member, sharing an AVR and player across both activities.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -578,6 +580,46 @@ player at playback address 4, and the second player at tuner address 3 on the
 same back wire, with distinct physical addresses `1.1.0.0` and `1.2.0.0`.
 Claim failures remain explicit; the backend does not retry using another type.
 
+## Dual-display activity scenario
+
+`functional_tests/dual-display.py` uses `amity-dut` as the original main and
+adds `amity-dut-4` as a headless member through the existing Add flow. Only the
+main needs HTTP credentials. The TV connects to member tentacle 1/front; the
+AVR's CEC-capable output connects to 1/back, with the player on AVR input 1.
+The projector is a CEC display on 2/front. The AVR's second output connects to
+2/back without CEC support, so that wire has no component responder. The AVR
+and player appear once, on 1/back; the two back wires are never bridged.
+
+The scan requires exactly those four identities and their typed owner,
+tentacle and side locations. Two saved activities share the AVR and player
+while selecting either the TV or projector. Starts from Standby require fresh
+physical power-on commands and AVR routing. The first cycle starts the TV
+activity, changes directly to the projector activity, then enters Standby.
+The second starts the projector activity, changes directly to the TV activity,
+then enters Standby. Each direct change requires a fresh power-on command to
+the selected display and fresh CEC Standby to the previous display, while the
+AVR and player remain On.
+Every selected activity and its route are verified. Here, an unused display
+being "off" means CEC Standby; electrically unpowered `PowerState.OFF` would
+remove its CEC responder.
+
+Both activities and their fixture equipment are cleaned up before the newly
+added member is removed with acknowledged scheduled reset, while responders
+remain available. Select `--test dual_display`; it also runs in `--test all`.
+
+On 1 November 2026, the complete nine-case suite passed all eight existing
+cases; the new case stopped before enrollment when its three SSH CEC workers
+timed out together. The unchanged standalone retry passed both starts and both
+direct handoffs, proving four typed device locations, sixteen fresh physical
+power commands and four fresh AVR routing commands. The initial failed report
+is preserved in `test-results/dual-display-2026-11-01/functional.json`; the
+passing retry is `dual-display-retry.json` in that directory. All 371 host
+checks passed. Postchecks in `verification.json` confirm activity/equipment
+cleanup, acknowledged member removal/reset, and preservation of the original
+main's boot, authority, ordinary configuration and pairings. This qualifies the
+exercised simulated CEC topology; it is not a clean nine-case suite pass in one
+attempt.
+
 ## Run functional tests
 
 Requires Linux/Pi, Python 3.10 or newer, the existing `cec-gpio` adapters and
@@ -599,7 +641,8 @@ power-cycle and explicit switch-input sub-tests, `--test source_theft` for unsel
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
-or `--test all` for all seven registered scenarios (eight
+`--test dual_display` for the TV/projector scenario on `amity-dut-4`,
+or `--test all` for all eight registered scenarios (nine
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
