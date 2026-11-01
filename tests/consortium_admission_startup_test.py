@@ -59,7 +59,6 @@ esp_err_t load_group(Group& value){++group_reads;if(!group_ok)return ESP_FAIL;va
 namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& value){++identity_loads;if(!identity_ok)return ESP_FAIL;value={owner,"validated-leaf","private-key-"+std::to_string(identity_loads),std::string(64,'a')};return ESP_OK;}}
 esp_err_t read_record(const char* space,const char* key,std::string& value,size_t cap){const auto name=std::string(space)+"/"+key;if(name==fail_read)return ESP_FAIL;const auto found=records.find(name);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;if(found->second.size()>cap)return ESP_ERR_INVALID_SIZE;value=found->second;return ESP_OK;}
 esp_err_t erase_record(const char*,const char*){++erases;return ESP_OK;}
-constexpr size_t maximum_roster_peers=2;
 // Recovery task creation is a separate service seam; created_tasks counts
 // operational workers only, while the public recovery status matches firmware.
 esp_err_t recovery_usb(model::OctopusId,esp_err_t result,const char*){++recoveries;status.initialized=true;status.credential_ready=false;status.authority_ready=false;status.coordinator=false;status.member=true;status.phase="recovery_required";return result;}
@@ -134,6 +133,9 @@ void check_phases(){
  check(platform::recorded_setup_timings.size()==4,"startup diagnostic capacity/phase count changed");
 }
 void startup_tests(){
+ reset();seed_role(Group::coordinator);
+ for(unsigned n=0;n<3;++n)seed.peers.push_back({ident<model::OctopusId>(10+n),"validated-peer",std::string(64,'a'+n),true});
+ check(start_runtime()==ESP_OK&&group.peers.size()==3&&status.authority_ready&&created_tasks==2,"main with three secondary Amities failed operational startup");
  for(auto mode:{AdmissionMode::button,AdmissionMode::setup_code}){
   for(auto role:{Group::unclaimed,Group::coordinator}){
    reset();seed_role(role);selected_mode=mode;
@@ -176,7 +178,7 @@ void startup_tests(){
   reset();seed_role(failure==1?Group::coordinator:Group::member);
   if(failure==0)seed.joining_id=ident<model::OctopusId>(99);
   if(failure==1)seed.authority=ident<model::OctopusId>(99);
-  if(failure==2)seed.peers.resize(3);
+  if(failure==2)seed.peers.resize(maximum_roster_peers+1);
   if(failure==3)remote_ok=false;
   check(start_runtime()!=ESP_OK&&recoveries==1&&!created_tasks&&!status.credential_ready,"headless authority/localID/capacity/remote shutdown check lost");
  }

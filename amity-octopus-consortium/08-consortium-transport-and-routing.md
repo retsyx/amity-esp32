@@ -127,6 +127,26 @@ original FIFO position, lifetime and exact authorization fences; it is never
 restamped or replayed. Current-scope discovery and exact key cleanup remain
 independent of the presence of saved activity context.
 
+**1 November 2026 setup-completion correction.** The original Python
+`ControllerImpl.set_activity()` completes its existing power/input steps before
+selecting the new activity. An asynchronous context recapture must preserve the
+completion scope of that same in-progress setup: while `setup_pending` remains
+true, its fresh context carries the current `setup_generation`, and the existing
+owner expectation advances to the fresh sequence. The superseded future-revision
+context was never queued and cannot produce its own completion snapshot. Once
+setup completes, later context captures carry no setup generation. This changes
+only transient completion bookkeeping; original CEC steps are neither repeated
+nor retained for replay, and authenticated TLS, revision and boot fences remain.
+
+`tests/owned_hub_settling_test.cpp` exercises the actual three-owner workers:
+select immediately after applying configuration while both idle owners still
+have the prior revision, recapture after each owner synchronizes, reject a stale
+capture, and complete from the matching fresh pending-zero snapshots. The
+regression fails on the old recapture generation and passes with the correction;
+it also requires unchanged power-frame counts and non-setup captures afterward.
+The existing original/local/remote settling comparisons remain in the same
+host suite. This is software evidence, not physical four-device qualification.
+
 The owner request includes its expected revision and reports a local typed
 published/stale/failed completion. A stale revision does not publish or fence
 the link. A genuine late publication failure fences only its still-current

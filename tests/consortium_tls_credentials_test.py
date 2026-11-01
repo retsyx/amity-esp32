@@ -73,6 +73,20 @@ bool connect(const Identity& authority,const Identity& member,const std::vector<
  check(server.config.MBEDTLS_PRIVATE(authmode)==MBEDTLS_SSL_VERIFY_REQUIRED&&client.config.MBEDTLS_PRIVATE(authmode)==MBEDTLS_SSL_VERIFY_REQUIRED,"mutual TLS authentication requirement changed");
  return exchange(server,client);
 }
+void roster_capacity(const Identity& authority,const Identity& member,const Identity& second,const Identity& third){
+ Group group;group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(10);group.authority=authority.id;group.epoch=group.revision=1;
+ group.peers={peer(member),peer(second),peer(third)};records.clear();
+ check(save_group(group)==ESP_OK,"three-secondary roster could not be saved");Group restored;
+ check(load_group(restored)==ESP_OK&&restored.peers.size()==3,"three-secondary roster did not survive reload");
+ for(const auto& allowed:group.peers){
+  const auto& identity=allowed.id==member.id?member:allowed.id==second.id?second:third;
+  check(connect(authority,identity,restored.peers),"a permitted secondary could not authenticate with a full roster");
+ }
+ group.peers.push_back(peer(authority));const auto committed=records.at("amity_group/state");
+ check(save_group(group)==ESP_ERR_INVALID_ARG&&records.at("amity_group/state")==committed,"fourth secondary replaced committed membership");
+ TlsLink oversized;check(!oversized.setup(authority,group.peers,true,-1),"four-secondary TLS allowlist admitted");
+ std::cout<<"PASS actual credentials/TLS capacity: all three secondary peers persist and authenticate; fourth rejected\n";
+}
 void binding_and_callback(const Identity& authority,const Identity& member,const Identity& outsider){
  mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);check(!mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(member.der.data()),member.der.size()),"fixture parse failed");std::string pin;
  check(certificate_binding(crt,member.id,pin)&&pin==member.spki,"valid profile binding changed");
@@ -104,6 +118,7 @@ int main(){using namespace amity::consortium;using namespace amity::consortium::
  check(!decode_identity(replace(identity_record,hex(member.key_der),hex(outsider.key_der)),member.id,decoded),"mismatched boot private key accepted");
  check(!decode_identity(replace(identity_record,hex(member.der),hex(damaged)),member.id,decoded),"invalid boot self-signature accepted");
  binding_and_callback(authority,member,outsider);
+ roster_capacity(authority,member,outsider,make_identity(4));
  full_checks=0;check(connect(authority,member,{peer(member)}),"valid real mutual TLS failed");std::cout<<"mutual_tls_full_validations="<<full_checks<<"\n";check(full_checks==0||OBSERVE_REDUNDANT_VALIDATION,"TLS setup/verify repeated full trusted leaf signatures");
  // A changed certificate with the same stable ID is still an unknown leaf.
  const auto changed_member=make_identity(2);check(!connect(authority,changed_member,{peer(member)}),"unlisted same-ID certificate completed TLS");

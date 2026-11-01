@@ -36,7 +36,6 @@ struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64
 struct Tls{int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;bool healthy=true;bool usable()const{return healthy;}};
 using TlsLink=Tls;
 struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
-constexpr size_t maximum_links=2;
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 std::vector<std::shared_ptr<Active>*> task_arguments;unsigned task_attempts=0;bool task_creation_fails=false;
 void active_loop(void*){}
@@ -158,6 +157,14 @@ void connection_launch(){
  links.front()->cancelled=true;assert(!connection_available(expected));
  launch(std::make_shared<Tls>(),"192.0.2.2",expected);
  assert(links.size()==2&&task_arguments.size()==2&&connection_available(expected));
+ reset();
+ for(unsigned peer=3;peer<6;++peer){
+  const auto owner=ident<model::OctopusId>(peer);launch(std::make_shared<Tls>(),"192.0.2.1",owner);
+  assert(connection_available(owner));
+ }
+ assert(links.size()==3&&task_arguments.size()==3&&task_attempts==3);
+ launch(std::make_shared<Tls>(),"192.0.2.1",ident<model::OctopusId>(6));
+ assert(links.size()==3&&task_arguments.size()==3&&task_attempts==3&&!connection_available(ident<model::OctopusId>(6)));
  reset();
 }
 void queues(){

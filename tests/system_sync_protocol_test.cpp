@@ -254,6 +254,69 @@ void reports_and_exact_disconnect(){
     assert(amity::discovered_equipment().empty()&&amity::state.reports.empty()&&!amity::state.maintenance.count(owner));
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
 }
+void full_roster_adapter_reports_keep_exact_owner_fences(){
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    static_assert(c::maximum_roster_peers==3&&amity::max_tentacles==4);
+    std::vector<s::OwnedAdapterSnapshot> expected;
+    for(unsigned index=0;index<c::maximum_roster_peers;++index){
+        peers.push_back(remote(9+index,19+index,amity::max_tentacles,0b1111));
+        const auto& owner=peers.back();std::string adapters="{\"adapters\":[";
+        for(uint8_t adapter=0;adapter<amity::max_tentacles;++adapter){
+            auto value=report(owner.id,owner.boot_id,adapter);value.discovery_generation=100+index*amity::max_tentacles+adapter;
+            if(adapter)adapters+=',';adapters+=c::owned_snapshot_json(value);expected.push_back(value);
+        }
+        assert(hooks.synchronize(owner.id,string_document(adapters+"]}"))==c::Error::none);
+    }
+    const auto count=c::maximum_roster_peers*amity::max_tentacles;
+    const auto retained=[&]{
+        assert(amity::state.reports.size()==expected.size());
+        for(const auto& value:expected){
+            const auto found=std::find_if(amity::state.reports.begin(),amity::state.reports.end(),[&](const auto& saved){return saved.owner==value.owner&&saved.adapter==value.adapter;});
+            assert(found!=amity::state.reports.end()&&c::owned_snapshot_json(*found)==c::owned_snapshot_json(value));
+        }
+        const auto available=amity::discovered_equipment();assert(available.size()==expected.size());
+        for(const auto& value:expected)assert(std::count_if(available.begin(),available.end(),[&](const auto& item){return item.endpoint.port.octopus_id==value.owner&&item.endpoint.port.tentacle_id==value.adapter&&item.owner_boot_id==value.boot&&item.endpoint.logical_address==value.devices[0].logical_address;})==1);
+    };
+    assert(count==12&&main.updates.size()==count);retained();
+
+    // A full roster still updates exactly one existing owner/adapter slot.
+    auto changed=expected[3];changed.discovery_generation=900;changed.devices[0].logical_address=8;
+    const auto link=id<s::LinkId>(82);
+    assert(hooks.control(changed.owner,report_envelope(changed),100,link)==c::Error::none);
+    expected[3]=changed;assert(main.updates.size()==count+1);retained();
+    const auto updates=main.updates.size();
+    auto rejected=changed;rejected.boot=id<s::BootId>(99);
+    assert(hooks.control(changed.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
+    rejected=changed;rejected.owner=peers[1].id;
+    assert(hooks.control(changed.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
+    auto invalid_adapter=report_envelope(changed);invalid_adapter.payload.get("snapshot")->get("adapter")->integer=amity::max_tentacles;
+    assert(hooks.control(changed.owner,invalid_adapter,100,link)==c::Error::invalid_message);
+    peers[0].supported_tentacles=3;
+    assert(hooks.control(changed.owner,report_envelope(changed),100,link)==c::Error::invalid_message);
+    peers[0].supported_tentacles=amity::max_tentacles;
+    rejected=changed;rejected.owner=id<s::OctopusId>(99);
+    assert(hooks.control(rejected.owner,report_envelope(rejected),100,link)==c::Error::invalid_message);
+    assert(main.updates.size()==updates);retained();
+
+    // Replacement boot observations survive cleanup of that owner's old boot;
+    // all adapters belonging to the other two owners remain untouched.
+    const auto owner=changed.owner;const auto oldboot=changed.boot;
+    peers[0].boot_id=changed.boot=id<s::BootId>(29);changed.discovery_generation=901;
+    assert(hooks.control(owner,report_envelope(changed),100,link)==c::Error::none);
+    expected[3]=changed;retained();
+    main.fence_result=false;
+    assert(!hooks.disconnected(owner,oldboot,id<s::LinkId>(81)));retained();
+    main.fence_result=true;
+    const auto before_cleanup=main.updates.size();
+    assert(hooks.disconnected(owner,oldboot,id<s::LinkId>(81)));
+    expected.erase(std::remove_if(expected.begin(),expected.end(),[&](const auto& value){return value.owner==owner&&value.boot==oldboot;}),expected.end());
+    assert(expected.size()==9&&main.updates.size()==before_cleanup+3);retained();
+    for(size_t index=before_cleanup;index<main.updates.size();++index){const auto& missing=main.updates[index];assert(missing.owner==owner&&missing.boot==oldboot&&!missing.ready&&!missing.discovering&&missing.devices.empty());}
+    assert(hooks.disconnected(owner,changed.boot,link));
+    expected.erase(std::remove_if(expected.begin(),expected.end(),[&](const auto& value){return value.owner==owner;}),expected.end());
+    assert(expected.size()==8);retained();
+    assert(sent.empty()&&memory.writes==0); // Reports remain diagnostic observations.
+}
 void logical_session_restart_preserves_reports(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     peers={remote(9,19,2,0b11)};const auto owner=peers[0].id,other=id<s::OctopusId>(10);const auto boot=peers[0].boot_id;
@@ -393,4 +456,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, latest snapshot recapture without failed-send regression, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

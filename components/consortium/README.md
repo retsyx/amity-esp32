@@ -12,6 +12,11 @@ The owner resolves equipment using ordinary local discovery and applies original
 
 ## Enrollment and role
 
+An original main supports at most three secondary Amities (four devices total).
+The membership roster, persistent credential validation and authenticated link
+capacity share this limit. Add refuses a fourth secondary before starting a new
+scan or committing membership; disconnected saved members still count.
+
 The main’s Amity devices → Add scans directly for unclaimed candidates after the user opens their three-to-below-ten-second FW RESET window. Admission uses fresh ephemeral key exchange and AEAD by default. `CONFIG_AMITY_ADMISSION_REQUIRE_SETUP_CODE`, default off, requires the candidate’s existing printed Matter manual/QR code through PAKE to authenticate fresh Amity session keys. Both ends require the same profile without fallback; no full Matter commissioning or fabric creation occurs. There is no separate Add secret, stored verifier, USB provisioning/rotation step or member relay. Preserve stable origin identity and factory Matter/admin credentials.
 
 Bind the selected candidate and actual hostname, retain exact-leaf LAN proof and commit headless adoption durably. Prepared transactions reconcile idempotently; a lost acknowledgment does not create a new member or undo committed authority.

@@ -33,13 +33,13 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 22534,
-      "sha256": "856b48ba32f6ac66f5ad40eef1887009d166d66212ac241410f511dea31196a5"
+      "size_bytes": 23949,
+      "sha256": "cf6e8178158f09673f122c1bbaac1c5c45338e08a9f730018abf2f6388ea5bd6"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
-      "size_bytes": 18809,
-      "sha256": "366b2a2cc3dfb8a1e3133106deea606fb02f8e9e1092bb1eeefd1efe5ecee307"
+      "size_bytes": 19557,
+      "sha256": "b2edf69d77d9d8fd2fb4ffa079fa160772c9cf0550ff3dac7c773f877269b05d"
     },
     {
       "path": "10-ble-and-matter-coexistence.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 96135,
-      "sha256": "b28ae34dac23588cf02bcc6394e9b70a5da225854f5102491ad95bdbb0f7e1ee"
+      "size_bytes": 101010,
+      "sha256": "ce056225c9ac73ee47013cd22397939c6bc2977d575f96fe675f8ae5b54a9937"
     },
     {
       "path": "examples/README.md",

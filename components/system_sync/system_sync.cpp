@@ -1,6 +1,7 @@
 #include "amity/system_sync.hpp"
 #include "amity/system_control.hpp"
 #include "amity/consortium/runtime.hpp"
+#include "amity/consortium/limits.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -56,7 +57,7 @@ bool accept_report(s::OctopusId sender,const s::OwnedAdapterSnapshot& report){
     if(!remote||report.owner!=sender||report.boot!=remote->boot_id||report.adapter>=remote->supported_tentacles)return false;
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.maintenance.count(sender))return false;
         auto prior=std::find_if(state.reports.begin(),state.reports.end(),[&](const auto& p){return p.owner==sender&&p.adapter==report.adapter;});
-        if(prior!=state.reports.end())*prior=report;else if(state.reports.size()<amity::max_tentacles*2)state.reports.push_back(report);else return false;}
+        if(prior!=state.reports.end())*prior=report;else if(state.reports.size()<amity::max_tentacles*c::maximum_roster_peers)state.reports.push_back(report);else return false;}
     return state.control->update_owned_snapshot(report);
 }
 std::string snapshot(s::OctopusId){

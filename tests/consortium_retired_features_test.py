@@ -31,13 +31,12 @@ bool unhex(std::string_view v,std::string& out,size_t cap){if(v.size()%2||v.size
 int read_record(const char* space,const char* key,std::string& out,size_t cap){auto it=records.find(std::string(space)+"/"+key);if(it==records.end())return ESP_ERR_NVS_NOT_FOUND;if(it->second.size()>cap)return ESP_ERR_INVALID_SIZE;out=it->second;return ESP_OK;}
 int write_record(const char* space,const char* key,std::string_view value){writes.emplace_back(key);if(fail_write==key)return ESP_ERR_INVALID_STATE;records[std::string(space)+"/"+key]=value;return ESP_OK;}
 // Certificate/secret generation is outside this storage/parser regression.
-bool certificate(std::string_view leaf,model::OctopusId id,std::string& pin){pin=std::string(64,'a');return id&&!leaf.empty();}
+bool certificate(std::string_view leaf,model::OctopusId id,std::string& pin){pin=std::string(64,leaf.size()==1024?leaf.front():'a');return id&&!leaf.empty();}
 int load_identity(model::OctopusId id,Identity& out){out.id=id;return ESP_OK;}
 '''
 MIDDLE = r'''
 }
 using namespace amity::consortium::platform;
-constexpr size_t maximum_roster_peers=2;
 struct RuntimeStartup {
  enum Role{unclaimed,coordinator,member,prepared,retired,recovery_required};Role role=unclaimed;
  model::ConsortiumId consortium_id;model::OctopusId authority_id;uint64_t epoch=0,membership_revision=0;
@@ -73,6 +72,17 @@ int main(){
  records.clear();fail_write="state";assert(save_group(group)!=ESP_OK&&records.count("amity_group/join_name")&&!records.count("amity_group/state"));assert(load_group(loaded)==ESP_OK&&loaded.role==Group::unclaimed); // Cut after name metadata never grants membership.
  records.clear();fail_write="join_name";assert(save_group(group)!=ESP_OK&&records.empty());fail_write.clear();
  group.epoch=2;assert(save_group(group)==ESP_ERR_INVALID_ARG);
+ group={};group.role=Group::coordinator;group.consortium=hello.consortium_id;group.authority=coordinator;group.epoch=group.revision=1;
+ for(unsigned n=0;n<3;++n)group.peers.push_back({ident<model::OctopusId>(20+n),std::string(1024,'b'+n),std::string(64,'b'+n),true});
+ records.clear();assert(save_group(group)==ESP_OK);const auto full=records["amity_group/state"];
+ assert(full.size()>6144&&load_group(loaded)==ESP_OK&&loaded.peers.size()==3);
+ for(size_t n=0;n<3;++n)assert(loaded.peers[n].id==group.peers[n].id&&loaded.peers[n].der==group.peers[n].der&&loaded.peers[n].pin==group.peers[n].pin);
+ group.peers.push_back({ident<model::OctopusId>(23),"leaf",std::string(64,'a'),true});
+ assert(save_group(group)==ESP_ERR_INVALID_ARG&&records["amity_group/state"]==full);
+ auto overfull=full;overfull.pop_back();overfull.pop_back();
+ overfull+=",{\"id\":\""+group.peers.back().id.str()+"\",\"leaf\":\"6c656166\",\"pin\":\""+std::string(64,'a')+"\",\"active\":true}]}";
+ records["amity_group/state"]=overfull;assert(load_group(loaded)==ESP_ERR_INVALID_STATE);
+ std::cout<<"PASS membership storage: three maximum-size peer leaves round-trip; fourth rejected without overwriting committed roster\n";
  std::cout<<"PASS retired features: reserved wire tags/old transfer payloads rejected; optional bits ignored, required retired bit denied; actual old-marker/orphan/epoch startup passive; legacy input flag discarded on rewrite\n";
 }
 '''

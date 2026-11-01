@@ -42,8 +42,6 @@
 namespace amity::consortium {
 using namespace platform;
 namespace {
-constexpr size_t maximum_links=2;
-constexpr size_t maximum_roster_peers=maximum_links;
 struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 // Diagnostic metadata only: no retained payload, retry or execution decision.
 struct LinkTrace {
@@ -829,7 +827,7 @@ void emit_link_trace(const LinkTraceSnapshot& captured){
 }
 void trace_link_closed(const Active& active,const LinkTrace& trace,uint64_t now){emit_link_trace(snapshot_link_trace(active,trace,now));}
 struct DeferredLinkTrace {
-    std::array<LinkTraceSnapshot,maximum_links> snapshots;
+    std::array<LinkTraceSnapshot,maximum_roster_peers> snapshots;
     size_t size=0;
     void capture(const Active& active,const LinkTrace& trace,uint64_t now){if(size<snapshots.size())snapshots[size++]=snapshot_link_trace(active,trace,now);}
     // Construct before runtime/queue guards; emit only after they unlock. The
@@ -1097,7 +1095,7 @@ bool connection_available(model::OctopusId peer){
 void launch(std::shared_ptr<TlsLink> tls,std::string endpoint_hint={},model::OctopusId expected={}){
     auto active=std::make_shared<Active>();active->tls=std::move(tls);active->endpoint_hint=std::move(endpoint_hint);active->connection_peer=expected;
     {std::lock_guard<std::mutex> guard(lock);
-        if(links.size()>=maximum_links)return;
+        if(links.size()>=maximum_roster_peers)return;
         if(expected&&std::any_of(links.begin(),links.end(),[&](const auto& link){return !link->cancelled&&link->tls&&link->tls->usable()&&(link->connection_peer==expected||link->peer==expected);}))return;
         links.push_back(active);
     }

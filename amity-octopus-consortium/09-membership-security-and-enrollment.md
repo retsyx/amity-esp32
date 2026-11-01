@@ -2,6 +2,17 @@
 
 Membership protects who may deliver work to an owner. It does not approve HDMI routes or replace local Amity algorithms. [Transport](08-consortium-transport-and-routing.md), [shared radio/setup](10-ble-and-matter-coexistence.md), [storage](11-configuration-storage.md) and [original-controller policy](21-original-controller-policy.md) apply.
 
+**1 November 2026 membership limit.** One original main supports at most three
+secondary Amities, for four devices total. A saved secondary occupies its place
+while offline until explicitly removed or replaced. Runtime link slots, admission
+scan/submission/preparation and credential roster reads/writes use the same
+three-secondary bound; adding a fourth is rejected. The stored group record
+allows 8 KiB so three maximum-size accepted certificate leaves fit. Existing
+authentication, physical-window, authority, revision and transaction fences apply.
+Host regressions exercise a third admission, rejection of a fourth, three-peer
+startup/persistence and exact-leaf TLS authentication. These checks do not
+qualify physical four-device operation.
+
 ## Identity and credentials
 
 Stable random Amity device IDs identify hardware independently of MAC, hostname, IP address and Matter identity. Installation identity, durable original-controller/member roles, operational private keys and exact peer leaf pins retain their separate purposes. Private keys stay on their device. Origin IDs and factory Matter/admin credentials survive the ordinary factory-reset contract; operational group trust/network/roles are reset-owned.

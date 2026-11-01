@@ -28,7 +28,7 @@ membership behavior remains unchanged.
   input 2 and verifies that Amity restores the first player after source theft.
 - `functional_tests/add_amity.py`: adds the second bench board through the main
   Amity, verifies its membership, then removes and resets that added board.
-- `functional_tests/consortium.py`: scans equipment on the main and one or two
+- `functional_tests/consortium.py`: scans equipment on the main and up to three
   headless members, then checks activity power and source-theft suppression in
   every ownership direction.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
@@ -381,6 +381,32 @@ Select it with `--test consortium_three_duts`. Host checks verify its coverage
 and cleanup order; adding the case does not physically qualify three-owner
 operation.
 
+`test_consortium_four_duts()` extends the same test to `amity-dut` as the main
+and `amity-dut-2`, `amity-dut-3` and `amity-dut-4` as headless members. Each
+owner uses tentacle 0 with the same TV/AVR/player topology. The scan requires
+exactly twelve identities and typed locations across eight isolated wires.
+The four activities each run a power-on/standby cycle and receive a physical
+theft attempt from every other owner, for twelve directed theft checks with
+the same 250 ms deadline. Activities and fixture equipment are cleaned up
+before members are removed/reset in reverse Add order, with responders still
+running. Select it with `--test consortium_four_duts`; it also runs in
+`--test all`.
+
+On 1 November 2026, all eight functional cases passed on `test2` with the same
+exact 0.1.115 image on all four DUTs. The four-DUT case proved twelve typed
+equipment locations across eight wires, all twelve owner-to-owner theft
+directions, fresh power/standby commands and four initial routes. Directed
+Standby responses took 66.900029–70.050082 ms within the unchanged 250 ms bound.
+All thirteen temporary activities and seven added members across the complete
+run were cleaned up, with each removal acknowledging a scheduled reset. Final
+checks preserve the main's post-update boot, authority, configuration, pairings
+and two Matter fabrics. Reports are in
+`test-results/consortium-four-duts-0.1.115-2026-11-01/functional.json`,
+`functional-verification.json` and `main-final-postcheck.json`. This qualifies
+the exercised normal-profile, one-adapter-per-owner simulated CEC setup.
+The earlier 0.1.114 failed run remains recorded separately; its deferred
+activity-context completion bug was fixed before this complete rerun.
+
 On 29 October 2026, all six functional cases passed on `test2` with firmware
 0.1.98, including both directions of `consortium.py`. Its scan proved exactly
 six typed equipment locations across the four wires; fourteen fresh physical
@@ -572,7 +598,8 @@ The default remains `hdmi_scan`. Select `--test activity` for both the activity
 power-cycle and explicit switch-input sub-tests, `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
-three-owner scenario, or `--test all` for all six registered scenarios (seven
+three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
+or `--test all` for all seven registered scenarios (eight
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

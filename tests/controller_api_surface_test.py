@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute the real mutation router against the supported administration contract."""
+"""Execute real administration routing and advertised membership capacity."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -12,6 +12,8 @@ def main():
     assert 'path=="/api/front-physical-address"' not in (ROOT / 'components/web_admin/web_admin.cpp').read_text()
     start = source.index('std::optional<std::string> device_settings_target(')
     router = source[start:source.index('void publish_inputs()', start)]
+    capacity = next(line for line in source.splitlines()
+                    if 'cJSON_AddNumberToObject(capabilities,"supported_octopuses",' in line)
     # Unknown routes are rejected before reading a request body or admitting work.
     rejection = source.index('const auto fields=request_fields(path);if(!fields)')
     assert rejection < source.index('std::string data;if(!web::body(req,data))', rejection)
@@ -22,6 +24,8 @@ def main():
 #include <optional>
 #include <string>
 #include <vector>
+#include "amity/consortium/limits.hpp"
+#include "cJSON.h"
 ''' + router + r'''
 int main(){
     for(const auto* path:{"membership/create","membership/move-coordinator",
@@ -63,14 +67,26 @@ int main(){
         "/api/membership/admission","/api/operations/0123456789abcdef0123456789abcdef",
         "/api/devices/0123456789abcdef0123456789abcdef/settings","/api/updates"})
         assert(administrative_path(path));
-    std::cout<<"PASS actual administration router rejects retired transfer, member-input, remote-mapping, wizard and alternate-control routes before admission\n";
+    auto* body=cJSON_CreateObject();auto* capabilities=cJSON_AddObjectToObject(body,"capabilities");
+''' + capacity + r'''
+    const auto* advertised=cJSON_GetObjectItemCaseSensitive(capabilities,"supported_octopuses");
+    assert(cJSON_IsNumber(advertised)&&advertised->valuedouble==4
+        &&advertised->valuedouble==amity::consortium::maximum_roster_peers+1);
+    cJSON_Delete(body);
+    std::cout<<"PASS actual administration router rejects retired routes before admission and advertises four total Amity devices\n";
 }
 '''
+    json_dir = ROOT / 'managed_components/espressif__cjson/cJSON'
+    if not (json_dir / 'cJSON.c').exists():
+        json_dir = json_dir.parent
     with tempfile.TemporaryDirectory(dir=ROOT / 'test-results') as directory:
         path = Path(directory)
         (path / 'test.cpp').write_text(program)
+        subprocess.run(['cc', '-g', '-Wno-deprecated-declarations', '-fsanitize=address,undefined',
+                        '-I'+str(json_dir), '-c', str(json_dir/'cJSON.c'), '-o', str(path/'json.o')], check=True)
         subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g',
-                        '-fsanitize=address,undefined', str(path / 'test.cpp'),
+                        '-fsanitize=address,undefined', '-I'+str(json_dir),
+                        '-I'+str(ROOT/'components/consortium/include'), str(path / 'test.cpp'), str(path/'json.o'),
                         '-o', str(path / 'test')], check=True)
         subprocess.run([str(path / 'test')], check=True)
 

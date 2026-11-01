@@ -52,8 +52,9 @@ class Scenario:
                 return self
 
             def assert_connected(self):
-                if candidate.name == "amity-dut-2" and len(fixture.members) > 1:
-                    raise AssertionError("The first member's preserved-members baseline excludes later additions")
+                expected = fixture.member_duts[:fixture.member_duts.index(candidate) + 1]
+                if tuple(fixture.members) != expected:
+                    raise AssertionError("A member's preserved-members baseline excludes later additions")
                 fixture.events.append(("member.connected", candidate.name))
                 return self
 
@@ -68,8 +69,8 @@ class Scenario:
         return Member()
 
     def scan(self, main):
-        if len(self.members) != 2:
-            raise AssertionError("Both members must be added before scanning")
+        if tuple(self.members) != self.member_duts:
+            raise AssertionError("All members must be added before scanning")
         fixture = self
 
         class Scan:
@@ -171,7 +172,7 @@ class Scenario:
         player._power, player.active = PowerState.STANDBY, False
         return SimpleNamespace(ok=True, kind="theft", thief=player)
 
-    def run(self):
+    def run(self, test=consortium.test_consortium_three_duts):
         with ExitStack() as patches:
             patches.enter_context(patch.object(consortium, "TestBed", self.bed))
             patches.enter_context(patch.object(DUT, "add_amity", lambda main, candidate: self.add(main, candidate)))
@@ -183,31 +184,52 @@ class Scenario:
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kwargs: self.route(avr, player, **kwargs)))
             patches.enter_context(patch.object(Component, "checkpoint", lambda component: SimpleNamespace(kind="theft", thief=component)))
             patches.enter_context(patch.object(PlaybackComponent, "activate", lambda player: self.activate(player)))
-            consortium.test_consortium_three_duts()
+            test()
 
 
 class ConsortiumScenarioTests(unittest.TestCase):
-    def test_three_owners_have_exact_scan_locations_and_all_theft_directions(self):
-        scenario = Scenario()
-        scenario.run()
-        owners = {"amity-dut", "amity-dut-2", "amity-dut-3"}
+    def assert_coverage(self, scenario, owners):
+        count = len(owners)
         self.assertEqual({dut.name for dut in scenario.duts}, owners)
         self.assertEqual({dut.name for dut in scenario.member_duts}, owners - {"amity-dut"})
-        self.assertEqual(len(scenario.components), 9)
-        self.assertEqual(len({component.gpio for component in scenario.components}), 6)
+        self.assertEqual(len(scenario.components), count * 3)
+        self.assertEqual(len({component.gpio for component in scenario.components}), count * 2)
         for kind in ("scan.contains", "scan.only"):
             self.assertEqual([row[1] for row in scenario.events if row[0] == kind], [scenario.components])
         expected_locations = {(component.name, component.dut.name, component.direction)
                               for component in scenario.components}
         locations = [row[1:] for row in scenario.events if row[0] == "scan.on"]
-        self.assertEqual(len(locations), 9)
+        self.assertEqual(len(locations), count * 3)
         self.assertEqual(set(locations), expected_locations)
         thefts = [row[1:] for row in scenario.events if row[0] == "theft"]
-        self.assertEqual(len(thefts), 6)
+        self.assertEqual(len(thefts), count * (count - 1))
         self.assertEqual(set(thefts), {(active, thief) for active in owners for thief in owners if active != thief})
-        for kind, count in (("start", 9), ("standby", 9), ("theft", 6)):
-            self.assertEqual(sum(row[:2] == ("power.wait", kind) for row in scenario.events), count)
-        self.assertEqual(len([row for row in scenario.events if row[0] == "activity.active"]), 9)
+        for kind, expected in (("start", count * 3), ("standby", count * 3), ("theft", count * (count - 1))):
+            self.assertEqual(sum(row[:2] == ("power.wait", kind) for row in scenario.events), expected)
+        self.assertEqual(len([row for row in scenario.events if row[0] == "activity.active"]), count * count)
+        self.assertEqual([row[1] for row in scenario.events if row[0] == "activity.start"],
+                         [dut.name for dut in scenario.duts])
+        self.assertEqual([row[1] for row in scenario.events if row[0] == "member.remove"],
+                         [dut.name for dut in reversed(scenario.member_duts)])
+        self.assertEqual(scenario.events[-1], ("bed.close",))
+
+    def test_three_owners_have_exact_scan_locations_and_all_theft_directions(self):
+        scenario = Scenario()
+        scenario.run()
+        self.assert_coverage(scenario, {"amity-dut", "amity-dut-2", "amity-dut-3"})
+
+    def test_four_owners_have_exact_scan_locations_and_all_theft_directions(self):
+        scenario = Scenario()
+        scenario.run(consortium.test_consortium_four_duts)
+        self.assert_coverage(scenario, {"amity-dut", "amity-dut-2", "amity-dut-3", "amity-dut-4"})
+        self.assertEqual([row[1] for row in scenario.events if row[0] == "member.connected"],
+                         ["amity-dut-2", "amity-dut-3", "amity-dut-4",
+                          "amity-dut-4", "amity-dut-3", "amity-dut-2"])
+
+    def test_failed_third_add_removes_both_members_with_bed_open(self):
+        scenario = Scenario(failed_add="amity-dut-4")
+        with self.assertRaisesRegex(RuntimeError, "candidate addition failed"):
+            scenario.run(consortium.test_consortium_four_duts)
         self.assertEqual([row[1] for row in scenario.events if row[0] == "member.remove"],
                          ["amity-dut-3", "amity-dut-2"])
         self.assertEqual(scenario.events[-1], ("bed.close",))
@@ -229,6 +251,16 @@ class ConsortiumScenarioTests(unittest.TestCase):
                          ["activity.remove"] * 3 + ["member.remove"] * 2 + ["bed.close"])
         self.assertEqual([row[1] for row in cleanup if row[0] == "member.remove"],
                          ["amity-dut-3", "amity-dut-2"])
+
+    def test_failed_four_owner_theft_closes_activities_before_removing_members(self):
+        scenario = Scenario(failed_theft=True)
+        with self.assertRaisesRegex(TimeoutError, "source theft failed"):
+            scenario.run(consortium.test_consortium_four_duts)
+        cleanup = [row for row in scenario.events if row[0] in {"activity.remove", "member.remove", "bed.close"}]
+        self.assertEqual([row[0] for row in cleanup],
+                         ["activity.remove"] * 4 + ["member.remove"] * 3 + ["bed.close"])
+        self.assertEqual([row[1] for row in cleanup if row[0] == "member.remove"],
+                         ["amity-dut-4", "amity-dut-3", "amity-dut-2"])
 
 
 if __name__ == "__main__":

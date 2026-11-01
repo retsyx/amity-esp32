@@ -1179,7 +1179,11 @@ struct HubService::Impl : Transport {
         if(owned_sequence==UINT64_MAX)return false;
         intent.sequence=++owned_sequence;
         intent.config_revision=owned_config_revision;
-        if(setting_activity)intent.setup_generation=setup_generation;
+        // A future-revision context may be recaptured by the owner-task hook
+        // after the synchronous recipe has returned. Keep that fresh context
+        // in the current setup's completion scope until setup is finished;
+        // expect_setup() then replaces its superseded sequence below.
+        if(setting_activity||(intent.kind==K::context&&setup_pending))intent.setup_generation=setup_generation;
         if(intent.kind==K::key_down&&intent.repeat){
             auto& retained=sent_keys[intent.key];
             if(retained){intent.token=retained->token;return true;}

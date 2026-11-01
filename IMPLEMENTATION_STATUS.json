@@ -1,7 +1,7 @@
 {
-  "status": "PASS software validation: admission self-tests run only during user-requested Add, with bounded BLE candidate failure diagnostics and approved Add-dialog messages. Full host suite with 361 framework units, native build and contracts passed. Changed source has not been deployed or physically timed; earlier exact-image 0.1.113 bench qualification remains historical evidence.",
+  "status": "PASS: all eight physical functional cases on exact firmware 0.1.115, three-secondary limit and setup-context completion correction; 365 framework units, firmware/software suites, native build, deployment and 36 final preservation checks passed. Full design-contract validation passed after the final documentation manifest refresh.",
   "audit_date": "2026-11-01",
-  "firmware_version": "0.1.113",
+  "firmware_version": "0.1.115",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -27,7 +27,7 @@
     "default_adapters_per_device": 1,
     "maximum_adapters_per_device": 4,
     "maximum_cec_ports_per_device": 8,
-    "maximum_active_devices": 3,
+    "maximum_active_devices": 4,
     "cec_fifo_messages_per_wire": 8,
     "maximum_mutation_payload_bytes": 16384,
     "external_activity_slots": 16,
@@ -43,7 +43,10 @@
     "configuration_storage_version": 2,
     "live_configuration_capability": 524288,
     "execution_capabilities_note": "Live configuration is additionally required by execution-profile compatibility; old peers remain management/update-only. Installer required-capability bitmap remains 401472.",
-    "synchronization_kind": 43
+    "synchronization_kind": 43,
+    "maximum_secondary_devices": 3,
+    "secondary_limit_constant": "amity::consortium::maximum_roster_peers",
+    "secondary_limit_definition": "components/consortium/include/amity/consortium/limits.hpp"
   },
   "controller_policy": {
     "original": "Immutable original controller, only UI/admin/remote/Matter/HomeKit owner",
@@ -51,6 +54,188 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
+    "result": "PASS physical functional, firmware, software and full design-contract validation",
+    "evidence_directory": "test-results/consortium-four-duts-0.1.115-2026-11-01",
+    "source_firmware_version": "0.1.115",
+    "matter_software_version": 116,
+    "deployed": true,
+    "latest_deployed_firmware_version": "0.1.115",
+    "latest_deployment_report": "test-results/consortium-four-duts-0.1.115-2026-11-01/deployment.json",
+    "invariant": "One original main supports at most three secondary Amities, defined once by amity::consortium::maximum_roster_peers in limits.hpp. Admission, stored credentials, runtime links, remote adapter reports and advertised total capacity derive from it. Fresh context recapture carries the current transient setup generation while setup_pending and advances its expected sequence; completed captures carry no setup generation. Original CEC work is not replayed and healthy authenticated TLS is reused.",
+    "design": [
+      "amity-octopus-consortium/08-consortium-transport-and-routing.md",
+      "amity-octopus-consortium/09-membership-security-and-enrollment.md"
+    ],
+    "host_tests": {
+      "result": "PASS firmware/software suites and 365 framework unit tests",
+      "command": "sh tests/run_host_tests.sh",
+      "framework_unit_tests": 365,
+      "log": "test-results/consortium-four-duts-0.1.115-2026-11-01/host-tests.log",
+      "command_scope": "All firmware/software suites, 365 framework unit tests and offline production-profile checks passed. The separate documentation-contract step now passes after the final manifest refresh; see test-results/consortium-four-duts-0.1.115-2026-11-01/contracts.log. Its preceding stale-manifest failure remains recorded under design_contracts.",
+      "targeted_regressions": [
+        "Third secondary admission and fourth rejection; three-peer credential persistence, exact-leaf TLS and runtime links; three-secondary adapter-report cache and four-device advertised total.",
+        "Actual three-owner HubService caller: immediate activity after configuration, delayed revision/context recapture, stale callback rejection, matching pending-zero setup snapshots, unchanged power-frame counts and completed non-setup recapture.",
+        "Four-DUT exact scan, all twelve theft directions and reverse-order cleanup, including failed enrollment/theft cleanup paths."
+      ]
+    },
+    "native_build": {
+      "result": "PASS",
+      "command": "idf.py build",
+      "log": "test-results/consortium-four-duts-0.1.115-2026-11-01/build.log",
+      "firmware_version": "0.1.115",
+      "matter_software_version": 116,
+      "image_bytes": 2462656,
+      "application_sha256": "5256da0eca6b61402ecd1d0f88c1ac6ddfb14093fba3b035c3c792f347117395",
+      "image_elf_sha256": "c433a79c21db12a49fda984c5be98397e638bd5ebd768da134aab31f7e2e53e5",
+      "source_commit": "391eacf45738b8a52c58592389adbc309cfd07bd",
+      "source_dirty": true,
+      "source_tree_sha256": "ad4d2b05b4727a6d75dfd07ddcbd6d6c584a4627bbc286f25f69bb95be561683",
+      "frozen_artifacts": "test-results/consortium-four-duts-0.1.115-2026-11-01/firmware-0.1.115",
+      "artifact_hashes": "test-results/consortium-four-duts-0.1.115-2026-11-01/frozen-firmware-hashes.json",
+      "changed_source_hashes": "test-results/consortium-four-duts-0.1.115-2026-11-01/changed-source-hashes.json",
+      "frozen_harness_hashes": "test-results/consortium-four-duts-0.1.115-2026-11-01/functional-source-hashes.json",
+      "remote_harness_hashes": "test-results/consortium-four-duts-0.1.115-2026-11-01/remote-harness-hashes.json",
+      "firmware_artifacts": 10,
+      "harness_files": 58,
+      "public_record_layout_checks": 36,
+      "source_note": "Firmware and harness sources remained frozen through deployment and the complete physical run. Subsequent edits record validation evidence only."
+    },
+    "design_contracts": {
+      "result": "PASS",
+      "preceding_failure": "Stale manifest 08-consortium-transport-and-routing.md",
+      "preceding_log": "test-results/consortium-four-duts-0.1.115-2026-11-01/host-tests.log",
+      "log": "test-results/consortium-four-duts-0.1.115-2026-11-01/contracts.log"
+    },
+    "physical_devices": {
+      "result": "PASS",
+      "report": "test-results/consortium-four-duts-0.1.115-2026-11-01/deployment.json",
+      "DUTs": 4,
+      "main_checks": 13,
+      "candidate_checks_each": 18,
+      "main_usb_opened": false,
+      "full_flash_erased": false,
+      "route": "Authenticated main OTA and exact-MAC application-only candidate updates with full backups and non-application flash preservation."
+    },
+    "physical_functional": {
+      "result": "PASS",
+      "report": "test-results/consortium-four-duts-0.1.115-2026-11-01/functional.json",
+      "verification": "test-results/consortium-four-duts-0.1.115-2026-11-01/functional-verification.json",
+      "duration_seconds": 897.452723,
+      "registered_scenarios": 7,
+      "cases": [
+        {
+          "test": "test_hdmi_scan",
+          "result": "PASS",
+          "duration_seconds": 17.607
+        },
+        {
+          "test": "test_activity",
+          "result": "PASS",
+          "duration_seconds": 32.459781
+        },
+        {
+          "test": "test_activity_switch_input",
+          "result": "PASS",
+          "duration_seconds": 33.016735999999995
+        },
+        {
+          "test": "test_source_theft",
+          "result": "PASS",
+          "duration_seconds": 41.824323
+        },
+        {
+          "test": "test_add_amity",
+          "result": "PASS",
+          "duration_seconds": 54.623168
+        },
+        {
+          "test": "test_consortium",
+          "result": "PASS",
+          "duration_seconds": 141.676475
+        },
+        {
+          "test": "test_consortium_three_duts",
+          "result": "PASS",
+          "duration_seconds": 240.547628
+        },
+        {
+          "test": "test_consortium_four_duts",
+          "result": "PASS",
+          "duration_seconds": 335.664939
+        }
+      ],
+      "clean_testbeds": 8,
+      "fixture_activities_created_and_removed": 13,
+      "add_transactions": 7,
+      "acknowledged_reset_removals": 7,
+      "cleanup_errors": []
+    },
+    "four_dut_case": {
+      "result": "PASS",
+      "main": "amity-dut",
+      "secondaries": [
+        "amity-dut-2",
+        "amity-dut-3",
+        "amity-dut-4"
+      ],
+      "report": "test-results/consortium-four-duts-0.1.115-2026-11-01/consortium-four-duts.json",
+      "verification": "test-results/consortium-four-duts-0.1.115-2026-11-01/consortium-four-duts-verification.json",
+      "components": 12,
+      "typed_locations": 12,
+      "isolated_wires": 8,
+      "activities": 4,
+      "theft_directions": 12,
+      "fresh_power_on_assertions": 12,
+      "fresh_standby_assertions": 12,
+      "fresh_theft_standby_assertions": 12,
+      "total_power_assertions": 36,
+      "initial_routes": 4,
+      "independent_checks": 24,
+      "minimum_theft_standby_ms": 66.900029,
+      "maximum_theft_standby_ms": 70.050082
+    },
+    "consortium_aggregate": {
+      "fresh_power_assertions": 74,
+      "typed_locations": 27,
+      "initial_routes": 9,
+      "theft_directions": 20
+    },
+    "source_theft_physical": {
+      "result": "PASS",
+      "same_trigger_deadline_ms": 250,
+      "shared_wire_standby_ms": 68.899945,
+      "shared_wire_route_restoration_ms": 186.900005,
+      "verification": "test-results/consortium-four-duts-0.1.115-2026-11-01/source-theft-verification.json",
+      "independent_checks": 20
+    },
+    "final_preservation": {
+      "result": "PASS",
+      "report": "test-results/consortium-four-duts-0.1.115-2026-11-01/main-final-postcheck.json",
+      "checks": 36,
+      "main_boot": "f821f83c97551a3d4ef88d3db58a2bea",
+      "matter_fabrics": 2,
+      "preserved": "Same post-OTA main boot, original authority, installation/group, configuration values and slot metadata, HomeKit pairing and both Matter fabrics. Ready/idle with no peer, saved removed-owner record, name, settings, equipment or observations; no pending configuration or activity/hardware error."
+    },
+    "historical_failed_evidence": {
+      "0.1.114": {
+        "result": "FAIL: six of eight cases passed; the three-DUT activity remained in setup after deferred context lost its setup generation, and four-DUT fixture preflight rejected the retained fixtures. Original failed reports are unchanged.",
+        "directory": "test-results/consortium-four-duts-0.1.114-2026-11-01",
+        "report": "test-results/consortium-four-duts-0.1.114-2026-11-01/functional.json",
+        "recovery": "Authenticated UI restart cleared only transient setup state; receipt-proven fixture activity/equipment cleanup and reviewed member removals acknowledged scheduled resets. Original main authority, group, configuration and pairings were preserved.",
+        "cleanup_report": "test-results/consortium-four-duts-0.1.114-2026-11-01/failed-fixture-final-cleanup.json",
+        "cleanup_result": "PASS (10 preservation checks)"
+      }
+    },
+    "qualification_scope": "Normal admission on the original main and up to three headless secondaries, one adapter per owner, physical isolated CEC wires with simulated TV/AVR/player responders. This does not qualify real AV picture/audio, physical remote input/gesture traffic, strict admission, adversarial radio/loss/load or four-adapter electrical operation.",
+    "resource_cleanup": {
+      "result": "PASS",
+      "report": "test-results/consortium-four-duts-0.1.115-2026-11-01/adapters-after.json",
+      "cec_adapters_checked": 16,
+      "allocated_logical_address_masks": 0,
+      "allocated_logical_addresses": 0
+    }
+  },
+  "previous_admission_on_demand_task_validation": {
     "result": "PASS software validation; physical deployment and timing not performed",
     "evidence_directory": "test-results/admission-on-demand-2026-11-01",
     "source_firmware_version": "0.1.113",
@@ -237,7 +422,7 @@
     "earlier_history": "Earlier detailed release/graph-model records remain in repository history and their original test-results artifacts; they are not current execution contracts."
   },
   "qualification_gates": [
-    "Owner delivery beyond the passing normal-profile seven-case suite, including three owners with one adapter each and a one-second source-theft limit; larger owner counts, reconnect, loss, load and strict admission behavior remain unqualified",
+    "Owner delivery beyond the passing normal-profile eight-case suite with up to four owners, one adapter per owner and a 250-ms same-trigger source-theft bound; reconnect, loss, load, strict admission and multi-adapter electrical operation remain unqualified.",
     "Real Siri/Atomic gestures, held/failure/FIFO/loss behavior under radio/HTTPS/scan load",
     "Four-adapter GPIO/electrical/simultaneous eight-wire timing and detachable hardware",
     "Real AVR/display/source picture/audio and source isolation",
@@ -245,7 +430,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": "114",
+  "matter_software_version": "116",
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -317,15 +502,17 @@
     "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
-    "firmware_version": "0.1.113",
-    "image_sha256": "a7dd4cd7e55530a3239c32a8270d84df0a0c966df3460ff2b0bf155b2116845a",
-    "image_elf_sha256": "84c567ee42e93a426e34a8066bbb4a87b49f003bb8f4079848eeea8913a37eaf",
-    "source_commit": "0f39113d5dbdf8e6319aa3ddb8b224fda039fc12",
+    "firmware_version": "0.1.115",
+    "image_bytes": 2462656,
+    "image_sha256": "5256da0eca6b61402ecd1d0f88c1ac6ddfb14093fba3b035c3c792f347117395",
+    "image_elf_sha256": "c433a79c21db12a49fda984c5be98397e638bd5ebd768da134aab31f7e2e53e5",
+    "source_commit": "391eacf45738b8a52c58592389adbc309cfd07bd",
     "source_dirty": true,
+    "source_tree_sha256": "ad4d2b05b4727a6d75dfd07ddcbd6d6c584a4627bbc286f25f69bb95be561683",
     "result": "PASS",
     "date": "2026-11-01",
-    "matter_software_version": 114,
-    "report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/deployment.json",
+    "matter_software_version": 116,
+    "report": "test-results/consortium-four-duts-0.1.115-2026-11-01/deployment.json",
     "DUTs": 4,
     "main_usb_opened": false,
     "flash_erased": false,

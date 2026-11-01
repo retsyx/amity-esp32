@@ -15,6 +15,88 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Four-DUT functional qualification — 1 November 2026
+
+The new four-DUT case uses `amity-dut` as the original main and
+`amity-dut-2`, `amity-dut-3` and `amity-dut-4` as headless secondaries.
+One public `maximum_roster_peers = 3` constant now supplies the admission,
+credential, link, remote-report and advertised four-device limits. A fresh
+context recapture retains the current transient setup generation while setup
+is pending and advances its expected sequence; it does not repeat CEC work.
+The actual three-owner worker regression fails before that correction and
+passes afterward, including stale callbacks and completed non-setup captures.
+
+All four boards run exact **0.1.115 / Matter software 116**. The
+2,462,656-byte application SHA-256 is
+`5256da0eca6b61402ecd1d0f88c1ac6ddfb14093fba3b035c3c792f347117395`;
+ELF SHA-256 is
+`c433a79c21db12a49fda984c5be98397e638bd5ebd768da134aab31f7e2e53e5`.
+The frozen release records source commit
+`391eacf45738b8a52c58592389adbc309cfd07bd`, `source_dirty=true` and tree
+SHA-256 `ad4d2b05b4727a6d75dfd07ddcbd6d6c584a4627bbc286f25f69bb95be561683`.
+Native build and 36 public-record layout checks passed. Ten firmware artifacts,
+58 harness files and the changed sources, including `limits.hpp`, were frozen
+and hash-verified; the Pi harness copy was verified too. Main authenticated OTA
+passed 13 preservation checks without opening USB. Each candidate passed 18
+application-only update checks with a full backup and retained provisioning.
+
+All eight physical cases passed in **897.452723 seconds**:
+
+| Case | Duration (seconds) |
+| --- | ---: |
+| HDMI scan | 17.607000 |
+| Activity power cycle | 32.459781 |
+| Explicit switch input | 33.016736 |
+| Shared-wire source theft | 41.824323 |
+| Add/Remove Amity | 54.623168 |
+| Two-owner consortium | 141.676475 |
+| Three-owner consortium | 240.547628 |
+| Four-owner consortium | 335.664939 |
+
+Independent completed-report verification passed. The four-owner case proves
+exactly twelve equipment identities and typed locations across eight isolated
+wires, four activity cycles and all twelve cross-owner theft directions. Its
+36 fresh power assertions comprise twelve On, twelve final Standby and twelve
+directed thief Standby assertions, plus four initial routes. Theft responses
+completed in 66.900029–70.050082 ms. The three consortium cases together prove
+74 fresh power assertions, 27 typed locations and nine initial routes.
+Shared-wire theft Standby completed in 68.899945 ms and route restoration in
+186.900005 ms from the same physical Active Source; every response retained the
+original 250 ms bound.
+
+All thirteen fixture activities were deleted, seven member removals acknowledged
+scheduled reset, and all eight testbeds closed without cleanup errors. Final
+authenticated preservation passed 36 checks: the same post-OTA main boot,
+original authority/group, configuration values and slot metadata, HomeKit pairing
+and both Matter fabrics were preserved. The main is Ready/idle with no peer or
+saved removed-owner name, record, settings or equipment. All sixteen CEC adapters
+have zero allocated logical addresses after cleanup.
+
+The firmware/software host suites and 365 framework units passed. The earlier
+separate full-contract step found a stale document-08 manifest entry. After the
+final documentation manifest refresh, full contract validation passed: 34 manifest
+entries, six schemas, 20 positive and 67 negative schema vectors, four configured
+selectors, 20 current wire kinds, 20 Markdown files and 151 local links. Evidence
+is under `test-results/consortium-four-duts-0.1.115-2026-11-01/`, including
+`deployment.json`, `functional.json`, `functional-verification.json`,
+`main-final-postcheck.json`, `adapters-after.json`, `host-tests.log`, `contracts.log`
+and the frozen manifests. Runtime and test sources remained frozen through the
+run; subsequent prose edits record its evidence.
+
+The initial **0.1.114 run remains failed**: six cases passed, the three-owner
+case stalled when deferred context lost its setup generation, and retained
+fixtures blocked the four-owner preflight. An authenticated UI restart cleared
+the transient stall; only receipt-proven fixture activities/equipment and newly
+added members were cleaned up through the existing UI, with scheduled-reset
+acknowledgments and ten preservation checks. The failed report and
+`failed-fixture-final-cleanup.json` remain in
+`test-results/consortium-four-duts-0.1.114-2026-11-01/`.
+
+This qualifies normal admission and simulated TV/AVR/player responders on one
+adapter per owner, with physical isolated CEC wires and up to three secondaries.
+It does not qualify real AV picture/audio, physical remote input, strict
+admission, adversarial radio/loss/load or four-adapter electrical operation.
+
 ## Admission checks on request — 1 November 2026
 
 Admission self-tests no longer run at boot or gate ordinary Matter commissioning
@@ -41,7 +123,8 @@ the real Add UI. The native ESP32-S3 build passes with the existing 0.1.113
 source version. Evidence is under
 `test-results/admission-on-demand-2026-11-01/`.
 
-This revision has not been deployed or physically timed. Removing the earlier
+At this earlier checkpoint the revision had not been deployed or physically
+timed; the later 0.1.115 qualification above includes it. Removing the earlier
 measured 1.95-second normal-profile boot test is expected to save approximately
 two seconds; that is an estimate, not a new factory-reset timing measurement.
 The earlier deployed 0.1.113 physical qualification below remains evidence for
@@ -58,7 +141,7 @@ and drains late bytes on the same transport without extending its acceptance
 deadline. Available PSRAM owns all cJSON allocations at startup; heap-failure
 observations record exact allocation requests without allocating in the hook.
 
-All four DUTs run exact 0.1.113 / Matter software 114, ELF SHA-256
+At this earlier qualification all four DUTs ran exact 0.1.113 / Matter software 114, ELF SHA-256
 `84c567ee42e93a426e34a8066bbb4a87b49f003bb8f4079848eeea8913a37eaf`;
 the 2,461,456-byte application SHA-256 is
 `a7dd4cd7e55530a3239c32a8270d84df0a0c966df3460ff2b0bf155b2116845a`.

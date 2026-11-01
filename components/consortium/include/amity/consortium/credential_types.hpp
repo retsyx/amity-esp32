@@ -1,5 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "amity/consortium/limits.hpp"
 #include "amity/consortium/wire.hpp"
 namespace amity::consortium::platform {
 struct Identity {

@@ -62,7 +62,6 @@ struct Active{
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
 };
-constexpr size_t maximum_links=2;
 std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
 RuntimeNetworkHooks network;RuntimeUpdateHooks updates;
 std::vector<std::tuple<model::OctopusId,model::BootId,model::LinkId>> restart_fences;

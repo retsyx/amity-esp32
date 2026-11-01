@@ -25,7 +25,6 @@ PREFIX = r'''
 namespace amity::consortium {
 namespace platform { enum class BootstrapFailure : uint8_t { none=0,crypto_self_test_failed=1 }; }
 using namespace amity::consortium::platform;
-constexpr unsigned maximum_roster_peers=2;
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 #define pdMS_TO_TICKS(x) (x)
 std::mutex lock;
@@ -135,8 +134,32 @@ void proposal_record_lifetime(){
     assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,1,2,"192.0.2.1","room").empty());
     peer.pin=identity.spki;assert(proposal_json(ident<model::JoinId>(90),group.consortium,identity,peer,1,2,"192.0.2.1","room").empty());
 }
+void roster_capacity(){
+    reset();
+    for(unsigned n=0;n<2;++n)group.peers.push_back({ident<model::OctopusId>(10+n),"existing-leaf",std::string(64,'e'+n),true});
+    assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
+    during_wait=select;run();
+    assert(group.peers.size()==3&&saves==1&&wifi_exports==1&&admission.view.phase=="finishing");
+    group.join_id={};group.joining_id={};group.join_digest.clear();group.join_hostname.clear();group.join_revision=0;
+    assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE&&!invitation_running);
+    assert(reservations==1&&saves==1&&wifi_exports==1); // A fourth Add never starts radio or transfers credentials.
+
+    reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
+    during_wait=[](){if(admission.view.phase=="found"){
+        group.peers.resize(3);
+        assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_ERR_INVALID_STATE);
+        assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_OK);
+    }};
+    run();assert(!saves&&!wifi_exports&&!connections&&admission.view.phase=="cancelled");
+
+    reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
+    during_wait=select;during_selftest=[](){group.peers.resize(3);};run();
+    assert(!saves&&!wifi_exports&&group.peers.size()==3&&admission.view.phase=="failed");
+    std::cout<<"PASS three secondary Amities admitted; fourth rejected before scan, submission and prepared membership storage\n";
+}
 int run_tests(){
     proposal_record_lifetime();
+    roster_capacity();
     for(auto selected_mode:{AdmissionMode::button,AdmissionMode::setup_code}){
         reset();mode=selected_mode;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
         assert(runtime_admission_status().phase=="scanning"&&self_tests==0);assert(runtime_admission_status().requires_setup_code==(mode==AdmissionMode::setup_code));
