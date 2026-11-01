@@ -160,7 +160,7 @@ int main(){
   assert(!denied.handshake([&](auto in,auto& out){if(!edited.handshake(in,out))return false;if(out.size()==139&&out.substr(0,8)=="AMADMIT3")out.back()^=1;return true;}));
  }
  assert(key_store.empty());
- std::cout<<"PASS actual admission handshake/AEAD both modes and selected-profile startup checks: transcript, direction, sequence, replay, cross-session, tamper, failure gates; disabled PAKE absent at normal boot, full explicit PAKE retained; PIN-PAKE seam mocked, PSA uses OpenSSL"<<std::endl;
+ std::cout<<"PASS actual admission handshake/AEAD both modes and selected-profile self-tests: transcript, direction, sequence, replay, cross-session, tamper, failure gates; unused PAKE absent from normal-profile checks, full explicit PAKE retained; PIN-PAKE seam mocked, PSA uses OpenSSL"<<std::endl;
 }
 '''
 

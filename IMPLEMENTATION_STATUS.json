@@ -1,5 +1,5 @@
 {
-  "status": "PASS within the exercised bench scope: all four DUTs run exact 0.1.113 / Matter software 114. Healthy TLS is independent of synchronization and recoverable application failures. Full host suite with 361 framework units, native build, contracts and all seven physical functional cases passed; 250ms theft bounds and 31 final preservation checks passed. Historical failed runs remain failed.",
+  "status": "PASS software validation: admission self-tests run only during user-requested Add, with bounded BLE candidate failure diagnostics and approved Add-dialog messages. Full host suite with 361 framework units, native build and contracts passed. Changed source has not been deployed or physically timed; earlier exact-image 0.1.113 bench qualification remains historical evidence.",
   "audit_date": "2026-11-01",
   "firmware_version": "0.1.113",
   "branch": "consort",
@@ -51,6 +51,46 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
+    "result": "PASS software validation; physical deployment and timing not performed",
+    "evidence_directory": "test-results/admission-on-demand-2026-11-01",
+    "source_firmware_version": "0.1.113",
+    "deployed": false,
+    "invariant": "No admission self-test at boot, discovery or an idle physical Add window. The primary tests after user Add submission; the candidate tests on its first complete plaintext handshake in that window. Failed tests cannot transfer credentials or commit membership; a bounded display-only BLE diagnostic explains candidate failure.",
+    "design": "amity-octopus-consortium/09-membership-security-and-enrollment.md",
+    "host_tests": {
+      "result": "PASS",
+      "command": "sh tests/run_host_tests.sh",
+      "framework_unit_tests": 361,
+      "log": "test-results/admission-on-demand-2026-11-01/host-tests.log"
+    },
+    "native_build": {
+      "result": "PASS",
+      "command": "idf.py build",
+      "log": "test-results/admission-on-demand-2026-11-01/build.log",
+      "application_sha256": "283c5df1502dc09c0fec0a6ba4f45097963b654f8c1300703b5687a65f721060"
+    },
+    "design_contracts": {
+      "result": "PASS",
+      "log": "test-results/admission-on-demand-2026-11-01/contracts.log"
+    },
+    "coverage": [
+      "all startup roles and original Matter claim independent of admission tests",
+      "both selected profiles and full explicit USB self-test preserved",
+      "candidate first complete request, fragmented request, duplicate and reconnect reuse, new physical-window retry",
+      "failed test skips admission handshake, encrypted handler, Wi-Fi export and membership writes",
+      "candidate generation/session/connection/deadline and primary cancellation/expiry fences after testing",
+      "exact empty plaintext diagnostic; malformed/unknown/stale/encrypted/success-marked diagnostic rejection",
+      "approved primary and candidate messages render via both admission status and tracked operation errors"
+    ],
+    "timing": {
+      "physical_measurement_performed": false,
+      "expected_normal_profile_boot_savings_ms": 1950,
+      "basis": "Earlier measured boot self-test duration; this revision has no new physical boot-time measurement."
+    },
+    "latest_deployed_firmware_version": "0.1.113",
+    "latest_deployment_report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/deployment.json"
+  },
+  "previous_tls_connection_reuse_task_validation": {
     "result": "PASS",
     "evidence_directory": "test-results/tls-connection-reuse-0.1.113-2026-11-01",
     "firmware_version": "0.1.113",

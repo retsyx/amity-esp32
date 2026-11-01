@@ -15,6 +15,38 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Admission checks on request — 1 November 2026
+
+Admission self-tests no longer run at boot or gate ordinary Matter commissioning
+and the original-main claim. PSA initialization and full stored credential,
+identity, journal and authority validation remain. A user-selected Add runs the
+configured-profile self-test on the primary before connecting; the candidate
+runs it on its existing GATT worker after receiving the first complete plaintext
+handshake in the physical setup window. Its transient result is reused only
+within that physical window. An idle window performs no self-test.
+
+A failed candidate remains discoverable and returns a fixed, empty diagnostic
+on the existing BLE record response. The primary reports the approved setup
+security message through the existing authenticated operation/status endpoints
+and Add dialog. The diagnostic never authenticates the candidate or permits
+credential transfer. Malformed, unknown, stale, encrypted and success-marked
+diagnostics fail without supplying that specific diagnosis. Both sides recheck
+their existing cancellation/window/session fences after the long self-test.
+
+The full host runner passes, including 361 framework unit tests, actual-source
+startup/claim, both admission profiles, deferred GATT worker success/failure,
+fragmented records, physical-window reuse/retry, stale completion, primary
+cancellation/expiry, exact BLE diagnostic parsing and both approved messages in
+the real Add UI. The native ESP32-S3 build passes with the existing 0.1.113
+source version. Evidence is under
+`test-results/admission-on-demand-2026-11-01/`.
+
+This revision has not been deployed or physically timed. Removing the earlier
+measured 1.95-second normal-profile boot test is expected to save approximately
+two seconds; that is an estimate, not a new factory-reset timing measurement.
+The earlier deployed 0.1.113 physical qualification below remains evidence for
+its exact recorded image, not for this changed source.
+
 ## TLS connection reuse — 1 November 2026
 
 TLS authentication and transport lifetime are separate from configuration

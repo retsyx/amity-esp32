@@ -34,7 +34,7 @@ function fixture(options={}){
   if(path==='membership/admission'){admissionReads++;const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
   if(path==='membership/cancel'){if(data.scan_id!==state.scan_id)throw Object.assign(Error('This search is no longer active.'),{status:409});state.phase='cancelled';return {stage:'complete'};}
   if(path==='membership/add'){if(options.failAdd)throw Object.assign(Error('The setup code could not be verified'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
-  if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage};
+  if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage,message:state.error};
   throw Error('Unexpected HTTP request '+path);
  };
  const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,token:'fixture-session',console,
@@ -73,6 +73,12 @@ function fixture(options={}){
  const stale=fixture({holdStatus:true});await stale.open();const old=stale.state.scan_id;await stale.click(stale.button('Cancel'));await stale.open();const current=stale.state.scan_id;assert.notEqual(old,current);stale.releaseStatus();await flush();assert.ok(stale.dialog());assert.equal(stale.state.scan_id,current);assert.equal(stale.label('Name').hidden,false);assert.equal(stale.posts.filter(([path])=>path.endsWith('/add')).length,0);
  stale.state.scan_id='f'.repeat(32);await stale.tick();assert.match(stale.dialog().textContent,/search changed/);assert.equal(stale.button('Add').disabled,true);
  const unknown=fixture();await unknown.open();await unknown.fill(unknown.input('Name'),'office');await unknown.click(unknown.button('Add'));unknown.state.scan_id='e'.repeat(32);unknown.setStage('unknown');await unknown.tick();assert.match(unknown.dialog().textContent,/Check the Amity devices list/);assert.equal(unknown.button('Add').disabled,true);assert.equal(unknown.posts.filter(([path])=>path.endsWith('/add')).length,1);
+ for(const error of ['The new Amity reported that its setup security check failed. Restart it and try again.','This Amity failed its setup security check. Restart it and try again.'])for(const stage of ['admitted','failed']){
+  const security=fixture();await security.open();await security.fill(security.input('Name'),'office');await security.click(security.button('Add'));
+  security.state.phase='failed';security.state.error=error;security.setStage(stage);await security.tick();
+  assert.ok(security.dialog().textContent.includes(error));assert.equal(security.button('Add').disabled,true);
+  assert.equal(security.posts.filter(([path])=>path==='membership/add').length,1);assert.deepEqual(security.errors,[]);
+ }
  const listed=fixture();await listed.context.window.amityInterface.route('config').decode(new Response(JSON.stringify({version:1,device_choices:[],activities:[]})));await listed.context.window.amityInterface.refresh();assert.equal(listed.document.body.children.find(node=>node.id==='managedAmityList').children.length,2);assert.match(listed.document.body.textContent,/amity-office/);
  const collecting=fixture({scanning:true});await collecting.open();assert.equal(collecting.button('Add').disabled,true);collecting.state.phase='found';await collecting.tick();assert.equal(collecting.label('Name').hidden,false);
  const liveChoices=fixture({scanning:true,candidates:[]});await liveChoices.open();assert.equal(liveChoices.button('Add').disabled,true);

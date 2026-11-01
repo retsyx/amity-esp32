@@ -1261,7 +1261,7 @@ void admission_failed(model::MessageId scan,const std::string& failure){
 
 }
 void invite_worker_work(void *arg){
-    BoundedSetupTimings<12> timing("invite",now_ms);
+    BoundedSetupTimings<13> timing("invite",now_ms);
     std::unique_ptr<InviteRequest> invite(static_cast<InviteRequest*>(arg));
     const auto scan=invite->scan_id;invite.reset();timing.scan=scan;
     uint64_t generation=0,deadline=0;RuntimeRadioHooks hooks;
@@ -1289,11 +1289,25 @@ void invite_worker_work(void *arg){
     }
     if(!submitted){admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;}
     const auto selected=timing.begin("worker_selected");timing.finish(selected,true);timing.begin("selected_total");
+    // Admission diagnostics belong to this user-requested Add attempt, never
+    // boot/Matter readiness or ordinary authenticated operation.
+    const bool checked=current()&&timing.step("admission_selftest",[&]{return admission_crypto_self_test(configured_admission_mode());});
+    if(!current()){
+        pin=0;admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;
+    }
+    if(!checked){
+        pin=0;admission_failed(scan,"This Amity failed its setup security check. Restart it and try again.");return;
+    }
     bool good=current()&&timing.step("gatt_connect",[&]{return gatt_client_connect_candidate(token,generation)==ESP_OK;});
     AdmissionClient client(configured_admission_mode(),pin);pin=0;
-    good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply)&&current();});});
+    BootstrapFailure bootstrap_failure=BootstrapFailure::none;
+    good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply,&bootstrap_failure)&&current();});});
     auto secure=[&](std::string_view plain,std::string& result){std::string encrypted,reply;return current()&&client.encrypt(plain,encrypted)&&gatt_client_exchange(true,encrypted,reply)&&current()&&client.decrypt(reply,result);};
     std::string response,failure;Json identity_json;JsonError err;Peer peer;bool networked=false;uint64_t bootstrap_profile=0;
+    // A pre-handshake diagnostic is display-only. It grants no authenticated
+    // identity, membership or access to the encrypted credential exchange.
+    if(!good&&current()&&bootstrap_failure==BootstrapFailure::crypto_self_test_failed)
+        failure="The new Amity reported that its setup security check failed. Restart it and try again.";
     good=good&&timing.step("identify_rpc",[&]{return secure("{\"phase\":\"identify\"}",response);});
     if(good){
         const auto validation=timing.begin("peer_validation");
@@ -1426,15 +1440,9 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     // Its removal must never erase origin identity or factory Matter credentials.
     if(erase_record("amity_origin","bootstrap")!=ESP_OK)ESP_LOGW("consortium","Could not discard an unused setup verifier");
     std::string name_record;const auto name_result=read_record("amity_group","hostnames",name_record,8192);if(name_result!=ESP_ERR_NVS_NOT_FOUND&&(name_result!=ESP_OK||!hostnames.restore(name_record))){hostnames={};status.last_error="Saved device names are unavailable. Names will refresh when devices reconnect.";}
-    // Stored headless roles cannot start admission or claim controller status.
-    // Their operational readiness comes from PSA, validated identity and TLS.
-    // Reset/reclaim boots unclaimed and runs the admission test before setup.
-    const bool needs_admission=group.role==Group::unclaimed||original_controller(group,identity.id);
-    status.crypto_ready=false;
-    if(needs_admission){
-        const auto admission_stage=timing.begin("admission_selftest");status.crypto_ready=admission_crypto_self_test(configured_admission_mode());timing.finish(admission_stage,status.crypto_ready,1);
-        if(!status.crypto_ready){error("Admission key exchange/encryption self-test failed");return ESP_FAIL;}
-    }else{const auto skipped=timing.begin("admission_not_needed");timing.finish(skipped,true,0);}
+    // Operational startup validates PSA and stored identity/authority. The
+    // admission self-test runs only during an explicit Add attempt; it cannot
+    // delay boot or prevent the independent Matter setup from choosing a main.
     status.initialized=status.credential_ready=true;status.authority_ready=original_controller(group,identity.id);status.coordinator=group.role==Group::coordinator&&status.authority_ready;status.member=group.role==Group::member||group.role==Group::prepared;candidate_passive=status.member;status.epoch=group.epoch;status.membership_revision=group.revision;status.leaf_spki_sha256=identity.spki;status.phase=group.role==Group::prepared?"finishing_enrollment":(group.role==Group::unclaimed?"awaiting_setup":"idle");
     if(startup.passive()){status.authority_ready=false;status.coordinator=false;status.member=true;}
     if(group.role==Group::retired){status.member=false;status.phase="retired";if(group.join_id&&group.mutation_id&&group.mutation_digest==group.join_digest){status.phase="enrollment_aborted";status.last_error="Enrollment cancelled; this Amity remains passive. Use physical reclaim to operate independently.";}}
@@ -1464,7 +1472,7 @@ RuntimeStatus runtime_status(){
 }
 esp_err_t runtime_claim_original_controller(){
     std::lock_guard<std::mutex> guard(lock);
-    if(!status.initialized||!status.credential_ready||!status.crypto_ready)return ESP_ERR_INVALID_STATE;
+    if(!status.initialized||!status.credential_ready)return ESP_ERR_INVALID_STATE;
     if(original_controller(group,identity.id))return ESP_OK;
     // Only the application's verified Matter/network completion path calls
     // this entry. The durable candidate decision wins any concurrent claim.
@@ -1494,7 +1502,7 @@ std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootI
 esp_err_t runtime_register_gatt(){return gatt_register();}
 esp_err_t runtime_open_enrollment(uint64_t generation){
     std::lock_guard<std::mutex> guard(lock);
-    if(!status.initialized||!status.crypto_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;
+    if(!status.initialized||!status.credential_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;
     const auto e=gatt_server_open(generation,identity.id,bootstrap_request);
     if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+EnrollmentWindow::duration_ms;status.enrollment_open=true;status.phase="enrollment_open";}
     return e;
@@ -1527,7 +1535,7 @@ RuntimeAdmissionStatus runtime_admission_status(){
 esp_err_t runtime_scan_admission(model::MessageId scan){
     if(!scan)return ESP_ERR_INVALID_ARG;
     std::lock_guard<std::mutex> guard(lock);
-    if(group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!radio.reserve||!status.crypto_ready)return ESP_ERR_INVALID_STATE;
+    if(!status.initialized||!status.credential_ready||group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!radio.reserve)return ESP_ERR_INVALID_STATE;
     if(invitation_running.exchange(true))return ESP_ERR_INVALID_STATE;
     admission={};admission.view.scan_id=scan;admission.view.phase="scanning";admission.view.requires_setup_code=configured_admission_mode()==AdmissionMode::setup_code;
     invitation_cancelled=false;status.last_error.clear();

@@ -42,6 +42,9 @@ unsigned request_endpoint = 0;
 size_t response_offset = 0, max_write = 0, max_read = 0;
 uint32_t response_record = 0;
 uint8_t response_endpoint = 0, response_status = 1;
+enum class BootstrapFailure : uint8_t { none=0, crypto_self_test_failed=1 };
+BootstrapFailure response_failure=BootstrapFailure::none;
+bool gatt_client_exchange(bool,std::string_view,std::string&,BootstrapFailure* failure=nullptr);
 uint16_t server_connection = 31;
 uint64_t generation = 7, server_session = 9, deadline = 100000000;
 bool server_open = true;
@@ -75,6 +78,7 @@ uint64_t clock_ms = 100;
 unsigned operations = 0, request_writes = 0, cursor_writes = 0, reads = 0, waits = 0;
 unsigned pending_reads_left = 0, fail_operation = 0, fail_wait = 0, wait_ms = 11;
 bool rejected_response = false, malformed_response = false, publish_before_cursor = false;
+unsigned diagnostic_mutation=0;
 std::vector<unsigned> wait_limits;
 std::vector<std::string> timing_lines;
 uint64_t now_ms() { return clock_ms; }
@@ -145,6 +149,13 @@ int ble_gattc_read(uint16_t, uint16_t, int, void *) {
     const auto error = access(client_connection, 17, &context, nullptr);
     if (error) return error;
     client_response = std::move(value.bytes);
+    if(diagnostic_mutation==1)client_response[2]^=1;
+    if(diagnostic_mutation==2)client_response[8]^=1;
+    if(diagnostic_mutation==3)client_response[9]=2;
+    if(diagnostic_mutation==4)client_response[11]=1;
+    if(diagnostic_mutation==5)client_response[6]=1;
+    if(diagnostic_mutation==6)client_response.push_back('x');
+    if(diagnostic_mutation==7)client_response[1]=1;
     if (malformed_response && response_record == request_record) client_response[11] = 1;
     max_read = std::max(max_read, client_response.size());
     return 0;
@@ -162,6 +173,7 @@ void reset(unsigned mtu = 527) {
     fake_mtu = mtu; client_record = request_record = 0; client_error = 0;
     received.clear(); client_response.clear(); max_write = max_read = response_offset = 0;
     response_record = 0; response_endpoint = 0; response_status = 1;
+    response_failure=BootstrapFailure::none;diagnostic_mutation=0;
     srv_response = "old-private-reply"; response_offset = 5;
     bad_attribute = bad_frame = rejected_response = malformed_response = publish_before_cursor = false;
     clock_ms = 100; operations = request_writes = cursor_writes = reads = waits = 0;
@@ -217,6 +229,28 @@ void timing_tests() {
           "invalid-record timing changed precondition behavior");
     std::cout << "PASS actual client/server cursor: late publication preserves offset, one write per advanced position, exact bytes/deadlines, safe timing and fail-fast outcomes\n";
 }
+void diagnostic_tests(){
+    for(unsigned mutation=0;mutation<9;++mutation){
+        reset();answer.clear();rejected_response=true;response_failure=BootstrapFailure::crypto_self_test_failed;
+        diagnostic_mutation=mutation<8?mutation:0;
+        BootstrapFailure failure=BootstrapFailure::crypto_self_test_failed;std::string response;
+        // The reserved diagnostic is recognized only on a complete, empty,
+        // exact plaintext rejection. Unknown/malformed/encrypted replies fail
+        // without promoting their contents into a customer-facing diagnosis.
+        const bool encrypted=mutation==8;
+        check(!gatt_client_exchange(encrypted,"handshake",response,&failure),"diagnostic became successful setup");
+        check(failure==(mutation==0?BootstrapFailure::crypto_self_test_failed:BootstrapFailure::none),"malformed/stale diagnostic escaped correlation");
+    }
+    reset();answer="reply";BootstrapFailure failure=BootstrapFailure::crypto_self_test_failed;std::string response;
+    check(gatt_client_exchange(false,"handshake",response,&failure)&&failure==BootstrapFailure::none,"success retained prior diagnostic");
+    failure=BootstrapFailure::crypto_self_test_failed;
+    check(!gatt_client_exchange(false,"",response,&failure)&&failure==BootstrapFailure::none,"precondition retained prior diagnostic");
+    for(bool encrypted:{false,true}){
+        reset();answer="valid reply";response_failure=BootstrapFailure::crypto_self_test_failed;failure=BootstrapFailure::crypto_self_test_failed;
+        check(!gatt_client_exchange(encrypted,"request",response,&failure)&&failure==BootstrapFailure::none,"success response accepted a diagnostic marker");
+    }
+    std::cout<<"PASS bounded setup diagnostic: exact plaintext empty rejection only; unknown, stale, malformed and encrypted replies stay generic; each call clears prior failure\n";
+}
 int main() {
     int failures = 0;
     for (const unsigned mtu : {23, 24, 64, 247, 512, 515, 516, 517, 527}) {
@@ -233,7 +267,7 @@ int main() {
                       << " max_attribute_read=" << max_read << '\n';
         }
     }
-    try { timing_tests(); } catch (const std::exception& error) {
+    try { timing_tests(); diagnostic_tests(); } catch (const std::exception& error) {
         ++failures; std::cerr << "FAIL " << error.what() << '\n';
     }
     return failures ? 1 : 0;

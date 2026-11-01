@@ -288,14 +288,13 @@ esp_err_t snapshot(httpd_req_t* req){
     cJSON_AddNumberToObject(storage,"configuration_payload_limit",config_store::configuration_payload_limit);
     if(storage_result==ESP_OK){cJSON_AddNumberToObject(storage,"used_entries",budget.used_entries);cJSON_AddNumberToObject(storage,"available_entries",budget.available_entries);cJSON_AddNumberToObject(storage,"total_entries",budget.total_entries);}
     cJSON_AddBoolToObject(capabilities,"managed_updates",true);
-    cJSON_AddBoolToObject(capabilities,"consortium_enrollment",group.initialized&&group.crypto_ready);
+    cJSON_AddBoolToObject(capabilities,"consortium_enrollment",group.initialized&&group.credential_ready);
     const auto timing=cec::Bus::runtime_statistics();auto* runtime=cJSON_AddObjectToObject(result.get(),"cec_runtime");
     cJSON_AddNumberToObject(runtime,"active_ports",timing.active_ports);cJSON_AddNumberToObject(runtime,"timer_instances",timing.timer_instances);
     cJSON_AddNumberToObject(runtime,"ticks",timing.ticks);cJSON_AddNumberToObject(runtime,"late_ticks",timing.late_ticks);
     cJSON_AddNumberToObject(runtime,"max_tick_gap_us",timing.max_tick_gap_us);cJSON_AddNumberToObject(runtime,"max_isr_us",timing.max_isr_us);
     auto* membership=cJSON_AddObjectToObject(result.get(),"membership");
     cJSON_AddStringToObject(membership,"membership_revision",m::format_uint64(group.membership_revision).c_str());
-    cJSON_AddBoolToObject(membership,"crypto_ready",group.crypto_ready);
     cJSON_AddBoolToObject(membership,"enrollment_open",group.enrollment_open);
     cJSON_AddBoolToObject(membership,"coordinator",group.coordinator);
     cJSON_AddBoolToObject(membership,"authority_ready",group.authority_ready);

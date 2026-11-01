@@ -6,8 +6,7 @@
 #include <functional>
 namespace amity::consortium {
 struct RuntimeStatus {
-    // crypto_ready is admission-test readiness; operational credentials use credential_ready.
-    bool initialized=false,credential_ready=false,crypto_ready=false,coordinator=false,member=false;
+    bool initialized=false,credential_ready=false,coordinator=false,member=false;
     bool enrollment_open=false,connected=false,synchronized=false;
     bool authority_ready=false;
     uint32_t active_peers=0;uint64_t epoch=0,membership_revision=0;

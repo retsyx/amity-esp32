@@ -17,7 +17,7 @@ using esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_STATE=1,ESP_FAIL=2;
 std::mutex lock;Group group,durable;Identity identity;model::ConsortiumId singleton;bool candidate_passive=false;
 uint64_t candidate_generation=0,candidate_deadline=0,released=0;unsigned closed_count=0;
 void gatt_server_close(){++closed_count;}void defer_radio_release(uint64_t generation){released=generation;}
-struct{bool initialized=true,credential_ready=true,crypto_ready=true,coordinator=false,authority_ready=false,member=false,enrollment_open=false;uint64_t epoch=0,membership_revision=0;std::string phase="awaiting_setup",last_error;}status;
+struct{bool initialized=true,credential_ready=true,coordinator=false,authority_ready=false,member=false,enrollment_open=false;uint64_t epoch=0,membership_revision=0;std::string phase="awaiting_setup",last_error;}status;
 unsigned writes=0;unsigned fault=0;
 int save_group(const Group&next){++writes;if(fault==1)return ESP_FAIL;durable=next;return fault==2?ESP_FAIL:ESP_OK;}
 template<class T>T id(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
@@ -37,7 +37,7 @@ int main(){
  reset();candidate_generation=7;candidate_deadline=42;status.phase="enrollment_open";status.enrollment_open=true;assert(!runtime_original_setup_eligible());runtime_close_enrollment();assert(closed_count==1&&released==7&&!status.enrollment_open&&status.phase=="awaiting_setup"&&runtime_original_setup_eligible()&&!writes);assert(runtime_claim_original_controller()==ESP_OK); // Cancelling one uncommitted choice permits physical Matter setup again.
  reset();group.role=Group::prepared;candidate_passive=true;candidate_generation=7;candidate_deadline=42;status.phase="prepared";runtime_close_enrollment();assert(status.phase=="prepared"&&!runtime_original_setup_eligible()&&runtime_claim_original_controller()==ESP_ERR_INVALID_STATE);
  for(unsigned cut:{1u,2u}){reset();fault=cut;assert(runtime_claim_original_controller()==ESP_FAIL&&!status.authority_ready&&group.role==Group::unclaimed);assert((durable.role==Group::coordinator)==(cut==2));assert(candidate_passive&&!runtime_original_setup_eligible()&&runtime_claim_original_controller()==ESP_ERR_INVALID_STATE);group=durable;candidate_passive=false;fault=0;assert(runtime_claim_original_controller()==ESP_OK);if(cut==1)assert(status.authority_ready);} // Only a reboot/reload can resolve uncertain durable outcome.
- for(unsigned unavailable=0;unavailable<3;++unavailable){reset();if(!unavailable)status.initialized=false;else if(unavailable==1)status.credential_ready=false;else status.crypto_ready=false;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);}
+ for(unsigned unavailable=0;unavailable<2;++unavailable){reset();if(!unavailable)status.initialized=false;else status.credential_ready=false;assert(runtime_claim_original_controller()==ESP_ERR_INVALID_STATE&&!writes);}
  std::cout<<"PASS actual original claim: no implicit singleton authority, durable epoch1 identity, idempotence, member/retired rejection, late Matter race and before/after-commit failure\n";
 }
 '''

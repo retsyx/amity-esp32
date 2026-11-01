@@ -44,16 +44,21 @@ struct WorkFinished {~WorkFinished(){processing_record=false;--outstanding_work;
 uint16_t cancelled_server=BLE_HS_CONN_HANDLE_NONE,cancelled_client=BLE_HS_CONN_HANDLE_NONE;
 uint32_t response_record=0;uint16_t response_offset=0;
 uint8_t response_endpoint=0,response_status=0;
+BootstrapFailure response_failure=BootstrapFailure::none;
 std::unique_ptr<AdmissionServer> server_channel;
 BootstrapRecords records;
-uint64_t channel_session=0,channel_started=0,record_started=0;
+uint64_t channel_generation=0,channel_session=0,channel_started=0,record_started=0;
+// Worker-owned result belongs only to this physical enrollment window. A new
+// connection may retry its diagnostic without repeating the expensive check.
+uint64_t tested_generation=0;
+bool self_test_passed=false;
 uint32_t pending_record=0;uint8_t pending_endpoint=0,last_endpoint=0;
-void close_channel(){server_channel.reset();channel_live=false;channel_session=channel_started=record_started=0;pending_record=0;records.disconnect();}
+void close_channel(){server_channel.reset();channel_live=false;channel_generation=channel_session=channel_started=record_started=0;pending_record=0;records.disconnect();}
 void worker(void*){
     Work work;
     while(true){
         if(xQueueReceive(work_queue,&work,pdMS_TO_TICKS(100))!=pdTRUE){
-            if(server_channel&&((!server_channel->authenticated()&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000))){
+            if(channel_live&&(((!server_channel||!server_channel->authenticated())&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000))){
                 uint16_t connection;{std::lock_guard<std::mutex> guard(state_mutex);connection=server_connection;}
                 close_channel();++failed_proofs;if(connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(connection,BLE_ERR_REM_USER_CONN_TERM);
             }
@@ -66,12 +71,11 @@ void worker(void*){
             if(!server_open||generation!=work.generation||server_session!=work.session||server_connection!=work.connection||now_ms()>=deadline||failed_proofs>=5)continue;
             own_id=server_id;pin=server_pin;
         }
-        if(server_channel&&channel_session!=work.session)close_channel();
-        if(!server_channel){
-            server_channel=std::make_unique<AdmissionServer>(configured_admission_mode(),own_id,pin);
-            channel_live=true;channel_session=work.session;channel_started=now_ms();records.connect(work.generation);
+        if(channel_live&&(channel_generation!=work.generation||channel_session!=work.session))close_channel();
+        if(!channel_live){
+            channel_live=true;channel_generation=work.generation;channel_session=work.session;channel_started=now_ms();records.connect(work.generation);
         }
-        if((!server_channel->authenticated()&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000)){
+        if(((!server_channel||!server_channel->authenticated())&&now_ms()-channel_started>=30000)||(record_started&&now_ms()-record_started>=30000)){
             close_channel();++failed_proofs;ble_gap_terminate(work.connection,BLE_ERR_REM_USER_CONN_TERM);continue;
         }
         if(record_started&&(pending_record!=work.record||pending_endpoint!=work.endpoint)){
@@ -81,12 +85,28 @@ void worker(void*){
         char rid[33];snprintf(rid,sizeof(rid),"%032x",static_cast<unsigned>(work.record));auto parsed=model::MessageId::parse(rid);if(!parsed)continue;
         const auto result=records.fragment(work.generation,*parsed,work.total,work.offset,std::string_view(reinterpret_cast<char*>(work.bytes),work.length));
         if(result==BootstrapRecords::Result::incomplete)continue;
-        std::string response;bool good=false;
+        std::string response;bool good=false;BootstrapFailure failure=BootstrapFailure::none;
         if(result==BootstrapRecords::Result::duplicate&&last_endpoint==work.endpoint){response=std::string(records.cached_response());good=true;record_started=0;}
         else if(result==BootstrapRecords::Result::complete){
             const auto request=records.request();
-            if(!work.endpoint)good=server_channel->handshake(request,response);
-            else if(server_channel->authenticated()){
+            if(!work.endpoint){
+                if(tested_generation!=work.generation){
+                    // Run only after a complete handshake request in the user's
+                    // physical window, outside runtime/transport locks.
+                    self_test_passed=admission_crypto_self_test(configured_admission_mode());
+                    tested_generation=work.generation;
+                }
+                bool current=false;{std::lock_guard<std::mutex> guard(state_mutex);
+                    current=server_open&&generation==work.generation&&server_session==work.session&&server_connection==work.connection&&now_ms()<deadline;
+                }
+                if(!current){close_channel();continue;}
+                if(!self_test_passed)failure=BootstrapFailure::crypto_self_test_failed;
+                else{
+                    if(!server_channel)server_channel=std::make_unique<AdmissionServer>(configured_admission_mode(),own_id,pin);
+                    good=server_channel->handshake(request,response);
+                }
+            }
+            else if(server_channel&&server_channel->authenticated()){
                 std::string plaintext,reply;BootstrapHandler handler;
                 {std::lock_guard<std::mutex> guard(state_mutex);if(server_open&&generation==work.generation&&server_session==work.session&&now_ms()<deadline)handler=server_handler;}
                 good=handler&&server_channel->decrypt(request,plaintext)&&handler(plaintext,reply)==ESP_OK&&!reply.empty()&&server_channel->encrypt(reply,response);
@@ -95,9 +115,9 @@ void worker(void*){
             good=good&&!response.empty()&&response.size()<=4096&&records.finish(*parsed,response);
             if(good){last_endpoint=work.endpoint;record_started=0;}
         }
-        if(!good){++failed_proofs;close_channel();}
+        if(!good){if(failure==BootstrapFailure::none)++failed_proofs;close_channel();}
         {std::lock_guard<std::mutex> guard(state_mutex);
-            if(server_open&&generation==work.generation&&server_session==work.session&&server_connection==work.connection){response_record=work.record;response_endpoint=work.endpoint;response_status=good?1:2;srv_response=std::move(response);}
+            if(server_open&&generation==work.generation&&server_session==work.session&&server_connection==work.connection&&now_ms()<deadline){response_record=work.record;response_endpoint=work.endpoint;response_status=good?1:2;response_failure=failure;srv_response=std::move(response);}
         }
         if(failed_proofs>=5){std::lock_guard<std::mutex> guard(state_mutex);const bool was_open=server_open;server_open=false;if(was_open)ble_gap_adv_stop();if(server_connection!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(server_connection,BLE_ERR_REM_USER_CONN_TERM);}
     }
@@ -110,7 +130,7 @@ int access(uint16_t connection,uint16_t,ble_gatt_access_ctxt *context,void*){
         Work work;work.generation=generation;work.session=server_session;work.connection=connection;work.endpoint=bytes[1];work.record=(uint32_t(bytes[2])<<24)|(uint32_t(bytes[3])<<16)|(uint32_t(bytes[4])<<8)|bytes[5];work.total=(uint16_t(bytes[6])<<8)|bytes[7];work.offset=(uint16_t(bytes[8])<<8)|bytes[9];work.length=length-10;if(!work.record||!work.total||work.total>4096||work.offset>work.total||work.length>work.total-work.offset)return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;memcpy(work.bytes,bytes+10,work.length);if(uxQueueMessagesWaiting(work_queue)>=15||!post_work(work))return BLE_ATT_ERR_INSUFFICIENT_RES;return 0;}
     if(context->op==BLE_GATT_ACCESS_OP_READ_CHR){
         if(context->offset)return BLE_ATT_ERR_INVALID_OFFSET;
-        uint8_t header[12]={1,response_status,uint8_t(response_record>>24),uint8_t(response_record>>16),uint8_t(response_record>>8),uint8_t(response_record),uint8_t(srv_response.size()>>8),uint8_t(srv_response.size()),response_endpoint,0,uint8_t(response_offset>>8),uint8_t(response_offset)};
+        uint8_t header[12]={1,response_status,uint8_t(response_record>>24),uint8_t(response_record>>16),uint8_t(response_record>>8),uint8_t(response_record),uint8_t(srv_response.size()>>8),uint8_t(srv_response.size()),response_endpoint,uint8_t(response_failure),uint8_t(response_offset>>8),uint8_t(response_offset)};
         const size_t mtu=ble_att_mtu(connection),capacity=mtu>13?std::min<size_t>(500,mtu-13):1;
         const auto count=std::min(capacity,srv_response.size()-std::min<size_t>(response_offset,srv_response.size()));
         if(os_mbuf_append(context->om,header,sizeof(header)))return BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -130,7 +150,7 @@ int server_gap(ble_gap_event *event,void *token){
         if(!event->connect.status){if(!server_open||server_sealed||server_connection!=BLE_HS_CONN_HANDLE_NONE||server_session==UINT64_MAX)ble_gap_terminate(event->connect.conn_handle,BLE_ERR_REM_USER_CONN_TERM);else{++server_session;server_connection=event->connect.conn_handle;}}
         else advertise_remaining();
     }else if(event->type==BLE_GAP_EVENT_DISCONNECT&&event->disconnect.conn.conn_handle==server_connection){
-        server_connection=BLE_HS_CONN_HANDLE_NONE;Work work;work.close=true;post_work(work);srv_response.clear();response_record=response_status=0;
+        server_connection=BLE_HS_CONN_HANDLE_NONE;Work work;work.close=true;post_work(work);srv_response.clear();response_record=response_status=0;response_failure=BootstrapFailure::none;
         advertise_remaining();
     }
     return 0;
@@ -242,7 +262,7 @@ esp_err_t gatt_server_open(uint64_t gen,model::OctopusId own_id,BootstrapHandler
     const auto* factory=device_settings::factory();
     if(configured_admission_mode()==AdmissionMode::setup_code&&(!factory||!amity::valid_setup_pin(factory->passcode)))return ESP_ERR_INVALID_STATE;
     generation=gen;deadline=now_ms()+180000;server_sealed=false;server_id=own_id.str();server_pin=factory?factory->passcode:0;server_handler=std::move(handler);
-    server_connection=BLE_HS_CONN_HANDLE_NONE;failed_proofs=0;response_status=response_record=0;srv_response.clear();++server_callback_cookie;
+    server_connection=BLE_HS_CONN_HANDLE_NONE;failed_proofs=0;response_status=response_record=0;response_failure=BootstrapFailure::none;srv_response.clear();++server_callback_cookie;
     advertised_name="A-"+server_id.substr(26);
     ble_hs_adv_fields fields{};fields.flags=BLE_HS_ADV_F_DISC_GEN|BLE_HS_ADV_F_BREDR_UNSUP;fields.uuids128=const_cast<ble_uuid128_t*>(&service_uuid);fields.num_uuids128=1;fields.uuids128_is_complete=1;
     fields.name=reinterpret_cast<const uint8_t*>(advertised_name.data());fields.name_len=advertised_name.size();fields.name_is_complete=1;
@@ -326,7 +346,7 @@ esp_err_t gatt_client_connect_candidate(std::string_view selected,uint64_t gen){
     capture_gatt_link(characteristic_timing);characteristic_timing.done();
     return ESP_OK;
 }
-bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response){GattTiming timing("exchange");timing.exchange=true;timing.endpoint=encrypted?1:0;if(request.empty()||request.size()>4096||client_connection==BLE_HS_CONN_HANDLE_NONE||client_record==UINT32_MAX)return false;const auto rid=++client_record;timing.record=rid;capture_gatt_link(timing);void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));const auto mtu=ble_att_mtu(client_connection);
+bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &response,BootstrapFailure* failure){if(failure)*failure=BootstrapFailure::none;GattTiming timing("exchange");timing.exchange=true;timing.endpoint=encrypted?1:0;if(request.empty()||request.size()>4096||client_connection==BLE_HS_CONN_HANDLE_NONE||client_record==UINT32_MAX)return false;const auto rid=++client_record;timing.record=rid;capture_gatt_link(timing);void *token=reinterpret_cast<void*>(static_cast<uintptr_t>(client_callback_cookie));const auto mtu=ble_att_mtu(client_connection);
     // The ATT value limit is 512 even when the negotiated MTU is 517 or 527.
     // Leave room for this protocol's ten-byte fragment header as well as the
     // write request's three-byte ATT header.
@@ -348,8 +368,13 @@ bool gatt_client_exchange(bool encrypted,std::string_view request,std::string &r
             const size_t length=(uint16_t(uint8_t(bytes[6]))<<8)|uint8_t(bytes[7]);
             const size_t cursor=(uint16_t(uint8_t(bytes[10]))<<8)|uint8_t(bytes[11]);
             if(returned==rid&&uint8_t(bytes[8])==uint8_t(encrypted)){
-                if(uint8_t(bytes[1])==2){timing.failure="response_rejected";return false;}
-                if(uint8_t(bytes[1])==1){timing.failure="response_frame";if(length>4096||!length||cursor!=offset||(total&&total!=length)||bytes.size()-12>length-offset)return false;total=length;if(bytes.size()==12)return false;response.append(bytes.data()+12,bytes.size()-12);++timing.response_fragments;offset=response.size();if(offset==total){timing.done();return true;}cursor_needed=true;continue;}
+                if(uint8_t(bytes[1])==2){
+                    // Pre-handshake diagnostics describe only this exact failed
+                    // request. They never authenticate a peer or authorize work.
+                    if(failure&&!encrypted&&bytes.size()==12&&!length&&!cursor&&!offset&&!total&&uint8_t(bytes[9])==uint8_t(BootstrapFailure::crypto_self_test_failed))*failure=BootstrapFailure::crypto_self_test_failed;
+                    timing.failure="response_rejected";return false;
+                }
+                if(uint8_t(bytes[1])==1){timing.failure="response_frame";if(uint8_t(bytes[9])||length>4096||!length||cursor!=offset||(total&&total!=length)||bytes.size()-12>length-offset)return false;total=length;if(bytes.size()==12)return false;response.append(bytes.data()+12,bytes.size()-12);++timing.response_fragments;offset=response.size();if(offset==total){timing.done();return true;}cursor_needed=true;continue;}
             }
         }
         ++timing.pending_reads;vTaskDelay(pdMS_TO_TICKS(25));

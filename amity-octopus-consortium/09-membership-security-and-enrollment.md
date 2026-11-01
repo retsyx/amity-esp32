@@ -49,16 +49,36 @@ The normal build uses fresh ephemeral key exchange and AEAD-protected messages d
 
 Both main and candidate must use the same profile. Bind the profile and participants into the exchange and reject profile mismatch, malformed records, bad proofs and replay without downgrade or fallback. Keep setup codes and derived secrets transient; do not write them to browser storage, logs or portable configuration.
 
-Unclaimed and original-main startup runs
-`admission_crypto_self_test(configured_admission_mode())`; failure keeps admission
-closed, and a normal-profile boot does not execute the unused strict-profile
-PAKE test. Validated headless prepared/member/retired roles do not offer admission,
-so they skip this test and keep admission `crypto_ready` false. Operational
-startup still initializes PSA and fully validates stored group credentials and
-its own identity/key pair before authenticated TLS. Reset/reclaim reboots into
-unclaimed startup and therefore runs the admission test before offering Add.
+Admission self-tests run only during an explicit user-requested Add attempt.
+The main runs `admission_crypto_self_test(configured_admission_mode())` after
+the user selects a candidate and submits Add, before connecting or sending
+credentials. The candidate runs the same selected-profile test on its existing
+GATT worker when the first complete handshake request arrives within its
+physically opened setup window. Its transient result belongs to that window;
+another connection in the same window reuses it, while a new physical window
+tests again. Mere boot, discovery, an idle physical window and ordinary Matter
+commissioning do not run the admission test. Operational startup still
+initializes PSA and fully validates stored group credentials and its own
+identity/key pair before authenticated TLS. An admission diagnostic failure
+cannot prevent the independent Matter path from establishing the original main.
 The no-argument explicit USB self-test and native coverage continue to exercise
 both profiles; profile matching and rejection without downgrade remain unchanged.
+
+A failed candidate remains discoverable within that same bounded physical
+window and rejects the handshake with a fixed diagnostic. The existing BLE
+record response uses status 2 with header byte 9 set to 1 for a setup security
+check failure; the diagnostic has no body and is valid only on the plaintext
+handshake endpoint. Other responses retain a zero diagnostic byte. The primary
+accepts the reason only on the exact current connection, record and endpoint;
+unknown or malformed reasons remain generic failures. This unauthenticated
+diagnostic is display-only and never supplies identity, authority, membership
+or permission to exchange credentials. The Add dialog displays:
+"The new Amity reported that its setup security check failed. Restart it and
+try again." A failed main-side test displays: "This Amity failed its setup
+security check. Restart it and try again." No encrypted setup handler or
+membership/credential transfer runs after a failed check. Long-running test
+completion rechecks physical-window, connection/session and cancellation fences
+before permitting handshake work or publishing a diagnostic.
 
 A public startup read always loads and validates fresh storage. Within
 `runtime_start`, a private shared validator consumes its already validated group
@@ -205,8 +225,10 @@ The actual-source admission regressions are
 [`consortium_admission_startup_test.py`](../tests/consortium_admission_startup_test.py),
 [`consortium_admission_crypto_test.py`](../tests/consortium_admission_crypto_test.py)
 and [`admission_workflow_test.py`](../tests/admission_workflow_test.py).
-They cover selected-profile boot/failure gates, full explicit self-tests, exact
-validated proposal records and known-address connection with authenticated
-fallback. The complete 0.1.105 physical suite and four clean Add timing samples
+They cover admission-independent boot and Matter claim, selected-profile Add
+failure gates, full explicit self-tests, exact validated proposal records and
+known-address connection with authenticated fallback. The actual GATT worker and
+record-framing regressions cover deferred checks, window/session fencing and
+bounded candidate diagnostics. The complete 0.1.105 physical suite and four clean Add timing samples
 are recorded in [validation](VALIDATION.md), with the failed diagnostic baseline
 retained separately.

@@ -64,6 +64,8 @@ int xSemaphoreTake(void*,unsigned ticks){if(ticks){bounded_waits.push_back(ticks
 int ble_gap_disc_cancel(){++cancellations;if(scan_cancel_hook){auto callback=std::move(scan_cancel_hook);scan_cancel_hook={};callback();}if(scan_stop_error)return scan_stop_error;if(!scan_active)return BLE_HS_EALREADY;scan_active=false;return 0;}int ble_gap_conn_cancel(){++connection_cancellations;return 0;}
 int ble_gap_terminate(uint16_t handle,int){++terminations;terminated_handle=handle;return 0;}
 std::mutex state_mutex;uint64_t generation=9,deadline=1000,server_session=0;
+enum class BootstrapFailure : uint8_t { none=0, crypto_self_test_failed=1 };
+BootstrapFailure response_failure=BootstrapFailure::none;
 uint32_t server_callback_cookie=9,response_record=0;uint8_t response_status=0;
 uint16_t server_connection=BLE_HS_CONN_HANDLE_NONE;
 bool server_open=true,server_sealed=false,advertising=true;
