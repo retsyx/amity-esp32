@@ -273,6 +273,7 @@ class CecSession:
         self._stop = threading.Event()
         self._backends = {}
         self._threads = []
+        self._wire_idle_since_ns = {}
         self._error = None
         self._started = False
         self._virtual_depth = 0
@@ -369,8 +370,14 @@ class CecSession:
     def _run(self, gpio, backend):
         try:
             while not self._stop.is_set():
+                polled_ns = time.monotonic_ns()
                 frame = backend.receive(0.05)
                 if frame is None:
+                    with self._lock:
+                        # Publish an idle poll's start only after it completes.
+                        # A delayed SSH reply cannot prove that the remote
+                        # receive FIFO was drained after a later boundary.
+                        self._wire_idle_since_ns[gpio] = polled_ns
                     continue
                 with self._lock:
                     for component in self.components:
@@ -470,9 +477,13 @@ class CecSession:
         with self._lock:
             self.assert_healthy()
             if (previous.value == "off") != (component.power.value == "off"):
-                component._active_since_ns = time.monotonic_ns()
+                views = [view for view in getattr(component, "_cec_views", (component,))
+                         if view._session is self]
+                for view in views:
+                    view._active_since_ns = time.monotonic_ns()
                 try:
-                    self._configure(component.gpio)
+                    for gpio in dict.fromkeys(view.gpio for view in views):
+                        self._configure(gpio)
                 except BaseException as exc:
                     # A failed reconfiguration may have cleared the old ACK
                     # mask. Fence the session instead of continuing with a

@@ -12,12 +12,6 @@ struct PortPin {
     Side side = Side::Front;
     int gpio = -1;
 };
-struct PresencePin {
-    int gpio = -1;
-    bool present_level = true;
-    bool pullup = false;
-    bool pulldown = false;
-};
 struct BoardProfile {
     BoardProfileId id;
     uint32_t revision;
@@ -25,7 +19,6 @@ struct BoardProfile {
     PortPin ports[amity::max_cec_ports];
     int reset_button = -1;
     int status_led = -1;
-    PresencePin presence[amity::max_tentacles]{};
 };
 // These mappings describe the existing board. They do not qualify additional
 // tentacles or new setup gestures, indicators, or HDMI electrical performance.
@@ -79,13 +72,7 @@ inline ProfileError validate_board_profile(const BoardProfile &profile,
             if (profile.ports[i].side == Side::Back) back = profile.ports[i].gpio >= 0;
         }
         if (front != back) return ProfileError::InvalidConnector;
-        const auto& presence = profile.presence[id];
-        if (presence.gpio == -1) continue;
-        if (!development || !front || presence.gpio < 0 || !valid_input || !valid_input(presence.gpio) || (presence.pullup && presence.pulldown)) return ProfileError::InvalidGpio;
-        if (presence.gpio == profile.reset_button || presence.gpio == profile.status_led) return ProfileError::PeripheralConflict;
-        for (size_t j = 0; j < count; ++j) if (profile.ports[j].gpio == presence.gpio) return ProfileError::DuplicateGpio;
-        for (uint8_t j = 0; j < id; ++j) if (profile.presence[j].gpio == presence.gpio) return ProfileError::DuplicateGpio;
-        for (size_t j = 0; j < reserved_count; ++j) if (reserved[j] == presence.gpio) return ProfileError::PeripheralConflict;
+
     }
     if (profile.reset_button >= 0 && profile.reset_button == profile.status_led)
         return ProfileError::PeripheralConflict;

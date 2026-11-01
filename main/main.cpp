@@ -459,7 +459,6 @@ extern "C" void app_main() {
     auto startup_profile=amity::board_profile;
     const auto passive_profile=[&]{
         for(size_t i=0;i<2u*startup_profile.tentacle_count;++i)startup_profile.ports[i].gpio=-1;
-        for(auto& presence:startup_profile.presence)presence=cec::PresencePin{};
         startup_profile.reset_button=-1;startup_profile.status_led=-1;
     };
     constexpr int reserved_pins[] = {0, 3, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 45, 46};

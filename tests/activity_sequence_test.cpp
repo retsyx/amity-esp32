@@ -314,6 +314,55 @@ static void long_power_repair_preserves_normal_input(){
     drain(hub);assert(!input.policy.waiting_for_release());
 }
 
+static void isolated_source_input(bool nested,bool same_adapter,bool front_source=false,bool lose_authority=false,bool reject_announcement=false,bool missing=false){
+    reset_fixture();fixture_present=false;
+    HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
+        {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
+         {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
+    std::array<uint16_t,amity::max_tentacles> physical;physical.fill(0x1000);physical[1]=nested?0x1200:0x1000;
+    assert(hub.start(profile,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    fixture_tick=0;
+    const int source_gpio=front_source?5:6;const uint8_t address=front_source?8:4;
+    // Boot had no peers, so the configured Front PA remains independent of
+    // this source's later PA. The announcement must use the adapter's PA.
+    fixture_incoming.push_back({source_gpio,{{static_cast<uint8_t>((address<<4)|15),0x84,0x12,0x10,4},5}});
+    fixture_incoming.push_back({source_gpio,{{static_cast<uint8_t>((address<<4)|(front_source?4:0)),0x47,'S','o','u','r','c','e'},8}});
+    run_idle(2);fixture_sent.clear();fixture_async_autocomplete=false;
+    bool authority=true;hub.set_owned_authorizer([&](const auto&){return authority;});
+    m::OwnedIntent input;input.kind=m::OwnedIntentKind::source_input;
+    input.target=named(owner,front_source?m::Side::front:m::Side::back,"Source",1);
+    input.display=named(owner,m::Side::front,"TV",same_adapter?1:0);input.setup_generation=1;
+    if(missing)input.target.osd_name="Missing";
+    if(reject_announcement)fixture_admission=[](int gpio,const auto& frame){return !(gpio==5&&frame.size>1&&frame.data[1]==0x82);};
+    enqueue(hub,input,1);
+    const bool announces=nested&&!same_adapter&&!front_source;
+    if(missing){
+        run_idle(2);assert(count(5,{0x82,0x12,0})==0&&count(source_gpio,{0x86,0x12,0x10})==0);
+        drain(hub);return; // An unresolved source never selects the upstream input.
+    }
+    assert(count(source_gpio,{0x86,0x12,0x10})==size_t(!announces||reject_announcement));
+    assert(count(5,{0x82,0x12,0})==size_t(announces));
+    m::OwnedIntent next;next.kind=m::OwnedIntentKind::standby_wire;next.target.port={group,owner,0,m::Side::front};next.setup_generation=1;
+    enqueue(hub,next,2);run_idle(2);assert(count(1,{0x36})==0);
+    if(lose_authority)authority=false;
+    if(announces){
+        if(!reject_announcement){
+            assert(count(source_gpio,{0x86,0x12,0x10})==0);
+            assert(fixture_complete_next(cec::TxResult::Success,5));run_idle(2);
+        }
+        assert(count(source_gpio,{0x86,0x12,0x10})==size_t(!lose_authority));
+        assert(count(1,{0x36})==0); // The final Back route remains completion paced.
+    }
+    if(!lose_authority){assert(fixture_complete_next(cec::TxResult::Success,source_gpio));run_idle(2);}
+    assert(count(5,{0x82,0x12,0})==size_t(announces));
+    assert(count(1,{0x82,0x10,0})==0); // Never announce on the display adapter.
+    assert(count(1,{0x36})==size_t(!lose_authority));
+    authority=true;drain(hub);
+    assert(count(source_gpio,{0x86,0x12,0x10})==size_t(!lose_authority));
+    assert(count(5,{0x82,0x12,0})==size_t(announces)); // Once only; no retry backlog.
+}
+
 int main(){
     owner_lane_and_independent_keys();
     for(const int next:{1,-1,0})cold_lookup_precedes_later_recipe(next);
@@ -323,5 +372,12 @@ int main(){
     active_source_reply_follows_route_completion(false);active_source_reply_follows_route_completion(true);
     existing_release_gate_covers_actual_worker_setup(true);existing_release_gate_covers_actual_worker_setup(false);
     long_power_repair_preserves_normal_input();
+    isolated_source_input(true,false);
+    isolated_source_input(false,false); // Dual displays: leave the unselected TV alone.
+    isolated_source_input(true,true); // Original same-adapter transcript.
+    isolated_source_input(true,false,true); // An upstream source needs no paired announcement.
+    isolated_source_input(true,false,false,true); // Recheck authority before the second step.
+    isolated_source_input(true,false,false,false,true); // Dropped upstream work never blocks the original route.
+    isolated_source_input(true,false,false,false,false,true); // Lookup must find the actual source first.
     std::puts("Actual worker activity sequencing: cold lookup/TX order at SETTLE=0, per-owner lanes, gated setup input with no hold replay, normal independent keys/owners, completed cleanup before bind, fenced RX and causal replies");
 }

@@ -46,6 +46,136 @@ class Hooks:
     after_rx: object = None
 
 
+class _SourceIsolationObservation:
+    """Retain the first forbidden original wire frame across two AVR ports."""
+
+    def __init__(self, receiver, source, *, upstream, since, duration=None):
+        self.receiver, self.source, self.upstream = receiver, source, upstream
+        self.since = since
+        self.duration = receiver._power_timeout if duration is None else duration
+        if (isinstance(self.duration, bool) or not isinstance(self.duration, (int, float))
+                or not math.isfinite(self.duration) or self.duration <= 0):
+            raise ValueError("Source isolation needs a positive finite observation duration")
+        self._condition = threading.Condition()
+        self._session = None
+        self._started = self._count = 0
+        self._leak = None
+        self._invalid_clock = self._checked = self._closed = False
+
+    def _validate(self):
+        contexts = [component._wire_context(self.since)
+                    for component in (self.receiver, self.upstream, self.source)]
+        session = contexts[0][0]
+        if any(context[0] is not session for context in contexts):
+            raise AssertionError("Source isolation equipment belongs to different CEC sessions")
+        if self._session is not None and self._session is not session:
+            raise AssertionError("The source isolation CEC session changed")
+        session.assert_healthy()
+        if getattr(session, "_stop", None) is not None and session._stop.is_set():
+            raise AssertionError("The CEC session ended during source isolation observation")
+        return session
+
+    def __enter__(self):
+        if self._session is not None or self._closed:
+            raise RuntimeError("A source isolation observation cannot be reused")
+        if (not self.receiver.can_route or not getattr(self.upstream, "can_route", False)
+                or len({self.receiver.gpio, self.upstream.gpio, self.source.gpio}) != 3):
+            raise ValueError("Source isolation needs two distinct AVR-side wires and an isolated source wire")
+        self._session = self._validate()
+        # Owner proof performs HTTP outside the responder lock. Register both
+        # original-frame observers atomically before the source transmits.
+        with self._session._lock:
+            self._started = time.monotonic_ns()
+            for receiver in (self.receiver, self.upstream):
+                receiver._wire_observers.add(self._observe)
+        self.receiver._trace("component.source_isolation.start", source_component=self.source.name,
+                             physical_address=self.source.address.physical,
+                             observed_wires=[self.receiver.gpio, self.upstream.gpio],
+                             since_monotonic_ns=self._started, duration_seconds=self.duration)
+        return self
+
+    def _observe(self, receiver, frame, transport):
+        if transport != "wire":
+            return
+        with self._condition:
+            if frame.timestamp_ns <= 0:
+                self._invalid_clock = True
+            elif frame.timestamp_ns >= self._started:
+                self._count += 1
+                target = self.source.address.physical.to_bytes(2, "big")
+                routing = (frame.destination == 15 and
+                           ((frame.opcode in (0x82, 0x86, 0x81) and frame.operands == target)
+                            or (frame.opcode == 0x80 and len(frame.operands) == 4
+                                and frame.operands[2:] == target)))
+                wake = frame.opcode in (0x04, 0x0d) and not frame.operands
+                if self._leak is None and (routing or wake):
+                    self._leak = {"frame": frame.raw.hex(":"), "source": frame.source,
+                                  "destination": frame.destination, "observed_gpio": receiver.gpio,
+                                  "wire_timestamp_ns": frame.timestamp_ns}
+            self._condition.notify_all()
+
+    def assert_suppressed(self, announcement):
+        """Observe through TX + CEC timeout, independently of the 250 ms reply."""
+        if self._session is None or self._closed or self._checked:
+            raise RuntimeError("Complete one active source isolation observation")
+        self._validate()
+        trigger = self.source._activation_timestamp(announcement, exact_component=True)
+        if trigger < self._started:
+            raise AssertionError("The physical source attempt predates its isolation observation")
+        deadline_ns = trigger + int(self.duration * 1_000_000_000)
+        inspection_deadline_ns = deadline_ns + int(self.receiver._power_timeout * 1_000_000_000)
+        while True:
+            self._session.assert_healthy()
+            if (any(component._session is not self._session for component in
+                    (self.receiver, self.upstream, self.source)) or self._session._stop.is_set()):
+                raise AssertionError("The CEC session ended during source isolation observation")
+            with self._condition:
+                if self._invalid_clock:
+                    raise AssertionError("Source isolation received a physical frame without a wire timestamp")
+                if self._leak is not None:
+                    self.receiver._trace("component.source_isolation.failed", level=logging.ERROR,
+                                         trigger_wire_timestamp_ns=trigger, **self._leak)
+                    raise AssertionError("The isolated source reached an AVR-side CEC wire")
+                remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    idle = getattr(self._session, "_wire_idle_since_ns", {})
+                    if all(idle.get(receiver.gpio, 0) >= deadline_ns
+                           for receiver in (self.receiver, self.upstream)):
+                        break
+                    if time.monotonic_ns() >= inspection_deadline_ns:
+                        raise TimeoutError("AVR-side CEC receive coverage did not drain after the observation window")
+                    remaining = (inspection_deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                self._condition.wait(min(remaining, 0.05))
+        # Fresh membership/boot proof cannot restart or shorten the observed
+        # interval. Inspect the monitor again after slow owner reads complete.
+        self._validate()
+        with self._condition:
+            if self._leak is not None or self._invalid_clock:
+                raise AssertionError("The isolated source reached an AVR-side CEC wire")
+            proof = {"kind": "wire_suppression", "command": "source_isolation",
+                     "physical_address": self.source.address.physical,
+                     "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": self._started,
+                     "trigger_wire_timestamp_ns": trigger, "trigger_frame": announcement.frame.raw.hex(":"),
+                     "observation_end_monotonic_ns": deadline_ns,
+                     "observed_wires": [self.receiver.gpio, self.upstream.gpio],
+                     "idle_receive_since_ns": {str(receiver.gpio): self._session._wire_idle_since_ns[receiver.gpio]
+                                               for receiver in (self.receiver, self.upstream)},
+                     "observed_frame_count": self._count}
+            self.receiver._routing_checks.append(proof)
+            self._checked = True
+        self.receiver._trace("component.source_isolation.assert_passed", **proof)
+        return self.receiver
+
+    def __exit__(self, exc_type, exc, traceback):
+        if self._session is not None:
+            with self._session._lock:
+                for receiver in (self.receiver, self.upstream):
+                    receiver._wire_observers.discard(self._observe)
+        self._closed = True
+        if exc_type is None and not self._checked:
+            raise RuntimeError("Source isolation observation was not asserted")
+
+
 class Component:
     """Generic registered CEC device with identity, power and message hooks.
 
@@ -118,6 +248,7 @@ class Component:
         self._switch_input_revision = self._switch_input_calls = 0
         self._routing_history = deque(maxlen=256)
         self._routing_checks = deque(maxlen=256)
+        self._wire_observers = set()
         runtime = getattr(self.dut, "_runtime", None) or current_config()
         self._power_timeout = runtime.cec_timeout
 
@@ -469,6 +600,30 @@ class Component:
             physical = CecAddress(0, source_component).physical
         return self._wait_for_routing(physical, since=since, timeout=timeout, command="set_stream_path", after=after, within=within)
 
+    def wait_for_active_source(self, source_component, *, since, timeout=None):
+        """Require a fresh applied DUT Active Source on this receiving wire."""
+        if not self.can_route:
+            raise ValueError("This component does not model HDMI input routing")
+        if not isinstance(source_component, Component):
+            raise TypeError("An Active Source assertion needs its source component")
+        if source_component.dut is not self.dut or source_component._session is not self._session:
+            raise ValueError("Input equipment belongs to a different DUT or CEC session")
+        return self._wait_for_routing(source_component.address.physical, since=since,
+                                     timeout=timeout, command="active_source")
+
+    def observe_source_isolation(self, source_component, *, upstream, since, duration=None):
+        """Watch both AVR-side wires before an isolated source attempts theft.
+
+        The upstream attachment is mandatory: observing the AVR's output wire
+        alone cannot prove suppression before a claim reaches its input wire.
+        ``assert_suppressed`` checks original physical RX, including frames
+        later dropped or rewritten by component hooks. The interval defaults
+        to the ordinary CEC assertion timeout; directed Standby's separate
+        250 ms physical completion assertion remains required by the scenario.
+        """
+        return _SourceIsolationObservation(self, source_component, upstream=upstream,
+                                           since=since, duration=duration)
+
     def wait_for_switch_input(self, number, *, since, timeout=None):
         """Require a fresh, directed DUT Select AV Input Function and its effect.
 
@@ -496,7 +651,8 @@ class Component:
             deadline = min(deadline, (timing["trigger_wire_timestamp_ns"] + timing["max_elapsed_ns"]) / 1_000_000_000)
         self._trace("component.routing.wait", command=command, **{field: expected},
                     since_monotonic_ns=started, initiator=source, timeout=timeout, **timing)
-        requested = f"Select AV Input Function for input {expected}" if switch else f"Set Stream Path for {expected:04x}"
+        requested = (f"Select AV Input Function for input {expected}" if switch else
+                     f"{'Active Source' if command == 'active_source' else 'Set Stream Path'} for {expected:04x}")
         missing = f"{self.name} did not handle a fresh DUT {requested}"
         owner_checked = owner_scan is None
         while True:
@@ -634,6 +790,10 @@ class Component:
     def receive(self, frame, *, transport="wire"):
         if transport not in ("wire", "virtual"):
             raise ValueError("CEC receive transport must be 'wire' or 'virtual'")
+        # Negative wire assertions must see the original physical frame even
+        # if destination filters or a fault hook suppress model handling.
+        for observer in tuple(self._wire_observers):
+            observer(self, frame, transport)
         if self.power == PowerState.OFF:
             return
         if frame.destination not in (self.address.logical, 15) or frame.source == self.address.logical:

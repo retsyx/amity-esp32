@@ -78,8 +78,7 @@ def check_hardware_capacity(schemas):
              re.findall(r'^menu "HDMI adapter ([0-9]+) \(stable connector ([0-9]+)\)"$', kconfig, re.M)]
     require(menus == [(slot + 1, slot) for slot in range(maximum)],
             'Kconfig connector menus differ from canonical hardware capacity')
-    fields = ('FRONT_GPIO', 'BACK_GPIO', 'PRESENCE_GPIO', 'PRESENT_HIGH',
-              'PRESENCE_PULLUP', 'PRESENCE_PULLDOWN')
+    fields = ('FRONT_GPIO', 'BACK_GPIO')
     expected = {f'AMITY_TENTACLE{slot}_{field}' for slot in range(maximum) for field in fields}
     configured = re.findall(r'^config (AMITY_TENTACLE[0-9]+_[A-Z_]+)$', kconfig, re.M)
     require(len(configured) == len(expected) and set(configured) == expected,

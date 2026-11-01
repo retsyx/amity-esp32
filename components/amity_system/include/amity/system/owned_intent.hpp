@@ -25,6 +25,8 @@ struct OwnedIntent {
     HoldToken token;
     uint8_t key = 0, input = 0;
     bool repeat = false, on = false;
+    // source_input also carries the original display selector so its owner can
+    // announce its paired front when the display is on another adapter.
     // Non-emitting context mirrors the original controller's selected activity
     // for follower replies and play/pause state, without replaying its recipe.
     bool selected = false, source_changed = false;

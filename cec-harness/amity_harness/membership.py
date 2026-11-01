@@ -25,6 +25,9 @@ class MembershipCleanupError(RuntimeError):
 
 
 class AddedAmity:
+    _cleanup_priority = 2
+    _cleanup_retryable = True
+
     def __init__(self, main, candidate, *, name=None, timeout=None, setup_code=None):
         bed = getattr(main, "_testbed", None)
         if (bed is None or not bed._entered or bed._closed or candidate._testbed is not bed
@@ -54,6 +57,7 @@ class AddedAmity:
         self._add_operation = self._remove_operation = None
         self._remove_id = None
         self._admission_phase = None
+        self._cleanup_deferred = False
         self._record("prepare")
         bed.add_cleanup(self.close)
 
@@ -90,6 +94,9 @@ class AddedAmity:
             return response
         except BaseException as error:
             request["error_type"] = type(error).__name__
+            status = getattr(error, "status", None)
+            if type(status) is int and 100 <= status <= 599:
+                request["http_status"] = status
             raise
         finally:
             request["finished_ns"] = time.monotonic_ns()
@@ -115,8 +122,9 @@ class AddedAmity:
         return self._observe_http(path, lambda: self.main.request(path, data, timeout=min(15, self._remaining(deadline))),
                                   method="GET" if data is None else "POST")
 
-    def _system(self):
-        self.session.assert_healthy()
+    def _system(self, *, check_health=True):
+        if check_health:
+            self.session.assert_healthy()
         system = self._observe_http("/api/system", self.main.get_system)
         membership = system.get("membership", {})
         if (system.get("octopus_id") != self.main.identity.device_id or system.get("mode") != "coordinator"
@@ -141,15 +149,20 @@ class AddedAmity:
                 if any(activity.get(role) in components for role in ("display", "source", "audio", "switch_device"))]
 
     def _removed_owners(self):
-        """Earlier successful removals in this bed may change a nested baseline."""
+        """Verified removals in this bed may change a nested saved baseline.
+
+        An unconfirmed physical reset still fails that resource's cleanup, but
+        a proven saved-inventory deletion must not block independent members.
+        """
         bed = self.main._testbed
         candidates = {dut.identity.device_id for dut in
                       (*bed.control_only, *getattr(bed, "members", ()))}
         start = getattr(bed, "_initial_membership_counts", {}).get(id(self.main), 0)
         return {row.get("device_id") for row in self.main.membership_operations[start:]
                 if row.get("phase") == "cleanup" and row.get("device_id") in candidates
-                and row.get("operation_stage") == "complete" and row.get("reset") == "scheduled"
-                and row.get("retained_member") is False and not row.get("error_type")}
+                and row.get("operation_stage") == "complete"
+                and (row.get("inventory_removed") is True or row.get("reset") == "scheduled"
+                     and row.get("retained_member") is False and not row.get("error_type"))}
 
     def _config(self, *, deadline, removed=False):
         config = self._request("/api/config", deadline=deadline)
@@ -208,7 +221,9 @@ class AddedAmity:
 
     def _preserved_members(self, system, *, added):
         active = self._active(system)
-        previous = self._active(self._initial_system)
+        removed = self._removed_owners()
+        previous = {identity: peer for identity, peer in self._active(self._initial_system).items()
+                    if identity not in removed}
         if set(active) != set(previous) | ({self.device_id} if added else set()):
             raise MembershipConflict("The set of added Amity devices changed unexpectedly")
         for identity, old in previous.items():
@@ -412,8 +427,29 @@ class AddedAmity:
                       error_type=type(error).__name__)
             raise
 
+    def front_physical_address(self, tentacle, address, *, timeout=None):
+        """Temporarily change a configured adapter through the main's UI settings.
+
+        Both applying and restoring restart this added member and prove its
+        new boot before returning. Close activities before restoring settings.
+        """
+        from .settings import FrontPhysicalAddress
+        return FrontPhysicalAddress(self, tentacle, address, timeout=timeout).apply()
+
     def close(self):
         if self._closed:
+            return
+        self._cleanup_deferred = False
+        bed = self.main._testbed
+        pending = list(getattr(bed, "_activities", ()))
+        pending.extend(owner for callback in getattr(bed, "_cleanups", ())
+                       if (owner := getattr(callback, "__self__", None)) is not None
+                       and getattr(owner, "_cleanup_priority", 2) < self._cleanup_priority)
+        if (not getattr(bed, "_closing", False) and self._created
+                and any(getattr(resource, "dut", getattr(resource, "main", None)) is self.main
+                        and not resource._closed for resource in pending)):
+            self._cleanup_deferred = True
+            self._log("membership.cleanup.waiting_for_resources")
             return
         proofs = getattr(self.main._testbed, "_member_proofs", {})
         if proofs.get(self.device_id) is self:
@@ -431,19 +467,23 @@ class AddedAmity:
                         if (operation.get("operation_id") == self.request_id and operation.get("boot_id") == self.boot
                                 and operation.get("stage") in {"failed", "rejected", "cancelled"}
                                 and state.get("phase") in {"failed", "cancelled"}):
-                            self._preserved_members(self._system(), added=False)
+                            self._preserved_members(self._system(check_health=False), added=False)
                             self._config(deadline=deadline)
                             self._closed = True
                             self._log("membership.cleanup.complete", retained_member=False,
                                       add_completed=False)
                             return
                         raise
-                if not self._remove_attempted:
-                    system = self._system()
+                for review_attempt in range(3):
+                    if self._remove_attempted:
+                        break
+                    system = self._system(check_health=False)
                     active = self._preserved_members(system, added=True)
                     peer = active[self.device_id]
                     if not _identifier(peer.get("boot_id")):
                         raise MembershipConflict("The added Amity has no reviewed boot for removal")
+                    if self.member_boot is not None and peer["boot_id"] != self.member_boot:
+                        raise MembershipConflict("The added Amity restarted before removal review")
                     config = self._config(deadline=deadline)
                     affected = self._affected_activities(config, {self.device_id})
                     if affected:
@@ -459,23 +499,42 @@ class AddedAmity:
                     self._log("membership.remove.submit", operation_id=self._remove_id,
                               target_boot=peer["boot_id"],
                               membership_revision=system["membership"]["membership_revision"])
-                    self._remove_operation = self._request("/api/membership/remove", payload, deadline=deadline)
+                    try:
+                        self._remove_operation = self._request("/api/membership/remove", payload, deadline=deadline)
+                    except AmityHTTPError as error:
+                        if error.status != 409:
+                            raise
+                        # The server explicitly rejected this review before
+                        # admission. A fresh review gets a new request identity;
+                        # boot/configuration/affected-activity fences above must
+                        # still pass. Unknown outcomes keep the original ID and
+                        # are reconciled below, never submitted a second time.
+                        self._remove_attempted = False
+                        self._remove_operation = None
+                        self._remove_id = None
+                        self._log("membership.remove.review_rejected", attempt=review_attempt + 1, http_status=error.status)
+                        if review_attempt == 2:
+                            raise
+                        time.sleep(min(0.25, self._remaining(deadline)))
+                        continue
+                    break
                 if self._remove_operation is None:
                     self._remove_operation = self._request("/api/operations/" + self._remove_id, deadline=deadline)
                 operation = self._wait_operation(self._remove_operation, self._remove_id, deadline=deadline, record=record)
                 record["reset"] = operation.get("reset")
-                if operation.get("reset") != "scheduled":
-                    raise MembershipConflict("The removed Amity did not acknowledge its scheduled factory reset")
-                self._log("membership.remove.reset_scheduled", operation_id=self._remove_id)
                 while True:
-                    system = self._system()
+                    system = self._system(check_health=False)
                     if self.device_id not in self._active(system):
                         self._preserved_members(system, added=False)
                         if any(row.get("octopus_id") == self.device_id for row in system.get("named_devices", [])):
                             raise MembershipConflict("The removed Amity remains in the device inventory")
                         self._config(deadline=deadline, removed=True)
+                        record.update(inventory_removed=True, retained_member=False)
                         break
                     time.sleep(min(0.25, self._remaining(deadline)))
+                if operation.get("reset") != "scheduled":
+                    raise MembershipConflict("The removed Amity did not acknowledge its scheduled factory reset")
+                self._log("membership.remove.reset_scheduled", operation_id=self._remove_id)
             elif self._scan_attempted:
                 state = self._admission(deadline=deadline)
                 if state.get("phase") in {"scanning", "found"}:
@@ -487,7 +546,8 @@ class AddedAmity:
             self._log("membership.cleanup.complete", retained_member=False,
                       reset_scheduled=record.get("reset") == "scheduled")
         except BaseException as error:
-            record.update(error_type=type(error).__name__, retained_member=self._add_attempted and not self._add_rejected)
+            record.update(error_type=type(error).__name__, retained_member=self._add_attempted and not self._add_rejected
+                          and not record.get("inventory_removed", False))
             self._log("membership.cleanup.failed", level=logging.ERROR,
                       error_type=type(error).__name__, retained_member=record["retained_member"])
             raise MembershipCleanupError("Add Amity cleanup could not confirm removal/reset; inspect its report") from error

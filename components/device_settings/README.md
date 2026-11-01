@@ -13,7 +13,7 @@ Per-device **Amity → Settings** saves a complete four-slot preference record i
 The old `front_physical` scalar is read only when that record is absent and
 migrates into slot0 alone. Other slots start at `1.0.0.0`. Stable internal slots
 0–3 are displayed as HDMI adapters 1–4 within the hardware profile's capacity;
-absent, unconfigured and unknown-presence slots retain their own settings.
+unconfigured slots and slots without CEC responses retain their own settings.
 The reader accepts prior longer preference records only after validating every
 stored address, retains the four supported entries and their durable revision,
 and writes only four entries on the next save. It rejects malformed trailing
@@ -28,17 +28,17 @@ finds no usable physical address; the original selected front address stays
 fixed for that boot. No separately approved topology or persistent PA-evidence
 gate is required. Settings do not themselves replay an activity.
 
-The shared settings service checks the target BootId, durable settings revision,
-original authority deadline and native attachment generation before persistence
-on the owner task. Writes require positive presence: fixed legacy hardware is
-present by construction; detachable hardware needs a separate configured GPIO
-detector, and CEC silence is never a presence detector. The target must be idle
-and quiescent. The durable applied result's transmission is attempted before
+The shared settings service checks the configured slot, target BootId, durable
+settings revision and original authority deadline before persistence on the
+owner task. There are no adapter-presence inputs, detector states or attachment
+generations. Settings do not require a responding CEC device; actual CEC replies
+and command ACKs determine communication results. The target must be idle and
+quiescent. The durable applied result's transmission is attempted before
 scheduling that target's restart, even if the connection has already closed.
 A lost reply leaves the client uncertain; it does not cancel the explicitly
 requested restart or repeat the write. Other devices are not restarted. The dialog reports saved, observed and
 selected addresses separately and performs no scan on read. Software tests do
-not qualify physical four-adapter wiring or presence sensing.
+not qualify physical four-adapter wiring.
 
 Factory reset writes a durable marker in `amity_cfg/amity_reset`, then reboots.
 Before starting network or application tasks, the boot path erases normal NVS

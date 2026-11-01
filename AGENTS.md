@@ -4,6 +4,21 @@
 
 This project is in early development. There is no need for backward compatibility with prior revisions of the software. This remains true as long as this instruction is in this file. When the software is more mature, this instruction will be replaced with an instruction to ensure backward compatibility between software revisions.
 
+## Adapter connections — 1 November 2026
+
+There are no separate inputs that detect whether an HDMI adapter is attached.
+Do not introduce presence GPIOs, detector states or attachment generations.
+Configured CEC wires remain usable; actual CEC device responses and command
+ACKs determine communication results. An absent adapter produces no CEC
+responses. Do not add another availability gate based on a sensor, saved
+selection, cache observation or an assumed physical topology. Keep the original
+resolver, scan triggers, electrical CEC handling and attempt budgets.
+
+Adapter settings use the configured slot, current owner boot, settings revision
+and authority, followed by atomic save and selected-device restart. They do not
+require a responding CEC device or physical attachment proof. Preserve actual
+binding, activity, boot, authority, deadline and transport fences.
+
 ## TLS connection reuse — 1 November 2026
 
 TLS connection establishment is independent of application synchronization.

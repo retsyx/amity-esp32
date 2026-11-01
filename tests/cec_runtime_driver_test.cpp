@@ -20,9 +20,14 @@ static std::vector<Semaphore*> semaphores;
 static std::vector<std::string> warning_logs;
 void fixture_log_warning(const char* tag, const char* format, ...) {
     assert(std::strcmp(tag, "cec") == 0 && critical_depth == 0);
-    for (const auto* semaphore : semaphores) if (semaphore->mutex) assert(semaphore->available);
     char message[192]; va_list args; va_start(args, format);
     std::vsnprintf(message, sizeof(message), format, args); va_end(args);
+    unsigned locked_mutexes = 0;
+    for (const auto* semaphore : semaphores)
+        if (semaphore->mutex && !semaphore->available) ++locked_mutexes;
+    // Worker diagnostics retain the lifecycle lock protecting port lifetime.
+    // Admission/drop logging must still run with every mutex released.
+    assert(locked_mutexes == (std::strncmp(message, "TX failed (", 11) == 0 ? 1u : 0u));
     warning_logs.emplace_back(message);
 }
 struct Task { void (*code)(void *); void *arg; bool pumping = false; };
@@ -185,6 +190,87 @@ static void caller_attempt_tests() {
         assert(bus.take_completion(completed)&&completed.operation_token==6&&completed.result==cec::TxResult::Nack);
     }
     assert(!timer&&tasks.empty()&&!output_low);
+}
+
+static void terminal_failure_diagnostics_tests() {
+    const cec::Frame press{{0x40, 0x44, 0x6d}, 3}, broadcast{{0x4f, 0x36}, 2}, poll{{0x44}, 1};
+    constexpr unsigned pin = 36;
+    constexpr uint64_t mask = uint64_t{1} << pin;
+    for (auto profile : {cec::Bus::QueueProfile::Legacy, cec::Bus::QueueProfile::Native}) {
+        cec::Bus bus; assert(bus.start(pin, profile) == ESP_OK);
+        cec::TxCompletion completion;
+        auto logged = warning_logs.size();
+        const auto before = bus.statistics();
+        const auto edges = pin_edges[pin];
+        assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion);
+        assert(completion.result.load() == cec::TxResult::Nack);
+        assert(warning_logs.size() == logged + 1);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Nack, attempts 1, started true)");
+        assert(bus.statistics().retries == before.retries && bus.statistics().tx_errors == before.tx_errors + 1);
+        assert(pin_edges[pin] == edges + 11); // One start and ten header slots, then failed ACK.
+        for (unsigned pass = 0; pass < 4000; ++pass) pump();
+        assert(bus.idle() && pin_edges[pin] == edges + 11 && warning_logs.size() == logged + 1);
+
+        logged = warning_logs.size();
+        assert(bus.send_async_guarded(press, {}, completion, 3)); finish(completion);
+        assert(completion.result.load() == cec::TxResult::Nack && warning_logs.size() == logged + 1);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Nack, attempts 3, started true)");
+        assert(bus.statistics().retries == before.retries + 2); // Only the caller's budget controls attempts.
+
+        logged = warning_logs.size();
+        const auto errors = bus.statistics().tx_errors;
+        assert(bus.send_async_guarded(poll, {}, completion, 1)); finish(completion);
+        assert(completion.result.load() == cec::TxResult::Nack);
+        assert(warning_logs.size() == logged && bus.statistics().tx_errors == errors);
+        assert(bus.send_async_guarded(broadcast, {}, completion, 1)); finish(completion);
+        assert(completion.result.load() == cec::TxResult::Success && warning_logs.size() == logged);
+
+        std::atomic<uint32_t> generation{1};
+        assert(bus.send_async_guarded(press, {&generation, 1}, completion, 1)); generation.store(2);
+        finish(completion);
+        assert(completion.result.load() == cec::TxResult::Cancelled && warning_logs.size() == ++logged);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Cancelled, attempts 0, started false)");
+        assert(bus.send_async_guarded(press, {nullptr, 0, nullptr, 0, now + 1}, completion, 1)); step();
+        finish(completion);
+        assert(completion.result.load() == cec::TxResult::Expired && warning_logs.size() == ++logged);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Expired, attempts 0, started false)");
+
+        external_low |= mask; gpio_set_level(pin, 1); step();
+        assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion);
+        assert(completion.result.load() == cec::TxResult::Timeout && warning_logs.size() == ++logged);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result Timeout, attempts 1, started false)");
+        external_low &= ~mask; gpio_set_level(pin, 1); step();
+
+        const auto arbitration_edges = pin_edges[pin];
+        uint64_t first_edge_at = 0;
+        before_tick = [&] {
+            if (!first_edge_at && pin_edges[pin] > arbitration_edges) first_edge_at = now - 50;
+            if (first_edge_at && now >= first_edge_at + 7600) {
+                // Another initiator wins the header's second, one-valued bit.
+                external_low |= mask;
+                gpio_set_level(pin, (output_low & mask) == 0);
+            }
+        };
+        assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion); before_tick = {};
+        assert(completion.result.load() == cec::TxResult::ArbitrationLost && warning_logs.size() == ++logged);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result ArbitrationLost, attempts 1, started true)");
+        external_low &= ~mask; gpio_set_level(pin, 1); step();
+
+        const auto line_error_edges = pin_edges[pin]; bool delayed_tick = false;
+        before_tick = [&] {
+            if (!delayed_tick && pin_edges[pin] > line_error_edges) { now += 250; delayed_tick = true; }
+        };
+        assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion); before_tick = {};
+        assert(delayed_tick && completion.result.load() == cec::TxResult::LineError && warning_logs.size() == ++logged);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result LineError, attempts 1, started true)");
+
+        cec::Frame longest{}; longest.size = 16;
+        for (unsigned i = 0; i < 16; ++i) longest.data[i] = i;
+        assert(bus.send_async_guarded(longest, {}, completion, 1)); finish(completion);
+        assert(completion.result.load() == cec::TxResult::Nack && warning_logs.size() == ++logged);
+        assert(warning_logs.back() == "TX failed (GPIO 36, 16 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f, result Nack, attempts 1, started true)");
+    }
+    assert(!timer && tasks.empty() && !output_low && !external_low);
 }
 
 static void async_completion_contract_tests() {
@@ -496,6 +582,7 @@ int main() {
     fail_task_creation = false;
     assert(!timer && tasks.empty() && cec::Bus::runtime_statistics().active_ports == 0);
     caller_attempt_tests();
+    terminal_failure_diagnostics_tests();
     async_completion_contract_tests();
     atomic_batch_tests();
     full_fifo_tests();

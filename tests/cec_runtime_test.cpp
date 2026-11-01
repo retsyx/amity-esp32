@@ -148,12 +148,7 @@ static void profile_tests() {
     development.ports[6].gpio=7;assert(cec::validate_board_profile(development,valid_gpio)==E::InvalidConnector);
     development.ports[7].gpio=8;assert(cec::validate_board_profile(development,valid_gpio)==E::None);
     assert(!cec::connector_enabled(development,0)&&cec::connector_enabled(development,3)); // Sparse connector4 retains index3.
-    development.presence[3]={9,false,true,false};
-    assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::None);
-    development.presence[3].pulldown=true;assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::InvalidGpio);
-    development.presence[3]={7,true,false,false};assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::DuplicateGpio);
-    development.presence[3]={9,true,false,false};const int occupied[]={9};assert(cec::validate_board_profile(development,valid_gpio,occupied,1,valid_gpio)==E::PeripheralConflict);
-    development.presence[0]={10,true,false,false};assert(cec::validate_board_profile(development,valid_gpio,nullptr,0,valid_gpio)==E::InvalidGpio);
+
 }
 int main() {
     observation_tests(); parallel_line_tests(); profile_tests();

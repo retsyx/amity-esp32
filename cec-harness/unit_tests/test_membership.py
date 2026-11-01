@@ -176,7 +176,7 @@ class Fixture:
                 return {"status": self.settings_status, "error": "" if self.settings_status == "ready" else "offline",
                         "settings": {"boot_id": self.settings_boot, "settings_revision": "1",
                                      "adapters": [{"tentacle_id": index, "name": "HDMI adapter " + str(index + 1),
-                                                   "configured": True, "presence": "unknown", "presence_generation": "1",
+                                                   "configured": True,
                                                    "default_front_physical_address": "1.0.0.0",
                                                    "observed_front_physical_address": None,
                                                    "effective_front_physical_address": None}
@@ -555,6 +555,121 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
         self.assertFalse(f.main.membership_operations[-1]["retained_member"])
 
+    def test_rejected_remove_review_gets_a_fresh_identity_and_current_revisions(self):
+        f = Fixture()
+        member = f.added().create()
+        original_request = f.request
+        first = True
+
+        def request(path, data=None, **kwargs):
+            nonlocal first
+            if path == "/api/membership/remove" and data is not None and first:
+                first = False
+                f.change_config_before_remove = True
+                try:
+                    return original_request(path, data, **kwargs)
+                finally:
+                    f.change_config_before_remove = False
+            return original_request(path, data, **kwargs)
+
+        f.main.request = f.request = request
+        member.close()
+        first, fresh = f.posts("remove")
+        self.assertNotEqual(first["request_id"], fresh["request_id"])
+        self.assertEqual(int(fresh["expected_config_revision"]), int(first["expected_config_revision"]) + 1)
+        self.assertEqual(first["expected_target_boot_id"], fresh["expected_target_boot_id"])
+        self.assertEqual(first["affected_activity_ids"], fresh["affected_activity_ids"])
+        self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
+
+    def test_rejected_review_does_not_authorize_removing_concurrent_user_changes(self):
+        f = Fixture()
+        member = f.added().create()
+        original_request = f.request
+
+        def request(path, data=None, **kwargs):
+            if path == "/api/membership/remove" and data is not None:
+                f.calls.append((path, deepcopy(data)))
+                f.config["activities"][0]["label"] = "User changed this activity"
+                f.bump()
+                raise AmityHTTPError(409, "The reviewed configuration changed")
+            return original_request(path, data, **kwargs)
+
+        f.main.request = f.request = request
+        with self.assertRaises(MembershipCleanupError):
+            member.close()
+        self.assertEqual(len(f.posts("remove")), 1)
+        self.assertEqual(f.config["activities"][0]["label"], "User changed this activity")
+        self.assertTrue(any(row["octopus_id"] == member.device_id for row in f.system["membership"]["peers"]))
+
+    def test_http_cleanup_can_reset_the_known_member_after_the_cec_worker_failed(self):
+        f = Fixture()
+        member = f.added().create()
+
+        def failed_worker():
+            raise RuntimeError("CEC responder failed")
+
+        f.bed.session.assert_healthy = failed_worker
+        member.close()
+        self.assertEqual(len(f.posts("remove")), 1)
+        self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
+
+    def test_member_context_waits_for_registered_activity_cleanup_before_removal(self):
+        f = Fixture()
+        member = f.added().create()
+        pending = SimpleNamespace(dut=f.main, _closed=False, _write_attempted=True, _creation_rejected=False)
+        f.bed._activities = [pending]
+        member.close()
+        self.assertTrue(member._cleanup_deferred)
+        self.assertFalse(member._closed)
+        self.assertEqual(f.posts("remove"), [])
+        pending._closed = True
+        member.close()
+        self.assertTrue(member._closed)
+        self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
+
+    def test_member_context_cannot_overtake_a_pending_settings_restore(self):
+        f = Fixture()
+        member = f.added().create()
+
+        class SettingsRestore:
+            _cleanup_priority = 1
+
+            def __init__(self):
+                self.main, self._closed = f.main, False
+
+            def close(self):
+                self._closed = True
+
+        setting = SettingsRestore()
+        f.bed._cleanups = [setting.close]
+        member.close()
+        self.assertEqual(f.posts("remove"), [])
+        self.assertTrue(member._cleanup_deferred)
+        setting.close()
+        member.close()
+        self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
+
+    def test_later_member_cleanup_accepts_an_earlier_owned_removal_receipt(self):
+        for reset, verified in (("scheduled", False), ("unconfirmed", True)):
+            with self.subTest(reset=reset, verified=verified):
+                f = Fixture()
+                f.system["capabilities"]["supported_octopuses"] = 4
+                third = DUT("amity-dut-3")
+                third._testbed = f.bed
+                f.bed.members = (f.candidate, third)
+                f.system["membership"]["peers"].append(f.peer(third.identity.device_id, third.name, "7" * 32))
+                f.config["octopuses"].append(f.owner(third.identity.device_id))
+                member = f.added().create()
+                f.system["membership"]["peers"] = [row for row in f.system["membership"]["peers"]
+                                                    if row["octopus_id"] != third.identity.device_id]
+                f.config["octopuses"] = [row for row in f.config["octopuses"] if row["octopus_id"] != third.identity.device_id]
+                f.main.membership_operations.append({"phase": "cleanup", "device_id": third.identity.device_id,
+                                                     "operation_stage": "complete", "reset": reset, "retained_member": False,
+                                                     "inventory_removed": verified,
+                                                     **({"error_type": "MembershipConflict"} if reset != "scheduled" else {})})
+                member.close()
+                self.assertEqual(f.main.membership_operations[-1]["reset"], "scheduled")
+
     def test_real_testbed_skips_candidate_http_and_cleans_member_before_main_logout(self):
         f = Fixture()
         f.main._testbed = f.candidate._testbed = None
@@ -890,6 +1005,8 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(len(f.posts("remove")), 1)
         self.assertEqual(f.presses, [3.5])
         self.assertEqual(len(f.gpio.calls), 2)
+        self.assertTrue(f.main.membership_operations[-1]["inventory_removed"])
+        self.assertFalse(f.main.membership_operations[-1]["retained_member"])
 
     def test_cleanup_fences_the_main_and_member_boot_review_before_removal(self):
         for change in ("main", "target_race", "config_race"):
@@ -904,7 +1021,7 @@ class MembershipTests(unittest.TestCase):
                     f.change_config_before_remove = True
                 with self.assertRaises(MembershipCleanupError):
                     member.close()
-                self.assertEqual(len(f.posts("remove")), 0 if change == "main" else 1)
+                self.assertEqual(len(f.posts("remove")), 0 if change == "main" else 3 if change == "config_race" else 1)
                 self.assertTrue(any(p["octopus_id"] == f.candidate.identity.device_id
                                     for p in f.system["membership"]["peers"]))
 

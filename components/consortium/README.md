@@ -25,7 +25,7 @@ Only checked committed Matter/network setup or proven retained original authorit
 
 ## Existing management
 
-Keep authenticated hostname metadata, per-device settings, exact-image peer updates and explicit removal/reset. Settings retain reviewed target boot/settings/presence generations, bounded owner drain, atomic save and selected-device restart after response attempt. Explicit removal retains reviewed membership/target boot, durable revocation/reset journal and actual scheduled/offline/unconfirmed outcomes. Generic loss/retirement does not reset a device.
+Keep authenticated hostname metadata, per-device settings, exact-image peer updates and explicit removal/reset. Settings retain configured-slot, reviewed target boot, settings revision and authority checks, bounded owner drain, atomic save and selected-device restart after response attempt. They require no adapter-presence sensor or responding CEC device. Explicit removal retains reviewed membership/target boot, durable revocation/reset journal and actual scheduled/offline/unconfirmed outcomes. Generic loss/retirement does not reset a device.
 
 Normal OTA preserves independent identities/credentials and saved intent. Main replacement uses fresh Matter authority plus existing Advanced restore after old-main isolation; it does not clone keys/pairings/trust or restore activity execution approvals. [Recovery](../../amity-octopus-consortium/13-faults-removal-and-recovery.md) and [updates](../../amity-octopus-consortium/14-ota-and-compatibility.md).
 

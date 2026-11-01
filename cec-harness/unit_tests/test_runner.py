@@ -265,7 +265,7 @@ class RunnerTests(unittest.TestCase):
             report = json.loads(evidence.read_text())
         expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
-                    "test_dual_display"]
+                    "test_dual_display", "test_source_theft_isolated"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])

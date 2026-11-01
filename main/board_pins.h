@@ -21,73 +21,7 @@ inline constexpr cec::BoardProfile board_profile{
         {2, cec::Side::Back, CONFIG_AMITY_TENTACLE2_BACK_GPIO},
         {3, cec::Side::Front, CONFIG_AMITY_TENTACLE3_FRONT_GPIO},
         {3, cec::Side::Back, CONFIG_AMITY_TENTACLE3_BACK_GPIO},
-    }, CONFIG_AMITY_BOARD_RESET_GPIO, -1,
-    {
-        {CONFIG_AMITY_TENTACLE0_PRESENCE_GPIO,
-#ifdef CONFIG_AMITY_TENTACLE0_PRESENT_HIGH
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE0_PRESENCE_PULLUP
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE0_PRESENCE_PULLDOWN
-            true},
-#else
-            false},
-#endif
-        {CONFIG_AMITY_TENTACLE1_PRESENCE_GPIO,
-#ifdef CONFIG_AMITY_TENTACLE1_PRESENT_HIGH
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE1_PRESENCE_PULLUP
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE1_PRESENCE_PULLDOWN
-            true},
-#else
-            false},
-#endif
-        {CONFIG_AMITY_TENTACLE2_PRESENCE_GPIO,
-#ifdef CONFIG_AMITY_TENTACLE2_PRESENT_HIGH
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE2_PRESENCE_PULLUP
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE2_PRESENCE_PULLDOWN
-            true},
-#else
-            false},
-#endif
-        {CONFIG_AMITY_TENTACLE3_PRESENCE_GPIO,
-#ifdef CONFIG_AMITY_TENTACLE3_PRESENT_HIGH
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE3_PRESENCE_PULLUP
-            true,
-#else
-            false,
-#endif
-#ifdef CONFIG_AMITY_TENTACLE3_PRESENCE_PULLDOWN
-            true},
-#else
-            false},
-#endif
-    }
+    }, CONFIG_AMITY_BOARD_RESET_GPIO, -1
 };
 #else
 inline constexpr auto board_profile = cec::legacy_board2_profile;

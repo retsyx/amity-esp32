@@ -21,14 +21,12 @@ int main() {
 '''
 
 
-def settings(pairs, presence=None):
+def settings(pairs):
     lines = ['#define CONFIG_AMITY_BOARD_DEVELOPMENT_4T 1', '#define CONFIG_AMITY_BOARD_RESET_GPIO -1']
     for index in range(4):
         front, back = pairs.get(index, (-1, -1))
         lines += [f'#define CONFIG_AMITY_TENTACLE{index}_FRONT_GPIO {front}',
-                  f'#define CONFIG_AMITY_TENTACLE{index}_BACK_GPIO {back}',
-                  f'#define CONFIG_AMITY_TENTACLE{index}_PRESENCE_GPIO {(presence or {}).get(index, -1)}',
-                  f'#define CONFIG_AMITY_TENTACLE{index}_PRESENT_HIGH 1']
+                  f'#define CONFIG_AMITY_TENTACLE{index}_BACK_GPIO {back}']
     return '\n'.join(lines) + '\n'
 
 
@@ -37,8 +35,7 @@ cases = [('legacy', '', 1, 1, True),
          ('sparse-fourth', settings({3: (9, 44)}), 4, 8, True),
          ('full', settings({0: (1, 2), 1: (5, 6), 2: (7, 8), 3: (9, 44)}), 4, 15, True),
          ('partial-pair', settings({3: (9, -1)}), 4, 0, False),
-         ('separate-presence', settings({3: (9, 44)}, {3: 42}), 4, 8, True),
-         ('presence-on-cec-rejected', settings({3: (9, 44)}, {3: 9}), 4, 8, False)]
+         ('cec-collision', settings({2: (9, 44), 3: (9, 44)}), 4, 12, False)]
 with tempfile.TemporaryDirectory(prefix='amity-profile-') as directory:
     temporary = Path(directory)
     (temporary/'test.cpp').write_text(source)

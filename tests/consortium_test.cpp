@@ -55,6 +55,14 @@ void envelope_tests(const std::string& body){
     assert(parse_owned_intent(out.payload,decoded,lease)==Error::none&&decoded.kind==m::OwnedIntentKind::power&&decoded.on);
     assert(parse_envelope(replace(body,"\"on\":true","\"on\":false"),out)==Error::none);
     assert(parse_owned_intent(out.payload,decoded,lease)==Error::none&&!decoded.on);
+    auto input=action(scope());input.kind=m::OwnedIntentKind::source_input;
+    input.display=m::QualifiedDeviceName{{scope().consortium_id,scope().peer_id,1,m::Side::front},"TV"};
+    const auto selected=packet(scope(),Kind::scoped_intent,owned_intent_json(input,ident<m::ExecutionLeaseId>(14)));
+    Envelope routed;assert(parse_envelope(selected,routed)==Error::none);
+    assert(parse_owned_intent(routed.payload,decoded,lease)==Error::none&&decoded.display==input.display);
+    assert(parse_envelope(replace(selected,"\"arguments\":{\"display\":"+name_json(*input.display)+"}","\"arguments\":{}"),routed)==Error::invalid_message);
+    input.display->port.consortium_id=ident<m::ConsortiumId>(99);
+    assert(owned_intent_json(input,ident<m::ExecutionLeaseId>(14)).empty());
     assert(parse_envelope(replace(body,"\"arguments\":{\"on\":true}","\"arguments\":{}"),out)==Error::invalid_message);
     for(const auto* invalid:{"0","01","18446744073709551616"})assert(parse_envelope(replace(body,"\"sequence\":\"1\"","\"sequence\":\""+std::string(invalid)+"\""),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":0"),out)==Error::invalid_message);
@@ -314,10 +322,10 @@ void adapter_index_tests(){
     value.get("tentacle_id")->integer=4;assert(!parse_name(value,parsed_name));
     assert(parse_json(m::address_json({name.port,4}),value,detail)&&parse_address(value,parsed_address));
     value.get("tentacle_id")->integer=4;assert(!parse_address(value,parsed_address));
-    DeviceSettingsWrite write,parsed_write;write.expected_boot=s.local_boot_id;write.expected_revision=1;write.changes.push_back({3,1,"2.0.0.0"});
+    DeviceSettingsWrite write,parsed_write;write.expected_boot=s.local_boot_id;write.expected_revision=1;write.changes.push_back({3,"2.0.0.0"});
     assert(parse_json(device_settings_write_json(write),value,detail)&&parse_device_settings_write(value,parsed_write)==Error::none);
     value.get("changes")->array[0].get("tentacle_id")->integer=4;assert(parse_device_settings_write(value,parsed_write)==Error::invalid_message);
-    const auto snapshot="{\"boot_id\":\""+s.local_boot_id.str()+"\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"presence\":\"unknown\",\"presence_generation\":\"1\",\"default_front_physical_address\":\"2.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":null}]}";
+    const auto snapshot="{\"boot_id\":\""+s.local_boot_id.str()+"\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"default_front_physical_address\":\"2.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":null}]}";
     assert(parse_json(snapshot,value,detail)&&valid_settings_snapshot(value));
     value.get("adapters")->array[0].get("tentacle_id")->integer=4;assert(!valid_settings_snapshot(value));
 }

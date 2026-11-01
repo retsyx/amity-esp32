@@ -137,7 +137,7 @@ window.amityInterface=(()=>{
     const address=physicalAddress(input.value);
     input.setCustomValidity(address===null?'Use a dotted hexadecimal address such as 2.0.0.0; zeros must follow all nonzero digits.':'');
     if(!input.reportValidity())return;
-    if(address!==row.default_front_physical_address)changes.push({tentacle_id:row.tentacle_id,expected_presence_generation:row.presence_generation,default_front_physical_address:address});
+    if(address!==row.default_front_physical_address)changes.push({tentacle_id:row.tentacle_id,default_front_physical_address:address});
    }
    if(!changes.length){status.textContent='No settings changed.';return;}
    busy=true;save.disabled=true;reload.disabled=true;inputs.forEach(({input})=>input.disabled=true);
@@ -150,7 +150,7 @@ window.amityInterface=(()=>{
     }
     if(result.stage!=='applied'){
      needsReview=result.stage==='unknown'||result.stage==='admitted';
-     const error=Error(needsReview?'The save outcome is unknown. Refresh and check the saved values before trying again.':customerText(result.message||'Settings were not saved. Refresh and check that the adapters are connected.'));error.settingsResult=true;throw error;
+     const error=Error(needsReview?'The save outcome is unknown. Refresh and check the saved values before trying again.':customerText(result.message||'Settings were not saved. Refresh and check the settings before trying again.'));error.settingsResult=true;throw error;
     }
     status.textContent='Settings saved. Restarting '+name+'. Activities will not resume automatically.';
     inputs=[];snapshot=null;
@@ -173,11 +173,11 @@ window.amityInterface=(()=>{
     }
     snapshot=result.settings;needsReview=false;inputs=[];rows.replaceChildren();
     const fresh=result.status==='ready',named=name!=='Name unavailable';
-    status.textContent=fresh?'Only connected adapters with confirmed presence can be edited.':result.status==='unsupported'?'Update this Amity to configure its adapters.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
+    status.textContent=fresh?'Configured HDMI adapters can be edited.':result.status==='unsupported'?'Update this Amity to configure its adapters.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
     for(const row of snapshot?.adapters||[]){
      const section=document.createElement('fieldset'),heading=document.createElement('legend');section.dataset.adapterId=String(row.tentacle_id);heading.textContent=row.name||'HDMI adapter '+(row.tentacle_id+1);section.append(heading);
-     const presence=!row.configured?'Not configured':row.presence==='present'?'Connected':row.presence==='absent'?'Not attached':'Presence unknown';section.append(text(presence));
-     const setting=field('Default front physical address',row.default_front_physical_address),editable=fresh&&named&&row.configured&&row.presence==='present'&&!!row.presence_generation;
+     if(!row.configured)section.append(text('Not configured'));
+     const setting=field('Default front physical address',row.default_front_physical_address),editable=fresh&&named&&row.configured;
      setting.input.maxLength=7;setting.input.placeholder='1.0.0.0';setting.input.autocomplete='off';setting.input.spellcheck=false;setting.input.disabled=!editable;setting.input.addEventListener('input',()=>setting.input.setCustomValidity(''));
      const selected=row.effective_front_physical_address,source=selected?(selected===row.observed_front_physical_address?' (detected)':' (saved default)'):'';
      section.append(setting.label,text('Detected front address: '+(row.observed_front_physical_address||'Unavailable')),text('Selected front address: '+(selected||'Unavailable')+source));

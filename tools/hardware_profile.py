@@ -44,7 +44,7 @@ def integer(value):
 
 def boolean(value):
     if value not in ('y', 'n', '1', '0', None):
-        raise ValueError('GPIO identity requires boolean presence settings')
+        raise ValueError('GPIO identity requires boolean board settings')
     return int(value in ('y', '1'))
 
 
@@ -54,23 +54,18 @@ def descriptor(config):
         raise ValueError('Select exactly one explicit SDK board profile')
     if legacy:
         return START + (f'profile={LEGACY}\nrevision=1\ncapacity=1\nreset=4\nstatus=-1\n'
-                        'slot0=1,2,-1,1,0,0\n').encode() + END
+                        'slot0=1,2\n').encode() + END
     reset = integer(config.get('AMITY_BOARD_RESET_GPIO'))
     lines = [f'profile={DEVELOPMENT}', 'revision=1', f'capacity={MAX_TENTACLES}', f'reset={reset}', 'status=-1']
     assigned = [] if reset < 0 else [reset]
     forbidden = {0, 3, 19, 20, 45, 46, *range(22, 38)}
     for slot in range(MAX_TENTACLES):
         prefix = f'AMITY_TENTACLE{slot}_'
-        # Kconfig omits the dependent pull-down option when pull-up is enabled.
-        if (any(prefix + key not in config for key in ('PRESENT_HIGH', 'PRESENCE_PULLUP')) or
-                (prefix + 'PRESENCE_PULLDOWN' not in config and not boolean(config.get(prefix + 'PRESENCE_PULLUP')))):
-            raise ValueError('SDK configuration omits presence-input settings')
-        front, back, presence = (integer(config.get(prefix + key)) for key in ('FRONT_GPIO', 'BACK_GPIO', 'PRESENCE_GPIO'))
-        high, pullup, pulldown = (boolean(config.get(prefix + key)) for key in ('PRESENT_HIGH', 'PRESENCE_PULLUP', 'PRESENCE_PULLDOWN'))
-        if (front < 0) != (back < 0) or (presence >= 0 and front < 0) or pullup + pulldown > 1:
-            raise ValueError('Invalid paired GPIO or presence-input profile')
-        assigned.extend(pin for pin in (front, back, presence) if pin >= 0)
-        lines.append(f'slot{slot}={front},{back},{presence},{high},{pullup},{pulldown}')
+        front, back = (integer(config.get(prefix + key)) for key in ('FRONT_GPIO', 'BACK_GPIO'))
+        if (front < 0) != (back < 0):
+            raise ValueError('Invalid paired CEC GPIO profile')
+        assigned.extend(pin for pin in (front, back) if pin >= 0)
+        lines.append(f'slot{slot}={front},{back}')
     if len(assigned) != len(set(assigned)) or forbidden.intersection(assigned):
         raise ValueError('GPIO profile has a pin collision or reserved peripheral pin')
     return START + ('\n'.join(lines) + '\n').encode() + END
@@ -94,9 +89,9 @@ def identity(raw):
         config = {BOARD_FLAGS[0]: 'n', BOARD_FLAGS[1]: 'y', 'AMITY_BOARD_RESET_GPIO': values.get('reset')}
         for slot in range(MAX_TENTACLES):
             items = values.get(f'slot{slot}', '').split(',')
-            if len(items) != 6 or any(item not in ('0', '1') for item in items[3:]):
+            if len(items) != 2:
                 raise ValueError('Malformed hardware slot descriptor')
-            for name, value in zip(('FRONT_GPIO', 'BACK_GPIO', 'PRESENCE_GPIO', 'PRESENT_HIGH', 'PRESENCE_PULLUP', 'PRESENCE_PULLDOWN'), items):
+            for name, value in zip(('FRONT_GPIO', 'BACK_GPIO'), items):
                 config[f'AMITY_TENTACLE{slot}_' + name] = value
     else:
         raise ValueError('Unknown hardware profile')

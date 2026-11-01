@@ -16,18 +16,6 @@
           "minimum": 0,
           "maximum": 3
         },
-        "expected_presence_generation": {
-          "allOf": [
-            {
-              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-            },
-            {
-              "not": {
-                "const": "0"
-              }
-            }
-          ]
-        },
         "default_front_physical_address": {
           "oneOf": [
             {
@@ -41,7 +29,6 @@
       },
       "required": [
         "tentacle_id",
-        "expected_presence_generation",
         "default_front_physical_address"
       ],
       "additionalProperties": false
@@ -64,16 +51,6 @@
         },
         "configured": {
           "type": "boolean"
-        },
-        "presence": {
-          "enum": [
-            "present",
-            "absent",
-            "unknown"
-          ]
-        },
-        "presence_generation": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
         },
         "default_front_physical_address": {
           "$ref": "#/$defs/PhysicalAddress"
@@ -103,8 +80,6 @@
         "tentacle_id",
         "name",
         "configured",
-        "presence",
-        "presence_generation",
         "default_front_physical_address",
         "observed_front_physical_address",
         "effective_front_physical_address"
@@ -171,25 +146,6 @@
             "properties": {
               "name": {
                 "const": "HDMI adapter 4"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "configured": {
-                "const": false
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "presence": {
-                "enum": [
-                  "unknown",
-                  "absent"
-                ]
               }
             }
           }

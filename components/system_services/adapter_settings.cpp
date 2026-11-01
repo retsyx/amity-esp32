@@ -34,7 +34,7 @@ const char* code(c::Error value){
 }
 std::string address(std::optional<uint16_t> value){return value&&*value!=0xffff?'"'+device_settings::format_physical_address(*value)+'"':"null";}
 std::string result(m::MessageId id,c::Error error){return "{\"request_id\":\""+id.str()+"\",\"stage\":\""+(error==c::Error::none?"applied":"failed")+"\",\"error\":\""+code(error)+"\",\"snapshot\":"+(error==c::Error::none?snapshot():"null")+"}";}
-struct Change {device_settings::AdapterDefaultChange preference;uint64_t generation;};
+struct Change {device_settings::AdapterDefaultChange preference;};
 struct Request {m::BootId boot;uint64_t revision=0;std::vector<Change> changes;std::string fingerprint;};
 bool parse(const c::Json& json,Request& request){
     bool confirm=false;
@@ -45,16 +45,15 @@ bool parse(const c::Json& json,Request& request){
     if(!changes||changes->type!=c::Json::Type::array||changes->array.empty()||changes->array.size()>amity::max_tentacles)return false;
     uint8_t seen=0;
     for(const auto& item:changes->array){
-        uint64_t id=0,generation=0;std::string physical;uint16_t parsed=0;
-        if(!c::closed(item,{"tentacle_id","expected_presence_generation","default_front_physical_address"})||
+        uint64_t id=0;std::string physical;uint16_t parsed=0;
+        if(!c::closed(item,{"tentacle_id","default_front_physical_address"})||
            !c::json_uint(item.get("tentacle_id"),id,0,amity::last_tentacle_id)||(seen&(1u<<id))||
-           !c::decimal(item.get("expected_presence_generation"),generation)||!generation||
            !c::json_string(item.get("default_front_physical_address"),physical,0,7)||!device_settings::parse_front_physical_address(physical,parsed))return false;
-        seen|=uint8_t(1u<<id);request.changes.push_back({{uint8_t(id),parsed},generation});
+        seen|=uint8_t(1u<<id);request.changes.push_back({{uint8_t(id),parsed}});
     }
     std::sort(request.changes.begin(),request.changes.end(),[](const Change& a,const Change& b){return a.preference.tentacle_id<b.preference.tentacle_id;});
     request.fingerprint=request.boot.str()+":"+std::to_string(request.revision);
-    for(const auto& change:request.changes)request.fingerprint+=":"+std::to_string(change.preference.tentacle_id)+":"+std::to_string(change.generation)+":"+std::to_string(change.preference.front_physical);
+    for(const auto& change:request.changes)request.fingerprint+=":"+std::to_string(change.preference.tentacle_id)+":"+std::to_string(change.preference.front_physical);
     return true;
 }
 }
@@ -69,7 +68,7 @@ std::string snapshot(){
         if(row.tentacle_id>=owner->supported_tentacles()||row.tentacle_id>=amity::max_tentacles)continue;
         if(!first)out+=',';
         first=false;
-        out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"presence\":\""+(!row.present?"unknown":*row.present?"present":"absent")+"\",\"presence_generation\":\""+std::to_string(row.presence_generation)+"\",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+"}";
+        out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+"}";
     }
     return out+"]}";
 }
@@ -89,10 +88,10 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
     else if(restart_pending||!c::runtime_device_settings_authorized(id))error=c::Error::not_ready;
     else {
         std::vector<device_settings::AdapterDefaultChange> preferences;
-        std::vector<std::pair<uint8_t,uint64_t>> generations;
-        for(const auto& change:request.changes){preferences.push_back(change.preference);generations.emplace_back(change.preference.tentacle_id,change.generation);}
+        std::vector<uint8_t> adapters;
+        for(const auto& change:request.changes){preferences.push_back(change.preference);adapters.push_back(change.preference.tentacle_id);}
         auto failure=std::make_shared<std::atomic<c::Error>>(c::Error::none);
-        const auto applied=owner->commit_adapter_settings(request.boot,std::move(generations),deadline,
+        const auto applied=owner->commit_adapter_settings(request.boot,std::move(adapters),deadline,
             [id,deadline,revision=request.revision,preferences=std::move(preferences),failure]{
                 if(now()>=deadline){failure->store(c::Error::lease_expired);return ESP_ERR_INVALID_STATE;}
                 if(!c::runtime_device_settings_authorized(id)){failure->store(c::Error::not_ready);return ESP_ERR_INVALID_STATE;}

@@ -12,6 +12,7 @@ from functional_tests.consortium import (
     test_consortium, test_consortium_three_duts, test_consortium_four_duts)
 
 test_dual_display = import_module("functional_tests.dual-display").test_dual_display
+test_source_theft_isolated = import_module("functional_tests.source-theft").test_source_theft_isolated
 
 if __name__ == "__main__":
     raise SystemExit(main({"hdmi_scan": test_hdmi_scan, "activity": (test_activity, test_activity_switch_input),
@@ -19,4 +20,5 @@ if __name__ == "__main__":
                            "consortium": test_consortium,
                            "consortium_three_duts": test_consortium_three_duts,
                            "consortium_four_duts": test_consortium_four_duts,
-                           "dual_display": test_dual_display}))
+                           "dual_display": test_dual_display,
+                           "source_theft_isolated": test_source_theft_isolated}))

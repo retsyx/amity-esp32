@@ -63,6 +63,16 @@ Error parse_owned_intent(const Json& v,model::OwnedIntent& out,model::ExecutionL
     case K::power:
         if(!closed(a,{"on"})||!json_bool(a.get("on"),x.on))return Error::invalid_message;
         break;
+    case K::source_input:{
+        if(!closed(a,{"display"}))return Error::invalid_message;
+        const auto* value=a.get("display");
+        if(value->type!=Json::Type::null_value){
+            model::QualifiedDeviceName display;
+            if(!target(*value,display,false)||display.port.consortium_id!=x.target.port.consortium_id)return Error::invalid_message;
+            x.display=std::move(display);
+        }
+        break;
+    }
     case K::switch_input:if(!closed(a,{"input"})||!json_uint(a.get("input"),n,0,255))return Error::invalid_message;x.input=static_cast<uint8_t>(n);break;
     case K::key_down:
         if(!closed(a,{"key","repeat","token"})||!json_uint(a.get("key"),n,0,255)||!json_bool(a.get("repeat"),x.repeat)||!id(a.get("token"),x.token))return Error::invalid_message;
@@ -84,6 +94,7 @@ std::string owned_intent_json(const model::OwnedIntent& x,model::ExecutionLeaseI
     std::string args="{}";
     switch(x.kind) {
     case K::power:args="{\"on\":"+std::string(x.on?"true":"false")+"}";break;
+    case K::source_input:args="{\"display\":"+(x.display?target_json(*x.display):"null")+"}";break;
     case K::switch_input:args="{\"input\":"+std::to_string(x.input)+"}";break;
     case K::key_down:args="{\"key\":"+std::to_string(x.key)+",\"repeat\":"+(x.repeat?"true":"false")+",\"token\":\""+x.token.str()+"\"}";break;
     case K::key_up:args="{\"key\":"+std::to_string(x.key)+",\"token\":\""+x.token.str()+"\"}";break;

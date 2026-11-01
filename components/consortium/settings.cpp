@@ -15,9 +15,8 @@ bool is_settings_kind(Kind kind){return kind==Kind::settings_read||kind==Kind::s
 bool valid_settings_snapshot(const Json& value){
  model::BootId boot;if(!closed(value,{"boot_id","settings_revision","adapters"})||!id(value.get("boot_id"),boot)||!counter(value.get("settings_revision")))return false;
  const auto* rows=value.get("adapters");if(rows->type!=Json::Type::array||rows->array.size()>amity::max_tentacles)return false;unsigned seen=0;
- for(const auto& row:rows->array){uint64_t slot=0,generation=0;std::string name;bool configured=false;
-  if(!closed(row,{"tentacle_id","name","configured","presence","presence_generation","default_front_physical_address","observed_front_physical_address","effective_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!json_string(row.get("name"),name,0,128)||!json_bool(row.get("configured"),configured)||!text(row.get("presence"),{"present","absent","unknown"})||!decimal(row.get("presence_generation"),generation)||!pa(row.get("default_front_physical_address"))||!nullable_pa(row.get("observed_front_physical_address"))||!nullable_pa(row.get("effective_front_physical_address")))return false;
-  if(!configured&&text(row.get("presence"),{"present"}))return false;
+ for(const auto& row:rows->array){uint64_t slot=0;std::string name;bool configured=false;
+  if(!closed(row,{"tentacle_id","name","configured","default_front_physical_address","observed_front_physical_address","effective_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!json_string(row.get("name"),name,0,128)||!json_bool(row.get("configured"),configured)||!pa(row.get("default_front_physical_address"))||!nullable_pa(row.get("observed_front_physical_address"))||!nullable_pa(row.get("effective_front_physical_address")))return false;
   seen|=1u<<slot;
  }
     return true;
@@ -26,13 +25,13 @@ Error parse_device_settings_write(const Json& value,DeviceSettingsWrite& out){
  DeviceSettingsWrite next;if(!closed(value,{"expected_boot_id","expected_settings_revision","confirm_restart","changes"})||!id(value.get("expected_boot_id"),next.expected_boot)||!decimal(value.get("expected_settings_revision"),next.expected_revision)||!next.expected_revision||!value.get("confirm_restart")||value.get("confirm_restart")->type!=Json::Type::boolean||!value.get("confirm_restart")->boolean)return Error::invalid_message;
  const auto* changes=value.get("changes");if(changes->type!=Json::Type::array||changes->array.empty()||changes->array.size()>amity::max_tentacles)return Error::invalid_message;unsigned seen=0;
  for(const auto& row:changes->array){uint64_t slot=0;AdapterSettingChange change;
-  if(!closed(row,{"tentacle_id","expected_presence_generation","default_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!decimal(row.get("expected_presence_generation"),change.presence_generation)||!change.presence_generation||!pa(row.get("default_front_physical_address"),true))return Error::invalid_message;
+  if(!closed(row,{"tentacle_id","default_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!pa(row.get("default_front_physical_address"),true))return Error::invalid_message;
   seen|=1u<<slot;change.tentacle_id=slot;change.default_front_physical_address=row.get("default_front_physical_address")->string;next.changes.push_back(std::move(change));
  }out=std::move(next);return Error::none;
 }
 std::string device_settings_write_json(const DeviceSettingsWrite& value){
  std::string out="{\"expected_boot_id\":\""+value.expected_boot.str()+"\",\"expected_settings_revision\":\""+std::to_string(value.expected_revision)+"\",\"confirm_restart\":true,\"changes\":[";
- for(size_t index=0;index<value.changes.size();++index){const auto& change=value.changes[index];if(index)out+=",";out+="{\"tentacle_id\":"+std::to_string(change.tentacle_id)+",\"expected_presence_generation\":\""+std::to_string(change.presence_generation)+"\",\"default_front_physical_address\":"+quote(change.default_front_physical_address)+"}";}
+ for(size_t index=0;index<value.changes.size();++index){const auto& change=value.changes[index];if(index)out+=",";out+="{\"tentacle_id\":"+std::to_string(change.tentacle_id)+",\"default_front_physical_address\":"+quote(change.default_front_physical_address)+"}";}
     return out+"]}";
 }
 bool valid_settings_payload(Kind kind,const Json& value){

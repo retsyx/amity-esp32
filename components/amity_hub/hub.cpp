@@ -150,6 +150,22 @@ bool Hub::execute_owned(const system::OwnedIntent& intent) {
     }
 }
 
+bool Hub::source_input_announcement(const system::OwnedIntent& intent) {
+    if(intent.kind!=system::OwnedIntentKind::source_input||intent.target.port.side!=system::Side::back||!intent.display)return false;
+    const auto& source=intent.target.port;const auto& display=intent.display->port;
+    return source.octopus_id!=display.octopus_id||source.tentacle_id!=display.tentacle_id;
+}
+bool Hub::source_input_announcement_here(const system::OwnedIntent& intent) const {
+    // A root-level display connection has no upstream switch to select.
+    // In particular, do not announce to an unselected TV in a dual-display
+    // activity. A nested PA identifies this adapter's input on the switch.
+    return source_input_announcement(intent)&&physical_!=0xffff&&(physical_&0x0f00)!=0;
+}
+bool Hub::announce_owned_input() {
+    if(physical_==0xffff)return false;
+    return send(BusSide::Front,15,{0x82,static_cast<uint8_t>(physical_>>8),static_cast<uint8_t>(physical_)});
+}
+
 void Hub::set_addresses(uint8_t front, uint8_t back, uint16_t physical) {
     front_ = front; back_ = back; physical_ = physical;
 }
@@ -235,6 +251,7 @@ void Hub::input(const Activity &activity) {
         current_input_sequence_=0;
         if(pending_inputs_.size()>=32)return;
         system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::source_input;intent.target=*source;intent.generation=owned_generation_;
+        intent.display=target(activity.display);
         const auto result=owned_sender_(intent);
         if(result.source_present){if(!*result.source_present)fallback_input(activity);}
         else if(result.admitted){pending_inputs_.push_back(PendingInput{activity,source->port.octopus_id,owned_generation_,result.sequence,false});current_input_sequence_=result.sequence;}

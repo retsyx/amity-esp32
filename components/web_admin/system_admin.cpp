@@ -281,7 +281,7 @@ esp_err_t snapshot(httpd_req_t* req){
     cJSON_AddNumberToObject(capabilities,"supported_tentacles",control->supported_tentacles());
     cJSON_AddNumberToObject(capabilities,"configured_tentacles_mask",control->configured_tentacles_mask());
     auto* connectors=cJSON_AddArrayToObject(capabilities,"connectors");
-    for(uint8_t id=0;id<control->supported_tentacles();++id){auto* connector=cJSON_CreateObject();cJSON_AddNumberToObject(connector,"tentacle_id",id);cJSON_AddBoolToObject(connector,"configured",control->connector_enabled(id));const auto presence=control->connector_presence(id);cJSON_AddStringToObject(connector,"presence",presence?(*presence?"present":"absent"):"unknown");cJSON_AddItemToArray(connectors,connector);}
+    for(uint8_t id=0;id<control->supported_tentacles();++id){auto* connector=cJSON_CreateObject();cJSON_AddNumberToObject(connector,"tentacle_id",id);cJSON_AddBoolToObject(connector,"configured",control->connector_enabled(id));cJSON_AddItemToArray(connectors,connector);}
     cJSON_AddNumberToObject(capabilities,"supported_octopuses",amity::consortium::maximum_roster_peers+1);
     cJSON_AddNumberToObject(capabilities,"configuration_payload_limit",config_store::configuration_payload_limit);
     config_store::StorageBudget budget;const auto storage_result=config_store::storage_budget(budget);auto* storage=cJSON_AddObjectToObject(result.get(),"storage");

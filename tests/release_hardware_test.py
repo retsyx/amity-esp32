@@ -20,10 +20,8 @@ import release_manifest as release
 def development():
     values = {'AMITY_BOARD_LEGACY_1T': 'n', 'AMITY_BOARD_DEVELOPMENT_4T': 'y', 'AMITY_BOARD_RESET_GPIO': '-1'}
     for slot in range(4):
-        for key in ('FRONT_GPIO', 'BACK_GPIO', 'PRESENCE_GPIO'):
+        for key in ('FRONT_GPIO', 'BACK_GPIO'):
             values[f'AMITY_TENTACLE{slot}_{key}'] = '-1'
-        for key, value in [('PRESENT_HIGH', 'y'), ('PRESENCE_PULLUP', 'n'), ('PRESENCE_PULLDOWN', 'n')]:
-            values[f'AMITY_TENTACLE{slot}_{key}'] = value
     return values
 
 
@@ -139,22 +137,20 @@ class HardwareReleaseTests(unittest.TestCase):
     def test_explicit_sdk_selection_and_gpio_validation(self):
         for config in [{}, {'AMITY_BOARD_LEGACY_1T': 'y', 'AMITY_BOARD_DEVELOPMENT_4T': 'y'}]:
             with self.assertRaises(ValueError): hardware.descriptor(config)
-        for key, value in [('AMITY_TENTACLE0_FRONT_GPIO', '1'), ('AMITY_BOARD_RESET_GPIO', '19'), ('AMITY_BOARD_RESET_GPIO', '24'), ('AMITY_TENTACLE0_PRESENCE_PULLUP', 'invalid')]:
+        for key, value in [('AMITY_TENTACLE0_FRONT_GPIO', '1'), ('AMITY_BOARD_RESET_GPIO', '19'), ('AMITY_BOARD_RESET_GPIO', '24'), ('AMITY_BOARD_DEVELOPMENT_4T', 'invalid')]:
             config = development(); config[key] = value
             with self.assertRaises(ValueError): hardware.descriptor(config)
-        config = development(); config.pop('AMITY_TENTACLE0_PRESENT_HIGH')
+        config = development(); config.pop('AMITY_TENTACLE0_FRONT_GPIO')
         with self.assertRaises(ValueError): hardware.descriptor(config)
 
-    def test_saved_menuconfig_pullup_omits_dependent_pulldown(self):
+    def test_slot_identity_contains_only_the_two_cec_wires(self):
         config = development()
-        config.update(AMITY_TENTACLE2_FRONT_GPIO='7', AMITY_TENTACLE2_BACK_GPIO='8',
-                      AMITY_TENTACLE2_PRESENCE_GPIO='41', AMITY_TENTACLE2_PRESENT_HIGH='n',
-                      AMITY_TENTACLE2_PRESENCE_PULLUP='y')
-        config.pop('AMITY_TENTACLE2_PRESENCE_PULLDOWN')
-        implicit = hardware.descriptor(config)
-        config['AMITY_TENTACLE2_PRESENCE_PULLDOWN'] = 'n'
-        self.assertEqual(implicit, hardware.descriptor(config))
-        self.assertIn(b'slot2=7,8,41,0,1,0\n', implicit)
+        config.update(AMITY_TENTACLE2_FRONT_GPIO='7', AMITY_TENTACLE2_BACK_GPIO='8')
+        raw = hardware.descriptor(config)
+        self.assertIn(b'slot2=7,8\n', raw)
+        malformed = raw.replace(b'slot2=7,8\n', b'slot2=7,8,41,0,1,0\n')
+        with self.assertRaisesRegex(ValueError, 'slot descriptor'):
+            hardware.identity(malformed)
 
 
 if __name__ == '__main__':

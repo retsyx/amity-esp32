@@ -1,6 +1,6 @@
 {
   "package": "Amity qualified owner lookup",
-  "amendment_date": "2026-10-27",
+  "amendment_date": "2026-11-01",
   "behavior_baseline": "98e64a6 plus explicit user amendments in AGENTS.md",
   "contract": "Stable Amity device ID / HDMI adapter / CEC side / OSD name; canonical schema3 saved intent and original local algorithms through authenticated owner delivery. No persistent enabled or executable graph approvals.",
   "hash_algorithm": "SHA-256",
@@ -13,13 +13,13 @@
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 6792,
-      "sha256": "0fded094ec8369f0dc8e3de758af0218a1fe7c37a48511986f225fa0b486983b"
+      "size_bytes": 7029,
+      "sha256": "3627a1689e5a4e15a32866d963f02effb97da8c54da8ddc53b88960979a66d5c"
     },
     {
       "path": "05-discovery-and-topology.md",
-      "size_bytes": 10024,
-      "sha256": "79eded99e50ba146f94363f4ca7e435234de3d02cbe229372c3e49f5c8e64be7"
+      "size_bytes": 10055,
+      "sha256": "c3170a7dd426343d26cfdc7b4b0e6c3b6ed3abde198d4d13da8ed71c2a7057bc"
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
@@ -28,13 +28,13 @@
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 11600,
-      "sha256": "3e6ce50e22c647c9ef549d41f5ae0568d0c975168b369355f74d09bbdd784a3e"
+      "size_bytes": 14357,
+      "sha256": "1aa9344fa3b10bc23f395779c8b97454e95f852e65155ed50afd48112c7a088d"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 23949,
-      "sha256": "cf6e8178158f09673f122c1bbaac1c5c45338e08a9f730018abf2f6388ea5bd6"
+      "size_bytes": 23945,
+      "sha256": "aadbe3d2cb69fe0d323c7a8d5739e2d29dda2959d91475bc1845d4d7b8ea4634"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -53,8 +53,8 @@
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 9592,
-      "sha256": "6e685cdb933d82775f811b71e7ed3df5c4a5973cbea6b3ed4b697470cab82420"
+      "size_bytes": 9649,
+      "sha256": "46b731e0eefd6daac72a5abd742d610088726a48cd6e0d12f8ea953b0814d43a"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
@@ -78,13 +78,13 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 29759,
-      "sha256": "8feec01aaddeefdcb46467ca278b75e2283d8c86d26998f3f7a828743848ad63"
+      "size_bytes": 29137,
+      "sha256": "8b01bbb9876a2dfcddb2f553df9ecc2d24993849be928a14c33a8ca931f242e0"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 10611,
-      "sha256": "d0145e4b9198742ab71f4239669897d676a217b1e9fe5a69f55d0466ec17b8b6"
+      "size_bytes": 10675,
+      "sha256": "1c79dbaea0719e379dc79970f8cab43faf1569545a0b76bb13b7c0d4c8f0bfd3"
     },
     {
       "path": "README.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 101010,
-      "sha256": "ce056225c9ac73ee47013cd22397939c6bc2977d575f96fe675f8ae5b54a9937"
+      "size_bytes": 104270,
+      "sha256": "3635906f2cee94f569de31578a5e5f7e5880b86597b8f6b40a5d2705cfc2d1c0"
     },
     {
       "path": "examples/README.md",
@@ -138,13 +138,13 @@
     },
     {
       "path": "schemas/README.md",
-      "size_bytes": 3340,
-      "sha256": "62ba2459b04f6e82c54f718dec89a199abdac3819c46947f2787042c6247a897"
+      "size_bytes": 3359,
+      "sha256": "7e3b1a301c34ad005503873d0f426b1819703be34dbddb9b5eddafed1814eece"
     },
     {
       "path": "schemas/adapter-settings.schema.json",
-      "size_bytes": 7780,
-      "sha256": "2ee6010da4858353bd51238a37369c64e68902572f38237b359ed089a6c8d337"
+      "size_bytes": 6715,
+      "sha256": "a6acbbea1571ac97696ca9d03efe25a65b7d95e10ae14c7b3698240dd4383a50"
     },
     {
       "path": "schemas/cec-address.schema.json",
@@ -173,8 +173,8 @@
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 19072,
-      "sha256": "bbc093acb846e840a1bb4609e5a25de224dcbf0a1b223d878ab69e0eb2a079b3"
+      "size_bytes": 18985,
+      "sha256": "662ee458872a1b53e2e9b9c5d936be4a76b7f9c5d3a5b2c3be1c107a19009498"
     }
   ]
 }

@@ -232,6 +232,16 @@ class Fixture:
 
 
 class ActivityTests(unittest.TestCase):
+    def test_cleanup_does_not_standby_a_user_activity_to_remove_an_unused_fixture(self):
+        fixture = Fixture()
+        owned = fixture.activity("Unused fixture").create()
+        fixture.current = "9" * 32  # The original saved activity, not a test resource.
+        with self.assertRaises(ActivityCleanupError):
+            owned.close()
+        self.assertEqual(fixture.current, "9" * 32)
+        self.assertFalse(any(path == "/api/activity-editor/activity" and data.get("activity_id") is None
+                             for path, data in fixture.calls if data is not None))
+
     def setUp(self):
         self.fixture = Fixture()
 
@@ -299,6 +309,7 @@ class ActivityTests(unittest.TestCase):
         f.rows[0]["source"] = "component:" + identity
         f.sync_full()
         activity.close()
+        activity.close()  # The bed callback revisits retained fixture equipment.
         self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32, identity])
         self.assertEqual(activity.retained_equipment, [identity])
 
@@ -317,6 +328,7 @@ class ActivityTests(unittest.TestCase):
         activity = f.activity()
         record = next(record for record in f.full["components"] if record["label"] == f.tv.name)
         record["label"] = "User changed label"
+        activity.close()
         activity.close()
         self.assertEqual([record["label"] for record in f.full["components"]], ["Preexisting equipment", "User changed label"])
 

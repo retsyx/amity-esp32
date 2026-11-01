@@ -7,8 +7,7 @@
 
 """Exercise shipped per-device settings, hostname and reset UI against a local fixture.
 
-The fixture qualifies browser requests and presentation, not GPIO presence,
-physical HDMI address discovery, an actual restart or multiple-device hardware.
+The fixture qualifies browser requests and presentation, not physical HDMI address discovery, an actual restart or multiple-device hardware.
 """
 from copy import deepcopy
 import json
@@ -26,14 +25,14 @@ fixture=dict(hostname='amity-dut',boot_id=BOOT,hostname_probes=0,hostname_ready=
 editor=dict(version=1,activities=[],device_choices=[],expected_config_revision='1',expected_presentation_revision='1')
 configuration=dict(version=3,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],zones=[],
                    octopuses=[dict(octopus_id=MAIN,supported_tentacles=1),dict(octopus_id=MEMBER,supported_tentacles=4)])
-def adapter(slot,presence='present',configured=True,default='1.0.0.0',observed=None):
-    return dict(tentacle_id=slot,name=f'HDMI adapter {slot+1}',configured=configured,presence=presence,presence_generation=str(slot+1),
+def adapter(slot,configured=True,default='1.0.0.0',observed=None):
+    return dict(tentacle_id=slot,name=f'HDMI adapter {slot+1}',configured=configured,
                 default_front_physical_address=default,observed_front_physical_address=observed,
-                effective_front_physical_address=(observed or default) if configured and presence!='absent' else None)
+                effective_front_physical_address=(observed or default) if configured else None)
 settings={MAIN:dict(boot_id=BOOT,settings_revision='1',adapters=[adapter(0)]),
           MEMBER:dict(boot_id=REMOTE_BOOT,settings_revision='9007199254740993',adapters=[
-              adapter(0,default='2.0.0.0',observed='3.0.0.0'),adapter(1,'absent',default='4.0.0.0'),
-              adapter(2,'unknown'),adapter(3,default='A.B.0.0')])}
+              adapter(0,default='2.0.0.0',observed='3.0.0.0'),adapter(1,default='4.0.0.0'),
+              adapter(2,configured=False),adapter(3,default='A.B.0.0')])}
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT/'components/web_admin/assets'),**kwargs)
     def log_message(self,*args):pass
@@ -80,8 +79,8 @@ class Handler(SimpleHTTPRequestHandler):
             for change in data['changes']:
                 row=current['adapters'][change['tentacle_id']]
                 assert change['tentacle_id'] not in seen;seen.add(change['tentacle_id'])
-                if not row['configured'] or row['presence']!='present' or change['expected_presence_generation']!=row['presence_generation']:
-                    return self.reply(dict(stage='failed',message='Adapter presence changed. Refresh before saving.',rebooting=False))
+                if not row['configured']:
+                    return self.reply(dict(stage='failed',message='HDMI adapter is not configured. Refresh before saving.',rebooting=False))
             for change in data['changes']:current['adapters'][change['tentacle_id']]['default_front_physical_address']=change['default_front_physical_address'] or '1.0.0.0'
             current['settings_revision']=str(int(current['settings_revision'])+1)
             if fixture['settings_http500']:return self.reply(dict(error='Connection closed after saving'),500)
@@ -142,14 +141,14 @@ def main():
             expect(d).to_contain_text('HDMI adapter 1');expect(d).to_contain_text('Detected front address: Unavailable');expect(d).to_contain_text('Selected front address: 1.0.0.0');assert fixture['calls']==before
             passed('fixed adapter remains editable; opening named device settings sends no mutation or scan');close(d)
             d=open_settings();expect(d.locator('h3')).to_have_text('amity-bedroom settings');expect(d).to_contain_text('HDMI adapter 4')
-            for slot in (0,3):expect(input_for(d,slot)).to_be_enabled()
-            for slot in (1,2):expect(input_for(d,slot)).to_be_disabled()
-            expect(d.locator('[data-adapter-id="1"]')).to_contain_text('Not attached');expect(d.locator('[data-adapter-id="2"]')).to_contain_text('Presence unknown')
+            for slot in (0,1,3):expect(input_for(d,slot)).to_be_enabled()
+            expect(input_for(d,2)).to_be_disabled()
+            expect(d.locator('[data-adapter-id="2"]')).to_contain_text('Not configured')
             expect(d.locator('[data-adapter-id="0"]')).to_contain_text('Detected front address: 3.0.0.0');expect(d.locator('[data-adapter-id="0"]')).to_contain_text('Selected front address: 3.0.0.0');expect(input_for(d,0)).to_have_value('2.0.0.0')
             close(d);settings[MEMBER]['adapters'][2]['configured']=False;d=open_settings()
             expect(d.locator('[data-adapter-id="2"]')).to_contain_text('Not configured');expect(input_for(d,2)).to_be_disabled()
             close(d);settings[MEMBER]['adapters'][2]['configured']=True;d=open_settings()
-            passed('four stable socket numbers; absent, unknown and unconfigured defaults read only; observed and saved values separated')
+            expect(input_for(d,2)).to_be_enabled();passed('four stable socket numbers; configured wires editable without a sensor; unconfigured defaults read only; observed and saved values separated')
             save=d.get_by_role('button',name='Save and restart Amity',exact=True);start=len(settings_posts())
             for invalid in ('1.0.1.0','F.F.F.F','invalid'):
                 input_for(d,3).fill(invalid);save.click();assert len(settings_posts())==start
@@ -160,10 +159,10 @@ def main():
             fixture['settings_fail']=False;captured=deepcopy(settings[MEMBER]);save.click();expect(d.get_by_role('status')).to_contain_text('Settings saved. Restarting amity-bedroom')
             path,body=settings_posts()[-1];assert path==f'/api/devices/{MEMBER}/settings'
             assert body['expected_boot_id']==captured['boot_id'] and body['expected_settings_revision']==captured['settings_revision']
-            assert body['confirm_restart'] is True and body['changes']==[dict(tentacle_id=3,expected_presence_generation=captured['adapters'][3]['presence_generation'],default_front_physical_address='B.C.0.0')]
+            assert body['confirm_restart'] is True and body['changes']==[dict(tentacle_id=3,default_front_physical_address='B.C.0.0')]
             assert settings[MEMBER]['adapters'][1]['default_front_physical_address']=='4.0.0.0' and settings[MAIN]['settings_revision']=='1'
             expect(page.locator('#admin')).to_be_visible();assert fixture['operations'][next(reversed(fixture['operations']))]['polls']>=2
-            passed('captured decimal CAS and exact slot sent; admission polled to applied; only selected added device restarts and absent preference retained');close(d)
+            passed('captured decimal CAS and exact slot sent; admission polled to applied; only selected added device restarts and unselected preference retained');close(d)
             d=open_settings();input_for(d,3).fill('');d.get_by_role('button',name='Save and restart Amity',exact=True).click();expect(d.get_by_role('status')).to_contain_text('Settings saved. Restarting amity-bedroom')
             assert settings_posts()[-1][1]['changes'][0]['default_front_physical_address']=='1.0.0.0';passed('blank resets only the selected stable slot to default');close(d)
             # The target may save before its reply disappears. Both an explicit
@@ -183,11 +182,11 @@ def main():
             assert len(settings_posts())==start+1;passed('unknown or HTTP500 after durable save disables Save until Refresh reviews saved values; neither outcome replays the POST');close(d)
             d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['settings_revision']=str(int(settings[MEMBER]['settings_revision'])+1);input_for(d,3).fill('6.0.0.0');d.get_by_role('button',name='Save and restart Amity',exact=True).click();expect(d.get_by_role('status')).to_contain_text('Settings changed')
             assert settings_posts()[-1][1]['expected_settings_revision']==captured['settings_revision'];expect(input_for(d,3)).to_have_value('6.0.0.0');passed('dialog keeps reviewed settings revision and reports stale-save rejection');close(d)
-            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['adapters'][3]['presence_generation']=str(int(settings[MEMBER]['adapters'][3]['presence_generation'])+2);input_for(d,3).fill('7.0.0.0');d.get_by_role('button',name='Save and restart Amity',exact=True).click();expect(d.get_by_role('status')).to_contain_text('Adapter presence changed')
-            assert settings_posts()[-1][1]['changes'][0]['expected_presence_generation']==captured['adapters'][3]['presence_generation'];passed('detach/reinsert ABA uses captured attachment generation and never silently retries');close(d)
+            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['boot_id']='d'*32;input_for(d,3).fill('7.0.0.0');d.get_by_role('button',name='Save and restart Amity',exact=True).click();expect(d.get_by_role('status')).to_contain_text('Settings changed')
+            assert settings_posts()[-1][1]['expected_boot_id']==captured['boot_id'];passed('member restart rejects the captured boot and never silently retries');close(d)
             fixture['remote_status']='offline';d=open_settings();expect(d.get_by_role('status')).to_contain_text('offline');expect(d.get_by_role('button',name='Save and restart Amity',exact=True)).to_be_disabled()
             for slot in range(4):expect(input_for(d,slot)).to_be_disabled()
-            passed('offline cached settings and missing-adapter defaults remain visible read only');close(d)
+            passed('offline cached settings remain visible read only');close(d)
             fixture['remote_status']='ready';fixture['named']=False;d=open_settings();expect(d.locator('h3')).to_have_text('Name unavailable settings');expect(d.get_by_role('button',name='Save and restart Amity',exact=True)).to_be_disabled();passed('unknown hostname cannot masquerade as a named editable device');close(d)
             fixture['named']=True;fixture['remote_status']='unsupported';manage();page.locator('#managedAmityList > article').nth(1).get_by_role('button',name='Settings',exact=True).click();d=page.locator('dialog.adapter-settings:visible');expect(d.get_by_role('status')).to_contain_text('Update this Amity');expect(d.get_by_role('button',name='Save and restart Amity',exact=True)).to_be_disabled();passed('older peer without settings support asks for update without a write');close(d)
             fixture['remote_status']='ready';d=open_settings();assert d.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
@@ -199,6 +198,6 @@ def main():
             fixture['fail']=False;page.once('dialog',lambda d:d.accept());page.locator('#factoryReset').click();expect(page.locator('#message')).to_contain_text('Factory reset started');expect(page.locator('#admin')).to_be_hidden();assert fixture['calls'][-1]==('/api/factory-reset',{'confirm':True});passed('confirmed reset posts explicit confirmation and ends session')
             assert not errors,errors;browser.close()
     finally:server.shutdown();server.server_close()
-    report=dict(passed=checks,checks=len(checks),scope='Shipped browser scripts against local fixtures; no physical presence, HDMI, restart or peer hardware qualification')
+    report=dict(passed=checks,checks=len(checks),scope='Shipped browser scripts against local fixtures; no physical HDMI, restart or peer hardware qualification')
     for filename in ('web-device-settings-ui.json','adapter-settings-ui-0.1.73.json'):(ROOT/'test-results'/filename).write_text(json.dumps(report,indent=2)+'\n')
 if __name__=='__main__':main()

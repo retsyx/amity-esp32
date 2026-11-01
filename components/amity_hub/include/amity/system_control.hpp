@@ -25,10 +25,8 @@ public:
     uint8_t supported_tentacles()const{return profile_.tentacle_count;}
     bool connector_enabled(uint8_t id)const{return cec::connector_enabled(profile_,id);}
     uint8_t configured_tentacles_mask()const{uint8_t mask=0;for(uint8_t i=0;i<supported_tentacles();++i)if(connector_enabled(i))mask|=uint8_t(1u<<i);return mask;}
-    std::optional<bool> connector_presence(uint8_t id)const{return local_.connector_presence(id);}
-    esp_err_t set_presence_reader(std::function<int(int)> f){return local_.set_presence_reader(std::move(f));}
     std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const{return local_.adapter_runtime_snapshot();}
-    esp_err_t commit_adapter_settings(system::BootId boot,std::vector<std::pair<uint8_t,uint64_t>> presence,uint64_t deadline,std::function<esp_err_t()> persist){return local_.commit_adapter_settings(boot,std::move(presence),deadline,std::move(persist));}
+    esp_err_t commit_adapter_settings(system::BootId boot,std::vector<uint8_t> adapters,uint64_t deadline,std::function<esp_err_t()> persist){return local_.commit_adapter_settings(boot,std::move(adapters),deadline,std::move(persist));}
     bool accepts_local_input()const;
     esp_err_t request_activity(int index);
     bool select_activity(int index){return request_activity(index)==ESP_OK;}

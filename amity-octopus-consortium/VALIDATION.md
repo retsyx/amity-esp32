@@ -15,6 +15,56 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Isolated source and complete functional suite — 1 November 2026
+
+All four bench boards were verified running exact firmware **0.1.117 / Matter
+software 118**. The application SHA-256 is
+`df1f4ff08f3d4bce3382594e56fedcb5fa9317ffd22bb0f5ff39f7ae80f590ba`;
+ELF SHA-256 is
+`6ee868caf2440c12043b3ea13f836ae1b4a3bebc6ffb76588ab5157b81df2f39`.
+USB MAC checks, full backups and application-slot-only writes verified all
+non-application flash and OTA metadata unchanged. Per-board evidence is in
+`test-results/source-theft-isolated-2026-11-01/deployment-0.1.117/`.
+
+One unchanged final `--test all` run passed all ten cases: scan, activity power
+cycle, explicit switch input, shared-wire theft, Add/removal, two-, three- and
+four-owner scenarios, dual display and isolated source theft. All 24 physical
+theft-to-Standby completion latencies are 66.900–70.050 ms, below the unchanged
+250 ms maximum. The isolated case proves five exact owner/adapter/side scan
+observations, three five-second suppression windows on both AVR-side wires,
+fresh legitimate upstream Active Source, both activities, UI address apply and
+restore with verified member reboots, and fresh power/Standby commands.
+All ten testbeds cleaned up without errors; nine member removals acknowledged
+scheduled reset. The original main kept the same boot, identity, authority,
+ordinary configuration, Matter fabrics and HomeKit pairing, with no retained
+fixture activities, equipment or members. Evidence is
+`test-results/source-theft-isolated-2026-11-01/full117-final.json` and
+`full117-final-verification.json` alongside it.
+
+The native host runner and production-profile checks passed in
+`firmware-host-tests-final.log` in that directory. The final harness run passed
+all 414 tests in `harness-final-414.log`, including the shared-equipment cleanup
+case whose sibling removal succeeds only on retry. Firmware/provisioning build
+and 21 browser settings checks also passed. The owning activity design records
+the nested-source adaptation and preserved ordinary/dual-display behavior.
+
+The older three-owner failure remains a failure: its remaining wire capture
+contains no late Standby, and retained firmware logs cannot identify whether
+the trigger was received or a response transmission failed. Passing later
+evidence does not establish its cause. Terminal failed CEC data transmissions
+now log the wire, full frame, result, attempt count and whether TX began,
+without changing attempt budgets, FIFO admission or source policy. An
+intermediate suite was deliberately interrupted to include the final cleanup
+fix; its Add cleanup acknowledged reset and left no fixture state. Historical
+failed/interrupted reports are preserved separately from the final pass.
+
+There are no adapter-presence GPIOs or attachment generations. Configured
+wires and the original resolver/transmitter use actual CEC responses and ACKs;
+UI settings require configured slots and real boot/revision/authority fences,
+not a detector or responding device. This qualification covers the exercised
+normal-profile simulated CEC setups, not real HDMI video, physical remotes or
+simultaneous timing on every adapter of a four-adapter board.
+
 ## Four-DUT functional qualification — 1 November 2026
 
 The new four-DUT case uses `amity-dut` as the original main and
@@ -1478,4 +1528,4 @@ The earlier graph-model schema/vector counts and firmware checks belong to their
 
 ## Physical scope
 
-Documentation and host tests do not establish physical qualification. The latest consortium result above covers main/member2 radio delivery and distributed activity/source policy on one adapter each with simulated HDMI-CEC equipment. Earlier local-only results retain their narrower scope. These results do not establish real AV/remote behavior, three-owner operation, four-adapter timing, complete ecosystem recovery or production security. Record actual device identity, image/source, configuration, input/observations and wire captures separately for each physical result.
+Documentation and host tests do not establish physical qualification. The latest 0.1.117 result covers radio delivery and distributed activity/source policy on the original main and three members, plus the exercised dual-display and isolated-source adapter connections with simulated HDMI-CEC equipment. Earlier results retain their original narrower scope. These results do not establish real AV/remote behavior, simultaneous timing on every adapter of a four-adapter board, complete ecosystem recovery or production security. Record actual device identity, image/source, configuration, input/observations and wire captures separately for each physical result.

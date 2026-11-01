@@ -10,6 +10,9 @@ static const auto controller_boot=*m::BootId::parse("555555555555555555555555555
 static const auto link=*m::LinkId::parse("66666666666666666666666666666666");
 static m::QualifiedDeviceName named(m::OctopusId owner,m::Side side,const char* name,uint8_t adapter=0){return {{group,owner,adapter,side},name};}
 static std::vector<SentFrame> select_trace(bool scoped){
+    // Compare explicit activity commands without crossing an incidental
+    // periodic audio-query deadline as synthetic clock reads advance.
+    const auto prior_tick=fixture_tick;fixture_tick=1000;
     fixture_present=true;
     HubService hub;
     if(scoped){hub.set_system_identity(group,controller);hub.set_boot_identity(boot);}
@@ -29,7 +32,7 @@ static std::vector<SentFrame> select_trace(bool scoped){
     assert(hub.snapshot().current_activity==-1);
     assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){return frame.frame.size==2&&frame.frame.data[1]==0x36;})==2);
     trace.insert(trace.end(),fixture_sent.begin(),fixture_sent.end());
-    return trace;
+    fixture_tick=prior_tick;return trace;
 }
 static void local_parity(){
     const auto baseline=select_trace(false),owned=select_trace(true);
@@ -88,6 +91,9 @@ static void startup_parity(){
     auto select_frames=[](const auto& sent){std::vector<SentFrame> result;for(const auto& f:sent)if(f.frame.size>1&&(f.frame.data[1]==0x44||f.frame.data[1]==0x45||f.frame.data[1]==0x86||f.frame.data[1]==0x82||f.frame.data[1]==0x04||f.frame.data[1]==0x71))result.push_back(f);return result;};
     const auto baseline=select_frames(startup_trace(false)),owned=select_frames(startup_trace(true));
     if(baseline.size()!=owned.size())for(const auto* trace:{&baseline,&owned}){std::fprintf(stderr,"startup trace size=%zu\n",trace->size());for(const auto& sent:*trace){std::fprintf(stderr,"gpio%d:",sent.gpio);for(unsigned n=0;n<sent.frame.size;++n)std::fprintf(stderr," %02x",sent.frame.data[n]);std::fprintf(stderr,"\n");}}
+    if(baseline.size()!=owned.size()){
+        for(const auto& group:{baseline,owned}){std::fprintf(stderr,"trace %zu\n",group.size());for(const auto& f:group){std::fprintf(stderr,"gpio=%d attempts=%u frame=",f.gpio,unsigned(f.attempts));for(unsigned n=0;n<f.frame.size;++n)std::fprintf(stderr,"%02x:",f.frame.data[n]);std::fprintf(stderr,"\n");}}
+    }
     assert(baseline.size()==owned.size());
     for(size_t i=0;i<baseline.size();++i){const auto& a=baseline[i];const auto& b=owned[i];assert(a.gpio==b.gpio&&a.attempts==b.attempts&&a.frame.size==b.frame.size&&std::memcmp(a.frame.data,b.frame.data,a.frame.size)==0);}
 }
@@ -123,25 +129,21 @@ static void owner_keys(){
     authority=false;bad.sequence=++sequence;assert(!hub.submit_owned(bad,auth));authority=true;
     fixture_async_autocomplete=true;fixture_complete_all();run_idle(2);
 }
-static void rejected_local_hold(){
+static void cec_ack_controls_hold(){
     fixture_present=true;
     cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,7},{2,cec::Side::Back,8},{3,cec::Side::Front,9},{3,cec::Side::Back,44}},-1,-1};
-    profile.presence[0]={20,true,false,false};int detector=1;
     HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);
-    assert(hub.set_presence_reader([&](int){return detector;})==ESP_OK);assert(hub.start(profile)==ESP_OK);
+    assert(hub.start(profile)==ESP_OK);
     assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
         {{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},{},controller,1)==ESP_OK);
     run_one_command();fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();
     fixture_async_autocomplete=false;
-    detector=0;run_idle(1);fixture_sent.clear();
-    assert(hub.press_key(0x41,true));run_one_command();
-    assert(hub.release_key(0x41));run_one_command();
-    assert(fixture_sent.empty());
-    // Rejected local admission has no consumed hold or cleanup token. The
-    // returning adapter must receive the very next physical down, once.
-    detector=1;run_idle(1);assert(fixture_sent.empty());
+    // A configured CEC wire has no separate adapter-presence permission.
+    // Submit to the cached recipient even when it no longer answers polls;
+    // that key's actual wire result decides its continuation.
+    fixture_present=false;run_idle(1);fixture_sent.clear();
     assert(hub.press_key(0x41,true));run_one_command();
     const auto presses=[](){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& f){
         return f.gpio==2&&f.frame.size==3&&f.frame.data[1]==0x44&&f.frame.data[2]==0x41;});};
@@ -154,7 +156,7 @@ static void rejected_local_hold(){
     assert(hub.press_key(0x41,true));run_one_command();assert(fixture_sent.size()==failed_count);
     assert(hub.release_key(0x41));run_one_command();assert(fixture_sent.size()==failed_count);
     assert(hub.press_key(0x41,true));run_one_command();assert(presses()==2);
-    assert(hub.release_key(0x41));run_one_command();fixture_complete_all();fixture_async_autocomplete=true;
+    assert(hub.release_key(0x41));run_one_command();fixture_complete_all();fixture_async_autocomplete=true;fixture_present=true;
 }
 static void queued_request_lifetime(){
     fixture_present=true;HubService hub;
@@ -341,4 +343,4 @@ static void configuration_preserves_discovery(){
     run_one_command();run_idle(2);verify();
     std::puts("Activity configuration preserves native device records/discovery and selected/unselected remote HDMI snapshots without rediscovery");
 }
-int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();rejected_local_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();std::puts("Original local/owned start/standby frame parity, queued request lifetime, rejected local hold/reconnect, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();std::puts("Original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}

@@ -584,7 +584,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 4,
-          "description": "Configured hardware-profile capacity. This is not proof of physical adapter presence. Omitted legacy fields mean capacity1 and mask1."
+          "description": "Configured hardware-profile CEC port capacity. Omitted legacy fields mean capacity1 and mask1."
         },
         "configured_tentacles_mask": {
           "type": "integer",
@@ -709,16 +709,30 @@
           "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
         },
         "phase": {
-          "enum": ["begin", "ack", "reject"]
+          "enum": [
+            "begin",
+            "ack",
+            "reject"
+          ]
         },
         "config_revision": {
           "allOf": [
-            {"$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"},
-            {"not": {"const": "0"}}
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
           ]
         }
       },
-      "required": ["round_id", "phase", "config_revision"],
+      "required": [
+        "round_id",
+        "phase",
+        "config_revision"
+      ],
       "additionalProperties": false
     },
     "Heartbeat": {
@@ -1599,16 +1613,6 @@
               "configured": {
                 "type": "boolean"
               },
-              "presence": {
-                "enum": [
-                  "present",
-                  "absent",
-                  "unknown"
-                ]
-              },
-              "presence_generation": {
-                "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-              },
               "default_front_physical_address": {
                 "type": "string",
                 "pattern": "^(?:0\\.0\\.0\\.0|[1-9a-fA-F]\\.0\\.0\\.0|[1-9a-fA-F]\\.[1-9a-fA-F]\\.0\\.0|[1-9a-fA-F]\\.[1-9a-fA-F]\\.[1-9a-fA-F]\\.[0-9a-fA-F])$",
@@ -1649,34 +1653,11 @@
               "tentacle_id",
               "name",
               "configured",
-              "presence",
-              "presence_generation",
               "default_front_physical_address",
               "observed_front_physical_address",
               "effective_front_physical_address"
             ],
-            "additionalProperties": false,
-            "allOf": [
-              {
-                "if": {
-                  "properties": {
-                    "configured": {
-                      "const": false
-                    }
-                  }
-                },
-                "then": {
-                  "properties": {
-                    "presence": {
-                      "enum": [
-                        "absent",
-                        "unknown"
-                      ]
-                    }
-                  }
-                }
-              }
-            ]
+            "additionalProperties": false
           },
           "allOf": [
             {
@@ -1792,18 +1773,6 @@
                 "minimum": 0,
                 "maximum": 3
               },
-              "expected_presence_generation": {
-                "allOf": [
-                  {
-                    "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-                  },
-                  {
-                    "not": {
-                      "const": "0"
-                    }
-                  }
-                ]
-              },
               "default_front_physical_address": {
                 "anyOf": [
                   {
@@ -1821,7 +1790,6 @@
             },
             "required": [
               "tentacle_id",
-              "expected_presence_generation",
               "default_front_physical_address"
             ],
             "additionalProperties": false
@@ -2222,8 +2190,15 @@
             "properties": {
               "arguments": {
                 "type": "object",
-                "properties": {},
-                "required": [],
+                "properties": {
+                  "display": {
+                    "anyOf": [
+                      {"$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/QualifiedDeviceName"},
+                      {"type": "null"}
+                    ]
+                  }
+                },
+                "required": ["display"],
                 "additionalProperties": false
               },
               "target": {

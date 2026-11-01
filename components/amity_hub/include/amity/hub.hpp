@@ -80,6 +80,10 @@ public:
     bool held_recipient(uint8_t key,BusSide side,uint8_t address)const;
     // Owner-local actions reuse the same original translation and held state.
     bool execute_owned(const system::OwnedIntent&);
+    static bool source_input_announcement(const system::OwnedIntent&);
+    bool source_input_announcement_here(const system::OwnedIntent&) const;
+    // The owner completes this before the source's ordinary Set Stream Path.
+    bool announce_owned_input();
     void owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
     void fence_owned_owner(system::OctopusId);
     bool refresh_owned_context(system::OctopusId owner){return publish_owned_context(false,owner);}

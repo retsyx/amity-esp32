@@ -75,6 +75,7 @@ struct Bus::Impl {
     void service();
     bool reserve_slots(size_t count);
     void log_fifo_full(const Frame&) const;
+    void log_tx_failure(const Work&, TxResult outcome, unsigned attempts, bool started) const;
     bool enqueue(const Work&);
     void free_slots(size_t count);
     bool dependency_ready(const Work& work);
@@ -228,13 +229,36 @@ bool Bus::Impl::reserve_slots(size_t count) {
     portEXIT_CRITICAL(&r.lock);
     return true;
 }
-void Bus::Impl::log_fifo_full(const Frame& frame) const {
-    char bytes[16 * 3]{};
+static void format_frame(const Frame& frame, char (&bytes)[16 * 3]) {
     for (size_t i = 0; i < frame.size; ++i)
         std::snprintf(bytes + 3 * i, sizeof(bytes) - 3 * i, "%02x%s",
                       unsigned(frame.data[i]), i + 1 == frame.size ? "" : " ");
+}
+void Bus::Impl::log_fifo_full(const Frame& frame) const {
+    char bytes[16 * 3]{};
+    format_frame(frame, bytes);
     ESP_LOGW("cec", "TX dropped: FIFO full (GPIO %d, %u bytes: %s)",
              int(gpio), unsigned(frame.size), bytes);
+}
+void Bus::Impl::log_tx_failure(const Work& work, TxResult outcome, unsigned attempts, bool started) const {
+    // Poll failures are ordinary address discovery. Data frames retain the
+    // mechanical result, without interpreting their opcode or changing work.
+    if (work.frame.size <= 1 || outcome == TxResult::Success) return;
+    const char* result = "Unknown";
+    switch (outcome) {
+    case TxResult::Pending: return;
+    case TxResult::Success: return;
+    case TxResult::Nack: result = "Nack"; break;
+    case TxResult::ArbitrationLost: result = "ArbitrationLost"; break;
+    case TxResult::LineError: result = "LineError"; break;
+    case TxResult::Timeout: result = "Timeout"; break;
+    case TxResult::Cancelled: result = "Cancelled"; break;
+    case TxResult::Expired: result = "Expired"; break;
+    }
+    char bytes[16 * 3]{};
+    format_frame(work.frame, bytes);
+    ESP_LOGW("cec", "TX failed (GPIO %d, %u bytes: %s, result %s, attempts %u, started %s)",
+             int(gpio), unsigned(work.frame.size), bytes, result, attempts, started ? "true" : "false");
 }
 bool Bus::Impl::enqueue(const Work& work) {
     if (!started || !work.frame.size || work.frame.size > 16 || !work.attempts) return false;
@@ -338,6 +362,7 @@ void Bus::Impl::service() {
         else if (outcome == TxResult::Cancelled || outcome == TxResult::Expired) ++stats.cancelled;
         else if (!(work.frame.size == 1 && outcome == TxResult::Nack)) ++stats.tx_errors;
         portEXIT_CRITICAL(&r.lock);
+        log_tx_failure(work, outcome, attempt, work_started);
         complete_work(*this, work, outcome, work_started);
         active = false;
     }

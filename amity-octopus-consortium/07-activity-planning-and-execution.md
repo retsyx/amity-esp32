@@ -24,6 +24,47 @@ Preserve the original treatment of absent source/display/audio/switch equipment 
 
 Each adapter's owner maintains its original discovery cache, allocated identities, physical-address selection and local CEC execution. A controller-side lookup selects the authenticated owning Amity; adapter/side/OSD resolution belongs to that owner. Static user choices are not replaced by copied logical addresses.
 
+The 1 November isolated-source topology adds an owner-local input step. Python
+`ControllerImpl.set_activity_input()` and `cec.DeviceImpl.set_stream_path()`
+send only Set Stream Path on a resolved source's bus; they never announce on
+the isolated paired front after that successful lookup. That leaves an AVR
+input unselected when an additional inline adapter isolates the source from
+the AVR. A source-input request now carries the activity's original qualified
+display selector. When that display is on another owner/adapter, the source is
+on Back, and this adapter's own Front PA is nested below a switch (for example,
+1.2.0.0), its owner first resolves the source, announces Active Source with its
+own PA on its paired Front, then completes the ordinary Back Set Stream Path.
+Keeping Set Stream Path last retains the baseline's complete source-reply
+interval for applying the new current activity; an added transmission must not
+occupy that interval while the prior activity still identifies a foreign source.
+Both steps complete before
+the next activity operation on that owner. The existing bounded request retains
+only the next semantic step, rechecks authority, and never retries a rejected
+CEC submission. Rejected Front admission does not prevent the original Back
+operation, and an unresolved source never sends this Front announcement.
+No received source announcement is forwarded, and source-theft
+decisions continue to use only the current activity.
+
+Same-adapter source/display handling retains the original transcript. A direct
+display connection such as 1.0.0.0 also emits no extra announcement when another
+display is selected, so a dual-display activity leaves its unselected TV alone.
+The runtime PA selects the upstream routing command; it is not saved topology
+approval or an availability gate, and it never blocks the original lookup,
+power or Back Set Stream Path. `tests/activity_sequence_test.cpp` checks the
+actual owner worker's nested/direct/same-adapter/front-source cases, exact wire
+and PA, completion order, once-only submission, rejected Front admission,
+unresolved source handling and authority loss between steps.
+
+The 1 November 2026 physical 0.1.117 run verifies this nested-input adaptation:
+three isolated theft attempts are suppressed on both AVR wires, while selecting
+that source produces a fresh Front Active Source and powers its required
+devices. The unchanged dual-display case also passes with the unused display
+in Standby. All ten functional cases pass with clean teardown in
+`test-results/source-theft-isolated-2026-11-01/full117-final.json`;
+preservation and exact wire timing are summarized in
+`full117-final-verification.json` alongside it. This is simulated CEC evidence,
+not HDMI video qualification.
+
 Every device access calls the same owner-local resolver described in [discovery](05-discovery-and-topology.md#one-device-access-path): cache lookup, throttled side scan on a miss, then the same cache again. Activity, key and received-frame callers do not inspect cache availability or choose a passive/cache-only variant. They may wait on an opaque lookup continuation while the owner keeps advancing input, RX and CEC completions. A source-input result still reflects actual owner-local lookup, preserving the original explicit-switch fallback.
 
 A one-shot operation is not retained for later replay when an owner reconnects. An uncertain relative action is not retried under a new identity. Unavailable equipment receives the original failure/discovery handling. Network loss does not cause a headless member to choose an activity independently.

@@ -57,6 +57,9 @@ _STATE = ("current_activity", "activity_settling", "expected_boot_id", "expected
 class Activity:
     """A created activity owned by an active TestBed and optionally a context."""
 
+    _cleanup_priority = 0
+    _cleanup_retryable = True
+
     def __init__(self, dut, name, *, display, source, audio=None,
                  switch_device=None, switch_input=0, timeout=None):
         bed = getattr(dut, "_testbed", None)
@@ -103,8 +106,14 @@ class Activity:
         self._last_start_terminal = False
         self._write_attempted = self._created = self._closed = self._needs_standby = False
         self._row_removed = False
+        self._created_row = None
+        self._cleanup_trace = None
+        self._cleanup_deferred = False
         self.retained_equipment = []
         bed.add_cleanup(self.close)
+        if not hasattr(bed, "_activities"):
+            bed._activities = []
+        bed._activities.append(self)
 
     def _record(self, phase, **values):
         record = {"phase": phase, "name": self.name, "activity_id": self.activity_id, **values}
@@ -243,6 +252,7 @@ class Activity:
             raise AssertionError("The created activity selectors differ from the scanned equipment")
         self.activity_id = row["activity_id"]
         self._created = True
+        self._created_row = deepcopy(row)
         selectors = self._row_selectors(row)
         if any(not selectors[role].startswith("component:") or not _identifier(selectors[role][len("component:"):])
                for role, component in self.components.items() if component is not None):
@@ -487,7 +497,41 @@ class Activity:
 
     def close(self):
         if self._closed:
+            # A sibling fixture may still have referenced equipment when this
+            # activity's own row was removed. Its registered bed callback runs
+            # after deferred rows have closed and must finish that same exact
+            # ownership-limited pruning work.
+            if self.retained_equipment and self._new_equipment:
+                try:
+                    self.retained_equipment = self._prune_equipment(time.monotonic() + self.timeout)
+                except BaseException as error:
+                    if self._cleanup_trace is not None:
+                        self._cleanup_trace["error_type"] = type(error).__name__
+                    raise ActivityCleanupError([error]) from error
+                if self._cleanup_trace is not None:
+                    self._cleanup_trace["retained_equipment"] = list(self.retained_equipment)
+                    self._cleanup_trace.pop("error_type", None)
+                self._log("activity.cleanup.equipment_rechecked", retained_equipment=list(self.retained_equipment))
             return
+        self._cleanup_deferred = False
+        # An unused fixture may close before the selected fixture's context.
+        # Leave its registered cleanup for the bed instead of trying to edit
+        # configuration while that other activity is still running. Ownership
+        # includes the exact created row; an unrelated or edited activity never
+        # authorizes this dependency handling.
+        if self._created and (not self._needs_standby or self._last_start_terminal):
+            document, state = self._view(check_health=False)
+            index = state.get("current_activity", -1)
+            current = document["activities"][index] if type(index) is int and 0 <= index < len(document["activities"]) else None
+            if current is not None and current.get("activity_id") != self.activity_id:
+                selected = next((activity for activity in getattr(self._testbed, "_activities", ())
+                                 if activity is not self and activity.dut is self.dut
+                                 and activity.boot == self.boot and activity._created and not activity._closed
+                                 and activity._created_row == current and activity._needs_standby), None)
+                if selected is not None:
+                    self._cleanup_deferred = True
+                    self._log("activity.cleanup.waiting_for_fixture", selected_activity_id=selected.activity_id)
+                    return
         self._log("activity.cleanup.start")
         errors = []
         deadline = time.monotonic() + self.timeout
@@ -506,6 +550,7 @@ class Activity:
                 errors.append(error)
         trace = self._record("cleanup", removed_activity=self._row_removed or not self._write_attempted or self._creation_rejected,
                              retained_equipment=list(self.retained_equipment))
+        self._cleanup_trace = trace
         if errors:
             trace["error_type"] = ",".join(type(error).__name__ for error in errors)
             self._log("activity.cleanup.failed", level=logging.ERROR,

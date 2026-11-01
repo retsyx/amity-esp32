@@ -46,16 +46,20 @@ _ROUTING_FIELDS = frozenset(("opcode", "physical_address", "input", "command", "
                             "payload_modified", "applied"))
 _ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "input", "command", "timestamp_ns", "since_monotonic_ns",
                                       "frame", "source", "destination", "wire_timestamp_ns",
-                                      "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns"))
+                                      "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns",
+                                      "observation_end_monotonic_ns", "observed_wires", "observed_frame_count", "idle_receive_since_ns"))
+_SETTINGS_FIELDS = frozenset(("phase", "dut", "device_id", "tentacle_id", "request_id", "old_boot", "address",
+                              "previous_address", "stage", "member_boot", "settings_revision", "error_type",
+                              "configured"))
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
                               "removed_activity", "removed_equipment", "retained_equipment"))
 _MEMBERSHIP_FIELDS = frozenset(("phase", "candidate", "device_id", "name", "request_id", "scan_id",
                                "operation_stage", "candidate_id", "boot", "member_boot",
                                "membership_revision", "reset", "retained_member", "error_type",
-                               "step", "reset_gpio", "hold_seconds", "released"))
+                               "step", "reset_gpio", "hold_seconds", "released", "inventory_removed"))
 _MEMBERSHIP_REQUEST_FIELDS = frozenset(("method", "path", "started_ns", "finished_ns", "duration_ms",
-                                       "admission_phase", "error_type"))
+                                       "admission_phase", "error_type", "http_status"))
 
 
 def _select(value, fields):
@@ -127,6 +131,7 @@ class TestBed:
         self._session_entered = False
         self._owned = []
         self._cleanups = []
+        self._activities = []
         self._closing = False
         self._cleanup_errors = []
         self._failure = None
@@ -134,6 +139,7 @@ class TestBed:
         self._initial_scans = {}
         self._initial_activity_counts = {}
         self._initial_membership_counts = {}
+        self._initial_settings_counts = {}
         self._member_proofs = {}
         if not resources:
             raise ValueError("A test bed needs at least one DUT or component")
@@ -196,6 +202,7 @@ class TestBed:
                 self._initial_scans[id(dut)] = getattr(dut, "last_scan", None)
                 self._initial_activity_counts[id(dut)] = len(getattr(dut, "activity_operations", ()))
                 self._initial_membership_counts[id(dut)] = len(getattr(dut, "membership_operations", ()))
+                self._initial_settings_counts[id(dut)] = len(getattr(dut, "adapter_settings_operations", ()))
                 event("testbed.dut.claimed", dut=dut.name, device_id=dut.identity.device_id,
                       control_only=dut in self.control_only, member=dut in self.members)
 
@@ -255,18 +262,58 @@ class TestBed:
         event("testbed.cleanup.start", duts=[dut.name for dut in self._owned],
               callbacks=len(self._cleanups), failure=self._failure)
         try:
-            while self._cleanups:
-                callback = self._cleanups.pop()
-                label = getattr(callback, "__qualname__", type(callback).__name__)
-                event("testbed.cleanup.callback.start", callback=label)
-                try:
-                    callback()
-                except BaseException as error:
-                    errors.append(error)
-                    event("testbed.cleanup.callback.failed", level=logging.ERROR,
-                          callback=label, error_type=type(error).__name__)
-                else:
-                    event("testbed.cleanup.callback.complete", callback=label)
+            callbacks = sorted(reversed(self._cleanups),
+                               key=lambda callback: getattr(getattr(callback, "__self__", None), "_cleanup_priority", 1))
+            self._cleanups.clear()
+            for priority in sorted({getattr(getattr(callback, "__self__", None), "_cleanup_priority", 1)
+                                    for callback in callbacks}):
+                pending = [callback for callback in callbacks
+                           if getattr(getattr(callback, "__self__", None), "_cleanup_priority", 1) == priority]
+                completed_activities = []
+                # Only the owned resource helpers support reconciliation. A
+                # generic cleanup callback may have arbitrary effects and runs
+                # once. Keep CEC responders and authentication alive throughout.
+                for attempt in range(2):
+                    retry = []
+                    failures = []
+                    for callback in pending:
+                        owner = getattr(callback, "__self__", None)
+                        label = getattr(callback, "__qualname__", type(callback).__name__)
+                        event("testbed.cleanup.callback.start", callback=label, attempt=attempt + 1)
+                        try:
+                            callback()
+                            if getattr(owner, "_cleanup_deferred", False):
+                                raise RuntimeError("Owned cleanup is waiting for another fixture")
+                        except BaseException as error:
+                            if not attempt and getattr(owner, "_cleanup_retryable", False):
+                                retry.append(callback)
+                            else:
+                                failures.append(error)
+                            event("testbed.cleanup.callback.failed", level=logging.ERROR,
+                                  callback=label, attempt=attempt + 1, error_type=type(error).__name__)
+                        else:
+                            if owner in self._activities and owner not in completed_activities:
+                                completed_activities.append(owner)
+                            event("testbed.cleanup.callback.complete", callback=label, attempt=attempt + 1)
+                    errors.extend(failures)
+                    if not retry:
+                        break
+                    pending = retry
+                # A sibling may remove its row only on the recovery pass.
+                # Revisit successful, closed activities before settings/member
+                # cleanup so their exact-record pruning sees those new orphans.
+                for activity in completed_activities:
+                    if not activity._closed or not activity.retained_equipment:
+                        continue
+                    event("testbed.cleanup.activity_equipment.start", activity_id=activity.activity_id)
+                    try:
+                        activity.close()
+                    except BaseException as error:
+                        errors.append(error)
+                        event("testbed.cleanup.activity_equipment.failed", level=logging.ERROR,
+                              activity_id=activity.activity_id, error_type=type(error).__name__)
+                    else:
+                        event("testbed.cleanup.activity_equipment.complete", activity_id=activity.activity_id)
             if self.session is not None:
                 event("testbed.cleanup.cec.start")
                 try:
@@ -387,6 +434,8 @@ class TestBed:
                                  for record in getattr(dut, "activity_operations", ())[self._initial_activity_counts[id(dut)]:]],
                   "memberships": [_membership_report(dut, record) for dut in self._owned
                                   for record in getattr(dut, "membership_operations", ())[self._initial_membership_counts[id(dut)]:]],
+                  "adapter_settings": [_select(record, _SETTINGS_FIELDS) for dut in self._owned
+                                       for record in getattr(dut, "adapter_settings_operations", ())[self._initial_settings_counts[id(dut)]:]],
                   "cec": _traffic(self.session.records if self.session is not None else ()),
                   "cleanup_errors": list(self._cleanup_errors)}
         if self._failure is not None:

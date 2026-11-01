@@ -212,7 +212,7 @@ The peer inventory takes its stable device ID and enrollment state from the dura
 
 Keep authenticated enrollment, hostname metadata, peer firmware update, per-device settings, explicit removal/reset and manual recovery. They are management operations with their existing reviewed-target, identity, boot, persistence and result semantics. They do not approve HDMI activity routes or permit members to host a UI.
 
-Per-device adapter settings continue to use the selected owner's current boot, settings revision and presence generations, durable atomic apply and selected-device restart after result attempt. Explicit Remove retains the original-controller-only retirement/drain/reset-journal contract; offline removal cannot claim a remote reset. Firmware update retains exact release/image/job/target/offset correlation and independent target validation. See [settings/admin](12-control-surfaces-and-admin.md), [recovery](13-faults-removal-and-recovery.md) and [updates](14-ota-and-compatibility.md).
+Per-device adapter settings continue to use the selected owner's current boot, settings revision and configured slots, durable atomic apply and selected-device restart after result attempt. Explicit Remove retains the original-controller-only retirement/drain/reset-journal contract; offline removal cannot claim a remote reset. Firmware update retains exact release/image/job/target/offset correlation and independent target validation. See [settings/admin](12-control-surfaces-and-admin.md), [recovery](13-faults-removal-and-recovery.md) and [updates](14-ota-and-compatibility.md).
 
 An admitted Remove retains its exact owner/request, full authenticated
 `LinkScope`, membership revision and original two-second reset deadline in

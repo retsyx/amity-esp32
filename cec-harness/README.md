@@ -26,6 +26,8 @@ membership behavior remains unchanged.
   then verifies standby using physical component power commands.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
+- `functional_tests/source-theft.py`: isolates the thief behind another
+  tentacle and requires suppression before its announcement reaches the AVR.
 - `functional_tests/add_amity.py`: adds the second bench board through the main
   Amity, verifies its membership, then removes and resets that added board.
 - `functional_tests/consortium.py`: scans equipment on the main and up to three
@@ -620,6 +622,78 @@ main's boot, authority, ordinary configuration and pairings. This qualifies the
 exercised simulated CEC topology; it is not a clean nine-case suite pass in one
 attempt.
 
+## Source theft before the AVR
+
+`functional_tests/source-theft.py` adds `amity-dut-4` to the original main
+`amity-dut`. Its TV attaches to tentacle 1/front, the AVR output to 1/back,
+and the ordinary media player to AVR input 1. AVR input 2 attaches to tentacle
+2/front, with the thief on 2/back. `AvrAttachment` represents the same AVR at
+the second endpoint: power, audio and input state are shared, while received
+frames and physical evidence stay separate. It does not forward frames between
+harness GPIOs. The scan requires five qualified observations for the four
+physical devices, including the AVR on both connected endpoints.
+
+Without EDID, `member.front_physical_address(2, "1.2.0.0")` uses the existing
+authenticated UI Save and restart operation to set the address for AVR input 2.
+It reviews the member boot, settings revision and configured adapter,
+then proves the restarted member and effective address before scanning. After
+activities close it restores the prior saved default through the same API and
+proves the next boot before member removal. Discovery may legitimately select
+a different effective address than the restored fallback.
+
+The media-player activity requires fresh power and AVR routing commands. Three
+physical Active Source attempts from the isolated thief must each receive
+directed Standby within 250 ms of that exact transmission. An observation
+started before each attempt checks both AVR-side wires for leaked source or
+routing announcements throughout the independent CEC timeout. It checks original
+physical RX before component hooks, so later route recovery cannot hide a leak.
+The media player, route and selected activity must remain unchanged. The other
+activity must power the thief and select AVR input 2 through a fresh physical
+Active Source on tentacle 2/front. This positive control prevents a disconnected
+observation path from passing the suppression test. Both activities must also
+return their selected devices to Standby through fresh commands.
+
+Select `--test source_theft_isolated`; it also runs in `--test all`. Functional
+scenarios contain equipment and behavior only; the shared framework owns the
+settings, restart proof, protocol monitoring and cleanup.
+
+Cleanup finishes activity rows and exact, unreferenced fixture equipment before
+restoring settings and removing members. An unused activity can defer behind
+another unchanged activity from the same bed; its shared equipment is revisited
+after those references disappear. Edited records and user activity references
+remain protected. Activities with retained equipment are revisited after sibling
+cleanup retries, before settings and member removal. Explicit HTTP 409 removal rejections receive fresh reviews
+and request IDs; unknown outcomes are reconciled with their original operation
+ID. A verified inventory deletion permits independent fixture cleanup to
+continue, while a missing reset acknowledgment still fails the original cleanup.
+
+Failed CEC transmissions now record the GPIO, complete frame, terminal result,
+actual attempt count and whether transmission began. These diagnostics preserve
+the original attempt budgets and distinguish wire failures from cancellation
+or expiry; they do not retry failed work.
+
+The earlier three-owner deadline failure had no directed Standby, including a
+late one, in the remaining wire capture. The retained firmware log did not cover
+that event, so it cannot establish whether the announcement was received or a
+response transmission failed. Preserve the failed report; a later passing run
+does not explain that original failure or relax the 250 ms deadline.
+
+On 1 November 2026, one complete `--test all` run passed all ten cases on
+`test2` with all four DUTs running the exact 0.1.117 image. All 24 source-theft
+Standby responses completed in 66.900–70.050 ms. The isolated case measured
+69.850, 66.900 and 66.900 ms, with no leaked source/routing frames on either
+AVR connection during each five-second window, followed by the legitimate
+source's fresh upstream Active Source. Both activities and address restoration
+passed. All ten beds cleaned up without errors, including nine scheduled-reset
+removal acknowledgments. Final HTTP snapshots preserve the main's boot,
+identity, authority, ordinary configuration, Matter fabrics and HomeKit pairing;
+no fixture activities, equipment or members remain. Evidence is
+`test-results/source-theft-isolated-2026-11-01/full117-final.json` and
+`full117-final-verification.json` in that directory. The full native host runner,
+firmware/provisioning build, browser settings checks and all 414 final harness
+unit tests also passed. This qualifies the exercised simulated CEC topologies,
+not real HDMI video or remote-control hardware.
+
 ## Run functional tests
 
 Requires Linux/Pi, Python 3.10 or newer, the existing `cec-gpio` adapters and
@@ -642,7 +716,8 @@ power-cycle and explicit switch-input sub-tests, `--test source_theft` for unsel
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test dual_display` for the TV/projector scenario on `amity-dut-4`,
-or `--test all` for all eight registered scenarios (nine
+`--test source_theft_isolated` for suppression ahead of the AVR,
+or `--test all` for all nine registered scenarios (ten
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

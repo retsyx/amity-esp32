@@ -37,7 +37,7 @@ RECORDS={
     'config_store::ReplacementApproval','config_store::ReplacementPort','config_store::ReplacementEquipment',
     'amity::HubService','amity::SystemControl','amity::LiveSystem',
     'amity::LiveSystem::Port','amity::LiveSystem::Port::Submitted',
-    'cec::BoardProfile','cec::PresencePin','cec::PortPin','cec::Bus',
+    'cec::BoardProfile','cec::PortPin','cec::Bus',
     'amity::consortium::HelloFrame',
     'amity::consortium::platform::TlsLink',
 }

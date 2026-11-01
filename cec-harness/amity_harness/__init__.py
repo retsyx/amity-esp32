@@ -7,6 +7,7 @@ from .topology import CecAddress, assign_addresses, format_physical_address
 from .components import (
     AvrComponent, Component, Hooks, PlaybackComponent, PowerState, TvComponent,
 )
+from .attachments import AvrAttachment
 from .cec import CecError, CecSession, Frame, LinuxCecBackend, TxResult
 from .config import RunConfig, use_config
 from .testbed import TestBed
@@ -17,7 +18,7 @@ from .membership import AddedAmity, MembershipConflict, MembershipCleanupError
 __all__ = [
     "AmityHTTPError", "DUT", "PinctrlGPIO", "Wiring", "CecAddress",
     "assign_addresses", "format_physical_address", "Component", "TvComponent",
-    "AvrComponent", "PlaybackComponent", "PowerState", "Hooks", "CecSession",
+    "AvrComponent", "AvrAttachment", "PlaybackComponent", "PowerState", "Hooks", "CecSession",
     "CecError", "Frame", "LinuxCecBackend", "TxResult",
     "RunConfig", "use_config", "TestBed", "ScanResult", "Tentacle", "TentacleEndpoint",
     "Activity", "ActivityAction", "ActivityCleanupError", "ActivityConflict",

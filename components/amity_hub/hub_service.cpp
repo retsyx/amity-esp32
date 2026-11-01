@@ -72,20 +72,20 @@ struct HubService::Impl : Transport {
     struct Command {
         explicit Command(Kind k,int v=0,bool r=false):kind(k),value(v),repeat(r){}
         Kind kind; int value=0; bool repeat=false,cleanup_reservation=false,activity_bound=false,route_transition=false,owned_deferred=false,owned_received=false;
-        bool activity_started=false,owned_waiting=false,configuration_applied=false,activity_reservation=false,selection_reservation=false,setup_blocked=false;
+        bool activity_started=false,owned_waiting=false,owned_input_announced=false,configuration_applied=false,activity_reservation=false,selection_reservation=false,setup_blocked=false;
         system::AdmissionResult owned_result;
         uint32_t key_generation=0,release_generation=0,activity_generation=0,intent_generation=0,activity_receipt=0;
         uint8_t discovery_sides=0;
         cec::Frame received_frame;BusSide received_side=BusSide::Back;uint8_t received_adapter=0;
         Hub::ReceiveStep received_step=Hub::ReceiveStep::Frame;
-        uint64_t received_generation=0,received_presence=0,received_deadline=0;uint32_t received_activity=0,received_binding=0,received_wire=0;
+        uint64_t received_generation=0,received_deadline=0;uint32_t received_activity=0,received_binding=0,received_wire=0;
         system::BootId received_boot;
         std::vector<Activity> activities;
         std::vector<system::ScopedSelector> selectors;OwnedSender sender;
         system::OwnedIntent owned;system::OwnedAuthorization auth;
         system::OctopusId controller;system::LinkId link;uint64_t config_revision=0,presentation_revision=1;
         std::shared_ptr<Reply> reply;std::function<esp_err_t()> persist;std::function<void(system::OwnedContextResult)> context_completion;
-        system::BootId settings_boot;std::vector<std::pair<uint8_t,uint64_t>> settings_presence;uint64_t settings_deadline=0;
+        system::BootId settings_boot;std::vector<uint8_t> settings_adapters;uint64_t settings_deadline=0;
     };
     std::atomic<uint32_t> intent_generation{0},key_generation{0},activity_selection{0},owned_wire_generation{1};
     std::atomic<unsigned> owner_activity_commands{0};
@@ -103,15 +103,12 @@ struct HubService::Impl : Transport {
     std::array<std::unique_ptr<Impl>,amity::max_tentacles-1> adapters;
     Impl *parent=nullptr;uint8_t adapter_id=0;
     std::optional<cec::BoardProfile> hardware_profile;
-    std::array<std::optional<bool>,amity::max_tentacles> presence{};
-    std::array<uint64_t,amity::max_tentacles> presence_generations=filled_tentacles(uint64_t{1});
     std::array<AdapterRuntimeState,amity::max_tentacles> cached_adapters{};
-    std::function<int(int)> presence_reader;
     std::array<uint16_t,amity::max_tentacles> front_defaults=filled_tentacles(uint16_t{0x1000});
     system::ConsortiumId consortium;system::OctopusId octopus;system::BootId local_boot;
     std::atomic<bool> local_coordinator{true},authority_transition{false},maintenance{false},maintenance_applied{false},settings_gate{false},retiring{false};
     uint64_t coordinator_epoch=1;
-    std::shared_ptr<Reply> pending_settings;system::BootId settings_boot;std::vector<std::pair<uint8_t,uint64_t>> settings_presence;
+    std::shared_ptr<Reply> pending_settings;system::BootId settings_boot;std::vector<uint8_t> settings_adapters;
     uint64_t settings_deadline=0;std::function<esp_err_t()> settings_persist;bool settings_paused=false,owner_started=false,legacy_enabled=false;
     std::atomic<bool> maintenance_started{false};
     Hub hub{*this},activity_hub{*this};
@@ -177,37 +174,6 @@ struct HubService::Impl : Transport {
         return id == 0 && native_port_count == 2;
     }
 
-    void poll_presence(uint64_t now) {
-        (void)now; if (!hardware_profile) return;
-        bool any_changed = false;
-        for (uint8_t id = 0; id < amity::max_tentacles; ++id) {
-            std::optional<bool> present;
-            const auto& pin = hardware_profile->presence[id];
-            if (connector_configured(id)) {
-                if (pin.gpio >= 0) {
-                    int level = -1;
-                    if (presence_reader) level = presence_reader(pin.gpio);
-#ifdef ESP_PLATFORM
-                    else level = gpio_get_level(static_cast<gpio_num_t>(pin.gpio));
-#endif
-                    if (level >= 0) present = ((level != 0) == pin.present_level);
-                } else if (id == 0 && (hardware_profile->id == cec::BoardProfileId::LegacyBoard2 ||
-                                      hardware_profile->id == cec::BoardProfileId::LegacyButtonless)) present = true;
-            }
-            xSemaphoreTake(lock, portMAX_DELAY);
-            const bool changed = presence[id] != present;
-            any_changed = any_changed || changed;
-            if (changed) {
-                if (presence_generations[id] == std::numeric_limits<uint64_t>::max()) present.reset();
-                else ++presence_generations[id];
-                presence[id] = present;
-            }
-            xSemaphoreGive(lock);
-            if (changed && present == std::optional<bool>{false}) if (auto* engine=adapter(id)) { engine->owned_wire_generation.fetch_add(1); engine->stop_holds(); }
-        }
-        if (any_changed && owner_started) publish();
-    }
-
     esp_err_t start_buses_here() {
         for (size_t i = 0; i < native_port_count; ++i) {
             const auto result = native_ports[i].bus->start(native_ports[i].gpio,
@@ -270,8 +236,7 @@ struct HubService::Impl : Transport {
         if (command_slots) { vSemaphoreDelete(command_slots); command_slots = nullptr; }
         if (cleanup_slots) { vSemaphoreDelete(cleanup_slots); cleanup_slots = nullptr; }
         for (auto& engine : adapters) engine.reset();
-        native_port_count = 0; hardware_profile.reset(); presence.fill({});
-        presence_generations.fill(1);
+        native_port_count = 0; hardware_profile.reset();
     }
 
     ~Impl() {
@@ -357,7 +322,7 @@ struct HubService::Impl : Transport {
         auto fail = [&](esp_err_t error, const char* reason) {
             pending_settings->settings_result = error;
             finish(pending_settings, {error == ESP_ERR_TIMEOUT ? system::AdmissionCode::expired : system::AdmissionCode::stale, reason});
-            pending_settings.reset(); settings_persist = {}; settings_presence.clear();
+            pending_settings.reset(); settings_persist = {}; settings_adapters.clear();
             if (settings_paused && !retiring.load() && !authority_transition.load() && !maintenance.load()) {
 
                 maintenance_started = false;
@@ -366,10 +331,8 @@ struct HubService::Impl : Transport {
         };
         if (pending_settings->canceled.load() || now >= settings_deadline) { fail(ESP_ERR_TIMEOUT, "Settings request expired before persistence"); return; }
         if (!settings_boot || settings_boot != local_boot || retiring.load() || authority_transition.load()) { fail(ESP_ERR_INVALID_STATE, "Amity identity changed before settings apply"); return; }
-        poll_presence(now); // Re-read hardware, not the dialog's cached presence.
-        for (const auto& expected : settings_presence) if (!connector_configured(expected.first) ||
-            presence[expected.first] != std::optional<bool>{true} || presence_generations[expected.first] != expected.second) {
-            fail(ESP_ERR_INVALID_STATE, "HDMI adapter changed; reopen Settings"); return;
+        for (const auto id : settings_adapters) if (!connector_configured(id)) {
+            fail(ESP_ERR_INVALID_STATE, "HDMI adapter is not configured; reopen Settings"); return;
         }
         if (!wires_idle() || false) return;
         uint8_t waiting = 0;
@@ -382,7 +345,7 @@ struct HubService::Impl : Transport {
         // acknowledgment, then restarts this selected device.
         maintenance.store(true); maintenance_applied.store(true);
         passive_ports(); finish(pending_settings, {system::AdmissionCode::accepted, {}});
-        pending_settings.reset(); settings_persist = {}; settings_presence.clear();
+        pending_settings.reset(); settings_persist = {}; settings_adapters.clear();
     }
 
     bool enqueue(Command *command) { return submit(command) == ESP_OK; }
@@ -513,7 +476,7 @@ struct HubService::Impl : Transport {
     }
     static bool owner_activity(const system::OwnedIntent& intent) {
         using K=system::OwnedIntentKind;
-        return intent.setup_generation&&intent.kind!=K::key_down&&intent.kind!=K::key_up&&intent.kind!=K::discover;
+        return Hub::source_input_announcement(intent)||(intent.setup_generation&&intent.kind!=K::key_down&&intent.kind!=K::key_up&&intent.kind!=K::discover);
     }
     static bool owner_activity(const Command& command) { return command.kind==Kind::Owned&&owner_activity(command.owned); }
     static bool activity_request(const Command& command) {
@@ -709,7 +672,7 @@ struct HubService::Impl : Transport {
                         command->received_step=hub.receive_step();
                         command->received_generation=received_generation;command->received_activity=hub.activity_generation();
                         command->intent_generation=root.intent_generation.load();
-                        command->received_boot=root.local_boot;command->received_presence=root.presence_generations[adapter_id];
+                        command->received_boot=root.local_boot;
                         command->received_binding=frame.source()<15?binding_wire_generation[side==BusSide::Front?0:1][frame.source()].load():0;
                         command->received_wire=owned_wire_generation.load();
                         command->received_deadline=uint64_t(esp_timer_get_time())+120000000;
@@ -883,7 +846,7 @@ struct HubService::Impl : Transport {
     bool current_received(const Command& command) {
         auto* engine=adapter(command.received_adapter);
         return engine&&command.intent_generation==intent_generation.load()&&command.received_boot==local_boot&&
-            command.received_presence==presence_generations[command.received_adapter]&&command.received_generation==engine->received_generation&&
+            command.received_generation==engine->received_generation&&
             command.received_activity==engine->hub.activity_generation()&&command.received_wire==engine->owned_wire_generation.load()&&
             command.received_binding==(command.received_frame.source()<15?engine->binding_wire_generation[command.received_side==BusSide::Front?0:1][command.received_frame.source()].load():0)&&
             uint64_t(esp_timer_get_time())<command.received_deadline;
@@ -894,14 +857,28 @@ struct HubService::Impl : Transport {
             auto* engine=adapter(command.owned.target.port.tentacle_id);
             if(command.owned_waiting){
                 if(owner_activity_pending())return false;
-                complete_owned(command,engine&&engine->owner_authorized(command.auth,false)?command.owned_result:
-                    system::AdmissionResult{system::AdmissionCode::unauthorized,"Original controller authority is unavailable"});return true;
+                if(!engine||!engine->owner_authorized(command.auth,false)){
+                    complete_owned(command,{system::AdmissionCode::unauthorized,"Original controller authority is unavailable"});return true;
+                }
+                if(engine->source_input_next(command.owned,command.owned_result,command.owned_input_announced)){
+                    if(command.owned.generation!=engine->received_generation){
+                        complete_owned(command,{system::AdmissionCode::stale,"Original source input was superseded"});return true;
+                    }
+                    // The upstream selection has completed (or was dropped).
+                    // Continue with the original Back source operation, once.
+                    // No frame or failed submission is retained for retry.
+                    command.owned_input_announced=true;
+                    command.owned_waiting=false;
+                    return execute(command);
+                }
+                complete_owned(command,command.owned_result);return true;
             }
-            const auto result=engine?engine->execute_owned(command.owned,command.auth,false,command.owned_received,command.setup_blocked):
+            const auto result=engine?engine->execute_owned(command.owned,command.auth,false,command.owned_received,command.setup_blocked,command.owned_input_announced):
                 system::AdmissionResult{system::AdmissionCode::invalid,"Unknown HDMI adapter"};
             command.owned_received=true;
             if(result.code==system::AdmissionCode::pending){command.discovery_sides=engine->hub.pending_resolution();return false;}
-            if(owner_activity(command)&&owner_activity_pending()){
+            if(owner_activity(command)&&(owner_activity_pending()||
+               engine->source_input_next(command.owned,result,command.owned_input_announced))){
                 command.owned_result=result;command.owned_waiting=true;command.discovery_sides=0;
                 return false;
             }
@@ -1079,14 +1056,18 @@ struct HubService::Impl : Transport {
         auto current=auth;if(!arrival)current.deadline_ms=0;
         return !check || (*check)(current);
     }
-    system::AdmissionResult execute_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,bool validate_only=false,bool received=false,bool setup_blocked=false) {
+    bool source_input_next(const system::OwnedIntent& intent,const system::AdmissionResult& result,bool input_announced=false) const {
+        return !input_announced&&hub.source_input_announcement_here(intent)&&result.source_present.value_or(false)&&
+            (result.code==system::AdmissionCode::accepted||result.code==system::AdmissionCode::overloaded);
+    }
+    system::AdmissionResult execute_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,bool validate_only=false,bool received=false,bool setup_blocked=false,bool input_announced=false) {
         auto& root=parent?*parent:*this;
         using K=system::OwnedIntentKind;
         const auto expected=intent.kind==K::key_up?system::OwnedAuthority::cleanup:intent.kind==K::key_down?system::OwnedAuthority::realtime:system::OwnedAuthority::control;
         if(auth.authority!=expected)return {system::AdmissionCode::unauthorized,"Original action has the wrong authority class"};
         if(!owner_authorized(auth))return {system::AdmissionCode::unauthorized,"Original controller authority is unavailable"};
         if(intent.target.port.octopus_id!=root.octopus || intent.target.port.consortium_id!=root.consortium ||
-           intent.target.port.tentacle_id!=adapter_id || !root.connector_configured(adapter_id) || root.presence[adapter_id]==std::optional<bool>{false})
+           intent.target.port.tentacle_id!=adapter_id || !root.connector_configured(adapter_id))
             return {system::AdmissionCode::invalid,"The selected HDMI adapter is unavailable"};
         if(root.maintenance.load()||root.retiring.load())return {system::AdmissionCode::unauthorized,"This Amity is unavailable while updating or removed"};
         if(!intent.generation||!intent.sequence)return {system::AdmissionCode::invalid,"Missing original input generation"};
@@ -1159,7 +1140,8 @@ struct HubService::Impl : Transport {
             owned_key_auth[intent.key].deadline_ms=0;
             state.active=true;state.failed=false;++state.instance;
             send_held_key(intent.key);admitted=!state.failed;
-        } else admitted=hub.execute_owned(intent);
+        } else if(!input_announced&&hub.source_input_announcement_here(intent))admitted=hub.announce_owned_input();
+        else admitted=hub.execute_owned(intent);
         executing_auth=nullptr;
         if(hub.pending_resolution())return {system::AdmissionCode::pending,"Original owner lookup is in progress"};
         const auto present=intent.kind==K::source_input?std::optional<bool>{true}:std::nullopt;
@@ -1220,7 +1202,8 @@ struct HubService::Impl : Transport {
                 return dispatched(admitted);
             }
             const auto result=engine->execute_owned(intent,auth,false,true);
-            if(result.code==system::AdmissionCode::pending||(owner_activity(intent)&&owner_activity_pending())){
+            if(result.code==system::AdmissionCode::pending||(owner_activity(intent)&&(owner_activity_pending()||
+               engine->source_input_next(intent,result)))){
                 auto* request=new(std::nothrow)Command{Kind::Owned};if(!request)return false;
                 request->owned=intent;request->auth=auth;request->owned_received=true;
                 if(result.code!=system::AdmissionCode::pending){request->owned_waiting=true;request->owned_result=result;}
@@ -1285,7 +1268,7 @@ struct HubService::Impl : Transport {
         report.setup_generation=engine.setup_generation;report.setup_last_sequence=engine.setup_last_sequence;report.setup_pending=engine.setup_outstanding;
         report.setup_replies_pending=engine.owned_settling.pending_replies();
         report.audio_status_known=state.audio_status_known;report.muted=state.muted;report.volume=state.volume;
-        if(presence[engine.adapter_id]!=std::optional<bool>{false})for(const auto& device:state.devices){
+        for(const auto& device:state.devices){
             report.devices.push_back({device.bus==BusSide::Front?system::Side::front:system::Side::back,device.name,device.address,device.type,device.physical_address,device.vendor_id,!device.name.empty()});
         }
         return report;
@@ -1337,8 +1320,8 @@ struct HubService::Impl : Transport {
         state.activity_settling=activity_settling(esp_timer_get_time());state.activity_error=last_activity_error;
         state.applied_config_revision=owned_config_revision;state.applied_presentation_revision=owned_presentation_revision;state.processed_activity_selection=processed_selection;
         xSemaphoreTake(lock,portMAX_DELAY);cached=state;cached_revision=owned_config_revision;
-        for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.present=presence[id];a.presence_generation=presence_generations[id];a.observed_front_physical.reset();a.effective_front_physical.reset();
-            if(a.configured&&presence[id]!=std::optional<bool>{false})if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;}
+        for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();
+            if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;}
         }
         auto observer=std::atomic_load(&observer_slot);auto cb=callback;xSemaphoreGive(lock);
         if(observer)for(const auto& report:changed)(*observer)(report);
@@ -1418,7 +1401,7 @@ struct HubService::Impl : Transport {
         case K::MaintenanceEnd:maintenance_started=false;maintenance.store(false);maintenance_applied.store(false);finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::SettingsCommit:
             if(pending_settings||maintenance_started||control_hub().snapshot().current_activity>=0||any_keys_active()){command.reply->settings_result=ESP_ERR_INVALID_STATE;settings_gate.store(false);finish(command.reply,{system::AdmissionCode::overloaded,"Stop the activity before changing settings"});return true;}
-            pending_settings=command.reply;settings_boot=command.settings_boot;settings_presence=command.settings_presence;settings_deadline=command.settings_deadline;settings_persist=std::move(command.persist);settings_paused=true;maintenance_started=true;return true;
+            pending_settings=command.reply;settings_boot=command.settings_boot;settings_adapters=command.settings_adapters;settings_deadline=command.settings_deadline;settings_persist=std::move(command.persist);settings_paused=true;maintenance_started=true;return true;
         default:return false;
         }
     }
@@ -1426,7 +1409,6 @@ struct HubService::Impl : Transport {
         auto& p=*static_cast<Impl*>(context);
         if(!p.owner_started){p.owner_started=true;if(p.local_coordinator.load()&&(!p.consortium||!p.octopus))p.legacy_enabled=true;else p.passive_ports();}
         for(;;){
-            p.poll_presence(uint64_t(esp_timer_get_time())/1000);
             if(p.pending_settings)p.complete_settings(uint64_t(esp_timer_get_time())/1000);
             if(p.maintenance_started)p.maintenance_applied.store(p.wires_idle());
             bool changed=p.receive_reports(),pending=false;
@@ -1438,7 +1420,7 @@ struct HubService::Impl : Transport {
                 for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=p.adapter(id))
                     changed=engine->complete_transmissions()||changed;
                 changed=p.resume_discovered()||changed;
-                for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=p.adapter(id))if(p.connector_configured(id)&&p.presence[id]!=std::optional<bool>{false}){
+                for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=p.adapter(id))if(p.connector_configured(id)){
                     engine->hub.tick(esp_timer_get_time());const bool received=engine->receive();
                     const auto phase=engine->discovery.phase;const auto generation=engine->discovery_generation;
                     engine->discovery_tick(received);
@@ -1521,26 +1503,7 @@ esp_err_t HubService::start(const cec::BoardProfile& profile, const std::array<u
         }
         p.native_ports[p.native_port_count++] = {pin.tentacle_id, side, bus, pin.gpio};
     }
-#ifdef ESP_PLATFORM
-    for (uint8_t id = 0; id < profile.tentacle_count; ++id) if (profile.presence[id].gpio >= 0) {
-        const auto& pin = profile.presence[id]; gpio_config_t input{};
-        input.pin_bit_mask = uint64_t{1} << pin.gpio; input.mode = GPIO_MODE_INPUT;
-        input.pull_up_en = pin.pullup ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
-        input.pull_down_en = pin.pulldown ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE;
-        const auto err = gpio_config(&input); if (err != ESP_OK) { p.reset_startup(); return err; }
-    }
-#endif
-    p.poll_presence(uint64_t(esp_timer_get_time()) / 1000);
     return p.start_owner();
-}
-esp_err_t HubService::set_presence_reader(std::function<int(int)> reader) {
-    if (impl_->commands || impl_->native_port_count) return ESP_ERR_INVALID_STATE;
-    impl_->presence_reader = std::move(reader); return ESP_OK;
-}
-std::optional<bool> HubService::connector_presence(uint8_t id) const {
-    if (id >= amity::max_tentacles) return {};
-    auto& p = *impl_; xSemaphoreTake(p.lock, portMAX_DELAY);
-    const auto present = p.presence[id]; xSemaphoreGive(p.lock); return present;
 }
 std::vector<AdapterRuntimeState> HubService::adapter_runtime_snapshot() const {
     auto& p = *impl_; xSemaphoreTake(p.lock, portMAX_DELAY);
@@ -1548,14 +1511,14 @@ std::vector<AdapterRuntimeState> HubService::adapter_runtime_snapshot() const {
     xSemaphoreGive(p.lock); return snapshot;
 }
 esp_err_t HubService::commit_adapter_settings(system::BootId boot,
-        std::vector<std::pair<uint8_t, uint64_t>> presence, uint64_t deadline,
+        std::vector<uint8_t> adapters, uint64_t deadline,
         std::function<esp_err_t()> persist) {
     auto& p = *impl_;
-    if (!boot || !persist || presence.empty() || presence.size() > amity::max_tentacles) return ESP_ERR_INVALID_ARG;
+    if (!boot || !persist || adapters.empty() || adapters.size() > amity::max_tentacles) return ESP_ERR_INVALID_ARG;
     bool used[amity::max_tentacles]{};
-    for (const auto& item : presence) {
-        if (item.first >= amity::max_tentacles || !item.second || used[item.first]) return ESP_ERR_INVALID_ARG;
-        used[item.first] = true;
+    for (const auto id : adapters) {
+        if (id >= amity::max_tentacles || used[id]) return ESP_ERR_INVALID_ARG;
+        used[id] = true;
     }
     const auto now = uint64_t(esp_timer_get_time()) / 1000;
     if (deadline <= now) return ESP_ERR_TIMEOUT;
@@ -1564,7 +1527,7 @@ esp_err_t HubService::commit_adapter_settings(system::BootId boot,
     auto command = std::unique_ptr<Impl::Command>(new (std::nothrow) Impl::Command{Impl::Kind::SettingsCommit});
     if (!command) return ESP_ERR_NO_MEM;
     command->reply = reply; command->settings_boot = boot;
-    command->settings_presence = std::move(presence); command->settings_deadline = deadline; command->persist = std::move(persist);
+    command->settings_adapters = std::move(adapters); command->settings_deadline = deadline; command->persist = std::move(persist);
     if (xSemaphoreTake(p.configuration_gate, 0) != pdTRUE) return ESP_ERR_INVALID_STATE;
     const bool reserved = !p.maintenance.load() && !p.authority_transition.load() && !p.retiring.load() && !p.settings_gate.exchange(true);
     xSemaphoreGive(p.configuration_gate);

@@ -45,11 +45,11 @@ State and completion trackers belong to the original executor. Each held key con
 
 The **29 October 2026 activity-sequencing amendment** requires a Start/Standby sequence to await each original lookup/command completion before its next step on the same Amity. Other owners and the owner loop may advance in parallel. During activity setting, ignore key presses before registering them; a release for an unregistered press is a no-op. Preserve the existing physical-input gate, with no ignored-press lifecycle or replay; normal independent keys resume after it clears. The continuation retains an original-function program counter in bounded semantic IPC, not CEC frames or a second transmit queue. [Activity execution](07-activity-planning-and-execution.md#2-reuse-the-original-decisions) owns this explicit sequencing rule.
 
-## Presence and per-device settings
+## CEC connectivity and per-device settings
 
-A separate, electrically qualified presence detector may report attached/absent. Without one, physical presence is unknown; CEC silence and saved selections do not prove detachment. Keep actual presence generations for approved settings/remove-reinsert checks. Do not add detection pulses or pull-downs to a live CEC line.
+There are no separate adapter-presence inputs or attachment generations. A configured adapter exposes its actual CEC wires. A valid pulled-up bus permits normal CEC communication; device replies and command ACKs determine the result of each exchange. An absent adapter produces no CEC responses. Do not add a cache, sensor or bus-availability permission before ordinary owner-local lookup and transmission, or add detection pulses or pull-downs to a live CEC line.
 
-Each adapter has its own saved default front physical address. The owner uses it in the original startup algorithm; it is not a verified route or a stored PA-evidence grant. Explicit per-device Settings retain fresh owner boot/settings/presence checks, atomic save and selected-device restart after the response attempt. See [UI settings](20-user-interface.md#per-device-hdmi-adapter-settings-amendment--20-october-2026).
+Each adapter has its own saved default front physical address. The owner uses it in the original startup algorithm; it is not a verified route or a stored PA-evidence grant. Explicit per-device Settings retain configured-slot, fresh owner boot/settings-revision and authority checks, atomic save and selected-device restart after the response attempt. CEC silence does not prevent editing a configured slot. See [UI settings](20-user-interface.md#per-device-hdmi-adapter-settings-amendment--20-october-2026).
 
 ## Qualification
 
