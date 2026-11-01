@@ -188,11 +188,11 @@ the scenario requires a successful physical announcement.
 
 Amity must then send a fresh directed Standby command to the second player and
 a fresh Set Stream Path restoring the first player's physical address. Both
-must finish within one second of the physical Active Source transmission:
-`other.wait_for_standby_after(announcement, within=1)` checks Standby and the
+must finish within 250 ms of the physical Active Source transmission:
+`other.wait_for_standby_after(announcement, within=0.250)` checks Standby and the
 resulting state, and
-`avr.wait_for_input(player, since=boundary, after=announcement, within=1)` checks
-route restoration against that same announcement. The one-second bound is an
+`avr.wait_for_input(player, since=boundary, after=announcement, within=0.250)` checks
+route restoration against that same announcement. The 250 ms bound is an
 absolute maximum; normal remediation is expected to be much faster.
 [Linux CEC timestamps](https://www.kernel.org/doc/html/v6.19/userspace-api/media/cec/cec-ioc-receive.html)
 mark the last transmitted/received byte, so the measured interval
@@ -342,7 +342,7 @@ physical power-on commands for the selected three and correct initial AVR
 routing. The other owner's player then sends its own physical Active Source
 announcement. That owner must send a fresh physical directed CEC Standby to
 the thief because it differs from the selected source. The directed Standby
-and resulting state must satisfy the same Active Source-to-response one-second
+and resulting state must satisfy the same Active Source-to-response 250 ms
 wire-completion limit as the shared-wire test; its TV and AVR must
 remain in Standby. The active three must remain On with their selected
 input and player active, and the main UI must retain the same activity and boot.
@@ -581,7 +581,7 @@ based on the measured 95.494-second verified Add above.
 `--cec-timeout` independently defaults to five seconds for ordinary fresh power
 and routing assertions. Changing the enrollment operation budget does not change
 the CEC budget. Source-theft
-remediation has the stricter one-second physical window described above,
+remediation has the stricter 250 ms physical window described above,
 including both Standby and shared-wire route restoration, regardless of either
 option. Owner identity proof still uses bounded HTTP requests and can extend
 the caller's wall time while a request is in progress; accepted physical

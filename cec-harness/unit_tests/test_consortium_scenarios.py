@@ -148,8 +148,8 @@ class Scenario:
         return component
 
     def standby_after(self, component, announcement, *, within):
-        if announcement.thief is not component or within != 1:
-            raise AssertionError("Theft remediation must use this player's actual announcement and one-second bound")
+        if announcement.thief is not component or within != 0.250:
+            raise AssertionError("Theft remediation must use this player's actual announcement and 250 ms bound")
         return self.wait_power(component, PowerState.STANDBY, since=announcement,
                                command="standby", directed=True)
 

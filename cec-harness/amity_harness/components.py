@@ -208,8 +208,8 @@ class Component:
         if after is None and within is None:
             return {}
         if (after is None or isinstance(within, bool) or not isinstance(within, (int, float))
-                or not math.isfinite(within) or not 0 < within <= 1):
-            raise ValueError("Source-theft remediation needs a positive deadline of at most one second")
+                or not math.isfinite(within) or not 0 < within <= 0.250):
+            raise ValueError("Source-theft remediation needs a positive deadline of at most 250 ms")
         return {"trigger_wire_timestamp_ns": self._activation_timestamp(after),
                 "trigger_frame": after.frame.raw.hex(":"), "max_elapsed_ns": int(within * 1_000_000_000)}
 
@@ -221,8 +221,8 @@ class Component:
     def _response_latency(event, timing):
         return {**timing, "response_latency_ns": event["wire_timestamp_ns"] - timing["trigger_wire_timestamp_ns"]} if timing else {}
 
-    def wait_for_standby_after(self, announcement, *, within=1):
-        """Require directed Standby/state within one second of this player's TX.
+    def wait_for_standby_after(self, announcement, *, within=0.250):
+        """Require directed Standby/state within 250 ms of this player's TX.
 
         Linux timestamps mark the last transmitted/received byte. Both events
         use the same wire clock; SSH's common mapping offset cancels. Identity

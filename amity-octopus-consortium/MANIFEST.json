@@ -68,8 +68,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 24066,
-      "sha256": "446fb9988897212c556b71cdb9f0d4155c2a708e4f46078577c1d7ffd221c14f"
+      "size_bytes": 24480,
+      "sha256": "ac18078954aec3dfbae7ff4fda30caf7508d44719b855c0e4d4a3359c0f10d3b"
     },
     {
       "path": "19-source-baseline.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 89439,
-      "sha256": "2ca159cee37c5164064aba4f17d3dc426889781dde050521638b7913d53e5b9b"
+      "size_bytes": 90331,
+      "sha256": "cc6175b131b127cda3bfffc305fa90d65a9485ba1e8c561a9af85e6ec27e673d"
     },
     {
       "path": "examples/README.md",

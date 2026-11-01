@@ -368,9 +368,9 @@ Keep enrollment/scan/activity operation deadlines separate from CEC assertions.
 95.494-second fully verified Add;
 `RunConfig.cec_timeout` / `--cec-timeout` independently defaults to five seconds
 for ordinary fresh power/routing waits. Raising the operation budget must not
-raise the CEC wait budget. Source-theft remediation has a hard one-second
+raise the CEC wait budget. Source-theft remediation has a hard 250 ms
 physical wire-completion limit, not the operation or ordinary CEC timeout.
-The directed Standby and resulting state must be proven within one second of
+The directed Standby and resulting state must be proven within 250 ms of
 the same component's successful physical Active Source transmission. The
 shared-wire scenario also requires route restoration within that same original
 window; isolated consortium wires do not add a route-restoration requirement.
@@ -378,7 +378,7 @@ Use complete Linux CEC TX/RX timestamps from the same wire and correlate the
 trigger to its exact component/session. Record actual response latency. A late
 response already in history, virtual traffic or a local state change cannot
 pass. Slow authenticated owner proof may validate timely evidence later, but
-must not extend or restart the physical response window. One second is an
+must not extend or restart the physical response window. 250 ms is an
 absolute maximum; expected normal remediation is substantially faster.
 
 Keep functional test bodies limited to equipment, topology and behavior:
@@ -453,7 +453,7 @@ player's activity, then use the second player's `activate()` to send a physical
 Active Source broadcast. `Component.activate()` returns the transmission
 result. The DUT must issue a fresh directed Standby to the second player and a
 fresh Set Stream Path to the first player's physical address;
-`avr.wait_for_input(player, since=boundary, after=announcement, within=1)` must verify actual DUT wire
+`avr.wait_for_input(player, since=boundary, after=announcement, within=0.250)` must verify actual DUT wire
 evidence. The first player must be active again, and `activity.assert_active()`
 verifies its selected UI activity and DUT boot did not change. Clean up both
 test-owned activities before component responders close. Keep raw CEC and

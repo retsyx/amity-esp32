@@ -15,6 +15,21 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## Current source-theft deadline — 1 November 2026
+
+The functional tests now require thief Standby and resulting state within
+250 ms of the component's successful physical Active Source transmission.
+Shared-wire route restoration must finish within that same original window;
+the two-owner and three-owner consortium cases require directed Standby on
+the isolated thief wire. The Standby helper defaults to 250 ms; shared timing
+validation rejects any larger requested bound, independently of operation and
+ordinary CEC timeouts.
+Boundary checks accept a complete frame at 250,000,000 ns and reject one at
+250,000,001 ns, including a late frame already in history and slow owner proof.
+All 355 framework unit tests pass with the updated limit.
+Earlier physical results below retain their recorded limits. No physical run
+has yet been performed with the new 250 ms test limit.
+
 ## Final enrollment fixes and physical qualification — 30 October 2026
 
 All four DUTs run exact 0.1.109 / Matter software 110 from
@@ -408,9 +423,9 @@ Strict admission, four owners, adversarial radio/reconnect/loss/load,
 four-adapter electrical timing and real picture/audio equipment remain outside
 this evidence. Earlier failed physical reports remain failed.
 
-## Current source-theft deadline — 30 October 2026
+## Previous one-second source-theft deadline — 30 October 2026
 
-The current functional contract now requires thief Standby and resulting state
+The then-current functional contract required thief Standby and resulting state
 within one second of that component's successful physical Active Source
 transmission. Shared-wire route restoration must complete within the same
 original one-second window. The requested framework change is complete:

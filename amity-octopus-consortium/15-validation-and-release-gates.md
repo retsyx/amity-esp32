@@ -124,6 +124,12 @@ starting and verifying the input-1 player's activity, the input-2 player wakes
 and broadcasts Active Source. Require a fresh directed DUT Standby to that
 player, a fresh DUT Set Stream Path restoring the input-1 player's PA, the
 original player's active/On state, and the same selected activity and boot.
+Both Standby and route restoration must complete within 250 ms of the same
+successful physical Active Source transmission, using complete TX/RX wire
+timestamps. The two-owner and three-owner consortium cases apply the same
+250 ms limit to directed Standby on each isolated thief wire. Slow HTTP owner
+proof cannot extend or restart the physical deadline; larger operation or
+ordinary CEC timeouts cannot raise it.
 The second playback model explicitly uses the tuner allocation pool while
 retaining playback identity and handling. The three-component back wire uses
 CEC 1.4; the front TV and original legal two-component fixtures retain CEC 2.0.
