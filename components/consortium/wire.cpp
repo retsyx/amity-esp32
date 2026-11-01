@@ -36,6 +36,7 @@ bool payload(Kind kind,const Json &v) {
     case Kind::settings_read:case Kind::settings_write:case Kind::settings_result:return valid_settings_payload(kind,v);
     case Kind::device_status:return closed(v,{"hostname"})&&v.get("hostname")->type==Json::Type::string&&valid_hostname(v.get("hostname")->string);
     case Kind::heartbeat:return closed(v,{"sequence","observation_cursor","ready"})&&decimal_field(v,"sequence")&&decimal_field(v,"observation_cursor")&&bool_field(v,"ready");
+    case Kind::synchronization:{model::MessageId round;std::string phase;uint64_t revision=0;return parse_synchronization(v,round,phase,revision)==Error::none;}
     case Kind::scoped_intent:{model::OwnedIntent out;model::ExecutionLeaseId lease;return parse_owned_intent(v,out,lease)==Error::none;}
     case Kind::scoped_result:return valid_owned_result(v);
     case Kind::execution_lease:return closed(v,{"lease_id","link_id","class","validity_ms"})&&ids(v,{"lease_id","link_id"})&&text_is(v.get("class"),{"control","realtime_input"})&&uint_field(v,"validity_ms",1,text_is(v.get("class"),{"realtime_input"})?2000:10000);
@@ -53,6 +54,17 @@ bool payload(Kind kind,const Json &v) {
 }
 }
 bool valid_envelope_payload(Kind kind,const Json& value){return payload(kind,value);}
+Error parse_synchronization(const Json& value,model::MessageId& round,std::string& phase,uint64_t& revision){
+    model::MessageId parsed_round;std::string parsed_phase;uint64_t parsed_revision=0;
+    if(!closed(value,{"round_id","phase","config_revision"})||!id(value.get("round_id"),parsed_round)||
+       !text_is(value.get("phase"),{"begin","ack","reject"})||!json_string(value.get("phase"),parsed_phase,1,6)||
+       !decimal(value.get("config_revision"),parsed_revision)||!parsed_revision)return Error::invalid_message;
+    round=parsed_round;phase=std::move(parsed_phase);revision=parsed_revision;return Error::none;
+}
+std::string synchronization_json(model::MessageId round,std::string_view phase,uint64_t revision){
+    if(!round||!revision||(phase!="begin"&&phase!="ack"&&phase!="reject"))return {};
+    return "{\"round_id\":\""+round.str()+"\",\"phase\":\""+std::string(phase)+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";
+}
 const char *error_name(Error v) {
     switch(v) {
 #define E(a,b) case Error::a:return b
@@ -63,7 +75,7 @@ const char *error_name(Error v) {
 const char *kind_name(Kind k) {switch(k) {
 #define K(a) case Kind::a:return #a
 K(heartbeat);K(execution_lease);K(enrollment_control);K(membership_event);K(membership_result);
-K(snapshot_request);K(snapshot_chunk);K(update_begin);K(update_chunk);K(update_install);K(update_status);K(update_abort);K(update_result);K(device_status);K(settings_read);K(settings_write);K(settings_result);K(scoped_intent);K(scoped_result);
+K(snapshot_request);K(snapshot_chunk);K(update_begin);K(update_chunk);K(update_install);K(update_status);K(update_abort);K(update_result);K(device_status);K(settings_read);K(settings_write);K(settings_result);K(scoped_intent);K(scoped_result);K(synchronization);
 #undef K
 }return "";}
 bool decimal(const Json *v,uint64_t &out) {if(!v||v->type!=Json::Type::string)return false;const auto parsed=model::parse_uint64(v->string);if(!parsed)return false;out=*parsed;return true;}
@@ -84,7 +96,7 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     uint64_t version=0,ttl=0;if(!json_uint(v.get("protocol_version"),version,1,1))return Error::protocol_mismatch;
     Envelope x;
     if(!id(v.get("consortium_id"),x.consortium_id)||!id(v.get("message_id"),x.message_id)||!id(v.get("origin_octopus_id"),x.origin_octopus_id)||!id(v.get("origin_boot_id"),x.origin_boot_id)||!id(v.get("destination_octopus_id"),x.destination_octopus_id)||!id(v.get("destination_boot_id"),x.destination_boot_id)||!decimal(v.get("coordinator_epoch"),x.coordinator_epoch)||!decimal(v.get("config_revision"),x.config_revision)||!json_uint(v.get("ttl_ms"),ttl,1,10000))return Error::invalid_message;
-    bool recognized=false;for(auto kind:{Kind::heartbeat,Kind::execution_lease,Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
+    bool recognized=false;for(auto kind:{Kind::heartbeat,Kind::execution_lease,Kind::enrollment_control,Kind::membership_event,Kind::membership_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result,Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::scoped_intent,Kind::scoped_result,Kind::synchronization})if(text_is(v.get("kind"),{kind_name(kind)})){x.kind=kind;recognized=true;break;}
     if(!recognized||retired_kind(x.kind))return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
     if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;

@@ -40,6 +40,59 @@ SemaphoreHandle_t lock=nullptr;
 char boot_identifier[33]{};
 std::atomic<bool> ready{false};
 vprintf_like_t original = nullptr;
+struct AllocationFailure {
+    uint64_t at_ms=0;
+    size_t bytes=0;
+    uint32_t caps=0;
+    size_t matched_free=0,matched_largest=0,dma_free=0,dma_largest=0,internal_free=0,internal_largest=0;
+    char function[32]{},task[16]{};
+};
+// The allocator calls its failure hook after releasing the heap lock. Capture
+// fixed-size observations only: logging here could allocate or recurse through
+// an application/log mutex held by the failing caller. The existing background
+// poll emits these event records later, outside this guard and allocator call.
+std::array<AllocationFailure,8> allocation_failures{};
+size_t allocation_failure_read=0,allocation_failure_count=0;
+std::atomic_flag allocation_failure_guard=ATOMIC_FLAG_INIT;
+std::atomic<uint32_t> allocation_failure_suppressed{0};
+void capture_allocation_failure(size_t bytes,uint32_t caps,const char* function){
+    if(allocation_failure_guard.test_and_set(std::memory_order_acquire)){
+        allocation_failure_suppressed.fetch_add(1,std::memory_order_relaxed);return;
+    }
+    if(allocation_failure_count==allocation_failures.size()){
+        allocation_failure_suppressed.fetch_add(1,std::memory_order_relaxed);
+        allocation_failure_guard.clear(std::memory_order_release);return;
+    }
+    auto& failure=allocation_failures[(allocation_failure_read+allocation_failure_count)%allocation_failures.size()];
+    failure={};failure.at_ms=static_cast<uint64_t>(esp_timer_get_time()/1000);failure.bytes=bytes;failure.caps=caps;
+    auto copy=[](char* destination,size_t capacity,const char* source){
+        size_t length=0;if(source)while(length+1<capacity&&source[length]){destination[length]=source[length];++length;}
+        destination[length]='\0';
+    };
+    copy(failure.function,sizeof(failure.function),function);
+    copy(failure.task,sizeof(failure.task),xPortInIsrContext()?"ISR":pcTaskGetName(nullptr));
+    multi_heap_info_t matched{},dma{},internal{};
+    heap_caps_get_info(&matched,caps);heap_caps_get_info(&dma,MALLOC_CAP_DMA);heap_caps_get_info(&internal,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    failure.matched_free=matched.total_free_bytes;failure.matched_largest=matched.largest_free_block;
+    failure.dma_free=dma.total_free_bytes;failure.dma_largest=dma.largest_free_block;
+    failure.internal_free=internal.total_free_bytes;failure.internal_largest=internal.largest_free_block;
+    ++allocation_failure_count;
+    allocation_failure_guard.clear(std::memory_order_release);
+}
+void log_allocation_failures(){
+    for(size_t emitted=0;emitted<allocation_failures.size();++emitted){
+        if(allocation_failure_guard.test_and_set(std::memory_order_acquire))return;
+        if(!allocation_failure_count){allocation_failure_guard.clear(std::memory_order_release);break;}
+        const auto failure=allocation_failures[allocation_failure_read];
+        allocation_failure_read=(allocation_failure_read+1)%allocation_failures.size();--allocation_failure_count;
+        allocation_failure_guard.clear(std::memory_order_release);
+        ESP_LOGE("memory","allocation_failed at_ms=%" PRIu64 " bytes=%zu caps=0x%08" PRIx32 " fn=%s task=%s matched_free=%zu matched_largest=%zu dma_free=%zu dma_largest=%zu internal_free=%zu internal_largest=%zu",
+                 failure.at_ms,failure.bytes,failure.caps,failure.function,failure.task,failure.matched_free,failure.matched_largest,
+                 failure.dma_free,failure.dma_largest,failure.internal_free,failure.internal_largest);
+    }
+    const auto suppressed=allocation_failure_suppressed.exchange(0,std::memory_order_relaxed);
+    if(suppressed)ESP_LOGE("memory","allocation_failed suppressed=%" PRIu32 " reason=concurrent_or_full",suppressed);
+}
 int capture(const char *fmt, va_list args) {
     char line[384];
     va_list copy;
@@ -66,10 +119,12 @@ void start_log_capture() {
              static_cast<unsigned long>(entropy[0]),static_cast<unsigned long>(entropy[1]),
              static_cast<unsigned long>(entropy[2]),static_cast<unsigned long>(entropy[3]));
     lock=xSemaphoreCreateMutex();if(lock)original = esp_log_set_vprintf(capture);
+    if(heap_caps_register_failed_alloc_callback(capture_allocation_failure)!=ESP_OK)ESP_LOGW("memory","Allocation failure diagnostics are unavailable");
 }
 const char *boot_id() { return boot_identifier; }
 bool firmware_ready() { return ready.load(); }
 void log_memory_if_due() {
+    log_allocation_failures();
     // Called by one background task. Wait for all services before the baseline.
     static int64_t next_log_us = 0;
     if (!firmware_ready()) return;

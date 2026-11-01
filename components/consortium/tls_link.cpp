@@ -66,6 +66,7 @@ int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){
     *flags|=MBEDTLS_X509_BADCERT_OTHER;return 0;
 }
 bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){
+    if(configured||socket>=0)return false;
     BoundedSetupTimings<5> timing("tls_setup",now_ms);timing.peer=expected;timing.begin("total");
     socket=fd;server=is_server;if(peers.empty()||peers.size()>7)return false;allowed=peers;authenticated=expected;
     if(!timing.step("own_credentials",[&]{return !mbedtls_x509_crt_parse_der(&own,reinterpret_cast<const uint8_t*>(identity.der.data()),identity.der.size())&&!mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0);}))return timing.done(false);
@@ -92,12 +93,14 @@ bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool
     if(mbedtls_ssl_conf_alpn_protocols(&config,profiles))return false;
     if(mbedtls_ssl_conf_own_cert(&config,&own,&key)||mbedtls_ssl_setup(&ssl,&config))return false;
     if(!is_server){if(!expected)return false;const std::string dns="o-"+expected.str()+".amity.invalid";if(mbedtls_ssl_set_hostname(&ssl,dns.c_str()))return false;}
-    struct timeval timeout{0,100000};setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));mbedtls_ssl_set_bio(&ssl,&socket,send_socket,receive_socket,nullptr);timing.finish(configured,true);return timing.done(true);
+    struct timeval timeout{0,100000};setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));mbedtls_ssl_set_bio(&ssl,&socket,send_socket,receive_socket,nullptr);timing.finish(configured,true);this->configured=true;return timing.done(true);
 }
 bool TlsLink::handshake(){
+    if(!usable())return false;
+    if(handshaken)return true;
     BoundedSetupTimings<3> timing("tls_handshake",now_ms);const auto total=timing.begin("handshake");
     timing_verify_ms=0;timing_verify_calls=0;uint64_t call_ms=0,wait_ms=0;uint32_t calls=0;
-    auto finished=[&](bool good,int code){timing.peer=authenticated;timing.finish(total,good,calls,call_ms,wait_ms,code);timing.sum("verify_callback",timing_verify_ms,timing_verify_calls,good);return good;};
+    auto finished=[&](bool good,int code){handshaken=good;transport_failed=!good;timing.peer=authenticated;timing.finish(total,good,calls,call_ms,wait_ms,code);timing.sum("verify_callback",timing_verify_ms,timing_verify_calls,good);return good;};
     const auto deadline=now_ms()+10000;
     while(now_ms()<deadline){
         auto began=now_ms();const int r=mbedtls_ssl_handshake(&ssl);call_ms+=now_ms()-began;++calls;
@@ -111,6 +114,7 @@ bool TlsLink::extended_profile()const{const auto *profile=mbedtls_ssl_get_alpn_p
 bool TlsLink::hardware_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&strcmp(profile,"amity-consortium-v1.hardware")==0;}
 bool TlsLink::send(std::string_view body){
     auto bytes=frame(body);if(bytes.empty())return false;
+    if(!handshake())return false;
     size_t offset=0;const auto deadline=now_ms()+3000;
     // Bound PSRAM-to-DMA AES bounce allocations for application data without
     // reducing the TLS buffers used by certificates or incoming records.
@@ -118,22 +122,38 @@ bool TlsLink::send(std::string_view body){
         const auto count=std::min(size_t{512},bytes.size()-offset);
         const int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,count);
         if(n>0)offset+=n;
-        else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;
+        else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE){transport_failed=true;return false;}
         else vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
     }
-    return offset==bytes.size();
+    // A timed-out write may retain a pending TLS record or an incomplete
+    // application frame. Its buffer cannot be replaced by another exchange.
+    if(offset!=bytes.size()){transport_failed=true;return false;}
+    return true;
 }
 TlsLink::ReceiveResult TlsLink::receive_failed(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){
     incoming_failed=true;
-    if(incoming_diagnostic.cause==TlsReceiveDiagnostic::Cause::none){
+    if(!incoming_diagnostic.fatal()){
         const auto progress=incoming_reader.progress(now);
         incoming_diagnostic={cause,code,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),
             progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};
     }
     return ReceiveResult::failed;
 }
+TlsLink::ReceiveResult TlsLink::receive_expired(TlsReceiveDiagnostic::Cause cause,int code,uint64_t now){
+    if(incoming_expired)return ReceiveResult::pending;
+    incoming_expired=true;
+    const auto progress=incoming_reader.progress(now);
+    incoming_diagnostic={cause,code,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),
+        progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};
+    return ReceiveResult::expired;
+}
+TlsLink::ReceiveResult TlsLink::expire_receive(){
+    if(!established())return ReceiveResult::failed;
+    return receive_expired(TlsReceiveDiagnostic::Cause::operation_timeout,0,now_ms());
+}
 TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
-    if(incoming_failed)return ReceiveResult::failed;
+    if(!established())return ReceiveResult::failed;
+    out.clear();
     const auto began=now_ms();
     if(incoming_size&&began>=incoming_last_poll_end)incoming_max_poll_gap=std::max(incoming_max_poll_gap,began-incoming_last_poll_end);
     struct PollFinished{TlsLink& link;~PollFinished(){link.incoming_last_poll_end=now_ms();}} finished{*this};
@@ -142,9 +162,16 @@ TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
     // consume bytes from the next frame or wait for another network fragment.
     for(unsigned turn=0;turn<16;++turn){
         auto now=now_ms();
-        if(incoming_reader.check_deadline(now)!=FrameReader::Result::incomplete){
+        // Expiry rejects this message once. Keep its original deadline data
+        // while draining exactly its bounded bytes, never accepting late work
+        // or interpreting its tail as another frame's length prefix.
+        if(incoming_expired&&incoming_size==incoming_expected&&incoming_size>=4){
+            incoming_reader.reset();incoming_size=0;incoming_expected=4;incoming_expired=false;
+            incoming_max_poll_gap=incoming_max_read_ms=0;return ReceiveResult::pending;
+        }
+        if(!incoming_expired&&incoming_reader.check_deadline(now)!=FrameReader::Result::incomplete){
             const auto progress=incoming_reader.progress(now);
-            return receive_failed(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
+            return receive_expired(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
                 progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);
         }
         const auto request=std::min(incoming_expected-incoming_size,sizeof(bytes));
@@ -160,31 +187,42 @@ TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
             if(!length||length>max_frame_bytes)return receive_failed(TlsReceiveDiagnostic::Cause::invalid_length,0,now);
             incoming_expected=4+length;
         }
+        if(incoming_expired)continue;
         size_t used=0;const auto fed_at=now_ms();const auto result=incoming_reader.feed(bytes,count,used,fed_at);
         if(used!=static_cast<size_t>(count)||(result!=FrameReader::Result::incomplete&&result!=FrameReader::Result::frame)){
             const auto progress=incoming_reader.progress(fed_at);
-            return receive_failed(result==FrameReader::Result::timed_out?(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
-                progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout):TlsReceiveDiagnostic::Cause::parser_rejected,static_cast<int>(result),fed_at);
+            if(result==FrameReader::Result::timed_out)return receive_expired(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
+                progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,static_cast<int>(result),fed_at);
+            return receive_failed(TlsReceiveDiagnostic::Cause::parser_rejected,static_cast<int>(result),fed_at);
         }
         if(result==FrameReader::Result::frame){
             out=std::string(incoming_reader.body());incoming_reader.reset();incoming_size=0;incoming_expected=4;
             incoming_max_poll_gap=incoming_max_read_ms=0;
+            incoming_diagnostic={};
             return ReceiveResult::frame;
         }
     }
     return ReceiveResult::pending;
 }
 bool TlsLink::receive(std::string &out,uint32_t duration){
+    if(!handshake())return false;
     const auto deadline=now_ms()+duration;
     while(now_ms()<deadline){
         const auto result=poll_receive(out);
         if(result==ReceiveResult::frame)return true;
-        if(result==ReceiveResult::failed)return false;
+        if(result==ReceiveResult::failed||result==ReceiveResult::expired)return false;
         // The configured 100 Hz tick would round a 2 ms delay to zero. Blocking
         // handshake/snapshot callers must let other tasks run while waiting.
         vTaskDelay(std::max<unsigned>(1,pdMS_TO_TICKS(2)));
     }
-    receive_failed(TlsReceiveDiagnostic::Cause::wrapper_timeout,0,now_ms());return false;
+    // An application wait expiring says nothing about transport health. Keep
+    // its exact partial frame so the next exchange continues at the same byte.
+    if(!incoming_diagnostic.expired()){
+        const auto now=now_ms();const auto progress=incoming_reader.progress(now);
+        incoming_diagnostic={TlsReceiveDiagnostic::Cause::wrapper_timeout,0,static_cast<uint32_t>(incoming_size),static_cast<uint32_t>(incoming_expected),
+            progress.idle_ms,progress.total_ms,incoming_max_poll_gap,incoming_max_read_ms};
+    }
+    return false;
 }
 std::string envelope_json(const Envelope &e,std::string_view payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"message_id\":\""+e.message_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+std::string(payload)+"}";}
 } // namespace

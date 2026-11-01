@@ -4,6 +4,17 @@
 
 This project is in early development. There is no need for backward compatibility with prior revisions of the software. This remains true as long as this instruction is in this file. When the software is more mature, this instruction will be replaced with an instruction to ensure backward compatibility between software revisions.
 
+## TLS connection reuse — 1 November 2026
+
+TLS connection establishment is independent of application synchronization.
+An exchange uses the existing connection to its peer; a missing connection is
+created implicitly. Reuse a healthy connection, including while synchronization
+is incomplete. Never close it to replace it with another connection merely
+because synchronization failed. Keep authentication, membership, boot, replay
+and authority fences, and withhold operational readiness until synchronization
+succeeds. Recover application exchanges on the same authenticated stream;
+actual transport loss or an unusable stream still requires reconnection.
+
 ## Explicit Amity removal — 29 October 2026
 
 An explicit Remove deletes the Amity from saved configuration. Remove its owner

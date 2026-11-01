@@ -53,6 +53,10 @@ public:
     Error authenticate(const LinkScope &, model::OctopusId authenticated_peer,PeerRole,bool active_membership);
     Error hello(const HelloFrame &,uint32_t supported_capabilities);
     Error synchronized(uint64_t applied_config_revision,bool membership_current,bool owner_metadata_current);
+    // Restart configuration exchange on the same authenticated stream. A
+    // supplied fresh logical link fences old work without changing TLS or
+    // identity. Keep replay history; no positive work until synchronized again.
+    Error begin_synchronization(uint64_t target_revision,model::LinkId new_link={});
     // Called by the owning link task after an authenticated in-place snapshot.
     // Preserve peer/boot/link identity and replay history; require fresh leases.
     Error advance_configuration(uint64_t revision);
@@ -67,13 +71,16 @@ public:
     // Validate and remember obsolete in-flight frames without applying them.
     // Success is a discard, never permission to execute or renew old authority.
     Error discard_stale(const Envelope &,uint64_t received_at_ms,uint64_t now_ms,bool remember_message=true);
+    // During a reset barrier, discard authenticated current/older frames from
+    // the abandoned exchange without applying work or granting authority.
+    Error discard_synchronization_frame(const Envelope &,uint64_t received_at_ms,uint64_t now_ms,bool remember_message=true);
     uint32_t negotiated_capabilities() const {return capabilities_;}
 private:
-    Error common(const Envelope &,uint64_t,uint64_t,bool stale=false) const;
+    Error common(const Envelope &,uint64_t,uint64_t,bool stale=false,bool synchronization_discard=false) const;
     Error typed(const Envelope &,uint64_t,bool leases) const;
     Error replay(const Envelope &,uint64_t,bool);
     Error admit_checked(const Envelope &,uint64_t,uint64_t,bool);
-    bool permitted(Kind) const;
+    bool permitted(Kind,bool discarding=false) const;
     struct Seen {model::MessageId id;uint64_t at=0;bool valid=false;};
     std::array<Seen,64> seen_{};size_t next_seen_=0;
     LinkScope scope_;ConnectionState state_=ConnectionState::disconnected;PeerRole role_=PeerRole::actuator;

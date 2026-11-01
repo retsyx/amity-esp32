@@ -94,7 +94,7 @@ struct RuntimeSnapshotRetry {
 struct RuntimeControlHooks {
     std::function<std::string(model::OctopusId)> snapshot;
     std::function<Error(model::OctopusId,const Json &)> synchronize;
-    // Exact receiver-local deadline and immutable authenticated TLS link.
+    // Exact receiver-local deadline and authenticated logical execution session.
     std::function<Error(model::OctopusId,const Envelope &,uint64_t,model::LinkId)> control;
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> disconnected;
     // Admit a current-context recapture on the owner task. Acceptance may be
@@ -104,6 +104,9 @@ struct RuntimeControlHooks {
     std::function<uint64_t()> configuration_revision = {};
     std::function<std::string(model::OctopusId,uint64_t)> configuration_snapshot = {};
     std::function<void(const RuntimeSnapshotRetry&)> snapshot_retry = {};
+    // Fence only the old logical execution session while retaining its healthy
+    // TLS transport and independent owner observations.
+    std::function<bool(model::OctopusId,model::BootId,model::LinkId)> restart_session = {};
 };
 void runtime_control_hooks(RuntimeControlHooks);
 struct RuntimeLifecycleHooks {

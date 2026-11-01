@@ -89,6 +89,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/amity_matter/include" "$root/tests/diagnostics_test.cpp" -o "$out/diagnostics_test"
 "$out/diagnostics_test"
+python3 "$root/tests/allocation_failure_diagnostics_test.py"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/amity_matter/include" "$root/tests/apple_fabric_cleanup_test.cpp" -o "$out/apple_fabric_cleanup_test"
 "$out/apple_fabric_cleanup_test"
@@ -107,6 +108,7 @@ python3 "$root/tests/consortium_gatt_callback_test.py"
 python3 "$root/tests/consortium_gatt_fragment_test.py"
 python3 "$root/tests/consortium_runtime_admission_test.py"
 python3 "$root/tests/consortium_live_configuration_test.py"
+python3 "$root/tests/consortium_synchronization_recovery_test.py"
 python3 "$root/tests/consortium_enrollment_restart_test.py"
 python3 "$root/tests/consortium_tls_rejection_test.py"
 python3 "$root/tests/consortium_tls_credentials_test.py"
@@ -133,6 +135,7 @@ python3 "$root/tests/radio_matter_handoff_test.py"
 python3 "$root/tests/apple_fabric_lifecycle_test.py"
 
 sh "$root/tests/system_configuration_test.sh"
+python3 "$root/tests/json_memory_test.py"
 sh "$root/tests/activity_editor_test.sh"
 sh "$root/tests/native_ports_test.sh"
 sh "$root/tests/system_sync_test.sh"

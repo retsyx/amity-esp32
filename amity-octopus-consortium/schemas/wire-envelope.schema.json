@@ -51,7 +51,8 @@
         "settings_write",
         "settings_result",
         "scoped_intent",
-        "scoped_result"
+        "scoped_result",
+        "synchronization"
       ]
     },
     "ttl_ms": {
@@ -79,6 +80,22 @@
   ],
   "additionalProperties": false,
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "synchronization"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/Synchronization"
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {

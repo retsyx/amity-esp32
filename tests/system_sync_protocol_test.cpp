@@ -111,7 +111,7 @@ namespace {
 using namespace fixture;
 void startup_and_minimal_handshake(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
-    assert(hooks.snapshot&&hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&main.sender&&main.observer&&main.authorizer&&main.deadline&&main.input_observer);
+    assert(hooks.snapshot&&hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer&&main.deadline&&main.input_observer);
     assert(amity::start_configuration_synchronization(main)==ESP_OK&&task_creations==1);
     auto other=control();assert(amity::start_configuration_synchronization(other)==ESP_ERR_INVALID_STATE);
     const auto document=json(hooks.snapshot(id<s::OctopusId>(9)));
@@ -136,7 +136,7 @@ void startup_and_minimal_handshake(){
     assert(hooks.synchronize(original,replica)!=c::Error::none);
     assert(hooks.synchronize(original,json("{}"))==c::Error::invalid_message);
     reset();task_ok=false;auto unavailable=control();assert(amity::start_configuration_synchronization(unavailable)==ESP_ERR_NO_MEM&&amity::state.control==nullptr);
-    assert(!hooks.snapshot&&!hooks.synchronize&&!hooks.control&&!hooks.disconnected&&!hooks.ready);
+    assert(!hooks.snapshot&&!hooks.synchronize&&!hooks.control&&!hooks.disconnected&&!hooks.ready&&!hooks.restart_session);
     assert(!unavailable.sender&&!unavailable.observer&&!unavailable.authorizer&&!unavailable.deadline&&!unavailable.input_observer);
     // Failed initialization leaves no callback into the unstarted task, and a
     // later legitimate start can install a fresh set of callbacks.
@@ -199,6 +199,8 @@ void source_lookup_results_preserve_original_fallback(){
     assert(!json(result_packets.back().payload).get("input_result")->get("source_present")->boolean);
     // Once the authenticated link is replaced, an old asynchronous lookup
     // result must fail on that exact link instead of reaching the replacement.
+    assert(hooks.restart_session(original,received.origin_boot_id,link));
+    assert(member.fences.back()==std::make_pair(original,link));
     current_result_link=id<s::LinkId>(45);const auto before_replace=result_fences.size();
     member.input_observer(input,pending_auth,located);
     assert(result_packets.back().link==link&&result_fences.size()==before_replace+1&&result_fences.back()==std::make_pair(original,link));
@@ -251,6 +253,30 @@ void reports_and_exact_disconnect(){
     main.fence_result=false;amity::set_owner_maintenance(owner,true);amity::forget_owner(owner);
     assert(amity::discovered_equipment().empty()&&amity::state.reports.empty()&&!amity::state.maintenance.count(owner));
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
+}
+void logical_session_restart_preserves_reports(){
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    peers={remote(9,19,2,0b11)};const auto owner=peers[0].id,other=id<s::OctopusId>(10);const auto boot=peers[0].boot_id;
+    auto first=report(owner,boot);auto second=first;second.adapter=1;
+    assert(hooks.synchronize(owner,string_document("{\"adapters\":["+c::owned_snapshot_json(first)+","+c::owned_snapshot_json(second)+"]}"))==c::Error::none);
+    const auto oldlink=id<s::LinkId>(81);const auto updates=main.updates.size(),reports=amity::state.reports.size();
+    const auto saved_first=c::owned_snapshot_json(amity::state.reports.front());
+    const auto observations=amity::discovered_equipment();assert(observations.size()==2);
+    amity::set_owner_maintenance(other,true);
+    main.fence_result=false;assert(!hooks.restart_session(owner,boot,oldlink));
+    assert(main.fences.back()==std::make_pair(owner,oldlink)&&main.updates.size()==updates&&amity::state.reports.size()==reports);
+    main.fence_result=true;assert(hooks.restart_session(owner,boot,oldlink));
+    assert(main.fences.back()==std::make_pair(owner,oldlink)&&main.updates.size()==updates&&amity::state.reports.size()==reports);
+    assert(c::owned_snapshot_json(amity::state.reports.front())==saved_first&&amity::state.maintenance.count(other));
+    const auto retained=amity::discovered_equipment();assert(retained.size()==observations.size());
+    for(size_t i=0;i<retained.size();++i)assert(retained[i].endpoint==observations[i].endpoint
+        &&retained[i].osd_name==observations[i].osd_name&&retained[i].owner_boot_id==observations[i].owner_boot_id
+        &&retained[i].physical_address==observations[i].physical_address&&retained[i].stale==observations[i].stale);
+    const auto fences=main.fences.size();
+    assert(!hooks.restart_session({},boot,oldlink)&&!hooks.restart_session(owner,{},oldlink)&&!hooks.restart_session(owner,boot,{})&&main.fences.size()==fences);
+    assert(sent.empty()&&main.input_results.empty()&&memory.writes==0); // A restart emits/replays no ordinary CEC work.
+    // Actual transport loss still publishes missing observations after exact cleanup.
+    assert(hooks.disconnected(owner,boot,oldlink)&&amity::discovered_equipment().empty()&&main.updates.size()>updates);
 }
 void report_coalescing_and_no_intent_backlog(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
@@ -367,4 +393,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, latest snapshot recapture without failed-send regression, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, latest snapshot recapture without failed-send regression, exact disconnect/no replay, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

@@ -170,6 +170,13 @@ def main():
     for field,value in [('logical_address',4),('tentacle_id',maximum),('side','both'),('osd_name','')]:
         candidate=copy.deepcopy(name);candidate[field]=value;negatives.append(('qualified-device-name.schema.json',candidate))
     power=read('examples/operation-ensure-power.json');key=read('examples/operation-press-key.json')
+    synchronization=copy.deepcopy(power);synchronization['kind']='synchronization'
+    synchronization['payload']={'round_id':'c'*32,'phase':'begin','config_revision':'8'}
+    for phase in ['begin','ack','reject']:
+        candidate=copy.deepcopy(synchronization);candidate['payload']['phase']=phase
+        require(valid('wire-envelope.schema.json',candidate),'Invalid same-stream synchronization barrier');positives+=1
+    for field,value in [('round_id','0'*32),('round_id','c'*31),('phase','retry'),('config_revision','0'),('config_revision','08'),('config_revision','18446744073709551616'),('config_revision',8),('unexpected',True)]:
+        candidate=copy.deepcopy(synchronization);candidate['payload'][field]=value;negatives.append(('wire-envelope.schema.json',candidate))
     for retired in ['relay_reserve','relay_record','relay_close','relay_result','operation','hold_release','hold_renew','binding_update','binding_result','plan_prepare','plan_barrier','plan_abort','plan_result','config_prepare','config_activate','config_result','operation_result','scan_request','scan_result']:
         candidate=copy.deepcopy(power);candidate['kind']=retired;negatives.append(('wire-envelope.schema.json',candidate))
     for value in ['0','01','18446744073709551616',1,True]:

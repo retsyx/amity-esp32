@@ -13,7 +13,7 @@ struct SettingsReceived {
 };
 struct SettingsAuthorization {
     model::MessageId id;bool local=false;uint64_t expires=0,config=0;
-    model::ExecutionLeaseId lease;std::weak_ptr<Active> link;
+    model::ExecutionLeaseId lease;model::LinkId execution_link;std::weak_ptr<Active> link;
 };
 std::vector<SettingsCache> settings_caches;
 std::vector<SettingsOperation> settings_operations;
@@ -28,7 +28,7 @@ const char* settings_message(std::string_view error){if(error=="STALE_BOOT")retu
 bool settings_enrolled(model::OctopusId owner){for(const auto& peer:group.peers)if(peer.id==owner&&peer.active)return true;return false;}
 struct SettingsLink {std::shared_ptr<Active> active;RuntimePeerStatus status;};
 SettingsLink settings_link(model::OctopusId owner){
-    for(auto& active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&current_peer_credential(*active,group)&&(active->ready||active->management_ready)){
+    for(auto& active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&current_peer_credential(*active,group)&&(active->ready||active->management_ready)){
         std::lock_guard<std::mutex> snapshot(active->mutex);if(active->status.config_revision==configuration&&active->status.boot_id)return {active,active->status};
     }
     return {};
@@ -48,10 +48,11 @@ bool settings_authorized_locked(model::MessageId id){
     const auto& permit=settings_authorization;const auto now=now_ms();
     if(!id||permit.id!=id||now>=permit.expires||configuration!=permit.config)return false;
     if(permit.local)return original_controller(group,identity.id)&&status.authority_ready;
-    auto active=permit.link.lock();if(!active||active->cancelled||active->retiring||!active->ready||group.role!=Group::member||group.authority!=active->peer||!current_peer_credential(*active,group))return false;
+    auto active=permit.link.lock();if(!active||active->cancelled||active->retiring||active->restart_requested||active->execution_fenced||!active->ready||group.role!=Group::member||group.authority!=active->peer||!current_peer_credential(*active,group)||active->session.scope().link_id!=permit.execution_link)return false;
     // The TLS worker verified this exact lease before reserving its immutable
-    // minimum deadline. Cancellation/role/config changes fence it here; no
-    // owner thread may read the worker-owned mutable Session lease book.
+    // minimum deadline. Cancellation/role/config or logical-session changes
+    // fence it here, including a restart on the same TLS object. No owner
+    // thread may read the worker-owned mutable Session lease book.
     return true;
 }
 // Returns a validated wire result. The owner service must recheck the exact
@@ -62,7 +63,7 @@ std::string settings_apply(const std::shared_ptr<Active>& active,model::MessageI
         for(const auto& old:settings_received)if(old.id==id&&old.issuer_boot==issuer){if(old.core!=encoded)return settings_result(id,"write","failed","INVALID_MESSAGE");return old.response;}
         if(settings_authorization.id||settings_received.size()>=9)return settings_result(id,"write","failed","QUEUE_FULL");
         settings_received.push_back({id,issuer,encoded,settings_result(id,"write","admitted","")});
-        settings_authorization={id,!active,deadline,configuration,lease,active};hooks=settings_hooks;
+        settings_authorization={id,!active,deadline,configuration,lease,active?active->session.scope().link_id:model::LinkId{},active};hooks=settings_hooks;
         if(!settings_authorized_locked(id)){settings_authorization={};settings_received.back().pending=false;settings_received.back().response=settings_result(id,"write","failed","LEASE_EXPIRED");return settings_received.back().response;}
     }
     std::string response;auto result=hooks.apply?hooks.apply(id,core,deadline,response):Error::not_ready;

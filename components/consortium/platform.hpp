@@ -7,6 +7,7 @@
 #include "mbedtls/ssl.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
+#include <atomic>
 #include <mutex>
 namespace amity::consortium::platform {
 inline constexpr std::string_view origin_record_prefix="1:unprovisioned:";
@@ -37,24 +38,36 @@ struct TlsLink {
     uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;
     TlsLink();~TlsLink();
     bool setup(const Identity &,const std::vector<Peer>&,bool is_server,int fd,model::OctopusId expected={});
+    // The first blocking I/O establishes this transport. Subsequent exchanges
+    // reuse it; application synchronization has no ownership of TLS lifetime.
     bool handshake();
+    bool usable()const{return configured&&!transport_failed&&!incoming_failed;}
+    bool established()const{return handshaken&&usable();}
     bool extended_profile()const;
     bool hardware_profile()const;
     bool send(std::string_view);
-    enum class ReceiveResult {pending,frame,failed};
-    // One bounded nonblocking turn; partial framing belongs to this TLS link.
+    enum class ReceiveResult {pending,frame,expired,failed};
+    // One bounded nonblocking turn on an established transport; partial
+    // framing belongs to this TLS link, including across wrapper timeouts.
     ReceiveResult poll_receive(std::string &);
+    // Reject the in-flight application frame after an outer receive budget.
+    // Its remaining bytes are drained; the authenticated TLS stays available.
+    ReceiveResult expire_receive();
     bool receive(std::string &,uint32_t timeout_ms=5000);
     const TlsReceiveDiagnostic& receive_diagnostic()const{return incoming_diagnostic;}
     static int verify(void *,mbedtls_x509_crt *,int,uint32_t *);
 private:
+    bool configured=false;
+    std::atomic_bool handshaken{false},transport_failed{false};
     FrameReader incoming_reader;
     uint8_t incoming_prefix[4]{};
     size_t incoming_size=0,incoming_expected=4;
-    bool incoming_failed=false;
+    std::atomic_bool incoming_failed{false};
+    bool incoming_expired=false;
     uint64_t incoming_last_poll_end=0,incoming_max_poll_gap=0,incoming_max_read_ms=0;
     TlsReceiveDiagnostic incoming_diagnostic;
     ReceiveResult receive_failed(TlsReceiveDiagnostic::Cause,int,uint64_t);
+    ReceiveResult receive_expired(TlsReceiveDiagnostic::Cause,int,uint64_t);
 };
 std::string envelope_json(const Envelope &,std::string_view payload);
 } // namespace

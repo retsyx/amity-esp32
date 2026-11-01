@@ -15,6 +15,63 @@ python3 amity-octopus-consortium/validate_contracts.py
 
 A contract fixture passing does not establish firmware execution. Current software and native-build commands/results are recorded in `IMPLEMENTATION_STATUS.json` after they run. Compare baseline local, qualified all-local and remote-owner transcripts for AVR/audio/switch, missing-name return, original discovery/PA, key lifecycle and FIFO8. A Ready endpoint, build or retained JSON alone is insufficient.
 
+## TLS connection reuse — 1 November 2026
+
+TLS authentication and transport lifetime are separate from configuration
+synchronization and execution-session recovery. Healthy peer acquisition is
+idempotent; synchronization retries reuse TLS, authenticated boots and replay
+history. Round IDs create fresh logical execution scopes, with exact old-scope
+cleanup before the barrier and no ordinary work replay. Frame expiry rejects
+and drains late bytes on the same transport without extending its acceptance
+deadline. Available PSRAM owns all cJSON allocations at startup; heap-failure
+observations record exact allocation requests without allocating in the hook.
+
+All four DUTs run exact 0.1.113 / Matter software 114, ELF SHA-256
+`84c567ee42e93a426e34a8066bbb4a87b49f003bb8f4079848eeea8913a37eaf`;
+the 2,461,456-byte application SHA-256 is
+`a7dd4cd7e55530a3239c32a8270d84df0a0c966df3460ff2b0bf155b2116845a`.
+The main's authenticated OTA passed 13 preservation checks without opening USB;
+each other DUT passed 18 application-only update checks with retained factory
+provisioning and full backups. The full host suite, 361 framework units, native
+build and contracts passed. Ten firmware artifacts and all 58 frozen harness
+files were hash-verified, including the Pi copy. Qualified source and tests
+remained unchanged through the physical run; final changes only record evidence.
+
+All seven physical cases passed in one 553.989190-second run: scan 17.890657 s,
+activity 32.771596 s, explicit switch input 34.187210 s, shared-wire theft
+42.612407 s, Add/Remove 46.972495 s, two-owner 142.874243 s and three-owner
+236.646128 s. Independent report checks passed 21 assertions for each consortium
+case and 20 for shared-wire theft. Shared-wire Standby completed in 68.699982 ms
+and route restoration in 186.699994 ms from the same physical Active Source;
+all eight isolated consortium theft responses were at most 68.600027 ms. Every
+response obeyed the original 250 ms window. Nine fixture activities were removed,
+all four member removals acknowledged scheduled reset, and all seven testbeds
+closed without cleanup errors. Final authenticated preservation passed 31 checks:
+original main boot/authority, pairings, unrelated configuration and existing slot
+metadata preserved, Ready/idle and no remaining peer, saved removed-owner data,
+pending configuration or activity/hardware error. Evidence is under
+`test-results/tls-connection-reuse-0.1.113-2026-11-01/`.
+
+The final retained 24,576-byte main log has no allocation-failure record. This
+bounded window does not prove absence throughout the run. Both final peer closes
+coincide with acknowledged fixture removals; one retirement race is logged as
+`heartbeat_send`. The earlier AES allocation's exact request remains unknown;
+PSRAM allocation ownership supplies headroom without claiming that causal proof.
+
+Earlier failed evidence is preserved: the 0.1.111 seven-case run passed five cases; shared-wire source-theft
+wire responses met 250 ms but the assertion failed on the session inspection
+lock, and the three-owner case encountered AES allocation/TLS failures and a
+truncated HTTPS response. The 0.1.112 main-only diagnostic had different member
+firmware and exposed a 512/582-byte frame progress expiry; it does not qualify
+distributed power behavior or identify the earlier failed allocation's size.
+The harness inspection fix retains the original 250 ms wire deadline and
+rejects late/virtual evidence even after slow owner proof. All 361 framework
+units pass. Both failed runs' newly added members were removed with scheduled
+reset acknowledgments; original-main identity, pairing and unrelated data were
+verified preserved. Evidence is under
+`test-results/tls-connection-reuse-0.1.111-2026-11-01/` and
+`test-results/tls-memory-diagnostic-0.1.112-2026-11-01/`.
+
 ## Current source-theft deadline — 1 November 2026
 
 The functional tests now require thief Standby and resulting state within
@@ -26,9 +83,9 @@ validation rejects any larger requested bound, independently of operation and
 ordinary CEC timeouts.
 Boundary checks accept a complete frame at 250,000,000 ns and reject one at
 250,000,001 ns, including a late frame already in history and slow owner proof.
-All 355 framework unit tests pass with the updated limit.
-Earlier physical results below retain their recorded limits. No physical run
-has yet been performed with the new 250 ms test limit.
+The initial 355 framework checks passed with this limit; the extended 361-test
+suite and 0.1.113 physical qualification above also pass. Earlier physical
+results below retain their recorded limits.
 
 ## Final enrollment fixes and physical qualification — 30 October 2026
 

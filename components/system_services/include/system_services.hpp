@@ -12,7 +12,8 @@
 #include <string>
 namespace system_services {
 void start_log_capture();
-// Poll from a single task; logs after firmware readiness and every ten minutes.
+// Poll from one task; drain allocation-failure events, and log memory totals
+// after firmware readiness and every ten minutes.
 void log_memory_if_due();
 std::string logs();
 size_t log_size();

@@ -16,7 +16,7 @@ enum class Kind { heartbeat=0, execution_lease=1,
     membership_event=14, membership_result=15, snapshot_request=16, snapshot_chunk=17,
     update_begin=27, update_chunk=28, update_install=29, update_status=30, update_abort=31, update_result=32,
     device_status=37, settings_read=38, settings_write=39, settings_result=40,
-    scoped_intent=41, scoped_result=42 };
+    scoped_intent=41, scoped_result=42, synchronization=43 };
 inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n==2||n==3||n==4||n==5||n==6||(n>=7&&n<=10)||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
 const char *kind_name(Kind);
 enum class LeaseClass { control, realtime_input };
@@ -33,6 +33,8 @@ struct Envelope {
 // Supported kinds all have closed payload validators. Retired numeric slots reject.
 Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = nullptr);
 bool valid_envelope_payload(Kind, const Json&);
+Error parse_synchronization(const Json &,model::MessageId& round,std::string& phase,uint64_t& revision);
+std::string synchronization_json(model::MessageId round,std::string_view phase,uint64_t revision);
 bool parse_address(const Json &, model::FullyQualifiedCecAddress &);
 bool parse_name(const Json &, model::QualifiedDeviceName &);
 bool decimal(const Json *, uint64_t &);

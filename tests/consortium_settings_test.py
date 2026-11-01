@@ -20,7 +20,7 @@ template<class T>T ident(unsigned n){char v[33];snprintf(v,sizeof(v),"%032x",n);
 template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++);}
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls{model::OctopusId authenticated;};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false;RuntimePeerStatus status;};
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,restart_requested=false,execution_fenced=false;RuntimePeerStatus status;};
 std::mutex lock;Group group;Identity identity;RuntimeStatus status;model::BootId boot=ident<model::BootId>(6);uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 unsigned saves=0,restarts=0;uint64_t revision=2,generation=7;bool send_success=true,applied_sent=false,http_sent=false;unsigned effect_fault=0;
 std::shared_ptr<Active> current_link;std::vector<std::string> sent;
@@ -78,6 +78,34 @@ void receiver_tests(){
  reset(true);active=connection(false);request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&!saves&&!restarts);
  std::cout<<"PASS actual target dispatch: originalmain scope/lease/deadline/config/revocation guards, no memberforwarding, exact duplicateoutcome and restartafterwireattemptincludinglostACK\n";
 }
+void logical_session_authorization_tests(){
+ reset(false);auto active=connection(true);const auto original=active->session.scope();const auto tls=active->tls;
+ const auto fresh_link=ident<model::LinkId>(91);const auto fresh_lease=ident<model::ExecutionLeaseId>(92);
+ bool checked=false;
+ settings_hooks.apply=[&](model::MessageId id,const Json&,uint64_t deadline,std::string& response){
+  assert(runtime_device_settings_authorized(id)&&deadline>now_ms());
+  active->execution_fenced=true;assert(!runtime_device_settings_authorized(id));active->execution_fenced=false;
+  active->restart_requested=true;assert(!runtime_device_settings_authorized(id));active->restart_requested=false;
+  assert(runtime_device_settings_authorized(id));
+  {std::lock_guard<std::mutex> guard(lock);active->ready=false;assert(active->session.begin_synchronization(original.config_revision,fresh_link)==Error::none);}
+  assert(!runtime_device_settings_authorized(id));
+  {std::lock_guard<std::mutex> guard(lock);
+   assert(active->session.synchronized(original.config_revision,true,true)==Error::none);
+   active->session.execution_leases().issue(fresh_lease,LeaseClass::control,5000,now_ms());active->ready=true;
+  }
+  // Ready and fresh authority on the same TLS object must not revive the
+  // settings write admitted to the ended logical execution session.
+  assert(!runtime_device_settings_authorized(id));
+  auto expected=original;expected.link_id=fresh_link;assert(active->session.scope()==expected&&active->tls==tls);
+  checked=true;response="{\"request_id\":\""+id.str()+"\",\"stage\":\"failed\",\"error\":\"NOT_READY\",\"snapshot\":null}";return Error::not_ready;
+ };
+ auto request=write_message(active);assert(settings_dispatch(active,request,clock_ms)&&checked&&!saves&&!restarts);
+ assert(parsed(sent.back()).get("stage")->string=="failed");
+ settings_hooks.apply=apply;request=write_message(active,21);request.payload.get("execution_lease_id")->string=fresh_lease.str();
+ assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);
+ assert(parsed(sent.back()).get("stage")->string=="applied"&&active->tls==tls&&active->session.scope().link_id==fresh_link);
+ std::cout<<"PASS actual settings authorization: ended logical-session permit stays invalid after same-TLS/boots/config synchronization and fresh leases; fresh-session write commits normally\n";
+}
 void local_tests(){
  reset(true);const auto id=ident<model::MessageId>(30);assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==1&&!restarts);auto result=parsed(runtime_device_settings_operation(identity.id,id));assert(result.get("stage")->string=="applied"&&!restarts);http_sent=true;runtime_device_settings_response_attempted(identity.id,id);runtime_device_settings_response_attempted(identity.id,id);assert(restarts==1);assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==1&&restarts==1);
  reset(true);assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK);for(unsigned n=0;n<12;++n)assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(100+n),core({},1),clock_ms+5000)==ESP_OK);assert(parsed(runtime_device_settings_operation(identity.id,id)).get("stage")->string=="applied"&&settings_received.size()<=9);http_sent=true;runtime_device_settings_response_attempted(identity.id,id);assert(restarts==1&&saves==1); // Failed-outcome cachepressure mustneverevict an unattempted committedresponse/restartpermit.
@@ -87,6 +115,9 @@ void local_tests(){
 }
 void sender_tests(){
  reset(true);auto active=connection(false);auto wrapper=parsed(runtime_device_settings(active->peer));assert(wrapper.get("status")->string=="reading"&&active->queue.size()==1);runtime_device_settings(active->peer);assert(active->queue.size()==1);
+ active->execution_fenced=true;assert(!settings_link(active->peer).active);active->execution_fenced=false;
+ active->restart_requested=true;assert(!settings_link(active->peer).active);active->restart_requested=false;
+ assert(settings_link(active->peer).active==active&&active->queue.size()==1);
  const auto read=parsed(active->queue.front().payload);const auto id=*model::MessageId::parse(read.get("request_id")->string);auto reply=message(active,Kind::settings_result,parsed(settings_result(id,"read","applied","",snapshot(active->status.boot_id))));assert(settings_dispatch(active,reply,clock_ms));assert(parsed(runtime_device_settings(active->peer)).get("status")->string=="ready");
  const auto command=ident<model::MessageId>(80);assert(runtime_write_device_settings(active->peer,command,core(active->status.boot_id),clock_ms+500)==ESP_OK);assert(active->queue.back().ttl<=500);assert(parsed(runtime_device_settings_operation(active->peer,command)).get("stage")->string=="admitted");
  active->cancelled=true;assert(parsed(runtime_device_settings(active->peer)).get("status")->string=="offline");assert(parsed(runtime_device_settings_operation(active->peer,command)).get("stage")->string=="unknown");const auto queued=active->queue.size();assert(runtime_write_device_settings(active->peer,command,core(active->status.boot_id),clock_ms+5000)==ESP_OK&&active->queue.size()==queued&&!restarts);
@@ -94,7 +125,7 @@ void sender_tests(){
  std::cout<<"PASS actual main client: coalescedreadonlyGET, authenticatedfreshcache, offline/unsupporteduneditable, preservedoriginalTTL, disconnectunknown and noautomaticresend\n";
 }
 }
-int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){const auto at=line.find('\t');Json value;JsonError detail;bool valid=false;if(at!=std::string::npos&&parse_json(line.substr(at+1),value,detail)){const auto name=line.substr(0,at);if(name=="DeviceSettingsSnapshot")valid=valid_settings_snapshot(value);else if(name=="DeviceSettingsWrite"){DeviceSettingsWrite write;valid=parse_device_settings_write(value,write)==Error::none;}else if(name=="SettingsRead")valid=valid_settings_payload(Kind::settings_read,value);else if(name=="SettingsWrite")valid=valid_settings_payload(Kind::settings_write,value);else if(name=="SettingsResult")valid=valid_settings_payload(Kind::settings_result,value);}std::cout<<(valid?'1':'0')<<'\n';}return 0;}amity::consortium::codec_tests();amity::consortium::receiver_tests();amity::consortium::local_tests();amity::consortium::sender_tests();}
+int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){const auto at=line.find('\t');Json value;JsonError detail;bool valid=false;if(at!=std::string::npos&&parse_json(line.substr(at+1),value,detail)){const auto name=line.substr(0,at);if(name=="DeviceSettingsSnapshot")valid=valid_settings_snapshot(value);else if(name=="DeviceSettingsWrite"){DeviceSettingsWrite write;valid=parse_device_settings_write(value,write)==Error::none;}else if(name=="SettingsRead")valid=valid_settings_payload(Kind::settings_read,value);else if(name=="SettingsWrite")valid=valid_settings_payload(Kind::settings_write,value);else if(name=="SettingsResult")valid=valid_settings_payload(Kind::settings_result,value);}std::cout<<(valid?'1':'0')<<'\n';}return 0;}amity::consortium::codec_tests();amity::consortium::receiver_tests();amity::consortium::logical_session_authorization_tests();amity::consortium::local_tests();amity::consortium::sender_tests();}
 '''
 def schema_vectors(binary):
  try:

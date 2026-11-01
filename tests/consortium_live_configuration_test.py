@@ -18,6 +18,7 @@ PREFIX = r'''
 #include "amity/consortium/settings.hpp"
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
+#include "amity/consortium/hostname.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -29,6 +30,7 @@ PREFIX = r'''
 #include <memory>
 #include <mutex>
 #include <sys/socket.h>
+#include <tuple>
 namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;
@@ -47,17 +49,23 @@ template<class... Args>void ESP_LOGW(const char* tag,const char* format,Args... 
 template<class... Args>void ESP_LOGI(const char* tag,const char* format,Args... args){capture_log("I",tag,format,args...);}
 struct FakeTls{
  int socket=-1;model::OctopusId authenticated;std::deque<std::string> incoming;std::vector<Envelope> sent;unsigned receives=0;
+ bool healthy=true;bool usable()const{return healthy;}TlsReceiveDiagnostic receive_diagnostic()const{return {};}
  std::function<void()> before_receive;
  bool receive(std::string& value,uint32_t timeout=10000){++receives;if(before_receive)before_receive();if(incoming.empty()){clock_ms+=timeout;return false;}value=std::move(incoming.front());incoming.pop_front();return true;}
 };
+struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active{
  Session session;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();model::OctopusId peer;
- std::mutex mutex;bool cancelled=false,retiring=false,management_ready=false,ready=true,context_ready=true,context_requested=false,refreshing=false;
+ std::mutex mutex;bool cancelled=false,retiring=false,lifecycle_only=false,management_ready=false,ready=true,context_ready=true,context_requested=false,refreshing=false;
  RuntimePeerStatus status;std::deque<Queued> queue;model::ExecutionLeaseId own_control,own_realtime;
- std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::string endpoint_hint;
+ std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::string endpoint_hint,expected_hostname;
+ std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
+ SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
 };
 constexpr size_t maximum_links=2;
 std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
+RuntimeNetworkHooks network;RuntimeUpdateHooks updates;
+std::vector<std::tuple<model::OctopusId,model::BootId,model::LinkId>> restart_fences;
 uint64_t configuration=7;std::string configuration_hash=std::string(64,'a');
 std::vector<std::shared_ptr<Active>> links;
 unsigned shutdowns=0;
@@ -65,6 +73,10 @@ esp_err_t save_group(const Group&){return ESP_OK;}
 esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){assert(false);return ESP_ERR_NOT_SUPPORTED;}
 std::function<void(Active&,const Envelope&)> on_send;
 bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);
+bool current_peer_credential(const Active&,const Group&){return true;}
+Error remember_hostname(model::OctopusId,const std::string&){return Error::none;}
+unsigned pdMS_TO_TICKS(unsigned ms){return ms/10;}
+void vTaskDelay(unsigned ticks){clock_ms+=ticks*10;}
 }
 int capture_shutdown(int,int){++amity::consortium::shutdowns;return 0;}
 #define shutdown capture_shutdown
@@ -96,7 +108,7 @@ std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
  assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
  a->own_control=ident<model::ExecutionLeaseId>(70);a->own_control_deadline=5000;a->status.control_lease=a->own_control;a->status.control_usable_until_ms=4900;
  assert(a->session.execution_leases().issue(a->own_control,LeaseClass::control,5000,clock_ms)==Error::none);
- clock_ms=100;controls={};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();
+ clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();
  return a;
 }
 std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
@@ -287,7 +299,8 @@ void observation_expiry_is_not_lost_causal_work(){
  assert(retries.size()==2&&diagnostic_logs.empty()); // Same scoped recapture from admission-side expiry.
  assert(a->queue.front().payload==typed);
  a->queue.clear();a->queue.push_back(input_result);
- assert(queue_control(a->peer,Kind::scoped_result,snapshot,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE&&a->cancelled&&shutdowns==1);
+ assert(queue_control(a->peer,Kind::scoped_result,snapshot,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE);
+ assert(a->restart_requested&&a->execution_fenced&&!a->ready&&!a->context_ready&&!a->cancelled&&a->tls->usable()&&shutdowns==0&&a->queue.empty());
  assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_result age_ms=1100 ttl_ms=1000")!=std::string::npos);
  // A typed source lookup result is still causal even when it reaches the
  // worker instead of a later admission call; expiry must fence its old link.
@@ -309,16 +322,17 @@ def main():
     end = source.index('        fd_set reads;', start)
     pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
-        'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(',
+        'Envelope outgoing(', 'bool same_manifest(', 'bool deliver_synchronization_input(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
+        'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(',
         'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal('))
-    actual = source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
+    actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')
     actual += ''.join(function(source, name) for name in ('bool initialize_context(', 'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned('))
     refresh_start=source.index('        if(server&&active->ready&&')
     refresh_end=source.index('        trace.phase="operational";',refresh_start)
-    refresh='\nbool refresh_turn(Active& storage){auto* active=&storage;const bool server=true;const uint64_t receive_until=0;LinkTrace trace;while(true){'+source[refresh_start:refresh_end]+'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
-    queued = source[source.index('enum class QueuedState'):source.index('void active_loop_work(')]
+    refresh='\nbool refresh_turn(Active& storage){auto* active=&storage;const bool server=true;const uint64_t receive_until=0;uint64_t heartbeat=0,renewal=0,control_renewal=0;LinkTrace trace;while(true){'+source[refresh_start:refresh_end]+'(void)heartbeat;(void)renewal;(void)control_renewal;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    queued = function(source, 'enum class QueuedState').rstrip() + ';\n' + function(source, 'QueuedState prepare_queued(')
     with tempfile.TemporaryDirectory(prefix='amity-live-configuration-') as directory:
         temp = Path(directory)
         (temp / 'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')

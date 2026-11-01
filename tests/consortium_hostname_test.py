@@ -17,7 +17,7 @@ PREFIX=r'''
 using namespace amity::consortium;using namespace amity::consortium::platform;
 using esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NOT_SUPPORTED=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5;
 std::mutex lock;Group group,durable;Identity identity;HostnameRegistry hostnames;
-uint64_t candidate_deadline=1000;bool candidate_passive=false;unsigned saves=0;bool save_failure=false,registry_failure=false;std::string current_name="factory-name",proposal_bytes;std::vector<std::string> effects;
+uint64_t candidate_deadline=1000;bool candidate_passive=false;unsigned saves=0,packet_id=8;bool save_failure=false,registry_failure=false;std::string current_name="factory-name",proposal_bytes;std::vector<std::string> effects;
 uint64_t now_ms(){return 100;}
 struct Network {std::function<esp_err_t(const std::string&)> set_hostname;std::function<std::string()> get_hostname;std::function<esp_err_t(model::JoinId,const std::string&,const std::string&,const std::string&)> stage_transaction;std::function<esp_err_t(model::JoinId,const std::string&)> commit_transaction,finish_transaction;std::function<void()> rollback;}network;
 using RuntimeNetworkHooks=Network;
@@ -37,15 +37,17 @@ template<class T>T id(unsigned n){char value[33];snprintf(value,sizeof(value),"%
 std::string escaped(std::string_view value){std::string out;for(char c:value){if(c=='"'||c=='\\')out+='\\';out+=c;}return out;}
 std::string prepare(){return "{\"phase\":\"prepare\",\"proposal\":\""+escaped(proposal_bytes)+"\",\"digest\":\""+std::string(64,'a')+"\"}";}
 JoinProposal proposal(){JoinProposal p;p.join_id=id<model::JoinId>(1);p.consortium_id=id<model::ConsortiumId>(2);p.coordinator_id=id<model::OctopusId>(3);p.candidate_id=id<model::OctopusId>(4);p.epoch=1;p.revision=2;p.coordinator_leaf="authority";p.candidate_leaf="candidate";p.coordinator_pin=std::string(64,'c');p.candidate_pin=std::string(64,'d');p.host="192.0.2.1";p.candidate_hostname="living-room";return p;}
-void reset(){group={};durable={};identity={id<model::OctopusId>(4),"candidate","",std::string(64,'d')};current_name="factory-name";status={};candidate_passive=false;saves=0;save_failure=registry_failure=false;effects.clear();hostnames={};network={};network.set_hostname=[](const std::string& name){effects.push_back("persist_hostname");current_name=name;return ESP_OK;};network.get_hostname=[]{return current_name;};lifecycle.retire=[]{assert(group.role==Group::prepared);effects.push_back("retire");return ESP_OK;};proposal_bytes=encode_join_proposal(proposal());assert(!proposal_bytes.empty());}
+void reset(){group={};durable={};identity={id<model::OctopusId>(4),"candidate","",std::string(64,'d')};current_name="factory-name";status={};candidate_passive=false;saves=0;packet_id=8;save_failure=registry_failure=false;effects.clear();hostnames={};network={};network.set_hostname=[](const std::string& name){effects.push_back("persist_hostname");current_name=name;return ESP_OK;};network.get_hostname=[]{return current_name;};lifecycle.retire=[]{assert(group.role==Group::prepared);effects.push_back("retire");return ESP_OK;};proposal_bytes=encode_join_proposal(proposal());assert(!proposal_bytes.empty());}
 struct FakeTls{std::string incoming;bool receive(std::string& out){out=incoming;return !out.empty();}};
-struct Active {Session session;FakeTls storage;FakeTls* tls=&storage;model::OctopusId peer;std::mutex mutex;struct{std::string hostname;}status;};
+struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
+struct LinkTrace {const char* phase="",*reason="";Error error=Error::none;bool fail(const char* why,Error result=Error::none){reason=why;error=result;return false;}};
+struct Active {Session session;FakeTls storage;FakeTls* tls=&storage;model::OctopusId peer;std::mutex mutex;struct{std::string hostname;}status;SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;};
 unsigned sent=0;bool send(Active&,Kind kind,std::string_view payload,uint32_t){assert(kind==Kind::device_status&&payload.find(current_name)!=std::string_view::npos);++sent;return true;}
 bool current_peer_credential(const Active& active,const Group&){return active.peer==id<model::OctopusId>(3);}
 Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}
 LinkScope scope(){return {id<model::LinkId>(5),id<model::ConsortiumId>(2),id<model::OctopusId>(4),id<model::OctopusId>(3),id<model::OctopusId>(4),id<model::BootId>(6),id<model::BootId>(7),1,1};}
 void start(Active& active,bool capable=true){auto sc=scope();active.peer=sc.peer_id;assert(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none);HelloFrame h;h.consortium_id=sc.consortium_id;h.octopus_id=sc.peer_id;h.boot_id=sc.peer_boot_id;h.coordinator_epoch=1;h.config_revision=1;h.required_capabilities=known_capabilities&~(capable?0u:hostname_metadata);assert(active.session.hello(h,known_capabilities)==Error::none);}
-std::string packet(std::string name="remote-name",unsigned destination=4){auto sc=scope();return "{\"protocol_version\":1,\"consortium_id\":\""+sc.consortium_id.str()+"\",\"message_id\":\""+id<model::MessageId>(8).str()+"\",\"origin_octopus_id\":\""+sc.peer_id.str()+"\",\"origin_boot_id\":\""+sc.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+id<model::OctopusId>(destination).str()+"\",\"destination_boot_id\":\""+sc.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"1\",\"kind\":\"device_status\",\"ttl_ms\":1000,\"payload\":{\"hostname\":\""+name+"\"}}";}
+std::string packet(std::string name="remote-name",unsigned destination=4){auto sc=scope();return "{\"protocol_version\":1,\"consortium_id\":\""+sc.consortium_id.str()+"\",\"message_id\":\""+id<model::MessageId>(packet_id++).str()+"\",\"origin_octopus_id\":\""+sc.peer_id.str()+"\",\"origin_boot_id\":\""+sc.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+id<model::OctopusId>(destination).str()+"\",\"destination_boot_id\":\""+sc.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"1\",\"kind\":\"device_status\",\"ttl_ms\":1000,\"payload\":{\"hostname\":\""+name+"\"}}";}
 '''
 SUITE=r'''
 int main(){
@@ -75,13 +77,15 @@ int main(){
  std::cout<<"PASS names: bounded64 identities, full-cap rejection, offline reboot retention, explicit durable removal and failed-storage rollback\n";
  reset();sent=0;{Active active;start(active);active.storage.incoming=packet();assert(exchange_hostname(active,{})&&active.status.hostname=="remote-name"&&hostnames.lookup(active.peer)=="remote-name"&&sent==1&&active.session.state()==ConnectionState::synchronizing);}
  reset();sent=0;{Active active;start(active,false);assert(exchange_hostname(active,{})&&sent==0&&hostnames.entries().empty());assert(!exchange_hostname(active,"required-name")&&sent==0);}
- for(unsigned failure=0;failure<4;++failure){reset();Active active;start(active);active.storage.incoming=packet(failure==0?"invalid.name":"remote-name",failure==1?99:4);if(failure==2)registry_failure=true;assert(!exchange_hostname(active,failure==3?"other-name":"")&&hostnames.entries().empty()&&active.status.hostname.empty());}
+ for(unsigned failure=0;failure<4;++failure){reset();Active active;start(active);active.storage.incoming=packet(failure==0?"invalid.name":"remote-name",failure==1?99:4);if(failure==2)registry_failure=true;LinkTrace trace;assert(!exchange_hostname(active,failure==3?"other-name":"",&trace)&&hostnames.entries().empty()&&active.status.hostname.empty());if(failure==2)assert(trace.error==Error::storage_failure);if(failure==3)assert(trace.error==Error::identity_conflict);}
+ reset();{Active active;start(active);const auto original=active.session.scope();auto* tls=active.tls;registry_failure=true;active.storage.incoming=packet();LinkTrace trace;assert(!exchange_hostname(active,{},&trace)&&trace.error==Error::storage_failure&&active.session.scope()==original&&active.tls==tls);registry_failure=false;active.storage.incoming=packet();assert(exchange_hostname(active,{},&trace)&&active.tls==tls&&active.session.scope()==original&&active.status.hostname=="remote-name");}
+ reset();{Active active;start(active);LinkTrace trace;network.get_hostname={};assert(!exchange_hostname(active,{},&trace)&&trace.error==Error::not_ready);}
  std::cout<<"PASS actual metadata exchange: negotiated-only legacy compatibility, exact authenticated destination/expected name, invalid-name/storage failure rejects without readiness or authority\n";
 }
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()
- actual=function(source,'esp_err_t bootstrap_request(')+function(source,'bool exchange_hostname(')
+ actual=function(source,'esp_err_t bootstrap_request(')+function(source,'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {')
  with tempfile.TemporaryDirectory(prefix='amity-hostname-') as directory:
   cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+SUITE)
   sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp','enrollment.cpp']]+[ROOT/'components/amity_system/model.cpp']

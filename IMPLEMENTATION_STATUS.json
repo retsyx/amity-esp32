@@ -1,7 +1,7 @@
 {
-  "status": "PASS within the exercised bench scope: all four DUTs run verified 0.1.105 / Matter software 106. The complete host suite with 340 framework units, native build, contracts and 29 live web checks passed. All seven physical functional cases passed under the current one-second source-theft contract, including four clean Add/reset-removal transactions and both consortium sizes. Matched clean 0.1.104 consortium Add samples improved by 9\u201310 seconds (18\u201319%) from Add POST to operation completion; final ready/settings proof remains separate. Main preservation passed 26 checks with the same boot and original saved values, 16 slot records and pairings. Qualification remains normal admission, one adapter per owner, at most three owners and simulated CEC. Historical failed runs, including the USB-perturbed timing baseline, remain failed.",
-  "audit_date": "2026-10-30",
-  "firmware_version": "0.1.105",
+  "status": "PASS within the exercised bench scope: all four DUTs run exact 0.1.113 / Matter software 114. Healthy TLS is independent of synchronization and recoverable application failures. Full host suite with 361 framework units, native build, contracts and all seven physical functional cases passed; 250ms theft bounds and 31 final preservation checks passed. Historical failed runs remain failed.",
+  "audit_date": "2026-11-01",
+  "firmware_version": "0.1.113",
   "branch": "consort",
   "source_baseline": {
     "behavior_commit": "98e64a6",
@@ -13,7 +13,7 @@
     "selector": "Amity device ID / HDMI adapter / CEC side / OSD name",
     "controller": "Original Hub activity decisions and sole user-input ownership",
     "owner": "Resolve local adapter/side/name and perform original local CEC handling",
-    "transport": "Authenticated typed owner intents/state changes, causal ordering and stale-work rejection",
+    "transport": "One canonical healthy authenticated TLS connection per peer; fresh logical execution sessions for application recovery, exact stale-work fences and no ordinary replay.",
     "configuration_schema": 3,
     "saved_intent": "Original activity role/switch fields, qualified selectors, IDs, labels/order/slots",
     "removed": "Persistent enabled, executable route/binding/domain/resource/capability/PA approvals, prepared execution plans, global owner-profile approval and durable current-activity resume ledger",
@@ -42,7 +42,8 @@
     "saved_configuration_write_version": 3,
     "configuration_storage_version": 2,
     "live_configuration_capability": 524288,
-    "execution_capabilities_note": "Live configuration is additionally required by execution-profile compatibility; old peers remain management/update-only. Installer required-capability bitmap remains 401472."
+    "execution_capabilities_note": "Live configuration is additionally required by execution-profile compatibility; old peers remain management/update-only. Installer required-capability bitmap remains 401472.",
+    "synchronization_kind": 43
   },
   "controller_policy": {
     "original": "Immutable original controller, only UI/admin/remote/Matter/HomeKit owner",
@@ -50,82 +51,50 @@
     "management": "Existing authenticated setup/name/settings/update/removal/reset/manual recovery contracts"
   },
   "current_task_validation": {
-    "result": "PASS: exact all-four 0.1.105 deployment, full host/build/contracts, live web responses, all seven physical functional cases, Add timing comparison and final preservation checks",
-    "evidence_directory": "test-results/add-latency-fix-2026-10-30",
-    "latest_deployed_firmware_version": "0.1.105",
-    "latest_deployment_report": "test-results/add-latency-fix-2026-10-30/deployment.json",
-    "source_theft_deadline_seconds": 1,
-    "source_theft_deadline_validation": {
-      "result": "COMPLETE / PASS: one-second source-theft contract implemented, host-validated and exercised physically on 0.1.105",
-      "host_validation": {
-        "result": "PASS",
-        "framework_unit_tests": 340,
-        "duration_seconds": 14.088,
-        "command": "PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q",
-        "log": "test-results/source-theft-one-second-2026-10-30/framework-tests.log",
-        "scope": "Exact one-second physical response boundaries accepted; responses one nanosecond late rejected. Same-trigger shared-wire route restoration remains mandatory."
-      },
-      "physical_validation": {
-        "result": "PASS",
-        "report": "test-results/add-latency-fix-2026-10-30/functional.json",
-        "verifications": [
-          "test-results/add-latency-fix-2026-10-30/consortium-verification.json",
-          "test-results/add-latency-fix-2026-10-30/consortium-three-duts-verification.json",
-          "test-results/add-latency-fix-2026-10-30/source-theft-verification.json"
-        ],
-        "deadline_ms": 1000,
-        "consortium_theft_directions": 8,
-        "maximum_consortium_standby_ms": 69.75002,
-        "shared_wire_standby_ms": 66.950012,
-        "shared_wire_route_restoration_ms": 183.45003,
-        "scope": "Complete physical responses measured against the same successful Active Source trigger; shared-wire Standby and route restoration both satisfy the same original one-second window."
-      },
-      "scope": "Directed thief Standby and resulting state must complete within one second of the same successful physical Active Source transmission; shared-wire route restoration uses that same trigger and window. Ordinary CEC, operation and settings-cache timeouts remain separate.",
-      "historical_reports": "Retained 0.1.104 and earlier physical reports used the then-current two-second window. Their recorded 2000 ms bounds and outcomes are unchanged."
-    },
-    "add_latency_corrections": [
-      "runtime_start tests only the configured admission profile; the no-argument USB/native self-test continues testing both profiles.",
-      "proposal_json uses the exact already-validated Identity and Peer DER/derived pins, removing two duplicate proposal signature checks. The first untrusted candidate verification, candidate-side authority validation, profile checks and pinned TLS authentication remain.",
-      "network_loop tries the known numeric authority IP before blocking mDNS on its first attempt; failed connect/TLS still uses the existing discovery, address rotation and backoff."
-    ],
-    "removal_correction": "RemovalOperation retains the admitted full LinkScope and membership revision for the exact pending owner/request/deadline. finish_retirement validates that permit, original main authority and original payload after the Remove cascade publishes a newer local configuration; it never advances or restamps the old request. Exact boot/link/group/epoch/authentication, absent target roster, original two-second lifetime and receiver/ACK fences remain.",
-    "targeted_regressions": {
-      "result": "PASS",
-      "scope": "Actual source with controlled host seams; no physical latency improvement or reset outcome is inferred.",
-      "tests": [
-        "tests/consortium_admission_startup_test.py",
-        "tests/consortium_admission_crypto_test.py",
-        "tests/admission_workflow_test.py",
-        "tests/consortium_removal_test.py"
-      ],
-      "checks": "Selected-profile boot and crypto-failure gates; full explicit self-test; exact typed proposal with one untrusted certificate check; immediate known IP with authenticated fallback; removal after config publication plus 19 denied stale/foreign/expired permit cases."
-    },
+    "result": "PASS",
+    "evidence_directory": "test-results/tls-connection-reuse-0.1.113-2026-11-01",
+    "firmware_version": "0.1.113",
+    "matter_software_version": 114,
+    "latest_deployed_firmware_version": "0.1.113",
+    "latest_deployment_report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/deployment.json",
+    "invariant": "One healthy TLS connection per authenticated peer, acquired implicitly and reused independently of synchronization. Application failure ends an exact logical execution scope, not TLS; no ordinary work is replayed.",
+    "design": "amity-octopus-consortium/08-consortium-transport-and-routing.md",
     "design_contracts": {
       "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/contracts.json"
+      "report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/contracts.log"
     },
     "software_tests": {
       "result": "PASS (exit 0)",
-      "command": "sh tests/run_host_tests.sh",
-      "framework_unit_tests": 340,
-      "log": "test-results/add-latency-fix-2026-10-30/host-tests.log"
+      "command": "bash tests/run_host_tests.sh",
+      "framework_unit_tests": 361,
+      "log": "test-results/tls-connection-reuse-0.1.113-2026-11-01/host-tests.log",
+      "targeted_regressions": [
+        "Same TLS/socket and boots through capture/apply/rejection/receive expiry recovery; fresh correlated logical scope and leases; replay retained",
+        "Immediate old-session cleanup, transient owner IPC pressure, exact callback rejection and zero ordinary replay",
+        "Valid bounded late-frame draining, original 2s/5s deadlines, fatal TLS/framing rejection, lazy handshake once",
+        "Same-Active/same-config settings permit cannot revive after logical reset",
+        "Pinned cJSON allocation ownership and every parse/print allocation fault, with and without PSRAM",
+        "Timed physical evidence inspection retains the 250ms wire bound despite responder lock or slow authenticated owner proof"
+      ]
     },
     "native_firmware_build": {
       "result": "PASS",
-      "firmware_version": "0.1.105",
-      "matter_software_version": 106,
-      "image_bytes": 2437744,
-      "image_sha256": "eeb7ff3f5674d8cd0a33d48d4fb0ce9cc6a5d3a2e938e81cd68c1ae4d1acc8dd",
-      "image_elf_sha256": "702a1fe78af38dbc3f913b1c6b7ff9cd74e97701310751feae8714997bc7940e",
-      "source_commit": "33208f41923db9f88eec093940d5f096266fd47b",
+      "firmware_version": "0.1.113",
+      "matter_software_version": 114,
+      "image_bytes": "2461456",
+      "image_sha256": "a7dd4cd7e55530a3239c32a8270d84df0a0c966df3460ff2b0bf155b2116845a",
+      "image_elf_sha256": "84c567ee42e93a426e34a8066bbb4a87b49f003bb8f4079848eeea8913a37eaf",
+      "source_commit": "0f39113d5dbdf8e6319aa3ddb8b224fda039fc12",
       "source_dirty": true,
-      "frozen_artifacts": "test-results/add-latency-fix-2026-10-30/firmware-0.1.105",
-      "log": "test-results/add-latency-fix-2026-10-30/build.log",
-      "public_record_layouts": 36
+      "source_tree_sha256": "a3ad3954962169cda60627bc7d872b25f498f1e6b240b72e4ea9079f0e7d51f4",
+      "log": "test-results/tls-connection-reuse-0.1.113-2026-11-01/build-final.log",
+      "frozen_artifacts": "test-results/tls-connection-reuse-0.1.113-2026-11-01/firmware-0.1.113",
+      "source_parity": "test-results/tls-connection-reuse-0.1.113-2026-11-01/qualification-source-parity.json",
+      "source_note": "Qualified runtime and tests remained unchanged through deployment and the complete physical run; only validation records were updated afterward."
     },
     "physical_devices": {
       "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/deployment.json",
+      "report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/deployment.json",
       "DUTs": 4,
       "main_checks": 13,
       "candidate_checks_each": 18,
@@ -134,196 +103,91 @@
     },
     "physical_functional": {
       "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/functional.json",
-      "verification": "test-results/add-latency-fix-2026-10-30/functional-verification.json",
-      "duration_seconds": 1373.775839,
+      "report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/functional.json",
+      "verification": "test-results/tls-connection-reuse-0.1.113-2026-11-01/functional-verification.json",
+      "duration_seconds": 553.9891899999999,
       "cases": [
         {
           "test": "test_hdmi_scan",
           "result": "PASS",
-          "duration_seconds": 24.987485
+          "duration_seconds": 17.890657
         },
         {
           "test": "test_activity",
           "result": "PASS",
-          "duration_seconds": 81.845978
+          "duration_seconds": 32.771595999999995
         },
         {
           "test": "test_activity_switch_input",
           "result": "PASS",
-          "duration_seconds": 86.399398
+          "duration_seconds": 34.18721
         },
         {
           "test": "test_source_theft",
           "result": "PASS",
-          "duration_seconds": 134.279441
+          "duration_seconds": 42.612407
         },
         {
           "test": "test_add_amity",
           "result": "PASS",
-          "duration_seconds": 104.58122900000001
+          "duration_seconds": 46.972495
         },
         {
           "test": "test_consortium",
           "result": "PASS",
-          "duration_seconds": 337.588307
+          "duration_seconds": 142.87424299999998
         },
         {
           "test": "test_consortium_three_duts",
           "result": "PASS",
-          "duration_seconds": 604.059135
+          "duration_seconds": 236.646128
         }
       ],
       "clean_testbeds": 7,
       "fixture_activities_created_and_removed": 9,
       "add_transactions": 4,
       "acknowledged_reset_removals": 4,
-      "typed_scan_locations": 28,
       "cleanup_errors": []
     },
-    "qualification_scope": "All seven physical functional cases on exact 0.1.105, normal admission, original main amity-dut with members amity-dut-2/amity-dut-3, one adapter per owner and simulated TV/AVR/player CEC. The current one-second source-theft contract is exercised. No strict-profile, four-owner, adversarial radio/reconnect/loss/load, four-adapter electrical or real-AV qualification is claimed.",
-    "firmware_version": "0.1.105",
-    "matter_software_version": 106,
-    "live_web": {
+    "source_theft_deadline_seconds": 0.25,
+    "source_theft_physical": {
       "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/web-verification.json",
-      "checks": 29,
-      "complete_response_bodies": 11,
-      "exact_build_assets": 4,
-      "scope": "Single-attempt shipping-UI responses, large JSON/log bodies, exact assets and preserved security headers, configuration and pairings."
-    },
-    "two_owner_functional": {
-      "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/consortium.json",
-      "verification": "test-results/add-latency-fix-2026-10-30/consortium-verification.json",
-      "verification_checks": 21,
-      "duration_seconds": 337.588307,
-      "fresh_power_assertions": 14,
-      "typed_locations": 6,
-      "initial_routes": 2,
-      "theft_directions": 2,
-      "theft_response_ns": [
-        67700051,
-        66900084
-      ],
-      "physical_deadline_ms": 1000,
-      "acknowledged_member_resets": 1,
-      "owner_failures": [],
-      "cleanup_errors": []
-    },
-    "three_owner_functional": {
-      "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/consortium-three-duts.json",
-      "verification": "test-results/add-latency-fix-2026-10-30/consortium-three-duts-verification.json",
-      "verification_checks": 21,
-      "duration_seconds": 604.059135,
-      "fresh_power_assertions": 24,
-      "typed_locations": 9,
-      "initial_routes": 3,
-      "theft_directions": 6,
-      "theft_response_ns": [
-        69750020,
-        69550134,
-        66900115,
-        66900009,
-        66899967,
-        66950044
-      ],
-      "physical_deadline_ms": 1000,
-      "acknowledged_member_resets": 2,
-      "owner_failures": [],
-      "cleanup_errors": []
-    },
-    "shared_wire_source_theft": {
-      "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/source-theft.json",
-      "verification": "test-results/add-latency-fix-2026-10-30/source-theft-verification.json",
-      "verification_checks": 20,
-      "duration_seconds": 134.279441,
-      "typed_locations": 4,
-      "fresh_start_power_commands": 3,
-      "cleanup_physical_standbys": 3,
-      "thief_standby_response_ms": 66.950012,
-      "selected_route_restored_ms": 183.45003,
-      "same_trigger_deadline_ms": 1000,
-      "selected_activity_and_boot_retained": true,
-      "fixture_activities_created_and_removed": 2,
-      "cleanup_errors": []
-    },
-    "add_latency_measurements": {
-      "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/add-timings.json",
-      "samples": [
-        {
-          "test": "test_add_amity",
-          "candidate": "amity-dut-2",
-          "add_post_to_operation_complete_seconds": 42.014,
-          "helper_to_first_verified_seconds": 79.202,
-          "operation_complete_to_first_verified_seconds": 9.386,
-          "cleanup_reset": "scheduled"
-        },
-        {
-          "test": "test_consortium",
-          "candidate": "amity-dut-2",
-          "add_post_to_operation_complete_seconds": 41.702,
-          "helper_to_first_verified_seconds": 79.083,
-          "operation_complete_to_first_verified_seconds": 9.01,
-          "cleanup_reset": "scheduled"
-        },
-        {
-          "test": "test_consortium_three_duts",
-          "candidate": "amity-dut-2",
-          "add_post_to_operation_complete_seconds": 41.977,
-          "helper_to_first_verified_seconds": 80.022,
-          "operation_complete_to_first_verified_seconds": 8.999,
-          "cleanup_reset": "scheduled"
-        },
-        {
-          "test": "test_consortium_three_duts",
-          "candidate": "amity-dut-3",
-          "add_post_to_operation_complete_seconds": 46.899,
-          "helper_to_first_verified_seconds": 84.557,
-          "operation_complete_to_first_verified_seconds": 9.746,
-          "cleanup_reset": "scheduled"
-        }
-      ],
-      "matched_clean_104_comparison": "Corresponding two-owner and three-owner Add transactions improve Add-POST-to-operation completion by 9.173\u201310.270 seconds (about 18\u201319%), and helper-to-first-verified readiness by about 10\u201311%. The separate clean 0.1.103 Add-only comparison improves POST completion by 8.407 seconds.",
-      "remaining_intervals": "The 20-second discovery window still collects multiple candidates. Final authenticated identity/configuration/settings proof takes about nine seconds after operation completion. HTTP polling runs concurrently and its accumulated request times are not subtracted from firmware progress.",
-      "limitations": "Four clean samples on this bench, not a performance distribution or bound. The earlier USB-perturbed failed-cleanup baseline remains failed diagnostic evidence and is not the headline comparison."
-    },
-    "unclaimed_startup_measurements": {
-      "report": "test-results/add-latency-fix-2026-10-30/boot-startup-timing.json",
-      "boards": 3,
-      "previous_ready_ms": [
-        10643,
-        10652,
-        10679
-      ],
-      "current_ready_ms": [
-        4933,
-        4953,
-        4969
-      ],
-      "improvement_ms": [
-        5710,
-        5699,
-        5710
-      ],
-      "scope": "Boot-uptime log timestamps during application-only updates, before the later explicit full USB self-test; these are unclaimed startup measurements, not Add-operation durations."
+      "same_trigger_deadline_ms": 250,
+      "shared_wire_standby_ms": 68.699982,
+      "shared_wire_route_restoration_ms": 186.699994,
+      "consortium_theft_directions": 8,
+      "maximum_consortium_standby_ms": 68.600027,
+      "verification_checks": [
+        21,
+        21,
+        20
+      ]
     },
     "final_preservation": {
       "result": "PASS",
-      "report": "test-results/add-latency-fix-2026-10-30/main-final-postcheck.json",
-      "checks": 26,
-      "main_boot": "58584933c4556412aad1391c3b0de029",
-      "combined_consortium_power_assertions": 38,
-      "combined_consortium_typed_locations": 15,
-      "combined_consortium_initial_routes": 5,
-      "combined_consortium_theft_directions": 8,
-      "preserved": "Original saved configuration values, all 16 existing slot records and metadata, names, hostname, installation/group, original authority, hardware capabilities, Matter fabrics and HomeKit pairing state; only authorized fixture cleanup and revision changes.",
-      "current_state": "Ready and idle, no enrolled peers or removed-owner observations, no pending configuration or discovery, and no activity or hardware error.",
-      "diagnostic_limits": "The final snapshot retains a nonempty membership last_error and cumulative tx_errors=4694 (before the cases: 114); rx_dropped remains zero. These passing checks do not assert the absence of transport or CEC transmission failures."
-    }
+      "report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/main-final-postcheck.json",
+      "checks": 31,
+      "main_boot": "8c401f2338ee2c86154a2d0723d3245b",
+      "preserved": "Original authority, installation/identity, pairing data, unrelated configuration and existing slot metadata; only test activity tombstones and authorized revisions changed. No peers or saved removed-owner names, equipment, settings or observations remain.",
+      "current_state": "Ready and idle, no pending configuration, discovery, activity error or hardware error."
+    },
+    "diagnostics": {
+      "retained_main_log": "test-results/tls-connection-reuse-0.1.113-2026-11-01/main-final.log",
+      "retained_bytes": 24576,
+      "scope": "The retained final log contains no allocation_failed or AES allocation failure record; this bounded window does not establish absence throughout the run. Its two final peer closes coincide with acknowledged fixture removals; one is logged heartbeat_send during retirement.",
+      "allocation_limit": "The original 0.1.111 AES allocation failure is proven, but its exact failed allocation size/capabilities were not retained. PSRAM ownership improves internal/DMA headroom and is not a causal measurement of that earlier failure."
+    },
+    "historical_failed_evidence": {
+      "0.1.111": {
+        "directory": "test-results/tls-connection-reuse-0.1.111-2026-11-01",
+        "result": "FAIL: five of seven passed; timely source-theft evidence was blocked by inspection lock, and three-owner Add encountered genuine AES/TLS/HTTP failure. Original reports remain failed; separate reviewed cleanup acknowledged resets."
+      },
+      "0.1.112": {
+        "directory": "test-results/tls-memory-diagnostic-0.1.112-2026-11-01",
+        "result": "FAIL / mixed-firmware diagnostic only: main112 and members111; partial frame expiry exposed framing/TLS coupling. No distributed power qualification. Reviewed cleanup completed after one definitive precommit Remove409 and a fresh review; original failures remain unchanged."
+      }
+    },
+    "qualification_scope": "Normal admission, original main and up to two headless members, one adapter per owner, physical isolated CEC wires with simulated TV/AVR/player responders. All four DUTs updated; no four-owner, strict-profile, real-AV, adversarial radio/loss/load or multi-adapter electrical qualification claimed."
   },
   "historical_evidence": {
     "release": "0.1.80",
@@ -341,7 +205,7 @@
     "Production secure boot, encrypted secret storage, signing/provisioning/recovery and capacity qualification"
   ],
   "documentation": "amity-octopus-consortium/README.md",
-  "matter_software_version": 106,
+  "matter_software_version": "114",
   "admission_validation": {
     "workflow": "Main scans; user opens unclaimed board FW RESET window, selects its opaque candidate token, names and adds it. Normal ephemeral encrypted exchange; optional matched printed-Matter-code PAKE authenticates fresh session keys. No separate Add secret or member relay.",
     "host_runner": {
@@ -413,15 +277,15 @@
     "scope": "Previous 0.1.83 admission implementation, followed by its four-board flash and device self-tests; actual radio enrollment was not exercised."
   },
   "latest_deployment": {
-    "firmware_version": "0.1.105",
-    "image_sha256": "eeb7ff3f5674d8cd0a33d48d4fb0ce9cc6a5d3a2e938e81cd68c1ae4d1acc8dd",
-    "image_elf_sha256": "702a1fe78af38dbc3f913b1c6b7ff9cd74e97701310751feae8714997bc7940e",
-    "source_commit": "33208f41923db9f88eec093940d5f096266fd47b",
+    "firmware_version": "0.1.113",
+    "image_sha256": "a7dd4cd7e55530a3239c32a8270d84df0a0c966df3460ff2b0bf155b2116845a",
+    "image_elf_sha256": "84c567ee42e93a426e34a8066bbb4a87b49f003bb8f4079848eeea8913a37eaf",
+    "source_commit": "0f39113d5dbdf8e6319aa3ddb8b224fda039fc12",
     "source_dirty": true,
     "result": "PASS",
-    "date": "2026-10-30",
-    "matter_software_version": 106,
-    "report": "test-results/add-latency-fix-2026-10-30/deployment.json",
+    "date": "2026-11-01",
+    "matter_software_version": 114,
+    "report": "test-results/tls-connection-reuse-0.1.113-2026-11-01/deployment.json",
     "DUTs": 4,
     "main_usb_opened": false,
     "flash_erased": false,
@@ -990,6 +854,22 @@
       "source_commit": "1be1436f45759e5ea40b0fe25023837256fe3f4e",
       "source_dirty": true,
       "qualification_scope": "Intermediate deployment. First five functional cases passed; consortium failed during configuration/member readiness and cleanup. Separate fixture recovery retained all baseline configuration values except normal revisions. This is not a passing consortium qualification; original failure/recovery reports remain private under test-results/consortium-2026-10-29."
+    },
+    {
+      "firmware_version": "0.1.105",
+      "image_sha256": "eeb7ff3f5674d8cd0a33d48d4fb0ce9cc6a5d3a2e938e81cd68c1ae4d1acc8dd",
+      "image_elf_sha256": "702a1fe78af38dbc3f913b1c6b7ff9cd74e97701310751feae8714997bc7940e",
+      "source_commit": "33208f41923db9f88eec093940d5f096266fd47b",
+      "source_dirty": true,
+      "result": "PASS",
+      "date": "2026-10-30",
+      "matter_software_version": 106,
+      "report": "test-results/add-latency-fix-2026-10-30/deployment.json",
+      "DUTs": 4,
+      "main_usb_opened": false,
+      "flash_erased": false,
+      "main_checks": 13,
+      "candidate_checks_each": 18
     }
   ],
   "standby_stack_fix_validation": {
@@ -2744,5 +2624,281 @@
       "button_released": true
     },
     "original_failure_preserved": true
+  },
+  "previous_add_latency_task_validation": {
+    "result": "PASS: exact all-four 0.1.105 deployment, full host/build/contracts, live web responses, all seven physical functional cases, Add timing comparison and final preservation checks",
+    "evidence_directory": "test-results/add-latency-fix-2026-10-30",
+    "latest_deployed_firmware_version": "0.1.105",
+    "latest_deployment_report": "test-results/add-latency-fix-2026-10-30/deployment.json",
+    "source_theft_deadline_seconds": 1,
+    "source_theft_deadline_validation": {
+      "result": "COMPLETE / PASS: one-second source-theft contract implemented, host-validated and exercised physically on 0.1.105",
+      "host_validation": {
+        "result": "PASS",
+        "framework_unit_tests": 340,
+        "duration_seconds": 14.088,
+        "command": "PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -q",
+        "log": "test-results/source-theft-one-second-2026-10-30/framework-tests.log",
+        "scope": "Exact one-second physical response boundaries accepted; responses one nanosecond late rejected. Same-trigger shared-wire route restoration remains mandatory."
+      },
+      "physical_validation": {
+        "result": "PASS",
+        "report": "test-results/add-latency-fix-2026-10-30/functional.json",
+        "verifications": [
+          "test-results/add-latency-fix-2026-10-30/consortium-verification.json",
+          "test-results/add-latency-fix-2026-10-30/consortium-three-duts-verification.json",
+          "test-results/add-latency-fix-2026-10-30/source-theft-verification.json"
+        ],
+        "deadline_ms": 1000,
+        "consortium_theft_directions": 8,
+        "maximum_consortium_standby_ms": 69.75002,
+        "shared_wire_standby_ms": 66.950012,
+        "shared_wire_route_restoration_ms": 183.45003,
+        "scope": "Complete physical responses measured against the same successful Active Source trigger; shared-wire Standby and route restoration both satisfy the same original one-second window."
+      },
+      "scope": "Directed thief Standby and resulting state must complete within one second of the same successful physical Active Source transmission; shared-wire route restoration uses that same trigger and window. Ordinary CEC, operation and settings-cache timeouts remain separate.",
+      "historical_reports": "Retained 0.1.104 and earlier physical reports used the then-current two-second window. Their recorded 2000 ms bounds and outcomes are unchanged."
+    },
+    "add_latency_corrections": [
+      "runtime_start tests only the configured admission profile; the no-argument USB/native self-test continues testing both profiles.",
+      "proposal_json uses the exact already-validated Identity and Peer DER/derived pins, removing two duplicate proposal signature checks. The first untrusted candidate verification, candidate-side authority validation, profile checks and pinned TLS authentication remain.",
+      "network_loop tries the known numeric authority IP before blocking mDNS on its first attempt; failed connect/TLS still uses the existing discovery, address rotation and backoff."
+    ],
+    "removal_correction": "RemovalOperation retains the admitted full LinkScope and membership revision for the exact pending owner/request/deadline. finish_retirement validates that permit, original main authority and original payload after the Remove cascade publishes a newer local configuration; it never advances or restamps the old request. Exact boot/link/group/epoch/authentication, absent target roster, original two-second lifetime and receiver/ACK fences remain.",
+    "targeted_regressions": {
+      "result": "PASS",
+      "scope": "Actual source with controlled host seams; no physical latency improvement or reset outcome is inferred.",
+      "tests": [
+        "tests/consortium_admission_startup_test.py",
+        "tests/consortium_admission_crypto_test.py",
+        "tests/admission_workflow_test.py",
+        "tests/consortium_removal_test.py"
+      ],
+      "checks": "Selected-profile boot and crypto-failure gates; full explicit self-test; exact typed proposal with one untrusted certificate check; immediate known IP with authenticated fallback; removal after config publication plus 19 denied stale/foreign/expired permit cases."
+    },
+    "design_contracts": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/contracts.json"
+    },
+    "software_tests": {
+      "result": "PASS (exit 0)",
+      "command": "sh tests/run_host_tests.sh",
+      "framework_unit_tests": 340,
+      "log": "test-results/add-latency-fix-2026-10-30/host-tests.log"
+    },
+    "native_firmware_build": {
+      "result": "PASS",
+      "firmware_version": "0.1.105",
+      "matter_software_version": 106,
+      "image_bytes": 2437744,
+      "image_sha256": "eeb7ff3f5674d8cd0a33d48d4fb0ce9cc6a5d3a2e938e81cd68c1ae4d1acc8dd",
+      "image_elf_sha256": "702a1fe78af38dbc3f913b1c6b7ff9cd74e97701310751feae8714997bc7940e",
+      "source_commit": "33208f41923db9f88eec093940d5f096266fd47b",
+      "source_dirty": true,
+      "frozen_artifacts": "test-results/add-latency-fix-2026-10-30/firmware-0.1.105",
+      "log": "test-results/add-latency-fix-2026-10-30/build.log",
+      "public_record_layouts": 36
+    },
+    "physical_devices": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/deployment.json",
+      "DUTs": 4,
+      "main_checks": 13,
+      "candidate_checks_each": 18,
+      "main_usb_opened": false,
+      "flash_erased": false
+    },
+    "physical_functional": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/functional.json",
+      "verification": "test-results/add-latency-fix-2026-10-30/functional-verification.json",
+      "duration_seconds": 1373.775839,
+      "cases": [
+        {
+          "test": "test_hdmi_scan",
+          "result": "PASS",
+          "duration_seconds": 24.987485
+        },
+        {
+          "test": "test_activity",
+          "result": "PASS",
+          "duration_seconds": 81.845978
+        },
+        {
+          "test": "test_activity_switch_input",
+          "result": "PASS",
+          "duration_seconds": 86.399398
+        },
+        {
+          "test": "test_source_theft",
+          "result": "PASS",
+          "duration_seconds": 134.279441
+        },
+        {
+          "test": "test_add_amity",
+          "result": "PASS",
+          "duration_seconds": 104.58122900000001
+        },
+        {
+          "test": "test_consortium",
+          "result": "PASS",
+          "duration_seconds": 337.588307
+        },
+        {
+          "test": "test_consortium_three_duts",
+          "result": "PASS",
+          "duration_seconds": 604.059135
+        }
+      ],
+      "clean_testbeds": 7,
+      "fixture_activities_created_and_removed": 9,
+      "add_transactions": 4,
+      "acknowledged_reset_removals": 4,
+      "typed_scan_locations": 28,
+      "cleanup_errors": []
+    },
+    "qualification_scope": "All seven physical functional cases on exact 0.1.105, normal admission, original main amity-dut with members amity-dut-2/amity-dut-3, one adapter per owner and simulated TV/AVR/player CEC. The current one-second source-theft contract is exercised. No strict-profile, four-owner, adversarial radio/reconnect/loss/load, four-adapter electrical or real-AV qualification is claimed.",
+    "firmware_version": "0.1.105",
+    "matter_software_version": 106,
+    "live_web": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/web-verification.json",
+      "checks": 29,
+      "complete_response_bodies": 11,
+      "exact_build_assets": 4,
+      "scope": "Single-attempt shipping-UI responses, large JSON/log bodies, exact assets and preserved security headers, configuration and pairings."
+    },
+    "two_owner_functional": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/consortium.json",
+      "verification": "test-results/add-latency-fix-2026-10-30/consortium-verification.json",
+      "verification_checks": 21,
+      "duration_seconds": 337.588307,
+      "fresh_power_assertions": 14,
+      "typed_locations": 6,
+      "initial_routes": 2,
+      "theft_directions": 2,
+      "theft_response_ns": [
+        67700051,
+        66900084
+      ],
+      "physical_deadline_ms": 1000,
+      "acknowledged_member_resets": 1,
+      "owner_failures": [],
+      "cleanup_errors": []
+    },
+    "three_owner_functional": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/consortium-three-duts.json",
+      "verification": "test-results/add-latency-fix-2026-10-30/consortium-three-duts-verification.json",
+      "verification_checks": 21,
+      "duration_seconds": 604.059135,
+      "fresh_power_assertions": 24,
+      "typed_locations": 9,
+      "initial_routes": 3,
+      "theft_directions": 6,
+      "theft_response_ns": [
+        69750020,
+        69550134,
+        66900115,
+        66900009,
+        66899967,
+        66950044
+      ],
+      "physical_deadline_ms": 1000,
+      "acknowledged_member_resets": 2,
+      "owner_failures": [],
+      "cleanup_errors": []
+    },
+    "shared_wire_source_theft": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/source-theft.json",
+      "verification": "test-results/add-latency-fix-2026-10-30/source-theft-verification.json",
+      "verification_checks": 20,
+      "duration_seconds": 134.279441,
+      "typed_locations": 4,
+      "fresh_start_power_commands": 3,
+      "cleanup_physical_standbys": 3,
+      "thief_standby_response_ms": 66.950012,
+      "selected_route_restored_ms": 183.45003,
+      "same_trigger_deadline_ms": 1000,
+      "selected_activity_and_boot_retained": true,
+      "fixture_activities_created_and_removed": 2,
+      "cleanup_errors": []
+    },
+    "add_latency_measurements": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/add-timings.json",
+      "samples": [
+        {
+          "test": "test_add_amity",
+          "candidate": "amity-dut-2",
+          "add_post_to_operation_complete_seconds": 42.014,
+          "helper_to_first_verified_seconds": 79.202,
+          "operation_complete_to_first_verified_seconds": 9.386,
+          "cleanup_reset": "scheduled"
+        },
+        {
+          "test": "test_consortium",
+          "candidate": "amity-dut-2",
+          "add_post_to_operation_complete_seconds": 41.702,
+          "helper_to_first_verified_seconds": 79.083,
+          "operation_complete_to_first_verified_seconds": 9.01,
+          "cleanup_reset": "scheduled"
+        },
+        {
+          "test": "test_consortium_three_duts",
+          "candidate": "amity-dut-2",
+          "add_post_to_operation_complete_seconds": 41.977,
+          "helper_to_first_verified_seconds": 80.022,
+          "operation_complete_to_first_verified_seconds": 8.999,
+          "cleanup_reset": "scheduled"
+        },
+        {
+          "test": "test_consortium_three_duts",
+          "candidate": "amity-dut-3",
+          "add_post_to_operation_complete_seconds": 46.899,
+          "helper_to_first_verified_seconds": 84.557,
+          "operation_complete_to_first_verified_seconds": 9.746,
+          "cleanup_reset": "scheduled"
+        }
+      ],
+      "matched_clean_104_comparison": "Corresponding two-owner and three-owner Add transactions improve Add-POST-to-operation completion by 9.173\u201310.270 seconds (about 18\u201319%), and helper-to-first-verified readiness by about 10\u201311%. The separate clean 0.1.103 Add-only comparison improves POST completion by 8.407 seconds.",
+      "remaining_intervals": "The 20-second discovery window still collects multiple candidates. Final authenticated identity/configuration/settings proof takes about nine seconds after operation completion. HTTP polling runs concurrently and its accumulated request times are not subtracted from firmware progress.",
+      "limitations": "Four clean samples on this bench, not a performance distribution or bound. The earlier USB-perturbed failed-cleanup baseline remains failed diagnostic evidence and is not the headline comparison."
+    },
+    "unclaimed_startup_measurements": {
+      "report": "test-results/add-latency-fix-2026-10-30/boot-startup-timing.json",
+      "boards": 3,
+      "previous_ready_ms": [
+        10643,
+        10652,
+        10679
+      ],
+      "current_ready_ms": [
+        4933,
+        4953,
+        4969
+      ],
+      "improvement_ms": [
+        5710,
+        5699,
+        5710
+      ],
+      "scope": "Boot-uptime log timestamps during application-only updates, before the later explicit full USB self-test; these are unclaimed startup measurements, not Add-operation durations."
+    },
+    "final_preservation": {
+      "result": "PASS",
+      "report": "test-results/add-latency-fix-2026-10-30/main-final-postcheck.json",
+      "checks": 26,
+      "main_boot": "58584933c4556412aad1391c3b0de029",
+      "combined_consortium_power_assertions": 38,
+      "combined_consortium_typed_locations": 15,
+      "combined_consortium_initial_routes": 5,
+      "combined_consortium_theft_directions": 8,
+      "preserved": "Original saved configuration values, all 16 existing slot records and metadata, names, hostname, installation/group, original authority, hardware capabilities, Matter fabrics and HomeKit pairing state; only authorized fixture cleanup and revision changes.",
+      "current_state": "Ready and idle, no enrolled peers or removed-owner observations, no pending configuration or discovery, and no activity or hardware error.",
+      "diagnostic_limits": "The final snapshot retains a nonempty membership last_error and cumulative tx_errors=4694 (before the cases: 114); rx_dropped remains zero. These passing checks do not assert the absence of transport or CEC transmission failures."
+    }
   }
 }

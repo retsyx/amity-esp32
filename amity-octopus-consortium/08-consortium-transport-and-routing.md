@@ -18,6 +18,65 @@ Transport scope includes the current installation, original controller, target o
 
 The production wire codec and its closed schema own numeric kinds and bounds. Deprecated prepared-plan/profile/binding graph contracts are not a second path for actuation. Remove unused contracts with their implementation; unknown or unsupported kinds reject rather than silently reinterpret. Version/capability negotiation must not accidentally authorize an older incompatible behavioral policy.
 
+**1 November 2026 TLS reuse amendment.** Each authenticated peer has one
+connection, independently of configuration readiness. Data exchange acquires
+that connection implicitly; a pending or established connection is reused.
+Concurrent acquisition does not create competing sockets. A same-peer,
+same-boot duplicate cannot replace a healthy connection, including one still
+synchronizing. A proven new boot or revoked credential retains the exact old
+scope's invalidation. TLS handshake runs once per transport. Send and receive
+reuse it. A wrapper wait may expire while preserving partial framing. A frame
+that exceeds its progress, total or operational deadline is rejected once;
+its remaining bounded bytes are drained without execution while TLS stays
+available. Neither timeout extends the original frame's acceptance deadline.
+EOF, fatal TLS/write failure, invalid length or malformed framing still makes
+the stream unusable; authentication deadlines remain unchanged.
+
+Hello/session authentication and configuration synchronization are separate
+operations. A failed application synchronization leaves the connection open
+and withholds readiness. The controller starts a fresh bounded synchronization
+round on that stream using `synchronization` (kind 43), with a closed round ID,
+phase and target revision. The member acknowledges the exact round before
+hostname, configuration and owner-state transfer. Its ACK forms a TCP-order boundary
+after abandoned transfer traffic. A new controller begin interrupts an older
+member exchange; late replies cannot acknowledge a different round. Failed
+rounds discard their transient transfer state and retry after one second,
+recapturing current configuration rather than retaining an outgoing payload.
+Only the original controller starts rounds; members reject failed rounds and
+wait for its next begin. No ordinary activity or key work is replayed.
+Membership transport owns asynchronous connection acquisition and recovery;
+ordinary one-shot actions retain their existing unavailable-peer handling and
+are never retained until a future connection becomes ready.
+
+The restart barrier retains installation, controller/member identities, boots
+and replay history. Each acknowledged round derives a fresh logical link ID
+from its round ID on the same physical TLS connection. Before waiting for the
+barrier, exact old-session execution is fenced; late callbacks for that ended
+scope cannot close TLS. This fence preserves independent HDMI observations.
+An expired causal IPC item, failed result delivery or failed context refresh
+likewise ends its execution session and requests synchronization on the same
+healthy transport. This retains exact cleanup without resending the lost work.
+Only that typed exchange can reconcile different
+envelope revisions after a partially applied synchronization; the target is
+monotonic and replies must match its exact round and revision. Operational
+messages retain their exact configuration fences. Beginning a round invalidates
+execution leases/context and blocks positive work until the normal snapshot
+exchange succeeds. A normal successful live configuration refresh keeps its
+logical link and delivers admitted typed lookup results to their original
+continuation. A recovery round ends the old continuation and discards its IPC
+work rather than granting it replacement leases. Abandoned frames may only be
+strictly validated and discarded, never executed. Identity,
+membership and authority failure remain terminal and cannot be recovered by
+loosening a check or treating a peer address as authority.
+
+At startup, configured and available PSRAM owns all cJSON allocations, including
+small nodes and strings. Its exhaustion returns allocation failure rather than
+consuming the internal/DMA heap needed by authenticated transport and CEC.
+Boards without PSRAM retain the normal allocator. The immutable hook is installed
+before configuration parsing and application tasks. Allocation failures are
+captured without allocating/logging in the heap callback and reported by the
+existing service poll with exact request size, capabilities and heap headroom.
+
 Activity configuration saves preserve authenticated TLS links and HDMI discovery
 observations. Peers negotiate `live_configuration` (bit `524288`) before using
 the existing snapshot request/chunk exchange on a ready link. The controller

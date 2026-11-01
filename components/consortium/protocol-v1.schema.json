@@ -702,6 +702,25 @@
         }
       ]
     },
+    "Synchronization": {
+      "type": "object",
+      "properties": {
+        "round_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "phase": {
+          "enum": ["begin", "ack", "reject"]
+        },
+        "config_revision": {
+          "allOf": [
+            {"$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"},
+            {"not": {"const": "0"}}
+          ]
+        }
+      },
+      "required": ["round_id", "phase", "config_revision"],
+      "additionalProperties": false
+    },
     "Heartbeat": {
       "type": "object",
       "properties": {

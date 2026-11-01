@@ -446,6 +446,7 @@ extern "C" void app_main() {
     // use external stacks with flash operations owned by internal-stack tasks.
     heap_caps_malloc_extmem_enable(32);
 #endif
+    config_store::initialize_json_memory();
     // Never erase NVS automatically: that would destroy Wi-Fi credentials and fabrics.
     ESP_ERROR_CHECK(config_store::init());
     ESP_ERROR_CHECK(device_settings::finish_factory_reset());

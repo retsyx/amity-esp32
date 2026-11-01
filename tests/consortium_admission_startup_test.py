@@ -20,6 +20,7 @@ PREFIX = r'''
 #include <algorithm>
 #include <atomic>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -45,14 +46,15 @@ constexpr int PSA_SUCCESS=0,pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 constexpr int ESP_ERR_NVS_NOT_FOUND=0x1102;
 int psa_crypto_init(){return psa_ok?PSA_SUCCESS:-1;}
 #define ESP_LOGW(...) do {} while(0)
-std::mutex lock;
+std::mutex lock,connection_lock;
 std::atomic_bool initialized{false};
 Group group,seed;Identity identity;RuntimeStatus status;HostnameRegistry hostnames;
 void error(std::string value){status.last_error=std::move(value);}
 model::ConsortiumId singleton;model::BootId boot;uint64_t configuration=0;
 bool candidate_passive=false;
 RuntimeRadioHooks radio;uint64_t pending_radio_release=0,candidate_deadline=0,candidate_generation=0;
-struct Active{bool cancelled=false;};std::vector<std::shared_ptr<Active>> links;
+struct ConnectionHealth{bool available=true;bool usable()const{return available;}};
+struct Active{bool cancelled=false;model::OctopusId peer,connection_peer;std::shared_ptr<ConnectionHealth> tls=std::make_shared<ConnectionHealth>();};std::vector<std::shared_ptr<Active>> links;
 esp_err_t load_group(Group& value){++group_reads;if(!group_ok)return ESP_FAIL;value=seed;return ESP_OK;}
 namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& value){++identity_loads;if(!identity_ok)return ESP_FAIL;value={owner,"validated-leaf","private-key-"+std::to_string(identity_loads),std::string(64,'a')};return ESP_OK;}}
 esp_err_t read_record(const char* space,const char* key,std::string& value,size_t cap){const auto name=std::string(space)+"/"+key;if(name==fail_read)return ESP_FAIL;const auto found=records.find(name);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;if(found->second.size()>cap)return ESP_ERR_INVALID_SIZE;value=found->second;return ESP_OK;}
@@ -84,7 +86,7 @@ bool gatt_quiescent(){return true;}
 void advertise_group_hint(const Group&){}
 void reap_closed_links(){links.erase(std::remove_if(links.begin(),links.end(),[](const auto& active){return active->cancelled;}),links.end());}
 void runtime_close_enrollment(){++enrollment_closes;candidate_deadline=candidate_generation=0;}
-unsigned discoveries=0,connect_failures=0,setup_failures=0,launch_failures=0,launches=0;
+unsigned discoveries=0,connect_failures=0,setup_failures=0,launch_failures=0,launches=0;bool retain_launched=false;
 std::vector<std::string> attempts;
 std::vector<uint64_t> attempt_times;
 std::string resolved;
@@ -106,7 +108,7 @@ struct TlsLink{
     }
 };
 struct Connected{};
-void launch(std::shared_ptr<TlsLink>,std::string endpoint={}){++launches;check(endpoint==attempts.back(),"launch lost selected endpoint");if(launch_failures){--launch_failures;return;}throw Connected{};}
+void launch(std::shared_ptr<TlsLink>,std::string endpoint={},model::OctopusId expected={}){++launches;check(endpoint==attempts.back()&&expected==group.authority,"launch lost selected endpoint or owner");if(launch_failures){--launch_failures;return;}if(retain_launched){auto active=std::make_shared<Active>();active->connection_peer=expected;std::lock_guard<std::mutex> guard(lock);links.push_back(active);return;}throw Connected{};}
 }
 namespace config_store{bool production_storage_self_test(){return true;}}
 namespace amity::consortium {
@@ -115,7 +117,7 @@ SUITE = r'''
 void reset(){
     initialized=false;status={};identity={};group={};seed={};hostnames={};singleton={};boot={};configuration=0;candidate_passive=false;
     full_checks=profile_checks=created_tasks=recoveries=group_reads=identity_loads=erases=remote_shutdowns=0;crypto_ok=identity_ok=psa_ok=group_ok=remote_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
-    clock_ms=transport_idle_at=netif_exists_at=netif_up_at=ip_ready_at=ip_query_success_at=0;early_connects=enrollment_closes=0;discovery_times.clear();on_loop_delay={};delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
+    clock_ms=transport_idle_at=netif_exists_at=netif_up_at=ip_ready_at=ip_query_success_at=0;early_connects=enrollment_closes=0;discovery_times.clear();on_loop_delay={};delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;retain_launched=false;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
 }
 void seed_role(Group::Role role){
  seed.role=role;if(role==Group::unclaimed)return;
@@ -214,7 +216,7 @@ void local_ipv4_tests(){
  check(!early_connects&&attempts==std::vector<std::string>({"192.0.2.1","192.0.2.2"})&&attempt_times.front()==300&&attempt_times.back()==8448&&discoveries==1,"genuine post-address connection failure lost original backoff/discovered fallback");
  struct Stopped{};
  for(bool connected:{false,true}){
-  setup_member();ip_ready_at=UINT64_MAX;if(connected)links.push_back(std::make_shared<Active>());
+  setup_member();ip_ready_at=UINT64_MAX;if(connected){auto active=std::make_shared<Active>();active->connection_peer=group.authority;links.push_back(active);}
   unsigned released=0;pending_radio_release=7;radio.release=[&](uint64_t generation){check(generation==7,"wrong radio release while no address");++released;};candidate_generation=8;candidate_deadline=150;
   on_loop_delay=[&]{if(clock_ms>=500)throw Stopped{};};
   try{network_loop(nullptr);}catch(const Stopped&){}
@@ -222,8 +224,27 @@ void local_ipv4_tests(){
   check(links.size()==(connected?1u:0u)&&platform::recorded_setup_timings.empty(),"address wait changed existing connection or produced periodic logs");
  }
 }
+void implicit_connection_acquisition(){
+ setup_member();retain_launched=true;
+ check(attempts.empty()&&links.empty(),"connection opened without data demand");
+ auto first=std::async(std::launch::async,[&]{ensure_connection(identity,group,"192.0.2.1");});
+ auto second=std::async(std::launch::async,[&]{ensure_connection(identity,group,"192.0.2.1");});first.get();second.get();
+ check(attempts==std::vector<std::string>{"192.0.2.1"}&&launches==1&&links.size()==1,"simultaneous TLS demand created competing sockets");
+ const auto existing=links.front();ensure_connection(identity,group,"192.0.2.2");
+ check(attempts.size()==1&&launches==1&&links.front()==existing&&!existing->cancelled,"data demand replaced the pending or established connection");
+ existing->peer=group.authority;existing->connection_peer={};ensure_connection(identity,group,"192.0.2.2");
+ check(attempts.size()==1&&launches==1,"authenticated connection was not reused after pending ownership cleared");
+ existing->cancelled=true;ensure_connection(identity,group,"192.0.2.2");
+ check(attempts==std::vector<std::string>({"192.0.2.1","192.0.2.2"})&&launches==2&&links.size()==2,"dead connection prevented implicit acquisition");
+ setup_member();retain_launched=true;ensure_connection(identity,group,"192.0.2.1");const auto broken=links.front();broken->tls->available=false;
+ check(!broken->cancelled&&!connection_available(group.authority),"known TLS failure remained available until worker cancellation");
+ ensure_connection(identity,group,"192.0.2.2");
+ check(attempts==std::vector<std::string>({"192.0.2.1","192.0.2.2"})&&launches==2&&links.size()==2&&!broken->cancelled,"known TLS failure prevented implicit acquisition");
+ setup_member();retain_launched=true;auto unrelated=std::make_shared<Active>();unrelated->peer=ident<model::OctopusId>(99);links.push_back(unrelated);ensure_connection(identity,group,"192.0.2.1");
+ check(attempts.size()==1&&launches==1&&links.size()==2&&!unrelated->cancelled,"unrelated peer was treated as the requested peer's connection");
+}
 void connection_tests(){
-    local_ipv4_tests();
+    implicit_connection_acquisition();local_ipv4_tests();
     setup_member();run_network();check(attempts==std::vector<std::string>{"192.0.2.1"}&&attempt_times.front()==0&&discoveries==0,"known authority waited for blocking mDNS before first attempt");
     setup_member(false);run_network();check(attempts==std::vector<std::string>{"192.0.2.2"}&&attempt_times.front()==2000&&discoveries==1,"missing hint lost bounded discovery");
     for(unsigned failure=0;failure<3;++failure){
@@ -246,6 +267,8 @@ def main():
     args = parser.parse_args()
     source = args.source.read_text()
     actual = ('#define socket amity::consortium::fake_socket\n#define close amity::consortium::fake_close\n#define getaddrinfo amity::consortium::fake_getaddrinfo\n#define freeaddrinfo amity::consortium::fake_freeaddrinfo\n'
+              + function(source, 'bool connection_available(')
+              + function(source, 'void ensure_connection(')
               + (function(source, 'bool local_ipv4_ready(') if 'bool local_ipv4_ready(' in source else '')
               + function(source, 'void network_loop(')
               + '\n#undef socket\n#undef close\n#undef getaddrinfo\n#undef freeaddrinfo\n'
@@ -267,7 +290,7 @@ def main():
         cpp.write_text(timing_support() + PREFIX + actual + suite)
         includes = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include', 'components/amity_system/include']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
-            '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
+            '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined',
             *['-I' + str(ROOT / path) for path in includes], str(cpp),
             str(ROOT / 'components/consortium/json.cpp'), str(ROOT / 'components/amity_system/model.cpp'), '-o', str(binary)], check=True)
         return subprocess.run([str(binary)], check=False).returncode

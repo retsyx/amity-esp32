@@ -490,7 +490,8 @@ class Component:
         timeout = self._power_timeout if timeout is None else timeout
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Routing assertion timeout must be a positive finite number")
-        deadline = time.monotonic() + timeout
+        inspection_deadline = time.monotonic() + timeout
+        deadline = inspection_deadline
         if timing:
             deadline = min(deadline, (timing["trigger_wire_timestamp_ns"] + timing["max_elapsed_ns"]) / 1_000_000_000)
         self._trace("component.routing.wait", command=command, **{field: expected},
@@ -504,14 +505,19 @@ class Component:
                 raise AssertionError("The CEC session ended before the requested input was confirmed")
             # Complete delivery to every peer (including the selected player)
             # before exposing the restored route to the scenario.
-            remaining = deadline - time.monotonic()
+            # Timed assertions may inspect already timely wire evidence after
+            # synchronous responder delivery releases this lock. The ordinary
+            # timeout bounds blocking inspection. A slow authenticated owner
+            # proof may finish later; then inspect without waiting for the
+            # lock. Neither case extends the physical matching/wait window.
+            remaining = (inspection_deadline if timing else deadline) - time.monotonic()
             if (remaining <= 0 and not timing) or not session._lock.acquire(timeout=max(0, remaining)):
                 self._trace("component.routing.timeout", level=logging.ERROR,
                             command=command, **{field: expected}, since_monotonic_ns=started)
                 raise TimeoutError(missing)
             try:
                 session.assert_healthy()
-                if not timing and time.monotonic() >= deadline:
+                if not timing and time.monotonic() >= inspection_deadline:
                     self._trace("component.routing.timeout", level=logging.ERROR,
                                 command=command, **{field: expected}, since_monotonic_ns=started)
                     raise TimeoutError(missing)

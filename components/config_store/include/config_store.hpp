@@ -12,6 +12,11 @@
 #include <string>
 #include <functional>
 namespace config_store {
+// Call once at startup, before parsing configuration or starting workers.
+// Prefer available PSRAM for every cJSON allocation; retain default allocators
+// on hosts/boards without PSRAM. Selected PSRAM exhaustion never falls back to
+// the internal/DMA pool. The hooks remain fixed for the rest of this boot.
+void initialize_json_memory();
 // Dedicated partition, independent of Matter's network/fabric storage. Never erase on error.
 esp_err_t init();
 // Bounded single-flight flash broker; callbacks execute on its internal stack.

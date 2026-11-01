@@ -9,6 +9,7 @@ PREFIX=r'''
 #include "controller_policy.hpp"
 #include "enrollment_abort.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <deque>
 #include <iostream>
@@ -20,11 +21,11 @@ using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 template<class T>T ident(unsigned n){char value[33];snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
 struct FakeTls{bool server=false;int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;std::vector<std::string> frames;size_t next=0;bool receive(std::string& out,uint32_t timeout){assert(timeout<=2000);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=false,context_requested=false;RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<int> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,refreshing=false,context_ready=false,context_requested=false;std::atomic_bool restart_requested{false},execution_fenced{false};RuntimePeerStatus status;std::optional<EnrollmentAbort> enrollment_abort;model::MessageId removal_request;uint64_t removal_until=0;std::string retirement_payload;};
 std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;RuntimeControlHooks controls;model::BootId boot;uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 // Diagnostics are independently exercised by runtime transport tests. This
 // fixture executes the completion and real roster-removal decisions directly.
-struct LinkTrace{const char* phase="";bool fail(const char*){return false;}};
+struct LinkTrace{const char* phase="";bool retained=false;bool fail(const char*){return false;}};
 struct DeferredLinkTrace{void capture(const Active&,const LinkTrace&,uint64_t){}};
 unsigned group_saves=0,quiesces=0,markers=0,restarts=0,revocations=0,hash_delay=0;bool disk_ok=true,send_ok=true;unsigned failure=0;std::vector<std::string> events,sent;std::vector<uint32_t> sent_timeouts;
 void gatt_client_disconnect(){}
@@ -179,7 +180,7 @@ def schema_vectors(binary):
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
  source=parser.parse_args().source.read_text();private=(ROOT/'components/consortium/removal_runtime.inc').read_text()
- actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'std::string envelope_json(')+''.join(function(source,name) for name in ['void context_capture_completed(', 'bool initialize_context(', 'bool lifecycle_receive(','std::string retirement_hash(','bool finish_retirement(','bool retire_member(','esp_err_t runtime_remove_octopus(','std::string runtime_removal_operation(','bool runtime_removed_device_reset_authorized('])
+ actual=function((ROOT/'components/consortium/tls_link.cpp').read_text(),'std::string envelope_json(')+''.join(function(source,name) for name in ['void request_session_restart(', 'void context_capture_completed(', 'bool initialize_context(', 'bool lifecycle_receive(','std::string retirement_hash(','bool finish_retirement(','bool retire_member(','esp_err_t runtime_remove_octopus(','std::string runtime_removal_operation(','bool runtime_removed_device_reset_authorized('])
  with tempfile.TemporaryDirectory(prefix='amity-removal-') as temp:
   temp=Path(temp);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+private+actual+'\n}\n'+SUITE)

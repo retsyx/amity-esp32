@@ -134,6 +134,10 @@ bool disconnected(s::OctopusId owner,s::BootId boot,s::LinkId link){
     for(auto& report:removed)state.control->update_owned_snapshot(std::move(report));
     return true;
 }
+bool restart_session(s::OctopusId owner,s::BootId boot,s::LinkId link){
+    if(!owner||!boot||!link)return false;
+    return state.control->fence_owned(owner,link);
+}
 bool send(const s::OwnedIntent& intent){
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.maintenance.count(intent.target.port.octopus_id))return false;}
     return c::runtime_send_owned(intent)==ESP_OK;
@@ -196,7 +200,7 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     }
     control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);control.set_owned_deadline(c::runtime_owned_deadline);
     control.set_owned_input_observer([](const auto& intent,const auto& auth,const auto& result){input_result(intent,auth,result);});
-    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner,uint64_t revision,std::function<void(s::OwnedContextResult)> completed){return state.control->refresh_owned_context(owner,revision,std::move(completed));},[]{return state.control->executing_configuration_revision();},configuration_snapshot,retry_report});return ESP_OK;
+    c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner,uint64_t revision,std::function<void(s::OwnedContextResult)> completed){return state.control->refresh_owned_context(owner,revision,std::move(completed));},[]{return state.control->executing_configuration_revision();},configuration_snapshot,retry_report,restart_session});return ESP_OK;
 }
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,
     std::function<esp_err_t()> before_commit){

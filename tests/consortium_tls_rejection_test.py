@@ -44,7 +44,7 @@ int recv(int,void*,size_t size,int flags){
     if(available_bytes){const auto count=std::min(available_bytes,size);available_bytes-=count;received_bytes+=count;return static_cast<int>(count);}
     errno=EAGAIN;return -1;
 }
-struct TlsLink{mbedtls_ssl_context ssl;int socket=31;bool server=true;amity::system::OctopusId authenticated=*amity::system::OctopusId::parse("00000000000000000000000000000001");uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;bool handshake();};
+struct TlsLink{mbedtls_ssl_context ssl;int socket=31;bool server=true,configured=true,handshaken=false,transport_failed=false,incoming_failed=false;amity::system::OctopusId authenticated=*amity::system::OctopusId::parse("00000000000000000000000000000001");uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;bool usable()const{return configured&&!transport_failed&&!incoming_failed;}bool handshake();};
 void reset(){clock_ms=0;handshake_error=handshake_calls=verify_flags=alerts=flushes=shutdowns=fcntl_flags=0;available_bytes=received_bytes=0;blocked_alert=fcntl_failure=false;}
 void check(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 '''
@@ -60,7 +60,7 @@ int main(){try{
      check(!link.handshake()&&alerts==0&&shutdowns==0,"server-only certificate response affected client path");}
     {reset();TlsLink link;handshake_error=MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE;fcntl_failure=true;
      check(!link.handshake()&&alerts==0&&shutdowns==0&&clock_ms==0,"failed nonblocking setup allowed potentially blocking reject path");}
-    {reset();TlsLink link;check(link.handshake()&&alerts==0&&shutdowns==0,"valid authenticated TLS no longer succeeds");}
+    {reset();TlsLink link;check(link.handshake()&&alerts==0&&shutdowns==0,"valid authenticated TLS no longer succeeds");check(link.handshake()&&handshake_calls==1,"healthy TLS repeated its handshake");}
     {reset();TlsLink link;link.authenticated={};check(!link.handshake(),"unrecognized leaf gained authentication");}
     {reset();TlsLink link;verify_flags=1;check(!link.handshake(),"bad verification flags gained authentication");}
     std::cout<<"PASS actual TLS rejection/handshake: exact missing-cert alert, pending-alert flush, nonblocking4KiB/250ms drain, no auth bypass or handshake retry\n";

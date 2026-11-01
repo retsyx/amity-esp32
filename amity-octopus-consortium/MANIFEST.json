@@ -33,8 +33,8 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 18396,
-      "sha256": "4b5c03af57ab5a32cc7aa4a9ba93b4d2c30aa45a4efa0fc570b9a7f504ef57c2"
+      "size_bytes": 22534,
+      "sha256": "856b48ba32f6ac66f5ad40eef1887009d166d66212ac241410f511dea31196a5"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -93,8 +93,8 @@
     },
     {
       "path": "VALIDATION.md",
-      "size_bytes": 90331,
-      "sha256": "cc6175b131b127cda3bfffc305fa90d65a9485ba1e8c561a9af85e6ec27e673d"
+      "size_bytes": 94160,
+      "sha256": "0363563b56960932c900368eff520b6ac3d692e257e23f4aba44a6387894e63c"
     },
     {
       "path": "examples/README.md",
@@ -168,13 +168,13 @@
     },
     {
       "path": "schemas/wire-envelope.schema.json",
-      "size_bytes": 8982,
-      "sha256": "68218160f434b53743312f9bb45133a4ec6649e3c3ec69ec659ff02b98b56ed3"
+      "size_bytes": 9360,
+      "sha256": "d619500a97162004a4dc4709ddbd3b895ce852c2a56a09438adfb4ea56dfae0d"
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 18292,
-      "sha256": "c0234eebb2015120cd59ea038676a478a60c5f5184bd3ee8522f5bb7a41883b9"
+      "size_bytes": 19072,
+      "sha256": "bbc093acb846e840a1bb4609e5a25de224dcbf0a1b223d878ab69e0eb2a079b3"
     }
   ]
 }
