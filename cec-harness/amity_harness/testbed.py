@@ -33,6 +33,12 @@ _TRAFFIC_FIELDS = frozenset(("timestamp", "direction", "component", "gpio", "fra
                              "destination", "opcode", "transport", "wire_timestamp_ns", "status",
                              "ok", "recipient", "recipients", "dropped", "handled_frame",
                              "handled_timestamp_ns"))
+_CONTROL_OBSERVATION_FIELDS = frozenset(("kind", "owner_ids", "wires", "since_monotonic_ns",
+                                        "observation_end_monotonic_ns", "idle_receive_since_ns",
+                                        "observed_frame_count", "started_monotonic_ns", "owner_boots", "checks",
+                                        "component", "owner", "gpio", "deadline_monotonic_ns",
+                                        "announcement_frame", "announcement_wire_timestamp_ns",
+                                        "query_frame", "query_wire_timestamp_ns", "reply_frame", "reply_wire_timestamp_ns"))
 _OPERATION_FIELDS = frozenset(("operation_id", "stage", "status", "saved", "unresolved"))
 _PORT_FIELDS = frozenset(("consortium_id", "octopus_id", "tentacle_id", "side"))
 _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "destination", "transport",
@@ -40,14 +46,17 @@ _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "des
                            "state_changed", "state_revision", "payload_modified", "applied"))
 _POWER_ASSERTION_FIELDS = frozenset(("kind", "power", "timestamp_ns", "since_monotonic_ns", "frame",
                                      "source", "destination", "wire_timestamp_ns", "command",
-                                     "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns"))
+                                     "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns",
+                                     "observation_end_monotonic_ns", "observed_wires", "idle_receive_since_ns"))
 _ROUTING_FIELDS = frozenset(("opcode", "physical_address", "input", "command", "frame", "source", "destination", "transport",
                             "wire_timestamp_ns", "processed_monotonic_ns", "state_revision",
                             "payload_modified", "applied"))
 _ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "input", "command", "timestamp_ns", "since_monotonic_ns",
                                       "frame", "source", "destination", "wire_timestamp_ns",
                                       "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns",
-                                      "observation_end_monotonic_ns", "observed_wires", "observed_frame_count", "idle_receive_since_ns"))
+                                      "observation_end_monotonic_ns", "observed_wires", "observed_frame_count", "idle_receive_since_ns",
+                                      "previous", "selected", "shared", "standby_wire_timestamp_ns", "power_on_wire_timestamp_ns",
+                                      "routing_wire_timestamp_ns", "standby_completion_upper_ns", "power_on_completion_upper_ns", "timestamp_kind", "count"))
 _SETTINGS_FIELDS = frozenset(("phase", "dut", "device_id", "tentacle_id", "request_id", "old_boot", "address",
                               "previous_address", "stage", "member_boot", "settings_revision", "error_type",
                               "configured"))
@@ -57,7 +66,11 @@ _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "sta
 _KEY_FIELDS = frozenset(("key", "emitted_key", "duration_ms", "started_monotonic_ns", "boot", "owner_boots", "released", "standby",
                         "deadline_monotonic_ns",
                         "component", "owner_id", "gpio", "press_frame", "release_frame", "presses",
-                        "press_wire_timestamp_ns", "release_wire_timestamp_ns"))
+                        "press_wire_timestamp_ns", "release_wire_timestamp_ns", "disconnected",
+                        "first_press_wire_timestamp_ns", "disconnected_monotonic_ns",
+                        "repeat_after_disconnect_wire_timestamp_ns", "observation_end_monotonic_ns",
+                        "observed_wires", "idle_receive_since_ns", "cleanup_verified",
+                        "hold_deadline_monotonic_ns", "wire_clock_uncertainty_ns", "release_completion_upper_ns"))
 _MEMBERSHIP_FIELDS = frozenset(("phase", "candidate", "device_id", "name", "request_id", "scan_id",
                                "operation_stage", "candidate_id", "boot", "member_boot",
                                "membership_revision", "reset", "retained_member", "error_type",
@@ -436,6 +449,8 @@ class TestBed:
                             "control_only": dut in self.control_only,
                             **({"member": dut in self.members} if self.members else {})} for dut in self.duts],
                   "components": components, "scans": scans,
+                  "control_observations": [_select(record, _CONTROL_OBSERVATION_FIELDS)
+                                           for record in getattr(self, "control_observations", ())],
                   "activities": [_activity_report(dut, record) for dut in self._owned
                                  for record in getattr(dut, "activity_operations", ())[self._initial_activity_counts[id(dut)]:]],
                   "keys": [{"dut": dut.name, **_select(record, _KEY_FIELDS)} for dut in self._owned

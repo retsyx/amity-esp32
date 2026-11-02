@@ -76,6 +76,39 @@ static void wire_tests() {
         Wire w; assert(w.a.begin(frame({0x4f, 0x36}), 0)); w.run(19000);
         w.now += 1000; w.tick();
         assert(w.a.take_result() == cec::TxResult::LineError);
+        const auto diagnostic = w.a.diagnostic();
+        assert(diagnostic.reason == cec::LineErrorReason::TickGap);
+        assert(diagnostic.at_us == 20000 && diagnostic.tick_gap_us == 1050);
+        assert(diagnostic.elapsed_us == 3200 && diagnostic.slot == -1 && diagnostic.within_us == 3200);
+        assert(!diagnostic.line_high && w.a.started() && !w.a.busy());
+        assert(w.a.take_result() == cec::TxResult::Pending);
+        assert(w.a.begin(frame({0x4f, 0x36}), w.now));
+        assert(w.a.diagnostic().reason == cec::LineErrorReason::None && !w.a.started());
+        assert(diagnostic.reason == cec::LineErrorReason::TickGap && diagnostic.at_us == 20000);
+    }
+    { // A delayed data callback records the actual missed position, not the
+      // previous tick's slot, while keeping the original abort threshold.
+        Wire w; assert(w.a.begin(frame({0x4f, 0x36}), 0)); w.run(30000);
+        w.now += 1000; w.tick();
+        assert(w.a.take_result() == cec::TxResult::LineError);
+        const auto diagnostic = w.a.diagnostic();
+        assert(diagnostic.reason == cec::LineErrorReason::TickGap && diagnostic.tick_gap_us == 1050);
+        assert(diagnostic.at_us == 31000 && diagnostic.elapsed_us == 14200);
+        assert(diagnostic.slot == 4 && diagnostic.within_us == 100);
+    }
+    { // Holding a zero-valued data bit low past 1.8 ms is a different
+      // LineError even with uninterrupted 50 us callbacks.
+        cec::Engine e; assert(e.begin(frame({0x4f, 0x36}), 0));
+        bool low = false;
+        for (uint64_t now = 0; now <= 23100; now += 50) {
+            const bool external_low = now >= 22700;
+            low = e.tick(now, !(low || external_low));
+        }
+        assert(e.take_result() == cec::TxResult::LineError && e.started());
+        const auto diagnostic = e.diagnostic();
+        assert(diagnostic.reason == cec::LineErrorReason::LowLine && diagnostic.at_us == 23100);
+        assert(diagnostic.tick_gap_us == 50 && diagnostic.elapsed_us == 6300);
+        assert(diagnostic.slot == 0 && diagnostic.within_us == 1800 && !diagnostic.line_high);
     }
     { cec::Engine e; cec::Frame f; assert(!e.begin(f, 0)); f.size = 17; assert(!e.begin(f, 0)); }
 }

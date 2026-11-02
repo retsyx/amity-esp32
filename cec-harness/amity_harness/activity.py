@@ -107,6 +107,7 @@ class Activity:
         self._write_attempted = self._created = self._closed = self._needs_standby = False
         self._row_removed = False
         self._created_row = None
+        self._saved_group = None
         self._cleanup_trace = None
         self._cleanup_deferred = False
         self.retained_equipment = []
@@ -218,6 +219,34 @@ class Activity:
             selections["switch"] = {"device": switch, "input": self.switch_input}
         return selections
 
+    def _saved_selections_match(self, document):
+        """Validate saved intent without requiring a current CEC observation.
+
+        Creation proves the complete scoped selection against physical discovery.
+        Later starts must also work while that equipment is absent. Keep both
+        the activity row and its saved qualified equipment records fenced.
+        """
+        self._validate_owners()
+        rows = [row for row in document["activities"] if row.get("activity_id") == self.activity_id]
+        if len(rows) != 1 or rows[0] != self._created_row:
+            return False
+        full = self._full_configuration(document)
+        selectors = self._row_selectors(rows[0])
+        group = self._saved_group
+        if not group or full.get("consortium_id") != group:
+            return False
+        for role, component in self.components.items():
+            if component is None:
+                continue
+            identity = selectors[role].removeprefix("component:")
+            records = [record for record in full["components"] if record.get("component_id") == identity]
+            expected = {"consortium_id": group, "octopus_id": component.dut.identity.device_id,
+                        "tentacle_id": component.tentacle, "side": component.direction,
+                        "osd_name": component.name}
+            if len(records) != 1 or records[0].get("qualified_names") != [expected]:
+                return False
+        return True
+
     def _write(self, path, payload, deadline, trace, *, stage):
         try:
             response = self.dut.request(path, payload, timeout=min(15, self._remaining(deadline)))
@@ -279,6 +308,10 @@ class Activity:
             if len(document["activities"]) >= 16 or any(row.get("name") == self.name for row in document["activities"]):
                 raise ValueError("The activity list is full or this activity name already exists")
             full = self._full_configuration(document)
+            self._saved_group = full.get("consortium_id")
+            if (not _identifier(self._saved_group)
+                    or self.scan._group and self._saved_group != self.scan._group):
+                raise AssertionError("Saved activity configuration belongs to another system")
             self._before_ids = {row["activity_id"] for row in document["activities"]}
             self._before_equipment = {record["component_id"] for record in full["components"]}
             rows = [*document["activities"], {"name": self.name, **self._selection_fields(document, state)}]
@@ -312,8 +345,7 @@ class Activity:
         if kind == "start":
             if len(matches) != 1:
                 raise AssertionError("The created activity is missing or ambiguous")
-            row = document["activities"][matches[0]]
-            if not self._matches_selections(row, self._selectors(document, state)):
+            if not self._saved_selections_match(document):
                 raise AssertionError("The test activity equipment changed before start")
         payload = {"request_id": uuid4().hex, "activity_id": self.activity_id if kind == "start" else None,
                    "expected_config_revision": document["expected_config_revision"],
@@ -384,8 +416,7 @@ class Activity:
                        if row.get("activity_id") == self.activity_id]
             if len(matches) != 1:
                 raise AssertionError("The created activity is missing or ambiguous")
-            row = document["activities"][matches[0]]
-            if not self._matches_selections(row, self._selectors(document, state)):
+            if not self._saved_selections_match(document):
                 raise AssertionError("The test activity equipment changed")
             current = state.get("current_activity")
             if type(current) is not int or current != matches[0]:

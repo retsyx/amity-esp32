@@ -76,17 +76,45 @@ The receiver remains running during transmission and follows the winning
 initiator after arbitration loss. Ordinary messages use a conservative seven
 bit-period idle interval; retries use three.
 
+Terminal transmission failures are logged by the existing worker with the
+exact frame, actual attempt count and whether transmission started.
+`LineError` additionally identifies a `TickGap` (more than 200 microseconds
+between callbacks), `LowLine` (the sampled line remains low at least 1.8 ms into
+a data/ACK bit), or task-side `BeginRejected`. The log records monotonic
+`at_us`, actual `gap_us`, bounded `elapsed_us`, slot/byte/bit, `within_us` and
+sampled line level. Slot -1 denotes the start bit; -2 denotes a timing gap
+beyond the frame's data slots. A LineError alone does not establish an external
+electrical fault.
+
+The ISR captures only fixed-size numeric evidence. Its existing one-result
+queue transports the complete attempt result, diagnostic and started flag
+together, so later ticks or a new attempt cannot replace the worker's evidence.
+Logging and formatting remain outside the ISR and wire lock. These diagnostics
+do not alter any timing threshold, attempt budget, FIFO slot, guard or frame.
+
 Enable `CONFIG_GPTIMER_ISR_CACHE_SAFE` and
 `CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM`. All wire paths and their literal pools
 reside in IRAM, and ISR state and queues are allocated in internal RAM. GPIO
 access uses ESP-IDF's GPIO LL functions so cache-disabled flash/OTA operations
 do not send the ISR through flash-resident functions.
 
-Run `sh tests/cec_bus_test.sh` and `sh tests/cec_hub_test.sh` from the repository
-root for host simulation under ASan/UBSan. Also run
+Keep `CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS=y` with
+`CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN=0x100`. The pinned SDK masks
+interrupts during PSRAM cache writeback. On 2 November 2026, a same-boot capture
+correlated a 206-microsecond CEC gap with `system_sync` returning from a critical
+section inside SHA's 2,496-byte cache writeback (217 microseconds including the
+interrupt). The SDK's 256-byte chunks restore interrupts between chunks while
+preserving its cache-coherence handling. Its default 32 KiB chunk would not
+split this request. This changes neither CEC timing nor attempts, task affinity,
+configuration hashing or application synchronization. Temporary task/register
+and cache-call probes were removed after attribution. Diagnostic evidence is
+under `test-results/cec-line-errors-2026-11-01/`, including `cause-128.json`.
+
+Run `sh tests/cec_hub_test.sh` from the repository root for host simulation
+under ASan/UBSan. Also run
 `sh tests/cec_runtime_test.sh` for the shared native runtime and completion-token
 API, and `sh tests/system_hold_test.sh` for the executor policy.
-`tests/cec_bus_test.cpp` exercises
+`tests/cec_runtime_driver_test.cpp` exercises
 immediate admission during an outstanding ACK, individual completion results,
 FIFO capacity/reuse and independent buses. The hub tests cover independent
 held keys, recipient release, failure cleanup and activity settling without

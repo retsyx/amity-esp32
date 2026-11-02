@@ -23,7 +23,9 @@ membership behavior remains unchanged.
   resource/authentication lifetime, CLI/reporting and scan evidence/assertions.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
-  then verifies standby using physical component power commands.
+  repairs the same activity after a power/input disturbance, then verifies
+  standby using physical component power commands. Its separate cases cover
+  switch input, local/member key routing, and client disconnect during a hold.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
 - `functional_tests/source-theft.py`: isolates the thief behind another
@@ -34,7 +36,13 @@ membership behavior remains unchanged.
   headless members, then checks activity power and source-theft suppression in
   every ownership direction.
 - `functional_tests/dual-display.py`: switches between a TV and projector on
-  one headless member, sharing an AVR and player across both activities.
+  one headless member, checking command completion order and preserving shared
+  AVR/player power throughout both activity handoffs.
+- `functional_tests/qualified_names.py`: uses identical equipment names and
+  addresses on two owners and requires control on only the selected owner.
+- `functional_tests/missing_equipment.py`: retains a missing source selection,
+  verifies switch fallback and lookup-scan cooldown, then uses its passive
+  return without editing the activity.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -129,6 +137,7 @@ These checks qualify test evidence; they add no firmware availability policy.
 
 ```python
 from amity_harness import PowerState
+from amity_harness.transitions import observe_no_standby
 from functional_tests.hdmi_scan import scanned_devices
 
 
@@ -142,6 +151,18 @@ def test_activity():
             started = activity.start()
             for component in components:
                 component.wait_for_power(PowerState.ON, since=started)
+            avr.wait_for_input(player, since=started)
+            activity.assert_active()
+
+            player.standby()
+            avr.active_input = 0x1200
+            with observe_no_standby(*components) as preserved:
+                repaired = activity.start()
+                for component in components:
+                    component.wait_for_power(PowerState.ON, since=repaired)
+                avr.wait_for_input(player, since=repaired)
+                activity.assert_active()
+                preserved.assert_preserved(since=repaired)
 
             stopped = activity.standby()
             for component in components:
@@ -150,6 +171,10 @@ def test_activity():
 
 `DUT.create_activity()` uses the exact scanned selections and the shipping UI's
 authenticated activity editor. It retains existing activities.
+The fixture power/input setters above create a disturbance only. Repair must
+deliver fresh physical power-on and routing commands; final model state alone
+cannot pass. An original-frame observation rejects any Standby, power-off or
+toggle command during the repair, including commands hidden by responder hooks.
 The separate `test_activity_switch_input()` sub-test configures the AVR as the
 switch with `switch_device=avr, switch_input=4` and `source=None`, representing
 a non-CEC source on that input. It verifies the selected activity, TV/AVR power
@@ -601,6 +626,16 @@ The second starts the projector activity, changes directly to the TV activity,
 then enters Standby. Each direct change requires a fresh power-on command to
 the selected display and fresh CEC Standby to the previous display, while the
 AVR and player remain On.
+The handoff observation starts before activity submission, rejects any physical
+power command to the shared AVR/player, and requires the previous display's
+Standby completion before the selected display's power-on completion, followed
+by the AVR's Set Stream Path completion. It drains every involved receiver
+through the assertion boundary so queued evidence or a transient Standby
+cannot hide behind a later On state. Original wire frames remain visible even
+if component hooks drop or rewrite their handling. Cross-wire comparisons use
+conservative SSH clock bounds. Linux timestamps describe complete frames;
+these checks establish completion order, not first-edge timing or proof that
+frames on isolated wires never overlap.
 Every selected activity and its route are verified. Here, an unused display
 being "off" means CEC Standby; electrically unpowered `PowerState.OFF` would
 remove its CEC responder.
@@ -694,6 +729,106 @@ firmware/provisioning build, browser settings checks and all 414 final harness
 unit tests also passed. This qualifies the exercised simulated CEC topologies,
 not real HDMI video or remote-control hardware.
 
+## Qualified equipment and missing-source recovery
+
+`functional_tests/qualified_names.py` gives TV/AVR/player triples on `amity-dut`
+and a newly added `amity-dut-2` identical OSD names, logical addresses and
+physical addresses. The scan must still report six exact owner/adapter/side
+identities. Each owner's activity must deliver fresh physical power, routing,
+volume and navigation commands to that owner's equipment. Original-frame
+observations reject unintended power, routing or key commands on the other
+owner's wires, including transient commands hidden by hooks. Both directions
+finish in Standby, and fixture configuration closes before member removal.
+Select `--test qualified_names`.
+
+`functional_tests/missing_equipment.py` saves a local activity with a CEC source
+and explicit AVR input fallback. It electrically removes the source responder,
+then explicitly scans to establish its absence. Starts of the unchanged saved
+activity must retain its source selector and send fresh numeric switch-input
+commands. Repeated misses during the real 120-second cooldown must not scan;
+expiry alone must not launch deferred enumeration. A subsequent real miss
+must scan only the source's back side, preserve the front cache, and complete
+that original operation's fallback.
+
+Restoring the responder must yield a fresh physical announcement and targeted
+identity exchange plus the correct UI observation without another full scan.
+The unchanged activity must then power and route the returned source and send
+a fresh key press/release to it. Select `--test missing_equipment`; this case
+deliberately waits for the real cooldown and therefore adds over two minutes
+to `--test all`. The operation and ordinary CEC assertion budgets remain
+independent of that elapsed wait.
+
+Reclaiming a Linux CEC address can reannounce other active peers on the same
+wire. Their fresh, directed identity queries are passive discovery, not bus
+enumeration. The lookup observer correlates each such query to that exact
+peer's successful original physical PA announcement on the same wire, within
+the CEC evidence budget. It still requires the original boot, unchanged scan
+generation and no scan in progress; unannounced witness queries fail. Reports
+retain both accepted correlations and rejected query evidence.
+
+On 1 November 2026, the expanded sixteen-case suite ran on `test2` with firmware
+0.1.124. Fifteen cases passed, including repair, both stricter handoffs,
+qualified-name routing and both disconnected holds. The missing-equipment case
+proved fallback, the real cooldown, side-local scanning and passive return,
+then failed its fresh Select assertion: firmware recorded `04 44 00` with
+`LineError`, one attempt and transmission started. All 24 source-theft responses
+completed in 66.899–70.2 ms. This is not a successful complete-suite run.
+
+An unchanged diagnostic retry also failed an existing local Left-key assertion
+with a one-attempt `LineError` and was interrupted after resource cleanup.
+Opening the diagnostic USB capture unexpectedly reset the main
+(`USB_UART_CHIP_RESET`), so that retry cannot establish main-boot preservation.
+Final checks retain saved configuration, activity slots, authority, Matter
+fabrics and HomeKit controllers; the system is ready in Standby with no members
+or pending configuration. All 467 host checks pass. No assertion, wire attempt
+budget or firmware behavior was changed to hide either transmission failure.
+Evidence is under `test-results/functional-expansion-2026-11-01/`:
+`all.json`, `all-verification.json`, `main-failed-run.log`, `all-retry.log`,
+the passive USB logs and `final-verification.json`. Earlier physical results
+above remain evidence for their recorded firmware and assertions.
+
+On 2 November, same-boot HTTP diagnostics traced the key failure to a CEC timer
+gap inside SHA's PSRAM cache writeback: a 2,496-byte flush took 217 microseconds,
+overlapping a 206-microsecond CEC gap on the same core. Firmware 0.1.129 bounds
+the SDK's writeback critical sections to 256-byte chunks; CEC thresholds,
+attempts, FIFO capacity and activity algorithms remain unchanged. Temporary
+task/register, heap and cache-call probes were removed; numeric LineError
+diagnostics remain. See `components/cec/README.md` and
+`test-results/cec-line-errors-2026-11-01/cause-128.json`.
+
+An additional 1,000-key diagnostic run on 0.1.129 verified 974 fresh physical
+press/release pairs, then failed because the Pi receive RPC timed out. Both
+wires lost worker responses; the captured firmware log contained no TX failure,
+the main boot was unchanged, and cleanup completed. This is an interrupted
+stress run, not a successful 1,000-key result. Evidence is
+`test-results/cec-line-errors-2026-11-01/key-diagnosis-129.json` and
+`fixed129-key-failure.json`; receive deadlines and assertions were unchanged.
+
+The first complete 0.1.129 run also passed fifteen cases. The recovered
+player's power, routing and Select now passed, but the new lookup observer
+mistook two AVR identity queries for enumeration. Original wire evidence
+showed a successful AVR PA announcement before both queries, with unchanged
+discovery generation. The observer now retains and validates that exact
+correlation; boot/generation and unannounced-query checks remain mandatory.
+The corrected focused physical case and all 486 framework unit tests pass.
+The failed complete run, cleanup/preservation verification and original query
+evidence remain under `test-results/functional-verification-2026-11-02/`;
+the corrected source and rerun evidence are under
+`test-results/functional-verification-2026-11-02b/`.
+
+The final complete run on 2 November passed all sixteen cases on the same
+0.1.129 image on all four boards in 26 minutes 39 seconds. All 35 independent
+verification checks passed: twelve member removal/reset receipts, cleanup of
+all twenty-four fixture activities, retained main boot/authority/configuration,
+reserved slots, Matter fabrics and HomeKit controllers, and no remaining
+members or pending configuration. All twenty-four source-theft responses
+completed in 66.899–69.600 ms. The native host suite and all 486 framework unit
+tests also pass. Evidence is `all.json` and `all-verification.json` under
+`test-results/functional-verification-2026-11-02b/`, alongside the exact frozen
+source hashes, deployment checks and focused recovery result. This qualifies
+the exercised simulated CEC topologies; the interrupted stress result above
+remains separate.
+
 ## Run functional tests
 
 `activity.py` exercises remote key routing twice: once with the TV/AVR/player
@@ -716,6 +851,16 @@ The routing cases include zero-duration taps and a 100 ms Volume Up hold.
 Key reports retain the requested duration, actual press/release wire timestamps,
 recipient and owner boots. No separate release request is needed.
 
+Two additional `activity` cases run a bounded Volume Up hold locally and on the
+member, prove its first physical press, and close that authenticated HTTP
+connection while the hold is still pending. They require repetition after the
+disconnect, a final operand-free release by the original hold/CEC deadline,
+and no later presses throughout an additional CEC observation window. The
+release must not complete before the requested duration measured from request
+start; an overlapping wire-clock uncertainty interval cannot prove that bound.
+A fresh Select press must work afterward. The shared helper owns the cancellable
+request and receive-drain evidence; the scenario contains no socket handling.
+
 Requires Linux/Pi, Python 3.10 or newer, the existing `cec-gpio` adapters and
 permission to open `/dev/cec*` (normally membership in `video`). GPIO button
 operations additionally require `pinctrl`. The framework has no third-party
@@ -731,14 +876,17 @@ python3 cec-harness/run.py \
 ```
 
 The default remains `hdmi_scan`. Select `--test activity` for the activity
-power-cycle, explicit switch-input and two remote-key sub-tests,
+power-cycle/repair, explicit switch-input, two remote-key and two disconnected
+hold sub-tests,
 `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test dual_display` for the TV/projector scenario on `amity-dut-4`,
 `--test source_theft_isolated` for suppression ahead of the AVR,
-or `--test all` for all nine registered scenarios (twelve
+`--test qualified_names` for identical equipment identities on two owners,
+`--test missing_equipment` for source disappearance, cooldown and passive return,
+or `--test all` for all eleven registered scenarios (sixteen
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

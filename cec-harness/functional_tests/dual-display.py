@@ -1,6 +1,7 @@
 """Two CEC displays sharing one AVR with only one CEC-capable output."""
 
 from amity_harness import DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent, PowerState
+from amity_harness.transitions import ActivityHandoff
 
 
 def test_dual_display():
@@ -43,14 +44,17 @@ def test_dual_display():
 
                         # Switch directly: shared source/audio stay powered,
                         # while the previously selected display must turn off.
-                        switched = second.start()
-                        display.wait_for_power(PowerState.STANDBY, since=switched,
-                                               command="standby", directed=True)
-                        other.wait_for_power(PowerState.ON, since=switched)
-                        for component in (avr, player):
-                            component.assert_power(PowerState.ON)
-                        avr.wait_for_input(player, since=switched)
-                        second.assert_active()
+                        with ActivityHandoff(display, other, shared=(avr, player),
+                                             receiver=avr, source=player) as handoff:
+                            switched = second.start()
+                            display.wait_for_power(PowerState.STANDBY, since=switched,
+                                                   command="standby", directed=True)
+                            other.wait_for_power(PowerState.ON, since=switched)
+                            for component in (avr, player):
+                                component.assert_power(PowerState.ON)
+                            avr.wait_for_input(player, since=switched)
+                            second.assert_active()
+                            handoff.assert_ordered(since=switched)
 
                         stopped = second.standby()
                         for component in (other, avr, player):

@@ -127,6 +127,24 @@ class DualDisplayScenario(Scenario):
         since.route_checked = True
         return avr
 
+    def handoff(self, previous, selected, *, shared, receiver, source):
+        fixture = self
+
+        class Observation:
+            def __enter__(self):
+                fixture.events.append(("handoff.observe", previous, selected, shared, receiver, source))
+                return self
+
+            def assert_ordered(self, *, since):
+                if since.previous is None or since.display is not selected:
+                    raise AssertionError("Handoff evidence must match the submitted direct change")
+                fixture.events.append(("handoff.ordered", since))
+
+            def __exit__(self, *args):
+                pass
+
+        return Observation()
+
     def run(self):
         with ExitStack() as patches:
             patches.enter_context(patch.object(dual_display, "TestBed", self.bed))
@@ -136,6 +154,7 @@ class DualDisplayScenario(Scenario):
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kw: self.route(avr, player, **kw)))
+            patches.enter_context(patch.object(dual_display, "ActivityHandoff", self.handoff))
             dual_display.test_dual_display()
 
 
@@ -188,6 +207,11 @@ class DualDisplayScenarioTests(unittest.TestCase):
                 for shared in (avr, player):
                     self.assertIn((shared, PowerState.ON), action.state_checks)
         stops = [action for action in scenario.actions if action.kind == "standby"]
+        self.assertEqual([row[1] for row in scenario.events if row[0] == "handoff.ordered"],
+                         [action for action in starts if action.previous is not None])
+        observations = [row[1:] for row in scenario.events if row[0] == "handoff.observe"]
+        self.assertEqual(observations, [(tv, projector, (avr, player), avr, player),
+                                        (projector, tv, (avr, player), avr, player)])
         self.assertEqual({action.display for action in stops}, {tv, projector})
         for action in stops:
             self.assertEqual({c for c, _, command, _ in action.power_checks if command == "standby"},

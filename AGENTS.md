@@ -389,10 +389,11 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The framework has
-nine functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
+eleven functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
 playback device; `activity.py`, which reuses that scan to create, start and
-standby an activity, checks explicit switch input, and tests key routing with
-equipment on the main and on `amity-dut-2`; `source_theft.py`, which adds a second playback device
+repair the same activity before standby, checks explicit switch input, and tests
+key routing and disconnected-client hold cleanup with equipment on the main
+and on `amity-dut-2`; `source_theft.py`, which adds a second playback device
 on AVR input 2 to check recovery from its Active Source announcement while the
 input-1 player's activity remains selected; `add_amity.py`, which uses
 `amity-dut` to add, verify, remove and reset the second board `amity-dut-2`;
@@ -401,11 +402,53 @@ exercises one TV/AVR/player triple on each owner in both activity/theft
 directions, whose three-owner case adds `amity-dut-2` and `amity-dut-3`, and
 whose four-owner case also adds `amity-dut-4`; plus `dual-display.py` for a
 TV/projector activity and `source-theft.py` for isolated-source suppression.
+`qualified_names.py` verifies exact routing of identical equipment names and
+addresses on two owners, and `missing_equipment.py` verifies saved source
+retention, numeric switch fallback, actual lookup cooldown and passive return.
 `--test consortium` selects the two-owner scenario;
 `--test consortium_three_duts` selects the three-owner scenario. `--test all`
-runs all nine scenarios, comprising twelve test cases because `activity` has four.
+runs all eleven scenarios, comprising sixteen test cases because `activity` has six.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
+
+The stricter dual-display handoff observes original physical frames before the
+action, rejects transient power commands to shared AVR/player equipment, and
+requires completed old-display Standby, selected-display power-on and AVR
+routing in that order. Drain each involved receive stream through the action
+assertion boundary, and account for per-wire SSH clock uncertainty. Complete
+Linux RX timestamps establish frame-completion order; do not claim proof of
+cross-wire first-edge timing or non-overlap.
+
+The missing-equipment scenario must establish a genuinely absent source cache
+entry through explicit scan after withdrawing its responder. Repeated actual
+starts retain the selector and use switch fallback without cooldown scans;
+wait the real 120 seconds, prove expiry did not launch deferred work, then
+require a new miss to scan only the back side and preserve the front cache.
+Passive return requires physical announcement/targeted identity evidence and
+the correct UI observation without another full scan; unchanged activity power,
+routing and keys must work afterward. These are test evidence requirements,
+not new firmware availability gates.
+
+The expanded sixteen-case physical run on 1 November passed fifteen cases;
+missing-equipment recovery failed its final Select assertion with a one-attempt
+CEC LineError. An unchanged diagnostic retry also had a local-key LineError and
+was interrupted after cleanup; its USB capture unexpectedly reset the main.
+Do not claim a complete-suite pass from these runs. Preserve their evidence in
+`test-results/functional-expansion-2026-11-01/` and earlier results with their
+original scope. Final saved configuration and pairing preservation checks pass.
+
+On 2 November, all sixteen cases passed on exact firmware 0.1.129 on all four
+bench boards. The SDK's 256-byte C2M cache-writeback chunks address the measured
+CEC timer delay without changing CEC attempts or activity algorithms. Lookup
+evidence distinguishes announcement-correlated identity queries from scans;
+boot/generation and unannounced-query checks remain mandatory. All 35 final
+verification checks pass, including twelve member removal/reset receipts,
+twenty-four test-owned activity cleanups, retained main boot/configuration/
+pairings and all twenty-four theft responses within 66.899–69.600 ms. Evidence
+is `test-results/functional-verification-2026-11-02b/all.json` and
+`all-verification.json`. The native host suite and all 486 framework unit tests
+also pass. Preserve the earlier failures and the separately interrupted
+974-pair stress run with their original scope.
 
 Keep enrollment/scan/activity operation deadlines separate from CEC assertions.
 `RunConfig.timeout` / `--timeout` defaults to 180 seconds, based on the measured

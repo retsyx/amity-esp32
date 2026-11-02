@@ -44,6 +44,7 @@ bool Engine::begin(const Frame &frame, uint64_t now, bool retry, ExecutionFence 
     requested_ = now;
     free_time_ = retry ? 7200 : 16800;
     result_ = TxResult::Pending;
+    diagnostic_ = {};
     return true;
 }
 
@@ -51,6 +52,29 @@ void Engine::fail(TxResult result) {
     transmitting_ = pending_ = false;
     result_ = result;
     if (result == TxResult::ArbitrationLost) self_rx_ = false;
+}
+
+void Engine::line_error(LineErrorReason reason, uint64_t now, uint64_t gap, bool high) {
+    const uint64_t elapsed = now - tx_start_;
+    diagnostic_.at_us = now;
+    diagnostic_.tick_gap_us = gap;
+    diagnostic_.elapsed_us = elapsed > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(elapsed);
+    diagnostic_.reason = reason;
+    diagnostic_.line_high = high;
+    if (elapsed < 4500) {
+        diagnostic_.slot = -1;
+        diagnostic_.within_us = static_cast<uint16_t>(elapsed);
+    } else if (elapsed - 4500 < uint32_t{tx_.size} * 2400 * 10) {
+        // Preserve the ISR's 32-bit division; no 64-bit compiler helper may
+        // enter this wire path while the flash cache is unavailable.
+        const auto data_elapsed = static_cast<uint32_t>(elapsed - 4500);
+        diagnostic_.slot = static_cast<int16_t>(data_elapsed / 2400);
+        diagnostic_.within_us = static_cast<uint16_t>(data_elapsed % 2400);
+    } else {
+        diagnostic_.slot = -2;
+        diagnostic_.within_us = 0;
+    }
+    fail(TxResult::LineError);
 }
 
 void Engine::receive_tick(uint64_t now, bool high) {
@@ -121,9 +145,10 @@ void Engine::receive_tick(uint64_t now, bool high) {
 bool Engine::tick(uint64_t now, bool high) {
     // Timing discontinuities (for example an unexpectedly masked interrupt)
     // invalidate a frame instead of emitting a malformed continuation.
-    if (last_tick_ && now - last_tick_ > 200) {
+    const uint64_t gap = last_tick_ ? now - last_tick_ : 0;
+    if (last_tick_ && gap > 200) {
         receiving_ = ack_drive_ = false;
-        if (transmitting_) fail(TxResult::LineError);
+        if (transmitting_) line_error(LineErrorReason::TickGap, now, gap, high);
     }
     last_tick_ = now;
     receive_tick(now, high);
@@ -175,7 +200,7 @@ bool Engine::tick(uint64_t now, bool high) {
     }
     // Every bit must return high by 1.75 ms, including ACK. Detect a stuck
     // line before proceeding to the next slot.
-    if (within >= 1800 && !high) { fail(TxResult::LineError); return false; }
+    if (within >= 1800 && !high) { line_error(LineErrorReason::LowLine, now, gap, high); return false; }
     return within < (one ? 600u : 1500u);
 }
 
@@ -196,4 +221,5 @@ TxResult Engine::take_result() {
     result_ = TxResult::Pending;
     return result;
 }
+const TxDiagnostic &Engine::diagnostic() const { return diagnostic_; }
 }

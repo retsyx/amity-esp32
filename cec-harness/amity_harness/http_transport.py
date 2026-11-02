@@ -4,6 +4,7 @@ import http.client
 import io
 import logging
 import math
+import socket
 import threading
 import time
 from urllib.error import HTTPError
@@ -202,3 +203,52 @@ class HTTPSOpener:
             raise
         finally:
             self._lock.release()
+
+    def disconnect_after(self, request, after_send, *, timeout=15):
+        """Send once, observe admission externally, then close before the reply.
+
+        ``after_send`` must be bounded and must not call this opener. This is
+        used to exercise an HTTP client's disappearance during a bounded key
+        hold. No response is consumed, and the mutation is never replayed.
+        """
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("HTTP timeout must be positive and finite")
+        if not callable(after_send):
+            raise TypeError("An external admission observer is required")
+        parsed = urlsplit(request.full_url)
+        if (parsed.scheme != "https" or parsed.hostname != self._host or (parsed.port or 443) != self._port
+                or parsed.username or parsed.password or parsed.fragment):
+            raise ValueError("HTTP request must use this DUT's HTTPS origin")
+        deadline = self._clock() + timeout
+        if not self._lock.acquire(timeout=timeout):
+            raise TimeoutError("HTTP transport deadline expired")
+        try:
+            self._budget(deadline)
+            if self._last_used is not None and self._clock() - self._last_used >= self._idle_timeout:
+                self._drop("idle_expired")
+            if self._connection is None:
+                remaining = self._budget(deadline)
+                self._connection = self._factory(self._host, self._port, timeout=remaining, context=self._context)
+                self._connection.connect()
+                self._connection.sock = _DeadlineSocket(self._connection.sock, self._clock, deadline)
+                self._budget(deadline)
+                event("http.connection.opened", level=logging.DEBUG, dut=self._dut)
+            headers = dict(request.header_items())
+            target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+            self._connection.request(request.get_method(), target, body=request.data, headers=headers)
+            self._budget(deadline)
+            result = after_send()
+            self._budget(deadline)
+            return result
+        finally:
+            try:
+                if self._connection is not None and self._connection.sock is not None:
+                    try:
+                        self._connection.sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        # An already closed peer still represents a lost client.
+                        pass
+                self._drop("client_disconnect")
+            finally:
+                self._lock.release()

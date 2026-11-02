@@ -26,6 +26,19 @@ struct Frame {
 };
 enum class TxResult : uint8_t { Pending, Success, Nack, ArbitrationLost, LineError, Timeout, Cancelled, Expired };
 
+// Numeric wire evidence only. A LineError can be a missed timer deadline or
+// a sampled low line; it is not by itself proof of faulty external wiring.
+enum class LineErrorReason : uint8_t { None, TickGap, LowLine, BeginRejected };
+struct TxDiagnostic {
+    uint64_t at_us = 0, tick_gap_us = 0;
+    uint32_t elapsed_us = 0;
+    // -1 is the start bit; -2 means a delay beyond the frame's data slots.
+    int16_t slot = -1;
+    uint16_t within_us = 0;
+    LineErrorReason reason = LineErrorReason::None;
+    bool line_high = false;
+};
+
 // Local task/ISR fencing only. The stable generation must outlive every queued
 // and in-flight operation. Firmware requires it to reside in internal RAM.
 struct ExecutionFence {
@@ -69,11 +82,15 @@ public:
     bool CEC_IRAM take_received(Frame &frame);
     bool CEC_IRAM take_observation(ReceiveObservation &observation);
     TxResult CEC_IRAM take_result();
+    // Retained through result consumption, until the next accepted begin().
+    // The bus copies it with the terminal result under the same ISR lock.
+    const TxDiagnostic &CEC_IRAM diagnostic() const;
     bool busy() const { return pending_ || transmitting_; }
     // Sticky for this attempt, including terminal failure after the first edge.
-    bool started() const { return tx_started_; }
+    bool CEC_IRAM started() const { return tx_started_; }
 private:
     void CEC_IRAM fail(TxResult result);
+    void CEC_IRAM line_error(LineErrorReason reason, uint64_t now, uint64_t gap, bool high);
     void CEC_IRAM receive_tick(uint64_t now, bool high);
     ReceivePolicy policy_{}, pending_policy_{};
     bool policy_pending_ = false;
@@ -93,5 +110,6 @@ private:
     uint32_t free_time_ = 12000;
     int tx_slot_ = -1;
     TxResult result_ = TxResult::Pending;
+    TxDiagnostic diagnostic_{};
 };
 }

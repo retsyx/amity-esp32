@@ -46,6 +46,11 @@ struct Bus::Impl {
         bool requires_previous_start = false;
     };
     struct BatchState { bool used = false; uint8_t remaining = 0; bool started[tx_capacity]{}; };
+    struct AttemptResult {
+        TxResult outcome = TxResult::Pending;
+        TxDiagnostic diagnostic{};
+        bool started = false;
+    };
     Engine engine;
     gpio_num_t gpio = GPIO_NUM_NC;
     uint64_t pin_mask = 0;
@@ -62,7 +67,7 @@ struct Bus::Impl {
     BatchState batches[tx_capacity]{}; // Dependency/completion metadata only, never frames.
     uint8_t* rx_storage = nullptr;
     uint8_t* tx_storage = nullptr;
-    uint8_t result_storage[sizeof(TxResult)]{};
+    uint8_t result_storage[sizeof(AttemptResult)]{};
     Statistics stats;
     bool started = false;
     bool attempt_pending = false;
@@ -75,7 +80,8 @@ struct Bus::Impl {
     void service();
     bool reserve_slots(size_t count);
     void log_fifo_full(const Frame&) const;
-    void log_tx_failure(const Work&, TxResult outcome, unsigned attempts, bool started) const;
+    void log_tx_failure(const Work&, TxResult outcome, unsigned attempts, bool started,
+                        const TxDiagnostic&) const;
     bool enqueue(const Work&);
     void free_slots(size_t count);
     bool dependency_ready(const Work& work);
@@ -201,8 +207,10 @@ bool Bus::Impl::Runtime::tick(gptimer_handle_t, const gptimer_alarm_event_data_t
         }
         const auto status = p->engine.take_result();
         if (status != TxResult::Pending) {
-            // One result slot is reserved for each in-flight operation.
-            xQueueSendFromISR(p->result, &status, &wake);
+            // The existing one-result slot owns a complete numeric snapshot.
+            // A later begin() or tick cannot overwrite the task's evidence.
+            AttemptResult completed{status, p->engine.diagnostic(), p->engine.started()};
+            xQueueSendFromISR(p->result, &completed, &wake);
             if (status == TxResult::ArbitrationLost) ++p->stats.arbitration_losses;
             if (status == TxResult::LineError) ++p->stats.line_errors;
         }
@@ -240,7 +248,8 @@ void Bus::Impl::log_fifo_full(const Frame& frame) const {
     ESP_LOGW("cec", "TX dropped: FIFO full (GPIO %d, %u bytes: %s)",
              int(gpio), unsigned(frame.size), bytes);
 }
-void Bus::Impl::log_tx_failure(const Work& work, TxResult outcome, unsigned attempts, bool started) const {
+void Bus::Impl::log_tx_failure(const Work& work, TxResult outcome, unsigned attempts, bool started,
+                              const TxDiagnostic& diagnostic) const {
     // Poll failures are ordinary address discovery. Data frames retain the
     // mechanical result, without interpreting their opcode or changing work.
     if (work.frame.size <= 1 || outcome == TxResult::Success) return;
@@ -257,6 +266,23 @@ void Bus::Impl::log_tx_failure(const Work& work, TxResult outcome, unsigned atte
     }
     char bytes[16 * 3]{};
     format_frame(work.frame, bytes);
+    if (outcome == TxResult::LineError) {
+        const char* reason = "None";
+        switch (diagnostic.reason) {
+        case LineErrorReason::None: break;
+        case LineErrorReason::TickGap: reason = "TickGap"; break;
+        case LineErrorReason::LowLine: reason = "LowLine"; break;
+        case LineErrorReason::BeginRejected: reason = "BeginRejected"; break;
+        }
+        const int slot = diagnostic.slot;
+        ESP_LOGW("cec", "TX failed (GPIO %d, %u bytes: %s, result %s, attempts %u, started %s, reason %s, at_us %llu, gap_us %llu, elapsed_us %u, slot %d, byte %d, bit %d, within_us %u, line %s)",
+                 int(gpio), unsigned(work.frame.size), bytes, result, attempts, started ? "true" : "false", reason,
+                 static_cast<unsigned long long>(diagnostic.at_us),
+                 static_cast<unsigned long long>(diagnostic.tick_gap_us), unsigned(diagnostic.elapsed_us),
+                 slot, slot < 0 ? slot : slot / 10, slot < 0 ? slot : slot % 10,
+                 unsigned(diagnostic.within_us), diagnostic.line_high ? "high" : "low");
+        return;
+    }
     ESP_LOGW("cec", "TX failed (GPIO %d, %u bytes: %s, result %s, attempts %u, started %s)",
              int(gpio), unsigned(work.frame.size), bytes, result, attempts, started ? "true" : "false");
 }
@@ -330,15 +356,21 @@ void Bus::Impl::service() {
         }
         auto& r = runtime(); const uint64_t now = esp_timer_get_time();
         TxResult outcome = TxResult::Pending;
+        TxDiagnostic diagnostic{};
         if (!attempt && !dependency_ready(work)) outcome = TxResult::Cancelled;
         if (attempt_pending) {
-            if (xQueueReceive(result, &outcome, 0) != pdTRUE) {
+            AttemptResult completed;
+            if (xQueueReceive(result, &completed, 0) != pdTRUE) {
                 if (now - attempt_started_us < 1600000) return;
                 outcome = TxResult::Timeout;
+                portENTER_CRITICAL(&r.lock);
+                work_started = work_started || engine.started();
+                portEXIT_CRITICAL(&r.lock);
+            } else {
+                outcome = completed.outcome;
+                diagnostic = completed.diagnostic;
+                work_started = work_started || completed.started;
             }
-            portENTER_CRITICAL(&r.lock);
-            work_started = work_started || engine.started();
-            portEXIT_CRITICAL(&r.lock);
             attempt_pending = false;
         }
         const bool terminal = outcome == TxResult::Success || outcome == TxResult::Cancelled || outcome == TxResult::Expired;
@@ -355,6 +387,13 @@ void Bus::Impl::service() {
                 if (begun) { ++attempt; attempt_pending = true; attempt_started_us = now; return; }
                 outcome = !fence_current(fence) ? TxResult::Cancelled :
                     fence.expires_at_us && uint64_t(esp_timer_get_time()) >= fence.expires_at_us ? TxResult::Expired : TxResult::LineError;
+                if (outcome == TxResult::LineError) {
+                    diagnostic = {};
+                    diagnostic.reason = LineErrorReason::BeginRejected;
+                    diagnostic.at_us = esp_timer_get_time();
+                    const uint64_t levels = uint64_t{GPIO.in} | (uint64_t{GPIO.in1.val} << 32);
+                    diagnostic.line_high = (levels & pin_mask) != 0;
+                }
             }
         }
         portENTER_CRITICAL(&r.lock);
@@ -362,7 +401,7 @@ void Bus::Impl::service() {
         else if (outcome == TxResult::Cancelled || outcome == TxResult::Expired) ++stats.cancelled;
         else if (!(work.frame.size == 1 && outcome == TxResult::Nack)) ++stats.tx_errors;
         portEXIT_CRITICAL(&r.lock);
-        log_tx_failure(work, outcome, attempt, work_started);
+        log_tx_failure(work, outcome, attempt, work_started, diagnostic);
         complete_work(*this, work, outcome, work_started);
         active = false;
     }
@@ -400,7 +439,7 @@ esp_err_t Bus::start(int gpio, QueueProfile) {
     if (!p.rx_storage || !p.tx_storage) { xSemaphoreGive(r.lifecycle); return ESP_ERR_NO_MEM; }
     p.rx = xQueueCreateStatic(rx_depth, sizeof(ReceiveObservation), p.rx_storage, &p.rx_control);
     p.tx = xQueueCreateStatic(tx_depth, sizeof(Impl::Work), p.tx_storage, &p.tx_control);
-    p.result = xQueueCreateStatic(1, sizeof(TxResult), p.result_storage, &p.result_control);
+    p.result = xQueueCreateStatic(1, sizeof(Impl::AttemptResult), p.result_storage, &p.result_control);
     p.admission = xSemaphoreCreateMutexStatic(&p.admission_control);
     p.completions = xQueueCreateStatic(tx_capacity, sizeof(Completion), p.completion_storage, &p.completions_control);
     p.completion_slots = xSemaphoreCreateCountingStatic(tx_capacity, tx_capacity, &p.completion_slots_control);

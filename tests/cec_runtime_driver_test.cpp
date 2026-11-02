@@ -20,14 +20,15 @@ static std::vector<Semaphore*> semaphores;
 static std::vector<std::string> warning_logs;
 void fixture_log_warning(const char* tag, const char* format, ...) {
     assert(std::strcmp(tag, "cec") == 0 && critical_depth == 0);
-    char message[192]; va_list args; va_start(args, format);
+    char message[384]; va_list args; va_start(args, format);
     std::vsnprintf(message, sizeof(message), format, args); va_end(args);
     unsigned locked_mutexes = 0;
     for (const auto* semaphore : semaphores)
         if (semaphore->mutex && !semaphore->available) ++locked_mutexes;
     // Worker diagnostics retain the lifecycle lock protecting port lifetime.
     // Admission/drop logging must still run with every mutex released.
-    assert(locked_mutexes == (std::strncmp(message, "TX failed (", 11) == 0 ? 1u : 0u));
+    const bool worker_diagnostic = std::strncmp(message, "TX failed (", 11) == 0;
+    assert(locked_mutexes == (worker_diagnostic ? 1u : 0u));
     warning_logs.emplace_back(message);
 }
 struct Task { void (*code)(void *); void *arg; bool pumping = false; };
@@ -261,8 +262,49 @@ static void terminal_failure_diagnostics_tests() {
             if (!delayed_tick && pin_edges[pin] > line_error_edges) { now += 250; delayed_tick = true; }
         };
         assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion); before_tick = {};
-        assert(delayed_tick && completion.result.load() == cec::TxResult::LineError && warning_logs.size() == ++logged);
-        assert(warning_logs.back() == "TX failed (GPIO 36, 3 bytes: 40 44 6d, result LineError, attempts 1, started true)");
+        ++logged;
+        assert(delayed_tick && completion.result.load() == cec::TxResult::LineError && warning_logs.size() == logged);
+        const auto gap_failure = warning_logs.back();
+        assert(gap_failure.find("result LineError, attempts 1, started true, reason TickGap, at_us ") != std::string::npos);
+        assert(gap_failure.find(", gap_us 300, elapsed_us 300, slot -1, byte -1, bit -1, within_us 300, line low)") != std::string::npos);
+
+        // A completed attempt's diagnostic must survive later ISR ticks until
+        // the task consumes its existing result slot. No task/ISR logging is
+        // permitted inside the wire lock or its callback.
+        const auto stale_result_edges = pin_edges[pin];
+        bool delayed_snapshot = false;
+        before_tick = [&] {
+            if (!delayed_snapshot && pin_edges[pin] > stale_result_edges) { now += 250; delayed_snapshot = true; }
+        };
+        assert(bus.send_async_guarded(press, {}, completion, 1));
+        pump();
+        for (unsigned pass = 0; pass < 500 && !delayed_snapshot; ++pass) step();
+        assert(delayed_snapshot && completion.result.load() == cec::TxResult::Pending);
+        const auto failure_at = now;
+        before_tick = {};
+        for (unsigned pass = 0; pass < 100; ++pass) step();
+        finish(completion);
+        ++logged;
+        assert(completion.result.load() == cec::TxResult::LineError && warning_logs.size() == logged);
+        assert(warning_logs.back().find("at_us " + std::to_string(failure_at) + ", gap_us 300") != std::string::npos);
+
+        // A peer can also keep a normally zero data bit low after the
+        // transmitter releases it. Here every callback remains exactly 50us.
+        const auto held_line_edges = pin_edges[pin];
+        uint64_t held_line_start = 0;
+        before_tick = [&] {
+            if (!held_line_start && pin_edges[pin] > held_line_edges) held_line_start = now - 50;
+            if (held_line_start && now >= held_line_start + 5900) {
+                external_low |= mask;
+                gpio_set_level(pin, (output_low & mask) == 0);
+            }
+        };
+        assert(bus.send_async_guarded(press, {}, completion, 1)); finish(completion); before_tick = {};
+        ++logged;
+        assert(completion.result.load() == cec::TxResult::LineError && warning_logs.size() == logged);
+        assert(warning_logs.back().find("reason LowLine, at_us ") != std::string::npos);
+        assert(warning_logs.back().find(", gap_us 50, elapsed_us 6300, slot 0, byte 0, bit 0, within_us 1800, line low)") != std::string::npos);
+        external_low &= ~mask; gpio_set_level(pin, 1); step();
 
         cec::Frame longest{}; longest.size = 16;
         for (unsigned i = 0; i < 16; ++i) longest.data[i] = i;
@@ -271,6 +313,24 @@ static void terminal_failure_diagnostics_tests() {
         assert(warning_logs.back() == "TX failed (GPIO 36, 16 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f, result Nack, attempts 1, started true)");
     }
     assert(!timer && tasks.empty() && !output_low && !external_low);
+}
+
+static void begin_rejection_diagnostics_tests() {
+    cec::Bus bus; assert(bus.start(36) == ESP_OK);
+    const cec::Frame broadcast{{0x4f, 0x36}, 2};
+    cec::TxCompletion completion;
+    assert(bus.send_async_guarded(broadcast, {}, completion, 1));
+    // Simulate a stopped callback source. The worker's existing timeout does
+    // not reset the still-pending Engine, so another begin must be diagnosed
+    // separately from either active-wire LineError path.
+    timer->running = false;
+    finish(completion);
+    assert(completion.result.load() == cec::TxResult::Timeout);
+    assert(bus.send_async_guarded(broadcast, {}, completion, 1));
+    finish(completion);
+    assert(completion.result.load() == cec::TxResult::LineError);
+    assert(warning_logs.back().find("result LineError, attempts 0, started false, reason BeginRejected, at_us ") != std::string::npos);
+    assert(warning_logs.back().find(", gap_us 0, elapsed_us 0, slot -1, byte -1, bit -1, within_us 0, line high)") != std::string::npos);
 }
 
 static void async_completion_contract_tests() {
@@ -619,6 +679,7 @@ int main() {
     assert(!timer && tasks.empty() && cec::Bus::runtime_statistics().active_ports == 0);
     caller_attempt_tests();
     terminal_failure_diagnostics_tests();
+    begin_rejection_diagnostics_tests();
     async_completion_contract_tests();
     atomic_batch_tests();
     full_fifo_tests();

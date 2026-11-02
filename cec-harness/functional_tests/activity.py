@@ -3,6 +3,7 @@
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent,
                            Key, PowerState)
 from functional_tests.hdmi_scan import scanned_devices
+from amity_harness.transitions import observe_no_standby
 
 
 def test_activity():
@@ -15,6 +16,20 @@ def test_activity():
             started = activity.start()
             for component in components:
                 component.wait_for_power(PowerState.ON, since=started)
+            avr.wait_for_input(player, since=started)
+            activity.assert_active()
+
+            # Disturb the fixture, then reselect this exact saved activity.
+            # Only fresh DUT commands can prove that the repair worked.
+            player.standby()
+            avr.active_input = 0x1200
+            with observe_no_standby(*components) as preserved:
+                repaired = activity.start()
+                for component in components:
+                    component.wait_for_power(PowerState.ON, since=repaired)
+                avr.wait_for_input(player, since=repaired)
+                activity.assert_active()
+                preserved.assert_preserved(since=repaired)
 
             stopped = activity.standby()
             for component in components:
@@ -65,7 +80,29 @@ def test_activity_keys():
         _exercise_keys(dut, tv, avr, player)
 
 
-def test_activity_keys_secondary():
+def _exercise_disconnected_key(dut, tv, avr, player):
+    with dut.create_activity("Functional disconnected hold", display=tv, source=player, audio=avr) as activity:
+        started = activity.start()
+        for component in (tv, avr, player):
+            component.wait_for_power(PowerState.ON, since=started)
+        avr.wait_for_input(player, since=started)
+        activity.assert_active()
+
+        dut.press_key_disconnected(Key.VOLUME_UP, avr)
+        dut.press_key(Key.SELECT).assert_received_by(player)
+        activity.assert_active()
+
+        stopped = activity.standby()
+        for component in (tv, avr, player):
+            component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+
+
+def test_activity_keys_disconnected():
+    with scanned_devices() as (dut, tv, avr, player):
+        _exercise_disconnected_key(dut, tv, avr, player)
+
+
+def _secondary_keys(exercise):
     main, secondary = DUT("amity-dut"), DUT("amity-dut-2")
     tentacle = secondary.tentacle(0)
     tv = TvComponent(tentacle.front, "Key TV")
@@ -81,5 +118,13 @@ def test_activity_keys_secondary():
             scan.assert_on(tv, tentacle.front)
             scan.assert_on(avr, tentacle.back)
             scan.assert_on(player, tentacle.back)
-            _exercise_keys(main, tv, avr, player)
+            exercise(main, tv, avr, player)
             member.assert_connected()
+
+
+def test_activity_keys_secondary():
+    _secondary_keys(_exercise_keys)
+
+
+def test_activity_keys_disconnected_secondary():
+    _secondary_keys(_exercise_disconnected_key)
