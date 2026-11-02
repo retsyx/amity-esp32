@@ -269,10 +269,25 @@ class RunnerTests(unittest.TestCase):
                     "test_activity_keys_disconnected", "test_activity_keys_disconnected_secondary",
                     "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
-                    "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment"]
+                    "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
+                    "test_removal_cascade"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])
+
+    def test_removal_cascade_can_be_selected_without_other_scenarios(self):
+        called = []
+
+        def capture(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": True, "testbeds": []}
+
+        arguments = ["run.py", "--test", "removal_cascade", "--credentials", "/private/main.json"]
+        with patch("sys.argv", arguments), patch("amity_harness.runner.run_test", side_effect=capture), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+            runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
+        self.assertEqual(exited.exception.code, 0)
+        self.assertEqual(called, ["test_removal_cascade"])
 
     def test_three_dut_consortium_can_be_selected_without_other_scenarios(self):
         called = []

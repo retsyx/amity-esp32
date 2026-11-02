@@ -43,6 +43,10 @@ membership behavior remains unchanged.
 - `functional_tests/missing_equipment.py`: retains a missing source selection,
   verifies switch fallback and lookup-scan cooldown, then uses its passive
   return without editing the activity.
+- `functional_tests/removal_cascade.py`: removes a member with four saved
+  activities referencing its source, display, audio and switch equipment,
+  rejects a stale confirmation, and verifies exact cascading deletion and
+  preservation of unrelated local activities and configuration.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -829,6 +833,39 @@ source hashes, deployment checks and focused recovery result. This qualifies
 the exercised simulated CEC topologies; the interrupted stress result above
 remains separate.
 
+## Removal with referenced equipment
+
+`functional_tests/removal_cascade.py` scans TV/AVR/player triples on the main
+and a newly added member. Four saved activities independently select member
+equipment as source, display, audio or switch, while a local activity keeps
+only main equipment. The test reviews Remove, creates another unrelated local
+activity, and requires the old confirmation to be rejected without deleting
+configuration or changing membership. A fresh review must identify the exact
+four affected activities before removal is confirmed.
+
+Confirmation must delete those activities, their ordering references, the
+member's equipment, owner record, name and adapter settings, and acknowledge
+its scheduled reset. Unrelated records and slot metadata remain unchanged;
+affected activity slots retain only ordinary default tombstones. The surviving
+local activity then proves fresh physical power, routing and standby commands.
+Dependent activity contexts close only after the cascade has been verified,
+so ordinary fixture cleanup cannot conceal a missing firmware cascade. Select
+`--test removal_cascade` for this case.
+
+On 2 November 2026, all seventeen functional cases passed on unchanged firmware
+0.1.129. The run acknowledged thirteen member resets and cleaned up thirty
+fixture activities. After extending report serialization to retain the new
+cascade proof, a focused rerun also passed with the exact stale rejection,
+four affected IDs, saved-data hashes, settings purge and reset acknowledgment
+recorded. All 41 combined evidence/preservation checks and all 529 integrated
+framework unit tests pass. The main's boot, configuration, slots and pairings
+are retained. Evidence is `test-results/removal-cascade-2026-11-02c/all.json`
+and `all-combined-verification.json`; the final focused proof, source hashes
+and unit log are under `test-results/removal-cascade-2026-11-02d/`. The full
+run used an isolated snapshot while separate status-LED work was in progress;
+the final focused run and unit suite include that subsequently committed work.
+No firmware changes or DUT update were needed.
+
 ## Run functional tests
 
 `activity.py` exercises remote key routing twice: once with the TV/AVR/player
@@ -841,8 +878,8 @@ later operand-free User Control Released from the scan-proven owner initiator.
 It rejects virtual/stale/modified evidence and the same key sent to another
 fixture recipient, and rechecks the main's activity/boot and exact member boot.
 The Power button must select system Standby and produce fresh physical Standby
-commands at all three selected devices. Fixture activities and equipment close
-before member removal/reset.
+commands at all three selected devices. These key cases close their fixture
+activities and equipment before member removal/reset.
 
 `DUT.press_key(Key.SELECT)` wraps the shipping authenticated `POST /api/key`.
 Its `duration_ms` defaults to zero for a complete tap and accepts at most 5000
@@ -886,7 +923,8 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test source_theft_isolated` for suppression ahead of the AVR,
 `--test qualified_names` for identical equipment identities on two owners,
 `--test missing_equipment` for source disappearance, cooldown and passive return,
-or `--test all` for all eleven registered scenarios (sixteen
+`--test removal_cascade` for stale removal confirmation and exact activity/member cleanup,
+or `--test all` for all twelve registered scenarios (seventeen
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

@@ -61,7 +61,10 @@ class ActivityHandoffTests(unittest.TestCase):
 
     def commands(self, fixture, *, order=(0, 1, 2), transport="wire", timestamp=None):
         observation, action, previous, selected, avr, player, session = fixture
-        times = [time.monotonic_ns() for _ in range(3)] if timestamp is None else [timestamp] * 3
+        # Consecutive host-clock reads may be equal at its actual resolution.
+        # Give the simulated completions explicit distinct instants instead.
+        start = time.monotonic_ns()
+        times = [start + index for index in range(3)] if timestamp is None else [timestamp] * 3
         self.receive(previous, action, 0x36, timestamp=times[order[0]], transport=transport)
         self.receive(selected, action, 0x04, timestamp=times[order[1]], transport=transport)
         self.receive(avr, action, 0x86, player.address.physical.to_bytes(2, "big"),

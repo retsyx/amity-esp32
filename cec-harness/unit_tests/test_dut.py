@@ -201,6 +201,24 @@ class DUTTests(unittest.TestCase):
         self.assertNotIn("device_choices", payload)
         self.assertIn("device_choices", configuration)
 
+    def test_http_error_preserves_typed_code_without_logging_response_or_credentials(self):
+        for code in ("stale_removal", None, {"unexpected": "PRIVATE_BODY"}):
+            with self.subTest(code_type=type(code).__name__):
+                payload = {"code": code, "error": "Activities changed", "password": "PRIVATE_BODY"}
+                error = HTTPError("https://amity.local/api/membership/remove", 409, "Conflict", {},
+                                  io.BytesIO(json.dumps(payload).encode()))
+                opener = Opener({"token": "PRIVATE_BEARER"}, error)
+                with patch("amity_harness.dut.event") as events:
+                    dut = DUT("amity-dut", wiring=self.wiring, url="https://amity.local",
+                              password="PRIVATE_PASSWORD", opener=opener)
+                    with self.assertRaises(AmityHTTPError) as failure:
+                        dut.request("/api/membership/remove", {"request_id": "1" * 32})
+                self.assertEqual(failure.exception.status, 409)
+                self.assertEqual(failure.exception.code, code if isinstance(code, str) else None)
+                self.assertTrue(error.closed)
+                self.assertEqual(len(opener.requests), 2)
+                self.assertNotIn("PRIVATE_", str(events.call_args_list))
+
     def test_reset_always_releases_gpio_including_cancelled_hold(self):
         class GPIO:
             def __init__(self):

@@ -10,6 +10,7 @@ from functional_tests.activity import (test_activity, test_activity_switch_input
                                        test_activity_keys_disconnected_secondary)
 from functional_tests.qualified_names import test_qualified_names
 from functional_tests.missing_equipment import test_missing_equipment
+from functional_tests.removal_cascade import test_removal_cascade
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
 from functional_tests.source_theft import test_source_theft
@@ -31,4 +32,5 @@ if __name__ == "__main__":
                            "dual_display": test_dual_display,
                            "source_theft_isolated": test_source_theft_isolated,
                            "qualified_names": test_qualified_names,
-                           "missing_equipment": test_missing_equipment}))
+                           "missing_equipment": test_missing_equipment,
+                           "removal_cascade": test_removal_cascade}))

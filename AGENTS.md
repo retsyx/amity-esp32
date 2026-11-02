@@ -389,7 +389,7 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The framework has
-eleven functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
+twelve functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
 playback device; `activity.py`, which reuses that scan to create, start and
 repair the same activity before standby, checks explicit switch input, and tests
 key routing and disconnected-client hold cleanup with equipment on the main
@@ -405,11 +405,28 @@ TV/projector activity and `source-theft.py` for isolated-source suppression.
 `qualified_names.py` verifies exact routing of identical equipment names and
 addresses on two owners, and `missing_equipment.py` verifies saved source
 retention, numeric switch fallback, actual lookup cooldown and passive return.
+`removal_cascade.py` removes an added member while four saved activities still
+reference its equipment independently as source, display, audio and switch.
+It rejects a stale confirmation after another local activity is created, then
+requires a fresh review to delete exactly the affected activities and member
+records while preserving unrelated configuration, ordering and slot metadata.
+The retained local activity must still deliver fresh power/routing and standby
+commands after removal. Never close the dependent activities before confirming
+that removal; ordinary membership cleanup remains conservative.
 `--test consortium` selects the two-owner scenario;
 `--test consortium_three_duts` selects the three-owner scenario. `--test all`
-runs all eleven scenarios, comprising sixteen test cases because `activity` has six.
+runs all twelve scenarios, comprising seventeen test cases because `activity` has six.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
+
+The seventeen-case run on 2 November passed on unchanged firmware 0.1.129,
+including stale removal rejection and an exact four-role cascade before any
+dependent fixture cleanup. All 41 combined evidence/preservation checks and
+529 framework unit tests pass. The final focused cascade rerun retains the
+complete serialized review/deletion/settings/reset proof. Preserve the full
+run under `test-results/removal-cascade-2026-11-02c/` and final focused evidence
+under `test-results/removal-cascade-2026-11-02d/`, with their recorded source
+provenance and scope. No firmware update was required for this test-only change.
 
 The stricter dual-display handoff observes original physical frames before the
 action, rejects transient power commands to shared AVR/player equipment, and

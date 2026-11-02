@@ -38,7 +38,16 @@ _CONTROL_OBSERVATION_FIELDS = frozenset(("kind", "owner_ids", "wires", "since_mo
                                         "observed_frame_count", "started_monotonic_ns", "owner_boots", "checks",
                                         "component", "owner", "gpio", "deadline_monotonic_ns",
                                         "announcement_frame", "announcement_wire_timestamp_ns",
-                                        "query_frame", "query_wire_timestamp_ns", "reply_frame", "reply_wire_timestamp_ns"))
+                                        "query_frame", "query_wire_timestamp_ns", "reply_frame", "reply_wire_timestamp_ns",
+                                        "request_id", "device_id", "main_boot", "member_boot", "affected_activity_ids",
+                                        "affected_activities", "role_activities", "reviewed_config_revision",
+                                        "reviewed_presentation_revision", "reviewed_membership_revision",
+                                        "stale_rejected", "http_status", "error_code", "operation_not_admitted",
+                                        "configuration_unchanged", "membership_unchanged", "settings_unchanged",
+                                        "unchanged_config_sha256", "removed", "operation_stage", "reset",
+                                        "exact_configuration", "deleted_activity_ids", "deleted_component_ids",
+                                        "preserved_activity_ids", "expected_config_sha256", "actual_config_sha256",
+                                        "inventory_removed", "settings_purged", "unrelated_settings_preserved"))
 _OPERATION_FIELDS = frozenset(("operation_id", "stage", "status", "saved", "unresolved"))
 _PORT_FIELDS = frozenset(("consortium_id", "octopus_id", "tentacle_id", "side"))
 _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "destination", "transport",

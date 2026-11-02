@@ -26,8 +26,9 @@ from .http_transport import HTTPSOpener
 
 
 class AmityHTTPError(RuntimeError):
-    def __init__(self, status, message):
+    def __init__(self, status, message, *, code=None):
         self.status = status
+        self.code = code if isinstance(code, str) else None
         super().__init__(f"Amity HTTP {status}: {message}")
 
 
@@ -214,11 +215,13 @@ class DUT:
             try:
                 payload = json.load(error)
                 message = payload.get("error") or payload.get("message") or "Request failed"
+                code = payload.get("code")
             except (ValueError, AttributeError):
                 message = "Request failed"
+                code = None
             finally:
                 error.close()
-            raise AmityHTTPError(error.code, message) from None
+            raise AmityHTTPError(error.code, message, code=code) from None
         except BaseException as error:
             event("http.request.failed", level=logging.DEBUG, **trace,
                   error_type=type(error).__name__,
