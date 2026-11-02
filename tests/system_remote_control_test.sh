@@ -11,9 +11,10 @@ if test -d /opt/homebrew/opt/openssl@3; then
  openssl_include="-I/opt/homebrew/opt/openssl@3/include"; openssl_lib="-L/opt/homebrew/opt/openssl@3/lib"
 fi
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
- -DCONFIG_AMITY_ACTIVITY_SETTLE_SECONDS=0 $openssl_include -I"$json" \
+ $openssl_include -I"$json" \
  -I"$root/tests/cec_hub_fakes" -I"$root/components/config_store/include" -I"$root/components/cec/include" \
  -I"$root/components/amity_hub/include" -I"$root/components/amity_system/include" \
+ -I"$root/components/web_admin" -I"$root/components/web_admin/include" \
  "$root/components/amity_hub/hub.cpp" "$root/components/amity_hub/hub_service.cpp" \
  "$root/components/amity_hub/system_control.cpp" "$root/components/amity_hub/remote_control.cpp" "$root/components/config_store/system_configuration.cpp" \
  "$root/components/config_store/configuration_journal.cpp" \

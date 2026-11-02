@@ -34,6 +34,8 @@ struct ExecutionFence {
     const std::atomic<uint32_t> *secondary_generation = nullptr;
     uint32_t expected_secondary_generation = 0;
     uint64_t expires_at_us = 0; // Receiver clock; zero is reserved for matching cleanup/legacy.
+    const std::atomic<uint32_t> *tertiary_generation = nullptr;
+    uint32_t expected_tertiary_generation = 0;
 };
 // Xtensa does not report all atomic read/modify/write operations lock-free,
 // but an aligned 32-bit acquire load is inline. Audit the target load's IRAM

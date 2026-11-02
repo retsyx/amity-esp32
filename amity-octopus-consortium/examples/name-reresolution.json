@@ -15,5 +15,5 @@
     "physical_address": 8448
   },
   "saved_selection_changes": false,
-  "held_recipient_changes": false
+  "next_key_lookup_uses_current_address": true
 }

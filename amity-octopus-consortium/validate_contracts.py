@@ -149,14 +149,14 @@ def main():
     validators = {p['$id'].rsplit('/',1)[-1]:Draft202012Validator(p,registry=registry) for p in schemas}
     def valid(name, value): return validators[name].is_valid(value)
     positives = 0
-    for fixture, contract in [('activity-configuration.json','configuration.schema.json'),('operation-ensure-power.json','wire-envelope.schema.json'),('operation-press-key.json','wire-envelope.schema.json'),('owner-state.json','wire-envelope.schema.json')]:
+    for fixture, contract in [('activity-configuration.json','configuration.schema.json'),('activity-selection.json','wire-envelope.schema.json'),('operation-press-key.json','wire-envelope.schema.json'),('owner-state.json','wire-envelope.schema.json')]:
         value=read('examples/'+fixture);require(valid(contract,value),'Invalid fixture '+fixture);positives+=1
     for fixture,contract in [('qualified-device-names.json','qualified-device-name.schema.json'),('qualified-addresses.json','cec-address.schema.json')]:
         for item in read('examples/'+fixture):require(valid(contract,item),'Invalid '+fixture);positives+=1
     config=read('examples/activity-configuration.json')
     selector_count=validate_configuration(config)
     changed=read('examples/name-reresolution.json')
-    require(valid('qualified-device-name.schema.json',changed['selector']) and changed['before']['logical_address']!=changed['after']['logical_address'] and changed['saved_selection_changes'] is False and changed['held_recipient_changes'] is False,'Invalid LA refresh example')
+    require(valid('qualified-device-name.schema.json',changed['selector']) and changed['before']['logical_address']!=changed['after']['logical_address'] and changed['saved_selection_changes'] is False and changed['next_key_lookup_uses_current_address'] is True,'Invalid LA refresh example')
     negatives=[]
     for field in ['enabled','route_id']:
         candidate=copy.deepcopy(config);candidate['activities'][0][field]=False if field=='enabled' else '1'*32;negatives.append(('configuration.schema.json',candidate))
@@ -168,7 +168,7 @@ def main():
     name=copy.deepcopy(changed['selector'])
     for field,value in [('logical_address',4),('tentacle_id',maximum),('side','both'),('osd_name','')]:
         candidate=copy.deepcopy(name);candidate[field]=value;negatives.append(('qualified-device-name.schema.json',candidate))
-    power=read('examples/operation-ensure-power.json');key=read('examples/operation-press-key.json')
+    power=read('examples/activity-selection.json');key=read('examples/operation-press-key.json')
     synchronization=copy.deepcopy(power);synchronization['kind']='synchronization'
     synchronization['payload']={'round_id':'c'*32,'phase':'begin','config_revision':'8'}
     for phase in ['begin','ack','reject']:
@@ -176,20 +176,41 @@ def main():
         require(valid('wire-envelope.schema.json',candidate),'Invalid same-stream synchronization barrier');positives+=1
     for field,value in [('round_id','0'*32),('round_id','c'*31),('phase','retry'),('config_revision','0'),('config_revision','08'),('config_revision','18446744073709551616'),('config_revision',8),('unexpected',True)]:
         candidate=copy.deepcopy(synchronization);candidate['payload'][field]=value;negatives.append(('wire-envelope.schema.json',candidate))
-    for retired in ['relay_reserve','relay_record','relay_close','relay_result','operation','hold_release','hold_renew','binding_update','binding_result','plan_prepare','plan_barrier','plan_abort','plan_result','config_prepare','config_activate','config_result','operation_result','scan_request','scan_result']:
+    for retired in ['execution_lease','relay_reserve','relay_record','relay_close','relay_result','operation','hold_release','hold_renew','binding_update','binding_result','plan_prepare','plan_barrier','plan_abort','plan_result','config_prepare','config_activate','config_result','operation_result','scan_request','scan_result']:
         candidate=copy.deepcopy(power);candidate['kind']=retired;negatives.append(('wire-envelope.schema.json',candidate))
     for value in ['0','01','18446744073709551616',1,True]:
         candidate=copy.deepcopy(power);candidate['payload']['sequence']=value;negatives.append(('wire-envelope.schema.json',candidate))
     for field,value in [('hold_lease_ms',750),('key',256),('repeat',1)]:
         candidate=copy.deepcopy(key);candidate['payload']['arguments'][field]=value;negatives.append(('wire-envelope.schema.json',candidate))
+    for code in [0,255]:
+        for edges in [[{'key':code,'down':True}],[{'key':code,'down':False}],[{'key':code,'down':True},{'key':code,'down':False}]]:
+            candidate=copy.deepcopy(key);candidate['payload']['arguments']['edges']=edges
+            require(valid('wire-envelope.schema.json',candidate),'Invalid raw button edges');positives+=1
+    for edges in [[],[{'key':256,'down':True}],[{'key':0,'down':1}],
+                  [{'key':0,'down':True},{'key':1,'down':False}],
+                  [{'key':0,'down':False},{'key':0,'down':True}],
+                  [{'key':0,'down':True},{'key':0,'down':True}],
+                  [{'key':0,'down':True},{'key':0,'down':False},{'key':0,'down':False}]]:
+        candidate=copy.deepcopy(key);candidate['payload']['arguments']['edges']=edges;negatives.append(('wire-envelope.schema.json',candidate))
+    candidate=copy.deepcopy(key);candidate['payload']['target']=copy.deepcopy(name);negatives.append(('wire-envelope.schema.json',candidate))
+    for action in ['key_down','key_up']:
+        candidate=copy.deepcopy(key);candidate['payload']['action']=action;negatives.append(('wire-envelope.schema.json',candidate))
+    for location,field,value in [('header','message_id','f'*32),('payload','execution_lease_id','f'*32),('payload','sequence','1'),('payload','setup_generation',1),('arguments','token','f'*32),('arguments','press_sequence','1')]:
+        candidate=copy.deepcopy(key)
+        target=candidate if location=='header' else candidate['payload'] if location=='payload' else candidate['payload']['arguments']
+        target[field]=value;negatives.append(('wire-envelope.schema.json',candidate))
     snapshot=read('examples/owner-state.json')
     for field,value in [('adapter',maximum),('volume',128),('ready',1)]:
         candidate=copy.deepcopy(snapshot);candidate['payload']['snapshot'][field]=value;negatives.append(('wire-envelope.schema.json',candidate))
     candidate=copy.deepcopy(snapshot);candidate['payload']['snapshot']['devices'][0]['logical_address']=15;negatives.append(('wire-envelope.schema.json',candidate))
-    result=copy.deepcopy(snapshot);result['payload']={'input_result':{'generation':'1','sequence':'2','source_present':False}}
-    require(valid('wire-envelope.schema.json',result),'Invalid owner source-presence result');positives+=1
-    candidate=copy.deepcopy(result);candidate['payload']['input_result']['sequence']='0';negatives.append(('wire-envelope.schema.json',candidate))
-    candidate=copy.deepcopy(result);candidate['payload']['snapshot']=copy.deepcopy(snapshot['payload']['snapshot']);negatives.append(('wire-envelope.schema.json',candidate))
+    candidate=copy.deepcopy(snapshot);candidate['payload']={'action_result':{}};negatives.append(('wire-envelope.schema.json',candidate))
+    for field in ['repair','selected','source','input']:
+        candidate=copy.deepcopy(power);del candidate['payload']['arguments'][field];negatives.append(('wire-envelope.schema.json',candidate))
+    for value in [True,False]:
+        candidate=copy.deepcopy(power);candidate['payload']['arguments']['repair']=value
+        require(valid('wire-envelope.schema.json',candidate),'Invalid owner-local activity selection');positives+=1
+    for action in ['power','source_input','switch_input','announce_active_source','query_audio','standby_wire']:
+        candidate=copy.deepcopy(power);candidate['payload']['action']=action;negatives.append(('wire-envelope.schema.json',candidate))
     context=copy.deepcopy(power);context['payload']['action']='context';context['payload']['target']['osd_name']=''
     context['payload']['arguments']={'selected':True,'source_changed':True,'source':copy.deepcopy(name),'audio':None,'display':None,'switch_device':None,'input':6}
     require(valid('wire-envelope.schema.json',context),'Invalid original activity context');positives+=1
@@ -198,10 +219,11 @@ def main():
     candidate=copy.deepcopy(config);del candidate['controller_octopus_id'];negatives.append(('configuration.schema.json',candidate))
     for value in [-1,4294967296,True,'0']:
         candidate=copy.deepcopy(power);candidate['payload']['setup_generation']=value;negatives.append(('wire-envelope.schema.json',candidate))
-    candidate=copy.deepcopy(snapshot);del candidate['payload']['snapshot']['setup_pending'];negatives.append(('wire-envelope.schema.json',candidate))
-    candidate=copy.deepcopy(snapshot);candidate['payload']['snapshot']['setup_pending']=65;negatives.append(('wire-envelope.schema.json',candidate))
-    candidate=copy.deepcopy(snapshot);del candidate['payload']['snapshot']['setup_replies_pending'];negatives.append(('wire-envelope.schema.json',candidate))
-    candidate=copy.deepcopy(snapshot);candidate['payload']['snapshot']['setup_replies_pending']=1;negatives.append(('wire-envelope.schema.json',candidate))
+    for field,value in [('setup_generation',1),('setup_last_sequence','1'),('setup_pending',0),('setup_replies_pending',False)]:
+        candidate=copy.deepcopy(snapshot);candidate['payload']['snapshot'][field]=value;negatives.append(('wire-envelope.schema.json',candidate))
+    for value in [True,False,1,'true']:
+        candidate=copy.deepcopy(power);candidate['payload']['activity_step']=value;negatives.append(('wire-envelope.schema.json',candidate))
+    candidate=copy.deepcopy(key);candidate['payload']['activity_step']=True;negatives.append(('wire-envelope.schema.json',candidate))
     for contract,candidate in negatives:require(not valid(contract,candidate),'Accepted obsolete/invalid '+contract)
     wire=read('schemas/wire-envelope.schema.json')
     source=(ROOT.parent/'components/consortium/include/amity/consortium/wire.hpp').read_text()
@@ -214,10 +236,10 @@ def main():
                  octopus_id='2'*32, boot_id='3'*32, coordinator_epoch='1', config_revision='7',
                  config_hash='a'*64, firmware_identity='current', required_capabilities=0,
                  optional_capabilities=0, frame_cap=8192)
-    for capabilities in (401472, 524288, 262144 | 524288, 1040970):
+    for capabilities in (401472, 524288, 262144 | 524288, 1040968):
         candidate = dict(hello, required_capabilities=capabilities)
         require(hello_validator.is_valid(candidate),'Schema rejects current configuration capabilities')
-    for capabilities in (4096, 1048576, 2147483648):
+    for capabilities in (2, 4096, 1048576, 2147483648):
         candidate = dict(hello, required_capabilities=capabilities)
         require(not hello_validator.is_valid(candidate),'Schema accepts an unsupported required capability')
     manifest=read('MANIFEST.json');paths=set()

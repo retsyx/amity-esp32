@@ -38,7 +38,7 @@ Error apply(model::MessageId id,const Json& body,uint64_t deadline,std::string& 
  if(effect_fault==1)clock_ms=deadline;
  if(effect_fault==2&&current_link)current_link->cancelled=true;
  if(effect_fault==3)++configuration;
- if(error==Error::none&&!runtime_device_settings_authorized(id))error=now_ms()>=deadline?Error::lease_expired:Error::not_ready;
+ if(error==Error::none&&!runtime_device_settings_authorized(id))error=now_ms()>=deadline?Error::expired:Error::not_ready;
  if(error==Error::none&&write.expected_boot!=boot)error=Error::stale_boot;
  if(error==Error::none&&write.expected_revision!=revision)error=Error::transaction_conflict;
  if(error==Error::none){++saves;++revision;}
@@ -54,12 +54,11 @@ std::shared_ptr<Active> connection(bool receiver){
  assert(active->session.authenticate(sc,sc.peer_id,receiver?PeerRole::coordinator:PeerRole::actuator,true)==Error::none);
  HelloFrame hello;hello.consortium_id=sc.consortium_id;hello.octopus_id=sc.peer_id;hello.boot_id=sc.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
  assert(active->session.hello(hello,known_capabilities)==Error::none&&active->session.synchronized(1,true,true)==Error::none);
- active->session.execution_leases().issue(ident<model::ExecutionLeaseId>(8),LeaseClass::control,5000,clock_ms);
- active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.negotiated_capabilities=known_capabilities;active->status.control_lease=ident<model::ExecutionLeaseId>(8);active->status.control_usable_until_ms=clock_ms+4900;active->status.ready=true;
+ active->status.id=active->peer;active->status.boot_id=sc.peer_boot_id;active->status.config_revision=1;active->status.negotiated_capabilities=known_capabilities;active->status.ready=true;
  links.push_back(active);current_link=active;return active;
 }
-Envelope message(const std::shared_ptr<Active>& active,Kind kind,const Json& payload){static unsigned next=200;auto sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.message_id=ident<model::MessageId>(next++);e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
-Envelope write_message(const std::shared_ptr<Active>& active,unsigned request=20,const Json* body=nullptr){auto content=body?*body:core();return message(active,Kind::settings_write,parsed("{\"request_id\":\""+ident<model::MessageId>(request).str()+"\",\"execution_lease_id\":\""+ident<model::ExecutionLeaseId>(8).str()+"\",\"settings\":"+settings_json(content)+"}"));}
+Envelope message(const std::shared_ptr<Active>& active,Kind kind,const Json& payload){auto sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
+Envelope write_message(const std::shared_ptr<Active>& active,unsigned request=20,const Json* body=nullptr){auto content=body?*body:core();return message(active,Kind::settings_write,parsed("{\"request_id\":\""+ident<model::MessageId>(request).str()+"\",\"settings\":"+settings_json(content)+"}"));}
 void codec_tests(){
  reset(true);auto snap=parsed(snapshot());assert(valid_settings_snapshot(snap));snap.get("adapters")->array[0].get("configured")->boolean=false;assert(valid_settings_snapshot(snap));
  for(const auto* valid:{"","0.0.0.0","A.0.0.0","a.1.0.0","1.2.3.4"}){auto value=core();value.get("changes")->array[0].get("default_front_physical_address")->string=valid;DeviceSettingsWrite write;assert(parse_device_settings_write(value,write)==Error::none);}
@@ -71,15 +70,15 @@ void codec_tests(){
 }
 void receiver_tests(){
  reset(false);auto active=connection(true);auto request=write_message(active);assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);assert(parsed(sent.back()).get("stage")->string=="applied");
- request.message_id=random_id<model::MessageId>();assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);
+ assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);
  for(unsigned failure=0;failure<7;++failure){reset(false);active=connection(true);request=write_message(active);if(failure==0)request.destination_boot_id=ident<model::BootId>(99);if(failure==1)request.origin_octopus_id=ident<model::OctopusId>(99);if(failure==2)request.config_revision=2;if(failure>=3&&failure<=5)effect_fault=failure-2;if(failure==6){active->session.disconnect();}assert(!settings_dispatch(active,request,clock_ms)||parsed(sent.back()).get("stage")->string=="failed");assert(!saves&&!restarts);}
- reset(false);active=connection(true);send_success=false;request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);send_success=true;request.message_id=random_id<model::MessageId>();assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1); // Never reapply; restartaftertheauthorizedresponseattempt,withoutreapplying.
+ reset(false);active=connection(true);send_success=false;request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);send_success=true;assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1); // Never reapply; restartaftertheauthorizedresponseattempt,withoutreapplying.
  reset(true);active=connection(false);request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&!saves&&!restarts);
- std::cout<<"PASS actual target dispatch: originalmain scope/lease/deadline/config/revocation guards, no memberforwarding, exact duplicateoutcome and restartafterwireattemptincludinglostACK\n";
+ std::cout<<"PASS actual target dispatch: originalmain scope/deadline/config/revocation guards, no memberforwarding, exact duplicateoutcome and restartafterwireattemptincludinglostACK\n";
 }
 void logical_session_authorization_tests(){
  reset(false);auto active=connection(true);const auto original=active->session.scope();const auto tls=active->tls;
- const auto fresh_link=ident<model::LinkId>(91);const auto fresh_lease=ident<model::ExecutionLeaseId>(92);
+ const auto fresh_link=ident<model::LinkId>(91);
  bool checked=false;
  settings_hooks.apply=[&](model::MessageId id,const Json&,uint64_t deadline,std::string& response){
   assert(runtime_device_settings_authorized(id)&&deadline>now_ms());
@@ -90,7 +89,7 @@ void logical_session_authorization_tests(){
   assert(!runtime_device_settings_authorized(id));
   {std::lock_guard<std::mutex> guard(lock);
    assert(active->session.synchronized(original.config_revision,true,true)==Error::none);
-   active->session.execution_leases().issue(fresh_lease,LeaseClass::control,5000,now_ms());active->ready=true;
+   active->ready=true;
   }
   // Ready and fresh authority on the same TLS object must not revive the
   // settings write admitted to the ended logical execution session.
@@ -100,10 +99,10 @@ void logical_session_authorization_tests(){
  };
  auto request=write_message(active);assert(settings_dispatch(active,request,clock_ms)&&checked&&!saves&&!restarts);
  assert(parsed(sent.back()).get("stage")->string=="failed");
- settings_hooks.apply=apply;request=write_message(active,21);request.payload.get("execution_lease_id")->string=fresh_lease.str();
+ settings_hooks.apply=apply;request=write_message(active,21);
  assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==1);
  assert(parsed(sent.back()).get("stage")->string=="applied"&&active->tls==tls&&active->session.scope().link_id==fresh_link);
- std::cout<<"PASS actual settings authorization: ended logical-session permit stays invalid after same-TLS/boots/config synchronization and fresh leases; fresh-session write commits normally\n";
+ std::cout<<"PASS actual settings authorization: ended logical-session permit stays invalid after same-TLS/boots/config synchronization; fresh-session write commits normally\n";
 }
 void local_tests(){
  reset(true);const auto id=ident<model::MessageId>(30);assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==1&&!restarts);auto result=parsed(runtime_device_settings_operation(identity.id,id));assert(result.get("stage")->string=="applied"&&!restarts);http_sent=true;runtime_device_settings_response_attempted(identity.id,id);runtime_device_settings_response_attempted(identity.id,id);assert(restarts==1);assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==1&&restarts==1);
@@ -139,7 +138,7 @@ def schema_vectors(binary):
  jsonschema.Draft202012Validator.check_schema(protocol)
  snapshot={'boot_id':'1'*32,'settings_revision':'2','adapters':[{'tentacle_id':3,'name':'HDMI adapter 4','configured':True,'default_front_physical_address':'A.0.0.0','observed_front_physical_address':None,'effective_front_physical_address':'1.0.0.0'}]}
  core={'expected_boot_id':'1'*32,'expected_settings_revision':'2','confirm_restart':True,'changes':[{'tentacle_id':3,'default_front_physical_address':'A.0.0.0'}]}
- vectors=[('DeviceSettingsSnapshot',snapshot),('DeviceSettingsWrite',core),('SettingsRead',{'request_id':'2'*32}),('SettingsWrite',{'request_id':'2'*32,'execution_lease_id':'3'*32,'settings':core})]
+ vectors=[('DeviceSettingsSnapshot',snapshot),('DeviceSettingsWrite',core),('SettingsRead',{'request_id':'2'*32}),('SettingsWrite',{'request_id':'2'*32,'settings':core})]
  for pa in ['', '0.0.0.0','A.0.0.0','a.b.0.0','1.2.3.4','F.F.F.E','F.F.F.F','f.f.f.f','1.0.1.0','0.1.0.0','1.2.0.3','x.0.0.0','1.0.0','1.0.0.0.0']:
   value=copy.deepcopy(core);value['changes'][0]['default_front_physical_address']=pa;vectors.append(('DeviceSettingsWrite',value))
   value=copy.deepcopy(snapshot);value['adapters'][0]['default_front_physical_address']=pa;vectors.append(('DeviceSettingsSnapshot',value))
@@ -152,7 +151,7 @@ def schema_vectors(binary):
   candidate=copy.deepcopy(core);candidate['changes']=candidate['changes']*count;vectors.append(('DeviceSettingsWrite',candidate))
  for configured in [False,True,'true',0,None]:
   candidate=copy.deepcopy(snapshot);candidate['adapters'][0]['configured']=configured;vectors.append(('DeviceSettingsSnapshot',candidate))
- for operation,stage,error,payload,reboot in itertools.product(['read','write'],['admitted','applied','failed'],['','INVALID_MESSAGE','STALE_BOOT','CONFLICT','NOT_READY','LEASE_EXPIRED','STORAGE_FAILURE','QUEUE_FULL'],[None,snapshot,{}],[False,True]):
+ for operation,stage,error,payload,reboot in itertools.product(['read','write'],['admitted','applied','failed'],['','INVALID_MESSAGE','STALE_BOOT','CONFLICT','NOT_READY','EXPIRED','STORAGE_FAILURE','QUEUE_FULL'],[None,snapshot,{}],[False,True]):
   vectors.append(('SettingsResult',{'request_id':'2'*32,'operation':operation,'stage':stage,'error':error,'snapshot':payload,'rebooting':reboot}))
  completed=subprocess.run([str(binary),'--vectors'],input=''.join(name+'\t'+json.dumps(value,separators=(',',':'))+'\n' for name,value in vectors),capture_output=True,text=True,check=True)
  actual=[value=='1' for value in completed.stdout.splitlines()];assert len(actual)==len(vectors)

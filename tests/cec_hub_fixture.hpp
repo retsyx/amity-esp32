@@ -32,6 +32,7 @@ static FakeTask *latest_task;
 static int worker_receives = -1;
 static bool fixture_present = false;
 static std::function<uint8_t(int)> fixture_peer_address;
+static std::function<std::string(int)> fixture_peer_name;
 static uint8_t fixture_peer(int gpio) { return fixture_peer_address ? fixture_peer_address(gpio) : gpio == 1 ? 0 : 4; }
 static std::function<bool(int)> fixture_completion_ready;
 static std::function<bool(int, const cec::Frame&)> fixture_submit_admission;
@@ -177,9 +178,9 @@ bool Bus::send(const Frame &frame) {
         reply.data[2] = peer ? 0x10 : 0; reply.data[3] = 0; reply.data[4] = peer ? 4 : 0;
         break;
     case 0x46: {
-        const char *name = peer ? "Source" : "TV";
+        const auto name=fixture_peer_name?fixture_peer_name(impl_->gpio):std::string(peer?"Source":"TV");
         reply.data[0] = (peer << 4) | impl_->address; reply.data[1] = 0x47; reply.size = 2;
-        while (*name) reply.data[reply.size++] = *name++;
+        for(const auto character:name)reply.data[reply.size++]=character;
         break;
     }
     case 0x8c:
@@ -205,7 +206,8 @@ bool Bus::idle() const {
 }
 static bool current_fence(ExecutionFence fence) {
     return (!fence.generation || fence.generation->load()==fence.expected_generation) &&
-        (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation);
+        (!fence.secondary_generation || fence.secondary_generation->load()==fence.expected_secondary_generation) &&
+        (!fence.tertiary_generation || fence.tertiary_generation->load()==fence.expected_tertiary_generation);
 }
 bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts) {
     if(!attempts||!current_fence(fence))return false;

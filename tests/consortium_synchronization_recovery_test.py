@@ -92,7 +92,7 @@ void coordinator_recovers_capture_failure_and_ignores_old_round(){
  on_send=[&](auto& a,const auto& e){script(a,e);};
  assert(synchronize_connection(*active,true)&&active->ready&&active->status.ready&&script.rounds==3&&captures==2&&applies==1);
  same_connection(*active,original,tls,7);
- assert(active->session.admit(seen,clock_ms,clock_ms)==Error::duplicate); // No reauthentication/replay reset.
+ seen.origin_boot_id=ident<model::BootId>(999);assert(active->session.admit(seen,clock_ms,clock_ms)==Error::stale_boot); // Same authenticated stream retains its exact boot fence.
  assert(!diagnostic_logs.empty()&&clock_ms>=12100); // Failed barrier and existing one-second recovery delays.
 }
 void coordinator_recovers_owner_apply_and_peer_rejection(){
@@ -196,54 +196,40 @@ void broken_transport_and_wrong_boot_stop_recovery(){
  }
  auto revoked=initial(true);credentials_current=false;assert(!synchronize_connection(*revoked,true)&&revoked->tls->sent.empty());
 }
-void prebarrier_lookup_completion_and_fenced_result_discard(){
- // Before an execution fence, preserve a legitimate admitted old lookup once;
- // a missing or failed delivery hook cannot be treated as replaceable status.
- for(unsigned outcome=0;outcome<4;++outcome){
-  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();unsigned delivered=0;
-  if(outcome!=1)controls.control=[&](auto peer,const Envelope& envelope,uint64_t deadline,model::LinkId link){
-   assert(peer==original.peer_id&&envelope.kind==Kind::scoped_result&&envelope.payload.get("input_result")&&envelope.config_revision==7&&envelope.origin_boot_id==original.peer_boot_id&&link==original.link_id&&deadline==0&&!active->execution_fenced);
-   ++delivered;return outcome==2?Error::not_ready:Error::none;
-  };
+void observation_interleaving_preserves_identity_fences(){
+ for(bool wrong_boot:{false,true}){
+  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
+  controls.control=[](auto,const auto&,auto,auto){assert(false&&"No remote CEC completion exists");return Error::none;};
   SynchronizationRound round{ident<model::MessageId>(600),7};
-  auto result=inbound(original,7,Kind::scoped_result,input_result);if(outcome==3)result.origin_boot_id=ident<model::BootId>(999);
-  feed(*active,result);feed(*active,result);feed(*active,sync_frame(original,round.id,"ack",7));
+  auto result=inbound(original,7,Kind::scoped_result,observation(original));if(wrong_boot)result.origin_boot_id=ident<model::BootId>(999);
+  feed(*active,result);feed(*active,sync_frame(original,round.id,"ack",7));
   LinkTrace trace;const bool passed=synchronization_barrier(*active,true,round,trace);
   same_connection(*active,original,tls,7);assert(restart_fences.empty());
-  if(outcome==0)assert(passed&&delivered==1);
-  else{assert(!passed&&delivered==(outcome==2?1u:0u));
-   if(outcome==1)assert(std::string(trace.reason)=="input_result_hook_missing");
-   if(outcome==2)assert(std::string(trace.reason)=="input_result_delivery");
-   if(outcome==3)assert(trace.error==Error::stale_boot);
-  }
+  assert(passed!=wrong_boot);if(wrong_boot)assert(trace.error==Error::stale_boot);
  }
- // A recovery wrapper ends that old execution scope before its barrier. Old
- // results then validate/discard both before ACK and after fresh-link rotation.
- for(bool barrier:{false,true})for(unsigned outcome=0;outcome<4;++outcome){
-  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();unsigned delivered=0;bool injected=false;
+ for(bool barrier:{false,true})for(bool wrong_boot:{false,true}){
+  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();bool injected=false;
   controls.snapshot=[](auto){return owner_state;};controls.synchronize=[](auto,const Json&){return Error::none;};
   controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
-  if(outcome!=1)controls.control=[&](auto,const auto&,auto,auto){++delivered;return outcome==2?Error::not_ready:Error::none;};
   ServerScript script{original};on_send=[&](Active& a,const Envelope& envelope){
    if(!injected&&((barrier&&envelope.kind==Kind::synchronization)||(!barrier&&envelope.kind==Kind::snapshot_request))){
-    injected=true;assert(active->execution_fenced);auto result=inbound(original,7,Kind::scoped_result,input_result);if(outcome==3)result.origin_boot_id=ident<model::BootId>(999);
-    feed(a,result);feed(a,result);
+    injected=true;assert(active->execution_fenced);auto result=inbound(original,7,Kind::scoped_result,observation(original));if(wrong_boot)result.origin_boot_id=ident<model::BootId>(999);feed(a,result);
    }
    script(a,envelope);
   };
   LinkTrace trace;const bool ready=synchronize_connection(*active,true,true,0,&trace);
-  same_connection(*active,original,tls,7);assert(injected&&script.rounds==1&&restart_fences.size()==1&&delivered==0);
-  if(outcome!=3)assert(ready&&active->ready&&!active->execution_fenced&&active->session.scope().link_id!=original.link_id);
+  same_connection(*active,original,tls,7);assert(injected&&script.rounds==1&&restart_fences.size()==1);
+  if(!wrong_boot)assert(ready&&active->ready&&!active->execution_fenced&&active->session.scope().link_id!=original.link_id);
   else assert(!ready&&!active->ready&&!active->status.ready&&trace.error==Error::stale_boot);
  }
 }
 void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
- auto remembered_frame=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(remembered_frame,clock_ms,clock_ms)==Error::none);
- model::OwnedIntent work;work.kind=model::OwnedIntentKind::power;work.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};work.config_revision=7;work.generation=work.sequence=1;work.on=true;
+ auto old_scope_frame=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::none);
+ model::OwnedIntent work;work.kind=model::OwnedIntentKind::activity;work.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};work.config_revision=7;work.generation=1;work.on=true;
  const auto admitted=std::make_shared<const model::OwnedIntent>(work);
  active->queue.push_back({Kind::scoped_intent,{},1000,clock_ms,7,admitted});
- const auto old_lease=active->own_control;const auto update_id=ident<model::MessageId>(500);active->update_begin_id=update_id;
+ const auto update_id=ident<model::MessageId>(500);active->update_begin_id=update_id;
  active->ready=active->status.ready=false;std::vector<std::string> cache={"TV","AVR","Player"};
  unsigned fences=0,disconnects=0,aborted_updates=0;bool fence_ready=false;
  controls.disconnected=[&](auto,auto,auto){++disconnects;cache.clear();return true;};
@@ -258,14 +244,10 @@ void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
  fence_ready=true;assert(restart_synchronization_scope(*active,round,trace));
  same_connection(*active,original,tls,7);
  assert(active->queue.empty()&&!active->update_begin_id&&fences==2&&aborted_updates==1&&disconnects==0&&cache.size()==3&&active->tls->sent.empty());
- assert(!active->context_ready&&!active->context_requested&&active->refreshing&&!active->own_control&&!active->own_realtime&&!active->status.control_lease&&!active->status.realtime_lease&&active->own_control_deadline==0&&active->own_realtime_deadline==0);
- assert(active->session.admit(remembered_frame,clock_ms,clock_ms)==Error::duplicate&&active->session.execution_leases().live(LeaseClass::control,clock_ms)==0);
+ assert(!active->context_ready&&!active->context_requested&&active->refreshing);
+ old_scope_frame.destination_boot_id=ident<model::BootId>(999);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::stale_boot);
  assert(active->session.synchronized(7,true,true)==Error::none);
- const auto fresh=ident<model::ExecutionLeaseId>(502);assert(active->session.execution_leases().issue(fresh,LeaseClass::control,5000,clock_ms)==Error::none);
- assert(!active->session.execution_leases().valid(old_lease,LeaseClass::control,active->session.scope(),clock_ms)
-     &&!active->session.execution_leases().valid(fresh,LeaseClass::control,original,clock_ms)
-     &&active->session.execution_leases().valid(fresh,LeaseClass::control,active->session.scope(),clock_ms));
- assert(active->queue.empty()&&active->tls->sent.empty()); // Fresh leases never resurrect admitted work from the ended link.
+ assert(active->queue.empty()&&active->tls->sent.empty()); // Fresh authentication never resurrects admitted work from the ended link.
  round.id=ident<model::MessageId>(503);assert(restart_synchronization_scope(*active,round,trace));
  assert(aborted_updates==1&&disconnects==0&&cache.size()==3&&active->queue.empty());
 }
@@ -306,9 +288,8 @@ void expired_operational_frame_uses_existing_connection(){
 }
 void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
- const auto old_lease=active->own_control;
- auto remembered_frame=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(remembered_frame,clock_ms,clock_ms)==Error::none);
- model::OwnedIntent work;work.kind=model::OwnedIntentKind::power;work.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};work.config_revision=7;work.generation=work.sequence=1;work.on=true;
+ auto old_scope_frame=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::none);
+ model::OwnedIntent work;work.kind=model::OwnedIntentKind::activity;work.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};work.config_revision=7;work.generation=1;work.on=true;
  auto pending=std::make_shared<const model::OwnedIntent>(work);std::weak_ptr<const model::OwnedIntent> abandoned=pending;
  active->queue.push_back({Kind::scoped_intent,{},1000,clock_ms,7,pending});pending.reset();
  unsigned fences=0,disconnects=0;std::vector<std::string> observations={"TV","AVR","Player"};
@@ -325,8 +306,7 @@ void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
  LinkTrace trace;trace.fail("control_dispatch",Error::not_ready);assert(application_failure_recoverable(*active,trace));
  assert(recover_operational_frame(*active,true,trace)&&fences==3&&script.rounds==1&&clock_ms>=2100);
  same_connection(*active,original,tls,7);assert(active->ready&&!active->execution_fenced&&active->queue.empty()&&abandoned.expired()&&disconnects==0&&observations.size()==3);
- assert(active->session.scope().link_id!=original.link_id&&active->session.admit(remembered_frame,clock_ms,clock_ms)==Error::duplicate);
- assert(!active->session.execution_leases().valid(old_lease,LeaseClass::control,active->session.scope(),clock_ms));
+ assert(active->session.scope().link_id!=original.link_id);old_scope_frame.destination_boot_id=ident<model::BootId>(999);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::stale_boot);
  assert(std::none_of(active->tls->sent.begin(),active->tls->sent.end(),[](const auto& e){return e.kind==Kind::scoped_intent;}));
 }
 void logical_recovery_keeps_security_and_transport_fences(){
@@ -339,7 +319,7 @@ void logical_recovery_keeps_security_and_transport_fences(){
   trace=LinkTrace{};trace.fail("control_dispatch",error);assert(!application_failure_recoverable(*active,trace));
  }
  active->restart_requested=true;
- for(const auto* reason:{"control_admit","envelope_parse","membership_revoked","retirement","execution_lease_scope"}){
+ for(const auto* reason:{"control_admit","envelope_parse","membership_revoked","retirement","owned_intent_parse"}){
   trace=LinkTrace{};trace.fail(reason);assert(!application_failure_recoverable(*active,trace));
  }
  trace=LinkTrace{};trace.fail("causal_expired");active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));
@@ -348,7 +328,7 @@ void logical_recovery_keeps_security_and_transport_fences(){
  active->lifecycle_only=true;assert(!application_failure_recoverable(*active,trace));active->lifecycle_only=false;
  group.role=Group::prepared;assert(!application_failure_recoverable(*active,trace));
 }
-struct PairedResult {bool ready=false,scope_intact=false,context_withheld=false,replay_intact=false;unsigned applies=0,rounds=0;model::LinkId link;};
+struct PairedResult {bool ready=false,scope_intact=false,context_withheld=false,boot_fence_intact=false;unsigned applies=0,rounds=0;model::LinkId link;};
 PairedResult paired_endpoint(bool server,int fd){
  auto active=initial(server);active->tls->socket=fd;const auto original=active->session.scope();const auto* tls=active->tls.get();
  auto seen=inbound(original,7,Kind::device_status,"{\"hostname\":\"amity-peer\"}");assert(active->session.admit(seen,clock_ms,clock_ms)==Error::none);
@@ -380,7 +360,7 @@ PairedResult paired_endpoint(bool server,int fd){
  on_send=[&](Active& current,const Envelope& envelope){
   assert(&current==active.get()&&current.tls.get()==tls&&current.tls->socket==fd&&!current.ready&&!current.status.ready);
   if(envelope.kind==Kind::synchronization){model::MessageId round;std::string phase;uint64_t revision;assert(parse_synchronization(envelope.payload,round,phase,revision)==Error::none);if(phase==(server?"begin":"ack"))++rounds;}
-  else assert(!current.context_ready&&!current.own_control&&!current.own_realtime&&!current.status.control_lease&&!current.status.realtime_lease);
+  else assert(!current.context_ready);
   const auto bytes=frame(packet(envelope));size_t offset=0;
   while(offset<bytes.size()){
    const auto count=::write(fd,bytes.data()+offset,bytes.size()-offset);
@@ -391,8 +371,8 @@ PairedResult paired_endpoint(bool server,int fd){
  PairedResult result;result.ready=ready&&active->ready&&active->status.ready&&active->session.state()==ConnectionState::ready;
  auto expected=original;expected.link_id=*model::LinkId::parse(active->synchronization.id.str());result.link=expected.link_id;
  result.scope_intact=active->session.scope()==expected&&expected.link_id!=original.link_id&&active->tls.get()==tls&&active->tls->socket==fd&&active->tls->usable()&&shutdowns==0;
- result.context_withheld=!active->context_ready&&!active->own_control&&!active->own_realtime&&!active->status.control_lease&&!active->status.realtime_lease;
- result.replay_intact=active->session.admit(seen,clock_ms,clock_ms)==Error::duplicate;result.applies=applies;result.rounds=rounds;
+ result.context_withheld=!active->context_ready;
+ seen.origin_boot_id=ident<model::BootId>(999);result.boot_fence_intact=active->session.admit(seen,clock_ms,clock_ms)==Error::stale_boot;result.applies=applies;result.rounds=rounds;
  return result;
 }
 void paired_endpoints_recover_crossed_application_failures(){
@@ -406,18 +386,18 @@ void paired_endpoints_recover_crossed_application_failures(){
  PairedResult member;const auto read=::read(reports[0],&member,sizeof(member));::close(reports[0]);int status=0;assert(::waitpid(child,&status,0)==child);
  assert(read==sizeof(member)&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
  assert(main.link&&main.link==member.link);
- for(const auto& endpoint:{main,member})assert(endpoint.ready&&endpoint.scope_intact&&endpoint.context_withheld&&endpoint.replay_intact&&endpoint.applies>=2&&endpoint.rounds>=3);
+ for(const auto& endpoint:{main,member})assert(endpoint.ready&&endpoint.scope_intact&&endpoint.context_withheld&&endpoint.boot_fence_intact&&endpoint.applies>=2&&endpoint.rounds>=3);
 }
 }
 int main(){using namespace amity::consortium;
  coordinator_recovers_capture_failure_and_ignores_old_round();coordinator_recovers_owner_apply_and_peer_rejection();
  member_recovers_configuration_apply_and_owner_capture();new_begin_unwinds_pending_transfer_without_reauthenticating();
  recovery_revision_preserves_identity_and_fences_ordinary_revision();broken_transport_and_wrong_boot_stop_recovery();
- prebarrier_lookup_completion_and_fenced_result_discard();logical_restart_clears_old_ipc_and_update_without_replaying_work();
+ observation_interleaving_preserves_identity_fences();logical_restart_clears_old_ipc_and_update_without_replaying_work();
  hostname_persistence_failure_retains_same_stream();late_old_link_callbacks_cannot_cancel_fenced_tls();expired_operational_frame_uses_existing_connection();
  application_restart_waits_for_exact_cleanup_before_fresh_scope();logical_recovery_keeps_security_and_transport_fences();
  paired_endpoints_recover_crossed_application_failures();
- std::cout<<"PASS actual synchronization recovery: scripted and paired fork/socket endpoints recover capture/apply/rejection/timeout/new-begin on same TLS/boots with fresh logical links, replay intact and fresh context/leases withheld; old-round ACK cannot satisfy new barrier; revised barrier preserves ordinary exact-revision fences; fatal transport/wrong boot/revoked authority stop recovery\n";
+ std::cout<<"PASS actual synchronization recovery: scripted and paired fork/socket endpoints recover capture/apply/rejection/timeout/new-begin on same TLS/boots with fresh logical links, boot fences intact and fresh context withheld; old-round ACK cannot satisfy new barrier; revised barrier preserves ordinary exact-revision fences; fatal transport/wrong boot/revoked authority stop recovery\n";
 }
 '''
 
@@ -434,7 +414,7 @@ def main():
     prefix = prefix.replace('Error remember_hostname(model::OctopusId,const std::string&){return Error::none;}\n', '')
     prefix = prefix.replace('unsigned pdMS_TO_TICKS(unsigned ms){return ms/10;}\nvoid vTaskDelay(unsigned ticks){clock_ms+=ticks*10;}\n', '')
     actual = ''.join(function(source, name) for name in (
-        'Envelope outgoing(', 'bool same_manifest(', 'bool deliver_synchronization_input(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
+        'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(',
         'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool recover_operational_frame(', 'bool application_failure_recoverable(', 'void runtime_fence_owned_link('))
     actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual

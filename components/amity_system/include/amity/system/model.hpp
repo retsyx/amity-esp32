@@ -62,10 +62,8 @@ AMITY_SYSTEM_ID(ComponentId);
 AMITY_SYSTEM_ID(ActivityId); AMITY_SYSTEM_ID(ZoneId);
 AMITY_SYSTEM_ID(SessionId);
 AMITY_SYSTEM_ID(MessageId); AMITY_SYSTEM_ID(ScanId);
-AMITY_SYSTEM_ID(ExecutionLeaseId);
 AMITY_SYSTEM_ID(LinkId);
 AMITY_SYSTEM_ID(JoinId); AMITY_SYSTEM_ID(MutationId);
-AMITY_SYSTEM_ID(HoldToken);
 #undef AMITY_SYSTEM_ID
 
 std::optional<uint64_t> parse_uint64(std::string_view);

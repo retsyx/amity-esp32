@@ -49,6 +49,7 @@ def _http_trace_fields(path, data):
     elif path in {"/api/login", "/api/logout", "/api/system", "/api/config",
                   "/api/activity-editor", "/api/activity-editor/status",
                   "/api/activity-editor/activity", "/api/activity-editor/discover",
+                  "/api/key",
                   "/api/membership/admission", "/api/membership/scan", "/api/membership/add",
                   "/api/membership/remove", "/api/membership/cancel"}:
         route = path
@@ -103,6 +104,7 @@ class DUT:
         self._testbed = None
         self.last_scan = None
         self.activity_operations = []
+        self.key_operations = []
         self.membership_operations = []
         if wiring is None:
             wiring = (Wiring.from_markdown(self._runtime.wiring_path)
@@ -281,6 +283,11 @@ class DUT:
         from .activity import Activity
         return Activity(self, name, display=display, source=source, audio=audio,
                         switch_device=switch_device, switch_input=switch_input, timeout=timeout).create()
+
+    def press_key(self, key, *, duration_ms=0):
+        """Send a bounded remote press through the authenticated shipping API."""
+        from .keys import press_key
+        return press_key(self, key, duration_ms=duration_ms)
 
     def add_amity(self, candidate, *, name=None, timeout=None, setup_code=None):
         """Temporarily add a control-only DUT using the existing Add Amity UI.

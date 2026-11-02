@@ -57,8 +57,7 @@ struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active{
  Session session;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();model::OctopusId peer;
  std::mutex mutex;bool cancelled=false,retiring=false,lifecycle_only=false,management_ready=false,ready=true,context_ready=true,context_requested=false,refreshing=false;
- RuntimePeerStatus status;std::deque<Queued> queue;model::ExecutionLeaseId own_control,own_realtime;
- std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::string endpoint_hint,expected_hostname;
+ RuntimePeerStatus status;std::deque<Queued> queue;std::string endpoint_hint,expected_hostname;
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
 };
@@ -83,14 +82,14 @@ int capture_shutdown(int,int){++amity::consortium::shutdowns;return 0;}
 SUPPORT = r'''
 namespace amity::consortium {
 std::string packet(const Envelope& e){
- return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"message_id\":\""+e.message_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
+ return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
 }
 bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
  auto e=outgoing(active,kind,ttl);JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));
  active.tls->sent.push_back(e);if(on_send)on_send(active,e);return true;
 }
 Envelope inbound(const LinkScope& scope,uint64_t revision,Kind kind,std::string_view payload){
- Envelope e;e.consortium_id=scope.consortium_id;e.message_id=random_id<model::MessageId>();e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;
+ Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;
  e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=scope.epoch;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;
  JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));return e;
 }
@@ -105,15 +104,13 @@ std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
  a->peer=scope.peer_id;a->tls->authenticated=a->peer;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;a->status.negotiated_capabilities=caps;
  HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=caps;
  assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
- a->own_control=ident<model::ExecutionLeaseId>(70);a->own_control_deadline=5000;a->status.control_lease=a->own_control;a->status.control_usable_until_ms=4900;
- assert(a->session.execution_leases().issue(a->own_control,LeaseClass::control,5000,clock_ms)==Error::none);
  clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();
  return a;
 }
 std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
 const std::string owner_state="{\"adapters\":[]}";
 const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
-const std::string input_result="{\"input_result\":{\"generation\":\"1\",\"sequence\":\"2\",\"source_present\":true}}";
+std::string observation(const LinkScope& scope){model::OwnedAdapterSnapshot report;report.owner=scope.peer_id;report.boot=scope.peer_boot_id;report.ready=true;return "{\"snapshot\":"+owned_snapshot_json(report)+"}";}
 void unchanged(const Active& active,const LinkScope& original,const FakeTls* tls){
  auto expected=original;expected.config_revision=active.session.scope().config_revision;
  assert(active.tls.get()==tls&&active.session.scope()==expected&&active.ready&&active.status.ready&&!active.cancelled&&!active.retiring&&active.session.state()==ConnectionState::ready);
@@ -136,27 +133,23 @@ void terminal_receive_trace(){
 }
 void coordinator_refresh(){
  auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
- const auto oldlease=a->own_control;unsigned applied=0,delivered=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
+ unsigned applied=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8);return controller_slice(original,revision);};
  controls.synchronize=[&](auto owner,const Json& value){++applied;assert(owner==a->peer&&value.type==Json::Type::string&&value.string==owner_state&&cached.size()==3);return Error::none;};
- controls.control=[&](auto owner,const Envelope& e,uint64_t deadline,model::LinkId link){
-  assert(owner==a->peer&&e.kind==Kind::scoped_result&&e.payload.get("input_result")&&deadline==0&&link==original.link_id);
-  assert(a->session.scope()==original&&e.origin_boot_id==original.peer_boot_id&&e.config_revision==original.config_revision&&applied==0);
-  assert(a->session.execution_leases().valid(oldlease,LeaseClass::control,original,clock_ms));++delivered;return Error::none;
- };
+ controls.control=[](auto,const auto&,auto,auto){assert(false&&"Observation refresh must not deliver a CEC completion");return Error::none;};
  a->tls->before_receive=[&]{unchanged(*a,original,tls);assert(cached.size()==3);};
  on_send=[&](Active& active,const Envelope& e){
   unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
   if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
    if(m.document_kind=="configuration"){assert(phase=="begin"&&e.config_revision==7&&m.config_revision==8);config_manifest=m;
-    result=inbound(original,7,Kind::scoped_result,input_result);feed(active,*result);feed(active,*result);
+    result=inbound(original,7,Kind::scoped_result,observation(original));feed(active,*result);
     feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
    else assert(e.config_revision==8&&m.config_revision==8&&(phase=="ack"||phase=="complete"));
-  }else{assert(config_manifest&&e.kind==Kind::snapshot_chunk&&e.config_revision==7&&delivered==1);
+  }else{assert(config_manifest&&e.kind==Kind::snapshot_chunk&&e.config_revision==7);
    feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
    // Already-in-flight obsolete messages are safely discarded after advance,
-   // including a replay; they cannot masquerade as the new owner-state slice.
-   stale=inbound(original,7,Kind::heartbeat,heartbeat);feed(active,*stale);feed(active,*stale);
+   // they cannot masquerade as the new owner-state slice.
+   stale=inbound(original,7,Kind::heartbeat,heartbeat);feed(active,*stale);
    const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);
    feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));
    feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));
@@ -164,11 +157,10 @@ void coordinator_refresh(){
  };
  runtime_configuration_changed(8,std::string(64,'b'));
  assert(configuration==8&&a->session.scope()==original&&a->ready&&a->status.ready&&shutdowns==0&&applied==0&&cached.size()==3);
- assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&delivered==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
- assert(a->session.execution_leases().live(LeaseClass::control,clock_ms)==0&&!a->own_control&&!a->status.control_lease&&a->own_control_deadline==0&&!a->context_ready);
- assert(!a->session.execution_leases().valid(oldlease,LeaseClass::control,a->session.scope(),clock_ms));
- assert(stale&&a->session.discard_stale(*stale,clock_ms,clock_ms)==Error::duplicate);stale->config_revision=8;assert(a->session.admit(*stale,clock_ms,clock_ms)==Error::duplicate);
- assert(result&&a->session.discard_stale(*result,clock_ms,clock_ms)==Error::duplicate);result->config_revision=8;assert(a->session.admit(*result,clock_ms,clock_ms)==Error::duplicate);
+ assert(synchronize(*a,true,true,8));unchanged(*a,original,tls);assert(applied==1&&cached.size()==3&&a->session.scope().config_revision==8&&a->status.config_revision==8);
+ assert(!a->context_ready);
+ assert(stale&&a->session.admit(*stale,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*stale,clock_ms,clock_ms)==Error::none);
+ assert(result&&a->session.admit(*result,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*result,clock_ms,clock_ms)==Error::none);
  assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
  runtime_configuration_changed(6,std::string(64,'c'));assert(configuration==8&&shutdowns==0);
 }
@@ -181,36 +173,32 @@ void future_context_recaptures_after_slow_refresh(){
    const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));}
  };
  unsigned receives=0;a->tls->before_receive=[&]{if(++receives==3)clock_ms+=1150;};runtime_configuration_changed(8,std::string(64,'b'));
- model::OwnedIntent context;context.kind=model::OwnedIntentKind::context;context.target.port={original.consortium_id,original.peer_id,0,model::Side::front};context.config_revision=8;context.generation=1;context.sequence=10;
+ model::OwnedIntent context;context.kind=model::OwnedIntentKind::context;context.target.port={original.consortium_id,original.peer_id,0,model::Side::front};context.config_revision=8;context.generation=1;
  assert(runtime_send_owned(context)==ESP_OK&&a->queue.empty());
- auto positive=context;positive.kind=model::OwnedIntentKind::power;positive.target.osd_name="Player";positive.sequence=11;positive.on=true;
+ auto positive=context;positive.kind=model::OwnedIntentKind::key_edges;positive.edges[0]={4,true};positive.edge_count=1;
  assert(runtime_send_owned(positive)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  assert(refresh_turn(*a)&&clock_ms==1250&&applied==1&&a->session.scope().config_revision==8&&!a->context_ready&&!a->cancelled&&a->queue.empty());
  assert(pump(*a)&&diagnostic_logs.empty()); // No old context payload or deadline.
- a->status.control_lease=ident<model::ExecutionLeaseId>(90);a->status.control_usable_until_ms=clock_ms+4900;
  unsigned requested=0;controls.ready=[&](auto,auto,auto){++requested;return true;};assert(initialize_context(*a)&&initialize_context(*a)&&requested==1&&a->context_requested&&!a->context_ready);
  assert(runtime_send_owned(positive)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  // The asynchronous callback reads current state when it actually runs. Its
- // fresh current generation/sequence enters before any later admitted action.
- context.generation=3;context.sequence=20;context.selected=true;assert(runtime_send_owned(context)==ESP_OK&&a->context_ready&&a->queue.size()==1&&a->queue.front().created==1250);
- positive.generation=3;positive.sequence=21;assert(runtime_send_owned(positive)==ESP_OK&&a->queue.size()==2);
+ // fresh current generation enters before any later admitted action.
+ context.generation=3;context.selected=true;assert(runtime_send_owned(context)==ESP_OK&&a->context_ready&&a->queue.size()==1&&a->queue.front().created==1250);
+ positive.generation=3;assert(runtime_send_owned(positive)==ESP_OK&&a->queue.size()==2);
  const auto before=a->tls->sent.size();assert(pump(*a)&&pump(*a)&&a->tls->sent.size()==before+2);
- model::OwnedIntent delivered;model::ExecutionLeaseId lease;
- assert(parse_owned_intent(a->tls->sent[before].payload,delivered,lease)==Error::none&&delivered.kind==model::OwnedIntentKind::context&&delivered.generation==3&&delivered.sequence==20&&lease==a->status.control_lease);
- assert(parse_owned_intent(a->tls->sent[before+1].payload,delivered,lease)==Error::none&&delivered.kind==model::OwnedIntentKind::power&&delivered.sequence==21&&a->tls->sent[before+1].config_revision==8);
+ model::OwnedIntent delivered;
+ assert(parse_owned_intent(a->tls->sent[before].payload,delivered)==Error::none&&delivered.kind==model::OwnedIntentKind::context&&delivered.generation==3&&!a->tls->sent[before].payload.get("execution_lease_id")&&!a->tls->sent[before].payload.get("sequence"));
+ assert(parse_owned_intent(a->tls->sent[before+1].payload,delivered)==Error::none&&delivered.kind==model::OwnedIntentKind::key_edges&&!a->tls->sent[before+1].payload.get("sequence")&&a->tls->sent[before+1].config_revision==8);
  unchanged(*a,original,a->tls.get());
 }
-void rejected_interleaved_input_results(){
- for(unsigned failure=0;failure<9;++failure){
-  auto a=start(true);const auto original=a->session.scope();unsigned delivered=0,applied=0;
+void rejected_interleaved_observations(){
+ for(unsigned failure=0;failure<7;++failure){
+  auto a=start(true);const auto original=a->session.scope();unsigned applied=0;
   controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto,uint64_t revision){return controller_slice(original,revision);};
   controls.synchronize=[&](auto,const Json&){++applied;return Error::none;};
-  if(failure!=7)controls.control=[&](auto owner,const Envelope& e,uint64_t deadline,model::LinkId link){
-   assert(owner==original.peer_id&&e.config_revision==7&&deadline==0&&link==original.link_id&&a->session.scope()==original);++delivered;return Error::identity_conflict;
-  };
   on_send=[&](Active& active,const Envelope& e){
    assert(e.kind==Kind::snapshot_request);SnapshotManifest m;std::string phase;uint32_t next=0;assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none&&phase=="begin");
-   auto result=inbound(original,7,Kind::scoped_result,input_result);
+   auto result=inbound(original,7,Kind::scoped_result,observation(original));
    switch(failure){
     case 0:result.origin_boot_id=ident<model::BootId>(99);break;
     case 1:result.destination_boot_id=ident<model::BootId>(99);break;
@@ -222,10 +210,9 @@ void rejected_interleaved_input_results(){
    }
    feed(active,result);feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));
   };
-  LinkTrace trace;assert(!synchronize(*a,true,true,8,nullptr,&trace));assert(applied==0&&delivered==(failure==8?1u:0u)&&a->session.scope()==original);
+  LinkTrace trace;assert(!synchronize(*a,true,true,8,nullptr,&trace));assert(applied==0&&a->session.scope()==original);
   assert(trace.unexpected&&trace.has_kind&&trace.kind==Kind::scoped_result&&!trace.has_queue);
-  assert(std::string(trace.phase)=="configuration_send"&&std::string(trace.reason)==(failure<7?"synchronization_admission":failure==7?"input_result_hook_missing":"input_result_delivery"));
-  trace_link_closed(*a,trace,clock_ms);assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("kind=scoped_result")!=std::string::npos&&diagnostic_logs.front().find("input_result\"")==std::string::npos&&diagnostic_logs.front().find("source_present")==std::string::npos);
+  assert(std::string(trace.phase)=="configuration_send"&&std::string(trace.reason)=="synchronization_admission");
  }
 }
 void member_refresh(){
@@ -246,7 +233,7 @@ void member_refresh(){
  };
  assert(synchronize(*a,false,true,8,&first));unchanged(*a,original,tls);assert(configuration==8&&applied==1&&cached.size()==2&&shutdowns==0);
  assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
- assert(a->session.execution_leases().live(LeaseClass::control,clock_ms)==0&&!a->own_control&&!a->status.control_lease);
+ assert(!a->context_ready);
 }
 void rejected_frames(){
  for(unsigned failure=0;failure<5;++failure){auto a=start(false);const auto original=a->session.scope();unsigned applied=0;
@@ -260,20 +247,18 @@ void rejected_frames(){
 }
 void immutable_queue(){
  auto a=start(true);on_send={};const auto original=a->session.scope();
- model::OwnedIntent i;i.kind=model::OwnedIntentKind::power;i.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};i.generation=i.sequence=1;i.on=true;i.config_revision=8;
+ model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_edges;i.target.port={original.consortium_id,original.peer_id,0,model::Side::front};i.generation=1;i.edges[0]={4,true};i.edge_count=1;i.config_revision=8;
  auto owned=std::make_shared<const model::OwnedIntent>(i);Queued queued{Kind::scoped_intent,{},500,100,8,owned};a->queue.push_back(queued);
  runtime_configuration_changed(8,std::string(64,'b'));assert(a->queue.size()==1&&a->queue.front().owned==owned&&a->queue.front().created==100&&a->queue.front().ttl==500&&a->session.scope()==original&&shutdowns==0);
- std::string payload;assert(prepare_queued(*a,queued,120,payload)==QueuedState::stale&&payload.empty());
- assert(a->session.advance_configuration(8)==Error::none);a->status.config_revision=8;a->status.control_lease={};a->status.control_usable_until_ms=0;a->context_ready=false;
- assert(prepare_queued(*a,queued,120,payload)==QueuedState::waiting);
- a->context_ready=true;assert(prepare_queued(*a,queued,120,payload)==QueuedState::waiting);
- const auto fresh=ident<model::ExecutionLeaseId>(88);a->status.control_lease=fresh;a->status.control_usable_until_ms=900;
- assert(prepare_queued(*a,queued,120,payload)==QueuedState::ready);
- Json parsed;JsonError error;model::OwnedIntent decoded;model::ExecutionLeaseId lease;assert(parse_json(payload,parsed,error)&&parse_owned_intent(parsed,decoded,lease)==Error::none&&lease==fresh);
+ std::string payload;assert(prepare_queued(*a,queued,payload)==QueuedState::stale&&payload.empty());
+ assert(a->session.advance_configuration(8)==Error::none);a->status.config_revision=8;a->context_ready=false;
+ assert(prepare_queued(*a,queued,payload)==QueuedState::waiting);
+ a->context_ready=true;assert(prepare_queued(*a,queued,payload)==QueuedState::ready);
+ Json parsed;JsonError error;model::OwnedIntent decoded;assert(parse_json(payload,parsed,error)&&parse_owned_intent(parsed,decoded)==Error::none&&!parsed.get("execution_lease_id"));
  assert(queued.owned==owned&&queued.revision==8&&queued.created==100&&queued.ttl==500&&owned->config_revision==8);
- auto stale=queued;stale.revision=7;assert(prepare_queued(*a,stale,120,payload)==QueuedState::stale);
+ auto stale=queued;stale.revision=7;assert(prepare_queued(*a,stale,payload)==QueuedState::stale);
  // The actual worker block expires the admitted IPC item at its original
- // deadline, even if context/fresh leases were unavailable during refresh.
+ // deadline, even if current context was unavailable during refresh.
  clock_ms=600;a->context_ready=false;assert(!pump(*a)&&a->tls->sent.empty()&&a->queue.empty());
  assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_intent age_ms=500 ttl_ms=500")!=std::string::npos);
  auto settings=Queued{Kind::settings_read,"{\"request_id\":\""+ident<model::MessageId>(91).str()+"\"}",1000,600,7,{}};
@@ -285,29 +270,26 @@ void observation_expiry_is_not_lost_causal_work(){
  std::vector<RuntimeSnapshotRetry> retries;controls.snapshot_retry=[&](const auto& request){retries.push_back(request);};
  model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.adapter=0;report.ready=true;
  const auto snapshot="{\"snapshot\":"+owned_snapshot_json(report)+"}";
- const auto typed="{\"input_result\":{\"generation\":\"1\",\"sequence\":\"2\",\"source_present\":true}}";
+ auto key=std::make_shared<model::OwnedIntent>();key->kind=model::OwnedIntentKind::key_edges;key->generation=1;key->config_revision=scope.config_revision;key->edges[0]={4,true};key->edge_count=1;
+ key->target={{scope.consortium_id,scope.peer_id,0,model::Side::back},"Player"};
  const auto observation=Queued{Kind::scoped_result,snapshot,1000,100,scope.config_revision,{}};
- const auto input_result=Queued{Kind::scoped_result,typed,1000,100,scope.config_revision,{}};
- assert(!queued_causal(observation)&&queued_causal(input_result));
+ const auto input=Queued{Kind::scoped_intent,{},1000,100,scope.config_revision,key};
+ assert(!queued_causal(observation)&&queued_causal(input));
  auto malformed=observation;malformed.payload="{\"snapshot\":{}}";assert(queued_causal(malformed));
  malformed.payload="{}";assert(queued_causal(malformed));malformed.payload="invalid";assert(queued_causal(malformed));
  a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled&&diagnostic_logs.empty());
  assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
- // Admission performs the same expiry distinction before submitting new IPC.
- a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_result,typed,1000,{},scope.config_revision)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
- assert(retries.size()==2&&diagnostic_logs.empty()); // Same scoped recapture from admission-side expiry.
- assert(a->queue.front().payload==typed);
- a->queue.clear();a->queue.push_back(input_result);
+ a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_intent,{},1000,{},scope.config_revision,key)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
+ assert(retries.size()==2&&diagnostic_logs.empty()&&a->queue.front().owned==key);
+ a->queue.clear();a->queue.push_back(input);
  assert(queue_control(a->peer,Kind::scoped_result,snapshot,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE);
  assert(a->restart_requested&&a->execution_fenced&&!a->ready&&!a->context_ready&&!a->cancelled&&a->tls->usable()&&shutdowns==0&&a->queue.empty());
- assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_result age_ms=1100 ttl_ms=1000")!=std::string::npos);
- // A typed source lookup result is still causal even when it reaches the
- // worker instead of a later admission call; expiry must fence its old link.
- a=start(false);a->queue.push_back(input_result);clock_ms=1200;assert(!pump(*a)&&a->queue.empty()&&a->tls->sent.empty());
- assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_result age_ms=1100 ttl_ms=1000")!=std::string::npos);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_intent age_ms=1100 ttl_ms=1000")!=std::string::npos);
+ a=start(false);a->queue.push_back(input);clock_ms=1200;assert(!pump(*a)&&a->queue.empty()&&a->tls->sent.empty());
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos);
 }
 }
-int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_slow_refresh();rejected_frames();rejected_interleaved_input_results();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; old-scope input result delivered once before revision advance; strict identity/boot/replay and missing/rejected callback fences; old-scope completion then new owner state; lease invalidation and original queued revision/deadline; snapshot expiry independent of causal input results\n";}
+int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_slow_refresh();rejected_frames();rejected_interleaved_observations();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place runtime synchronization: both roles retain TLS/link/boots/readiness/cache; strict identity/boot/configuration and observation fences; old-scope observation discarded before new owner state; fresh context and original queued revision/deadline; snapshot expiry independent of causal input state\n";}
 '''
 
 
@@ -321,16 +303,16 @@ def main():
     end = source.index('        fd_set reads;', start)
     pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
-        'Envelope outgoing(', 'bool same_manifest(', 'bool deliver_synchronization_input(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
+        'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(',
-        'void runtime_configuration_changed(', 'static bool queued_cleanup(', 'static bool queued_causal('))
+        'void runtime_configuration_changed(', 'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal('))
     actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')
     actual += ''.join(function(source, name) for name in ('bool initialize_context(', 'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned('))
     refresh_start=source.index('        if(server&&active->ready&&')
     refresh_end=source.index('        trace.phase="operational";',refresh_start)
-    refresh='\nbool refresh_turn(Active& storage){auto* active=&storage;const bool server=true;const uint64_t receive_until=0;uint64_t heartbeat=0,renewal=0,control_renewal=0;LinkTrace trace;while(true){'+source[refresh_start:refresh_end]+'(void)heartbeat;(void)renewal;(void)control_renewal;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    refresh='\nbool refresh_turn(Active& storage){auto* active=&storage;const bool server=true;const uint64_t receive_until=0;uint64_t heartbeat=0;LinkTrace trace;while(true){'+source[refresh_start:refresh_end]+'(void)heartbeat;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     queued = function(source, 'enum class QueuedState').rstrip() + ';\n' + function(source, 'QueuedState prepare_queued(')
     with tempfile.TemporaryDirectory(prefix='amity-live-configuration-') as directory:
         temp = Path(directory)

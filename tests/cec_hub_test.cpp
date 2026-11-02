@@ -398,20 +398,27 @@ static void independent_key_tests() {
     assert(!t.contains(B, 5, {0x45})); assert(h.release_key(0x61));
     assert(t.count(B, 5, {0x45}) == 1);
 
-    // Re-resolving a held key's device cannot move its repeat or final release.
+    // Each repeat and release resolves the current source again.
     t.sent.clear(); assert(h.press_key(right, true));
     device(h, B, 8, 0x2000, 4, "Source"); t.sent.clear();
     assert(h.press_key(right, true) && h.release_key(right));
-    assert(t.count(B, 5, {0x44, right}) == 1 && t.count(B, 5, {0x45}) == 1);
-    assert(!t.contains(B, 8, {0x44, right}) && !t.contains(B, 8, {0x45}));
+    assert(t.count(B, 8, {0x44, right}) == 1 && t.count(B, 8, {0x45}) == 1);
+    assert(!t.contains(B, 5, {0x44, right}) && !t.contains(B, 5, {0x45}));
     t.sent.clear(); assert(h.press_key(right));
     assert(t.count(B, 8, {0x44, right}) == 1 && t.count(B, 8, {0x45}) == 1);
+
+    // Release performs its own lookup even when no repeat followed the change.
+    t.sent.clear(); assert(h.press_key(right, true));
+    device(h, B, 11, 0x3000, 4, "Source"); t.sent.clear();
+    assert(h.release_key(right));
+    assert(t.sent.size() == 1 && t.count(B, 11, {0x45}) == 1);
+    assert(!t.contains(B, 8, {0x45}));
 
     // Activity changes still terminate every independent hold once per recipient.
     assert(h.select_activity(0)); t.sent.clear();
     assert(h.press_key(volume_up, true) && h.press_key(right, true));
     assert(h.select_activity(-1));
-    assert(t.count(F, 5, {0x45}) == 1 && t.count(B, 8, {0x45}) == 1);
+    assert(t.count(F, 5, {0x45}) == 1 && t.count(B, 11, {0x45}) == 1);
     t.sent.clear(); assert(h.release_key()); assert(t.sent.empty());
 }
 static void volume_sequence_tests() {

@@ -25,7 +25,7 @@ const char* code(c::Error value){
         case c::Error::none:return "";
         case c::Error::stale_boot:return "STALE_BOOT";
         case c::Error::transaction_conflict:case c::Error::stale_config:return "CONFLICT";
-        case c::Error::lease_expired:return "LEASE_EXPIRED";
+        case c::Error::expired:return "EXPIRED";
         case c::Error::storage_failure:return "STORAGE_FAILURE";
         case c::Error::queue_full:return "QUEUE_FULL";
         case c::Error::invalid_message:return "INVALID_MESSAGE";
@@ -84,7 +84,7 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
     if(!owner)error=c::Error::not_ready;
     else if(request.boot!=owner->boot_identity())error=c::Error::stale_boot;
     else if(request.revision!=device_settings::adapter_defaults().revision)error=c::Error::transaction_conflict;
-    else if(!deadline||now()>=deadline)error=c::Error::lease_expired;
+    else if(!deadline||now()>=deadline)error=c::Error::expired;
     else if(restart_pending||!c::runtime_device_settings_authorized(id))error=c::Error::not_ready;
     else {
         std::vector<device_settings::AdapterDefaultChange> preferences;
@@ -93,7 +93,7 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
         auto failure=std::make_shared<std::atomic<c::Error>>(c::Error::none);
         const auto applied=owner->commit_adapter_settings(request.boot,std::move(adapters),deadline,
             [id,deadline,revision=request.revision,preferences=std::move(preferences),failure]{
-                if(now()>=deadline){failure->store(c::Error::lease_expired);return ESP_ERR_INVALID_STATE;}
+                if(now()>=deadline){failure->store(c::Error::expired);return ESP_ERR_INVALID_STATE;}
                 if(!c::runtime_device_settings_authorized(id)){failure->store(c::Error::not_ready);return ESP_ERR_INVALID_STATE;}
                 if(device_settings::adapter_defaults().revision!=revision){failure->store(c::Error::transaction_conflict);return ESP_ERR_INVALID_STATE;}
                 const auto saved=device_settings::save_adapter_defaults(revision,preferences);
@@ -101,7 +101,7 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
                 return saved;
             });
         error=failure->load();
-        if(error==c::Error::none&&applied!=ESP_OK)error=now()>=deadline?c::Error::lease_expired:applied==ESP_ERR_NO_MEM?c::Error::queue_full:c::Error::not_ready;
+        if(error==c::Error::none&&applied!=ESP_OK)error=now()>=deadline?c::Error::expired:applied==ESP_ERR_NO_MEM?c::Error::queue_full:c::Error::not_ready;
         if(error==c::Error::none)restart_pending=true;
     }
     response=result(id,error);

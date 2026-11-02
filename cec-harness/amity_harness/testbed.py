@@ -54,6 +54,10 @@ _SETTINGS_FIELDS = frozenset(("phase", "dut", "device_id", "tentacle_id", "reque
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
                               "removed_activity", "removed_equipment", "retained_equipment"))
+_KEY_FIELDS = frozenset(("key", "emitted_key", "duration_ms", "started_monotonic_ns", "boot", "owner_boots", "released", "standby",
+                        "deadline_monotonic_ns",
+                        "component", "owner_id", "gpio", "press_frame", "release_frame", "presses",
+                        "press_wire_timestamp_ns", "release_wire_timestamp_ns"))
 _MEMBERSHIP_FIELDS = frozenset(("phase", "candidate", "device_id", "name", "request_id", "scan_id",
                                "operation_stage", "candidate_id", "boot", "member_boot",
                                "membership_revision", "reset", "retained_member", "error_type",
@@ -138,6 +142,7 @@ class TestBed:
         self._failure_details = None
         self._initial_scans = {}
         self._initial_activity_counts = {}
+        self._initial_key_counts = {}
         self._initial_membership_counts = {}
         self._initial_settings_counts = {}
         self._member_proofs = {}
@@ -201,6 +206,7 @@ class TestBed:
                 self._owned.append(dut)
                 self._initial_scans[id(dut)] = getattr(dut, "last_scan", None)
                 self._initial_activity_counts[id(dut)] = len(getattr(dut, "activity_operations", ()))
+                self._initial_key_counts[id(dut)] = len(getattr(dut, "key_operations", ()))
                 self._initial_membership_counts[id(dut)] = len(getattr(dut, "membership_operations", ()))
                 self._initial_settings_counts[id(dut)] = len(getattr(dut, "adapter_settings_operations", ()))
                 event("testbed.dut.claimed", dut=dut.name, device_id=dut.identity.device_id,
@@ -432,6 +438,8 @@ class TestBed:
                   "components": components, "scans": scans,
                   "activities": [_activity_report(dut, record) for dut in self._owned
                                  for record in getattr(dut, "activity_operations", ())[self._initial_activity_counts[id(dut)]:]],
+                  "keys": [{"dut": dut.name, **_select(record, _KEY_FIELDS)} for dut in self._owned
+                           for record in getattr(dut, "key_operations", ())[self._initial_key_counts[id(dut)]:]],
                   "memberships": [_membership_report(dut, record) for dut in self._owned
                                   for record in getattr(dut, "membership_operations", ())[self._initial_membership_counts[id(dut)]:]],
                   "adapter_settings": [_select(record, _SETTINGS_FIELDS) for dut in self._owned

@@ -57,6 +57,46 @@ The original remote behavior explicitly includes Siri swipes: gesture recognitio
 
 The original controller hosts every tab and browser/admin session. Added devices host no UI, login, recovery/status page or home-control integration. Their management goes through the one extra Amity tab and authenticated peer channels. Controller absence makes user control unavailable; no member offers an alternative UI.
 
+The authenticated `POST /api/key` accepts `{"key":65,"duration_ms":250}`
+with an integer CEC user-control code from 0 to 255 and an optional integer
+hold duration from 0 to 5000 milliseconds. Zero, also the default when
+`duration_ms` is omitted, sends one complete press/release tap. A positive
+duration begins the existing held-key/repetition lifecycle, waits in the
+administration task, then releases that exact key before writing the HTTP
+response. Disconnecting the caller does not skip release. The owner task keeps
+advancing RX, activity setup, discovery and CEC completions throughout that
+bounded wait. Other HTTP administration requests wait behind this request for
+the requested hold plus ordinary task/cleanup admission time. The duration
+sets when firmware requests release; it does not promise an exact physical CEC
+completion deadline. No timer, retry or outgoing CEC queue is added.
+
+Requests use the same `SystemControl` remote facade and original owner-local
+lookup/transmission path. The current activity's audio device receives Volume
+Up (`0x41`), Volume Down (`0x42`) and Mute (`0x43`), and its source receives
+Select (`0x00`), Up/Down/Left/Right (`0x01`–`0x04`), Play (`0x44`), Stop (`0x45`)
+and Pause (`0x46`). Play/Pause (`0x61`) retains the original toggle translation.
+Power (`0x40`) selects system Standby through the original accepted-selection
+path for both zero and positive durations, retaining its selection receipt and
+input gate. The same request on the main controls an
+activity whose equipment belongs to an added Amity; members expose no
+additional control endpoint. Startup/selection input handling and activity
+setup suppression remain in their existing layers. A positive-duration request
+received during setup is discarded immediately without scheduling a later up.
+The main checks the captured activity generation, accepted-selection receipt
+and existing local input lifetime before forwarding either edge. A selection,
+repair, configuration change or input reset prevents an old request from
+releasing a newly pressed key. These local timer checks add no wire token.
+Conditional cleanup uses the existing
+bounded cleanup IPC reservation; it never falls back to an unfenced raw-key up.
+Failed keys retain their
+existing suppression until this request's final release, and cleanup does not
+release an independently held different key. Unknown or duplicate fields,
+noninteger values and keys/durations outside the supported ranges are rejected.
+`{"ok":true}` acknowledges task admission (including final release admission
+for a positive duration); fresh CEC completion and resulting equipment state
+must be checked separately. This is ordinary product control reused by the
+functional framework without a test-specific firmware surface.
+
 ## Additional Amity tab
 
 The device list always includes the original main first, including a system with no added devices. Use the heading `<hostname> (this device)`, for example **amity-dut (this device)**, with the marker inline rather than on a separate status line. Align **Settings** to the right in the same title row. Added-device title rows likewise place the hostname on the left and **Settings** plus **Remove**, or **Replace** when applicable, on the right; **Update firmware** may remain below. This row identifies the controller serving the interface; it does not offer member Remove, Replace or Update firmware actions. Main firmware updates remain in the original Advanced workflow. There is no separate Location action or editable cosmetic device alias. Main hostname changes use the existing Advanced setting. Do not precede the list with a paragraph describing only added devices as manageable.
@@ -122,7 +162,7 @@ The exact [HTTP contract](12-control-surfaces-and-admin.md#per-device-settings-c
 | UX-12 | Amity devices always lists the main first with the inline heading `<hostname> (this device)`, even without members. Settings is right-aligned in the title row; added-device Settings and Remove/Replace share that row, while Update firmware may remain below. Member Remove/Replace/Update firmware controls never appear on the main's row; Add requires a valid, unique Name that sets the actual hostname; no separate Location alias exists, and actuator status/remove/replace/update remain explicit. |
 | UX-13 | Members have no UI/integrations/remote permission; foreign remote/promotion requests are rejected. |
 | UX-14 | Original Advanced backup, restore, logs, restart and remaining settings retain their baseline workflow; only the former global default front address moves to the per-device Settings dialog. Fresh replacement-main recovery uses existing Upload/Restore with old-main isolation, preserved portable logical IDs/names/order, fresh authority and explicit re-pairing/member re-enrollment; no separate wizard. |
-| UX-15 | Reboot/reconnect/stale input cannot replay activity or retarget an exact held gesture. |
+| UX-15 | Reboot/reconnect/stale input cannot replay activity or end a newer hold. Key operations use the current activity target through the normal resolver. |
 | UX-17 | Per-device Settings meets the zero-to-four/sparse/configured-slot matrix above; reads have no CEC side effects and only an applied durable save restarts the selected owner after response attempt. |
 | UX-16 | Desktop/mobile, keyboard/focus/error behavior and actual baseline comparison are recorded; historical guided-wizard checks are not substitute evidence. |
 

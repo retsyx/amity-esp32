@@ -43,6 +43,7 @@ void reset(){
     send_result=ESP_OK;report_result=ESP_OK;task_ok=true;auth_allowed=true;now=100;
     on_report_send={};
     require_retry_lock=false;
+    system_sync_test_log::messages.clear();
     task_creations=authorization_checks=0;memory=JournalMemory{};journal=std::make_unique<ConfigurationStore>(memory);
 }
 amity::SystemControl control(bool member=false){
@@ -57,22 +58,22 @@ c::Json json(std::string_view text){c::Json value;c::JsonError error;if(!c::pars
 s::OwnedAdapterSnapshot report(s::OctopusId owner,s::BootId boot,uint8_t adapter=0){
     s::OwnedAdapterSnapshot value;value.owner=owner;value.boot=boot;value.adapter=adapter;
     value.ready=true;value.front_address=4;value.back_address=0;value.front_physical_address=0x1000;
-    value.discovery_generation=3;value.setup_generation=3;value.setup_last_sequence=11;value.setup_pending=2;value.setup_replies_pending=true;value.devices.push_back({s::Side::back,"Source",4,4,0x1000,0x123456,true});return value;
+    value.discovery_generation=3;value.devices.push_back({s::Side::back,"Source",4,4,0x1000,0x123456,true});return value;
 }
 c::RuntimePeerStatus remote(unsigned owner=9,unsigned boot=19,uint8_t capacity=4,uint8_t mask=0b1101){
     c::RuntimePeerStatus value;value.id=id<s::OctopusId>(owner);value.boot_id=id<s::BootId>(boot);
     value.supported_tentacles=capacity;value.configured_tentacles_mask=mask;value.ready=value.enrolled=true;return value;
 }
 s::OwnedIntent down(const amity::SystemControl& owner){
-    s::OwnedIntent value;value.kind=s::OwnedIntentKind::key_down;
+    s::OwnedIntent value;value.kind=s::OwnedIntentKind::key_edges;
     value.target={{owner.consortium_id(),owner.octopus_id(),0,s::Side::back},"Source"};
-    value.generation=7;value.sequence=11;value.key=0x41;value.repeat=true;value.token=id<s::HoldToken>(77);return value;
+    value.generation=7;value.edge_count=1;value.edges[0]={0x41,true};return value;
 }
 c::Envelope envelope(const amity::SystemControl& owner,s::OctopusId sender,const s::OwnedIntent& intent){
     c::Envelope value;value.kind=c::Kind::scoped_intent;value.consortium_id=owner.consortium_id();
     value.origin_octopus_id=sender;value.destination_octopus_id=owner.octopus_id();
     value.origin_boot_id=id<s::BootId>(12);value.destination_boot_id=owner.boot_identity();value.config_revision=23;
-    value.payload=json(c::owned_intent_json(intent,id<s::ExecutionLeaseId>(80)));return value;
+    value.payload=json(c::owned_intent_json(intent));return value;
 }
 c::Envelope report_envelope(const s::OwnedAdapterSnapshot& value){
     c::Envelope result;result.kind=c::Kind::scoped_result;result.payload=json("{\"snapshot\":"+c::owned_snapshot_json(value)+"}");return result;
@@ -111,7 +112,7 @@ namespace {
 using namespace fixture;
 void startup_and_minimal_handshake(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
-    assert(hooks.snapshot&&hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer&&main.deadline&&main.input_observer);
+    assert(hooks.snapshot&&hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer&&main.deadline);
     assert(amity::start_configuration_synchronization(main)==ESP_OK&&task_creations==1);
     auto other=control();assert(amity::start_configuration_synchronization(other)==ESP_ERR_INVALID_STATE);
     const auto document=json(hooks.snapshot(id<s::OctopusId>(9)));
@@ -137,7 +138,7 @@ void startup_and_minimal_handshake(){
     assert(hooks.synchronize(original,json("{}"))==c::Error::invalid_message);
     reset();task_ok=false;auto unavailable=control();assert(amity::start_configuration_synchronization(unavailable)==ESP_ERR_NO_MEM&&amity::state.control==nullptr);
     assert(!hooks.snapshot&&!hooks.synchronize&&!hooks.control&&!hooks.disconnected&&!hooks.ready&&!hooks.restart_session);
-    assert(!unavailable.sender&&!unavailable.observer&&!unavailable.authorizer&&!unavailable.deadline&&!unavailable.input_observer);
+    assert(!unavailable.sender&&!unavailable.observer&&!unavailable.authorizer&&!unavailable.deadline);
     // Failed initialization leaves no callback into the unstarted task, and a
     // later legitimate start can install a fresh set of callbacks.
     task_ok=true;assert(amity::start_configuration_synchronization(unavailable)==ESP_OK&&task_creations==2);
@@ -147,88 +148,78 @@ void intent_delivery_preserves_authorization(){
     const auto original=*member.configuration.controller_octopus_id;const auto intent=down(member);auto received=envelope(member,original,intent);
     const auto link=id<s::LinkId>(44);const uint64_t deadline=123456;
     assert(hooks.control(original,received,deadline,link)==c::Error::none&&member.submitted.size()==1&&authorization_checks==1);
-    const auto& actual=member.submitted.back();assert(actual.target==intent.target&&actual.generation==7&&actual.sequence==11&&actual.token==intent.token&&actual.key==0x41&&actual.repeat);
+    const auto& actual=member.submitted.back();assert(actual.target.port.octopus_id==member.octopus_id()&&actual.target.port.consortium_id==member.consortium_id()&&actual.target.osd_name.empty()&&actual.generation==7&&actual.edge_count==1&&actual.edges[0].key==0x41&&actual.edges[0].down);
     const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==received.origin_boot_id&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline);
-    assert(auth.authority==s::OwnedAuthority::realtime);
+    assert(auth.authority==s::OwnedAuthority::input);
     assert(member.deadline(auth)==refreshed_deadline&&deadline_queries.size()==1&&deadline_queries.back().link_id==link&&deadline_queries.back().deadline_ms==deadline);
-    auto up=intent;up.kind=s::OwnedIntentKind::key_up;auto released=envelope(member,original,up);
+    auto up=intent;up.edges[0].down=false;auto released=envelope(member,original,up);
     assert(hooks.control(original,released,deadline,link)==c::Error::none&&member.authorizations.back().authority==s::OwnedAuthority::cleanup);
-    auto power=intent;power.kind=s::OwnedIntentKind::power;power.on=true;auto powered=envelope(member,original,power);
+    auto power=intent;power.kind=s::OwnedIntentKind::activity;power.selected=true;power.source=intent.target;auto powered=envelope(member,original,power);
     assert(hooks.control(original,powered,deadline,link)==c::Error::none&&member.authorizations.back().authority==s::OwnedAuthority::control);
+    auto tap=intent;tap.edge_count=2;tap.edges[1]={tap.edges[0].key,false};const auto pair_calls=member.submitted.size();
+    assert(hooks.control(original,envelope(member,original,tap),deadline,link)==c::Error::none&&member.submitted.size()==pair_calls+1&&member.submitted.back().edge_count==2&&member.authorizations.back().authority==s::OwnedAuthority::input);
     auth_allowed=false;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role);auth_allowed=true;
-    for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::lease_expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(hooks.control(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
-    const auto calls=member.submitted.size();auto wrong=intent;wrong.target.port.octopus_id=id<s::OctopusId>(99);auto target=envelope(member,original,wrong);
+    for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(hooks.control(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
+    const auto calls=member.submitted.size();auto target=envelope(member,original,intent);target.destination_octopus_id=id<s::OctopusId>(99);
     assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.submitted.size()==calls);
-    wrong=intent;wrong.target.port.consortium_id=id<s::ConsortiumId>(99);target=envelope(member,original,wrong);
+    target=envelope(member,original,intent);target.consortium_id=id<s::ConsortiumId>(99);
     assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.submitted.size()==calls);
     for(unsigned retired:{2u,4u,6u,12u,18u,20u,26u,35u,36u}){received.kind=static_cast<c::Kind>(retired);assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.submitted.size()==calls);}
     received.kind=c::Kind::scoped_result;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role);
     role.member=false;role.coordinator=true;received.kind=c::Kind::scoped_intent;
     assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.submitted.size()==calls);
 }
-void source_lookup_results_preserve_original_fallback(){
+void key_rejection_diagnostics_preserve_results(){
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    const auto intent=down(main);
+    assert(main.sender(intent)&&system_sync_test_log::messages.empty());
+    send_result=ESP_ERR_INVALID_STATE;
+    assert(!main.sender(intent)&&sent.size()==2&&system_sync_test_log::messages.size()==1);
+    const auto transport=system_sync_test_log::messages.back();
+    assert(transport.find("phase=transport key=65 generation=7 error=")!=std::string::npos);
+    assert(transport.find("Source")==std::string::npos);
+    auto power=intent;power.kind=s::OwnedIntentKind::activity;
+    assert(!main.sender(power)&&system_sync_test_log::messages.size()==1);
+
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
-    const auto original=*member.configuration.controller_octopus_id;auto input=down(member);input.kind=s::OwnedIntentKind::source_input;input.setup_generation=3;
-    const auto received=envelope(member,original,input);const auto link=id<s::LinkId>(44);const auto began=now;
-    // Device presence and CEC admission are distinct in the original Hub:
-    // a full TX FIFO must not incorrectly trigger receiver-input fallback.
-    for(const auto& entry:std::vector<std::tuple<s::AdmissionCode,c::Error,bool>>{
-        {s::AdmissionCode::accepted,c::Error::none,true},
-        {s::AdmissionCode::unresolved,c::Error::none,false},
-        {s::AdmissionCode::overloaded,c::Error::none,true}}){
-        member.admission=std::get<0>(entry);member.source_present=std::get<2>(entry);const auto count=result_packets.size();
-        assert(hooks.control(original,received,123456,link)==std::get<1>(entry)&&result_packets.size()==count+1&&now==began);
-        assert(member.submitted.back().setup_generation==3);
-        const auto& packet=result_packets.back();assert(packet.owner==original&&packet.link==link&&packet.ttl==1000);
-        const auto payload=json(packet.payload);assert(c::valid_owned_result(payload));const auto* result=payload.get("input_result");
-        assert(result&&result->get("generation")->string=="7"&&result->get("sequence")->string=="11"&&result->get("source_present")->boolean==std::get<2>(entry));
+    const auto original=*member.configuration.controller_octopus_id;
+    const auto key=down(member);const auto packet=envelope(member,original,key);const auto link=id<s::LinkId>(44);
+    assert(hooks.control(original,packet,123456,link)==c::Error::none&&system_sync_test_log::messages.empty());
+    member.admission=s::AdmissionCode::pending;
+    assert(hooks.control(original,packet,123456,link)==c::Error::none&&system_sync_test_log::messages.empty());
+    for(const auto& failure:std::vector<std::pair<s::AdmissionCode,c::Error>>{
+        {s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},
+        {s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::unauthorized,c::Error::unauthorized_role}}){
+        member.admission=failure.first;const auto count=system_sync_test_log::messages.size();
+        assert(hooks.control(original,packet,123456,link)==failure.second&&system_sync_test_log::messages.size()==count+1);
+        const auto& message=system_sync_test_log::messages.back();
+        assert(message=="Key rejected phase=owner key=65 generation=7 admission="+std::to_string(static_cast<int>(failure.first)));
+        assert(message.find("Source")==std::string::npos);
     }
-    const auto reports=result_packets.size();for(auto code:{s::AdmissionCode::unauthorized,s::AdmissionCode::stale,s::AdmissionCode::expired,s::AdmissionCode::invalid}){
-        member.admission=code;assert(hooks.control(original,received,123456,link)!=c::Error::none&&result_packets.size()==reports);
+}
+void activity_selection_delivery_is_independent(){
+    reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
+    const auto original=*member.configuration.controller_octopus_id;auto activity=down(member);activity.kind=s::OwnedIntentKind::activity;
+    activity.target.osd_name.clear();activity.selected=true;activity.source=down(member).target;activity.repair=true;
+    const auto received=envelope(member,original,activity);const auto link=id<s::LinkId>(44);const auto began=now;
+    for(auto code:{s::AdmissionCode::accepted,s::AdmissionCode::pending,s::AdmissionCode::unresolved}){
+        member.admission=code;assert(hooks.control(original,received,123456,link)==c::Error::none);
+        const auto& delivered=member.submitted.back();
+        assert(delivered.kind==s::OwnedIntentKind::activity&&delivered.selected&&delivered.repair&&delivered.source==activity.source);
+        assert(!delivered.activity_step&&member.authorizations.back().authority==s::OwnedAuthority::control);
+        assert(result_packets.empty()&&result_fences.empty()&&packets.empty()&&now==began);
     }
-    member.admission=s::AdmissionCode::overloaded;member.source_present.reset();const auto before_unknown=result_packets.size();
-    assert(hooks.control(original,received,123456,link)==c::Error::queue_full&&result_packets.size()==before_unknown);
-    assert(result_fences.back()==std::make_pair(original,link)); // IPC admission is not an owner lookup.
-    member.admission=s::AdmissionCode::pending;member.source_present.reset();const auto deferred=result_packets.size();
-    assert(hooks.control(original,received,123456,link)==c::Error::none&&result_packets.size()==deferred);
-    const auto pending_auth=member.authorizations.back();assert(pending_auth.authority==s::OwnedAuthority::control);
-    s::AdmissionResult located{s::AdmissionCode::accepted,{}};located.source_present=false;
-    member.input_observer(input,pending_auth,located);
-    assert(result_packets.back().revision==pending_auth.config_revision);
-    assert(result_packets.size()==deferred+1&&result_packets.back().link==link);
-    assert(!json(result_packets.back().payload).get("input_result")->get("source_present")->boolean);
-    // Once the authenticated link is replaced, an old asynchronous lookup
-    // result must fail on that exact link instead of reaching the replacement.
-    assert(hooks.restart_session(original,received.origin_boot_id,link));
-    assert(member.fences.back()==std::make_pair(original,link));
-    current_result_link=id<s::LinkId>(45);const auto before_replace=result_fences.size();
-    member.input_observer(input,pending_auth,located);
-    assert(result_packets.back().link==link&&result_fences.size()==before_replace+1&&result_fences.back()==std::make_pair(original,link));
-    current_result_link={};s::AdmissionResult stale{s::AdmissionCode::stale,{}};
-    const auto before_stale=result_packets.size();member.input_observer(input,pending_auth,stale);
-    assert(result_packets.size()==before_stale&&result_fences.back()==std::make_pair(original,link));
-    member.admission=s::AdmissionCode::accepted;member.source_present=true;report_result=ESP_FAIL;
-    const auto failed=result_fences.size();assert(hooks.control(original,received,123456,link)==c::Error::queue_full);
-    assert(result_fences.size()==failed+1&&result_fences.back()==std::make_pair(original,link));
-    const auto obsolete_packets=result_packets.size(),obsolete_fences=result_fences.size();
-    assert(hooks.synchronize(original,string_document("{\"controller\":\""+original.str()+"\",\"config_revision\":\"24\"}"))==c::Error::none);
-    member.input_observer(input,pending_auth,located);
-    assert(result_packets.size()==obsolete_packets&&result_fences.size()==obsolete_fences); // Old-revision continuations never disconnect the live replacement scope.
-    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);peers={remote()};const auto owner=peers[0].id;
-    c::Envelope result;result.kind=c::Kind::scoped_result;result.origin_boot_id=peers[0].boot_id;
-    result.payload=json("{\"input_result\":{\"generation\":\"7\",\"sequence\":\"11\",\"source_present\":false}}");
-    assert(c::valid_owned_result(result.payload));assert(hooks.control(owner,result,123456,link)==c::Error::none&&main.input_results.size()==1);
-    assert(main.input_results.back()==std::make_tuple(owner,uint64_t{7},uint64_t{11},false));
-    const auto calls=main.input_results.size();assert(hooks.control(id<s::OctopusId>(99),result,123456,link)==c::Error::invalid_message&&main.input_results.size()==calls);
-    result.origin_boot_id=id<s::BootId>(99);assert(hooks.control(owner,result,123456,link)==c::Error::invalid_message&&main.input_results.size()==calls);result.origin_boot_id=peers[0].boot_id;
-    main.lookup_result=false;assert(hooks.control(owner,result,123456,link)==c::Error::queue_full&&main.input_results.size()==calls+1);
-    amity::flush_reports();assert(main.input_results.size()==calls+1&&sent.empty()); // No hidden continuation replay.
+    activity.selected=false;activity.repair=false;member.admission=s::AdmissionCode::accepted;
+    assert(hooks.control(original,envelope(member,original,activity),123456,link)==c::Error::none&&!member.submitted.back().selected);
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    c::Envelope retired;retired.kind=c::Kind::scoped_result;retired.payload=json("{\"action_result\":{}}");
+    assert(!c::valid_owned_result(retired.payload)&&hooks.control(id<s::OctopusId>(9),retired,123456,link)==c::Error::invalid_message);
 }
 void reports_and_exact_disconnect(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     peers={remote(9,19,2,0b11)};const auto owner=peers[0].id;const auto oldboot=peers[0].boot_id;auto first=report(owner,oldboot);
     assert(hooks.synchronize(owner,string_document("{\"adapters\":["+c::owned_snapshot_json(first)+"]}"))==c::Error::none&&main.updates.size()==1);
-    assert(main.updates[0].setup_generation==3&&main.updates[0].setup_last_sequence==11&&main.updates[0].setup_pending==2&&main.updates[0].setup_replies_pending);
+    assert(main.updates[0].discovery_generation==3);
     auto available=amity::discovered_equipment();assert(available.size()==1&&available[0].endpoint.port.octopus_id==owner&&available[0].endpoint.logical_address==4&&available[0].owner_boot_id==oldboot);
     const auto count=main.updates.size();auto bad=first;bad.owner=id<s::OctopusId>(98);auto value=report_envelope(bad);
     assert(hooks.control(owner,value,100,id<s::LinkId>(1))==c::Error::invalid_message&&main.updates.size()==count);
@@ -337,7 +328,7 @@ void logical_session_restart_preserves_reports(){
         &&retained[i].physical_address==observations[i].physical_address&&retained[i].stale==observations[i].stale);
     const auto fences=main.fences.size();
     assert(!hooks.restart_session({},boot,oldlink)&&!hooks.restart_session(owner,{},oldlink)&&!hooks.restart_session(owner,boot,{})&&main.fences.size()==fences);
-    assert(sent.empty()&&main.input_results.empty()&&memory.writes==0); // A restart emits/replays no ordinary CEC work.
+    assert(sent.empty()&&memory.writes==0); // A restart emits/replays no ordinary CEC work.
     // Actual transport loss still publishes missing observations after exact cleanup.
     assert(hooks.disconnected(owner,boot,oldlink)&&amity::discovered_equipment().empty()&&main.updates.size()>updates);
 }
@@ -349,35 +340,35 @@ void report_coalescing_and_no_intent_backlog(){
     report_result=ESP_FAIL;amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty()&&amity::state.retry_reports[0]&&sent.empty());
     report_result=ESP_OK;amity::flush_reports();assert(packets.size()==2&&amity::state.pending_reports.empty());
     assert(packets.back().kind==c::Kind::scoped_result&&packets.back().owner==original&&packets.back().ttl==1000);
-    auto body=json(packets.back().payload);s::OwnedAdapterSnapshot actual;assert(c::parse_owned_snapshot(*body.get("snapshot"),actual)&&actual.discovery_generation==4&&actual.setup_generation==3&&actual.setup_last_sequence==11&&actual.setup_pending==2&&actual.setup_replies_pending);
+    auto body=json(packets.back().payload);s::OwnedAdapterSnapshot actual;assert(c::parse_owned_snapshot(*body.get("snapshot"),actual)&&actual.discovery_generation==4);
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);auto intent=down(main);intent.target.port.octopus_id=id<s::OctopusId>(9);
     send_result=ESP_FAIL;assert(!main.sender(intent)&&sent.size()==1);amity::flush_reports();assert(sent.size()==1);
     amity::set_owner_maintenance(intent.target.port.octopus_id,true);assert(!main.sender(intent)&&sent.size()==1);
     amity::set_owner_maintenance(intent.target.port.octopus_id,false);send_result=ESP_OK;assert(main.sender(intent)&&sent.size()==2);
-    assert(sent.back().generation==intent.generation&&sent.back().sequence==intent.sequence&&sent.back().token==intent.token);
+    assert(sent.back().generation==intent.generation);
 }
 void dropped_snapshot_recaptures_latest_without_regression(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto controller=*member.configuration.controller_octopus_id;peers={remote(2,12,1,1)};current_result_link=id<s::LinkId>(71);
     assert(hooks.synchronize(controller,string_document("{\"controller\":\""+controller.str()+"\",\"config_revision\":\"23\"}"))==c::Error::none);
     c::RuntimeSnapshotRetry retry{controller,member.boot,peers[0].boot_id,current_result_link,23,0};
-    auto latest=report(member.identity,member.boot);latest.setup_pending=0;latest.setup_replies_pending=false;
+    auto latest=report(member.identity,member.boot);
     member.snapshots={latest};member.observer(latest);amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty());
-    // The admitted final pending=0 snapshot expired on TLS. Only its adapter
+    // The admitted latest discovery snapshot expired on TLS. Only its adapter
     // and immutable scope return; the worker recaptures the current cache.
     hooks.snapshot_retry(retry);assert(result_packets.empty());amity::flush_reports();assert(result_packets.size()==1);
     auto decoded=[&](const std::string& payload){s::OwnedAdapterSnapshot value;const auto body=json(payload);assert(c::parse_owned_snapshot(*body.get("snapshot"),value));return value;};
-    assert(decoded(result_packets.back().payload).setup_pending==0&&result_packets.back().link==retry.link&&result_packets.back().revision==23&&result_packets.back().ttl==1000);
+    assert(decoded(result_packets.back().payload).discovery_generation==3&&result_packets.back().link==retry.link&&result_packets.back().revision==23&&result_packets.back().ttl==1000);
     // A cache update can precede its observer. Recovery reads that latest state,
     // rather than replaying the payload which originally expired.
-    latest.discovery_generation=4;latest.setup_pending=5;member.snapshots={latest};hooks.snapshot_retry(retry);amity::flush_reports();
-    assert(decoded(result_packets.back().payload).discovery_generation==4&&decoded(result_packets.back().payload).setup_pending==5);
+    latest.discovery_generation=4;member.snapshots={latest};hooks.snapshot_retry(retry);amity::flush_reports();
+    assert(decoded(result_packets.back().payload).discovery_generation==4);
     // A newer observation arrives while the old publication fails. It must
     // remain pending; the failed payload must never overwrite it.
-    report_result=ESP_FAIL;on_report_send=[&]{latest.discovery_generation=5;latest.setup_pending=0;member.snapshots={latest};member.observer(latest);};
+    report_result=ESP_FAIL;on_report_send=[&]{latest.discovery_generation=5;member.snapshots={latest};member.observer(latest);};
     hooks.snapshot_retry(retry);amity::flush_reports();assert(amity::state.pending_reports.size()==1&&!amity::state.retry_reports[0]);
-    assert(amity::state.pending_reports[0].discovery_generation==5&&amity::state.pending_reports[0].setup_pending==0);
-    report_result=ESP_OK;on_report_send={};amity::flush_reports();assert(decoded(packets.back().payload).discovery_generation==5&&decoded(packets.back().payload).setup_pending==0);
+    assert(amity::state.pending_reports[0].discovery_generation==5);
+    report_result=ESP_OK;on_report_send={};amity::flush_reports();assert(decoded(packets.back().payload).discovery_generation==5);
     // The same race on the ordinary observer path also preserves the newer
     // pending observation, with no hidden typed intent or old-payload replay.
     member.observer(latest);report_result=ESP_FAIL;on_report_send=[&]{latest.discovery_generation=6;member.snapshots={latest};member.observer(latest);};
@@ -456,4 +447,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();source_lookup_results_preserve_original_fallback();reports_and_exact_disconnect();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, deferred owner lookup/exact-link fencing, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

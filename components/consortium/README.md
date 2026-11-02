@@ -4,11 +4,32 @@ The consortium is a thin ownership and transport layer around original local Ami
 
 ## Operational contract
 
-`scoped_intent` (41) carries the original typed action and qualified target, current generation/sequence, exact key token where applicable and receiver-issued transport authorization. `scoped_result` (42) reports owner-local adapter/device state or the generation/sequence-correlated source-input presence outcome needed to continue the original switch fallback. It does not wait for a CEC ACK. `qualified_lookup` capability 262144 distinguishes this execution contract. Numeric slots of removed operation/hold-renew/binding/plan/profile/config-replication/remote-management features remain retired; unknown/retired kinds reject.
+`scoped_intent` (41) carries original owner delivery and current activity scope. Distribution sends activity selections and key state; each Amity independently runs the original local activity algorithm for its equipment. Lookup and CEC transmission completion order local steps, including local old-only Standby before new Power On. Another Amity's lookup, device state or transmission cannot hold that local job. No per-step CEC orchestration or completion results cross owners. `scoped_result` (42) reports owner-local adapter/device observations for the UI. Raw `key_edges` follow the authenticated stream's ordering without frame IDs, per-key permission tokens or renewable execution grants. The stream supplies original-controller authority and exact boot/configuration scope. `qualified_lookup` capability 262144 distinguishes this execution contract. Numeric slots of removed execution-grant/operation/hold-renew/binding/plan/profile/config-replication/remote-management features remain retired; unknown/retired kinds reject.
 
-The production closed codec/schema and `wire.hpp` are authoritative for exact payload fields, kinds, capabilities and bounds. Keep current exact-peer TLS, durable role/membership checks, boot/link/configuration/input scope, replay handling and bounded causal IPC. These protect delivery; they are not a persisted HDMI profile or activity availability decision.
+The production closed codec/schema and `wire.hpp` are authoritative for exact payload fields, kinds, capabilities and bounds. Keep current exact-peer TLS, durable role/membership checks, boot/link/configuration/input scope and bounded causal IPC. TCP/TLS supplies ordered delivery; no generic application replay cache is added. These protect delivery; they are not a persisted HDMI profile or activity availability decision. Add, Remove, settings and firmware-update operations retain their payload request IDs and explicit idempotence because their results may need reconciliation after a lost response.
 
-The owner resolves equipment using ordinary local discovery and applies original local CEC behavior. The controller does not transmit periodic presses, per-button renewals, a persistent logical address or a replacement opcode policy. Owner-local successful completion paces each held key; other commands submit immediately. No outgoing executor retry queue or global prepared-plan barrier is added.
+The owner resolves equipment using ordinary local discovery and applies original local CEC behavior. The controller does not transmit periodic presses, per-button renewals, a persistent logical address or a replacement opcode policy. The main retains only a raw key's owner index. One receiver table tracks button state and resolves the current activity target again on press, repeat and release. Owner-local successful completion paces each held key; only state edges cross the network and other commands submit immediately. No outgoing executor retry queue or global prepared-plan barrier is added.
+
+Operational TLS sockets require `TCP_NODELAY` so consecutive short TLS records
+are sent without waiting for a delayed TCP acknowledgment. Application writes
+remain bounded to 512-byte records; framing, authentication, receive/write
+deadlines and CEC attempt budgets are unchanged. A native test runs the actual
+setup, credential callbacks and framing over loopback TCP, checks the option on
+both peers, rejects a socket that cannot enable it, and exchanges frames across
+the record boundary in both directions on the same authenticated stream.
+
+An earlier native comparison using the pinned Mbed TLS library and production
+methods on Darwin measured 32 transfers of 800-byte bodies: default TCP had a
+1 ms median, 2 ms 95th percentile and 3 ms maximum; `TCP_NODELAY` had 0 ms, 1 ms
+and 1 ms respectively. The SDK's lwIP delayed-ACK timer can wait 250 ms while
+Nagle holds a short following segment. This supports removing transport
+coalescing latency; it does not prove that Nagle caused a historical bench key
+failure. Native timing does not qualify ESP32 Wi-Fi or physical CEC latency.
+
+Rejected key delivery logs its numeric key and activity generation with the transport,
+receive or owner-admission failure stage and result. These diagnostics
+retain no payload, credentials, hold tokens or OSD names and do not change
+admission, expiry, retries or connection policy.
 
 ## Enrollment and role
 

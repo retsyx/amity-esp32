@@ -52,10 +52,10 @@ int main(){
         assert(submit(request(owner.boot,1,changes))==c::Error::invalid_message);
     assert(submit(request(id<m::BootId>(2)))==c::Error::stale_boot);
     assert(submit(request(owner.boot,2))==c::Error::transaction_conflict);
-    assert(submit(request(owner.boot),100)==c::Error::lease_expired&&calls==0&&writes==0);
+    assert(submit(request(owner.boot),100)==c::Error::expired&&calls==0&&writes==0);
     authorized=false;assert(submit(request(owner.boot))==c::Error::not_ready&&calls==0);authorized=true;
     owner.gate=[&](auto,auto,uint64_t,std::function<esp_err_t()> persist){++calls;clock_ms=1000;return persist();};
-    assert(submit(request(owner.boot))==c::Error::lease_expired&&writes==0);clock_ms=100;
+    assert(submit(request(owner.boot))==c::Error::expired&&writes==0);clock_ms=100;
     owner.gate=[&](auto,auto,uint64_t,std::function<esp_err_t()> persist){++calls;authorized=false;return persist();};
     assert(submit(request(owner.boot))==c::Error::not_ready&&writes==0);authorized=true;
     // Native owner revalidation still fences boot, configured adapter IDs and

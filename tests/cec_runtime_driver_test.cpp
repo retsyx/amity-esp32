@@ -465,6 +465,42 @@ static void full_fifo_tests() {
     assert(active.idle()); active.stop(); assert(!timer && tasks.empty() && !output_low);
 }
 
+static void independent_epoch_fence_tests() {
+    std::atomic<uint32_t> route{1}, authority{1}, epoch{1};
+    cec::ExecutionFence fence{&route,1,&authority,1};
+    fence.tertiary_generation=&epoch;fence.expected_tertiary_generation=1;
+    const cec::Frame frame{{0x4f,0xab},2};
+    {
+        cec::Bus bus;assert(bus.start(36,cec::Bus::QueueProfile::Native)==ESP_OK);
+        const auto edges=pin_edges[36];cec::TxCompletion completion;
+        // Changing only the third lifetime cancels queued work before dispatch.
+        assert(bus.send_async_guarded(frame,fence,completion,1));epoch.store(2);
+        finish(completion);assert(completion.result.load()==cec::TxResult::Cancelled&&pin_edges[36]==edges);
+        // The same guard is checked after Engine::begin while waiting for a
+        // free wire, before the actual first edge.
+        external_low|=uint64_t{1}<<36;gpio_set_level(36,1);step();
+        external_low&=~(uint64_t{1}<<36);gpio_set_level(36,1);step();
+        fence.expected_tertiary_generation=2;const auto cancel_at=now+5000;
+        before_tick=[&]{if(now>=cancel_at)epoch.store(3);};
+        assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
+        before_tick={};assert(completion.result.load()==cec::TxResult::Cancelled&&pin_edges[36]==edges);
+        // An already-started waveform finishes even if that lifetime changes.
+        fence.expected_tertiary_generation=3;
+        before_tick=[&]{if(pin_edges[36]>edges)epoch.store(4);};
+        assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
+        before_tick={};assert(completion.result.load()==cec::TxResult::Success&&epoch.load()==4);
+        assert(!bus.send_async_guarded(frame,fence,completion,1));
+        fence.expected_tertiary_generation=4;
+        auto unaligned=fence;
+        unaligned.tertiary_generation=reinterpret_cast<const std::atomic<uint32_t>*>(reinterpret_cast<uintptr_t>(&epoch)+1);
+        assert(!bus.send_async_guarded(frame,unaligned,completion,1));
+        assert(bus.send_async_guarded(frame,fence,completion,1));finish(completion);
+        assert(completion.result.load()==cec::TxResult::Success&&route.load()==1&&authority.load()==1);
+        assert(bus.statistics().cancelled==2&&bus.statistics().transmitted==2&&bus.statistics().tx_errors==0);
+    }
+    assert(!timer&&tasks.empty()&&!output_low);
+}
+
 int main() {
     std::atomic<uint32_t> generation{7};
     std::atomic<uint32_t> key_generation{3};
@@ -586,6 +622,7 @@ int main() {
     async_completion_contract_tests();
     atomic_batch_tests();
     full_fifo_tests();
+    independent_epoch_fence_tests();
     std::puts("Real Bus shared-timer lifecycle, queued/start-edge cancellation and in-flight completion passed");
     std::puts("Real Bus sole FIFO8, logged full drops, atomic batches, caller budgets and first-edge dependency passed");
 }

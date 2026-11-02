@@ -28,6 +28,7 @@ def development():
 CPP = r'''
 #include "release_manifest.hpp"
 #include "release_hardware.hpp"
+#include "amity/consortium/wire.hpp"
 #include <openssl/sha.h>
 #include <fstream>
 #include <iostream>
@@ -42,6 +43,7 @@ std::string sha256_hex(std::string_view value) {
 }
 int main(int argc,char **argv) {
     if(argc==1){std::cout<<system_services::updates::release_hardware_descriptor;return 0;}
+    if(argc==2&&std::string(argv[1])=="--capabilities"){std::cout<<amity::consortium::known_capabilities;return 0;}
     std::ifstream file(argv[1]);std::string text((std::istreambuf_iterator<char>(file)),{}),error;
     system_services::updates::ReleaseManifest manifest;
     const bool accepted=system_services::updates::parse_release_manifest(text,manifest,error);
@@ -101,6 +103,13 @@ class HardwareReleaseTests(unittest.TestCase):
             actual = subprocess.check_output([str(self.binaries[name])])
             self.assertEqual(actual, hardware.descriptor(config))
             self.assertEqual(hardware.identity(actual)[0], hardware.LEGACY if name == 'legacy' else hardware.DEVELOPMENT)
+
+    def test_generated_capabilities_match_compiled_protocol(self):
+        for name, config in [('legacy', {'AMITY_BOARD_LEGACY_1T': 'y'}), ('development', development())]:
+            known = int(subprocess.check_output([str(self.binaries[name]), '--capabilities']))
+            protocol = self.manifest(self.image(name + '-capabilities.bin', config))['protocol']
+            self.assertEqual(int(protocol['optional_capabilities']), known)
+            self.assertEqual(int(protocol['required_capabilities']) & ~known, 0)
 
     def test_exact_profile_and_mapping_required_before_admission(self):
         for name, config in [('legacy', {'AMITY_BOARD_LEGACY_1T': 'y'}), ('development', development())]:

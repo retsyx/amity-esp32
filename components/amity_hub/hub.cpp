@@ -41,10 +41,17 @@ bool Hub::configure(std::vector<Activity> activities, ActionReady ready) {
     if (activity_execution_ && activity_execution_->target != -1) return false;
     if (selected_ >= 0 || activity_execution_) { if(!standby(std::move(ready)))return false; }
     else if(ready)ready();
-    ++activity_generation_; ++owned_generation_; pending_inputs_.clear();lookup_previous_selection_.reset();
+    ++activity_generation_; ++owned_generation_;
     activities_ = std::move(activities);
     if (owned_sender_) publish_owned_context(true);
     return true;
+}
+int Hub::stage_activity(Activity next,std::vector<system::ScopedSelector> selectors,bool selected,uint64_t generation){
+    const auto before=current();const bool had_selection=selected_>=0;
+    const bool same=had_selection&&generation==owned_generation_&&before.display==next.display&&before.source==next.source&&before.audio==next.audio&&before.switch_device==next.switch_device&&before.switch_input==next.switch_input;
+    activities_={before,std::move(next)};selected_=had_selection?0:-1;
+    scoped_selectors_=std::move(selectors);next_owned_generation_=generation;
+    return selected?(same?0:1):-1;
 }
 void Hub::scoped_transport(std::vector<system::ScopedSelector> selectors, OwnedDispatcher sender, OwnedLookup lookup,
         std::optional<system::CecPortRef> default_port) {
@@ -56,11 +63,11 @@ std::optional<system::QualifiedDeviceName> Hub::target(const std::string& value)
     for (const auto& selector : scoped_selectors_) if (selector.value == value) return selector.target;
     return {};
 }
-bool Hub::owned(system::OwnedIntentKind kind, const std::string& value, bool on, uint8_t data, bool repeat) {
+bool Hub::owned(system::OwnedIntentKind kind, const std::string& value, bool on, uint8_t data) {
     if (!owned_sender_) return false;
     auto endpoint = target(value); if (!endpoint) return false;
     system::OwnedIntent intent; intent.kind = kind; intent.target = *endpoint; intent.generation = owned_generation_;
-    intent.on = on; intent.key = data; intent.input = data; intent.repeat = repeat;
+    intent.on = on; intent.input = data;
     return bool(owned_sender_(intent));
 }
 bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
@@ -69,9 +76,13 @@ bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
     const auto activity = current(); std::vector<system::CecPortRef> ports;
     for (const auto& selector : scoped_selectors_) {
         if(owner&&selector.target.port.octopus_id!=owner)continue;
+        if(scoped_owner_&&!owner&&selector.target.port.octopus_id!=scoped_owner_)continue;
         auto port = selector.target.port; port.side = system::Side::front;
         if (std::find(ports.begin(), ports.end(), port) != ports.end()) continue;
-        ports.push_back(port); system::OwnedIntent intent; intent.kind = system::OwnedIntentKind::context;
+        ports.push_back(port);
+    }
+    for(auto port:scoped_owner_ports_)if((!owner||port.octopus_id==owner)&&std::find(ports.begin(),ports.end(),port)==ports.end())ports.push_back(port);
+    for(const auto& port:ports){system::OwnedIntent intent; intent.kind = system::OwnedIntentKind::context;
         intent.target.port = port; intent.generation = owned_generation_; intent.selected = selected_ >= 0;
         intent.source_changed = source_changed; intent.source = target(activity.source); intent.audio = target(activity.audio);
         intent.display = target(activity.display); intent.switch_device = target(activity.switch_device); intent.input = activity.switch_input;
@@ -82,17 +93,10 @@ bool Hub::publish_owned_context(bool source_changed,system::OctopusId owner) {
 void Hub::scoped_audio_status(bool known, bool muted, uint8_t volume) {
     audio_status_known_ = known; muted_ = muted; volume_ = volume;
 }
-void Hub::owned_input_result(system::OctopusId owner,uint64_t generation,uint64_t sequence,bool present) {
-    const auto found=std::find_if(pending_inputs_.begin(),pending_inputs_.end(),[&](const auto& pending){return pending.owner==owner&&pending.generation==generation&&pending.sequence==sequence;});
-    if(found==pending_inputs_.end()||generation!=owned_generation_)return;
-    const auto pending=*found;pending_inputs_.erase(found);
-    if(!present)fallback_input(pending.activity);
-    if(pending.query_audio)request_audio_status(true);
-    if(pending_inputs_.empty())lookup_previous_selection_.reset();
-}
-void Hub::fence_owned_owner(system::OctopusId owner){
-    pending_inputs_.erase(std::remove_if(pending_inputs_.begin(),pending_inputs_.end(),[&](const auto& pending){return pending.owner==owner;}),pending_inputs_.end());
-    if(pending_inputs_.empty())lookup_previous_selection_.reset();
+void Hub::owned_step_result(const system::OwnedIntent& request,const system::AdmissionResult& result){
+    if(!activity_execution_)return;
+    if(request.kind==system::OwnedIntentKind::source_input&&activity_execution_->step==ActivityExecution::Step::Source){activity_execution_->source_done=true;activity_execution_->source_present=result.source_present;}
+    if(request.kind==system::OwnedIntentKind::switch_input&&activity_execution_->step==ActivityExecution::Step::Switch){activity_execution_->switch_done=true;activity_execution_->switch_result=result.code;}
 }
 bool Hub::execute_owned(const system::OwnedIntent& intent) {
     pending_resolution_ = 0;
@@ -130,7 +134,6 @@ bool Hub::execute_owned(const system::OwnedIntent& intent) {
     }
     if (intent.kind == system::OwnedIntentKind::announce_active_source) { active_source(); return true; }
     if (intent.kind == system::OwnedIntentKind::standby_wire) return send(side,15,{0x36});
-    if (intent.kind == system::OwnedIntentKind::key_up) return release_key(intent.key);
     auto* device = find_device(intent.target.osd_name,side); if (!device) return false;
     switch (intent.kind) {
     case system::OwnedIntentKind::power:
@@ -145,7 +148,6 @@ bool Hub::execute_owned(const system::OwnedIntent& intent) {
         audio_query_pending_ = !admitted; if (!admitted) audio_query_due_ = now_us_ + 500000;
         return admitted;
     }
-    case system::OwnedIntentKind::key_down: return press_device(device,intent.key,intent.repeat);
     default: return false;
     }
 }
@@ -181,8 +183,8 @@ void Hub::announce(BusSide side) {
 }
 Snapshot Hub::snapshot() const {
     Snapshot s;
-    s.activities = activities_; s.devices = devices_; s.current_activity = lookup_previous_selection_.value_or(selected_);
-    s.activity_generation = lookup_previous_selection_?lookup_previous_generation_:activity_generation_;
+    s.activities = activities_; s.devices = devices_; s.current_activity = selected_;
+    s.activity_generation = activity_generation_;
     s.binding_generation = binding_generation_; s.uncertain_releases = uncertain_releases_;
     s.front_address = front_; s.back_address = back_; s.front_physical_address = physical_;
     s.ready = front_ < 15 && back_ < 15 && physical_ != 0xffff;
@@ -229,9 +231,10 @@ bool Hub::power(const Device &device, bool on) {
     }
 }
 bool Hub::finite_press(const Device& device, const uint8_t* data, size_t size) {
-    if (!transport_.send(device.bus,device.address,data,size)) return false;
-    const bool held = std::any_of(held_keys_.begin(),held_keys_.end(),[&](const auto& key){return key.bus == device.bus && key.address == device.address;});
-    return held || send(device.bus,device.address,{0x45});
+    const Device recipient=device;
+    const bool held=recipient_held(recipient);if(pending_resolution_)return false;
+    if (!transport_.send(recipient.bus,recipient.address,data,size)) return false;
+    return held||send(recipient.bus,recipient.address,{0x45});
 }
 void Hub::active_source(const std::string& display) {
     if (owned_sender_) {
@@ -248,14 +251,9 @@ void Hub::active_source(const std::string& display) {
 }
 void Hub::input(const Activity &activity) {
     if(owned_sender_)if(const auto source=target(activity.source)){
-        current_input_sequence_=0;
-        if(pending_inputs_.size()>=32)return;
         system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::source_input;intent.target=*source;intent.generation=owned_generation_;
-        intent.display=target(activity.display);
-        const auto result=owned_sender_(intent);
-        if(result.source_present){if(!*result.source_present)fallback_input(activity);}
-        else if(result.admitted){pending_inputs_.push_back(PendingInput{activity,source->port.octopus_id,owned_generation_,result.sequence,false});current_input_sequence_=result.sequence;}
-        return;
+        intent.selected=true;intent.source=source;intent.audio=target(activity.audio);intent.display=target(activity.display);intent.switch_device=target(activity.switch_device);intent.input=activity.switch_input;
+        const auto result=owned_sender_(intent);if(result.source_present&&!*result.source_present)fallback_input(activity);return;
     }
     if (auto *d = find_device(activity.source)) {
         send(d->bus, 15, {0x86, static_cast<uint8_t>(d->physical_address >> 8), static_cast<uint8_t>(d->physical_address)});
@@ -270,6 +268,7 @@ void Hub::fallback_input(const Activity& activity){
         if (!d) return;
         if (owned_sender_) owned(system::OwnedIntentKind::switch_input,activity.switch_device,false,activity.switch_input);
         else { const uint8_t data[] = {0x44,0x69,activity.switch_input}; finite_press(*d,data,sizeof(data)); }
+        if(pending_resolution_)return;
     }
     active_source(activity.display);
 }
@@ -280,22 +279,30 @@ bool Hub::select_activity(int index, ActionReady ready) {
     if(!activity_execution_){
         ActivityExecution execution;execution.before=current();execution.after=index<0?Activity{}:activities_[index];
         execution.before_names=names(execution.before);execution.after_names=names(execution.after);
+        if(scoped_owner_){const auto foreign=[&](const auto& name){const auto ref=target(name);return !ref||ref->port.octopus_id!=scoped_owner_;};
+            execution.before_names.erase(std::remove_if(execution.before_names.begin(),execution.before_names.end(),foreign),execution.before_names.end());
+            execution.after_names.erase(std::remove_if(execution.after_names.begin(),execution.after_names.end(),foreign),execution.after_names.end());}
         execution.target=index;execution.repair=index==selected_;
-        execution.step=execution.repair?ActivityExecution::Step::On:ActivityExecution::Step::Off;
+        execution.step=execution.repair?ActivityExecution::Step::On:ActivityExecution::Step::Release;
         if(execution.repair)execution.before_names.clear();
         activity_execution_=std::move(execution);
         if(ready)ready();
-        if(!activity_execution_->repair){release_key();pending_inputs_.clear();++owned_generation_;}
-        if(!owned_sender_&&transport_.activity_step_pending()){activity_execution_->waiting_tx=true;return false;}
+        if(!activity_execution_->repair){if(owned_sender_)release_key();++owned_generation_;}
+        if(next_owned_generation_){owned_generation_=*next_owned_generation_;next_owned_generation_.reset();}
+        if(transport_.activity_step_pending()){activity_execution_->waiting_tx=true;return false;}
     }
     auto& execution=*activity_execution_;
     const auto pause_after_step=[&]{
-        if(!owned_sender_&&transport_.activity_step_pending()){execution.waiting_tx=true;return true;}
+        if(transport_.activity_step_pending()){execution.waiting_tx=true;return true;}
         return false;
     };
     if(execution.waiting_tx){if(transport_.activity_step_pending())return false;execution.waiting_tx=false;}
     using Step=ActivityExecution::Step;
     for(;;)switch(execution.step){
+    case Step::Release:
+        if(!owned_sender_)release_key();
+        if(pending_resolution_)return false;
+        execution.step=Step::Off;if(pause_after_step())return false;break;
     case Step::Off:
     case Step::On:{
         const bool on=execution.step==Step::On;
@@ -305,23 +312,52 @@ bool Hub::select_activity(int index, ActionReady ready) {
             const auto& name=recipients[execution.cursor];
             if(std::find(retained.begin(),retained.end(),name)!=retained.end()){++execution.cursor;continue;}
             auto* device=find_device(name);if(pending_resolution_)return false;
-            ++execution.cursor;
             if(device)power(*device,on);
+            if(pending_resolution_)return false;
+            ++execution.cursor;
             if(pause_after_step())return false;
         }
         execution.cursor=0;execution.step=on?Step::Source:Step::On;break;
     }
     case Step::Source:
-        if(owned_sender_){input(execution.after);execution.step=Step::Commit;break;}
+        if(owned_sender_){
+            if(scoped_owner_)if(const auto source=target(execution.after.source);source&&source->port.octopus_id!=scoped_owner_){
+                const auto sw=target(execution.after.switch_device);
+                execution.step=sw&&sw->port.octopus_id==scoped_owner_?Step::Switch:Step::Commit;break;
+            }
+            if(!execution.source_started){
+                execution.source_started=true;
+                if(const auto source=target(execution.after.source)){
+                    system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::source_input;intent.target=*source;intent.generation=owned_generation_;
+                    intent.selected=true;intent.source_changed=!execution.repair&&execution.before.source!=execution.after.source;intent.source=source;intent.audio=target(execution.after.audio);intent.display=target(execution.after.display);intent.switch_device=target(execution.after.switch_device);intent.input=execution.after.switch_input;
+                    const auto result=owned_sender_(intent);
+                    if(!result.pending){execution.source_done=true;execution.source_present=result.source_present;}
+                }else{execution.source_done=true;execution.source_present=false;}
+            }
+            if(!execution.source_done||transport_.activity_step_pending())return false;
+            execution.step=execution.source_present&&!*execution.source_present?Step::Switch:Step::Commit;
+            break;
+        }
         if(auto* device=find_device(execution.after.source)){
             send(device->bus,15,{0x86,static_cast<uint8_t>(device->physical_address>>8),static_cast<uint8_t>(device->physical_address)});
             execution.step=Step::Commit;if(pause_after_step())return false;
         }else{if(pending_resolution_)return false;execution.step=Step::Switch;}
         break;
     case Step::Switch:
+        if(owned_sender_){
+            if(scoped_owner_)if(const auto sw=target(execution.after.switch_device);sw&&sw->port.octopus_id!=scoped_owner_){execution.step=Step::Commit;break;}
+            if(!execution.switch_started){
+                execution.switch_started=true;
+                if(!execution.after.switch_device.empty())owned(system::OwnedIntentKind::switch_input,execution.after.switch_device,false,execution.after.switch_input);
+                if(!transport_.activity_step_pending())execution.switch_done=true;
+            }
+            if(!execution.switch_done||transport_.activity_step_pending())return false;
+            execution.step=execution.switch_result==system::AdmissionCode::unresolved?Step::Commit:Step::Announce;break;
+        }
         if(execution.after.switch_device.empty()){execution.step=Step::Announce;break;}
         if(auto* device=find_device(execution.after.switch_device)){
             const uint8_t data[]={0x44,0x69,execution.after.switch_input};finite_press(*device,data,sizeof(data));
+            if(pending_resolution_)return false;
             execution.step=Step::Announce;if(pause_after_step())return false;
         }else{if(pending_resolution_)return false;execution.step=Step::Commit;}
         break;
@@ -329,7 +365,6 @@ bool Hub::select_activity(int index, ActionReady ready) {
         active_source(execution.after.display);execution.step=Step::Commit;if(pause_after_step())return false;break;
     case Step::Commit:
         if(!execution.repair){
-            if(input_pending()){lookup_previous_selection_=selected_;lookup_previous_generation_=activity_generation_;}
             selected_=index;++activity_generation_;audio_status_known_=false;volume_=127;
             publish_owned_context(index<0||execution.before.source!=execution.after.source);
             if(index<0||execution.before.source!=execution.after.source)playing_=false;
@@ -342,6 +377,12 @@ bool Hub::select_activity(int index, ActionReady ready) {
         send(BusSide::Front,15,{0x36});execution.step=Step::ForceBack;if(pause_after_step())return false;break;
     case Step::ForceBack:
         send(BusSide::Back,15,{0x36});execution.step=Step::Finish;if(pause_after_step())return false;break;
+    case Step::ForceOwned:
+        while(execution.cursor<execution.force_ports.size()){
+            system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::standby_wire;intent.target.port=execution.force_ports[execution.cursor++];intent.generation=owned_generation_;owned_sender_(intent);
+            if(pause_after_step())return false;
+        }
+        execution.step=Step::Finish;break;
     case Step::Finish:
         activity_execution_.reset();return true;
     }
@@ -349,11 +390,8 @@ bool Hub::select_activity(int index, ActionReady ready) {
 void Hub::fix_current_activity() {
     select_activity(selected_);
 }
-void Hub::request_audio_status(bool resolved_input) {
-    if(owned_sender_&&!resolved_input&&current_input_sequence_){
-        for(auto& pending:pending_inputs_)if(pending.sequence==current_input_sequence_)pending.query_audio=true;
-        current_input_sequence_=0;return;
-    }
+void Hub::request_audio_status() {
+    if(scoped_owner_){const auto audio=target(current().audio);if(!audio||audio->port.octopus_id!=scoped_owner_)return;}
     const auto *audio = find_device(current().audio,owner_audio_side_);
     if (const auto *d = audio) {
         if (owned_sender_) { owned(system::OwnedIntentKind::query_audio,current().audio); return; }
@@ -364,9 +402,11 @@ void Hub::request_audio_status(bool resolved_input) {
 bool Hub::standby(ActionReady ready) {
     pending_resolution_ = 0;
     if(activity_execution_&&activity_execution_->target!=-1)return false;
-    if(selected_<0&&!activity_execution_&&owned_sender_){if(ready)ready();force_standby();playing_=false;return true;}
     if (selected_ < 0 && !activity_execution_) {
-        ActivityExecution execution;execution.target=-1;execution.step=ActivityExecution::Step::ForceFront;
+        ActivityExecution execution;execution.target=-1;execution.step=owned_sender_?ActivityExecution::Step::ForceOwned:ActivityExecution::Step::ForceFront;
+        if(owned_sender_)for(const auto& selector:scoped_selectors_)if(!scoped_owner_||selector.target.port.octopus_id==scoped_owner_)for(const auto side:{system::Side::front,system::Side::back}){auto port=selector.target.port;port.side=side;if(std::find(execution.force_ports.begin(),execution.force_ports.end(),port)==execution.force_ports.end())execution.force_ports.push_back(port);}
+        if(owned_sender_)for(auto port:scoped_owner_ports_)for(const auto side:{system::Side::front,system::Side::back}){port.side=side;if(std::find(execution.force_ports.begin(),execution.force_ports.end(),port)==execution.force_ports.end())execution.force_ports.push_back(port);}
+        if(next_owned_generation_){owned_generation_=*next_owned_generation_;next_owned_generation_.reset();}
         activity_execution_=std::move(execution);if(ready)ready();
     }
     if (!select_activity(-1,std::move(ready))) return false;
@@ -387,90 +427,99 @@ void Hub::force_standby() {
     send(BusSide::Front, 15, {0x36});
     send(BusSide::Back, 15, {0x36});
 }
-bool Hub::press_key(uint8_t key, bool repeat) {
-    pending_resolution_ = 0;
-    const auto a = lookup_previous_selection_?(*lookup_previous_selection_>=0?activities_[*lookup_previous_selection_]:Activity{}):current();
-    if (key == 0x40) return standby();
-    if (owned_sender_) {
-        const auto held = std::find_if(held_keys_.begin(),held_keys_.end(),[&](const auto& h){return h.raw_key == key;});
-        if (repeat && held != held_keys_.end()) return true;
-        const bool audio = (key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66;
-        const auto selector = held != held_keys_.end() ? held->selector : audio ? a.audio : a.source;
-        if (!find_device(selector) || !owned(system::OwnedIntentKind::key_down,selector,false,key,repeat)) return false;
-        if (repeat) held_keys_.push_back({key,key,BusSide::Back,15,audio,selector});
-        return true;
-    }
-    return press_device(nullptr,key,repeat);
+bool Hub::audio_key(uint8_t key){
+    return (key>=0x41&&key<=0x43)||key==0x65||key==0x66;
 }
-bool Hub::press_device(const Device* supplied, uint8_t key, bool repeat) {
-    const auto a = current();
-    const uint8_t raw_key = key;
-    const auto held = std::find_if(held_keys_.begin(), held_keys_.end(),
-                                   [raw_key](const HeldKey &h) { return h.raw_key == raw_key; });
-    // Default Python hub behavior emulates the play/pause toggle.
-    if (key == 0x61) {
-        if (held != held_keys_.end()) key = held->key;
-        else key = playing_ ? 0x46 : 0x44;
-    }
-    const bool audio_key = (key >= 0x41 && key <= 0x43) || key == 0x65 || key == 0x66;
-    // A held key keeps its accepted recipient even if discovery changes the
-    // device cache before a repeat or release arrives.
-    const auto *d = held == held_keys_.end() ? (supplied ? supplied : find_device(audio_key ? a.audio : a.source)) : nullptr;
-    if (held == held_keys_.end() && !d) return false;
-    const BusSide bus = held != held_keys_.end() ? held->bus : d->bus;
-    const uint8_t address = held != held_keys_.end() ? held->address : d->address;
-    if (!send(bus, address, {0x44, key})) return false;
-    // Explicit transport commands and emulated toggles share the same last
-    // accepted state. Held toggles keep emitting their original mapped key.
-    if (key == 0x44) playing_ = true;
-    else if (key == 0x46 || key == 0x45) playing_ = false;
-    if (audio_key) audio_status_known_ = false;
-    if (repeat) {
-        if (held == held_keys_.end()) held_keys_.push_back({raw_key, key, bus, address, audio_key});
-    } else {
-        // A one-shot command cannot terminate any independently held key at
-        // this recipient: User Control Released has no key operand.
-        const bool recipient_held = std::any_of(held_keys_.begin(), held_keys_.end(),
-            [bus, address](const HeldKey &h) { return h.bus == bus && h.address == address; });
-        const bool admitted = recipient_held || send(bus, address, {0x45});
-        if (audio_key && admitted) {
-            audio_query_pending_ = true;
-            audio_query_due_ = now_us_ + 500000;
-        }
-    }
+std::string Hub::key_name(uint8_t key)const{
+    const auto activity=current();return audio_key(key)?activity.audio:activity.source;
+}
+std::optional<system::QualifiedDeviceName> Hub::key_target(uint8_t key)const{
+    return target(key_name(key));
+}
+uint8_t Hub::translated_key(uint8_t key)const{
+    return key==0x61?(playing_?0x46:0x44):key;
+}
+bool Hub::transmit_key(const Device& recipient,uint8_t mapped,bool audio){
+    if(!send(recipient.bus,recipient.address,{0x44,mapped}))return false;
+    if(mapped==0x44)playing_=true;
+    else if(mapped==0x46||mapped==0x45)playing_=false;
+    if(audio)audio_status_known_=false;
     return true;
 }
-bool Hub::release_key(uint8_t key) {
-    const auto held = std::find_if(held_keys_.begin(), held_keys_.end(),
-                                   [key](const HeldKey &h) { return h.raw_key == key; });
-    if (held == held_keys_.end()) return true;
-    const HeldKey ended = *held;
+bool Hub::transmit_release(const Device& recipient,bool audio){
+    const bool admitted=send(recipient.bus,recipient.address,{0x45});
+    if(admitted)key_released(audio);
+    if(!admitted)++uncertain_releases_;
+    return admitted;
+}
+void Hub::key_released(bool audio){
+    if(audio){audio_query_pending_=true;audio_query_due_=now_us_+500000;}
+}
+bool Hub::press_key(uint8_t key,bool repeat){
+    pending_resolution_=0;
+    if(key==0x40)return standby();
+    if(owned_sender_){
+        const auto recipient=key_target(key);if(!recipient)return false;
+        system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::key_edges;intent.generation=owned_generation_;
+        intent.target.port=recipient->port;intent.edges[0]={key,true};intent.edge_count=repeat?1:2;
+        if(!repeat)intent.edges[1]={key,false};
+        return bool(owned_sender_(intent));
+    }
+    return press_device(key,repeat);
+}
+bool Hub::recipient_held(const Device& recipient,std::optional<uint8_t> ending_key){
+    if(owner_audio_held_){
+        const auto* current=find_device(key_name(0x41));if(pending_resolution_)return false;
+        if(current&&current->bus==recipient.bus&&current->address==recipient.address)return true;
+    }
+    for(const auto& held:held_keys_){
+        if(ending_key&&held.raw_key==*ending_key)continue;
+        const auto* current=find_device(key_name(held.raw_key));if(pending_resolution_)return false;
+        if(current&&current->bus==recipient.bus&&current->address==recipient.address)return true;
+    }
+    return false;
+}
+bool Hub::press_device(uint8_t raw,bool repeat){
+    const auto held=std::find_if(held_keys_.begin(),held_keys_.end(),[raw](const auto& key){return key.raw_key==raw;});
+    const uint8_t mapped=held==held_keys_.end()?translated_key(raw):held->key;
+    const bool audio=audio_key(raw);
+    const auto* resolved=find_device(key_name(raw));if(!resolved)return false;
+    const Device recipient=*resolved;
+    const bool other_held=!repeat&&recipient_held(recipient);if(pending_resolution_)return false;
+    if(!transmit_key(recipient,mapped,audio))return false;
+    if(repeat){if(held==held_keys_.end())held_keys_.push_back({raw,mapped,audio});}
+    else if(other_held)key_released(audio);
+    else transmit_release(recipient,audio);
+    return true;
+}
+bool Hub::release_key(uint8_t raw){
+    pending_resolution_=0;
+    if(owned_sender_){
+        system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::key_edges;intent.generation=owned_generation_;
+        if(const auto recipient=key_target(raw))intent.target.port=recipient->port;
+        else if(scoped_default_port_)intent.target.port=*scoped_default_port_;
+        intent.edges[0]={raw,false};intent.edge_count=1;
+        return bool(owned_sender_(intent));
+    }
+    const auto held=std::find_if(held_keys_.begin(),held_keys_.end(),[raw](const auto& key){return key.raw_key==raw;});
+    if(held==held_keys_.end())return true;
+    const bool audio=held->audio;
+    const auto* resolved=find_device(key_name(raw));if(pending_resolution_)return false;
+    if(!resolved){held_keys_.erase(held);return false;}
+    const Device recipient=*resolved;
+    const bool other_held=recipient_held(recipient,raw);if(pending_resolution_)return false;
     held_keys_.erase(held);
-    if (owned_sender_) return owned(system::OwnedIntentKind::key_up,ended.selector,false,key);
-    const bool recipient_held = std::any_of(held_keys_.begin(), held_keys_.end(),
-        [&ended](const HeldKey &h) { return h.bus == ended.bus && h.address == ended.address; });
-    const bool admitted = recipient_held || send(ended.bus, ended.address, {0x45});
-    // The final-release decision is consumed even when the eight-slot driver FIFO
-    // is full. No later tick, up or new key retries a dropped release.
-    if (ended.audio && admitted) {
-        audio_query_pending_ = true;
-        audio_query_due_ = now_us_ + 500000;
-    }
-    if (!admitted) ++uncertain_releases_;
+    if(other_held){key_released(audio);return true;}
+    return transmit_release(recipient,audio);
+}
+bool Hub::release_key(){
+    bool admitted=true;
+    if(owned_sender_){for(unsigned raw=0;raw<256;++raw)if(!release_key(static_cast<uint8_t>(raw)))admitted=false;}
+    else while(!held_keys_.empty())if(!release_key(held_keys_.front().raw_key)){if(pending_resolution_)return false;admitted=false;}
     return admitted;
 }
-bool Hub::release_key() {
-    bool admitted = true;
-    while (!held_keys_.empty()) {
-        if (!release_key(held_keys_.front().raw_key)) admitted = false;
-    }
-    return admitted;
-}
-bool Hub::audio_key_held() const {
-    return std::any_of(held_keys_.begin(), held_keys_.end(), [](const HeldKey &h) { return h.audio; });
-}
-bool Hub::held_recipient(uint8_t key,BusSide side,uint8_t address)const{
-    return std::any_of(held_keys_.begin(),held_keys_.end(),[&](const auto& held){return held.raw_key==key&&held.bus==side&&held.address==address;});
+bool Hub::audio_key_held()const{
+    return owner_audio_held_||std::any_of(held_keys_.begin(),held_keys_.end(),[](const auto& key){return key.audio;});
 }
 void Hub::tick(uint64_t now_us) {
     now_us_ = now_us;
@@ -480,11 +529,8 @@ void Hub::tick(uint64_t now_us) {
 void Hub::invalidate_endpoint(BusSide side, uint8_t address) {
     transport_.invalidate_binding(side, address);
     ++binding_generation_;
-    // Never send cleanup to an address whose appliance may have changed.
-    for (auto it = held_keys_.begin(); it != held_keys_.end();) {
-        if (it->bus == side && it->address == address) { ++uncertain_releases_; it = held_keys_.erase(it); }
-        else ++it;
-    }
+    // Raw held state has no retained endpoint. The next repeat or release
+    // resolves the current role again through the shared resolver.
     audio_query_pending_ = false;
     audio_status_known_ = false;
     for (auto &d : devices_) if (d.bus == side && d.address == address) d.resolved = false;
@@ -596,7 +642,7 @@ uint8_t Hub::resume_received(){
     case ReceiveStep::Switch:
         if(current().switch_device.empty()){receive_step_=ReceiveStep::Announce;continue;}
         if(auto* device=find_device(current().switch_device)){
-            const uint8_t data[]={0x44,0x69,current().switch_input};finite_press(*device,data,sizeof(data));receive_step_=ReceiveStep::Announce;
+            const uint8_t data[]={0x44,0x69,current().switch_input};finite_press(*device,data,sizeof(data));if(pending_resolution_)return pending_resolution_;receive_step_=ReceiveStep::Announce;
         }else{if(pending_resolution_)return pending_resolution_;receive_step_=ReceiveStep::Done;}
         break;
     case ReceiveStep::Announce:active_source(current().display);receive_step_=ReceiveStep::Done;break;

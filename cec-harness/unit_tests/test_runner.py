@@ -248,7 +248,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn(str(evidence.resolve()), errors.getvalue())
         self.assertNotIn("private-token", json.dumps(report))
 
-    def test_actual_all_registration_runs_both_activity_subtests_once(self):
+    def test_actual_all_registration_runs_all_activity_subtests_once(self):
         called = []
 
         def capture(test, config):
@@ -263,7 +263,8 @@ class RunnerTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
-        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input", "test_source_theft", "test_add_amity",
+        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input",
+                    "test_activity_keys", "test_activity_keys_secondary", "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
                     "test_dual_display", "test_source_theft_isolated"]
         self.assertEqual(called, expected)

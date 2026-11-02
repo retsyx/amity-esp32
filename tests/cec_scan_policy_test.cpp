@@ -16,10 +16,18 @@ static void reset_fixture(){
 static size_t polls(int gpio){
     return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& frame){return frame.gpio==gpio&&frame.frame.size==1;});
 }
-static void missing(HubService& hub,m::Side side,uint64_t sequence,uint8_t adapter=0){
-    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.on=true;intent.sequence=sequence;intent.generation=1;
+static void missing(HubService& hub,m::Side side,uint8_t adapter=0){
+    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.on=true;intent.generation=1;
     intent.target={{group,owner,adapter,side},"Missing"};
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+    assert(hub.submit_owned(intent,auth,0));run_one_command();
+}
+static void explicit_ui_discovery(HubService& hub){
+    // The main's UI request reaches a headless owner through authenticated
+    // delivery, rather than that owner's coordinator-only dispatch helper.
+    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::discover;intent.generation=1;
+    intent.target.port={group,owner,0,m::Side::front};
+    const m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     assert(hub.submit_owned(intent,auth,0));run_one_command();
 }
 static void setup(HubService& hub){
@@ -41,35 +49,35 @@ static void side_local_cooldown(){
     const auto front=cached(hub,BusSide::Front),back=cached(hub,BusSide::Back);
     assert(polls(1)&&polls(2)); // The actual boot enumerates both sides.
     fixture_sent.clear();
-    fixture_time=120999999;missing(hub,m::Side::back,1);run_idle(3);
+    fixture_time=120999999;missing(hub,m::Side::back);run_idle(3);
     assert(hub.snapshot().discovery_generation==1&&fixture_sent.empty());
-    fixture_time=121000000;missing(hub,m::Side::back,2);
+    fixture_time=121000000;missing(hub,m::Side::back);
     fixture_finish_discovery(hub,1);run_idle(1);
     assert(polls(2)&&!polls(1));same_device(front,cached(hub,BusSide::Front));
 
     // A back lookup cannot charge the independent front-side cooldown.
     fixture_sent.clear();const auto back_scan=hub.snapshot().discovery_generation;
-    missing(hub,m::Side::front,3);fixture_finish_discovery(hub,back_scan);run_idle(1);
+    missing(hub,m::Side::front);fixture_finish_discovery(hub,back_scan);run_idle(1);
     assert(polls(1)&&!polls(2));same_device(back,cached(hub,BusSide::Back));
 
     fixture_sent.clear();const auto completed=hub.snapshot().discovery_generation;
-    fixture_time=181000000;missing(hub,m::Side::back,4);run_idle(3);
+    fixture_time=181000000;missing(hub,m::Side::back);run_idle(3);
     assert(hub.snapshot().discovery_generation==completed&&fixture_sent.empty());
     // Expiry alone cannot queue/defer another scan or replay the failed work.
     fixture_time=400000000;run_idle(30);
     assert(hub.snapshot().discovery_generation==completed&&fixture_sent.empty());
-    missing(hub,m::Side::back,5);fixture_finish_discovery(hub,completed);
+    missing(hub,m::Side::back);fixture_finish_discovery(hub,completed);
     assert(polls(2)&&!polls(1));
 
     // Explicit UI discovery bypasses both cooldowns, and its fresh scan
     // prevents another lookup enumeration immediately afterwards.
     fixture_sent.clear();const auto lookup=hub.snapshot().discovery_generation;
-    assert(hub.discover_owned(owner,0));run_one_command();fixture_finish_discovery(hub,lookup);
+    explicit_ui_discovery(hub);fixture_finish_discovery(hub,lookup);
     assert(polls(1)&&polls(2));
     fixture_sent.clear();const auto manual=hub.snapshot().discovery_generation;
-    missing(hub,m::Side::front,6);missing(hub,m::Side::back,7);run_idle(3);
+    missing(hub,m::Side::front);missing(hub,m::Side::back);run_idle(3);
     assert(hub.snapshot().discovery_generation==manual&&fixture_sent.empty());
-    assert(hub.discover_owned(owner,0));run_one_command();fixture_finish_discovery(hub,manual);
+    explicit_ui_discovery(hub);fixture_finish_discovery(hub,manual);
     assert(polls(1)&&polls(2));
 }
 static void no_configuration_or_rebind_scan(){
@@ -94,10 +102,10 @@ static void no_configuration_or_rebind_scan(){
 }
 static void unrelated_scan_does_not_defer_cooldown_miss(){
     reset_fixture();HubService hub;setup(hub);fixture_time=200000000;
-    missing(hub,m::Side::back,1);fixture_finish_discovery(hub,1);
+    missing(hub,m::Side::back);fixture_finish_discovery(hub,1);
     const auto generation=hub.snapshot().discovery_generation;
-    fixture_sent.clear();missing(hub,m::Side::front,2);
-    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::source_input;intent.sequence=3;intent.generation=1;
+    fixture_sent.clear();missing(hub,m::Side::front);
+    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::source_input;intent.generation=1;
     intent.target={{group,owner,0,m::Side::back},"Missing"};
     const m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     // The front scan begins while this synchronous request is consumed. A
@@ -117,12 +125,12 @@ static void independent_adapters(){
     HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
     assert(hub.start(profile)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     const auto generation=hub.snapshot().discovery_generation;assert(generation==2);
-    fixture_time=200000000;fixture_sent.clear();missing(hub,m::Side::back,1,0);fixture_finish_discovery(hub,generation);
+    fixture_time=200000000;fixture_sent.clear();missing(hub,m::Side::back,0);fixture_finish_discovery(hub,generation);
     assert(polls(2)&&!polls(1)&&!polls(5)&&!polls(6));
     const auto first=hub.snapshot().discovery_generation;fixture_sent.clear();
-    missing(hub,m::Side::back,2,1);fixture_finish_discovery(hub,first);
+    missing(hub,m::Side::back,1);fixture_finish_discovery(hub,first);
     assert(polls(6)&&!polls(1)&&!polls(2)&&!polls(5));
-    fixture_sent.clear();missing(hub,m::Side::back,3,0);missing(hub,m::Side::back,4,1);run_idle(3);
+    fixture_sent.clear();missing(hub,m::Side::back,0);missing(hub,m::Side::back,1);run_idle(3);
     assert(fixture_sent.empty());fixture_peer_address={};
 }
 static void claim_maintenance_is_not_enumeration(){
@@ -208,16 +216,16 @@ static void cold_miss_still_absent_and_stale_rx(){
 static void owned_context_fences_pending_rx(){
     reset_fixture();HubService hub;setup(hub);
     const m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
-    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.generation=1;context.sequence=1;context.selected=true;
+    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.generation=1;context.selected=true;
     context.target.port={group,owner,0,m::Side::front};context.source=m::QualifiedDeviceName{{group,owner,0,m::Side::back},"Missing"};
     assert(hub.submit_owned(context,auth));
     // A new activity's earlier power request has arrived, while the previous
     // assigned-source context is still installed on this owner.
-    m::OwnedIntent power;power.kind=m::OwnedIntentKind::power;power.on=true;power.sequence=2;power.generation=2;
+    m::OwnedIntent power;power.kind=m::OwnedIntentKind::power;power.on=true;power.generation=2;
     power.target={{group,owner,0,m::Side::back},"Source"};assert(hub.submit_owned(power,auth));
     fixture_time+=300000000;fixture_sent.clear();fixture_incoming.push_back({2,{{0x40,0x8f},2}});run_idle(1);
     const auto generation=hub.snapshot().discovery_generation;assert(hub.snapshot().discovering);
-    context.generation=2;context.sequence=3;context.source->osd_name="Source";assert(hub.submit_owned(context,auth));
+    context.generation=2;context.source->osd_name="Source";assert(hub.submit_owned(context,auth));
     fixture_finish_discovery(hub,generation);run_idle(2);
     assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.frame.size>1&&tx.frame.data[1]==0x90;}));
     fixture_sent.clear();fixture_incoming.push_back({2,{{0x40,0x8f},2}});run_idle(1);
@@ -225,7 +233,7 @@ static void owned_context_fences_pending_rx(){
 }
 static void rejected_owner_work_does_not_resolve(){
     reset_fixture();HubService hub;setup(hub);fixture_time+=300000000;fixture_sent.clear();
-    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.on=true;intent.sequence=1;intent.generation=1;
+    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.on=true;intent.generation=1;
     intent.target={{group,owner,0,m::Side::back},"Missing"};
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     auto wrong=auth;wrong.owner_boot=controller_boot;assert(hub.submit_owned(intent,wrong).code==m::AdmissionCode::unauthorized);

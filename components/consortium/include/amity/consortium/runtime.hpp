@@ -146,8 +146,8 @@ void runtime_update_hooks(RuntimeUpdateHooks);
 // Uses the authenticated scoped link and retains the original bounded queue age.
 esp_err_t runtime_send_update(model::OctopusId,Kind,std::string payload,uint32_t ttl_ms=5000);
 struct RuntimePeerStatus {
-    model::OctopusId id;model::BootId boot_id;model::ExecutionLeaseId control_lease,realtime_lease;
-    uint64_t config_revision=0,control_usable_until_ms=0,realtime_usable_until_ms=0;
+    model::OctopusId id;model::BootId boot_id;
+    uint64_t config_revision=0;
     uint32_t negotiated_capabilities=0;
     uint8_t supported_tentacles=1,configured_tentacles_mask=1;
     std::string firmware_identity,hostname;

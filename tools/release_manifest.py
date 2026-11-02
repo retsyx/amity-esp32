@@ -57,7 +57,7 @@ def manifest(image,profile='development',signing_key_id='',sdkconfig=None):
     value=dict(format=1,release_id='amity-'+version+'-'+hashlib.sha256(data).hexdigest()[:12],firmware_version=version,
         image_bytes=str(len(data)),image_sha256=hashlib.sha256(data).hexdigest(),image_elf_sha256=data[176:208].hex(),
         chip='esp32s3',hardware_profiles=[hardware],partition_layout='amity-8m-ota3d0000-v1',slot_bytes=str(0x3d0000),
-        protocol=dict(min='1',max='1',required_capabilities='401472',optional_capabilities='1040970'),
+        protocol=dict(min='1',max='1',required_capabilities='401472',optional_capabilities='1040968'),
         configuration=formats(3,3,3),storage=formats(2,2,2),origin=formats(1,1,1),factory=formats(1,4,4),
         bootloader='esp-idf6.1-rollback-v1',security_profile=profile,rollback_readable_max='2',source_commit=commit,
         source_tree_sha256=tree_identity(),source_dirty=dirty,dependencies=DEPENDENCIES,signing_key_id=signing_key_id)

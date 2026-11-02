@@ -26,7 +26,7 @@ std::optional<u::ReleaseManifest> staged;
 bool drop_next=false,reject_install=false;
 std::set<m::OctopusId> incompatible;
 std::string manifest;
-uint64_t message=100;
+m::MessageId accepted_begin;
 unsigned disk_writes=0,release_checks=0,begin_calls=0,chunk_calls=0,install_calls=0,abort_calls=0;
 c::RuntimeStatus runtime_role;
 c::Json parse(std::string_view body){c::Json value;c::JsonError error;assert(c::parse_json(body,value,error));return value;}
@@ -61,8 +61,10 @@ esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_
     if(kind==Kind::update_result){if(drop_next){drop_next=false;return ESP_OK;}return transport.result(destination,value)==Error::none?ESP_OK:ESP_FAIL;}
     for(const auto& peer:peers)if(peer.id==to&&peer.management_ready&&!(peer.negotiated_capabilities&qualified_lookup)&&kind==Kind::update_begin)assert(!value.get("validate_only"));
     sent.emplace_back(to,kind);const auto old=destination;destination=to;
-    Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.message_id=identity<m::MessageId>(++message);envelope.config_revision=7;envelope.coordinator_epoch=1;
-    transport.handle(local,envelope);destination=old;return ESP_OK;
+    Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;envelope.coordinator_epoch=1;
+    const auto handled=transport.handle(local,envelope);
+    if(handled==Error::none&&kind==Kind::update_begin&&(!value.get("validate_only")||!value.get("validate_only")->boolean))accepted_begin=*m::MessageId::parse(field(value,"request_id"));
+    destination=old;return ESP_OK;
 }
 }
 c::Json cohort(){return parse(u::cohort_status_json());}
@@ -136,7 +138,7 @@ int main(int argc,char** argv){
     runtime_role=unclaimed;assert(u::cancel_cohort(cleanup_job,error)==ESP_OK);assert(sent.size()==before_cleanup_messages&&install_calls==before_cleanup_installs&&begin_calls==before_cleanup_begins&&abort_calls==before_cleanup_aborts+1);assert(nodes[local].phase=="aborted"&&!nodes[local].maintenance&&fences.back()==std::make_pair(local,false));runtime_role=authorized_main;
     // Exact accepted begin ID scopes disconnect cleanup across reconnects.
     assert(u::stage_cohort(manifest,"",{one},error)==ESP_OK&&u::cohort_chunk(job(),one,0,bytes,error)==ESP_OK);
-    const auto begin=identity<m::MessageId>(message-1);destination=one;
+    const auto begin=accepted_begin;destination=one;
     transport.disconnected(local,identity<m::MessageId>(99999));assert(nodes[one].maintenance);
     transport.disconnected(local,begin);assert(!nodes[one].maintenance&&nodes[one].phase=="aborted");destination=local;
     assert(u::cancel_cohort(job(),error)==ESP_OK);

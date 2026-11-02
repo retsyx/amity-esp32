@@ -1,7 +1,6 @@
 {
   "protocol_version": 1,
   "consortium_id": "00000000000000000000000000001001",
-  "message_id": "00000000000000000000000000006001",
   "origin_octopus_id": "00000000000000000000000000002001",
   "origin_boot_id": "00000000000000000000000000007001",
   "destination_octopus_id": "00000000000000000000000000002002",
@@ -11,20 +10,30 @@
   "kind": "scoped_intent",
   "ttl_ms": 1000,
   "payload": {
-    "execution_lease_id": "00000000000000000000000000008001",
     "generation": "1",
-    "sequence": "1",
     "target": {
       "consortium_id": "00000000000000000000000000001001",
       "octopus_id": "00000000000000000000000000002002",
       "tentacle_id": 0,
-      "side": "back",
-      "osd_name": "Apple TV"
+      "side": "front",
+      "osd_name": ""
     },
-    "action": "power",
+    "action": "activity",
     "arguments": {
-      "on": true
-    },
-    "setup_generation": 0
+      "selected": true,
+      "source_changed": true,
+      "source": {
+        "consortium_id": "00000000000000000000000000001001",
+        "octopus_id": "00000000000000000000000000002002",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "Apple TV"
+      },
+      "audio": null,
+      "display": null,
+      "switch_device": null,
+      "input": 0,
+      "repair": false
+    }
   }
 }

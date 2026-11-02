@@ -1,7 +1,6 @@
 {
   "protocol_version": 1,
   "consortium_id": "00000000000000000000000000001001",
-  "message_id": "00000000000000000000000000006001",
   "origin_octopus_id": "00000000000000000000000000002002",
   "origin_boot_id": "00000000000000000000000000007002",
   "destination_octopus_id": "00000000000000000000000000002001",
@@ -34,11 +33,7 @@
           "vendor_id": 107,
           "resolved": true
         }
-      ],
-      "setup_generation": 0,
-      "setup_last_sequence": "0",
-      "setup_pending": 0,
-      "setup_replies_pending": false
+      ]
     }
   }
 }

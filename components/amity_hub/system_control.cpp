@@ -25,8 +25,10 @@ esp_err_t SystemControl::configure(config_store::Configuration config,std::funct
     std::vector<system::ScopedSelector> selectors;
     for(const auto& c:config.components)for(const auto& name:c.record.qualified_names)
         selectors.push_back({c.record.component_id.str(),name});
+    std::vector<system::OctopusId> owners;
+    for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
     auto stored=std::make_shared<const config_store::Configuration>(std::move(config));
-    const auto result=local_.configure_scoped(activities(*stored),std::move(selectors),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,std::move(commit),stored->presentation_revision);
+    const auto result=local_.configure_scoped(activities(*stored),std::move(selectors),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,std::move(commit),stored->presentation_revision,std::move(owners));
     if(result==ESP_OK)std::atomic_store(&active_,std::move(stored));
     return result;
 }

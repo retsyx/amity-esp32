@@ -70,7 +70,7 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
             const auto* validation=request.get("validate_only");const bool validate_only=validation&&validation->type==c::Json::Type::boolean&&validation->boolean;
             applied=validate_only?stage_release(manifest.canonical,string(request,"signature_hex"),error):peer_begin(manifest.canonical,string(request,"signature_hex"),error);
             code=applied==ESP_ERR_INVALID_ARG?"INVALID_MANIFEST":"NOT_READY";
-            if(applied==ESP_OK){stage="ready";if(!validate_only){std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=envelope.message_id;incoming_release=release_id;incoming_hash=image_hash;}}
+            if(applied==ESP_OK){stage="ready";if(!validate_only){std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=*m::MessageId::parse(string(request,"request_id"));incoming_release=release_id;incoming_hash=image_hash;}}
         }
     }else if(envelope.kind==c::Kind::update_chunk){std::string bytes;if(unhex(string(request,"data_hex"),bytes)&&config_store::sha256_hex(bytes)==string(request,"chunk_sha256")){applied=peer_chunk(release_id,decimal(request,"offset"),bytes,error);code=applied==ESP_ERR_INVALID_ARG?"OFFSET_MISMATCH":"STORAGE_FAILURE";if(applied==ESP_OK)stage="progress";}}
     else if(envelope.kind==c::Kind::update_install){applied=peer_install(release_id,error);code="HASH_MISMATCH";if(applied==ESP_OK)stage="installing";}

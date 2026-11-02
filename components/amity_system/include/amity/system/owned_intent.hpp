@@ -1,6 +1,7 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "amity/system/model.hpp"
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -11,20 +12,25 @@ namespace amity::system {
 // These are IPC/transport requests, never an outgoing CEC frame backlog.
 enum class OwnedIntentKind {
     power, source_input, switch_input, announce_active_source, query_audio,
-    key_down, key_up, context, standby_wire, discover
+    context, standby_wire, discover, activity, key_edges
 };
+struct KeyEdge { uint8_t key=0; bool down=false; };
 struct OwnedIntent {
     OwnedIntentKind kind = OwnedIntentKind::query_audio;
-    // Port-only actions (context, announcement, standby and discovery) may
-    // leave osd_name empty. All component/key actions require an actual name.
+    // key_edges uses only owner/group as local delivery metadata; its wire
+    // destination is the authenticated envelope. Other actions select a port.
     QualifiedDeviceName target;
-    uint64_t generation = 0, sequence = 0;
+    uint64_t generation = 0;
     // Local IPC metadata. The authenticated envelope carries this on wire.
     uint64_t config_revision = 0;
-    uint32_t setup_generation = 0;
-    HoldToken token;
-    uint8_t key = 0, input = 0;
-    bool repeat = false, on = false;
+    // A same-target repair repeats this owner's original power/input recipe.
+    bool repair = false;
+    // Owner-task IPC metadata for its original local recipe, never on wire.
+    bool activity_step = false;
+    uint8_t input = 0;
+    bool on = false;
+    std::array<KeyEdge,2> edges{};
+    uint8_t edge_count=0;
     // source_input also carries the original display selector so its owner can
     // announce its paired front when the display is on another adapter.
     // Non-emitting context mirrors the original controller's selected activity
@@ -34,7 +40,7 @@ struct OwnedIntent {
 };
 // Local owner-task completion, not a wire message or saved execution state.
 enum class OwnedContextResult {published,stale,failed};
-enum class OwnedAuthority {control,realtime,cleanup};
+enum class OwnedAuthority {control,input,cleanup};
 struct OwnedAuthorization {
     OctopusId controller_id;
     BootId controller_boot, owner_boot;
@@ -49,9 +55,9 @@ struct ScopedSelector {
 struct OwnedDispatchResult {
     bool admitted = false;
     std::optional<bool> source_present;
-    uint64_t sequence = 0;
-    OwnedDispatchResult(bool accepted=false,std::optional<bool> present={},uint64_t serial=0)
-        : admitted(accepted),source_present(present),sequence(serial) {}
+    bool pending = false;
+    OwnedDispatchResult(bool accepted=false,std::optional<bool> present={},bool waiting=false)
+        : admitted(accepted),source_present(present),pending(waiting) {}
     explicit operator bool()const{return admitted;}
 };
 struct OwnedDeviceObservation {
@@ -69,9 +75,6 @@ struct OwnedAdapterSnapshot {
     uint16_t front_physical_address = 0xffff;
     bool ready = false, discovering = false;
     uint32_t discovery_generation = 0;
-    uint32_t setup_generation = 0, setup_pending = 0;
-    bool setup_replies_pending = false;
-    uint64_t setup_last_sequence = 0;
     bool audio_status_known = false, muted = false;
     uint8_t volume = 127;
     std::vector<OwnedDeviceObservation> devices;

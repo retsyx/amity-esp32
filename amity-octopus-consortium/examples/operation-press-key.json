@@ -1,7 +1,6 @@
 {
   "protocol_version": 1,
   "consortium_id": "00000000000000000000000000001001",
-  "message_id": "00000000000000000000000000006001",
   "origin_octopus_id": "00000000000000000000000000002001",
   "origin_boot_id": "00000000000000000000000000007001",
   "destination_octopus_id": "00000000000000000000000000002001",
@@ -9,24 +8,17 @@
   "coordinator_epoch": "1",
   "config_revision": "1",
   "kind": "scoped_intent",
-  "ttl_ms": 1000,
+  "ttl_ms": 500,
   "payload": {
-    "execution_lease_id": "00000000000000000000000000008001",
     "generation": "1",
-    "sequence": "1",
-    "target": {
-      "consortium_id": "00000000000000000000000000001001",
-      "octopus_id": "00000000000000000000000000002001",
-      "tentacle_id": 0,
-      "side": "back",
-      "osd_name": "Receiver"
-    },
-    "action": "key_down",
+    "action": "key_edges",
     "arguments": {
-      "key": 65,
-      "repeat": true,
-      "token": "00000000000000000000000000009001"
-    },
-    "setup_generation": 0
+      "edges": [
+        {
+          "key": 65,
+          "down": true
+        }
+      ]
+    }
   }
 }

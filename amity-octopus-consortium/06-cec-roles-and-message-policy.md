@@ -51,7 +51,8 @@ The **29 October 2026 sequencing amendment** makes each Start/Standby sequence a
 
 Power uses standard commands only: TV On sends Image View On (`04`), other
 devices receive Power On Function (`44:6d`) and Released (`45`), and Off sends
-Standby (`36`). The transported power arguments contain only the `on` boolean.
+Standby (`36`). Each owner derives these operations from its full activity;
+the main does not send individual device power actions.
 There are no configurable command recipes or vendor-dependent power branches.
 
 A separate AVR/audio target is an ordinary qualified equipment selection. A source that cannot be found can still use the original explicit switch-device/input fallback. Missing one recipient does not authorize an all-or-nothing topology preflight that prevents the rest of the original algorithm from proceeding. Preserve baseline deduplication when one recipient fills several activity roles.
@@ -60,13 +61,15 @@ Do not require a stored receiver profile, capability approval, confirmed cable g
 
 ## 3. Original input and gestures
 
-Only the original controller accepts the sole remote and home/browser input. It keeps the original input gate, Power behavior, Siri macros, gesture recognition and generated press/release ordering. Deliver resulting button state changes and typed local intents to the owning executor. Do not send periodic presses or per-button renewal messages.
+Only the original controller accepts the sole remote and home/browser input. It keeps the original input gate, Power behavior, Siri macros, gesture recognition and generated press/release ordering. The main records only the owning Amity index for each raw key and delivers raw button edges to that owner. No adapter, side, OSD name or resolved recipient accompanies a key edge. Do not send periodic presses or per-button renewal messages.
 
-Each key continues independently after its own successful completion while it remains down. New keys and other CEC commands submit immediately; another key's outstanding ACK/completion does not block them. A failed key press ends that key; unchanged down reports or authority refresh cannot restart it. A matching later up is a no-op.
+One owner-level key table tracks each raw key. The receiver uses its current activity and shared resolver for every press, repeat and release; it does not retain a per-key CEC recipient. Each key continues independently after its own successful completion while it remains down. New keys and other CEC commands submit immediately; another key's outstanding ACK/completion does not block them. A failed key press ends that key; unchanged down reports or authority refresh cannot restart it. A matching later up is a no-op.
+
+An accepted activity transition immediately ends prior holds and fences their pending user-key lookups and queued presses before the first wire edge. Already transmitting frames finish; old activity recipe frames retain their normal sequence. The existing input gate discards transition-period presses before registration and never replays them. Old releases and completions cannot affect a newer hold. This cutoff is local to each Amity and adds no cross-owner wait.
 
 ## 4. End-of-stream release and the only transmit FIFO
 
-Aggregate pressed keys by physical wire, initiator and destination. `User Control Released` has no key operand. Ending one key must not release another active key at that recipient. Final up submits the recipient's release immediately behind admitted presses, without waiting for first edge, ACK or completion. Last-key failure may also end the stream. Preserve exact safe cleanup state independently of the ended key token.
+Resolve the remaining pressed keys against the current activity and aggregate them by physical wire, initiator and destination. `User Control Released` has no key operand. Ending one key must not release another active key at that recipient. Final up submits the recipient's release immediately behind admitted presses, without waiting for first edge, ACK or completion. Last-key failure may also end the stream. Preserve the required local completion/binding fences independently of button state, without retaining a per-key target.
 
 The executor validates/translates and submits directly. CEC contains the only outgoing FIFO: eight queued-plus-active messages per wire, including releases. No extra release slot, repeat backlog or executor retry queue exists. Drop full-FIFO submissions, log every dropped TX including each member of a rejected atomic batch, and do not retain a dropped release for later capacity. State/completion trackers and bounded IPC are not outgoing frame buffers.
 
@@ -74,7 +77,7 @@ CEC mechanically queues and transmits exactly the frames and attempt budgets sup
 
 ## 5. Transport fences
 
-Authenticate the original controller and selected owner, reject stale boot/configuration/input work and preserve causal ordering. These are message-delivery protections. They must not create a second normal-operation planner, persistent activity availability or new CEC timing. Exact matching cleanup cannot be redirected to equipment resolved later under the same name.
+Authenticate the original controller and selected owner, reject stale boot/configuration/input work and preserve causal ordering. These are message-delivery protections. They must not create a second normal-operation planner, persistent activity availability or new CEC timing. Release uses the shared resolver under the current activity; activity and input lifetimes prevent old cleanup from affecting a later hold.
 
 ## 6. Validation
 

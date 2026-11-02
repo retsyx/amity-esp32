@@ -13,6 +13,7 @@ from .config import RunConfig, use_config
 from .testbed import TestBed
 from .discovery import ScanResult
 from .activity import Activity, ActivityAction, ActivityCleanupError, ActivityConflict
+from .keys import Key, KeyAction
 from .membership import AddedAmity, MembershipConflict, MembershipCleanupError
 
 __all__ = [
@@ -22,5 +23,6 @@ __all__ = [
     "CecError", "Frame", "LinuxCecBackend", "TxResult",
     "RunConfig", "use_config", "TestBed", "ScanResult", "Tentacle", "TentacleEndpoint",
     "Activity", "ActivityAction", "ActivityCleanupError", "ActivityConflict",
+    "Key", "KeyAction",
     "AddedAmity", "MembershipConflict", "MembershipCleanupError",
 ]

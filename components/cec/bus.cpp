@@ -443,7 +443,7 @@ static bool valid_fence_storage(ExecutionFence fence) {
             ((reinterpret_cast<uintptr_t>(counter) % alignof(std::atomic<uint32_t>)) == 0 &&
              esp_ptr_internal(counter) && esp_ptr_byte_accessible(counter));
     };
-    return valid(fence.generation) && valid(fence.secondary_generation);
+    return valid(fence.generation) && valid(fence.secondary_generation) && valid(fence.tertiary_generation);
 }
 bool Bus::send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts) {
     if (!impl_ || !valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;

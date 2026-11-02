@@ -56,52 +56,50 @@ void start(Active &active,uint64_t config=7,uint32_t capabilities=known_capabili
     check(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none,"authenticate failed");
     check(active.session.hello(hello,known_capabilities)==Error::none&&active.session.synchronized(config,true,true)==Error::none,"session did not synchronize");
 }
-Envelope envelope(Kind kind,unsigned message=10,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.message_id=ident<m::MessageId>(message);e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
-std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"message_id\":\""+e.message_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
+Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
+std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
 const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
 const std::string requested="{\"mutation_id\":\"00000000000000000000000000000020\",\"proposal_digest\":\""+std::string(64,'a')+"\",\"phase\":\"factory_reset\",\"membership_revision\":\"2\",\"expected_boot_id\":\"00000000000000000000000000000006\"}";
-std::string acknowledgement(bool correct=true){auto payload=requested;if(!correct)payload.replace(payload.find(std::string(64,'a')),64,std::string(64,'b'));payload.pop_back();return packet(envelope(Kind::membership_result,20),payload+",\"result\":\"reset_scheduled\"}");}
-std::string lease(Kind kind,unsigned message){const auto base="{\"lease_id\":\"00000000000000000000000000000021\",\"link_id\":\"00000000000000000000000000000001\",\"class\":\"control\",\"validity_ms\":5000}";return packet(envelope(kind,message),base);}
+std::string acknowledgement(bool correct=true){auto payload=requested;if(!correct)payload.replace(payload.find(std::string(64,'a')),64,std::string(64,'b'));payload.pop_back();return packet(envelope(Kind::membership_result),payload+",\"result\":\"reset_scheduled\"}");}
 const std::string settings_payload="{\"request_id\":\"00000000000000000000000000000100\",\"operation\":\"read\",\"stage\":\"applied\",\"error\":\"\",\"snapshot\":{\"boot_id\":\"00000000000000000000000000000006\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":0,\"name\":\"HDMI adapter 1\",\"configured\":true,\"default_front_physical_address\":\"1.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]},\"rebooting\":false}";
-std::string settings_reply(unsigned message=70){return packet(envelope(Kind::settings_result,message),settings_payload);}
+std::string settings_reply(){return packet(envelope(Kind::settings_result),settings_payload);}
 '''
 SUITE = r'''
 void heartbeat_tests(){
     Active active;start(active);const auto valid=envelope(Kind::heartbeat);
     check(dispatch_heartbeat(active,valid),"valid heartbeat rejected");
-    check(!dispatch_heartbeat(active,valid),"duplicate heartbeat accepted");
-    for(unsigned failure=0;failure<7;++failure){auto bad=envelope(Kind::heartbeat,30+failure);
+    check(dispatch_heartbeat(active,valid),"repeated heartbeat on an authenticated stream was rejected");
+    for(unsigned failure=0;failure<7;++failure){auto bad=envelope(Kind::heartbeat);
         switch(failure){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 3:bad.consortium_id=ident<m::ConsortiumId>(99);break;case 4:bad.config_revision=8;break;case 5:bad.coordinator_epoch=2;break;case 6:bad.origin_octopus_id=ident<m::OctopusId>(99);break;}
         LinkTrace trace;check(!dispatch_heartbeat(active,bad,&trace),"foreign heartbeat bypassed actual runtime admission");
         check(trace.unexpected&&trace.error!=Error::none&&std::string(trace.reason)=="heartbeat_admit","heartbeat rejection lost its admission diagnostic");
     }
     // A committed new config must not relabel an existing TLS link: old-scope
     // heartbeats remain valid until reconnect; the new link accepts only8.
-    check(dispatch_heartbeat(active,envelope(Kind::heartbeat,50,7)),"old scoped heartbeat rejected during transition");
-    Active updated;start(updated,8);check(dispatch_heartbeat(updated,envelope(Kind::heartbeat,51,8)),"new scoped heartbeat rejected");
-    check(!dispatch_heartbeat(updated,envelope(Kind::heartbeat,52,7)),"old revision accepted on new link");
-    updated.session.restrict_management();check(dispatch_heartbeat(updated,envelope(Kind::heartbeat,53,8)),"valid management heartbeat rejected");
-    std::cout<<"PASS actual heartbeat dispatch: exact boots/identities/group/epoch/config/replay; old/new config transition and management\n";
+    check(dispatch_heartbeat(active,envelope(Kind::heartbeat)),"old scoped heartbeat rejected during transition");
+    Active updated;start(updated,8);check(dispatch_heartbeat(updated,envelope(Kind::heartbeat,8)),"new scoped heartbeat rejected");
+    check(!dispatch_heartbeat(updated,envelope(Kind::heartbeat)),"old revision accepted on new link");
+    updated.session.restrict_management();check(dispatch_heartbeat(updated,envelope(Kind::heartbeat,8)),"valid management heartbeat rejected");
+    std::cout<<"PASS actual heartbeat dispatch: exact boots/identities/group/epoch/config; old/new config transition and management\n";
 }
 void retirement_tests(){
-    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::heartbeat,60),heartbeat),lease(Kind::execution_lease,61),acknowledgement()};
-     check(finish_retirement(active),"retirement failed behind in-flight heartbeat/leases");check(!active.ready&&!active.status.ready&&active.queue.empty(),"retirement did not fence queue");check(active.session.execution_leases().live(LeaseClass::control,clock_ms)==0,"drained frame granted authority");check(active.transport.largest_timeout<=2000,"retirement extended two-second deadline");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::heartbeat),heartbeat),packet(envelope(Kind::heartbeat),heartbeat),acknowledgement()};
+     check(finish_retirement(active),"retirement failed behind in-flight heartbeats");check(!active.ready&&!active.status.ready&&active.queue.empty(),"retirement did not fence queue");check(active.session.state()==ConnectionState::restricted,"drained frame restored authority");check(active.transport.largest_timeout<=2000,"retirement extended two-second deadline");}
     {Active active;start(active);active.retirement_payload=requested;active.transport.frames={acknowledgement(false)};check(!finish_retirement(active),"wrong retirement digest accepted");}
-    {Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::heartbeat,63);foreign.config_revision=8;active.transport.frames={packet(foreign,heartbeat),acknowledgement()};check(!finish_retirement(active)&&active.transport.next==1,"foreign frame was drained or acknowledged");}
-    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(packet(envelope(Kind::heartbeat,100+i),heartbeat));active.transport.frames.push_back(acknowledgement());check(!finish_retirement(active)&&active.transport.next==32,"retirement drain exceeded32 frames");}
+    {Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::heartbeat);foreign.config_revision=8;active.transport.frames={packet(foreign,heartbeat),acknowledgement()};check(!finish_retirement(active)&&active.transport.next==1,"foreign frame was drained or acknowledged");}
+    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(packet(envelope(Kind::heartbeat),heartbeat));active.transport.frames.push_back(acknowledgement());check(!finish_retirement(active)&&active.transport.next==32,"retirement drain exceeded32 frames");}
     {Active active;start(active);active.retirement_payload=requested;check(!finish_retirement(active)&&active.transport.largest_timeout<=2000,"absent ACK did not time out bounded");}
-    std::cout<<"PASS actual retirement:32-frame/2s drain, no lease grants, exact ACK digest, foreign-scope and missing-ACK rejection\n";
+    std::cout<<"PASS actual retirement:32-frame/2s drain, no restored authority, exact ACK digest, foreign-scope and missing-ACK rejection\n";
 }
 void settings_retirement_tests(){
     {Active active;start(active);active.retirement_payload=requested;Envelope reply;
-     check(parse_envelope(settings_reply(),reply)==Error::none&&active.session.admit(reply,clock_ms,clock_ms,false)==Error::none,"fixture is not a valid ready-session settings reply");
+     check(parse_envelope(settings_reply(),reply)==Error::none&&active.session.admit(reply,clock_ms,clock_ms)==Error::none,"fixture is not a valid ready-session settings reply");
      active.transport.frames={settings_reply(),acknowledgement()};
      check(finish_retirement(active)&&active.transport.next==2,"in-flight settings reply hid the matching reset ACK");
      check(active.session.state()==ConnectionState::restricted&&!active.ready&&!active.status.ready&&active.queue.empty(),"drained settings reply restored work authority");
-     check(active.session.execution_leases().live(LeaseClass::control,clock_ms)==0,"drained settings reply granted a lease");
      check(active.transport.largest_timeout<=2000,"settings reply drain extended the removal deadline");
-     check(!dispatch_heartbeat(active,envelope(Kind::heartbeat,80)),"settings reply left the session in management mode");}
-    for(unsigned failure=0;failure<7;++failure){Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::settings_result,71);
+     check(!dispatch_heartbeat(active,envelope(Kind::heartbeat)),"settings reply left the session in management mode");}
+    for(unsigned failure=0;failure<7;++failure){Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::settings_result);
      switch(failure){case 0:foreign.origin_boot_id=ident<m::BootId>(99);break;case 1:foreign.destination_boot_id=ident<m::BootId>(99);break;case 2:foreign.origin_octopus_id=ident<m::OctopusId>(99);break;case 3:foreign.destination_octopus_id=ident<m::OctopusId>(99);break;case 4:foreign.consortium_id=ident<m::ConsortiumId>(99);break;case 5:foreign.coordinator_epoch=2;break;case 6:foreign.config_revision=8;break;}
      active.transport.frames={packet(foreign,settings_payload),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"foreign settings reply was drained or acknowledged");}
@@ -110,20 +108,20 @@ void settings_retirement_tests(){
     {Active active;start(active);active.retirement_payload=requested;Envelope seen;
      check(parse_envelope(settings_reply(),seen)==Error::none&&active.session.admit(seen,clock_ms,clock_ms)==Error::none,"could not record a prior settings reply");
      active.transport.frames={settings_reply(),acknowledgement()};
-     check(!finish_retirement(active)&&active.transport.next==1,"previously received settings reply bypassed replay checks");}
+     check(finish_retirement(active)&&active.transport.next==2,"previous settings observation blocked the reset acknowledgment");}
     {Active active;start(active);active.retirement_payload=requested;active.transport.frames={settings_reply(),settings_reply(),acknowledgement()};
-     check(!finish_retirement(active)&&active.transport.next==2,"replayed settings reply bypassed drain replay checks");}
-    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={settings_reply(20),acknowledgement()};
-     check(!finish_retirement(active)&&active.transport.next==2,"ACK reused a drained reply message ID");}
+     check(finish_retirement(active)&&active.transport.next==3,"repeated settings observation blocked the reset acknowledgment");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={settings_reply(),acknowledgement()};
+     check(finish_retirement(active)&&active.transport.next==2,"unrelated operation IDs blocked the matching reset acknowledgment");}
     {Active active;start(active,7,known_capabilities&~per_adapter_settings);active.retirement_payload=requested;active.transport.frames={settings_reply(),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1&&active.session.state()==ConnectionState::restricted,"settings drain ignored negotiated capability or retained management permission");}
-    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::settings_read,72),"{\"request_id\":\"00000000000000000000000000000100\"}"),acknowledgement()};
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::settings_read),"{\"request_id\":\"00000000000000000000000000000100\"}"),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"settings work was admitted during retirement");}
-    {Active active;start(active);active.retirement_payload=requested;auto malformed=settings_payload;malformed.replace(malformed.find("\"applied\""),9,"\"failed\"");active.transport.frames={packet(envelope(Kind::settings_result,73),malformed),acknowledgement()};
+    {Active active;start(active);active.retirement_payload=requested;auto malformed=settings_payload;malformed.replace(malformed.find("\"applied\""),9,"\"failed\"");active.transport.frames={packet(envelope(Kind::settings_result),malformed),acknowledgement()};
      check(!finish_retirement(active)&&active.transport.next==1,"malformed settings reply was drained");}
-    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(settings_reply(200+i));active.transport.frames.push_back(acknowledgement());
+    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(settings_reply());active.transport.frames.push_back(acknowledgement());
      check(!finish_retirement(active)&&active.transport.next==32,"settings reply drain exceeded32 frames");}
-    std::cout<<"PASS actual retirement behind settings replies: exact ACK required; scope/capability/replay/32-frame/2s fences retained; no settings work or lease authority\n";
+    std::cout<<"PASS actual retirement behind settings replies: exact ACK required; scope/capability/32-frame/2s fences retained; no settings work or restored authority\n";
 }
 int main(){try{heartbeat_tests();retirement_tests();settings_retirement_tests();return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
 '''

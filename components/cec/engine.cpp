@@ -12,7 +12,9 @@ namespace cec {
 bool fence_current(ExecutionFence fence) {
     return (!fence.generation || fence.generation->load(std::memory_order_acquire) == fence.expected_generation) &&
         (!fence.secondary_generation ||
-         fence.secondary_generation->load(std::memory_order_acquire) == fence.expected_secondary_generation);
+         fence.secondary_generation->load(std::memory_order_acquire) == fence.expected_secondary_generation) &&
+        (!fence.tertiary_generation ||
+         fence.tertiary_generation->load(std::memory_order_acquire) == fence.expected_tertiary_generation);
 }
 void Engine::set_address(uint8_t address) {
     auto replacement = policy_pending_ ? pending_policy_ : policy_;

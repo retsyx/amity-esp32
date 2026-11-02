@@ -42,7 +42,11 @@ public:
     esp_err_t request_remote_activity(unsigned index,uint32_t generation);
     bool press_remote_key(uint8_t key,bool repeat=false){return press_key(key,repeat);}
     bool press_remote_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return press_key_for_activity(key,generation,repeat);}
-    bool release_remote_key(uint8_t key=0xff){return release_key(key);}
+    bool release_remote_key(){return release_key();}
+    bool release_remote_key(uint8_t key){return local_coordinator_.load()&&local_.release_key(key);}
+    uint32_t remote_input_epoch()const{return local_.input_epoch();}
+    bool press_timed_remote_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){return accepts_local_input()&&local_.press_timed_key(key,generation,selection,input_epoch);}
+    bool release_timed_remote_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){return local_coordinator_.load()&&local_.release_timed_key(key,generation,selection,input_epoch);}
     esp_err_t repair_remote_activity(uint32_t generation);
     esp_err_t stop_remote_zone(){return stop_remote_zone(remote_activity_generation());}
     esp_err_t stop_remote_zone(uint32_t generation);
@@ -69,13 +73,11 @@ public:
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> observer){local_.set_owned_observer(std::move(observer));}
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> check){local_.set_owned_authorizer(std::move(check));}
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> check){local_.set_owned_deadline(std::move(check));}
-    void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)> observer){local_.set_owned_input_observer(std::move(observer));}
     system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout=1000){return local_.submit_owned(intent,auth,timeout);}
     esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision){return local_.bind_owned_controller(controller,revision);}
     bool update_owned_snapshot(system::OwnedAdapterSnapshot report){return local_.update_owned_snapshot(std::move(report));}
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const{return local_.owned_snapshots();}
     bool fence_owned(system::OctopusId controller,system::LinkId link){return local_.fence_owned(controller,link);}
-    bool owned_input_result(system::OctopusId owner,uint64_t generation,uint64_t sequence,bool present){return local_.owned_input_result(owner,generation,sequence,present);}
     uint64_t executing_configuration_revision()const{return local_.executing_configuration_revision();}
     esp_err_t retire_membership(){local_coordinator_.store(false);return local_.retire_membership();}
     esp_err_t begin_maintenance(){const auto result=local_.begin_maintenance();if(result==ESP_OK)maintenance_.store(true);return result;}

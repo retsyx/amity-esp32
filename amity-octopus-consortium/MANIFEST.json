@@ -8,8 +8,8 @@
   "files": [
     {
       "path": "03-domain-model-and-addressing.md",
-      "size_bytes": 6018,
-      "sha256": "20a68c29901e2f5723b37a5779b1cf5cac497a658017c1087df2ead0406f9c77"
+      "size_bytes": 6087,
+      "sha256": "63a1afa396412434311583802c69e6e104118a9cca5be92817f2c4e540c7ca15"
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
@@ -23,18 +23,18 @@
     },
     {
       "path": "06-cec-roles-and-message-policy.md",
-      "size_bytes": 10479,
-      "sha256": "fd149bde368c1edc6de3394c9fa6f81d63a1e48155046b5ded9dae849244d51e"
+      "size_bytes": 11436,
+      "sha256": "99314271320134cb5356d58123abad3998191847a5c77116718cbeed6da9184a"
     },
     {
       "path": "07-activity-planning-and-execution.md",
-      "size_bytes": 14357,
-      "sha256": "1aa9344fa3b10bc23f395779c8b97454e95f852e65155ed50afd48112c7a088d"
+      "size_bytes": 16464,
+      "sha256": "8d8398ce07e464559d6513f5870c3175acd3bdb85371c7f71268bf33112bcc02"
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 23945,
-      "sha256": "aadbe3d2cb69fe0d323c7a8d5739e2d29dda2959d91475bc1845d4d7b8ea4634"
+      "size_bytes": 27905,
+      "sha256": "057cd19b20df0d68aad930f19b950d5c39d4c984acde43d9f632be2b3a2573a3"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 29137,
-      "sha256": "8b01bbb9876a2dfcddb2f553df9ecc2d24993849be928a14c33a8ca931f242e0"
+      "size_bytes": 31978,
+      "sha256": "b29e9aa2d25f042a48a19647e13ab388751659919b99524dbcc66d0adfec73f8"
     },
     {
       "path": "21-original-controller-policy.md",
@@ -98,8 +98,8 @@
     },
     {
       "path": "examples/README.md",
-      "size_bytes": 1799,
-      "sha256": "e54d3f7b2913c781e060793a62d452a2ee1eeca9091dafb95f2cbcbccfa30602"
+      "size_bytes": 1931,
+      "sha256": "aa86f6f25e9f811d3325e5a9f444b002d97cd2dee2d892c5d8aff5522ae5e1e2"
     },
     {
       "path": "examples/activity-configuration.json",
@@ -108,23 +108,23 @@
     },
     {
       "path": "examples/name-reresolution.json",
-      "size_bytes": 422,
-      "sha256": "ba9b383da2219339c25ff3e17fc22f105663c9d5bbf983943ed8648373eb066d"
+      "size_bytes": 435,
+      "sha256": "9c52b66f461b76ef96c74d7e0b4a19ad91dfaf9d636fbde7ee8229447243e34b"
     },
     {
-      "path": "examples/operation-ensure-power.json",
-      "size_bytes": 905,
-      "sha256": "57d77a5ffa76e57bfc4612ff9ba3561a5a72170dc75e6f634304431a9e8b264a"
+      "path": "examples/activity-selection.json",
+      "size_bytes": 1116,
+      "sha256": "4a23f8bdb43fb9ddd903ed758d5dfb70e3e68f29aa96a05229ac948bcfbbffb0"
     },
     {
       "path": "examples/operation-press-key.json",
-      "size_bytes": 980,
-      "sha256": "1a44148953f0fd0d566b143af17294e790bbcc5e5788d5b82ebb836a7273f579"
+      "size_bytes": 605,
+      "sha256": "b85b8101cad8158ad08471c547fd7fb468008aaaa875547bd07edc9f4af05254"
     },
     {
       "path": "examples/owner-state.json",
-      "size_bytes": 1273,
-      "sha256": "0df0b5f34bd6a9a064862a6357f42047e0fc12812c57dc26e0511fa43aca4355"
+      "size_bytes": 1094,
+      "sha256": "e6abcdddd4651caa234006f30184eabe9bf63c461fbe3373ab9d86c6d2f554fc"
     },
     {
       "path": "examples/qualified-addresses.json",
@@ -168,13 +168,13 @@
     },
     {
       "path": "schemas/wire-envelope.schema.json",
-      "size_bytes": 9360,
-      "sha256": "d619500a97162004a4dc4709ddbd3b895ce852c2a56a09438adfb4ea56dfae0d"
+      "size_bytes": 8895,
+      "sha256": "cc261112d4caa98a677aa6a96a07cdbe2c1a6b26534ce7002ecd1a9acae91b67"
     },
     {
       "path": "validate_contracts.py",
-      "size_bytes": 18985,
-      "sha256": "662ee458872a1b53e2e9b9c5d936be4a76b7f9c5d3a5b2c3be1c107a19009498"
+      "size_bytes": 20911,
+      "sha256": "ce91af6478a626f46237b737cbe8ee2a1cc76ee98fa990e41a042c6a0148d6f9"
     }
   ]
 }

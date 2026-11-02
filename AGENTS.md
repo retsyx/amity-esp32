@@ -30,6 +30,20 @@ and authority fences, and withhold operational readiness until synchronization
 succeeds. Recover application exchanges on the same authenticated stream;
 actual transport loss or an unusable stream still requires reconnection.
 
+## Control and activity invariants — 1 November 2026
+
+- One authenticated, ordered TCP connection per Amity pair. No renewable input/control leases, generic replay IDs, or random key-hold tokens.
+- Boot and activity lifetimes reject stale work. Keep authentication, configuration checks and operation deadlines. Administrative operation IDs may prevent duplicate actions after retries.
+- Amities agree on activity start/stop intent. Each independently runs its own ordered device sequence. No cross-Amity CEC waits, step planning, or device synchronization; one owner's blocked job must not delay another owner's activity delivery or execution.
+- Within each Amity, each action waits for its lookup and CEC transmission before the next action. Send old-only devices' Standby before new-only devices' power-on; preserve shared-device behavior. Later activity requests cannot overtake that local sequence.
+- Never wait for reported device state, application replies, or a quiet period to advance an activity.
+- The resolver may have multiple pending lookups, but resumes waiters FIFO. Each caller stays paused; cached independent work and the owner task remain responsive.
+- The key API sends a complete press/release: duration 0 is a tap; 1–5000 ms is a bounded hold. Cleanup does not depend on the caller remaining connected.
+- The main sends only key-down/key-up state changes and remembers the receiving Amity index. Each owner uses the full current activity and the shared resolver for key actions, including release; do not retain a per-key resolved CEC recipient. Held-button CEC press transmissions are generated locally by the owner.
+- When an Amity accepts an activity transition, stop old holds and invalidate old pending user-key lookups and queued user presses before initialization. No further old user press may start; an already-transmitting frame can finish. Old releases/completions cannot affect new holds. Normal key-up still preserves admitted-frame FIFO behavior.
+
+These supersede older execution-lease, generic replay, response-settling and per-key recipient-retention requirements below. Human login sessions and administrative retry IDs are separate.
+
 ## Explicit Amity removal — 29 October 2026
 
 An explicit Remove deletes the Amity from saved configuration. Remove its owner
@@ -334,6 +348,8 @@ cache, successful scan, repeated miss/cooldown, and independent tentacle sides.
 
 ## Sequential activity execution — 29 October 2026
 
+The 1 November control/activity invariants above govern ordering and completion.
+
 Activity start/standby sequences run sequentially on each Amity. Follow the
 original `ControllerImpl.set_activity()` in `~/projects-other/amity/hdmi.py`:
 resolve the device, complete that step's original CEC work, then advance to the
@@ -373,19 +389,21 @@ functional tests. Extend the harness around the existing UI capabilities.
 Parse its HDMI-CEC mapping and setup/reset tables; do not duplicate GPIO maps or
 persist virtual home-theater profiles. Each functional scenario owns its
 components and releases their CEC addresses when it ends. The framework has
-six functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
+nine functional scenarios: an HDMI scan on `amity-dut` with a TV, AVR and
 playback device; `activity.py`, which reuses that scan to create, start and
-standby an activity; `source_theft.py`, which adds a second playback device
+standby an activity, checks explicit switch input, and tests key routing with
+equipment on the main and on `amity-dut-2`; `source_theft.py`, which adds a second playback device
 on AVR input 2 to check recovery from its Active Source announcement while the
 input-1 player's activity remains selected; `add_amity.py`, which uses
 `amity-dut` to add, verify, remove and reset the second board `amity-dut-2`;
 and `consortium.py`, whose two-owner case adds that headless member and
 exercises one TV/AVR/player triple on each owner in both activity/theft
-directions, and whose three-owner case adds `amity-dut-2` and `amity-dut-3`
-to the original main `amity-dut` and exercises all three owners.
+directions, whose three-owner case adds `amity-dut-2` and `amity-dut-3`, and
+whose four-owner case also adds `amity-dut-4`; plus `dual-display.py` for a
+TV/projector activity and `source-theft.py` for isolated-source suppression.
 `--test consortium` selects the two-owner scenario;
 `--test consortium_three_duts` selects the three-owner scenario. `--test all`
-runs all six scenarios, comprising seven test cases because `activity` has two.
+runs all nine scenarios, comprising twelve test cases because `activity` has four.
 Host-only framework unit tests are separate.
 Do not retain the previous harness implementation in an archived directory.
 

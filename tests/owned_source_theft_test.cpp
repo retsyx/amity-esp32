@@ -73,21 +73,46 @@ static void distributed_source_comparison(){
     other.set_system_identity(group,member);other.set_boot_identity(member_boot);other.set_coordinator_authority(false,1);assert(other.start(3,4)==ESP_OK);auto* other_task=latest_task;
     assert(other.bind_owned_controller(controller,1)==ESP_OK);
     other.set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
-    other.set_owned_input_observer([&](const auto& intent,const auto&,const auto& result){if(result.source_present)assert(primary.owned_input_result(member,intent.generation,intent.sequence,*result.source_present));});
     latest_task=primary_task;
     assert(primary.configure_scoped({{"Main","tv-a","player-a","","",0},{"Member","tv-b","player-b","","",0}},
         {{"tv-a",name(controller,m::Side::front,"TV")},{"player-a",name(controller,m::Side::back,"Source")},{"tv-b",name(member,m::Side::front,"TV")},{"player-b",name(member,m::Side::back,"Source")}},
         [&](const m::OwnedIntent& intent){
             assert(intent.target.port.octopus_id==member);auto* previous=latest_task;latest_task=other_task;
-            m::OwnedAuthorization auth{controller,controller_boot,member_boot,link,1,0};auth.authority=intent.kind==m::OwnedIntentKind::key_up?m::OwnedAuthority::cleanup:intent.kind==m::OwnedIntentKind::key_down?m::OwnedAuthority::realtime:m::OwnedAuthority::control;
+            m::OwnedAuthorization auth{controller,controller_boot,member_boot,link,1,0};auth.authority=m::OwnedAuthority::control;
             const auto result=other.submit_owned(intent,auth);latest_task=previous;
-            if(intent.kind==m::OwnedIntentKind::source_input&&result.source_present)assert(primary.owned_input_result(member,intent.generation,intent.sequence,*result.source_present));
             return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::overloaded||result.code==m::AdmissionCode::unresolved;
         },controller,1)==ESP_OK);
     run_one_command();fixture_finish_discovery(primary);latest_task=other_task;fixture_finish_discovery(other);latest_task=primary_task;run_idle(2);
+    auto advance=[&](unsigned passes){
+        for(unsigned pass=0;pass<passes;++pass)for(auto* task:{primary_task,other_task}){latest_task=task;run_idle(1);}
+        latest_task=primary_task;
+    };
+    auto finish_activity=[&](int selected){
+        for(unsigned pass=0;pass<64&&(primary.activity_setup_in_progress()||other.activity_setup_in_progress()||primary.snapshot().current_activity!=selected);++pass)advance(1);
+        assert(primary.snapshot().current_activity==selected&&!primary.activity_setup_in_progress()&&!other.activity_setup_in_progress());
+    };
     auto count=[](int gpio,uint8_t destination,uint8_t opcode){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return sent.gpio==gpio&&sent.frame.destination()==destination&&sent.frame.size>=2&&sent.frame.data[1]==opcode;});};
     for(int selected:{0,1}){
-        assert(primary.select_activity(selected));run_one_command();run_idle(2);const auto generation=primary.activity_generation();
+        fixture_sent.clear();
+        if(selected)fixture_async_autocomplete=false;
+        assert(primary.select_activity(selected));run_one_command();advance(2);
+        if(selected){
+            // The new owner progresses while the previous owner's Standby
+            // is still physically pending. There is no cross-Amity CEC gate.
+            assert(count(1,0,0x36)==1&&count(2,4,0x36)==0);
+            assert(count(3,0,0x04)==1&&count(4,4,0x44)==0);
+            assert(fixture_complete_next(cec::TxResult::Success,3));advance(2);
+            assert(count(4,4,0x44)==1&&count(2,4,0x36)==0);
+            assert(fixture_complete_next(cec::TxResult::Success,4));advance(2);
+            assert(fixture_complete_next(cec::TxResult::Success,4));advance(2);
+            assert(count(4,15,0x86)==1&&count(2,4,0x36)==0);
+            assert(fixture_complete_next(cec::TxResult::Success,4));advance(2);
+            assert(!other.activity_setup_in_progress()&&count(2,4,0x36)==0);
+            assert(fixture_complete_next(cec::TxResult::Success,1));advance(2);
+            assert(count(2,4,0x36)==1&&count(3,0,0x04)==1);
+            fixture_complete_all();fixture_async_autocomplete=true;
+        }
+        finish_activity(selected);const auto generation=primary.activity_generation();
         const int thief_gpio=selected?2:4;const int source_gpio=selected?4:2;
         fixture_sent.clear();fixture_incoming.push_back({thief_gpio,active(4)});
         latest_task=selected?primary_task:other_task;run_idle(1);latest_task=primary_task;run_idle(1);
@@ -98,7 +123,7 @@ static void distributed_source_comparison(){
         latest_task=selected?other_task:primary_task;run_idle(1);latest_task=primary_task;run_idle(1);
         assert(count(source_gpio,4,0x36)==0&&count(source_gpio,15,0x86)==0);
     }
-    fixture_sent.clear();assert(primary.standby());run_one_command();run_idle(1);
+    fixture_sent.clear();assert(primary.standby());run_one_command();finish_activity(-1);
     assert(count(3,0,0x36)==1&&count(4,4,0x36)==1&&count(1,0,0x36)==0&&count(2,4,0x36)==0);
     fixture_sent.clear();fixture_incoming.push_back({2,active(4)});run_idle(1);
     assert(count(1,15,0x36)==1&&count(2,15,0x36)==1); // Existing global standby response.
@@ -114,8 +139,6 @@ static void three_owner_standby_cycles(){
     second.set_system_identity(group,member);second.set_boot_identity(member_boot);second.set_coordinator_authority(false,1);assert(second.start(3,4)==ESP_OK);auto* second_task=latest_task;assert(second.bind_owned_controller(controller,1)==ESP_OK);
     tertiary.set_system_identity(group,third);tertiary.set_boot_identity(third_boot);tertiary.set_coordinator_authority(false,1);assert(tertiary.start(5,6)==ESP_OK);auto* third_task=latest_task;assert(tertiary.bind_owned_controller(controller,1)==ESP_OK);
     for(auto* owner:{&second,&tertiary})owner->set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
-    second.set_owned_input_observer([&](const auto& intent,const auto&,const auto& result){if(result.source_present)assert(primary.owned_input_result(member,intent.generation,intent.sequence,*result.source_present));});
-    tertiary.set_owned_input_observer([&](const auto& intent,const auto&,const auto& result){if(result.source_present)assert(primary.owned_input_result(third,intent.generation,intent.sequence,*result.source_present));});
     latest_task=primary_task;
     // All three activities exist before the first cycle, just as on the bench.
     assert(primary.configure_scoped({{"Main","tv-a","player-a","avr-a","",0},{"Member2","tv-b","player-b","avr-b","",0},{"Member3","tv-c","player-c","avr-c","",0}},
@@ -127,7 +150,6 @@ static void three_owner_standby_cycles(){
           auto* previous=latest_task;latest_task=is_third?third_task:second_task;
           m::OwnedAuthorization auth{controller,controller_boot,is_third?third_boot:member_boot,is_third?third_link:link,1,0};auth.authority=m::OwnedAuthority::control;
           const auto result=(is_third?tertiary:second).submit_owned(intent,auth);latest_task=previous;
-          if(intent.kind==m::OwnedIntentKind::source_input&&result.source_present)assert(primary.owned_input_result(is_third?third:member,intent.generation,intent.sequence,*result.source_present));
           return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::overloaded||result.code==m::AdmissionCode::unresolved;
        },controller,1)==ESP_OK);
     run_one_command();fixture_finish_discovery(primary);
@@ -136,6 +158,11 @@ static void three_owner_standby_cycles(){
     auto advance=[&](unsigned passes){
         for(unsigned i=0;i<passes;++i)for(auto* task:{primary_task,second_task,third_task}){latest_task=task;run_idle(1);}
         latest_task=primary_task;
+    };
+    auto finish_activity=[&](int selected){
+        const auto pending=[&]{return primary.activity_setup_in_progress()||second.activity_setup_in_progress()||tertiary.activity_setup_in_progress();};
+        for(unsigned pass=0;pass<96&&(pending()||primary.snapshot().current_activity!=selected);++pass)advance(1);
+        assert(primary.snapshot().current_activity==selected&&!pending());
     };
     // Each isolated back bus has an AVR at 1.0.0.0 and its player at 1.1.0.0.
     for(int gpio:{2,4,6}){
@@ -151,7 +178,7 @@ static void three_owner_standby_cycles(){
     };
     const cec::Frame player_active{{0x4f,0x82,0x11,0},4};
     for(int selected:{0,1,2}){
-        fixture_sent.clear();assert(primary.select_activity(selected));run_one_command();advance(4);
+        fixture_sent.clear();assert(primary.select_activity(selected));run_one_command();finish_activity(selected);
         assert(primary.snapshot().current_activity==selected);
         const auto generation=primary.activity_generation();
         for(int owner:{0,1,2}){
@@ -174,7 +201,7 @@ static void three_owner_standby_cycles(){
         for(int owner:{0,1,2})assert(count(2+2*owner,4,0x36)==0&&count(2+2*owner,15,0x86)==0);
         assert(primary.snapshot().current_activity==selected&&primary.activity_generation()==generation);
         assert(primary.snapshot().devices.size()==9);
-        fixture_sent.clear();assert(primary.standby());run_one_command();advance(4);
+        fixture_sent.clear();assert(primary.standby());run_one_command();finish_activity(-1);
         assert(primary.snapshot().current_activity==-1);
         for(int owner:{0,1,2}){
             assert(count(1+2*owner,0,0x36)==(owner==selected));

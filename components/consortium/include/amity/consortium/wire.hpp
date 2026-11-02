@@ -7,22 +7,20 @@
 namespace amity::consortium {
 namespace model = amity::system;
 enum class Error { none, invalid_message, unsupported_kind, protocol_mismatch, unauthorized_role,
-    wrong_consortium, stale_boot, stale_epoch, stale_config, lease_expired, target_not_local, not_ready, queue_full, duplicate,
+    wrong_consortium, stale_boot, stale_epoch, stale_config, expired, target_not_local, not_ready, queue_full, duplicate,
     identity_conflict, unknown_outcome, storage_failure, transaction_conflict };
 const char *error_name(Error);
 // Numeric slots of retired features are never reassigned or dispatched.
-enum class Kind { heartbeat=0, execution_lease=1,
+enum class Kind { heartbeat=0,
     enrollment_control=11,
     membership_event=14, membership_result=15, snapshot_request=16, snapshot_chunk=17,
     update_begin=27, update_chunk=28, update_install=29, update_status=30, update_abort=31, update_result=32,
     device_status=37, settings_read=38, settings_write=39, settings_result=40,
     scoped_intent=41, scoped_result=42, synchronization=43 };
-inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n==2||n==3||n==4||n==5||n==6||(n>=7&&n<=10)||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
+inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n==1||n==2||n==3||n==4||n==5||n==6||(n>=7&&n<=10)||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
 const char *kind_name(Kind);
-enum class LeaseClass { control, realtime_input };
 struct Envelope {
     model::ConsortiumId consortium_id;
-    model::MessageId message_id;
     model::OctopusId origin_octopus_id, destination_octopus_id;
     model::BootId origin_boot_id, destination_boot_id;
     uint64_t coordinator_epoch = 0, config_revision = 0;
@@ -43,12 +41,12 @@ template<class Id> bool id(const Json *v, Id &out) {
     auto parsed=Id::parse(v->string); if(!parsed)return false;out=*parsed;return true;
 }
 // Unknown required capabilities fail; unknown optional bits are ignored.
-enum Capability : uint32_t { token_holds=2u, lifecycle_journal=8u,
+enum Capability : uint32_t { lifecycle_journal=8u,
     chunked_snapshots=64u, peer_firmware_update=512u,
     original_controller_only=8192u, hostname_metadata=16384u, per_adapter_settings=32768u,
     factory_reset_removal=65536u, owner_repeated_keys=131072u, qualified_lookup=262144u,
     live_configuration=524288u };
-constexpr uint32_t known_capabilities = token_holds|lifecycle_journal|chunked_snapshots|peer_firmware_update|original_controller_only|hostname_metadata|per_adapter_settings|factory_reset_removal|owner_repeated_keys|qualified_lookup|live_configuration;
+constexpr uint32_t known_capabilities = lifecycle_journal|chunked_snapshots|peer_firmware_update|original_controller_only|hostname_metadata|per_adapter_settings|factory_reset_removal|owner_repeated_keys|qualified_lookup|live_configuration;
 struct HelloFrame {
     uint8_t protocol_min = 1, protocol_max = 1;
     model::ConsortiumId consortium_id;

@@ -28,7 +28,7 @@ OSD text uses the original shared CEC decoder and matching rules. Duplicate name
 
 The original controller resolves the stable owning device through authenticated membership. That owner resolves its configured adapter and CEC side, then resolves the OSD name using its ordinary local discovery state. The result contains the current CEC logical address and observed device metadata. There is no persistent decision that the component or its activity is executable.
 
-A resolved endpoint has the same scope plus `logical_address`. Logical address, physical address, type, vendor, observed power/audio state and current reachability are runtime data. A logical-address change does not rewrite an activity. A later operation uses the original discovery/cache behavior. An admitted held key retains its exact recipient for repetition and final cleanup, as in local Amity; a late release cannot be redirected to a new endpoint.
+A resolved endpoint has the same scope plus `logical_address`. Logical address, physical address, type, vendor, observed power/audio state and current reachability are runtime data. A logical-address change does not rewrite an activity. A later operation uses the original discovery/cache behavior. The receiver resolves the current activity target again for every press, repeat and release. It does not retain a per-key CEC recipient; an updated lookup supplies the endpoint for the next operation.
 
 ## 3. Saved activity intent
 
@@ -42,7 +42,7 @@ An AVR is equipment addressed by its selector. Separate audio and explicit switc
 
 Durable device identity, original-controller authority, membership trust, credentials, configuration revisions/journals, reset journals and hardware/adapter settings remain necessary for their existing purposes. They do not approve an HDMI path.
 
-Runtime state includes discovery caches, current activity/input generation, exact held recipients, CEC completions, ordered IPC and authenticated transport replay/stale-work fences. Keep only state needed by the original algorithms or message authorization. Do not add a durable current-activity resume journal or restore live addresses, holds or grants after boot.
+Runtime state includes discovery caches, current activity/input generation, raw button state, translated held-key state, CEC completions, ordered IPC and authenticated transport scope and stale-work fences. Keep only state needed by the original algorithms or message authorization. Do not add a durable current-activity resume journal or restore live addresses, holds or grants after boot.
 
 **29 October 2026 scan/cache amendment.** Activity edits retain owner-local device records and remote observations even when no saved activity references them. Cache age is not an availability gate. Device enumeration follows only the three triggers and side-local 120-second lookup cooldown in [discovery](05-discovery-and-topology.md#2-scan-triggers-and-retained-discovery); it is not periodic cache expiry or configuration-driven invalidation.
 

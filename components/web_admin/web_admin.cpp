@@ -10,6 +10,7 @@
 #include "system_admin.hpp"
 #include "activity_editor.hpp"
 #include "local_remote_approval.hpp"
+#include "key_request.hpp"
 #include "web.hpp"
 #include "config_store.hpp"
 #include "device_settings.hpp"
@@ -25,6 +26,8 @@
 #include "esp_wifi.h"
 #include "esp_heap_caps.h"
 #include "esp_https_server.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <atomic>
 #include <mutex>
 #include "cec/bus.hpp"
@@ -232,7 +235,7 @@ esp_err_t api(httpd_req_t *req) {
         if(!root)return web::error(req,"Invalid JSON");
         esp_err_t e=ESP_OK;
         auto int_arg=[&](const char *key,int low,int high,int &out){auto *v=cJSON_GetObjectItemCaseSensitive(root.get(),key);if(!cJSON_IsNumber(v)||v->valuedouble!=v->valueint||v->valueint<low||v->valueint>high)return false;out=v->valueint;return true;};
-        if(path=="/api/key") {int key;if(!int_arg("key",0,255,key))return web::error(req,"Invalid key");e=hub->press_key(key)?ESP_OK:ESP_ERR_NO_MEM;}
+        if(path=="/api/key") {KeyRequest key;if(!parse_key_request(root.get(),key))return web::error(req,"Expected a key from 0 to 255 and duration_ms from 0 to 5000");e=submit_key_request(*hub,key,[](uint16_t duration){vTaskDelay(pdMS_TO_TICKS(duration-1)+1);})?ESP_OK:ESP_ERR_NO_MEM;}
         else if(path=="/api/remotes/scan")e=ble_remote_scan(20);
         else if(path=="/api/remotes/unpair"||path=="/api/remotes/pair") {
             LocalRemoteRequest approval;

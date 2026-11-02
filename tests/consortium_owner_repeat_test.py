@@ -35,7 +35,7 @@ template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct Tls{int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;bool healthy=true;bool usable()const{return healthy;}};
 using TlsLink=Tls;
-struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::atomic<uint64_t> own_control_deadline{0},own_realtime_deadline{0};std::deque<Queued> queue;};
+struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::deque<Queued> queue;};
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 std::vector<std::shared_ptr<Active>*> task_arguments;unsigned task_attempts=0;bool task_creation_fails=false;
 void active_loop(void*){}
@@ -62,12 +62,12 @@ esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){return
 SUITE=r'''
 namespace amity::consortium {
 std::shared_ptr<Active> connection(unsigned link=7,unsigned peer_boot=8){
- auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(3);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;a->status.negotiated_capabilities=known_capabilities;a->status.control_lease=ident<model::ExecutionLeaseId>(11);a->status.realtime_lease=ident<model::ExecutionLeaseId>(12);a->status.control_usable_until_ms=a->status.realtime_usable_until_ms=5100;
+ auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(3);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;a->status.negotiated_capabilities=known_capabilities;
  const LinkScope scope{ident<model::LinkId>(link),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),a->peer,ident<model::OctopusId>(2),ident<model::BootId>(4),a->status.boot_id,1,1};
  assert(a->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);return a;
 }
-void reset(){for(auto* argument:task_arguments)delete argument;task_arguments.clear();task_attempts=0;task_creation_fails=false;shutdowns=0;diagnostic_logs.clear();links.clear();controls={};status={};status.authority_ready=true;group={};group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);group.peers={{ident<model::OctopusId>(3),"leaf","pin",true}};clock_ms=100;}
-model::OwnedIntent down(unsigned sequence=1){model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_down;i.target={{ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::back},"Player"};i.generation=2;i.sequence=sequence;i.config_revision=1;i.token=ident<model::HoldToken>(50+sequence);i.key=0x41;i.repeat=true;return i;}
+void reset(){for(auto* argument:task_arguments)delete argument;task_arguments.clear();task_attempts=0;task_creation_fails=false;shutdowns=0;diagnostic_logs.clear();links.clear();controls={};status={};status.authority_ready=true;group={};group.consortium=ident<model::ConsortiumId>(1);group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);group.peers={{ident<model::OctopusId>(3),"leaf","pin",true}};clock_ms=100;}
+model::OwnedIntent down(){model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_edges;i.target.port={ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::front};i.generation=2;i.config_revision=1;i.edges[0]={0x41,true};i.edge_count=1;return i;}
 void logical_restart_pending(const Active& active){
  assert(active.restart_requested&&active.execution_fenced&&!active.ready&&!active.status.ready&&!active.management_ready&&!active.status.management_ready);
  assert(!active.context_ready&&!active.context_requested&&active.queue.empty()&&!active.cancelled&&active.tls->usable()&&shutdowns==0);
@@ -92,7 +92,6 @@ void duplicate_connections(){
   assert(old->session.hello(hello,known_capabilities)==Error::none);if(ready)assert(old->session.synchronized(1,true,true)==Error::none);
   const auto state=old->session.state();
   old->refreshing=!ready;old->queue.push_back({Kind::heartbeat,"canonical work",1000,clock_ms,1,{}});
-  const auto lease=old->status.control_lease;
   controls.disconnected=[&](auto,auto,auto){++fences;old->queue.clear();old->context_ready=false;return true;};
   assert(!fence_replaced_links(*duplicate)&&duplicate->cancelled&&!old->cancelled&&old->ready==ready&&old->session.scope()==original&&old->session.state()==state&&fences==0);
   // Rejection is followed by the real worker/reaper close path. That path
@@ -101,7 +100,7 @@ void duplicate_connections(){
   reap_closed_links();
   assert(links.size()==1&&links.front()==old&&fences==0&&!old->cancelled&&old->ready==ready&&old->status.ready==ready
       &&old->session.scope()==original&&old->session.state()==state&&old->refreshing==!ready
-      &&old->status.control_lease==lease&&old->context_ready&&old->queue.size()==1&&old->queue.front().payload=="canonical work");
+      &&old->context_ready&&old->queue.size()==1&&old->queue.front().payload=="canonical work");
  }
  // Whichever authenticated Hello claims the peer first owns that boot. Its
  // competitor cannot cancel it, including before Ready/status publication.
@@ -169,29 +168,35 @@ void connection_launch(){
 }
 void queues(){
  reset();auto a=connection();links={a};auto i=down();
- assert(runtime_send_control(a->peer,Kind::heartbeat,"first",1000)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.kind=model::OwnedIntentKind::key_up;++i.sequence;assert(runtime_send_owned(i)==ESP_OK);
+ auto foreign=i;foreign.target.port.consortium_id=ident<model::ConsortiumId>(99);assert(runtime_send_owned(foreign)==ESP_ERR_INVALID_ARG&&a->queue.empty());
+ assert(runtime_send_control(a->peer,Kind::heartbeat,"first",1000)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);
  assert(a->queue.size()==3&&a->queue[0].payload=="first"&&a->queue[1].kind==Kind::scoped_intent&&queued_cleanup(a->queue[2])); // strict causal FIFO, no cleanup priority reordering
- reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_NO_MEM);i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM);logical_restart_pending(*a);assert(a->queue.empty());
- reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent age_ms=2000 ttl_ms=2000")!=std::string::npos);
- reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
- reset();a=connection();links={a};const auto result=std::string("{\"input_result\":{\"generation\":\"2\",\"sequence\":\"1\",\"source_present\":true}}");
+ reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_NO_MEM);i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM);logical_restart_pending(*a);assert(a->queue.empty());
+ reset();a=connection();links={a};i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent age_ms=2000 ttl_ms=2000")!=std::string::npos);
+ reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
+ reset();a=connection();links={a};model::OwnedAdapterSnapshot report;report.owner=a->session.scope().local_id;report.boot=a->session.scope().local_boot_id;
+ const auto result="{\"snapshot\":"+owned_snapshot_json(report)+"}";
  assert(runtime_send_owned_result(a->peer,ident<model::LinkId>(99),result)==ESP_ERR_INVALID_STATE&&a->queue.empty());
- for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);
- assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_OK&&a->queue.size()==16);
- assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_ERR_NO_MEM);logical_restart_pending(*a);assert(a->queue.empty());assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=cleanup_queue_full")!=std::string::npos);
+ for(unsigned n=0;n<14;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);
+ assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_OK&&a->queue.size()==15);
+ assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_ERR_NO_MEM&&!a->restart_requested&&diagnostic_logs.empty());a->queue.clear();
  reset();a=connection();links={a};assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",100)==ESP_OK);clock_ms+=100;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",100)==ESP_OK&&a->queue.size()==1);assert(runtime_send_control(a->peer,static_cast<Kind>(21),"{}",1000)==ESP_ERR_NOT_SUPPORTED);
- reset();a=connection();links={a};a->status.realtime_usable_until_ms=clock_ms;assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);assert(a->queue.empty());
+ // A quiet authenticated stream needs no periodic permission before fresh input.
+ reset();a=connection();links={a};
+ const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.required_capabilities=known_capabilities;
+ assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
+ clock_ms+=60000;assert(runtime_send_owned(down())==ESP_OK&&a->queue.size()==1&&a->queue.front().ttl==500);
 }
 void initial_context(){
  reset();auto a=connection();links={a};a->context_ready=false;
  auto i=down();assert(runtime_send_owned(i)==ESP_ERR_INVALID_STATE&&a->queue.empty());
- i.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(i)==ESP_ERR_INVALID_STATE);
- unsigned refreshes=0;controls.ready=[&](auto owner,auto,auto){++refreshes;assert(owner==a->peer&&!a->context_ready);assert(runtime_send_owned(down(2))==ESP_ERR_INVALID_STATE);return true;};
+ i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==1&&a->context_ready);a->queue.clear();a->context_ready=false;i=down();
+ unsigned refreshes=0;controls.ready=[&](auto owner,auto,auto){++refreshes;assert(owner==a->peer&&!a->context_ready);assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);return true;};
  // True means the recapture entered owner-task IPC, not that it has run.
  assert(initialize_context(*a)&&initialize_context(*a)&&refreshes==1&&!a->context_ready&&a->context_requested&&a->queue.empty());
- assert(runtime_send_owned(down(2))==ESP_ERR_INVALID_STATE);
+ assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);
  i.kind=model::OwnedIntentKind::context;i.target.osd_name.clear();assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==1);
- assert(a->context_ready&&!a->context_requested&&runtime_send_owned(down(2))==ESP_OK&&a->queue.size()==2);
+ assert(a->context_ready&&!a->context_requested&&runtime_send_owned(down())==ESP_OK&&a->queue.size()==2);
  assert(a->queue[0].owned&&a->queue[0].owned->kind==model::OwnedIntentKind::context&&a->queue[0].revision==1);
  reset();a=connection();links={a};a->context_ready=false;assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);controls.ready=[](auto,auto,auto){return false;};assert(!initialize_context(*a)&&!a->context_ready&&!a->context_requested);
  // No saved selectors means an admitted recapture may emit no context. Local
@@ -203,29 +208,28 @@ void initial_context(){
  assert(!a->refreshing&&!a->context_ready&&a->context_requested&&a->queue.empty());
  assert(initialize_context(*a)&&empty_requests==1); // Empty success is complete, not another capture request.
  auto scan=down();scan.kind=model::OwnedIntentKind::discover;scan.target.osd_name.clear();assert(runtime_send_owned(scan)==ESP_OK&&!a->context_ready);
- auto up=down(2);up.kind=model::OwnedIntentKind::key_up;assert(runtime_send_owned(up)==ESP_OK&&!a->context_ready);
- assert(runtime_send_owned(down(3))==ESP_ERR_INVALID_STATE);
+ auto up=down();up.edges[0].down=false;assert(runtime_send_owned(up)==ESP_OK&&!a->context_ready);
+ assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);
 }
 void future_context_is_recaptured(){
  reset();auto a=connection();links={a};configuration=2;
- auto current=down();current.kind=model::OwnedIntentKind::context;current.target.osd_name.clear();current.config_revision=2;current.generation=8;current.sequence=10;
+ auto current=down();current.kind=model::OwnedIntentKind::context;current.target.osd_name.clear();current.config_revision=2;current.generation=8;
  assert(runtime_send_owned(current)==ESP_OK&&a->queue.empty()&&a->context_ready&&!a->cancelled);
- auto action=down(11);action.config_revision=2;action.generation=8;
+ auto action=down();action.config_revision=2;action.generation=8;
  assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty()&&!a->cancelled);
- action.kind=model::OwnedIntentKind::power;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
+ action.kind=model::OwnedIntentKind::key_edges;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  // The exchange may take longer than the ordinary action TTL. No old payload
- // or deadline is retained, so configuration alone cannot expire leased work.
+ // or deadline is retained, so configuration alone cannot create or expire an admitted action.
  clock_ms+=1150;assert(a->queue.empty()&&!a->cancelled);
  const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.config_revision=1;hello.required_capabilities=known_capabilities;
  assert(a->session.hello(hello,known_capabilities)==Error::none&&a->session.synchronized(1,true,true)==Error::none);
  assert(a->session.advance_configuration(2)==Error::none);a->status.config_revision=2;a->context_ready=false;a->refreshing=true;a->context_requested=false;
- a->status.control_lease=ident<model::ExecutionLeaseId>(90);a->status.control_usable_until_ms=clock_ms+4900;
  unsigned requested=0;controls.ready=[&](auto,auto,auto){++requested;return true;};assert(initialize_context(*a)&&requested==1&&!a->context_ready&&a->context_requested);
- action.kind=model::OwnedIntentKind::source_input;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
- // Recapture reads the current activity now, with a newer generation/sequence.
- current.generation=9;current.sequence=20;current.selected=true;assert(runtime_send_owned(current)==ESP_OK&&a->context_ready&&!a->refreshing&&a->queue.size()==1);
- assert(a->queue[0].owned->generation==9&&a->queue[0].owned->sequence==20&&a->queue[0].created==clock_ms&&a->queue[0].revision==2);
- action.generation=9;action.sequence=21;assert(runtime_send_owned(action)==ESP_OK&&a->queue.size()==2&&a->queue[1].owned->sequence==21);
+ action.kind=model::OwnedIntentKind::key_edges;assert(runtime_send_owned(action)==ESP_ERR_INVALID_STATE&&a->queue.empty());
+ // Recapture reads the current activity now, with a newer generation.
+ current.generation=9;current.selected=true;assert(runtime_send_owned(current)==ESP_OK&&a->context_ready&&!a->refreshing&&a->queue.size()==1);
+ assert(a->queue[0].owned->generation==9&&a->queue[0].created==clock_ms&&a->queue[0].revision==2);
+ action.generation=9;assert(runtime_send_owned(action)==ESP_OK&&a->queue.size()==2&&a->queue[1].owned->generation==9);
  // Once ordinary work is admitted, its original TTL and fence remain intact.
  a->queue.pop_front();clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
  assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired")!=std::string::npos);
@@ -236,7 +240,8 @@ void asynchronous_context_failure_is_scoped(){
  controls.ready=[&](auto owner,uint64_t revision,auto completed){assert(owner==a->peer&&revision==1);done=std::move(completed);return true;};
  assert(initialize_context(*a)&&a->context_requested&&!a->context_ready);
  clock_ms=5101;auto context=down();context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();
- assert(runtime_send_owned(context)==ESP_ERR_INVALID_STATE&&a->queue.empty()&&!a->cancelled);
+ // Failure of the captured context is scoped independently of elapsed wall time.
+ assert(a->queue.empty()&&!a->cancelled);
  done(model::OwnedContextResult::failed);logical_restart_pending(*a);assert(!a->context_requested&&!a->context_ready&&diagnostic_logs.size()==1);
  assert(diagnostic_logs[0].find("reason=context_recapture_failed")!=std::string::npos);done(model::OwnedContextResult::failed);assert(diagnostic_logs.size()==1);
  // A local R+1 configuration may be executing before the runtime publishes
@@ -252,7 +257,7 @@ void asynchronous_context_failure_is_scoped(){
  std::function<void(model::OwnedContextResult)> newer;
  controls.ready=[&](auto,uint64_t revision,auto completed){assert(revision==2);newer=std::move(completed);return true;};assert(initialize_context(*a));
  done(model::OwnedContextResult::failed);done(model::OwnedContextResult::published);assert(!a->cancelled&&a->context_requested&&a->refreshing&&diagnostic_logs.empty());
- context=down(20);context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();context.config_revision=2;assert(runtime_send_owned(context)==ESP_OK);newer(model::OwnedContextResult::published);
+ context=down();context.kind=model::OwnedIntentKind::context;context.target.osd_name.clear();context.config_revision=2;assert(runtime_send_owned(context)==ESP_OK);newer(model::OwnedContextResult::published);
  assert(a->context_ready&&!a->context_requested&&!a->cancelled&&a->queue.size()==1);
  // Nor can an old callback fence a replacement authenticated connection.
  links.clear();auto replacement=connection(9);links={replacement};done(model::OwnedContextResult::failed);assert(!replacement->cancelled&&diagnostic_logs.empty());
@@ -285,7 +290,7 @@ void asynchronous_context_ignores_ended_logical_session(){
 }
 void diagnostic_lines_fit_capture(){
  for(bool retained:{false,true}){
-  reset();auto a=connection();LinkTrace trace;trace.phase="configuration_receive";trace.fail("application_restart_requested",Error::unsupported_kind);trace.retained=retained;trace.has_kind=trace.has_queue=true;trace.kind=Kind::execution_lease;trace.created=0;trace.ttl=UINT32_MAX;trace.queued_revision=UINT64_MAX;trace.action_code=INT32_MIN;trace.socket_error=INT32_MIN;
+  reset();auto a=connection();LinkTrace trace;trace.phase="configuration_receive";trace.fail("application_restart_requested",Error::unsupported_kind);trace.retained=retained;trace.has_kind=trace.has_queue=true;trace.kind=Kind::scoped_intent;trace.created=0;trace.ttl=UINT32_MAX;trace.queued_revision=UINT64_MAX;trace.action_code=INT32_MIN;trace.socket_error=INT32_MIN;
   auto captured=snapshot_link_trace(*a,trace,UINT64_MAX);captured.scope.config_revision=UINT64_MAX;emit_link_trace(captured);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].size()<384&&diagnostic_logs[0].find("qrev=18446744073709551615")!=std::string::npos);
  }
 }
@@ -296,10 +301,11 @@ void restart_flags_gate_front_doors_before_scope_rotation(){
   assert(a->ready); // Explicit flags fence any transiently retained ready view.
   assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);
   assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);
-  assert(runtime_send_owned_result(a->peer,original.link_id,"{\"input_result\":{\"generation\":\"1\",\"sequence\":\"2\",\"source_present\":true}}",1000,1)==ESP_ERR_INVALID_STATE);
+  model::OwnedAdapterSnapshot report;report.owner=original.local_id;report.boot=original.local_boot_id;
+  assert(runtime_send_owned_result(a->peer,original.link_id,"{\"snapshot\":"+owned_snapshot_json(report)+"}",1000,1)==ESP_ERR_INVALID_STATE);
   unsigned captures=0;a->context_ready=false;controls.ready=[&](auto,auto,auto){++captures;return true;};
   assert(!initialize_context(*a)&&captures==0&&a->queue.empty());
-  group.role=Group::member;group.authority=a->peer;boot=original.local_boot_id;a->own_control_deadline=5000;
+  group.role=Group::member;group.authority=a->peer;boot=original.local_boot_id;
   model::OwnedAuthorization auth{a->peer,original.peer_boot_id,boot,original.link_id,1,5000};auth.authority=model::OwnedAuthority::cleanup;
   assert(!runtime_owned_authorized(auth));
   assert(a->session.scope()==original&&a->tls==transport&&a->tls->usable()&&!a->cancelled&&shutdowns==0&&diagnostic_logs.empty());
@@ -307,36 +313,61 @@ void restart_flags_gate_front_doors_before_scope_rotation(){
 }
 void authorization(){
  reset();auto a=connection();links={a};
- // Receiver owns the leases. A long control lease cannot prolong a held key.
+ // Authenticated current membership, boot, link and configuration are authority.
+ // Time alone cannot revoke an unchanged stream; each message retains its TTL.
  group.role=Group::member;group.authority=a->peer;boot=ident<model::BootId>(4);configuration=1;
- a->own_control_deadline=1000;a->own_realtime_deadline=200;
  const auto scope=a->session.scope();
  model::OwnedAuthorization auth{a->peer,scope.peer_boot_id,boot,scope.link_id,1,200};
- auth.authority=model::OwnedAuthority::realtime;assert(runtime_owned_deadline(auth)==200);
- clock_ms=200;assert(!runtime_owned_authorized(auth));
- auth.authority=model::OwnedAuthority::control;assert(runtime_owned_deadline(auth)==1000);
- auth.authority=model::OwnedAuthority::cleanup;assert(runtime_owned_deadline(auth)==UINT64_MAX);
+ for(auto kind:{model::OwnedAuthority::input,model::OwnedAuthority::control,model::OwnedAuthority::cleanup}){
+  auth.authority=kind;assert(runtime_owned_deadline(auth)==UINT64_MAX);clock_ms+=60000;assert(runtime_owned_authorized(auth));
+ }
  auth.link_id=ident<model::LinkId>(99);assert(!runtime_owned_authorized(auth));auth.link_id=scope.link_id;
  auth.controller_boot=ident<model::BootId>(99);assert(!runtime_owned_authorized(auth));auth.controller_boot=scope.peer_boot_id;
+ auth.owner_boot=ident<model::BootId>(99);assert(!runtime_owned_authorized(auth));auth.owner_boot=boot;
  auth.config_revision=2;assert(!runtime_owned_authorized(auth));auth.config_revision=1;
+ group.authority=ident<model::OctopusId>(99);assert(!runtime_owned_authorized(auth));group.authority=a->peer;
  runtime_fence_owned_link(a->peer,ident<model::LinkId>(99));assert(!a->cancelled);
  runtime_fence_owned_link(a->peer,scope.link_id);logical_restart_pending(*a);assert(!runtime_owned_authorized(auth));assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_result_fence")!=std::string::npos);runtime_fence_owned_link(a->peer,scope.link_id);assert(diagnostic_logs.size()==1);
  reset();identity.id=group.authority=ident<model::OctopusId>(2);boot=ident<model::BootId>(4);
  auth={identity.id,boot,boot,{},1,0};assert(runtime_owned_deadline(auth)==UINT64_MAX);
 }
 void codec_and_session(){
- auto input=down();auto lease=ident<model::ExecutionLeaseId>(12);auto text=owned_intent_json(input,lease);assert(!text.empty());Json value;JsonError error;assert(parse_json(text,value,error));model::OwnedIntent parsed;model::ExecutionLeaseId received;assert(parse_owned_intent(value,parsed,received)==Error::none&&parsed.target==input.target&&parsed.repeat&&parsed.token==input.token);
- auto bad=value;bad.object.emplace_back("enabled",Json{});assert(parse_owned_intent(bad,parsed,received)==Error::invalid_message);bad=value;bad.get("target")->object.emplace_back("logical_address",Json{});assert(parse_owned_intent(bad,parsed,received)==Error::invalid_message);bad=value;bad.get("arguments")->object.emplace_back("hold_lease_ms",Json{});assert(parse_owned_intent(bad,parsed,received)==Error::invalid_message);input.target.osd_name.clear();assert(owned_intent_json(input,lease).empty());input=down();input.sequence=0;assert(owned_intent_json(input,lease).empty());
+ auto input=down();auto text=owned_intent_json(input);assert(!text.empty());Json value;JsonError error;assert(parse_json(text,value,error));model::OwnedIntent parsed;
+ assert(parse_owned_intent(value,parsed)==Error::none&&parsed.kind==model::OwnedIntentKind::key_edges&&parsed.edge_count==1&&parsed.edges[0].key==0x41&&parsed.edges[0].down&&!value.get("target"));
+ assert(!value.get("execution_lease_id")&&!value.get("sequence")&&!value.get("setup_generation")&&!value.get("arguments")->get("hold_token")&&!value.get("arguments")->get("press_sequence"));
+ for(const auto* action:{"key_down","key_up"}){auto obsolete=value;obsolete.get("action")->string=action;assert(parse_owned_intent(obsolete,parsed)==Error::invalid_message);}
+ auto bad=value;bad.object.emplace_back("enabled",Json{});assert(parse_owned_intent(bad,parsed)==Error::invalid_message);bad=value;bad.object.emplace_back("target",Json{});assert(parse_owned_intent(bad,parsed)==Error::invalid_message);bad=value;bad.get("arguments")->object.emplace_back("hold_lease_ms",Json{});assert(parse_owned_intent(bad,parsed)==Error::invalid_message);
+ Json old_permission;old_permission.type=Json::Type::string;old_permission.string=std::string(32,'1');bad=value;bad.object.emplace_back("execution_lease_id",old_permission);assert(parse_owned_intent(bad,parsed)==Error::invalid_message);
+ bad=value;old_permission.string="1";bad.object.emplace_back("sequence",old_permission);assert(parse_owned_intent(bad,parsed)==Error::invalid_message);
+ input.target.osd_name.clear();assert(!owned_intent_json(input).empty());input=down();assert(!owned_intent_json(input).empty());input.kind=model::OwnedIntentKind::activity;assert(!owned_intent_json(input).empty());
+ input=down();input.edge_count=2;input.edges[1]={input.edges[0].key,false};text=owned_intent_json(input);assert(!text.empty()&&parse_json(text,bad,error)&&parse_owned_intent(bad,parsed)==Error::none&&parsed.edge_count==2&&!parsed.edges[1].down&&!bad.get("target"));
+ input.edges[1].key=0x42;assert(owned_intent_json(input).empty());input=down();
  LinkScope scope{ident<model::LinkId>(7),ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),ident<model::OctopusId>(2),ident<model::OctopusId>(2),ident<model::BootId>(8),ident<model::BootId>(4),1,1};
- Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none);HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.required_capabilities=known_capabilities;assert(session.hello(h,known_capabilities)==Error::none&&session.synchronized(1,true,true)==Error::none);assert(session.execution_leases().issue(lease,LeaseClass::realtime_input,500,100)==Error::none);
- Envelope e;e.consortium_id=scope.consortium_id;e.message_id=ident<model::MessageId>(70);e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;
- assert(session.admit(e,100,100)==Error::none&&session.admit(e,100,100)==Error::duplicate);e.message_id=ident<model::MessageId>(71);assert(session.admit(e,600,600)==Error::lease_expired);
- input=down(2);input.kind=model::OwnedIntentKind::key_up;text=owned_intent_json(input,lease);assert(parse_json(text,e.payload,error));assert(session.admit(e,600,600)==Error::none); // exact-token up independent of expired positive lease
- e.message_id=ident<model::MessageId>(72);e.origin_boot_id=ident<model::BootId>(99);assert(session.admit(e,600,600)==Error::stale_boot);e.origin_boot_id=scope.peer_boot_id;e.config_revision=2;assert(session.admit(e,600,600)==Error::stale_config);
+ Session session;assert(session.authenticate(scope,scope.peer_id,PeerRole::coordinator,true)==Error::none);HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.required_capabilities=known_capabilities;assert(session.hello(h,known_capabilities)==Error::none&&session.synchronized(1,true,true)==Error::none);
+ Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=e.config_revision=1;e.kind=Kind::scoped_intent;e.ttl_ms=500;e.payload=value;
+ assert(session.admit(e,100,100)==Error::none);
+ input=down();text=owned_intent_json(input);assert(parse_json(text,e.payload,error)&&session.admit(e,60000,60000)==Error::none); // Fresh input after long idle needs no grant.
+ assert(session.admit(e,60000,60500)==Error::invalid_message); // Its original 500 ms TTL still expires.
+ input=down();input.edges[0].down=false;text=owned_intent_json(input);assert(parse_json(text,e.payload,error));assert(parse_owned_intent(e.payload,parsed)==Error::none&&!e.payload.get("arguments")->get("press_sequence"));
+ assert(session.admit(e,60600,60600)==Error::none); // Ordered Up carries button state only, without another permission.
+
+ for(auto kind:{model::OwnedIntentKind::activity,model::OwnedIntentKind::context,model::OwnedIntentKind::discover}){
+  auto control=down();control.kind=kind;control.selected=true;control.source=model::QualifiedDeviceName{{ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::back},"Player"};text=owned_intent_json(control);Json payload;
+  assert(!text.empty()&&parse_json(text,payload,error)&&!payload.get("execution_lease_id")&&!payload.get("setup_generation")&&parse_owned_intent(payload,parsed)==Error::none);
+  assert(!payload.get("sequence")&&!payload.get("activity_step"));
+  auto command=e;command.payload=payload;
+  assert(session.admit(command,120000,120000)==Error::none);
+ }
+ for(auto kind:{model::OwnedIntentKind::power,model::OwnedIntentKind::source_input,model::OwnedIntentKind::switch_input,
+               model::OwnedIntentKind::query_audio,model::OwnedIntentKind::standby_wire,model::OwnedIntentKind::announce_active_source}){
+  auto local=down();local.kind=kind;assert(owned_intent_json(local).empty()); // CEC actions never cross owners.
+ }
+ e.origin_boot_id=ident<model::BootId>(99);assert(session.admit(e,60600,60600)==Error::stale_boot);e.origin_boot_id=scope.peer_boot_id;e.config_revision=2;assert(session.admit(e,60600,60600)==Error::stale_config);
  model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.devices.push_back({model::Side::back,"Player",4,4,0x1000,1,true});text=owned_snapshot_json(report);assert(!text.empty()&&parse_json(text,value,error));model::OwnedAdapterSnapshot decoded;assert(parse_owned_snapshot(value,decoded)&&decoded.devices.front().osd_name=="Player");value.get("devices")->array.push_back(value.get("devices")->array.front());assert(!parse_owned_snapshot(value,decoded));
 }
+
 }
-int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, link loss/replacement fences, scoped codecs, stale boots/config, leases and duplicate rejection\\n";}
+int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()

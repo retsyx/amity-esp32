@@ -26,6 +26,8 @@ PREFIX=r'''
 #include "mbedtls/oid.h"
 #include "psa/crypto.h"
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <algorithm>
@@ -66,8 +68,16 @@ bool exchange(TlsLink& server,TlsLink& client){
   ++clock_ms;
  }return false;
 }
+void tcp_pair(int (&fd)[2]){
+ int listener=::socket(AF_INET,SOCK_STREAM,0);check(listener>=0,"TCP listener failed");
+ sockaddr_in address{};address.sin_family=AF_INET;address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+ if(::bind(listener,reinterpret_cast<sockaddr*>(&address),sizeof(address))||::listen(listener,1)){::close(listener);throw std::runtime_error("TCP loopback listen failed");}
+ socklen_t length=sizeof(address);check(!::getsockname(listener,reinterpret_cast<sockaddr*>(&address),&length),"TCP listener address failed");
+ fd[1]=::socket(AF_INET,SOCK_STREAM,0);check(fd[1]>=0&&!::connect(fd[1],reinterpret_cast<sockaddr*>(&address),length),"TCP loopback connect failed");
+ fd[0]=::accept(listener,nullptr,nullptr);::close(listener);check(fd[0]>=0,"TCP loopback accept failed");
+}
 bool connect(const Identity& authority,const Identity& member,const std::vector<Peer>& permitted,model::OctopusId expected={}){
- int fd[2];check(!socketpair(AF_UNIX,SOCK_STREAM,0,fd),"socketpair failed");TlsLink server,client;
+ int fd[2];tcp_pair(fd);TlsLink server,client;
  if(!server.setup(authority,permitted,true,fd[0],expected)){::close(fd[1]);return false;}
  if(!client.setup(member,{peer(authority)},false,fd[1],authority.id))return false;
  check(server.config.MBEDTLS_PRIVATE(authmode)==MBEDTLS_SSL_VERIFY_REQUIRED&&client.config.MBEDTLS_PRIVATE(authmode)==MBEDTLS_SSL_VERIFY_REQUIRED,"mutual TLS authentication requirement changed");
@@ -122,7 +132,7 @@ int main(){using namespace amity::consortium;using namespace amity::consortium::
  full_checks=0;check(connect(authority,member,{peer(member)}),"valid real mutual TLS failed");std::cout<<"mutual_tls_full_validations="<<full_checks<<"\n";check(full_checks==0||OBSERVE_REDUNDANT_VALIDATION,"TLS setup/verify repeated full trusted leaf signatures");
  // A changed certificate with the same stable ID is still an unknown leaf.
  const auto changed_member=make_identity(2);check(!connect(authority,changed_member,{peer(member)}),"unlisted same-ID certificate completed TLS");
- int fds[2];check(!socketpair(AF_UNIX,SOCK_STREAM,0,fds),"snapshot socketpair failed");
+ int fds[2];tcp_pair(fds);
  {TlsLink server,client;std::vector<Peer> original{peer(member)};check(server.setup(authority,original,true,fds[0]),"snapshot server setup failed");original[0]=peer(outsider);
   check(client.setup(member,{peer(authority)},false,fds[1],authority.id)&&exchange(server,client),"mutable source roster changed captured TLS allowlist");}
  check(!connect(authority,outsider,{peer(member)}),"unknown peer completed mutual TLS");

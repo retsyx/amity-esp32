@@ -31,16 +31,17 @@ static size_t first(int gpio,std::initializer_list<uint8_t> data,size_t begin=0)
 static m::QualifiedDeviceName named(m::OctopusId id,m::Side side,const char* name,uint8_t adapter=0){return {{group,id,adapter,side},name};}
 static m::OwnedAuthorization authorization(m::OwnedIntentKind kind){
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
-    auth.authority=kind==m::OwnedIntentKind::key_up?m::OwnedAuthority::cleanup:kind==m::OwnedIntentKind::key_down?m::OwnedAuthority::realtime:m::OwnedAuthority::control;
+    auth.authority=kind==m::OwnedIntentKind::key_edges?m::OwnedAuthority::input:m::OwnedAuthority::control;
     return auth;
 }
-static void enqueue(HubService& hub,m::OwnedIntent intent,uint64_t sequence){
-    intent.generation=1;intent.sequence=sequence;intent.config_revision=1;
-    assert(hub.submit_owned(intent,authorization(intent.kind),0));run_one_command();
+static void enqueue(HubService& hub,m::OwnedIntent intent){
+    intent.generation=1;intent.config_revision=1;
+    auto auth=authorization(intent.kind);if(intent.kind==m::OwnedIntentKind::key_edges&&!intent.edges[0].down)auth.authority=m::OwnedAuthority::cleanup;
+    assert(hub.submit_owned(intent,auth,0));run_one_command();
 }
 static m::OwnedIntent power(m::OctopusId id,m::Side side,uint8_t adapter=0){
     m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.target=named(id,side,side==m::Side::front?"TV":"Source",adapter);
-    intent.on=true;intent.setup_generation=1;return intent;
+    intent.on=true;intent.activity_step=true;return intent;
 }
 static void start_owner(HubService& hub,m::OctopusId id,bool two_adapters=false,int front=1,int back=2){
     hub.set_system_identity(group,id);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
@@ -62,19 +63,18 @@ static void drain(HubService& hub,FakeTask* task=nullptr){
 static void owner_lane_and_independent_keys(){
     reset_fixture();HubService hub;start_owner(hub,owner,true);
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,owner,0,m::Side::front};
-    context.selected=true;context.source=context.audio=named(owner,m::Side::back,"Source");enqueue(hub,context,1);
+    context.selected=true;context.source=context.audio=named(owner,m::Side::back,"Source");enqueue(hub,context);
     fixture_sent.clear();fixture_async_autocomplete=false;
-    enqueue(hub,power(owner,m::Side::front),2);
+    enqueue(hub,power(owner,m::Side::front));
     assert(count(1,{0x04})==1&&fixture_pending.size()==1);
-    enqueue(hub,power(owner,m::Side::back),3);
-    enqueue(hub,power(owner,m::Side::front,1),4);
-    m::OwnedIntent standby;standby.kind=m::OwnedIntentKind::standby_wire;standby.target.port={group,owner,1,m::Side::back};standby.setup_generation=1;
-    enqueue(hub,standby,5);run_idle(2);
-    assert(fixture_sent.size()==1); // One lane across front/back and adapter IDs, even with SETTLE=0.
+    enqueue(hub,power(owner,m::Side::back));
+    enqueue(hub,power(owner,m::Side::front,1));
+    m::OwnedIntent standby;standby.kind=m::OwnedIntentKind::standby_wire;standby.target.port={group,owner,1,m::Side::back};standby.activity_step=true;
+    enqueue(hub,standby);run_idle(2);
+    assert(fixture_sent.size()==1); // One lane across front/back and adapter IDs, without a settling delay.
 
-    m::OwnedIntent right;right.kind=m::OwnedIntentKind::key_down;right.target=named(owner,m::Side::back,"Source");right.repeat=true;right.key=4;
-    right.token=*m::HoldToken::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    auto volume=right;volume.key=0x41;volume.token=*m::HoldToken::parse("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    m::OwnedIntent right;right.kind=m::OwnedIntentKind::key_edges;right.target.port={group,owner,0,m::Side::front};right.edge_count=1;right.edges[0]={4,true};
+    auto volume=right;volume.edges[0].key=0x41;
     assert(count(1,{0x04})==1&&count(2,{0x44,0x6d})==0&&count(5,{0x04})==0);
     assert(fixture_complete_next(cec::TxResult::Success,1));run_idle(2);
     assert(count(2,{0x44,0x6d})==1&&count(5,{0x04})==0&&count(6,{0x36})==0);
@@ -86,14 +86,15 @@ static void owner_lane_and_independent_keys(){
     drain(hub);
     assert(count(2,{0x44,4})==0&&count(2,{0x44,0x41})==0);
     fixture_sent.clear();fixture_async_autocomplete=false;
-    right.kind=m::OwnedIntentKind::key_down;volume.kind=m::OwnedIntentKind::key_down;
-    enqueue(hub,right,13);enqueue(hub,volume,14);
+    right.edges[0].down=volume.edges[0].down=true;
+    enqueue(hub,right);enqueue(hub,volume);
     assert(count(2,{0x44,4})==1&&count(2,{0x44,0x41})==1);
-    right.kind=m::OwnedIntentKind::key_up;enqueue(hub,right,15);assert(count(2,{0x45})==0);
+    right.edges[0].down=false;enqueue(hub,right);assert(count(2,{0x45})==0);
     assert(fixture_complete_next(cec::TxResult::Success,2));run_idle(1);
     assert(fixture_complete_next(cec::TxResult::Success,2));run_idle(1);
+    if(count(2,{0x44,4})!=1||count(2,{0x44,0x41})!=2)std::fprintf(stderr,"independent repeats: right=%zu volume=%zu pending=%zu\n",count(2,{0x44,4}),count(2,{0x44,0x41}),fixture_pending.size());
     assert(count(2,{0x44,4})==1&&count(2,{0x44,0x41})==2);
-    volume.kind=m::OwnedIntentKind::key_up;enqueue(hub,volume,16);assert(count(2,{0x45})==1);drain(hub);
+    volume.edges[0].down=false;enqueue(hub,volume);assert(count(2,{0x45})==1);drain(hub);
 }
 static void cold_lookup_precedes_later_recipe(int next){
     reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
@@ -122,10 +123,10 @@ static void different_owners_progress_independently(){
     reset_fixture();HubService first_owner;start_owner(first_owner,owner);auto* first_task=latest_task;
     HubService second_owner;start_owner(second_owner,other_owner,false,3,4);auto* second_task=latest_task;
     fixture_sent.clear();fixture_async_autocomplete=false;
-    latest_task=first_task;enqueue(first_owner,power(owner,m::Side::front),1);enqueue(first_owner,power(owner,m::Side::back),2);
+    latest_task=first_task;enqueue(first_owner,power(owner,m::Side::front));enqueue(first_owner,power(owner,m::Side::back));
     assert(count(1,{0x04})==1&&count(2,{0x44,0x6d})==0);
-    latest_task=second_task;enqueue(second_owner,power(other_owner,m::Side::front),1);enqueue(second_owner,power(other_owner,m::Side::back),2);
-    assert(count(3,{0x04})==1&&count(4,{0x44,0x6d})==0); // No global owner barrier.
+    latest_task=second_task;enqueue(second_owner,power(other_owner,m::Side::front));enqueue(second_owner,power(other_owner,m::Side::back));
+    assert(count(3,{0x04})==1&&count(4,{0x44,0x6d})==0); // Independent owner tasks remain responsive outside one activity recipe.
     assert(fixture_complete_next(cec::TxResult::Success,3));run_idle(2);
     assert(count(4,{0x44,0x6d})==1&&count(2,{0x44,0x6d})==0);
     while(fixture_complete_next(cec::TxResult::Success,4)){}run_idle(2);
@@ -137,7 +138,7 @@ static void revision_bind_waits_for_old_recipe_cleanup(){
     reset_fixture();HubService hub;start_owner(hub,owner);
     fixture_sent.clear();fixture_completed.clear();fixture_async_autocomplete=false;
     auto front=power(owner,m::Side::front),back=power(owner,m::Side::back);front.on=back.on=false;
-    enqueue(hub,front,1);enqueue(hub,back,2);
+    enqueue(hub,front);enqueue(hub,back);
     assert(count(1,{0x36})==1&&count(2,{0x36})==0&&hub.executing_configuration_revision()==1);
     unsigned completed=0;
     fixture_delay=[&]{
@@ -155,10 +156,10 @@ static void revision_bind_waits_for_old_recipe_cleanup(){
     assert(hub.bind_owned_controller(controller,2)==ESP_OK);
     fixture_delay={};assert(completed==2&&hub.executing_configuration_revision()==2);
     assert(count(1,{0x36})==1&&count(2,{0x36})==1&&fixture_completed.size()==2&&fixture_pending.empty());
-    auto stale=power(owner,m::Side::front);stale.sequence=3;stale.generation=1;stale.config_revision=1;
+    auto stale=power(owner,m::Side::front);stale.generation=1;stale.config_revision=1;
     const auto before=fixture_sent.size();assert(!hub.submit_owned(stale,authorization(stale.kind)));
     assert(fixture_sent.size()==before); // The old authorization is no longer executable after the boundary.
-    auto current=stale;current.sequence=1;current.config_revision=2;auto auth=authorization(current.kind);auth.config_revision=2;
+    auto current=stale;current.config_revision=2;auto auth=authorization(current.kind);auth.config_revision=2;
     assert(hub.submit_owned(current,auth,0));run_one_command();assert(count(1,{0x04})==1);
     drain(hub);
 }
@@ -253,10 +254,12 @@ static void existing_release_gate_covers_actual_worker_setup(bool all_up){
     // worker must also reject this race at dequeue, before creating key state.
     assert(hub.press_key_for_activity(9,hub.activity_generation(),true));
     assert(hub.request_activity(0)==ESP_OK);run_one_command();assert(count(2,{0x44,9})==0);
-    run_one_command();input.refresh();run_idle(1);
+    run_one_command();input.refresh();run_idle(4);
     const auto during_setup=uint64_t(fixture_time);const auto selection_generation=hub.activity_generation();
     const auto prior_right=count(2,{0x44,4}),prior_releases=count(2,{0x45});input.emitted.clear();
-    assert(hub.activity_setup_in_progress()&&input.policy.waiting_for_release()&&count(1,{0x04})==1);
+    assert(hub.activity_setup_in_progress()&&input.policy.waiting_for_release());
+    assert(count(1,{0x04})==size_t(all_up));
+    if(!all_up)assert(count(2,{0x45})==1); // Accepted selection ends the old hold before activity On.
     input.button(ble::RemoteButton::Right,true);input.button(ble::RemoteButton::VolumeUp,true);
     fixture_time+=2000000;input.refresh();assert(input.policy.waiting_for_release());
     assert(hub.press_key_for_activity(9,hub.activity_generation(),true));
@@ -332,10 +335,11 @@ static void isolated_source_input(bool nested,bool same_adapter,bool front_sourc
     bool authority=true;hub.set_owned_authorizer([&](const auto&){return authority;});
     m::OwnedIntent input;input.kind=m::OwnedIntentKind::source_input;
     input.target=named(owner,front_source?m::Side::front:m::Side::back,"Source",1);
-    input.display=named(owner,m::Side::front,"TV",same_adapter?1:0);input.setup_generation=1;
+    input.display=named(owner,m::Side::front,"TV",same_adapter?1:0);input.activity_step=true;
     if(missing)input.target.osd_name="Missing";
+    input.selected=true;input.source=input.target;
     if(reject_announcement)fixture_admission=[](int gpio,const auto& frame){return !(gpio==5&&frame.size>1&&frame.data[1]==0x82);};
-    enqueue(hub,input,1);
+    enqueue(hub,input);
     const bool announces=nested&&!same_adapter&&!front_source;
     if(missing){
         run_idle(2);assert(count(5,{0x82,0x12,0})==0&&count(source_gpio,{0x86,0x12,0x10})==0);
@@ -343,8 +347,8 @@ static void isolated_source_input(bool nested,bool same_adapter,bool front_sourc
     }
     assert(count(source_gpio,{0x86,0x12,0x10})==size_t(!announces||reject_announcement));
     assert(count(5,{0x82,0x12,0})==size_t(announces));
-    m::OwnedIntent next;next.kind=m::OwnedIntentKind::standby_wire;next.target.port={group,owner,0,m::Side::front};next.setup_generation=1;
-    enqueue(hub,next,2);run_idle(2);assert(count(1,{0x36})==0);
+    m::OwnedIntent next;next.kind=m::OwnedIntentKind::standby_wire;next.target.port={group,owner,0,m::Side::front};next.activity_step=true;
+    enqueue(hub,next);run_idle(2);assert(count(1,{0x36})==0);
     if(lose_authority)authority=false;
     if(announces){
         if(!reject_announcement){
@@ -379,5 +383,5 @@ int main(){
     isolated_source_input(true,false,false,true); // Recheck authority before the second step.
     isolated_source_input(true,false,false,false,true); // Dropped upstream work never blocks the original route.
     isolated_source_input(true,false,false,false,false,true); // Lookup must find the actual source first.
-    std::puts("Actual worker activity sequencing: cold lookup/TX order at SETTLE=0, per-owner lanes, gated setup input with no hold replay, normal independent keys/owners, completed cleanup before bind, fenced RX and causal replies");
+    std::puts("Actual worker activity sequencing: cold lookup/TX completion order, per-owner lanes, gated setup input with no hold replay, normal independent keys/owners, completed cleanup before bind, fenced RX and causal replies");
 }

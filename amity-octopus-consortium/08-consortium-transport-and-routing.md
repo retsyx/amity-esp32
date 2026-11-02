@@ -4,17 +4,42 @@
 
 ## 1. Ownership and local dispatch
 
-Resolve the selected stable Amity device ID through current authenticated membership. Deliver the typed operation or button-state change to that owner. The owner resolves the specified HDMI adapter, CEC side and OSD name using the original local discovery behavior and performs the original local operation.
+Resolve the selected stable Amity device ID through current authenticated membership. Deliver the selected activity or raw button edges to that owner. The receiver selects its current activity's audio/source equipment, then uses the shared local resolver for its configured adapter, side and OSD name.
 
-Do not ship a periodic stream of key presses, a persisted CEC logical address, a newly compiled opcode policy or a preapproved topology as the recipient's activity model. The controller sequences the original activity decisions; each owner does the work that depends on its local equipment. Local and remote delivery must result in equivalent frames/order/budgets/admission/lifecycle.
+Do not ship a periodic stream of key presses, a persisted CEC logical address, a newly compiled opcode policy or a preapproved topology as the recipient's activity model. Distribution delivers the selected activity and equipment ownership. Each Amity runs the original local activity algorithm for its own equipment. Local and remote delivery must retain equivalent local frames, order, attempt budgets, admission and key lifecycle.
 
-For source input, the owner reports the actual local source-presence result with the original generation/sequence. A CEC FIFO drop after lookup still reports the actual presence; failed IPC admission has no lookup result. An asynchronous result stays bound to its original authenticated link, and delivery failure fences that link rather than redirecting it after reconnect. The controller can then continue the original explicit switch fallback/audio query. This is a bounded correlation for an in-flight typed request, not a CEC frame backlog, ACK wait, global barrier or persistent execution plan. Power and key dispatch do not depend on a controller-side discovery cache.
+Activity lookup and CEC transmission completion are sequential within each Amity's local activity job. Its old-only Standby steps finish before its new Power On steps. Different Amities progress independently: a missing device, scan, transmission or failed command on one Amity cannot hold another Amity's activity. The distribution layer neither advances individual CEC steps nor waits for remote device responses or step-completion reports. The owner loop continues RX, discovery, input cleanup and completions while its own activity call waits.
+
+Source lookup, explicit switch-input fallback and source-theft handling use the original owner-local algorithm and current local activity. A source on another Amity cannot authorize or suppress local fallback, and a controller-side discovery cache cannot prevent owner-local power or key lookup. No cross-owner CEC dependency, outgoing frame backlog or persistent execution plan is introduced.
+
+Every owner retains the shared selected activity as current context, including
+an owner with no equipment roles in it. Only its own equipment's CEC recipe is
+executed. Such an owner keeps the existing foreign-source policy: it can issue
+directed Standby to a local thief without routing a foreign source. Only a
+shared Standby selection means that the whole system has no current activity.
+Reconnect and configuration recapture deliver nonemitting context; they never
+start or repair an activity automatically.
+
+An owner's transient activity job retains its admitted original-main
+authentication scope. Its local typed steps use a local activity-instance
+guard so deferred work cannot continue a canceled job after authority loss.
+That guard never crosses the network and requires no renewal. Starting the
+job ends the prior registered held streams; its nonemitting shared context is
+committed even when no equipment role belongs to that owner. Matching shared
+generation and equal role selections identify same-target repair locally;
+distinct activities sharing equipment do not gain extra Power On commands.
 
 ## 2. Authentication and framing
 
 Keep authenticated exact-peer TLS, bounded framed messages, strict typed parsing, canonical stable IDs and existing membership/controller role checks. Only the durable original controller can issue operational work. Added devices remain headless, cannot become input gateways and cannot promote themselves.
 
-Transport scope includes the current installation, original controller, target owner, appropriate boot/configuration/input context and bounded request identity. Derive control, realtime key-down and cleanup key-up authority from the typed action; retain its receiver deadline and exact link/boot identity. These classes and deadlines are volatile transport authorization, never saved activity permission or a per-button renewal protocol. Reject mismatched, stale, replayed, malformed or unauthorized work. Never derive authority from a hostname, IP address, discovery order or portable configuration alone. Do not import old trust or credentials during configuration restore.
+**1 November 2026 ordered-control amendment.** The authenticated connection from the durable original main supplies authority. There are no input/control execution grants, permission renewals, generic frame identifiers or replay caches, random hold tokens, or per-key wire sequence checks. TCP/TLS supplies ordered delivery. Ordinary input carries only its activity generation and raw button edges; the authenticated envelope supplies the destination Amity. No adapter, side, OSD name, resolved CEC recipient or per-key authority is transported. The member's existing ordered task handoff preserves down/up order. Boot, configuration and activity changes still invalidate stale work; malformed or unauthorized scope and expired concrete requests are rejected. Never derive authority from a hostname, IP address, discovery order or portable configuration alone. Do not import old trust or credentials during configuration restore.
+
+The selected activity and current boot/configuration scope identify ordinary activity work. Owners do not exchange per-step completion identities or results. Local CEC completion instances still prevent an old transmission completion from continuing a newly pressed key; they are never transported as key tokens.
+
+`key_edges` contains one `{key,down}` edge, or an atomic same-key down/up pair for a finite tap. The pair enters existing typed IPC as one item so its up cannot erase the admitted tap before one press. The main keeps only each raw key's owner index. The receiver keeps one compact owner-level key table; repetition follows its existing local successful-completion pacing. Only state edges cross the network. A pure up retains cleanup capacity and its two-second transport lifetime; down and complete taps use the ordinary half-second input lifetime. No repeat messages, recipient tables or per-key configuration copies are sent or saved.
+
+Add, Remove, adapter settings and firmware-update payloads retain their actual operation/request identities so a lost response can be reconciled safely. Those operations keep their concrete transaction deadlines and reviewed configuration/boot guards. Ordinary activity or key traffic needs no renewable authorization or generic frame identity.
 
 The production wire codec and its closed schema own numeric kinds and bounds. Deprecated prepared-plan/profile/binding graph contracts are not a second path for actuation. Remove unused contracts with their implementation; unknown or unsupported kinds reject rather than silently reinterpret. Version/capability negotiation must not accidentally authorize an older incompatible behavioral policy.
 
@@ -48,23 +73,22 @@ Membership transport owns asynchronous connection acquisition and recovery;
 ordinary one-shot actions retain their existing unavailable-peer handling and
 are never retained until a future connection becomes ready.
 
-The restart barrier retains installation, controller/member identities, boots
-and replay history. Each acknowledged round derives a fresh logical link ID
+The restart barrier retains installation, controller/member identities and boots. Each acknowledged round derives a fresh logical link ID
 from its round ID on the same physical TLS connection. Before waiting for the
 barrier, exact old-session execution is fenced; late callbacks for that ended
 scope cannot close TLS. This fence preserves independent HDMI observations.
-An expired causal IPC item, failed result delivery or failed context refresh
+An expired causal IPC item or failed context refresh
 likewise ends its execution session and requests synchronization on the same
 healthy transport. This retains exact cleanup without resending the lost work.
 Only that typed exchange can reconcile different
 envelope revisions after a partially applied synchronization; the target is
 monotonic and replies must match its exact round and revision. Operational
 messages retain their exact configuration fences. Beginning a round invalidates
-execution leases/context and blocks positive work until the normal snapshot
+the old execution context and blocks positive work until the normal snapshot
 exchange succeeds. A normal successful live configuration refresh keeps its
-logical link and delivers admitted typed lookup results to their original
-continuation. A recovery round ends the old continuation and discards its IPC
-work rather than granting it replacement leases. Abandoned frames may only be
+logical link and preserves admitted owner-local continuations in their original
+scope. A recovery round ends the old continuation and discards its IPC
+work rather than replaying it in the new scope. Abandoned frames may only be
 strictly validated and discarded, never executed. Identity,
 membership and authority failure remain terminal and cannot be recovered by
 loosening a check or treating a peer address as authority.
@@ -84,27 +108,18 @@ sends its current controller/revision slice using the previous envelope scope,
 with the new revision in the bounded manifest. The member binds that revision
 and sends its completion acknowledgment in the previous scope. Both then advance
 the same session, and the member's owner-state slice uses the new scope. Link
-ID, installation, controller/member identities, boots and replay history remain
-unchanged. Applying the controller's local configuration does not wait for a
+ID, installation, controller/member identities and boots remain unchanged. Applying the controller's local configuration does not wait for a
 member acknowledgment or authorize replay of uncertain work.
 
-Revision advance invalidates old positive-work leases; normal fresh grants use
-the same existing issuance cadence and bounds. Queued work retains its original
-configuration revision, creation time and deadline, and cannot be restamped into
-the new scope. Obsolete in-flight frames may be discarded only after strict
-identity, boot, epoch, role, capability, closed-payload, TTL and replay checks;
-future revisions and mismatched scope remain rejected. A successful stale-frame
-check means discard, never execution or lease renewal. These changes add no wire
-kind, HTTP endpoint, ordinary command retry or alternate CEC policy.
+Queued work retains its original configuration revision, creation time and
+deadline, and cannot be restamped into the new scope. Obsolete in-flight frames
+may be discarded only after strict identity, boot, epoch, role, capability,
+closed-payload and concrete TTL checks; future revisions and mismatched scope
+remain rejected. A successful stale-frame check means discard, never execution.
+These changes add no wire kind, HTTP endpoint, ordinary command retry or
+alternate CEC policy.
 
-While a live refresh waits for its snapshot acknowledgment, an admitted typed
-source-input result in the current old scope still completes its original
-lookup continuation exactly once, before revision advance. Deliver it through
-the same control hook and exact authenticated link as normal reception. Missing
-or rejected delivery fails synchronization; it cannot be silently remembered by
-replay protection and discarded. Obsolete-scope frames retain the existing
-strict discard checks, and this handoff executes no positive owner intent or
-restamped work.
+Live configuration refresh keeps an admitted local lookup or transmission continuation under its original scope until that owner completes its existing work. It does not create cross-owner completion traffic or restamp work into a later revision. Obsolete-scope frames retain strict discard checks.
 
 Live configuration support is part of the execution capability floor. A peer
 without it remains eligible for existing management/firmware-update operations,
@@ -113,11 +128,11 @@ capability floor remains unchanged so an older peer can install the update.
 
 ## 3. Ordering, input state and uncertainty
 
-The first control-lease handshake queues the current nonemitting activity context before positive owner actions. This synchronizes ordinary follower replies/playback context without replaying an activity recipe or missed commands.
+Successful application synchronization queues the current nonemitting activity context before positive owner actions. This synchronizes ordinary follower replies/playback context without replaying an activity recipe or missed commands.
 
 A context publication for a configuration that is still synchronizing is a
 notification to recapture current nonemitting state after the existing revision
-exchange and fresh lease. Do not retain its old payload in the action FIFO or
+exchange. Do not retain its old payload in the action FIFO or
 let its one-second action lifetime expire behind that exchange. The existing
 owner-task callback supplies fresh current context; accepting that asynchronous
 callback does not grant context readiness. Only admission of the current-scope
@@ -127,25 +142,13 @@ original FIFO position, lifetime and exact authorization fences; it is never
 restamped or replayed. Current-scope discovery and exact key cleanup remain
 independent of the presence of saved activity context.
 
-**1 November 2026 setup-completion correction.** The original Python
-`ControllerImpl.set_activity()` completes its existing power/input steps before
-selecting the new activity. An asynchronous context recapture must preserve the
-completion scope of that same in-progress setup: while `setup_pending` remains
-true, its fresh context carries the current `setup_generation`, and the existing
-owner expectation advances to the fresh sequence. The superseded future-revision
-context was never queued and cannot produce its own completion snapshot. Once
-setup completes, later context captures carry no setup generation. This changes
-only transient completion bookkeeping; original CEC steps are neither repeated
-nor retained for replay, and authenticated TLS, revision and boot fences remain.
+**1 November 2026 independent-owner amendment.** Configuration/context recapture preserves current local activity state and never repeats emitted CEC work. Each owner advances its original local activity algorithm from its own lookup and CEC transmission completions. Another owner's progress, device state or observation snapshot is not an activity condition. Tests must cover cold lookup and configuration recapture, old-only Standby before new Power On locally, independent progress across owners and unchanged CEC frames/attempt budgets.
 
-`tests/owned_hub_settling_test.cpp` exercises the actual three-owner workers:
-select immediately after applying configuration while both idle owners still
-have the prior revision, recapture after each owner synchronizes, reject a stale
-capture, and complete from the matching fresh pending-zero snapshots. The
-regression fails on the old recapture generation and passes with the correction;
-it also requires unchanged power-frame counts and non-setup captures afterward.
-The existing original/local/remote settling comparisons remain in the same
-host suite. This is software evidence, not physical four-device qualification.
+Pending `find_device()` continuations resume in their existing deferred arrival
+order, including when a later lookup on another adapter or side finishes first.
+A command resolved immediately from the cache never enters that pending-lookup
+order and remains immediate. The owner continues pumping received frames,
+discovery and transmission completions while the earlier lookup waits.
 
 The owner request includes its expected revision and reports a local typed
 published/stale/failed completion. A stale revision does not publish or fence
@@ -157,9 +160,17 @@ granting context readiness, emitting a message or repeating empty captures.
 This keeps ordinary discovery and reviewed removal available for a newly added
 Amity before any activity refers to it.
 
-Preserve causal operation order and button down/up state through bounded task/network handoff. Keep request deduplication and stale input/boot fences needed for message delivery; do not turn them into persistent activity approval. Already admitted held recipients and cleanup remain exact. Reconnect or authority refresh does not replay uncertain relative actions or restart a failed key.
+Preserve causal operation order and button down/up state through bounded task/network handoff. Keep actual operation idempotence and stale input/boot fences needed for message delivery; do not turn them into persistent activity approval. The receiver looks up the current activity target again for press, repeat and release; it retains no per-key CEC recipient. Reconnect or authority refresh does not replay uncertain relative actions or restart a failed key.
 
-Owner snapshots include volatile setup generation/last sequence/pending admitted completions and whether original expected replies remain pending. The controller unions those pending replies and uses the same original ActivitySettling quiet period and two-second deadline measured after the last admitted completion. Owners add no independent quiet period, timer or barrier. A typed source-input result completes a waiting original operation: its expiry fences the exact link. An owner snapshot is replaceable observation state: expiry drops that payload and requests a fresh publication of the latest owner state, including a final pending-zero completion. That status does not hold back new keys or ordinary commands, wait for CEC capacity or create a new frame queue.
+Activity setup waits for CEC transmission completion, including the wire ACK
+that is part of the supplied attempt budget. It does not query or wait for
+reported power, active-source state, a CEC application reply, a device-response
+quiet period or a second settling deadline. No per-step completion report
+crosses between Amities.
+Owner snapshots remain replaceable observation state; expiry drops the payload
+and requests a fresh publication of the current state. A snapshot does not
+advance the activity or hold back ordinary commands, wait for CEC capacity or
+create a new frame queue.
 
 A transport receipt reports only transport/IPC admission. It does not guarantee CEC FIFO admission, ACK, completion or equipment state. Return the actual result without hiding a second outgoing queue or automatically retrying ordinary work when CEC capacity opens. Do not wait for another key's ACK/completion before submitting new input or other original commands.
 
@@ -170,7 +181,7 @@ No durable current-activity resume ledger, global resource-plan reservation, pre
 Bound communication queues by explicit resource limits and report admission failure. Necessary IPC state handoff is permitted; retained outgoing frames, retry queues and hidden repeat backlogs are not. Keep owner input, RX frames, setup and discovery advancing while CEC transmissions are outstanding.
 
 Operational TLS receive is incremental. Keep one bounded incoming frame/parser
-per link and return to the existing IPC/lease pump while bytes are incomplete.
+per link and return to the existing IPC pump while bytes are incomplete.
 Both socket callbacks are nonblocking. Preserve the original 8 KiB frame cap,
 two-second progress and ten-second framing bounds, and the five-second
 operational receive budget beginning at the first socket/TLS readiness event,
@@ -196,7 +207,7 @@ locks and emits only after those guards release; diagnostic formatting and
 logging never run under the runtime or link-queue mutex. Normal
 cancellation/retirement is distinguished. These logs contain no message
 payload, credential, certificate or key, add no periodic traffic, and do not
-change admission, deadlines, replay checks or reconnect policy.
+change admission, deadlines or reconnect policy.
 
 The CEC FIFO has eight total queued-plus-active messages per wire. Releases have no extra slot; dropped full-FIFO releases are not retained or retried. Log every full-FIFO TX drop, including every member of a rejected atomic batch. Transport does not inspect CEC opcodes to make a different admission policy.
 
@@ -226,13 +237,43 @@ apply. The receiver and acknowledgment retain their exact existing fences;
 ordinary work remains revoked. The
 [actual removal regression](../tests/consortium_removal_test.py) covers this
 publication interleaving and stale, foreign, replaced and expired permits.
+A reset acknowledgment can follow observations/results that the member sent
+before revocation on the same ordered TLS stream. Keep the session restricted
+while draining only valid heartbeat, device-status, owner-snapshot, settings-result
+and update-result frames. Their authenticated peer, boots, epoch, role,
+capabilities, closed payload and concrete TTL still apply. A positive current
+or older configuration is permitted only for this nonexecuting discard;
+future configurations are rejected. The reset acknowledgment itself retains
+its exact current configuration and mutation/target/digest correlation. No
+management/readiness grant, new request, retry or CEC coordination is involved.
+The original two-second deadline and 32-frame receive bound are unchanged.
+
+The 0.1.121 Add cleanup reported an unconfirmed reset even though the member
+logged successful retirement and then rebooted. The previous drain accepted
+only heartbeat/settings-result traffic, so a valid owner snapshot or device
+status ahead of the acknowledgment could terminate the receive early. The
+[removal regression](../tests/consortium_removal_test.py) now constructs the
+snapshot with the production codec and places current/older typed observations
+before the acknowledgment; it also checks wrong scope, future configuration,
+malformed payload, missing capability, obsolete acknowledgment and bounded
+drain rejection. Native ASan/UBSan validation reproduces the early failure with
+the saved old reader in
+[removal-drain-native-before.log](../test-results/remote-keys-final-2026-11-01/removal-drain-native-before.log).
+The current full removal regression passes in
+[removal-drain-native-after.log](../test-results/remote-keys-final-2026-11-01/removal-drain-native-after.log),
+including the original admission, durable reset marker, exact acknowledgment,
+stale-scope and deadline checks. Physical outcomes remain separate in the
+[0.1.121 report](../test-results/remote-keys-final-2026-11-01/all121-progress.json)
+and subsequent run reports; the 0.1.121 logs do not identify the exact preceding
+frame kind.
+
 The complete 0.1.105 physical suite acknowledges scheduled reset for all four
 fixture removals;
 see [validation](VALIDATION.md) for its scope and retained failed baseline.
 
 ## 7. Validation
 
-Test wrong owner/installation/controller, old boot/configuration/input, replay, malformed selectors, link loss, queue pressure and exact held cleanup without changing baseline CEC behavior. Compare local delivery with fake authenticated remote delivery of the same original intents. Management/security tests do not substitute for activity/CEC parity or real multi-device radio/CEC qualification.
+Test wrong owner/installation/controller, old boot/configuration/input, malformed selectors, link loss, queue pressure and exact held cleanup without changing baseline CEC behavior. Compare local delivery with fake authenticated remote delivery of the same original intents. Management/security tests do not substitute for activity/CEC parity or real multi-device radio/CEC qualification.
 
 The [actual TLS send regression](../tests/consortium_tls_receive_test.py)
 checks the 512-byte write bound, exact frame bytes, partial writes, WANT

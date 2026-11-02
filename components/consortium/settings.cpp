@@ -37,8 +37,8 @@ std::string device_settings_write_json(const DeviceSettingsWrite& value){
 bool valid_settings_payload(Kind kind,const Json& value){
  model::MessageId request;if(!id(value.get("request_id"),request))return false;
  if(kind==Kind::settings_read)return closed(value,{"request_id"});
- if(kind==Kind::settings_write){model::ExecutionLeaseId lease;DeviceSettingsWrite write;return closed(value,{"request_id","execution_lease_id","settings"})&&id(value.get("execution_lease_id"),lease)&&parse_device_settings_write(*value.get("settings"),write)==Error::none;}
- if(kind!=Kind::settings_result||!closed(value,{"request_id","operation","stage","error","snapshot","rebooting"})||!text(value.get("operation"),{"read","write"})||!text(value.get("stage"),{"admitted","applied","failed"})||!text(value.get("error"),{"","INVALID_MESSAGE","STALE_BOOT","CONFLICT","NOT_READY","LEASE_EXPIRED","STORAGE_FAILURE","QUEUE_FULL"})||value.get("rebooting")->type!=Json::Type::boolean)return false;
+ if(kind==Kind::settings_write){DeviceSettingsWrite write;return closed(value,{"request_id","settings"})&&parse_device_settings_write(*value.get("settings"),write)==Error::none;}
+ if(kind!=Kind::settings_result||!closed(value,{"request_id","operation","stage","error","snapshot","rebooting"})||!text(value.get("operation"),{"read","write"})||!text(value.get("stage"),{"admitted","applied","failed"})||!text(value.get("error"),{"","INVALID_MESSAGE","STALE_BOOT","CONFLICT","NOT_READY","EXPIRED","STORAGE_FAILURE","QUEUE_FULL"})||value.get("rebooting")->type!=Json::Type::boolean)return false;
  const bool applied=text(value.get("stage"),{"applied"});
  if(applied)return text(value.get("error"),{""})&&valid_settings_snapshot(*value.get("snapshot"))&&(value.get("rebooting")->boolean==text(value.get("operation"),{"write"}));
  return value.get("snapshot")->type==Json::Type::null_value&&!value.get("rebooting")->boolean&&(text(value.get("stage"),{"admitted"})?(text(value.get("operation"),{"write"})&&text(value.get("error"),{""})):!text(value.get("error"),{""}));

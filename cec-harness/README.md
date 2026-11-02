@@ -696,6 +696,26 @@ not real HDMI video or remote-control hardware.
 
 ## Run functional tests
 
+`activity.py` exercises remote key routing twice: once with the TV/AVR/player
+on `amity-dut`, and once on the headless `amity-dut-2`, enrolled and controlled
+through `amity-dut`. Volume Up, Volume Down and Mute must reach the AVR;
+the four navigation directions, Select, Play, Pause and Stop must reach the
+player. The combined Play/Pause button must emit Play then Pause after Stop.
+Each assertion requires fresh physical directed User Control Pressed and a
+later operand-free User Control Released from the scan-proven owner initiator.
+It rejects virtual/stale/modified evidence and the same key sent to another
+fixture recipient, and rechecks the main's activity/boot and exact member boot.
+The Power button must select system Standby and produce fresh physical Standby
+commands at all three selected devices. Fixture activities and equipment close
+before member removal/reset.
+
+`DUT.press_key(Key.SELECT)` wraps the shipping authenticated `POST /api/key`.
+Its `duration_ms` defaults to zero for a complete tap and accepts at most 5000
+milliseconds; firmware owns the final release even if the client disconnects.
+The routing cases include zero-duration taps and a 100 ms Volume Up hold.
+Key reports retain the requested duration, actual press/release wire timestamps,
+recipient and owner boots. No separate release request is needed.
+
 Requires Linux/Pi, Python 3.10 or newer, the existing `cec-gpio` adapters and
 permission to open `/dev/cec*` (normally membership in `video`). GPIO button
 operations additionally require `pinctrl`. The framework has no third-party
@@ -710,14 +730,15 @@ python3 cec-harness/run.py \
   --output test-results/functional/hdmi-scan-framework.json
 ```
 
-The default remains `hdmi_scan`. Select `--test activity` for both the activity
-power-cycle and explicit switch-input sub-tests, `--test source_theft` for unselected-source recovery,
+The default remains `hdmi_scan`. Select `--test activity` for the activity
+power-cycle, explicit switch-input and two remote-key sub-tests,
+`--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test dual_display` for the TV/projector scenario on `amity-dut-4`,
 `--test source_theft_isolated` for suppression ahead of the AVR,
-or `--test all` for all nine registered scenarios (ten
+or `--test all` for all nine registered scenarios (twelve
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

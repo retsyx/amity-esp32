@@ -110,7 +110,7 @@ static void foreign_activity_still_caches_local_player(){
     assert(hub.start(1,2)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);
     fixture_finish_discovery(hub);fixture_tick=0;fixture_time+=300000000;fixture_sent.clear();
-    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.generation=1;context.sequence=1;
+    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.generation=1;
     context.selected=true;context.target.port={group,owner,0,m::Side::front};
     context.source=m::QualifiedDeviceName{{group,controller,0,m::Side::back},"Elsewhere"};
     assert(hub.submit_owned(context,{controller,controller_boot,boot,link,1,0}));

@@ -9,6 +9,7 @@
 #pragma once
 #include "cec/engine.hpp"
 #include "amity/system/owned_intent.hpp"
+#include "amity/system/execution.hpp"
 #include <functional>
 #include <cstdint>
 #include <string>
@@ -75,17 +76,20 @@ public:
     void scoped_transport(std::vector<system::ScopedSelector>, OwnedDispatcher, OwnedLookup,
                           std::optional<system::CecPortRef> default_port = {});
     bool scoped() const { return bool(owned_sender_); }
+    void scoped_owner(system::OctopusId owner){scoped_owner_=owner;}
+    void scoped_ports(std::vector<system::CecPortRef> ports){scoped_owner_ports_=std::move(ports);}
+    // Install one transient owner-local selection without configure's cleanup.
+    // The previous effective activity remains the recipe's before state.
+    int stage_activity(Activity,std::vector<system::ScopedSelector>,bool selected,uint64_t generation);
+    void selection_generation(uint64_t generation){next_owned_generation_=generation;}
     uint64_t scoped_generation() const { return owned_generation_; }
-    bool input_pending()const{return !pending_inputs_.empty();}
-    bool held_recipient(uint8_t key,BusSide side,uint8_t address)const;
     // Owner-local actions reuse the same original translation and held state.
     bool execute_owned(const system::OwnedIntent&);
     static bool source_input_announcement(const system::OwnedIntent&);
     bool source_input_announcement_here(const system::OwnedIntent&) const;
     // The owner completes this before the source's ordinary Set Stream Path.
     bool announce_owned_input();
-    void owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
-    void fence_owned_owner(system::OctopusId);
+    void owned_step_result(const system::OwnedIntent&,const system::AdmissionResult&);
     bool refresh_owned_context(system::OctopusId owner){return publish_owned_context(false,owner);}
     void qualified_names(bool value=true){qualified_names_=value;}
     void scoped_audio_status(bool known, bool muted, uint8_t volume);
@@ -93,6 +97,14 @@ public:
     void announce(BusSide side);
     bool select_activity(int index, ActionReady ready = {});
     bool press_key(uint8_t key, bool repeat = false);
+    static bool audio_key(uint8_t key);
+    std::optional<system::QualifiedDeviceName> key_target(uint8_t key) const;
+    std::string key_name(uint8_t key) const;
+    uint8_t translated_key(uint8_t key) const;
+    bool transmit_key(const Device&,uint8_t mapped,bool audio);
+    bool transmit_release(const Device&,bool audio);
+    void key_released(bool audio);
+    void owner_audio_held(bool held){owner_audio_held_=held;}
     // Admit the operand-free final release when this recipient's last held
     // key ends. Releasing one raw key never changes another key's state.
     bool release_key(uint8_t key);
@@ -114,6 +126,7 @@ public:
     // continuation is ready. Cache access and scan throttling stay in get_device.
     uint8_t pending_resolution() const { return pending_resolution_; }
     bool activity_pending() const { return activity_execution_.has_value(); }
+    void cancel_activity(){activity_execution_.reset();next_owned_generation_.reset();}
     Device *find_device(const std::string &name, std::optional<BusSide> side = {});
     Snapshot snapshot() const;
     uint32_t activity_generation() const { return activity_generation_; }
@@ -131,21 +144,21 @@ private:
     void identity(BusSide side, const cec::Frame &frame);
     void source_thief(const cec::Frame&);
     uint8_t resume_received();
-    void request_audio_status(bool resolved_input = false);
+    void request_audio_status();
     bool audio_key_held() const;
-    bool press_device(const Device*, uint8_t key, bool repeat);
+    bool press_device(uint8_t key, bool repeat);
+    bool recipient_held(const Device&,std::optional<uint8_t> ending_key = {});
     bool finite_press(const Device&, const uint8_t*, size_t);
     std::optional<system::QualifiedDeviceName> target(const std::string&) const;
-    bool owned(system::OwnedIntentKind, const std::string&, bool on = false, uint8_t value = 0, bool repeat = false);
+    bool owned(system::OwnedIntentKind, const std::string&, bool on = false, uint8_t value = 0);
     bool publish_owned_context(bool source_changed,system::OctopusId owner={});
     Transport &transport_;
     std::vector<system::ScopedSelector> scoped_selectors_;
     OwnedDispatcher owned_sender_;
     OwnedLookup owned_lookup_;
     std::optional<system::CecPortRef> scoped_default_port_;
-    struct PendingInput {Activity activity;system::OctopusId owner;uint64_t generation=0,sequence=0;bool query_audio=false;};
-    std::vector<PendingInput> pending_inputs_;
-    uint64_t current_input_sequence_=0;
+    system::OctopusId scoped_owner_;std::optional<uint64_t> next_owned_generation_;
+    std::vector<system::CecPortRef> scoped_owner_ports_;
     bool qualified_names_=false;
     Device scoped_device_;
     uint64_t owned_generation_ = 1;
@@ -154,9 +167,10 @@ private:
     // The original activity function's local variables survive an async
     // device lookup/TX wait. No CEC frame or executable plan is retained.
     struct ActivityExecution {
-        enum class Step { Off, On, Source, Switch, Announce, Commit, Audio, ForceFront, ForceBack, Finish };
+        enum class Step { Release, Off, On, Source, Switch, Announce, Commit, Audio, ForceFront, ForceBack, ForceOwned, Finish };
         Activity before,after;std::vector<std::string> before_names,after_names;
-        int target=-1;size_t cursor=0;Step step=Step::Off;bool repair=false,waiting_tx=false;
+        int target=-1;size_t cursor=0;Step step=Step::Off;bool repair=false,waiting_tx=false,source_started=false,source_done=false,switch_started=false,switch_done=false;
+        std::optional<bool> source_present;system::AdmissionCode switch_result=system::AdmissionCode::accepted;std::vector<system::CecPortRef> force_ports;
     };
     std::optional<ActivityExecution> activity_execution_;
     std::vector<Device> devices_;
@@ -165,19 +179,15 @@ private:
     uint8_t pending_resolution_ = 0;
     ReceiveStep receive_step_ = ReceiveStep::Frame;
     int selected_ = -1;
-    std::optional<int> lookup_previous_selection_;
-    uint32_t lookup_previous_generation_=0;
     uint32_t activity_generation_ = 0;
     uint32_t binding_generation_ = 0, uncertain_releases_ = 0;
     uint8_t front_ = 15, back_ = 15;
     uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff;
     bool playing_ = false;
+    bool owner_audio_held_ = false;
     struct HeldKey {
         uint8_t raw_key, key;
-        BusSide bus;
-        uint8_t address;
         bool audio;
-        std::string selector{};
     };
     std::vector<HeldKey> held_keys_;
     bool audio_query_pending_ = false;

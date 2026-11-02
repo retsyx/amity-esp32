@@ -103,6 +103,9 @@ int main() {
         run_one_command();
         assert(hub.press_key(2, true));
         for (int i = 0; i < 32; ++i) run_one_command();
+        // Release lookup/cleanup uses the same bounded semantic IPC. Let that
+        // continuation and the later fresh key run before checking the wire.
+        run_idle(2);
         bool released = false, future_key = false, stale_key = false;
         for (const auto &sent : fixture_sent) {
             const auto &frame = sent.frame;
@@ -202,7 +205,10 @@ int main() {
             assert(fixture_completed.size() == n + 1 && fixture_pending.size() == 1);
         }
         assert(fixture_complete_next()); assert(hub.release_key(0x41)); run_one_command(); run_idle(2);
-        assert(fixture_completed.size() == 4 && fixture_pending.empty());
+        assert(fixture_completed.size() == 4 && fixture_pending.size() == 1);
+        assert(fixture_pending.front().frame.size == 2 && fixture_pending.front().frame.data[1] == 0x45);
+        assert(fixture_complete_next());run_idle(2);
+        assert(fixture_completed.size() == 5 && fixture_pending.empty());
         std::vector<uint8_t> keys;
         for (const auto &sent : fixture_sent) {
             const auto &f = sent.frame;
@@ -232,12 +238,17 @@ int main() {
             assert(count(0x44) == 1 && count(0x45) == 1);
             assert(hub.release_key(0x41)); run_one_command();
             assert(count(0x44) == 1 && count(0x45) == 1);
+            assert(fixture_pending.size()==1&&fixture_pending.front().frame.data[1]==0x45);
+            assert(fixture_complete_next());run_idle(1);
+            assert(fixture_pending.empty()&&count(0x44)==1&&count(0x45)==1);
         }
         fixture_sent.clear(); assert(hub.press_key(0x41, true)); run_one_command();
         assert(fixture_complete_next(cec::TxResult::Success)); run_idle(1);
         assert(fixture_complete_next(cec::TxResult::Nack)); run_idle(2);
         assert(count(0x44) == 2 && count(0x45) == 1);
         assert(hub.release_key(0x41)); run_one_command();
+        assert(fixture_pending.size()==1&&fixture_pending.front().frame.data[1]==0x45);
+        assert(fixture_complete_next());run_idle(1);
         fixture_sent.clear(); assert(hub.press_key(0x41, true)); run_one_command();
         assert(hub.press_key(0x41, true)); run_one_command();
         assert(count(0x44) == 1 && count(0x45) == 0); // Repeated down does not create another operation.
@@ -245,14 +256,15 @@ int main() {
         assert(hub.discover()); assert(hub.discover()); run_one_command(); run_one_command();
         assert(count(0x44) == 1); // Other commands execute with that press still pending.
         assert(fixture_complete_next(cec::TxResult::Success, 2)); run_idle(1);
-        assert(count(0x44) == 2);
-        assert(hub.release_key(0x41)); run_one_command(); fixture_complete_all(); run_idle(2);
-        assert(count(0x45) == 1);
+        assert(count(0x44) == 2); // A current cached lookup still permits the next press.
+        assert(hub.release_key(0x41)); run_one_command();
+        fixture_async_autocomplete=true;fixture_complete_all();fixture_finish_discovery(hub,before_scan);run_idle(2);
+        assert(count(0x44) == 2 && count(0x45) == 1);
         for (const auto &sent : fixture_sent) if (sent.frame.size > 1 && (sent.frame.data[1] == 0x44 || sent.frame.data[1] == 0x45)) {
             assert(sent.attempts == (sent.frame.data[1] == 0x44 ? 1u : 3u));
             assert(sent.timeout_ms == 0);
         }
-        fixture_async_autocomplete = true; fixture_complete_all(); fixture_finish_discovery(hub, before_scan); fixture_present = false;
+        fixture_present = false;
     }
     { // Key up stops future continuation; a repeat already admitted to CEC
       // finishes and receives one final release in FIFO order.
@@ -266,7 +278,10 @@ int main() {
         assert(fixture_pending.size() == 1 && fixture_completed.size() == 1);
         assert(hub.release_key(0x41)); run_one_command();
         assert(fixture_complete_next()); run_idle(3);
-        assert(fixture_completed.size() == 2 && fixture_pending.empty());
+        assert(fixture_completed.size() == 2 && fixture_pending.size() == 1);
+        assert(fixture_pending.front().frame.size==2&&fixture_pending.front().frame.data[1]==0x45);
+        assert(fixture_complete_next());run_idle(1);
+        assert(fixture_completed.size()==3&&fixture_pending.empty());
         assert(std::count_if(fixture_sent.begin(), fixture_sent.end(), [](const auto &sent) {
             return sent.frame.size == 2 && sent.frame.data[1] == 0x45;
         }) == 1);
@@ -340,20 +355,30 @@ int main() {
         assert(hub.press_key(1, true)); run_one_command();
         assert(hub.release_key(1)); run_one_command();
         assert(fixture_complete_next()); run_idle(3);
-        assert(fixture_completed.size() == 1 && fixture_pending.empty());
+        assert(fixture_completed.size() == 1 && fixture_pending.size() == 1);
+        assert(fixture_pending.front().frame.size==2&&fixture_pending.front().frame.data[1]==0x45);
+        assert(fixture_complete_next());run_idle(1);
+        assert(fixture_completed.size()==2&&fixture_pending.empty());
         bool released = false;
         for (const auto &sent : fixture_sent) released |= sent.frame.size == 2 && sent.frame.data[1] == 0x45;
         assert(released);
         fixture_completed.clear(); assert(hub.press_key(2, true)); assert(hub.release_key(2));
         run_one_command(); run_one_command(); assert(fixture_complete_next()); run_idle(3);
-        assert(fixture_completed.size() == 1 && fixture_pending.empty());
+        assert(fixture_completed.size() == 1 && fixture_pending.size() == 1);
+        assert(fixture_pending.front().frame.size==2&&fixture_pending.front().frame.data[1]==0x45);
+        assert(fixture_complete_next());run_idle(1);
+        assert(fixture_completed.size()==2&&fixture_pending.empty());
         // Ordinary one-shot commands never turn into a held stream.
         fixture_completed.clear(); assert(hub.press_key(0x42)); run_one_command(); run_idle(3);
-        assert(fixture_pending.empty() && fixture_completed.empty());
+        assert(fixture_completed.empty()&&fixture_pending.size()==2);
+        assert(fixture_pending[0].frame.size==3&&fixture_pending[0].frame.data[1]==0x44&&fixture_pending[0].frame.data[2]==0x42);
+        assert(fixture_pending[1].frame.size==2&&fixture_pending[1].frame.data[1]==0x45);
+        fixture_complete_all();run_idle(3);
+        assert(fixture_pending.empty()&&fixture_completed.size()==2);
         fixture_async_autocomplete = true; fixture_present = false;
     }
-    { // An activity switch is admitted before an earlier key completes and
-      // prevents its eventual ACK from continuing into the new activity.
+    { // Accepting an activity switch fences a queued old user press before
+      // the owner advances initialization; its completion cannot revive a hold.
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
@@ -362,11 +387,12 @@ int main() {
         fixture_completed.clear(); fixture_async_autocomplete = false;
         assert(hub.press_key(0x42, true)); run_one_command();
         assert(fixture_completed.empty() && fixture_pending.size() == 1);
-        assert(hub.select_activity(1)); run_one_command();
+        const auto old_press=fixture_pending.front().fence;
+        assert(hub.select_activity(1));assert(!cec::current_fence(old_press));run_one_command();
         assert(hub.snapshot().current_activity == 0 && fixture_completed.empty());
         assert(fixture_complete_next()); run_idle(3);
         finish_activity(hub,1,true);
-        assert(std::count_if(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x42;})==1);
+        assert(std::none_of(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x42;}));
         assert(fixture_pending.empty());
         fixture_async_autocomplete = true; fixture_present = false;
     }
@@ -419,14 +445,14 @@ int main() {
         assert(hub.snapshot().current_activity == 1 && hub.snapshot().activity_error.empty());
         fixture_present = false;
     }
-    { // A newer explicit intent still supersedes an older uncompiled one.
+    { // Accepted activity selections execute in order, including before compilation.
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
         assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
         assert(hub.select_activity(0)); assert(hub.select_activity(1));
         run_one_command();
-        assert(hub.snapshot().current_activity == -1 && !hub.snapshot().activity_error.empty());
+        assert(hub.snapshot().current_activity == 0 && hub.snapshot().activity_error.empty());
         run_one_command();
         assert(hub.snapshot().current_activity == 1 && hub.snapshot().activity_error.empty());
         fixture_present = false;
@@ -484,6 +510,9 @@ int main() {
         const auto pending_before_switch = fixture_pending.size();
         const auto sent_before_switch = fixture_sent.size();
         assert(pending_before_switch > 0 && hub.select_activity(1)); run_one_command();
+        for(const auto& pending:fixture_pending)if(pending.frame.size==3&&pending.frame.data[1]==0x44)
+            assert(!cec::current_fence(pending.fence));
+        run_idle(1); // Resolve/admit cleanup without waiting for the old press ACK.
         assert(hub.snapshot().current_activity == 0 && fixture_sent.size() > sent_before_switch);
         for (const auto &sent : fixture_sent) assert(sent.timeout_ms == 0);
         finish_activity(hub,1,true);fixture_async_autocomplete = true; run_idle(2);
@@ -516,12 +545,11 @@ int main() {
         assert(presses == 1 && releases == 1);
         fixture_present = false;
     }
-    { // A new hold on another wire cannot depend on an ended hold's pending
-      // completion, even when both instances use the same logical key.
+    { // Re-resolution can move a new hold to another wire without depending on
+      // an ended hold's pending completion for the same logical key.
         fixture_present = true;
         amity::HubService hub; assert(hub.start(1, 2) == ESP_OK);
-        assert(hub.configure({{"First", "TV", "Source", "Source", "", 0},
-                              {"Second", "TV", "TV", "TV", "Source", 0}}));
+        assert(hub.configure({{"Watch", "TV", "Source", "Source", "", 0}}));
         run_one_command(); fixture_finish_discovery(hub);
         assert(hub.select_activity(0)); run_one_command();
         fixture_sent.clear(); fixture_async_autocomplete = false;
@@ -540,29 +568,50 @@ int main() {
         assert(hub.press_key(0x41, true)); run_one_command();
         assert(volume_presses(2) == 1 && volume_pending(2) == 1);
         assert(hub.release_key(0x41)); run_one_command();
-        assert(hub.select_activity(1)); run_one_command();
-        // The new recipe uses only front-side commands. Its input/status
-        // completions must finish in order without completing the old back key.
-        for(unsigned n=0;n<32&&hub.snapshot().processed_activity_selection!=hub.activity_selection();++n){
-            while(fixture_complete_next(cec::TxResult::Success,1)){}run_idle(1);
-        }
-        assert(hub.snapshot().current_activity == 1);
+        // Keep the same activity and use real received OSD updates to change
+        // the legacy name lookup. Activity transitions separately wait for
+        // their old cleanup and fence old user frames before initialization.
+        const auto generation=hub.activity_generation();
+        fixture_peer_name=[](int gpio){return gpio==1?std::string("Source"):std::string("Former");};
+        fixture_incoming.push_back({2,{{0x40,0x47,'F','o','r','m','e','r'},8}});
+        fixture_incoming.push_back({1,{{0x04,0x47,'S','o','u','r','c','e'},8}});
+        run_idle(2);
+        assert(hub.snapshot().current_activity == 0&&hub.activity_generation()==generation);
         assert(hub.press_key(0x41, true)); run_one_command();
         assert(volume_presses(1) == 1 && volume_pending(1) == 1 && volume_pending(2) == 1);
 
         // The new front hold repeats as soon as its own TX completes; the old
         // back TX is still pending and must not contribute to its outstanding count.
-        assert(fixture_complete_next(cec::TxResult::Success, 1)); run_idle(1);
+        const auto complete_front_volume=[&](){
+            const auto before=volume_presses(1);
+            for(;;){
+                const auto next=std::find_if(fixture_pending.begin(),fixture_pending.end(),[](const auto& tx){return tx.gpio==1;});
+                assert(next!=fixture_pending.end());
+                const bool volume=next->frame.size==3&&next->frame.data[1]==0x44&&next->frame.data[2]==0x41;
+                // Received identity/route work precedes the new key on this
+                // wire. Complete it in FIFO order without crediting its ACK
+                // as this hold's completion.
+                assert(fixture_complete_next(cec::TxResult::Success,1));run_idle(1);
+                if(volume)break;
+                assert(volume_presses(1)==before);
+            }
+        };
+        complete_front_volume();
         assert(volume_presses(1) == 2 && volume_pending(1) == 1 && volume_pending(2) == 1);
         assert(fixture_complete_next(cec::TxResult::Nack, 2)); run_idle(1);
         assert(volume_presses(2) == 1 && volume_presses(1) == 2 && volume_pending(1) == 1);
-        assert(fixture_complete_next(cec::TxResult::Success, 1)); run_idle(1);
+        complete_front_volume();
         assert(volume_presses(1) == 3 && volume_pending(1) == 1); // Old failure did not stop it.
 
         assert(hub.release_key(0x41)); run_one_command();
-        fixture_complete_all(); run_idle(2);
+        fixture_complete_all();run_idle(2);
+        if(!fixture_pending.empty()){
+            assert(fixture_pending.size()==1&&fixture_pending.front().gpio==1&&fixture_pending.front().frame.size==2&&fixture_pending.front().frame.data[1]==0x45);
+            assert(fixture_complete_next());run_idle(1);
+        }
         assert(fixture_pending.empty());
-        fixture_async_autocomplete = true; fixture_present = false;
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.gpio==1&&tx.frame.size==2&&tx.frame.data[1]==0x45;})==1);
+        fixture_peer_name={};fixture_async_autocomplete = true; fixture_present = false;
     }
     { // Command-queue overflow release remains keyed: ending Right through
       // the emergency path cannot cancel Volume Up or its pending completion.
@@ -592,8 +641,18 @@ int main() {
         assert(presses(0x41) == 2 && presses(0x04) == 1);
         assert(fixture_complete_next(cec::TxResult::Success, 2)); run_one_command();
         assert(presses(0x41) == 2 && presses(0x04) == 1); // Right's old ACK cannot repeat it.
-        assert(fixture_complete_next(cec::TxResult::Success, 2)); run_one_command();
-        assert(presses(0x41) == 3 && presses(0x04) == 1);
+        // Queued finite Select taps are now tracked transmissions too.
+        // Finish those earlier wire entries without treating their ACKs as
+        // Volume's completion or recreating Right after its emergency up.
+        for(;;){
+            const auto next=std::find_if(fixture_pending.begin(),fixture_pending.end(),[](const auto& tx){return tx.gpio==2;});
+            assert(next!=fixture_pending.end());
+            if(next->frame.size==3&&next->frame.data[1]==0x44&&next->frame.data[2]==0x41)break;
+            assert(fixture_complete_next(cec::TxResult::Success,2));run_idle(1);
+            assert(presses(0x41)==2&&presses(0x04)==1);
+        }
+        assert(fixture_complete_next(cec::TxResult::Success,2));run_idle(1);
+        assert(presses(0x41)==3&&presses(0x04)==1);
 
         assert(hub.release_key(0x41)); run_idle(1); // Drain the benign queued commands and up.
         fixture_complete_all(); run_idle(2);

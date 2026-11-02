@@ -9,22 +9,27 @@ int main(){
     const auto boot=id<m::BootId>('4');
     fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
     const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},{"source",{{group,member,0,m::Side::back},"Source"}}};
-    struct Action{m::OwnedIntentKind kind;bool on;uint64_t revision;};std::vector<Action> sent;
+    struct Action{m::OwnedIntentKind kind;bool selected;uint64_t revision;};std::vector<Action> sent;
     bool publication_allowed=true;
     const auto sender=[&](const m::OwnedIntent& intent){
         assert(intent.config_revision==hub.executing_configuration_revision());
-        sent.push_back({intent.kind,intent.on,intent.config_revision});
+        sent.push_back({intent.kind,intent.selected,intent.config_revision});
         if(intent.kind==m::OwnedIntentKind::context&&!publication_allowed)return false;
-        if(intent.kind==m::OwnedIntentKind::source_input)assert(hub.owned_input_result(member,intent.generation,intent.sequence,true));
         return true;
     };
     assert(hub.configure_scoped({{"Watch","display","source","","",0}},selectors,sender,controller,1)==ESP_OK);
     assert(hub.executing_configuration_revision()==0);run_one_command();fixture_finish_discovery(hub);
-    assert(hub.select_activity(0));run_one_command();run_idle(2);assert(hub.snapshot().current_activity==0);
+    assert(hub.select_activity(0));run_one_command();
+    for(unsigned pass=0;pass<32&&hub.activity_setup_in_progress();++pass)run_idle(1);
+    assert(hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
     sent.clear();assert(hub.configure_scoped({{"Renamed","display","source","","",0}},selectors,sender,controller,2)==ESP_OK);
     assert(hub.executing_configuration_revision()==1);run_one_command();
+    for(unsigned pass=0;pass<32&&hub.executing_configuration_revision()!=2;++pass)run_idle(1);
     assert(hub.executing_configuration_revision()==2&&hub.snapshot().current_activity==-1);
-    const auto cleanup=std::find_if(sent.begin(),sent.end(),[](const auto& action){return action.kind==m::OwnedIntentKind::power&&!action.on;});
+    // The transport's existing ready hook requests the new revision's
+    // nonemitting context after configuration synchronization.
+    assert(hub.refresh_owned_context(member,2));run_one_command();
+    const auto cleanup=std::find_if(sent.begin(),sent.end(),[](const auto& action){return action.kind==m::OwnedIntentKind::activity&&!action.selected;});
     const auto context=std::find_if(sent.begin(),sent.end(),[](const auto& action){return action.kind==m::OwnedIntentKind::context&&action.revision==2;});
     assert(cleanup!=sent.end()&&cleanup->revision==1&&context!=sent.end()&&cleanup<context);
     sent.clear();const auto commands_before=command_waits.size();

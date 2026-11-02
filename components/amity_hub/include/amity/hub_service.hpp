@@ -24,6 +24,9 @@ public:
     esp_err_t configure_with_commit(std::vector<Activity>,std::function<esp_err_t()>);
     esp_err_t request_activity(int,uint32_t* accepted_selection=nullptr);esp_err_t repair_activity();uint32_t activity_selection()const;int activity_target()const;
     bool select_activity(int);bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
+    uint32_t input_epoch()const;
+    bool press_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
+    bool release_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
     uint32_t activity_generation()const;bool release_key(uint8_t);bool release_key();bool standby();bool discover();
     Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
     // User-selection/configuration setup only; the original long-Power repair
@@ -34,13 +37,12 @@ public:
     esp_err_t retire_membership();esp_err_t begin_maintenance();void end_maintenance();bool maintenance_ready()const;
     using OwnedSender=Hub::OwnedSender;
     esp_err_t configure_scoped(std::vector<Activity>,std::vector<system::ScopedSelector>,OwnedSender,
-        system::OctopusId controller,uint64_t config_revision,std::function<esp_err_t()> commit={},uint64_t presentation_revision=1);
+        system::OctopusId controller,uint64_t config_revision,std::function<esp_err_t()> commit={},uint64_t presentation_revision=1,std::vector<system::OctopusId> owners={});
     system::AdmissionResult submit_owned(const system::OwnedIntent&,const system::OwnedAuthorization&,uint32_t timeout_ms=1000);
     esp_err_t bind_owned_controller(system::OctopusId,uint64_t config_revision);
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)>);
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)>);
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)>);
-    void set_owned_input_observer(std::function<void(const system::OwnedIntent&,const system::OwnedAuthorization&,const system::AdmissionResult&)>);
     bool update_owned_snapshot(system::OwnedAdapterSnapshot);
     bool refresh_owned_context(system::OctopusId,uint64_t expected_revision,std::function<void(system::OwnedContextResult)> completed={});
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const;
@@ -48,7 +50,6 @@ public:
     bool discover_owned(system::OctopusId owner,uint8_t adapter);
     uint64_t applied_configuration_revision()const;
     uint64_t executing_configuration_revision()const;
-    bool owned_input_result(system::OctopusId,uint64_t generation,uint64_t sequence,bool source_present);
 private:
     esp_err_t request_activity(int,bool notify_selection,uint32_t* accepted_selection);struct Impl;std::unique_ptr<Impl> impl_;
 };

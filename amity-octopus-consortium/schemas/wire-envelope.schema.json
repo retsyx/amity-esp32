@@ -10,9 +10,6 @@
     "consortium_id": {
       "$ref": "core-types.schema.json#/$defs/Id128"
     },
-    "message_id": {
-      "$ref": "core-types.schema.json#/$defs/Id128"
-    },
     "origin_octopus_id": {
       "$ref": "core-types.schema.json#/$defs/Id128"
     },
@@ -34,7 +31,6 @@
     "kind": {
       "enum": [
         "heartbeat",
-        "execution_lease",
         "enrollment_control",
         "membership_event",
         "membership_result",
@@ -67,7 +63,6 @@
   "required": [
     "protocol_version",
     "consortium_id",
-    "message_id",
     "origin_octopus_id",
     "origin_boot_id",
     "destination_octopus_id",
@@ -108,22 +103,6 @@
         "properties": {
           "payload": {
             "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/Heartbeat"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "execution_lease"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json#/$defs/Lease"
           }
         }
       }

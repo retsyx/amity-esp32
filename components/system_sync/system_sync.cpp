@@ -5,6 +5,7 @@
 #include "amity/consortium/owned_intent.hpp"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <mutex>
@@ -99,33 +100,25 @@ c::Error synchronize(s::OctopusId sender,const c::Json& value){
     {std::lock_guard<std::mutex> guard(state.mutex);state.owner_revision=revision;}
     return c::Error::none;
 }
-bool input_result(const s::OwnedIntent& intent,const s::OwnedAuthorization& auth,const s::AdmissionResult& result){
-    if(intent.kind!=s::OwnedIntentKind::source_input||result.code==s::AdmissionCode::pending)return true;
-    {std::lock_guard<std::mutex> guard(state.mutex);if(auth.config_revision<state.owner_revision)return true;}
-    if(!result.source_present){c::runtime_fence_owned_link(auth.controller_id,auth.link_id);return false;}
-    const auto payload="{\"input_result\":{\"generation\":\""+std::to_string(intent.generation)+"\",\"sequence\":\""+std::to_string(intent.sequence)+"\",\"source_present\":"+(*result.source_present?"true":"false")+"}}";
-    if(c::runtime_send_owned_result(auth.controller_id,auth.link_id,payload,1000,auth.config_revision)==ESP_OK)return true;
-    c::runtime_fence_owned_link(auth.controller_id,auth.link_id);return false;
-}
 c::Error receive(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadline,s::LinkId link){
     if(envelope.kind==c::Kind::scoped_result){
         if(!c::runtime_status().coordinator)return c::Error::unauthorized_role;
-        if(const auto* lookup=envelope.payload.get("input_result")){
-            const auto remote=peer(sender);uint64_t generation=0,sequence=0;bool present=false;
-            if(!remote||remote->boot_id!=envelope.origin_boot_id||!c::decimal(lookup->get("generation"),generation)||!c::decimal(lookup->get("sequence"),sequence)||!c::json_bool(lookup->get("source_present"),present))return c::Error::invalid_message;
-            return state.control->owned_input_result(sender,generation,sequence,present)?c::Error::none:c::Error::queue_full;
-        }
-        s::OwnedAdapterSnapshot report;return c::parse_owned_snapshot(*envelope.payload.get("snapshot"),report)&&accept_report(sender,report)?c::Error::none:c::Error::invalid_message;
+        const auto* snapshot=envelope.payload.get("snapshot");s::OwnedAdapterSnapshot report;
+        return snapshot&&c::closed(envelope.payload,{"snapshot"})&&c::parse_owned_snapshot(*snapshot,report)&&accept_report(sender,report)?c::Error::none:c::Error::invalid_message;
     }
     if(envelope.kind!=c::Kind::scoped_intent||!c::runtime_status().member)return c::Error::unauthorized_role;
-    s::OwnedIntent intent;s::ExecutionLeaseId lease;
-    if(c::parse_owned_intent(envelope.payload,intent,lease)!=c::Error::none||intent.target.port.octopus_id!=state.control->octopus_id()||intent.target.port.consortium_id!=state.control->consortium_id())return c::Error::target_not_local;
+    s::OwnedIntent intent;
+    if(c::parse_owned_intent(envelope.payload,intent)!=c::Error::none)return c::Error::invalid_message;
+    if(intent.kind==s::OwnedIntentKind::key_edges){intent.target.port.consortium_id=envelope.consortium_id;intent.target.port.octopus_id=envelope.destination_octopus_id;}
+    if(intent.target.port.octopus_id!=state.control->octopus_id()||intent.target.port.consortium_id!=state.control->consortium_id())return c::Error::target_not_local;
     s::OwnedAuthorization auth{sender,envelope.origin_boot_id,envelope.destination_boot_id,link,envelope.config_revision,deadline};
-    auth.authority=intent.kind==s::OwnedIntentKind::key_down?s::OwnedAuthority::realtime:intent.kind==s::OwnedIntentKind::key_up?s::OwnedAuthority::cleanup:s::OwnedAuthority::control;
+    auth.authority=intent.kind==s::OwnedIntentKind::key_edges?(intent.edge_count==1&&!intent.edges[0].down?s::OwnedAuthority::cleanup:s::OwnedAuthority::input):s::OwnedAuthority::control;
     const auto admitted=state.control->submit_owned(intent,auth);
-    if(intent.kind==s::OwnedIntentKind::source_input&&admitted.code!=s::AdmissionCode::pending)
-        return input_result(intent,auth,admitted)?c::Error::none:c::Error::queue_full;
-    switch(admitted.code){case s::AdmissionCode::accepted:case s::AdmissionCode::pending:return c::Error::none;case s::AdmissionCode::overloaded:return c::Error::queue_full;case s::AdmissionCode::expired:return c::Error::lease_expired;case s::AdmissionCode::unresolved:return c::Error::none;case s::AdmissionCode::unauthorized:return c::Error::unauthorized_role;case s::AdmissionCode::stale:return c::Error::stale_boot;default:return c::Error::invalid_message;}
+    if(intent.kind==s::OwnedIntentKind::key_edges&&
+       admitted.code!=s::AdmissionCode::accepted&&admitted.code!=s::AdmissionCode::pending)
+        ESP_LOGW("system_sync","Key rejected phase=owner key=%u generation=%llu admission=%d",
+            static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),static_cast<int>(admitted.code));
+    switch(admitted.code){case s::AdmissionCode::accepted:case s::AdmissionCode::pending:return c::Error::none;case s::AdmissionCode::overloaded:return c::Error::queue_full;case s::AdmissionCode::expired:return c::Error::expired;case s::AdmissionCode::unresolved:return c::Error::none;case s::AdmissionCode::unauthorized:return c::Error::unauthorized_role;case s::AdmissionCode::stale:return c::Error::stale_boot;default:return c::Error::invalid_message;}
 }
 bool disconnected(s::OctopusId owner,s::BootId boot,s::LinkId link){
     if(!state.control->fence_owned(owner,link))return false;
@@ -141,7 +134,11 @@ bool restart_session(s::OctopusId owner,s::BootId boot,s::LinkId link){
 }
 bool send(const s::OwnedIntent& intent){
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.maintenance.count(intent.target.port.octopus_id))return false;}
-    return c::runtime_send_owned(intent)==ESP_OK;
+    const auto result=c::runtime_send_owned(intent);
+    if(result!=ESP_OK&&intent.kind==s::OwnedIntentKind::key_edges)
+        ESP_LOGW("system_sync","Key rejected phase=transport key=%u generation=%llu error=%d",
+            static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),static_cast<int>(result));
+    return result==ESP_OK;
 }
 void flush_reports(){
     std::vector<s::OwnedAdapterSnapshot> reports;
@@ -196,11 +193,10 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
     const auto created=xTaskCreate(worker,"system_sync",12288,nullptr,2,nullptr);
 #endif
     if(created!=pdPASS){
-        c::runtime_control_hooks({});control.set_owned_sender({});control.set_owned_observer({});control.set_owned_authorizer({});control.set_owned_deadline({});control.set_owned_input_observer({});
+        c::runtime_control_hooks({});control.set_owned_sender({});control.set_owned_observer({});control.set_owned_authorizer({});control.set_owned_deadline({});
         std::lock_guard<std::mutex> guard(state.mutex);state.control=nullptr;return ESP_ERR_NO_MEM;
     }
     control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);control.set_owned_deadline(c::runtime_owned_deadline);
-    control.set_owned_input_observer([](const auto& intent,const auto& auth,const auto& result){input_result(intent,auth,result);});
     c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner,uint64_t revision,std::function<void(s::OwnedContextResult)> completed){return state.control->refresh_owned_context(owner,revision,std::move(completed));},[]{return state.control->executing_configuration_revision();},configuration_snapshot,retry_report,restart_session});return ESP_OK;
 }
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,

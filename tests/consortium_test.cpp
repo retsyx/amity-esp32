@@ -44,52 +44,87 @@ void frame_tests(std::string_view body){
 
 LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),1,7};}
 HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.coordinator_epoch=s.epoch;h.config_revision=s.config_revision;h.required_capabilities=known_capabilities;return h;}
-Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.message_id=ident<m::MessageId>(10);e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::heartbeat;return e;}
-std::string packet(const LinkScope& s,Kind kind,const std::string& payload){return "{\"protocol_version\":1,\"consortium_id\":\""+s.consortium_id.str()+"\",\"message_id\":\""+ident<m::MessageId>(10).str()+"\",\"origin_octopus_id\":\""+s.peer_id.str()+"\",\"origin_boot_id\":\""+s.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+s.local_id.str()+"\",\"destination_boot_id\":\""+s.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"7\",\"kind\":\""+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
-m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::power;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=x.sequence=1;x.on=true;return x;}
+Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::heartbeat;return e;}
+std::string packet(const LinkScope& s,Kind kind,const std::string& payload){return "{\"protocol_version\":1,\"consortium_id\":\""+s.consortium_id.str()+"\",\"origin_octopus_id\":\""+s.peer_id.str()+"\",\"origin_boot_id\":\""+s.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+s.local_id.str()+"\",\"destination_boot_id\":\""+s.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"7\",\"kind\":\""+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
+m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::activity;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=1;x.selected=true;x.source=x.target;return x;}
 void envelope_tests(const std::string& body){
-    Envelope out;assert(parse_envelope(body,out)==Error::none);
+    Envelope out;assert(parse_envelope(body,out)==Error::none);m::OwnedIntent decoded;
     const auto* arguments=out.payload.get("arguments");
-    assert(arguments&&closed(*arguments,{"on"}));
-    m::OwnedIntent decoded;m::ExecutionLeaseId lease;
-    assert(parse_owned_intent(out.payload,decoded,lease)==Error::none&&decoded.kind==m::OwnedIntentKind::power&&decoded.on);
-    assert(parse_envelope(replace(body,"\"on\":true","\"on\":false"),out)==Error::none);
-    assert(parse_owned_intent(out.payload,decoded,lease)==Error::none&&!decoded.on);
-    auto input=action(scope());input.kind=m::OwnedIntentKind::source_input;
-    input.display=m::QualifiedDeviceName{{scope().consortium_id,scope().peer_id,1,m::Side::front},"TV"};
-    const auto selected=packet(scope(),Kind::scoped_intent,owned_intent_json(input,ident<m::ExecutionLeaseId>(14)));
-    Envelope routed;assert(parse_envelope(selected,routed)==Error::none);
-    assert(parse_owned_intent(routed.payload,decoded,lease)==Error::none&&decoded.display==input.display);
-    assert(parse_envelope(replace(selected,"\"arguments\":{\"display\":"+name_json(*input.display)+"}","\"arguments\":{}"),routed)==Error::invalid_message);
-    input.display->port.consortium_id=ident<m::ConsortiumId>(99);
-    assert(owned_intent_json(input,ident<m::ExecutionLeaseId>(14)).empty());
-    assert(parse_envelope(replace(body,"\"arguments\":{\"on\":true}","\"arguments\":{}"),out)==Error::invalid_message);
-    for(const auto* invalid:{"0","01","18446744073709551616"})assert(parse_envelope(replace(body,"\"sequence\":\"1\"","\"sequence\":\""+std::string(invalid)+"\""),out)==Error::invalid_message);
+    assert(arguments&&closed(*arguments,{"selected","source_changed","source","audio","display","switch_device","input","repair"}));
+    assert(parse_owned_intent(out.payload,decoded)==Error::none&&decoded.kind==m::OwnedIntentKind::activity&&decoded.selected&&!decoded.repair);
+    assert(parse_envelope(replace(body,"\"repair\":false","\"repair\":true"),out)==Error::none);
+    assert(parse_owned_intent(out.payload,decoded)==Error::none&&decoded.repair);
+    auto input=action(scope());input.display=m::QualifiedDeviceName{{scope().consortium_id,scope().peer_id,1,m::Side::front},"TV"};
+    const auto selected=packet(scope(),Kind::scoped_intent,owned_intent_json(input));Envelope routed;
+    assert(parse_envelope(selected,routed)==Error::none&&parse_owned_intent(routed.payload,decoded)==Error::none&&decoded.display==input.display);
+    input.display->port.consortium_id=ident<m::ConsortiumId>(99);assert(owned_intent_json(input).empty());
+    auto key=action(scope());key.kind=m::OwnedIntentKind::key_edges;key.edge_count=1;key.edges[0]={4,true};
+    Json key_payload;JsonError key_error;assert(parse_json(owned_intent_json(key),key_payload,key_error));
+    assert(closed(key_payload,{"generation","action","arguments"})&&closed(*key_payload.get("arguments"),{"edges"}));
+    assert(parse_owned_intent(key_payload,decoded)==Error::none&&decoded.edge_count==1&&decoded.edges[0].key==4&&decoded.edges[0].down);
+    key.edges[0].down=false;assert(parse_json(owned_intent_json(key),key_payload,key_error));
+    assert(closed(key_payload,{"generation","action","arguments"})&&closed(*key_payload.get("arguments"),{"edges"}));
+    assert(parse_owned_intent(key_payload,decoded)==Error::none&&decoded.edge_count==1&&decoded.edges[0].key==4&&!decoded.edges[0].down);
+    assert(parse_envelope(replace(body,"\"repair\":false","\"obsolete_repair\":false"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":0"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"config_revision\":\"7\"","\"config_revision\":7"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"config_revision\":\"7\"","\"config_revision\":\"07\""),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"protocol_version\":1","\"protocol_version\":2"),out)==Error::protocol_mismatch);
     assert(parse_envelope(replace(body,"\"kind\":\"scoped_intent\"","\"kind\":\"raw_cec\""),out)==Error::unsupported_kind);
-    assert(parse_envelope(replace(body,"\"on\":true","\"on\":1"),out)==Error::invalid_message);
-    assert(parse_envelope(replace(body,"\"on\":true","\"on\":true,\"toggle\":true"),out)==Error::invalid_message);
+    assert(parse_envelope(replace(body,"\"repair\":false","\"repair\":1"),out)==Error::invalid_message);
+    assert(parse_envelope(replace(body,"\"repair\":false","\"repair\":false,\"toggle\":true"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":1000,\"extra\":false"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":1000,\"ttl_ms\":10"),out)==Error::invalid_message);
 }
 void session_tests(){
-    const auto s=scope();auto h=hello(s);Session session;auto e=envelope(s);e.kind=Kind::scoped_intent;const auto lease=ident<m::ExecutionLeaseId>(14);auto intent=action(s);JsonError detail;assert(parse_json(owned_intent_json(intent,lease),e.payload,detail));
+    const auto s=scope();auto h=hello(s);Session session;auto e=envelope(s);e.kind=Kind::scoped_intent;auto intent=action(s);JsonError detail;assert(parse_json(owned_intent_json(intent),e.payload,detail));
     assert(session.authenticate(s,ident<m::OctopusId>(99),PeerRole::coordinator,true)==Error::identity_conflict);assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,true)==Error::none);assert(session.admit(e,0,0)==Error::not_ready);
     h.required_capabilities|=0x80000000u;assert(session.hello(h,known_capabilities)==Error::protocol_mismatch);h=hello(s);assert(session.hello(h,known_capabilities)==Error::none);assert(session.synchronized(7,true,false)==Error::not_ready);assert(session.synchronized(8,true,true)==Error::stale_config);assert(session.synchronized(7,true,true)==Error::none);
-    assert(session.admit(e,100,100)==Error::lease_expired);assert(session.execution_leases().issue(lease,LeaseClass::control,5000,100)==Error::none);assert(session.admit(e,100,101)==Error::none);assert(session.admit(e,100,102)==Error::duplicate);
-    e.message_id=ident<m::MessageId>(15);assert(session.admit(e,5100,5100)==Error::lease_expired);
-    const auto next=ident<m::ExecutionLeaseId>(16);assert(session.execution_leases().issue(next,LeaseClass::control,5000,5200)==Error::none);assert(parse_json(owned_intent_json(intent,next),e.payload,detail));
-    for(unsigned n=0;n<6;++n){auto bad=e;switch(n){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.coordinator_epoch=2;break;case 3:bad.origin_octopus_id=ident<m::OctopusId>(99);break;case 4:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 5:bad.config_revision=8;break;}assert(session.admit(bad,5200,5200,false)!=Error::none);}
-    intent.kind=m::OwnedIntentKind::key_down;intent.repeat=true;intent.key=4;intent.token=ident<m::HoldToken>(90);assert(parse_json(owned_intent_json(intent,next),e.payload,detail));assert(session.admit(e,5200,5200,false)==Error::lease_expired);
-    const auto realtime=ident<m::ExecutionLeaseId>(17);assert(session.execution_leases().issue(realtime,LeaseClass::realtime_input,500,5200)==Error::none);assert(parse_json(owned_intent_json(intent,realtime),e.payload,detail));assert(session.admit(e,5200,5200,false)==Error::none);assert(session.admit(e,5200,5700,false)==Error::lease_expired);
-    intent.kind=m::OwnedIntentKind::key_up;assert(parse_json(owned_intent_json(intent,realtime),e.payload,detail));assert(session.admit(e,5700,5700,false)==Error::none); // Exact-token cleanup needs no renewed positive-work lease.
-    for(unsigned i=20;i<23;++i)assert(session.execution_leases().issue(ident<m::ExecutionLeaseId>(i),LeaseClass::realtime_input,500,5800+i)==Error::none);assert(session.execution_leases().live(LeaseClass::realtime_input,5850)==2);
-    session.disconnect();assert(session.admit(e,6000,6000)==Error::not_ready);assert(session.execution_leases().live(LeaseClass::control,6000)==0);
+    assert(session.admit(e,100,101)==Error::none);assert(session.admit(e,100,102)==Error::none);
+    // An authenticated current original controller needs no renewed grant,
+    // including after an idle interval beyond the previous grant period.
+    assert(session.admit(e,5100,5100)==Error::none);
+    assert(session.admit(e,5100,5000)==Error::invalid_message&&session.admit(e,5100,15100)==Error::invalid_message);
+    for(unsigned n=0;n<6;++n){auto bad=e;switch(n){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.coordinator_epoch=2;break;case 3:bad.origin_octopus_id=ident<m::OctopusId>(99);break;case 4:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 5:bad.config_revision=8;break;}assert(session.admit(bad,5200,5200)!=Error::none);}
+    intent.kind=m::OwnedIntentKind::key_edges;intent.edge_count=1;intent.edges[0]={4,true};assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5200,5200)==Error::none);
+    assert(session.admit(e,5200,15200)==Error::invalid_message);
+    intent.edges[0].down=false;assert(parse_json(owned_intent_json(intent),e.payload,detail));assert(session.admit(e,5700,5700)==Error::none);
+    session.disconnect();assert(session.admit(e,6000,6000)==Error::not_ready);
     assert(session.authenticate(s,s.peer_id,PeerRole::coordinator,false)==Error::none&&session.hello(h,known_capabilities)==Error::none);assert(session.admit(e,0,0)==Error::unauthorized_role);
     auto unknown=s;unknown.peer_boot_id={};assert(session.authenticate(unknown,s.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(h,known_capabilities)==Error::none&&session.scope().peer_boot_id==s.peer_boot_id);
+}
+void owner_activity_selection_tests(){
+    auto request=action(scope());request.target.osd_name.clear();Json value;JsonError detail;m::OwnedIntent decoded;
+    for(bool selected:{false,true})for(bool repair:{false,true}){
+        request.selected=selected;request.repair=repair;request.activity_step=true;
+        assert(parse_json(owned_intent_json(request),value,detail)&&parse_owned_intent(value,decoded)==Error::none);
+        assert(decoded.selected==selected&&decoded.repair==repair&&decoded.source==request.source&&!decoded.activity_step);
+        assert(!value.get("activity_step"));
+    }
+    value.object.emplace_back("activity_step",Json{});assert(parse_owned_intent(value,decoded)==Error::invalid_message);
+    for(auto kind:{m::OwnedIntentKind::power,m::OwnedIntentKind::source_input,m::OwnedIntentKind::switch_input,m::OwnedIntentKind::announce_active_source,m::OwnedIntentKind::query_audio,m::OwnedIntentKind::standby_wire}){
+        request.kind=kind;assert(owned_intent_json(request).empty());
+    }
+    Json retired;assert(parse_json("{\"action_result\":{}}",retired,detail)&&!valid_owned_result(retired));
+}
+void raw_key_edge_tests(){
+    auto key=action(scope());key.kind=m::OwnedIntentKind::key_edges;key.edge_count=2;key.edges={{{0,true},{0,false}}};
+    Json value;JsonError detail;m::OwnedIntent decoded;
+    assert(parse_json(owned_intent_json(key),value,detail)&&parse_owned_intent(value,decoded)==Error::none);
+    assert(decoded.edge_count==2&&decoded.edges[0].key==0&&decoded.edges[0].down&&!decoded.edges[1].down&&!decoded.target.port.octopus_id);
+    assert(closed(value,{"generation","action","arguments"}));
+    auto bad=value;bad.object.emplace_back("target",Json{});assert(parse_owned_intent(bad,decoded)==Error::invalid_message);
+    for(const auto& edges:{std::string("[]"),std::string("[{\"key\":0,\"down\":true},{\"key\":1,\"down\":false}]"),
+        std::string("[{\"key\":0,\"down\":false},{\"key\":0,\"down\":true}]"),std::string("[{\"key\":0,\"down\":true},{\"key\":0,\"down\":true}]"),
+        std::string("[{\"key\":256,\"down\":true}]"),std::string("[{\"key\":0,\"down\":1}]"),std::string("[{\"key\":0,\"down\":true,\"repeat\":true}]"),
+        std::string("[{\"key\":0,\"down\":true},{\"key\":0,\"down\":false},{\"key\":0,\"down\":false}]")}){
+        assert(parse_json("{\"generation\":\"1\",\"action\":\"key_edges\",\"arguments\":{\"edges\":"+edges+"}}",bad,detail));
+        assert(parse_owned_intent(bad,decoded)==Error::invalid_message);
+    }
+    for(const auto* old:{"key_down","key_up"}){
+        assert(parse_json("{\"generation\":\"1\",\"action\":\""+std::string(old)+"\",\"arguments\":{\"key\":0}}",bad,detail));
+        assert(parse_owned_intent(bad,decoded)==Error::invalid_message);
+    }
 }
 void synchronization_tests(){
     const auto original=scope();JsonError detail;
@@ -113,44 +148,42 @@ void synchronization_tests(){
         assert(value.authenticate(sc,sc.peer_id,role,active)==Error::none&&value.hello(h,known_capabilities)==Error::none);
     };
     Session member;start(member);
-    assert(member.state()==ConnectionState::synchronizing&&member.admit(begin,100,100,false)==Error::none);
-    for(const auto revision:{6u,8u,99u}){auto barrier=begin;barrier.config_revision=revision;assert(member.admit(barrier,100,100,false)==Error::none);}
-    auto ordinary=envelope(original);ordinary.config_revision=8;assert(member.admit(ordinary,100,100,false)==Error::stale_config);
-    for(unsigned field=0;field<10;++field){auto bad=begin;switch(field){
+    assert(member.state()==ConnectionState::synchronizing&&member.admit(begin,100,100)==Error::none);
+    for(const auto revision:{6u,8u,99u}){auto barrier=begin;barrier.config_revision=revision;assert(member.admit(barrier,100,100)==Error::none);}
+    auto ordinary=envelope(original);ordinary.config_revision=8;assert(member.admit(ordinary,100,100)==Error::stale_config);
+    for(unsigned field=0;field<9;++field){auto bad=begin;switch(field){
         case 0:bad.consortium_id=ident<m::ConsortiumId>(99);break;
         case 1:bad.origin_octopus_id=ident<m::OctopusId>(99);break;
         case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
         case 3:bad.origin_boot_id=ident<m::BootId>(99);break;
         case 4:bad.destination_boot_id=ident<m::BootId>(99);break;
         case 5:bad.coordinator_epoch=2;break;
-        case 6:bad.message_id={};break;
-        case 7:bad.ttl_ms=0;break;
-        case 8:bad.ttl_ms=10001;break;
-        case 9:bad.config_revision=0;break;
-    }assert(member.admit(bad,100,100,false)!=Error::none);}
-    assert(member.admit(begin,100,99,false)==Error::invalid_message&&member.admit(begin,100,1100,false)==Error::invalid_message);
+        case 6:bad.ttl_ms=0;break;
+        case 7:bad.ttl_ms=10001;break;
+        case 8:bad.config_revision=0;break;
+    }assert(member.admit(bad,100,100)!=Error::none);}
+    assert(member.admit(begin,100,99)==Error::invalid_message&&member.admit(begin,100,1100)==Error::invalid_message);
     assert(member.admit(begin,100,100)==Error::none);
     assert(member.synchronized(7,true,true)==Error::none);
-    const auto lease=ident<m::ExecutionLeaseId>(121);assert(member.execution_leases().issue(lease,LeaseClass::control,5000,100)==Error::none);
     assert(member.begin_synchronization(8)==Error::none);
     auto expected=original;expected.config_revision=8;
-    assert(member.scope()==expected&&member.state()==ConnectionState::synchronizing&&member.execution_leases().live(LeaseClass::control,101)==0);
-    assert(member.begin_synchronization(8)==Error::none); // Same-revision retry keeps the stream and replay history.
+    assert(member.scope()==expected&&member.state()==ConnectionState::synchronizing);
+    assert(member.begin_synchronization(8)==Error::none); // Same-revision retry keeps the authenticated stream.
     assert(member.begin_synchronization(7)==Error::stale_config&&member.begin_synchronization(0)==Error::stale_config&&member.scope()==expected);
-    assert(member.admit(begin,100,101)==Error::duplicate);
-    auto stale_work=envelope(original);stale_work.message_id=ident<m::MessageId>(125);stale_work.kind=Kind::scoped_intent;
-    assert(parse_json(owned_intent_json(action(original),lease),stale_work.payload,detail));
-    assert(member.admit(stale_work,100,101,false)==Error::stale_config);
-    assert(member.discard_synchronization_frame(stale_work,100,101)==Error::none&&member.discard_synchronization_frame(stale_work,100,101)==Error::duplicate);
-    assert(member.state()==ConnectionState::synchronizing&&member.scope()==expected&&member.execution_leases().live(LeaseClass::control,101)==0);
-    assert(member.discard_stale(stale_work,100,101,false)==Error::not_ready);
-    auto current_work=stale_work;current_work.config_revision=8;current_work.message_id=ident<m::MessageId>(126);
-    assert(member.admit(current_work,100,101,false)==Error::unauthorized_role&&member.discard_synchronization_frame(current_work,100,101)==Error::none);
-    assert(member.admit(current_work,100,101,false)==Error::unauthorized_role); // Discard never changes operational admission.
-    assert(member.discard_synchronization_frame(begin,100,101,false)==Error::unsupported_kind);
-    assert(member.discard_synchronization_frame(stale_work,100,99,false)==Error::invalid_message&&member.discard_synchronization_frame(stale_work,100,10100,false)==Error::invalid_message);
-    for(const auto revision:{0u,9u}){auto invalid=stale_work;invalid.config_revision=revision;assert(member.discard_synchronization_frame(invalid,100,101,false)==Error::stale_config);}
-    auto malformed=stale_work;malformed.payload.object.emplace_back("extra",Json{});assert(member.discard_synchronization_frame(malformed,100,101,false)==Error::invalid_message);
+    assert(member.admit(begin,100,101)==Error::none);
+    auto stale_work=envelope(original);stale_work.kind=Kind::scoped_intent;
+    assert(parse_json(owned_intent_json(action(original)),stale_work.payload,detail));
+    assert(member.admit(stale_work,100,101)==Error::stale_config);
+    assert(member.discard_synchronization_frame(stale_work,100,101)==Error::none&&member.discard_synchronization_frame(stale_work,100,101)==Error::none);
+    assert(member.state()==ConnectionState::synchronizing&&member.scope()==expected);
+    assert(member.discard_stale(stale_work,100,101)==Error::not_ready);
+    auto current_work=stale_work;current_work.config_revision=8;
+    assert(member.admit(current_work,100,101)==Error::unauthorized_role&&member.discard_synchronization_frame(current_work,100,101)==Error::none);
+    assert(member.admit(current_work,100,101)==Error::unauthorized_role); // Discard never changes operational admission.
+    assert(member.discard_synchronization_frame(begin,100,101)==Error::unsupported_kind);
+    assert(member.discard_synchronization_frame(stale_work,100,99)==Error::invalid_message&&member.discard_synchronization_frame(stale_work,100,10100)==Error::invalid_message);
+    for(const auto revision:{0u,9u}){auto invalid=stale_work;invalid.config_revision=revision;assert(member.discard_synchronization_frame(invalid,100,101)==Error::stale_config);}
+    auto malformed=stale_work;malformed.payload.object.emplace_back("extra",Json{});assert(member.discard_synchronization_frame(malformed,100,101)==Error::invalid_message);
     for(unsigned field=0;field<6;++field){auto bad=stale_work;switch(field){
         case 0:bad.origin_boot_id=ident<m::BootId>(99);break;
         case 1:bad.destination_boot_id=ident<m::BootId>(99);break;
@@ -158,73 +191,56 @@ void synchronization_tests(){
         case 3:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
         case 4:bad.consortium_id=ident<m::ConsortiumId>(99);break;
         case 5:bad.coordinator_epoch=2;break;
-    }assert(member.discard_synchronization_frame(bad,100,101,false)!=Error::none);}
-    auto rollback=begin;rollback.message_id=ident<m::MessageId>(122);assert(parse_json(payload("begin",7),rollback.payload,detail));assert(member.admit(rollback,100,101,false)==Error::stale_config);
-    auto positive=envelope(expected);positive.message_id=ident<m::MessageId>(123);positive.kind=Kind::scoped_intent;assert(parse_json(owned_intent_json(action(expected),lease),positive.payload,detail));
-    assert(member.admit(positive,100,101,false)==Error::unauthorized_role);
-    auto heartbeat=envelope(expected);heartbeat.message_id=ident<m::MessageId>(124);assert(member.admit(heartbeat,100,101,false)==Error::none);
+    }assert(member.discard_synchronization_frame(bad,100,101)!=Error::none);}
+    auto rollback=begin;assert(parse_json(payload("begin",7),rollback.payload,detail));assert(member.admit(rollback,100,101)==Error::stale_config);
+    auto positive=envelope(expected);positive.kind=Kind::scoped_intent;assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
+    assert(member.admit(positive,100,101)==Error::unauthorized_role);
+    auto heartbeat=envelope(expected);assert(member.admit(heartbeat,100,101)==Error::none);
     assert(member.synchronized(7,true,true)==Error::stale_config&&member.synchronized(8,true,true)==Error::none);
-    assert(member.admit(positive,100,101,false)==Error::lease_expired);
-    assert(member.discard_synchronization_frame(stale_work,100,101,false)==Error::not_ready);
+    assert(member.admit(positive,100,101)==Error::none);
+    assert(member.discard_synchronization_frame(stale_work,100,101)==Error::not_ready);
     member.restrict_management();assert(member.begin_synchronization(8)==Error::none&&member.synchronized(8,true,true)==Error::none);
-    member.restrict_lifecycle();assert(member.begin_synchronization(8)==Error::not_ready&&member.admit(begin,100,101,false)==Error::unauthorized_role);
-    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.begin_synchronization(8)==Error::unsupported_kind&&no_chunks.admit(begin,100,100,false)==Error::unsupported_kind);
-    Session management;start(management,PeerRole::coordinator,known_capabilities&~live_configuration);assert(management.synchronized(7,true,true)==Error::none);management.restrict_management();assert(management.admit(begin,100,100,false)==Error::none&&management.begin_synchronization(8)==Error::none);
-    assert(management.discard_synchronization_frame(stale_work,100,101,false)==Error::none);
+    member.restrict_lifecycle();assert(member.begin_synchronization(8)==Error::not_ready&&member.admit(begin,100,101)==Error::unauthorized_role);
+    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.begin_synchronization(8)==Error::unsupported_kind&&no_chunks.admit(begin,100,100)==Error::unsupported_kind);
+    Session management;start(management,PeerRole::coordinator,known_capabilities&~live_configuration);assert(management.synchronized(7,true,true)==Error::none);management.restrict_management();assert(management.admit(begin,100,100)==Error::none&&management.begin_synchronization(8)==Error::none);
+    assert(management.discard_synchronization_frame(stale_work,100,101)==Error::none);
     Session controller;start(controller,PeerRole::actuator);assert(controller.begin_synchronization(8)==Error::none);
-    auto stale_lease=envelope(original);stale_lease.kind=Kind::execution_lease;
-    assert(parse_json("{\"lease_id\":\""+lease.str()+"\",\"link_id\":\""+original.link_id.str()+"\",\"class\":\"control\",\"validity_ms\":1000}",stale_lease.payload,detail));
-    assert(controller.admit(stale_lease,100,101,false)==Error::stale_config&&controller.discard_synchronization_frame(stale_lease,100,101,false)==Error::none);
-    assert(controller.execution_leases().live(LeaseClass::control,101)==0&&management.discard_synchronization_frame(stale_lease,100,101,false)==Error::unauthorized_role);
-    stale_lease.payload.get("link_id")->string=ident<m::LinkId>(99).str();assert(controller.discard_synchronization_frame(stale_lease,100,101,false)==Error::identity_conflict);
     for(const auto role:{PeerRole::coordinator,PeerRole::actuator}){
         Session value;start(value,role);
         for(const auto phase:{"begin","ack","reject"}){auto message=begin;assert(parse_json(payload(phase,8),message.payload,detail));
-            assert(value.admit(message,100,100,false)==((std::string_view(phase)=="begin")== (role==PeerRole::coordinator)?Error::none:Error::unauthorized_role));
+            assert(value.admit(message,100,100)==((std::string_view(phase)=="begin")== (role==PeerRole::coordinator)?Error::none:Error::unauthorized_role));
         }
     }
-    for(const auto role:{PeerRole::coordinator,PeerRole::provisional_candidate}){Session passive;start(passive,role,known_capabilities,false);assert(passive.begin_synchronization(8)==Error::not_ready&&passive.admit(begin,100,100,false)==Error::unauthorized_role);}
+    for(const auto role:{PeerRole::coordinator,PeerRole::provisional_candidate}){Session passive;start(passive,role,known_capabilities,false);assert(passive.begin_synchronization(8)==Error::not_ready&&passive.admit(begin,100,100)==Error::unauthorized_role);}
     Session negotiating;assert(negotiating.authenticate(original,original.peer_id,PeerRole::coordinator,true)==Error::none&&negotiating.begin_synchronization(8)==Error::not_ready);
 }
 void logical_session_restart_tests(){
     const auto original=scope();Session session;JsonError detail;
     assert(session.authenticate(original,original.peer_id,PeerRole::coordinator,true)==Error::none);
     assert(session.hello(hello(original),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);
-    auto remembered=envelope(original);remembered.message_id=ident<m::MessageId>(140);
+    auto remembered=envelope(original);
     assert(session.admit(remembered,100,100)==Error::none);
-    const auto old_lease=ident<m::ExecutionLeaseId>(141),fresh_lease=ident<m::ExecutionLeaseId>(142);
-    assert(session.execution_leases().issue(old_lease,LeaseClass::control,5000,100)==Error::none);
-    assert(session.execution_leases().valid(old_lease,LeaseClass::control,original,101));
     const auto logical_link=ident<m::LinkId>(143);
     assert(session.begin_synchronization(7,logical_link)==Error::none);
     auto expected=original;expected.link_id=logical_link;
     assert(session.scope()==expected&&session.state()==ConnectionState::synchronizing);
-    assert(session.execution_leases().live(LeaseClass::control,101)==0);
-    assert(!session.execution_leases().valid(old_lease,LeaseClass::control,original,101)
-        &&!session.execution_leases().valid(old_lease,LeaseClass::control,expected,101));
-    assert(session.admit(remembered,100,101)==Error::duplicate); // Changing logical scope never erases replay history.
-    auto positive=envelope(expected);positive.message_id=ident<m::MessageId>(144);positive.kind=Kind::scoped_intent;
-    assert(parse_json(owned_intent_json(action(expected),old_lease),positive.payload,detail));
-    assert(session.admit(positive,100,101,false)==Error::unauthorized_role);
-    assert(session.synchronized(7,true,true)==Error::none&&session.admit(positive,100,101,false)==Error::lease_expired);
-    assert(session.execution_leases().issue(fresh_lease,LeaseClass::control,5000,101)==Error::none);
-    assert(!session.execution_leases().valid(fresh_lease,LeaseClass::control,original,102)
-        &&session.execution_leases().valid(fresh_lease,LeaseClass::control,expected,102));
-    assert(parse_json(owned_intent_json(action(expected),fresh_lease),positive.payload,detail));
-    assert(session.admit(positive,100,102,false)==Error::none);
-    auto foreign=positive;foreign.origin_boot_id=ident<m::BootId>(99);assert(session.admit(foreign,100,102,false)==Error::stale_boot);
-    foreign=positive;foreign.config_revision=6;assert(session.admit(foreign,100,102,false)==Error::stale_config);
-    assert(session.begin_synchronization(7,logical_link)==Error::identity_conflict&&session.scope()==expected
-        &&session.state()==ConnectionState::ready&&session.execution_leases().valid(fresh_lease,LeaseClass::control,expected,102));
+    assert(session.admit(remembered,100,101)==Error::none); // Ordinary heartbeats remain admissible during synchronization.
+    auto positive=envelope(expected);positive.kind=Kind::scoped_intent;
+    assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
+    assert(session.admit(positive,100,101)==Error::unauthorized_role);
+    assert(session.synchronized(7,true,true)==Error::none&&session.admit(positive,100,101)==Error::none);
+    auto foreign=positive;foreign.origin_boot_id=ident<m::BootId>(99);assert(session.admit(foreign,100,102)==Error::stale_boot);
+    foreign=positive;foreign.config_revision=6;assert(session.admit(foreign,100,102)==Error::stale_config);
+    assert(session.begin_synchronization(7,logical_link)==Error::identity_conflict&&session.scope()==expected&&session.state()==ConnectionState::ready);
     assert(session.begin_synchronization(6,ident<m::LinkId>(145))==Error::stale_config&&session.scope()==expected);
     assert(session.begin_synchronization(8,ident<m::LinkId>(145))==Error::none);
     expected.link_id=ident<m::LinkId>(145);expected.config_revision=8;
-    assert(session.scope()==expected&&session.execution_leases().live(LeaseClass::control,102)==0);
+    assert(session.scope()==expected&&session.state()==ConnectionState::synchronizing);
 }
 void original_controller_tests(){
     using namespace amity::consortium::platform;const auto local=ident<m::OctopusId>(2);Group group;assert(controller_membership_compatible(group)&&!original_controller(group,local));group.role=Group::coordinator;group.authority=local;group.epoch=1;assert(original_controller(group,local)&&!original_controller(group,ident<m::OctopusId>(3)));
     for(auto role:{Group::member,Group::prepared,Group::retired}){group.role=role;assert(controller_membership_compatible(group)&&!original_controller(group,local));}group.role=Group::coordinator;group.epoch=2;assert(!controller_membership_compatible(group));
-    for(auto role:{PeerRole::coordinator,PeerRole::actuator}){const auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(unsigned number:{2u,3u,4u,5u,6u,12u,13u,18u,19u,20u,21u,22u,23u,24u,25u,26u,33u,34u,35u,36u}){auto e=envelope(sc);e.kind=static_cast<Kind>(number);assert(retired_kind(e.kind)&&session.admit(e,100,100,false)==Error::unauthorized_role);}}}
+    for(auto role:{PeerRole::coordinator,PeerRole::actuator}){const auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(unsigned number:{1u,2u,3u,4u,5u,6u,12u,13u,18u,19u,20u,21u,22u,23u,24u,25u,26u,33u,34u,35u,36u}){auto e=envelope(sc);e.kind=static_cast<Kind>(number);assert(retired_kind(e.kind)&&session.admit(e,100,100)==Error::unauthorized_role);}}}
     auto profile=hello(scope());assert(execution_profile_supported(profile,true,true,4,15));profile.required_capabilities&=~qualified_lookup;assert(!execution_profile_supported(profile,true,true,1,1));profile.optional_capabilities|=qualified_lookup;assert(execution_profile_supported(profile,true,true,1,1));assert(!execution_profile_supported(profile,false,true,1,1)&&!execution_profile_supported(profile,true,false,4,15));
     profile.required_capabilities&=~live_configuration;assert(!execution_profile_supported(profile,true,true,4,15));profile.optional_capabilities|=live_configuration;assert(execution_profile_supported(profile,true,true,4,15));
 }
@@ -237,60 +253,52 @@ void live_configuration_tests(){
     start(session);
     auto heartbeat=envelope(old);assert(parse_json("{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}",heartbeat.payload,detail));
     assert(session.admit(heartbeat,100,100)==Error::none);
-    const auto prior=ident<m::ExecutionLeaseId>(71);assert(session.execution_leases().issue(prior,LeaseClass::control,5000,100)==Error::none);
     for(auto invalid:{0u,6u,7u})assert(session.advance_configuration(invalid)==Error::stale_config);
     assert(session.advance_configuration(8)==Error::none);
     auto current=old;current.config_revision=8;assert(session.scope()==current&&session.state()==ConnectionState::ready);
-    assert(session.execution_leases().live(LeaseClass::control,101)==0&&!session.execution_leases().valid(prior,LeaseClass::control,current,101));
-    assert(session.discard_stale(heartbeat,100,101)==Error::duplicate); // Replay history survived the revision change.
-    heartbeat.config_revision=8;assert(session.admit(heartbeat,100,101)==Error::duplicate);
-    auto intent=envelope(current);intent.message_id=ident<m::MessageId>(72);intent.kind=Kind::scoped_intent;
-    assert(parse_json(owned_intent_json(action(current),prior),intent.payload,detail));
-    assert(session.admit(intent,101,101,false)==Error::lease_expired); // No lease transplant.
-    const auto fresh=ident<m::ExecutionLeaseId>(73);assert(session.execution_leases().issue(fresh,LeaseClass::control,5000,101)==Error::none);
-    assert(parse_json(owned_intent_json(action(current),fresh),intent.payload,detail));assert(session.admit(intent,101,102)==Error::none);
-    auto stale=envelope(old);stale.message_id=ident<m::MessageId>(74);stale.payload=heartbeat.payload;
+    assert(session.discard_stale(heartbeat,100,101)==Error::none); // Obsolete observations are discarded without executing them.
+    heartbeat.config_revision=8;assert(session.admit(heartbeat,100,101)==Error::none);
+    auto intent=envelope(current);intent.kind=Kind::scoped_intent;
+    assert(parse_json(owned_intent_json(action(current)),intent.payload,detail));
+    assert(session.admit(intent,101,101)==Error::none); // Current synchronized authority is sufficient.
+    assert(parse_json(owned_intent_json(action(current)),intent.payload,detail));assert(session.admit(intent,101,102)==Error::none);
+    auto stale=envelope(old);stale.payload=heartbeat.payload;
     assert(session.admit(stale,100,102)==Error::stale_config);
-    assert(session.discard_stale(stale,100,102,false)==Error::none&&session.discard_stale(stale,100,102)==Error::none);
-    assert(session.discard_stale(stale,100,103)==Error::duplicate);
-    stale.config_revision=8;assert(session.admit(stale,100,103)==Error::duplicate);
-    stale.message_id=ident<m::MessageId>(75);
-    for(auto invalid:{0u,8u,9u}){stale.config_revision=invalid;assert(session.discard_stale(stale,100,103,false)==Error::stale_config);}
+    assert(session.discard_stale(stale,100,102)==Error::none&&session.discard_stale(stale,100,102)==Error::none);
+    assert(session.discard_stale(stale,100,103)==Error::none);
+    stale.config_revision=8;assert(session.admit(stale,100,103)==Error::none);
+
+    for(auto invalid:{0u,8u,9u}){stale.config_revision=invalid;assert(session.discard_stale(stale,100,103)==Error::stale_config);}
     stale.config_revision=7;
-    for(unsigned field=0;field<9;++field){auto bad=stale;switch(field){
+    for(unsigned field=0;field<8;++field){auto bad=stale;switch(field){
         case 0:bad.consortium_id=ident<m::ConsortiumId>(99);break;
         case 1:bad.origin_octopus_id=ident<m::OctopusId>(99);break;
         case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;
         case 3:bad.origin_boot_id=ident<m::BootId>(99);break;
         case 4:bad.destination_boot_id=ident<m::BootId>(99);break;
         case 5:bad.coordinator_epoch=2;break;
-        case 6:bad.message_id={};break;
-        case 7:bad.ttl_ms=0;break;
-        case 8:bad.ttl_ms=10001;break;
-    }assert(session.discard_stale(bad,100,103,false)!=Error::none);}
-    assert(session.discard_stale(stale,100,99,false)==Error::invalid_message&&session.discard_stale(stale,100,10100,false)==Error::invalid_message);
-    auto malformed=stale;malformed.payload.object.emplace_back("unknown",Json{});assert(session.discard_stale(malformed,100,103,false)==Error::invalid_message);
-    auto foreign=envelope(old);foreign.message_id=ident<m::MessageId>(76);foreign.kind=Kind::scoped_intent;auto target=action(old);target.target.port.octopus_id=old.peer_id;
-    assert(parse_json(owned_intent_json(target,prior),foreign.payload,detail));assert(session.discard_stale(foreign,100,103,false)==Error::target_not_local);
-    target=action(old);assert(parse_json(owned_intent_json(target,prior),foreign.payload,detail));
+        case 6:bad.ttl_ms=0;break;
+        case 7:bad.ttl_ms=10001;break;
+    }assert(session.discard_stale(bad,100,103)!=Error::none);}
+    assert(session.discard_stale(stale,100,99)==Error::invalid_message&&session.discard_stale(stale,100,10100)==Error::invalid_message);
+    auto malformed=stale;malformed.payload.object.emplace_back("unknown",Json{});assert(session.discard_stale(malformed,100,103)==Error::invalid_message);
+    auto foreign=envelope(old);foreign.kind=Kind::scoped_intent;auto target=action(old);target.target.port.octopus_id=old.peer_id;
+    assert(parse_json(owned_intent_json(target),foreign.payload,detail));assert(session.discard_stale(foreign,100,103)==Error::target_not_local);
+    target=action(old);assert(parse_json(owned_intent_json(target),foreign.payload,detail));
     assert(session.discard_stale(foreign,100,103)==Error::none); // Discarding obsolete work grants no execution authority.
-    assert(session.execution_leases().live(LeaseClass::control,104)==1);
-    auto snapshot=envelope(current);snapshot.message_id=ident<m::MessageId>(77);snapshot.kind=Kind::snapshot_request;
-    assert(session.admit(snapshot,100,104,false)==Error::none);snapshot.kind=Kind::snapshot_chunk;assert(session.admit(snapshot,100,104,false)==Error::none);
+    auto snapshot=envelope(current);snapshot.kind=Kind::snapshot_request;
+    assert(session.admit(snapshot,100,104)==Error::none);snapshot.kind=Kind::snapshot_chunk;assert(session.admit(snapshot,100,104)==Error::none);
     Session missing;start(missing,PeerRole::coordinator,known_capabilities&~live_configuration);
-    assert(missing.advance_configuration(8)==Error::unsupported_kind&&missing.admit(snapshot,100,104,false)==Error::stale_config);
-    snapshot.config_revision=7;assert(missing.admit(snapshot,100,104,false)==Error::unauthorized_role);
-    missing.restrict_management();auto update=envelope(old);update.kind=Kind::update_begin;assert(missing.admit(update,100,104,false)==Error::none);
+    assert(missing.advance_configuration(8)==Error::unsupported_kind&&missing.admit(snapshot,100,104)==Error::stale_config);
+    snapshot.config_revision=7;assert(missing.admit(snapshot,100,104)==Error::unauthorized_role);
+    missing.restrict_management();auto update=envelope(old);update.kind=Kind::update_begin;assert(missing.admit(update,100,104)==Error::none);
     assert(missing.advance_configuration(8)==Error::not_ready); // Older peers remain update-capable, never operational.
-    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.admit(snapshot,100,104,false)==Error::unsupported_kind);
+    Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.admit(snapshot,100,104)==Error::unsupported_kind);
     Session actuator;start(actuator,PeerRole::actuator);assert(actuator.advance_configuration(8)==Error::none);
-    auto wrong_role=foreign;assert(actuator.discard_stale(wrong_role,100,104,false)==Error::unauthorized_role);
-    auto lease_frame=envelope(old);lease_frame.kind=Kind::execution_lease;lease_frame.message_id=ident<m::MessageId>(78);
-    assert(parse_json("{\"lease_id\":\""+prior.str()+"\",\"link_id\":\""+old.link_id.str()+"\",\"class\":\"control\",\"validity_ms\":1000}",lease_frame.payload,detail));
-    assert(actuator.discard_stale(lease_frame,100,104,false)==Error::none);lease_frame.payload.get("link_id")->string=ident<m::LinkId>(99).str();assert(actuator.discard_stale(lease_frame,100,104,false)==Error::identity_conflict);
+    auto wrong_role=foreign;assert(actuator.discard_stale(wrong_role,100,104)==Error::unauthorized_role);
     Session no_hostname;start(no_hostname,PeerRole::actuator,known_capabilities&~hostname_metadata);assert(no_hostname.advance_configuration(8)==Error::none);
-    auto name=envelope(old);name.kind=Kind::device_status;assert(parse_json("{\"hostname\":\"member\"}",name.payload,detail));assert(no_hostname.discard_stale(name,100,104,false)==Error::unsupported_kind);
-    session.restrict_lifecycle();assert(session.advance_configuration(9)==Error::not_ready&&session.discard_stale(stale,100,104,false)==Error::not_ready);
+    auto name=envelope(old);name.kind=Kind::device_status;assert(parse_json("{\"hostname\":\"member\"}",name.payload,detail));assert(no_hostname.discard_stale(name,100,104)==Error::unsupported_kind);
+    session.restrict_lifecycle();assert(session.advance_configuration(9)==Error::not_ready&&session.discard_stale(stale,100,104)==Error::not_ready);
     Session negotiating;assert(negotiating.authenticate(old,old.peer_id,PeerRole::coordinator,true)==Error::none);assert(negotiating.advance_configuration(8)==Error::not_ready);
 }
 void hello_profile_tests(){
@@ -352,18 +360,18 @@ void update_tests() {
         auto sc=scope();Session session;auto h=hello(sc);assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none);
         assert(session.hello(h,known_capabilities)==Error::none);
         auto e=envelope(sc);e.kind=Kind::update_begin;
-        assert(session.admit(e,100,100,false)!=Error::none); // Never before synchronization.
+        assert(session.admit(e,100,100)!=Error::none); // Never before synchronization.
         const auto synchronized=session.synchronized(7,true,true);
-        if(role==PeerRole::provisional_candidate) {assert(session.admit(e,100,100,false)!=Error::none);continue;}
+        if(role==PeerRole::provisional_candidate) {assert(session.admit(e,100,100)!=Error::none);continue;}
         assert(synchronized==Error::none);
-        assert(session.admit(e,100,100,false)==(role==PeerRole::coordinator?Error::none:Error::unauthorized_role));
+        assert(session.admit(e,100,100)==(role==PeerRole::coordinator?Error::none:Error::unauthorized_role));
         e.kind=Kind::update_result;
-        assert(session.admit(e,100,100,false)==(role==PeerRole::coordinator?Error::unauthorized_role:Error::none));
-        e.destination_boot_id=ident<m::BootId>(999);assert(session.admit(e,100,100,false)==Error::stale_boot);
+        assert(session.admit(e,100,100)==(role==PeerRole::coordinator?Error::unauthorized_role:Error::none));
+        e.destination_boot_id=ident<m::BootId>(999);assert(session.admit(e,100,100)==Error::stale_boot);
     }
     {auto sc=scope();Session management;auto peer=hello(sc);peer.required_capabilities=peer_firmware_update|lifecycle_journal;peer.optional_capabilities=0;
-     assert(management.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&management.hello(peer,known_capabilities)==Error::none&&management.synchronized(7,true,true)==Error::none);management.restrict_management();auto message=envelope(sc);message.kind=Kind::update_begin;assert(management.admit(message,0,0,false)==Error::none);
-     for(auto kind:{Kind::scoped_intent,static_cast<Kind>(2),static_cast<Kind>(18),static_cast<Kind>(7)}){message.kind=kind;assert(management.admit(message,0,0,false)!=Error::none);}assert(management.execution_leases().live(LeaseClass::control,1)==0);}
+     assert(management.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&management.hello(peer,known_capabilities)==Error::none&&management.synchronized(7,true,true)==Error::none);management.restrict_management();auto message=envelope(sc);message.kind=Kind::update_begin;assert(management.admit(message,0,0)==Error::none);
+     for(auto kind:{Kind::scoped_intent,static_cast<Kind>(2),static_cast<Kind>(18),static_cast<Kind>(7)}){message.kind=kind;assert(management.admit(message,0,0)!=Error::none);}}
 
     auto sc=scope();Session legacy;auto h=hello(sc);h.required_capabilities=known_capabilities&~peer_firmware_update;
     assert(legacy.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);
@@ -436,4 +444,4 @@ void bootstrap_tests(){
     records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());EnrollmentWindow window;assert(!window.open(false,0));assert(window.open(true,0));for(int i=0;i<5;++i){assert(window.admit(i));assert(!window.admit(i));window.failed_proof();}assert(!window.available(100));assert(window.open(true,100));assert(!window.available(180100));
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope()),ident<m::ExecutionLeaseId>(14)));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/lease/replay fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

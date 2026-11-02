@@ -32,7 +32,7 @@ int scripted_select(int,fd_set*,fd_set*,fd_set*,timeval*){
 '''
 SUITE=r'''
 namespace amity::consortium {
-model::OwnedIntent action(const Active& a){model::OwnedIntent i;i.kind=model::OwnedIntentKind::power;i.target={{a.session.scope().consortium_id,a.peer,0,model::Side::back},"Player"};i.generation=i.sequence=1;i.config_revision=7;i.on=true;return i;}
+model::OwnedIntent action(const Active& a){model::OwnedIntent i;i.kind=model::OwnedIntentKind::activity;i.target={{a.session.scope().consortium_id,a.peer,0,model::Side::back},"Player"};i.generation=1;i.config_revision=7;i.on=true;return i;}
 void pending_receive_keeps_pumping(){
  auto a=start(true);a->tls->socket=3;status.authority_ready=true;reset_worker();on_send={};unsigned polls=0;uint64_t admitted=0,budget=0;
  auto admit=[&]{auto i=std::make_shared<const model::OwnedIntent>(action(*a));admitted=clock_ms;assert(queue_control(a->peer,Kind::scoped_intent,{},1000,a->session.scope().link_id,7,i,admitted)==ESP_OK);};
@@ -87,7 +87,7 @@ void application_failures_restart_scope_without_replaying_work(){
 }
 void invalid_local_ipc_restarts_scope_without_sending_or_replaying(){
  auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto original=a->session.scope();const auto* tls=a->tls.get();
- auto malformed=action(*a);malformed.target.osd_name.clear();
+ auto malformed=action(*a);malformed.target.port.octopus_id={};
  auto work=std::make_shared<const model::OwnedIntent>(malformed);std::weak_ptr<const model::OwnedIntent> abandoned=work;
  a->queue.push_back({Kind::scoped_intent,{},1000,clock_ms,7,work});work.reset();
  a->tls->poller=[&](std::string& text){assert(recoveries==1);text=heartbeat;return FakeTls::ReceiveResult::frame;};
@@ -119,9 +119,9 @@ def main():
     recovery_end=source.index('\n    }',recovery_start)
     restart_start=source.index('        if(active->restart_requested){',source.index('void active_loop_work('))
     restart_end=source.index('\n',restart_start)
-    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){auto* active=&storage;const bool server=true;uint64_t heartbeat=100,renewal=200,control_renewal=300;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+'const auto now=now_ms();'+source[queue_start:receive_start]+source[receive_start:receive_end]+'timers_reset=heartbeat==0&&renewal==0&&control_renewal==0;return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){auto* active=&storage;const bool server=true;uint64_t heartbeat=100;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+'const auto now=now_ms();'+source[queue_start:receive_start]+source[receive_start:receive_end]+'timers_reset=heartbeat==0;return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
     helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
-    actual=function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(','static bool queued_cleanup(','static bool queued_causal('))
+    actual=function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(','static bool pure_key_release(', 'static bool queued_cleanup(','static bool queued_causal('))
     actual+=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual+=function(source,'static esp_err_t queue_control(')
     actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')
