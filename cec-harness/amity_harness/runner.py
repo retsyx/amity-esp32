@@ -1,6 +1,7 @@
 """Shared functional-test CLI, runtime configuration and private reporting."""
 
 import argparse
+from contextlib import nullcontext
 from functools import partial
 import json
 import logging
@@ -12,6 +13,7 @@ import time
 
 from .cec import CecSession
 from .config import RunConfig, track_testbeds, use_config
+from .status_led import run_status_led
 from .trace import event, failure_fields, stdio_logging, test_logging
 
 
@@ -93,6 +95,8 @@ def main(test, argv=None):
     parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
+    parser.add_argument("--no-status-led", action="store_true",
+                        help="leave the harness Pi's status LED unchanged")
     parser.add_argument("--output", type=Path, help="private JSON evidence under test-results/")
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO",
                         help="stderr detail: INFO progress (default), DEBUG also HTTP and CEC traffic")
@@ -127,23 +131,25 @@ def main(test, argv=None):
               log_level=args.log_level, operation_timeout_seconds=config.timeout,
               cec_timeout_seconds=config.cec_timeout)
         try:
-            reports = []
-            for group in selected.values():
-                for scenario in group:
-                    result = run_test(scenario, config)
-                    reports.append(result)
-                    if result["passed"]:
-                        print(f"PASS: {result['test']}", flush=True)
-                    else:
-                        # Exception text may contain server-echoed secrets or
-                        # private URLs. Detailed errors remain in the private
-                        # JSON report; stdio carries the type and source stack.
-                        print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
-                              file=sys.stderr, flush=True)
-            report = (reports[0] if len(reports) == 1 else
-                      {"passed": all(result["passed"] for result in reports), "tests": reports})
-            if args.output:
-                _write_report(args.output, report)
+            with (nullcontext() if args.no_status_led else
+                  run_status_led(host=args.harness_host, root=args.harness_root, port=args.ssh_port)):
+                reports = []
+                for group in selected.values():
+                    for scenario in group:
+                        result = run_test(scenario, config)
+                        reports.append(result)
+                        if result["passed"]:
+                            print(f"PASS: {result['test']}", flush=True)
+                        else:
+                            # Exception text may contain server-echoed secrets or
+                            # private URLs. Detailed errors remain in the private
+                            # JSON report; stdio carries the type and source stack.
+                            print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
+                                  file=sys.stderr, flush=True)
+                report = (reports[0] if len(reports) == 1 else
+                          {"passed": all(result["passed"] for result in reports), "tests": reports})
+                if args.output:
+                    _write_report(args.output, report)
             event("run.finish", passed=report["passed"], tests=len(reports),
                   duration_ms=round((time.monotonic() - started) * 1000, 3))
             if args.output:

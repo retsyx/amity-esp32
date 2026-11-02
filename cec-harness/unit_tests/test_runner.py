@@ -167,7 +167,8 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("backend_factory", config.session_factory.keywords)
             return {"test": test.__name__, "passed": True, "testbeds": []}
 
-        with patch("amity_harness.runner.run_test", side_effect=capture), redirect_stdout(io.StringIO()):
+        with patch("amity_harness.runner.run_test", side_effect=capture), \
+                patch("amity_harness.runner.run_status_led"), redirect_stdout(io.StringIO()):
             self.assertEqual(main(scenario, ["--credentials", "/private/main.json",
                                             "--harness-host", "pi@bench.example",
                                             "--harness-root", "/bench/harness root", "--ssh-port", "2222"]), 0)

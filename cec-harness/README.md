@@ -907,6 +907,14 @@ failures and cleanup. PASS/FAIL summaries go to stdout/stderr after each test.
 After writing the JSON report, the final `run.report` line gives its absolute
 path on successful and failed runs.
 
+The Pi's status LED blinks red while the functional runner is active, including
+test cleanup and report writing. Its previous LED triggers and brightness are
+restored when the run ends or its connection closes. Overlapping runs keep the
+indicator active until the last run finishes. This also works with
+`--harness-host`; LED writes use non-interactive `sudo` when needed. Unsupported
+hosts or unavailable LED permissions produce a diagnostic without changing test
+results. Use `--no-status-led` to leave the LEDs unchanged.
+
 Owner-proof failures retain the rejected check's bounded identity, boot,
 readiness and proof fields in stdio and `scans[].owner_failures` in the JSON
 report. Primary failure and cause stacks survive cleanup failures. Only
