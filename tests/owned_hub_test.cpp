@@ -110,6 +110,54 @@ static void observation_pressure(){
     run_one_command();const auto reports=hub.owned_snapshots();const auto found=std::find_if(reports.begin(),reports.end(),[](const auto& state){return state.owner==member;});assert(found!=reports.end()&&found->volume==99);
     for(unsigned n=1;n<32;++n)run_one_command();
 }
+static void removed_owner_snapshots_release_capacity(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    assert(hub.configure_scoped({{"Watch","display","source","source","",0}},{{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},{},controller,1)==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);fixture_tick=0;
+    const auto survivor=*m::OctopusId::parse("77777777777777777777777777777777");
+    m::OwnedAdapterSnapshot removed;removed.owner=member;removed.boot=boot;removed.ready=true;removed.devices={{m::Side::back,"Source",4}};
+    auto retained=removed;retained.owner=survivor;retained.devices[0].logical_address=8;
+    assert(hub.update_owned_snapshot(removed)&&hub.update_owned_snapshot(retained));run_idle(1);
+    const auto local_generation=hub.snapshot().discovery_generation;
+    const auto local_devices=hub.snapshot().devices;
+    const auto has_owner=[&](m::OctopusId owner){const auto reports=hub.owned_snapshots();return std::any_of(reports.begin(),reports.end(),[&](const auto& report){return report.owner==owner;});};
+    assert(has_owner(member)&&has_owner(survivor)&&has_owner(controller));
+
+    // Purge both a stored report and pending updates/new adapter reports for
+    // only the removed owner, before the worker can consume pending state.
+    removed.devices[0].logical_address=11;assert(hub.update_owned_snapshot(removed));
+    removed.adapter=1;assert(hub.update_owned_snapshot(removed));
+    retained.adapter=1;assert(hub.update_owned_snapshot(retained));
+    const auto sent=fixture_sent.size();hub.forget_owned_snapshots(member);
+    assert(!has_owner(member)&&has_owner(survivor)&&has_owner(controller)&&fixture_sent.size()==sent);
+    run_idle(1);
+    assert(!has_owner(member)&&has_owner(survivor)&&has_owner(controller));
+    const auto remaining=hub.owned_snapshots();
+    assert(std::count_if(remaining.begin(),remaining.end(),[&](const auto& report){return report.owner==survivor&&report.devices[0].logical_address==8;})==2);
+    assert(hub.snapshot().discovery_generation==local_generation&&hub.snapshot().devices.size()==local_devices.size());
+    const auto current_devices=hub.snapshot().devices;
+    for(size_t i=0;i<local_devices.size();++i){const auto& current=current_devices[i];assert(current.name==local_devices[i].name&&current.bus==local_devices[i].bus&&current.address==local_devices[i].address);}
+
+    // Readding the same physical board accepts its new boot and observations.
+    removed.adapter=0;removed.boot=controller_boot;removed.devices[0].logical_address=6;
+    assert(hub.update_owned_snapshot(removed));run_idle(1);
+    const auto readded=hub.owned_snapshots();
+    const auto fresh=std::find_if(readded.begin(),readded.end(),[&](const auto& report){return report.owner==member;});
+    assert(fresh!=readded.end()&&fresh->boot==controller_boot&&fresh->devices[0].logical_address==6);
+    hub.forget_owned_snapshots(member);
+
+    // More than 64 distinct four-adapter boards used to exhaust the facade
+    // despite each previous board having been explicitly removed.
+    for(unsigned n=1;n<=70;++n){
+        const auto owner=*m::OctopusId::generate([n](uint8_t* bytes,size_t size){std::fill(bytes,bytes+size,0);bytes[0]=0xa1;bytes[size-1]=static_cast<uint8_t>(n);return true;});
+        for(uint8_t adapter=0;adapter<amity::max_tentacles;++adapter){removed.owner=owner;removed.adapter=adapter;assert(hub.update_owned_snapshot(removed));}
+        run_idle(1);assert(has_owner(owner));
+        hub.forget_owned_snapshots(owner);assert(!has_owner(owner));
+    }
+    const auto final=hub.owned_snapshots();assert(final.size()==remaining.size()&&has_owner(survivor)&&has_owner(controller));
+    fixture_tick=100000;
+}
 static void owner_keys(){
     fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);assert(hub.start(1,2)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
@@ -689,4 +737,4 @@ static void distinct_activity_ids_with_identical_equipment(unsigned mode){
     if(other)assert(delivered_generations.back()==second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}

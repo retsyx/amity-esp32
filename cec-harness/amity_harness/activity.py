@@ -95,6 +95,7 @@ class Activity:
             if initiator is None or not _fresh_discovery(self.scan.records, component, initiator, self.scan.started):
                 raise AssertionError("Activity equipment has no fresh physical discovery evidence")
         self._validate_owners()
+        self._action_scan = self.scan
         self.activity_id = None
         self._before_ids, self._before_equipment = set(), set()
         self._new_equipment = {}
@@ -144,6 +145,41 @@ class Activity:
         if not callable(validator):
             raise AssertionError("Activity equipment has no verified owner boot evidence")
         validator(equipment)
+
+    def refresh_scan(self, scan=None):
+        """Use fresh scan evidence for future actions of this saved activity.
+
+        Keep its creation evidence and saved identity intact. Every selected
+        component must be physically rediscovered on the same owner boot.
+        """
+        if self._closed or not self._created:
+            raise RuntimeError("The test activity is not available")
+        scan = self.dut.last_scan if scan is None else scan
+        bed = self._testbed
+        if (scan is None or scan is not self.dut.last_scan or scan.dut is not self.dut
+                or scan._session is not self.session or getattr(scan, "_testbed", None) is not bed
+                or bed.session is not self.session or not bed._entered or bed._closed
+                or self.dut._testbed is not bed or scan._boot != self.boot
+                or scan._group != self._saved_group or not scan.started):
+            raise AssertionError("Replacement action evidence belongs to another current scan, boot or TestBed")
+        equipment = tuple(component for component in self.components.values() if component is not None)
+        for component in equipment:
+            owner = component.dut.identity.device_id
+            original_boot = (self.boot if component.dut is self.dut
+                             else self.scan.owner_boots.get(owner))
+            if (component not in scan.expected or component._session is not self.session
+                    or component.dut._testbed is not bed
+                    or scan.owner_duts.get(owner) is not component.dut
+                    or not _identifier(original_boot) or scan.owner_boots.get(owner) != original_boot):
+                raise AssertionError("Replacement action evidence changed a selected component's owner or boot")
+            initiator = scan.initiators.get(component.gpio)
+            if initiator is None or not _fresh_discovery(scan.records, component, initiator, scan.started):
+                raise AssertionError("Replacement action evidence needs fresh physical discovery of every selection")
+        scan.validate_owners(equipment)
+        if self.dut.last_scan is not scan:
+            raise AssertionError("The current scan changed while refreshing activity evidence")
+        self._action_scan = scan
+        return self
 
     def _view(self, *, check_health=True):
         if check_health:
@@ -350,11 +386,12 @@ class Activity:
         payload = {"request_id": uuid4().hex, "activity_id": self.activity_id if kind == "start" else None,
                    "expected_config_revision": document["expected_config_revision"],
                    "expected_state_revision": state["expected_state_revision"], "expected_boot_id": self.boot}
+        scan = self._action_scan
         action = ActivityAction(self.dut, self.session, time.monotonic_ns(), self.boot,
-                                deepcopy(self.scan.initiators), kind, payload["request_id"], payload["activity_id"],
-                                scan=self.scan, testbed=self._testbed,
-                                owner_boots=dict(getattr(self.scan, "owner_boots", {})),
-                                owner_duts=dict(getattr(self.scan, "owner_duts", {})))
+                                deepcopy(scan.initiators), kind, payload["request_id"], payload["activity_id"],
+                                scan=scan, testbed=self._testbed,
+                                owner_boots=dict(getattr(scan, "owner_boots", {})),
+                                owner_duts=dict(getattr(scan, "owner_duts", {})))
         trace = self._record(kind, request_id=action.request_id, started_monotonic_ns=action.started_ns,
                              boot=self.boot, expected_config_revision=payload["expected_config_revision"])
         if kind == "start":

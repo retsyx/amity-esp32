@@ -1,6 +1,7 @@
 """Temporary activity ownership uses existing UI transactions and safe cleanup."""
 
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -12,6 +13,19 @@ from amity_harness.activity import Activity, ActivityCleanupError, ActivityConfl
 from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, TvComponent, assign_addresses
 from amity_harness.dut import AmityHTTPError
 import test_scan_assertions as scan_fixture
+
+
+def fresh_rescan(fixture):
+    """A later scan of the same physical fixture, with new wire timestamps."""
+    previous = fixture.dut.last_scan
+    records = tuple({**record, "timestamp": record["timestamp"] + 10,
+                     "wire_timestamp_ns": record["wire_timestamp_ns"] + 10_000_000_000}
+                    for record in previous.records)
+    scan = replace(previous, records=records, started=previous.started + 10_000_000_000,
+                   initiators=dict(previous.initiators), owner_boots=dict(previous.owner_boots),
+                   owner_duts=dict(previous.owner_duts), _testbed=fixture.bed, _group=fixture.source.group)
+    fixture.dut.last_scan = scan
+    return scan
 
 
 class Fixture:
@@ -561,6 +575,72 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(f.rows, original)
         self.assertEqual([r["component_id"] for r in f.full["components"]], ["f" * 32])
         self.assertEqual(len([r for r in f.dut.activity_operations if r["phase"] == "start"]), 1)
+
+    def test_saved_member_activity_refreshes_future_actions_without_retagging_creation_or_old_actions(self):
+        f = self.fixture
+        f.add_member()
+        with f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr) as activity:
+            identity, row, creation = activity.activity_id, deepcopy(activity._created_row), activity.scan
+            old = activity.start()
+            activity.standby()
+            scan = fresh_rescan(f)
+            writes = len([data for _, data in f.calls if data is not None])
+            self.assertIs(activity.refresh_scan(scan), activity)
+            self.assertEqual(len([data for _, data in f.calls if data is not None]), writes)
+            new = activity.start()
+            self.assertIs(new.scan, scan)
+            self.assertEqual(new.owner_boots, scan.owner_boots)
+            self.assertIs(new.owner_duts[f.member.identity.device_id], f.member)
+            self.assertIs(activity.scan, creation)
+            self.assertIs(old.scan, creation)
+            self.assertEqual(activity.activity_id, identity)
+            self.assertEqual(activity._created_row, row)
+            self.assertIs(activity.assert_active(), activity)
+            self.assertIs(activity.standby().scan, scan)
+
+    def test_refresh_rejects_foreign_or_changed_scan_and_missing_stale_or_virtual_discovery(self):
+        for fault in ("not_current", "main", "bed", "session", "main_boot", "group",
+                      "owner_object", "member_boot", "missing_component", "virtual", "stale", "missing_reply"):
+            with self.subTest(fault=fault):
+                f = Fixture()
+                f.add_member()
+                activity = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+                creation, scan = activity.scan, fresh_rescan(f)
+                if fault == "not_current":
+                    f.dut.last_scan = creation
+                elif fault == "main":
+                    scan.dut = f.member
+                elif fault == "bed":
+                    scan._testbed = object()
+                elif fault == "session":
+                    scan._session = object()
+                elif fault == "main_boot":
+                    scan._boot = "e" * 32
+                elif fault == "group":
+                    scan._group = "e" * 32
+                elif fault == "owner_object":
+                    scan.owner_duts[f.member.identity.device_id] = DUT("amity-dut-2")
+                elif fault == "member_boot":
+                    scan.owner_boots[f.member.identity.device_id] = "e" * 32
+                elif fault == "missing_component":
+                    scan.expected = tuple(component for component in scan.expected if component is not f.member_player)
+                else:
+                    records = [record for record in scan.records if record["gpio"] == f.member_player.gpio]
+                    if fault == "virtual":
+                        scan.records = tuple({**record, "transport": "virtual"} if record in records else record
+                                             for record in scan.records)
+                    elif fault == "stale":
+                        scan.records = tuple({**record, "wire_timestamp_ns": 1} if record in records else record
+                                             for record in scan.records)
+                    else:
+                        scan.records = tuple(record for record in scan.records
+                                             if record["component"] != f.member_player.name)
+                writes = len([data for _, data in f.calls if data is not None])
+                with self.assertRaises(AssertionError):
+                    activity.refresh_scan(scan)
+                self.assertIs(activity._action_scan, creation)
+                self.assertIs(activity.scan, creation)
+                self.assertEqual(len([data for _, data in f.calls if data is not None]), writes)
 
     def test_mixed_owner_activity_matches_actual_owner_selectors(self):
         f = self.fixture

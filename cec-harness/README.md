@@ -980,9 +980,11 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test qualified_names` for identical equipment identities on two owners,
 `--test missing_equipment` for source disappearance, cooldown and passive return,
 `--test removal_cascade` for stale removal confirmation and exact activity/member cleanup,
+`--test removal_replacement` for removing an earlier member, retaining a later member's
+saved identities, then adding a different board and proving both owners' physical control,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all fourteen registered scenarios (twenty-four
+or `--test all` for all fifteen registered scenarios (twenty-five
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

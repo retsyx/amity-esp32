@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrComponent, CecError, CecSession, DUT, Frame, Hooks,
                            PlaybackComponent, PowerState, RunConfig, TvComponent,
                            TxResult, use_config)
-from test_activity import Fixture as ActivityFixture
+from test_activity import Fixture as ActivityFixture, fresh_rescan
 
 
 def distributed_activity_fixture():
@@ -87,6 +87,19 @@ class ComponentPowerAssertionTests(unittest.TestCase):
         marker = f.member_tv.checkpoint()
         self.receive(f.member_tv, 4, 0x36)
         self.assertIs(f.member_tv.wait_for_power("standby", since=marker, command="standby"), f.member_tv)
+
+    def test_refreshed_saved_activity_authorizes_new_wire_evidence_but_old_actions_stay_stale(self):
+        f = distributed_activity_fixture()
+        activity = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr)
+        old = activity.start()
+        activity.standby()
+        current = fresh_rescan(f)
+        activity.refresh_scan(current)
+        new = activity.start()
+        self.receive(f.member_tv, current.initiators[f.member_tv.gpio], 0x04)
+        self.assertIs(f.member_tv.wait_for_power("on", since=new), f.member_tv)
+        with self.assertRaisesRegex(AssertionError, "different active TestBed or scan"):
+            f.member_tv.wait_for_power("on", since=old)
 
     def test_member_wire_assertions_reject_foreign_action_owner_boot_maps_and_session(self):
         f = distributed_activity_fixture()

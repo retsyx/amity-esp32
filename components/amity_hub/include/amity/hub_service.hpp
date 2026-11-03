@@ -45,6 +45,7 @@ public:
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)>);
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)>);
     bool update_owned_snapshot(system::OwnedAdapterSnapshot);
+    void forget_owned_snapshots(system::OctopusId);
     bool refresh_owned_context(system::OctopusId,uint64_t expected_revision,std::function<void(system::OwnedContextResult)> completed={});
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const;
     bool fence_owned(system::OctopusId controller,system::LinkId link);

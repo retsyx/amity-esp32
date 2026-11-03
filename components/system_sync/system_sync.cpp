@@ -54,11 +54,15 @@ void retry_report(const c::RuntimeSnapshotRetry& retry){
         state.retry_reports[retry.adapter]=retry;
 }
 bool accept_report(s::OctopusId sender,const s::OwnedAdapterSnapshot& report){
+    // Removal revokes the peer before taking this lock to purge both caches.
+    // Validate and publish in the same critical section: an earlier report
+    // either finishes before that purge or observes the revoked membership.
+    std::lock_guard<std::mutex> guard(state.mutex);
     const auto remote=peer(sender);
     if(!remote||report.owner!=sender||report.boot!=remote->boot_id||report.adapter>=remote->supported_tentacles)return false;
-    {std::lock_guard<std::mutex> guard(state.mutex);if(state.maintenance.count(sender))return false;
-        auto prior=std::find_if(state.reports.begin(),state.reports.end(),[&](const auto& p){return p.owner==sender&&p.adapter==report.adapter;});
-        if(prior!=state.reports.end())*prior=report;else if(state.reports.size()<amity::max_tentacles*c::maximum_roster_peers)state.reports.push_back(report);else return false;}
+    if(state.maintenance.count(sender))return false;
+    auto prior=std::find_if(state.reports.begin(),state.reports.end(),[&](const auto& p){return p.owner==sender&&p.adapter==report.adapter;});
+    if(prior!=state.reports.end())*prior=report;else if(state.reports.size()<amity::max_tentacles*c::maximum_roster_peers)state.reports.push_back(report);else return false;
     return state.control->update_owned_snapshot(report);
 }
 std::string snapshot(s::OctopusId){
@@ -122,9 +126,10 @@ c::Error receive(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadli
 }
 bool disconnected(s::OctopusId owner,s::BootId boot,s::LinkId link){
     if(!state.control->fence_owned(owner,link))return false;
+    std::lock_guard<std::mutex> guard(state.mutex);
     std::vector<s::OwnedAdapterSnapshot> removed;
-    {std::lock_guard<std::mutex> guard(state.mutex);for(const auto& report:state.reports)if(report.owner==owner&&(!boot||report.boot==boot)){auto missing=report;missing.ready=false;missing.discovering=false;missing.devices.clear();removed.push_back(missing);}
-        state.reports.erase(std::remove_if(state.reports.begin(),state.reports.end(),[&](const auto& report){return report.owner==owner&&(!boot||report.boot==boot);}),state.reports.end());}
+    for(const auto& report:state.reports)if(report.owner==owner&&(!boot||report.boot==boot)){auto missing=report;missing.ready=false;missing.discovering=false;missing.devices.clear();removed.push_back(missing);}
+    state.reports.erase(std::remove_if(state.reports.begin(),state.reports.end(),[&](const auto& report){return report.owner==owner&&(!boot||report.boot==boot);}),state.reports.end());
     for(auto& report:removed)state.control->update_owned_snapshot(std::move(report));
     return true;
 }
@@ -172,7 +177,11 @@ void adopt_owners(){
     for(const auto& remote:c::runtime_peers())if(remote.ready&&remote.enrolled){
         auto found=std::find_if(config->octopuses.begin(),config->octopuses.end(),[&](const auto& owner){return owner.octopus_id==remote.id;});
         if(found!=config->octopuses.end()&&found->supported_tentacles>=remote.supported_tentacles)continue;
-        auto next=*config;if(found==config->octopuses.end()){const auto label="Amity "+std::to_string(next.octopuses.size()+1);next.octopuses.push_back({remote.id,label,label,false,remote.supported_tentacles});}
+        auto next=*config;if(found==config->octopuses.end()){
+            size_t number=1;std::string label;
+            do{label="Amity "+std::to_string(number++);}while(std::any_of(next.octopuses.begin(),next.octopuses.end(),[&](const auto& owner){return owner.label==label||owner.generated_label==label;}));
+            next.octopuses.push_back({remote.id,label,label,false,remote.supported_tentacles});
+        }
         else for(auto& owner:next.octopuses)if(owner.octopus_id==remote.id)owner.supported_tentacles=remote.supported_tentacles;
         activate_distributed_configuration(std::move(next),config->revisions(),fresh<s::MessageId>());return;
     }
@@ -234,6 +243,7 @@ void forget_owner(s::OctopusId owner){
     // Runtime authorization has already revoked that owner. Keep its transient
     // wire cleanup state separate from this latest-observation cache.
     std::lock_guard<std::mutex> guard(state.mutex);
+    if(state.control)state.control->forget_owned_snapshots(owner);
     state.reports.erase(std::remove_if(state.reports.begin(),state.reports.end(),[&](const auto& report){return report.owner==owner;}),state.reports.end());
     state.pending_reports.erase(std::remove_if(state.pending_reports.begin(),state.pending_reports.end(),[&](const auto& report){return report.owner==owner;}),state.pending_reports.end());
     state.maintenance.erase(owner);

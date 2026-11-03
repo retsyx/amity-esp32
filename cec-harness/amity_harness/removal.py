@@ -56,6 +56,81 @@ def _settings_signature(settings):
     return {"status": settings.get("status"), "settings": body}
 
 
+class MembershipContinuity:
+    """Preserve one fixture owner's saved identities across sibling changes."""
+
+    def __init__(self, member, *activities):
+        self.member, self.main, self.bed = member, member.main, member.main._testbed
+        self.activities = tuple(activities)
+        if (not self.activities or not member._created or member._closed
+                or getattr(self.bed, "_member_proofs", {}).get(member.device_id) is not member
+                or any(activity not in getattr(self.bed, "_activities", ())
+                       or activity.dut is not self.main or not activity._created or activity._closed
+                       for activity in self.activities)):
+            raise MembershipConflict("Continuity needs a verified member and its live saved fixture activities")
+        self.before, _, _ = self._snapshot()
+
+    def _snapshot(self):
+        system = self.member._system()
+        config = self.member._request("/api/config", deadline=time.monotonic() + self.member.timeout)
+        if (not isinstance(config, dict) or config.get("controller_octopus_id") != self.main.identity.device_id
+                or config.get("consortium_id") != self.member.group
+                or any(not isinstance(config.get(key), list) for key in ("octopuses", "components", "activities"))
+                or system.get("configuration_pending") is not False
+                or system.get("applied_config_revision") != config.get("config_revision")
+                or system.get("applied_presentation_revision") != config.get("presentation_revision")):
+            raise MembershipConflict("Continuity lost the original main's applied configuration")
+        peers = self.member._active(system)
+        peer = peers.get(self.member.device_id, {})
+        if (peer.get("boot_id") != self.member.member_boot or peer.get("hostname") != self.member.name
+                or peer.get("enrolled") is not True or peer.get("ready") is not True):
+            raise AssertionError("The surviving Amity changed identity, boot, name or readiness")
+        owners = [row for row in config["octopuses"] if row.get("octopus_id") == self.member.device_id]
+        equipment = [row for row in config["components"]
+                     if any(name.get("octopus_id") == self.member.device_id
+                            for name in row.get("qualified_names", []))]
+        identities = {row["component_id"] for row in equipment}
+        activities = [row for row in config["activities"]
+                      if row.get("activity_id") in {activity.activity_id for activity in self.activities}]
+        if (len(owners) != 1 or not equipment or len(activities) != len(self.activities)
+                or any(row.get(role) not in identities for row in activities for role in ("source", "display", "audio"))):
+            raise AssertionError("The surviving owner's saved equipment or activity identities are missing")
+        saved = {"owner": owners[0], "equipment": sorted(equipment, key=lambda row: row["component_id"]),
+                 "activities": sorted(activities, key=lambda row: row["activity_id"])}
+        return deepcopy(saved), system, config
+
+    def assert_preserved(self, *members, removed=()):
+        saved, system, config = self._snapshot()
+        expected = {member.device_id for member in members}
+        removed_ids = {member.device_id for member in removed}
+        if (self.member.device_id not in expected or len(expected) != len(members)
+                or expected & removed_ids or set(self.member._active(system)) != expected
+                or len(config["octopuses"]) != len(expected) + 1
+                or {row.get("octopus_id") for row in config["octopuses"]}
+                    != expected | {self.main.identity.device_id}):
+            raise AssertionError("Membership or saved owner identities do not match the exact physical boards")
+        if saved != self.before:
+            raise AssertionError("A sibling membership change modified the surviving owner's saved equipment or activity")
+        if (any(row.get("octopus_id") in removed_ids for row in system.get("named_devices", []))
+                or any(row.get(field, {}).get("octopus_id") in removed_ids
+                       for row in system.get("observations", []) for field in ("qualified_name", "runtime_address"))
+                or any(name.get("octopus_id") in removed_ids for row in config["components"]
+                       for name in row.get("qualified_names", []))):
+            raise AssertionError("Removed owner names, equipment selectors or observations returned")
+        proof = {"kind": "membership_continuity", "survivor": self.member.device_id,
+                 "main_boot": self.member.boot, "survivor_boot": self.member.member_boot,
+                 "members": sorted(expected), "removed": sorted(removed_ids),
+                 "activity_ids": [row["activity_id"] for row in saved["activities"]],
+                 "component_ids": [row["component_id"] for row in saved["equipment"]],
+                 "saved_sha256": _digest(saved), "preserved": True, "removed_inventory_absent": True}
+        if not hasattr(self.bed, "control_observations"):
+            self.bed.control_observations = []
+        self.bed.control_observations.append(proof)
+        event("membership.continuity.passed", dut=self.main.name, survivor=self.member.device_id,
+              members=sorted(expected), removed=sorted(removed_ids), survivor_boot=self.member.member_boot)
+        return self
+
+
 class RemovalReview:
     """One review, one confirmation, and exact cascade/preservation evidence.
 
@@ -63,13 +138,20 @@ class RemovalReview:
     only unchanged registered fixture rows and their own equipment records.
     """
 
-    def __init__(self, member, activities):
+    def __init__(self, member, activities, *, preserve=()):
         self.member, self.main, self.bed = member, member.main, member.main._testbed
         self.activities, self.request_id, self._used = tuple(activities), uuid4().hex, False
+        self.preserved = tuple(preserve)
         if (not member._created or member._closed or member._remove_attempted
                 or not self.bed._entered or self.bed._closed or self.bed.session is not member.session
                 or not self.activities or len({id(activity) for activity in self.activities}) != len(self.activities)):
             raise MembershipConflict("Removal review needs a live test member and distinct fixture activities")
+        proofs = getattr(self.bed, "_member_proofs", {})
+        if (len({id(other) for other in self.preserved}) != len(self.preserved)
+                or any(other is member or other.main is not self.main or other.session is not member.session
+                       or not other._created or other._closed or not _identifier(other.member_boot)
+                       or proofs.get(other.device_id) is not other for other in self.preserved)):
+            raise MembershipConflict("Preserved members need exact live fixture ownership and verified boots")
         if (any(row.get("octopus_id") == member.device_id for row in member._baseline.get("octopuses", []))
                 or any(row.get("octopus_id") == member.device_id
                        for row in member._initial_system.get("named_devices", []))):
@@ -106,6 +188,22 @@ class RemovalReview:
     def _request(self, path, data=None):
         return self.member._request(path, data, deadline=self.deadline)
 
+    def _preserved_members(self, system, *, added):
+        if not self.preserved:
+            return self.member._preserved_members(system, added=added)
+        active = self.member._active(system)
+        removed = self.member._removed_owners()
+        expected = {identity: peer for identity, peer in self.member._active(self.member._initial_system).items()
+                    if identity not in removed}
+        for other in (*self.preserved, *((self.member,) if added else ())):
+            expected[other.device_id] = {"hostname": other.name, "boot_id": other.member_boot, "enrolled": True}
+        if set(active) != set(expected):
+            raise MembershipConflict("Removal changed the exact set of preserved Amity devices")
+        for identity, peer in expected.items():
+            if any(active[identity].get(key) != peer.get(key) for key in ("hostname", "boot_id", "enrolled")):
+                raise MembershipConflict("Removal changed a preserved Amity's name, boot or membership")
+        return active
+
     def _snapshot(self, *, removed=False):
         system = self.member._system()
         config = self._request("/api/backup")
@@ -127,7 +225,7 @@ class RemovalReview:
             raise MembershipConflict("Removal review lost its applied configuration, standby or main boot")
         settings = self._request("/api/devices/" + self.member.device_id + "/settings")
         if not removed:
-            peer = self.member._preserved_members(system, added=True)[self.member.device_id]
+            peer = self._preserved_members(system, added=True)[self.member.device_id]
             if (peer.get("boot_id") != self.member.member_boot or peer.get("hostname") != self.member.name
                     or peer.get("ready") is not True):
                 raise MembershipConflict("Removal review lost the exact ready member boot/settings")
@@ -268,7 +366,7 @@ class RemovalReview:
             if int(after["config"]["config_revision"]) <= int(self.before["config"]["config_revision"]):
                 raise AssertionError("Removal did not commit a new configuration revision")
             system = after["system"]
-            self.member._preserved_members(system, added=False)
+            self._preserved_members(system, added=False)
             if any(row.get("octopus_id") == self.member.device_id for row in system["membership"]["peers"]):
                 raise AssertionError("The removed member remains in membership records")
             expected_names = [row for row in self.before["system"].get("named_devices", [])

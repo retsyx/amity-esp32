@@ -9,7 +9,7 @@ from functional_tests.activity import (test_activity, test_activity_switch_input
                                        test_activity_keys_disconnected_secondary)
 from functional_tests.qualified_names import test_qualified_names
 from functional_tests.missing_equipment import test_missing_equipment
-from functional_tests.removal_cascade import test_removal_cascade
+from functional_tests.removal_cascade import test_removal_cascade, test_removal_replacement
 from functional_tests.default_physical_address import (
     test_default_physical_address_local, test_default_physical_address_local_scanned,
     test_default_physical_address_remote, test_default_physical_address_remote_scanned)
@@ -36,6 +36,7 @@ if __name__ == "__main__":
                            "qualified_names": test_qualified_names,
                            "missing_equipment": test_missing_equipment,
                            "removal_cascade": test_removal_cascade,
+                           "removal_replacement": test_removal_replacement,
                            "default_physical_address": (
                                test_default_physical_address_local, test_default_physical_address_local_scanned,
                                test_default_physical_address_remote, test_default_physical_address_remote_scanned),

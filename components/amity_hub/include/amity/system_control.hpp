@@ -76,6 +76,7 @@ public:
     system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout=1000){return local_.submit_owned(intent,auth,timeout);}
     esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision){return local_.bind_owned_controller(controller,revision);}
     bool update_owned_snapshot(system::OwnedAdapterSnapshot report){return local_.update_owned_snapshot(std::move(report));}
+    void forget_owned_snapshots(system::OctopusId owner){local_.forget_owned_snapshots(owner);}
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const{return local_.owned_snapshots();}
     bool fence_owned(system::OctopusId controller,system::LinkId link){return local_.fence_owned(controller,link);}
     uint64_t executing_configuration_revision()const{return local_.executing_configuration_revision();}

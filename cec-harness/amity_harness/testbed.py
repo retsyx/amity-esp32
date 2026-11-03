@@ -47,7 +47,9 @@ _CONTROL_OBSERVATION_FIELDS = frozenset(("kind", "owner_ids", "wires", "since_mo
                                         "unchanged_config_sha256", "removed", "operation_stage", "reset",
                                         "exact_configuration", "deleted_activity_ids", "deleted_component_ids",
                                         "preserved_activity_ids", "expected_config_sha256", "actual_config_sha256",
-                                        "inventory_removed", "settings_purged", "unrelated_settings_preserved"))
+                                        "inventory_removed", "settings_purged", "unrelated_settings_preserved",
+                                        "survivor", "survivor_boot", "members", "activity_ids", "component_ids",
+                                        "saved_sha256", "preserved", "removed_inventory_absent"))
 _OPERATION_FIELDS = frozenset(("operation_id", "stage", "status", "saved", "unresolved"))
 _PORT_FIELDS = frozenset(("consortium_id", "octopus_id", "tentacle_id", "side"))
 _POWER_FIELDS = frozenset(("command", "requested_power", "frame", "source", "destination", "transport",

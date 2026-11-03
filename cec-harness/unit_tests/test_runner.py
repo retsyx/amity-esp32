@@ -271,7 +271,7 @@ class RunnerTests(unittest.TestCase):
                     "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
                     "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
-                    "test_removal_cascade", "test_default_physical_address_local",
+                    "test_removal_cascade", "test_removal_replacement", "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
                     "test_default_physical_address_remote_scanned",
                     "test_ble_keyboard_local", "test_ble_keyboard_remote"]

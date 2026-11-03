@@ -1255,13 +1255,16 @@ struct HubService::Impl : Transport {
         return admitted?system::AdmissionResult{system::AdmissionCode::accepted,{},present}:
             system::AdmissionResult{system::AdmissionCode::overloaded,"Original action could not enter the CEC FIFO or resolve its equipment",present};
     }
-    std::optional<Device> lookup_owned(const system::QualifiedDeviceName& name) const {
+    std::optional<Device> lookup_owned_locked(const system::QualifiedDeviceName& name) const {
         for(const auto& report:owned_reports)if(report.owner==name.port.octopus_id&&report.adapter==name.port.tentacle_id){
             if(!name.osd_name.empty())for(const auto& device:report.devices)if(device.side==name.port.side&&device.osd_name==name.osd_name)
                 return Device{name.osd_name,name.port.side==system::Side::front?BusSide::Front:BusSide::Back,
                     device.logical_address,device.physical_address,device.device_type,device.vendor_id,true};
         }
         return {};
+    }
+    std::optional<Device> lookup_owned(const system::QualifiedDeviceName& name) const {
+        xSemaphoreTake(lock,portMAX_DELAY);auto device=lookup_owned_locked(name);xSemaphoreGive(lock);return device;
     }
     bool action_result(const StepResult& result){
         if(!step_pending||!pending_step)return false;
@@ -1367,9 +1370,10 @@ struct HubService::Impl : Transport {
             state.tx_errors+=engine->dropped_tx+engine->front.statistics().tx_errors+engine->back.statistics().tx_errors;
             state.rx_dropped+=engine->front.statistics().rx_dropped+engine->back.statistics().rx_dropped;
         }
+        xSemaphoreTake(lock,portMAX_DELAY);
         if(scoped_mode){
             state.ready=std::any_of(owned_reports.begin(),owned_reports.end(),[](const auto& report){return report.ready;});
-            state.devices.clear();for(const auto& selector:active_selectors)if(auto device=lookup_owned(selector.target)){device->name=selector.value;state.devices.push_back(*device);}
+            state.devices.clear();for(const auto& selector:active_selectors)if(auto device=lookup_owned_locked(selector.target)){device->name=selector.value;state.devices.push_back(*device);}
             if(state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size()){
                 const auto& audio=state.activities[state.current_activity].audio;
                 for(const auto& selector:active_selectors)if(selector.value==audio)for(const auto& report:owned_reports)if(report.owner==selector.target.port.octopus_id&&report.adapter==selector.target.port.tentacle_id){
@@ -1379,7 +1383,7 @@ struct HubService::Impl : Transport {
         }
         state.activity_settling=activity_settling(esp_timer_get_time());state.activity_error=last_activity_error;
         state.applied_config_revision=owned_config_revision;state.applied_presentation_revision=owned_presentation_revision;state.processed_activity_selection=processed_selection;
-        xSemaphoreTake(lock,portMAX_DELAY);cached=state;cached_revision=owned_config_revision;
+        cached=state;cached_revision=owned_config_revision;
         for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();
             if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;a.observed_front_physical=engine->hub.detected_front_physical_address();}
         }
@@ -1791,6 +1795,13 @@ bool HubService::update_owned_snapshot(system::OwnedAdapterSnapshot report){
     if(old!=p.pending_reports.end())*old=std::move(report);
     else if(admitted)p.pending_reports.push_back(std::move(report));
     xSemaphoreGive(p.lock);return admitted;
+}
+void HubService::forget_owned_snapshots(system::OctopusId owner){
+    auto& p=*impl_;xSemaphoreTake(p.lock,portMAX_DELAY);
+    const auto matching=[&](const auto& report){return report.owner==owner;};
+    p.owned_reports.erase(std::remove_if(p.owned_reports.begin(),p.owned_reports.end(),matching),p.owned_reports.end());
+    p.pending_reports.erase(std::remove_if(p.pending_reports.begin(),p.pending_reports.end(),matching),p.pending_reports.end());
+    xSemaphoreGive(p.lock);
 }
 bool HubService::refresh_owned_context(system::OctopusId owner,uint64_t revision,std::function<void(system::OwnedContextResult)> completed){
     if(!owner||!revision)return false;

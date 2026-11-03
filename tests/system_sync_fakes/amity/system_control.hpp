@@ -3,6 +3,7 @@
 #include "amity/system/execution.hpp"
 #include "amity/system/owned_intent.hpp"
 #include "esp_err.h"
+#include <algorithm>
 #include <functional>
 #include <tuple>
 
@@ -26,6 +27,8 @@ public:
     std::vector<system::OctopusId> refreshed_context;
     std::vector<system::OwnedAuthorization> authorizations;
     std::vector<system::OwnedAdapterSnapshot> snapshots, updates;
+    std::vector<system::OctopusId> forgotten_snapshot_owners;
+    std::function<void(const system::OwnedAdapterSnapshot&)> before_snapshot_update;
     std::vector<system::CecObservation> observations;
     std::vector<std::pair<system::OctopusId,uint8_t>> remote_scans;
     std::vector<std::pair<system::OctopusId,system::LinkId>> fences;
@@ -58,7 +61,17 @@ public:
         if(bind_result!=ESP_OK)return bind_result;
         bound_controller=controller;bound_revision=revision;return ESP_OK;
     }
-    bool update_owned_snapshot(system::OwnedAdapterSnapshot report) { updates.push_back(std::move(report));return update_result; }
+    bool update_owned_snapshot(system::OwnedAdapterSnapshot report) {
+        if(before_snapshot_update)before_snapshot_update(report);
+        updates.push_back(report);if(!update_result)return false;
+        auto previous=std::find_if(snapshots.begin(),snapshots.end(),[&](const auto& current){return current.owner==report.owner&&current.adapter==report.adapter;});
+        if(previous==snapshots.end())snapshots.push_back(std::move(report));else *previous=std::move(report);
+        return true;
+    }
+    void forget_owned_snapshots(system::OctopusId owner) {
+        forgotten_snapshot_owners.push_back(owner);
+        snapshots.erase(std::remove_if(snapshots.begin(),snapshots.end(),[&](const auto& report){return report.owner==owner;}),snapshots.end());
+    }
     bool refresh_owned_context(system::OctopusId owner,uint64_t,std::function<void(system::OwnedContextResult)>) { refreshed_context.push_back(owner);return refresh_result; }
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots() const { return snapshots; }
     std::vector<system::CecObservation> native_observations() const { return observations; }

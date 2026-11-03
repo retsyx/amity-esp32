@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <condition_variable>
 
 namespace fixture {
 namespace s=amity::system;namespace c=amity::consortium;
@@ -24,7 +25,10 @@ s::LinkId current_result_link;
 uint64_t refreshed_deadline=654321;
 esp_err_t send_result=ESP_OK,report_result=ESP_OK;
 std::function<void()> on_report_send;
-bool require_retry_lock=false;
+bool require_retry_lock=false,require_report_lock=false;
+void require_state_lock(){
+    bool held=false;std::thread contender([&]{held=!amity::state.mutex.try_lock();if(!held)amity::state.mutex.unlock();});contender.join();assert(held);
+}
 std::vector<std::pair<uint64_t,std::string>> configuration_changes;
 struct JournalMemory:Memory {
     bool fail_marker=false;
@@ -42,7 +46,7 @@ void reset(){
     peers.clear();sent.clear();packets.clear();result_packets.clear();result_fences.clear();deadline_queries.clear();current_result_link={};configuration_changes.clear();hooks={};
     send_result=ESP_OK;report_result=ESP_OK;task_ok=true;auth_allowed=true;now=100;
     on_report_send={};
-    require_retry_lock=false;
+    require_retry_lock=require_report_lock=false;
     system_sync_test_log::messages.clear();
     task_creations=authorization_checks=0;memory=JournalMemory{};journal=std::make_unique<ConfigurationStore>(memory);
 }
@@ -87,14 +91,14 @@ void vTaskDelete(TaskHandle_t){}
 void vTaskDelay(unsigned ticks){fixture::now+=ticks;}
 namespace amity::consortium {
 RuntimeStatus runtime_status(){return fixture::role;}
-std::vector<RuntimePeerStatus> runtime_peers(){return fixture::peers;}
+std::vector<RuntimePeerStatus> runtime_peers(){if(fixture::require_report_lock)fixture::require_state_lock();return fixture::peers;}
 void runtime_control_hooks(RuntimeControlHooks hooks){fixture::hooks=std::move(hooks);}
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){fixture::sent.push_back(intent);return fixture::send_result;}
 bool runtime_owned_authorized(const model::OwnedAuthorization&){++fixture::authorization_checks;return fixture::auth_allowed;}
 esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});if(fixture::on_report_send)fixture::on_report_send();return fixture::report_result;}
 esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){fixture::result_packets.push_back({owner,link,std::move(payload),ttl,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
 std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){
-    if(fixture::require_retry_lock){bool held=false;std::thread contender([&]{held=!amity::state.mutex.try_lock();if(!held)amity::state.mutex.unlock();});contender.join();assert(held);}
+    if(fixture::require_retry_lock)fixture::require_state_lock();
     for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;return {};
 }
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){fixture::result_fences.push_back({owner,link});}
@@ -244,6 +248,49 @@ void reports_and_exact_disconnect(){
     main.fence_result=false;amity::set_owner_maintenance(owner,true);amity::forget_owner(owner);
     assert(amity::discovered_equipment().empty()&&amity::state.reports.empty()&&!amity::state.maintenance.count(owner));
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos&&memory.writes==0);
+}
+void removal_serializes_report_and_disconnect_publication(){
+    for(bool losing_connection:{false,true}){
+        reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+        peers={remote(9,19,1,1),remote(10,20,1,1)};
+        const auto removed=report(peers[0].id,peers[0].boot_id),kept=report(peers[1].id,peers[1].boot_id);
+        assert(amity::accept_report(removed.owner,removed)&&amity::accept_report(kept.owner,kept));
+        std::mutex gate;std::condition_variable changed;bool publishing=false,resume=false,removing=false;
+        main.before_snapshot_update=[&](const s::OwnedAdapterSnapshot& value){
+            if(value.owner!=removed.owner)return;
+            assert(value.ready!=losing_connection);
+            // A removal cannot overtake a validated report or a disconnect's
+            // blank publication between its two diagnostic cache updates.
+            require_state_lock();
+            std::unique_lock<std::mutex> lock(gate);publishing=true;changed.notify_all();changed.wait(lock,[&]{return resume;});
+        };
+        require_report_lock=true;
+        std::thread publication([&]{
+            if(losing_connection)assert(hooks.disconnected(removed.owner,removed.boot,id<s::LinkId>(81)));
+            else assert(amity::accept_report(removed.owner,removed));
+        });
+        {std::unique_lock<std::mutex> lock(gate);changed.wait(lock,[&]{return publishing;});}
+        // Runtime membership is revoked before the lifecycle purge. Exact key
+        // cleanup may be busy, but it must not prevent observation deletion.
+        peers.erase(peers.begin());main.fence_result=false;
+        std::thread removal([&]{
+            {std::lock_guard<std::mutex> lock(gate);removing=true;changed.notify_all();}
+            amity::forget_owner(removed.owner);
+        });
+        {std::unique_lock<std::mutex> lock(gate);changed.wait(lock,[&]{return removing;});resume=true;changed.notify_all();}
+        publication.join();removal.join();main.before_snapshot_update={};
+        assert(main.forgotten_snapshot_owners==std::vector<s::OctopusId>{removed.owner});
+        assert(main.snapshots.size()==1&&c::owned_snapshot_json(main.snapshots.front())==c::owned_snapshot_json(kept));
+        assert(amity::state.reports.size()==1&&c::owned_snapshot_json(amity::state.reports.front())==c::owned_snapshot_json(kept));
+        const auto updates=main.updates.size();
+        assert(!amity::accept_report(removed.owner,removed)&&main.updates.size()==updates);
+        require_report_lock=false;
+        const auto replacement=remote(11,21,1,1);peers.push_back(replacement);const auto added=report(replacement.id,replacement.boot_id);
+        assert(amity::accept_report(added.owner,added));
+        const auto observations=amity::discovered_equipment();
+        assert(observations.size()==2&&std::none_of(observations.begin(),observations.end(),[&](const auto& value){return value.endpoint.port.octopus_id==removed.owner;}));
+        assert(main.snapshots.size()==2&&std::none_of(main.snapshots.begin(),main.snapshots.end(),[&](const auto& value){return value.owner==removed.owner;}));
+    }
 }
 void full_roster_adapter_reports_keep_exact_owner_fences(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
@@ -428,6 +475,26 @@ void saved_owner_capacity_does_not_shrink(){
     amity::adopt_owners();
     assert(main.configure_calls==0&&memory.writes==writes&&configuration_changes.empty()&&serialize_configuration(main.configuration)==saved);
 }
+void added_owner_label_remains_unique_after_middle_removal(){
+    for(bool renamed:{false,true}){
+        reset();auto main=control();const auto original=main.identity,removed=id<s::OctopusId>(9),kept=id<s::OctopusId>(10),added=id<s::OctopusId>(1);
+        main.configuration.octopuses.front().label=main.configuration.octopuses.front().generated_label="Amity 1";
+        main.configuration.octopuses.push_back({removed,"Amity 2","Amity 2",false,1});
+        main.configuration.octopuses.push_back({kept,renamed?"Den":"Amity 3","Amity 3",renamed,1});
+        Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
+        assert(amity::start_configuration_synchronization(main)==ESP_OK);
+        Configuration candidate;std::vector<s::ActivityId> affected;std::string error;
+        assert(propose_octopus_removal(active,removed,candidate,affected,error)&&affected.empty());
+        assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(140))==ESP_OK);
+        peers={remote(10,20,1,1),remote(1,21,1,1)};amity::adopt_owners();
+        const auto owner=[&](s::OctopusId id)->const ConfiguredOctopus&{const auto found=std::find_if(main.configuration.octopuses.begin(),main.configuration.octopuses.end(),[&](const auto& value){return value.octopus_id==id;});assert(found!=main.configuration.octopuses.end());return *found;};
+        assert(owner(original).label=="Amity 1"&&owner(kept).label==(renamed?"Den":"Amity 3")&&owner(kept).generated_label=="Amity 3"&&owner(kept).label_override==renamed);
+        assert(owner(added).label=="Amity 2"&&owner(added).generated_label=="Amity 2"&&!owner(added).label_override);
+        const auto encoded=serialize_configuration(main.configuration);Configuration decoded;
+        assert(encoded.find(removed.str())==std::string::npos&&parse_configuration(encoded,decoded,error));
+        assert(decoded.octopuses.front().octopus_id==added&&decoded.controller_octopus_id==original&&decoded.activities.front().source==active.activities.front().source);
+    }
+}
 void removal_commit_boundary(){
     reset();auto main=control();const auto removed=id<s::OctopusId>(9);
     main.configuration.octopuses.push_back({removed,"Member","Member",false,1});
@@ -447,4 +514,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, callback cleanup, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

@@ -436,10 +436,10 @@ class AddedAmity:
         from .settings import FrontPhysicalAddress
         return FrontPhysicalAddress(self, tentacle, address, timeout=timeout).apply()
 
-    def review_removal(self, *activities):
+    def review_removal(self, *activities, preserve=()):
         """Review an intentional cascade while these fixture activities exist."""
         from .removal import RemovalReview
-        return RemovalReview(self, activities)
+        return RemovalReview(self, activities, preserve=preserve)
 
     def close(self):
         if self._closed:
