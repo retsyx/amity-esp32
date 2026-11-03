@@ -52,6 +52,8 @@ membership behavior remains unchanged.
   preservation of unrelated local activities and configuration.
 - `functional_tests/default_physical_address.py`: changes adapter defaults on
   the main and a headless member, with and without a scanned back address.
+- `functional_tests/ble_keyboard.py`: pairs a Pi BLE HID keyboard and verifies
+  taps, overlapping buttons and disconnect cleanup with local/member equipment.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -891,6 +893,35 @@ query. Discovery checks cover the tested adapter's wires; the UI's combined
 scan indicator also includes other adapters. Cleanup restores the original
 default before removing the added member.
 
+## BLE keyboard input
+
+`--test ble_keyboard` runs two cases with equipment on the main and on an
+added `amity-dut-2`. The Pi advertises a real BLE HID keyboard; pairing and
+unpairing use the shipping authenticated remote settings API. The main must
+have no saved remote. The fixture refuses to replace an existing bond and
+removes only its own new bond during cleanup.
+
+Each case requires a fresh Select press/release, holds Volume Up while pressing
+and releasing Right, then disconnects BLE during another held Volume Up.
+Original physical CEC frames must prove that Right releases independently,
+Volume Up continues, and disconnect ends the remaining stream. No `/api/key`
+request supplies these inputs. Generic HID exercises the keyboard input path;
+Siri touch gestures and Power macros remain separate.
+
+The Pi needs BlueZ with peripheral support and an isolated Python environment:
+
+```sh
+python3 -m venv /home/pi/amity/ble-keyboard-venv
+/home/pi/amity/ble-keyboard-venv/bin/python -m pip install dbus-next==0.2.3
+```
+
+Use `--ble-python /home/pi/amity/ble-keyboard-venv/bin/python` together with
+the existing `--harness-host` and `--harness-root` options. Only BLE fixture
+control and HID reports cross SSH; DUT credentials remain on the runner host.
+The worker releases buttons, unregisters its services and advertisement, restores
+the Pi's pairing setting and removes its new peer bond on exit. It does not
+restart Bluetooth or remove preexisting Pi bonds.
+
 ## Run functional tests
 
 `activity.py` exercises remote key routing twice: once with the TV/AVR/player
@@ -950,7 +981,8 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test missing_equipment` for source disappearance, cooldown and passive return,
 `--test removal_cascade` for stale removal confirmation and exact activity/member cleanup,
 `--test default_physical_address` for four local/member scanned/fallback cases,
-or `--test all` for all thirteen registered scenarios (twenty-two
+`--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
+or `--test all` for all fourteen registered scenarios (twenty-four
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

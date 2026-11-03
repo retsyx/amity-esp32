@@ -22,6 +22,7 @@ class RunConfig:
     wiring_path: Path | None = None
     session_factory: Callable = CecSession
     gpio_factory: Callable | None = None
+    keyboard_factory: Callable | None = None
     timeout: float = 180
     cec_timeout: float = 5
 
@@ -33,6 +34,8 @@ class RunConfig:
             raise ValueError("session_factory must be callable")
         if self.gpio_factory is not None and not callable(self.gpio_factory):
             raise ValueError("gpio_factory must be callable or None")
+        if self.keyboard_factory is not None and not callable(self.keyboard_factory):
+            raise ValueError("keyboard_factory must be callable or None")
         if not isinstance(self.insecure, bool):
             raise ValueError("insecure must be a boolean")
         if self.cafile is not None and self.insecure:

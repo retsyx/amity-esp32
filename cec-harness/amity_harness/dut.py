@@ -359,6 +359,11 @@ class DUT:
         from .settings import FrontPhysicalAddress
         return FrontPhysicalAddress.local(self, tentacle, address, timeout=timeout).apply()
 
+    def pair_ble_keyboard(self, *, timeout=None):
+        """Pair a test-owned BLE keyboard only when no remote is already bonded."""
+        from .ble_keyboard import PairedKeyboard
+        return PairedKeyboard(self, timeout=timeout).create()
+
     def capture_logs(self, *, expected_boot=None, timeout=15):
         """Read existing UI logs with before/after boot proof, without serial I/O."""
         from .diagnostics import capture_logs

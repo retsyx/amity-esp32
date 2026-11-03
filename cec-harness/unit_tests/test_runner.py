@@ -273,7 +273,8 @@ class RunnerTests(unittest.TestCase):
                     "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
                     "test_removal_cascade", "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
-                    "test_default_physical_address_remote_scanned"]
+                    "test_default_physical_address_remote_scanned",
+                    "test_ble_keyboard_local", "test_ble_keyboard_remote"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])

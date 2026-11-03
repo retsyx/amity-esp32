@@ -95,6 +95,8 @@ def main(test, argv=None):
     parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
+    parser.add_argument("--ble-python", default="python3",
+                        help="Python executable with dbus-next for the BLE keyboard fixture")
     parser.add_argument("--no-status-led", action="store_true",
                         help="leave the harness Pi's status LED unchanged")
     parser.add_argument("--output", type=Path, help="private JSON evidence under test-results/")
@@ -110,6 +112,8 @@ def main(test, argv=None):
         parser.error("Provide --credentials or --dut-credentials")
     session_factory = CecSession
     gpio_factory = None
+    from .ble_keyboard import LocalKeyboard, SSHKeyboard
+    keyboard_factory = partial(LocalKeyboard, python=args.ble_python)
     if args.harness_host:
         from .remote import SSHCecBackend
         from .gpio import SSHPinctrlGPIO
@@ -118,11 +122,14 @@ def main(test, argv=None):
         session_factory = partial(CecSession, backend_factory=backend)
         gpio_factory = partial(SSHPinctrlGPIO, host=args.harness_host,
                                root=args.harness_root, port=args.ssh_port)
+        keyboard_factory = partial(SSHKeyboard, host=args.harness_host,
+                                   root=args.harness_root, port=args.ssh_port, python=args.ble_python)
     config = RunConfig(credentials=credentials, default_credentials=args.credentials,
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, cec_timeout=args.cec_timeout,
-                       session_factory=session_factory, gpio_factory=gpio_factory)
+                       session_factory=session_factory, gpio_factory=gpio_factory,
+                       keyboard_factory=keyboard_factory)
     selected = tests if args.test == "all" else {args.test: tests[args.test]}
     with stdio_logging(args.log_level):
         started = time.monotonic()
