@@ -922,6 +922,34 @@ The worker releases buttons, unregisters its services and advertisement, restore
 the Pi's pairing setting and removes its new peer bond on exit. It does not
 restart Bluetooth or remove preexisting Pi bonds.
 
+## Firmware upgrade prelude
+
+Add `--firmware build/amity-update.bin` to a functional run to upgrade all boards
+listed in `TEST-HARNESS.md` before the selected tests. For example:
+
+```sh
+python3 cec-harness/run.py --test all --firmware build/amity-update.bin \
+  --credentials test-results/credentials/amity-dut.json --insecure \
+  --harness-host pi@test2.local \
+  --ble-python /home/pi/amity/ble-keyboard-venv/bin/python \
+  --output test-results/functional/with-upgrade.json
+```
+
+Use `--test firmware_upgrade --firmware PATH` to run only this scenario. Without
+`--firmware`, ordinary runs do not upload or run the upgrade scenario. A failed
+upgrade stops the remaining tests. `--firmware-timeout` defaults to 2700 seconds
+and does not extend physical CEC assertion deadlines.
+
+Start with an idle main, no saved activities/equipment or enrolled secondaries,
+and unclaimed secondary boards. The file must differ from the running image.
+The scenario adds every secondary, exercises an activity per owner, uploads once
+through the main, checks staging, new boots, exact image identities and retained
+configuration/settings, then exercises the same activities again. Cleanup
+deletes its activities/equipment, removes every secondary and requires each
+factory-reset acknowledgement, and verifies the main's original settings and
+empty membership. The reset acknowledgement proves durable scheduling; erased
+secondary Wi-Fi credentials prevent observing reset completion through HTTP.
+
 ## Run functional tests
 
 `activity.py` exercises remote key routing twice: once with the TV/AVR/player

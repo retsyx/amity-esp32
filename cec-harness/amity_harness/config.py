@@ -25,9 +25,12 @@ class RunConfig:
     keyboard_factory: Callable | None = None
     timeout: float = 180
     cec_timeout: float = 5
+    firmware: Path | None = None
+    firmware_timeout: float = 2700
 
     def __post_init__(self):
-        for description, value in (("Run timeout", self.timeout), ("CEC timeout", self.cec_timeout)):
+        for description, value in (("Run timeout", self.timeout), ("CEC timeout", self.cec_timeout),
+                                   ("Firmware timeout", self.firmware_timeout)):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{description} must be a positive finite number")
         if not callable(self.session_factory):
@@ -50,7 +53,7 @@ class RunConfig:
             raise ValueError("The default DUT URL must be a nonempty string")
         object.__setattr__(self, "credentials", MappingProxyType({name: Path(path) for name, path in credentials.items()}))
         object.__setattr__(self, "urls", MappingProxyType(urls))
-        for name in ("default_credentials", "cafile", "wiring_path"):
+        for name in ("default_credentials", "cafile", "wiring_path", "firmware"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value))

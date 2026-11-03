@@ -63,8 +63,10 @@ def _named_options(parser, values, description, convert=str):
     return options
 
 
-def main(test, argv=None):
-    """Run registered scenarios or groups with the shared functional-test CLI."""
+def main(test, argv=None, *, firmware_upgrade=None):
+    """Run scenario groups after the optional, required-to-pass firmware prelude."""
+    if firmware_upgrade is not None and not callable(firmware_upgrade):
+        raise ValueError("firmware_upgrade must be callable or None")
     tests = {test.__name__: test} if callable(test) else dict(test)
     if not tests or any(not isinstance(name, str) for name in tests):
         raise ValueError("Provide named functional tests or nonempty groups of callable tests")
@@ -76,7 +78,10 @@ def main(test, argv=None):
         else:
             raise ValueError("Provide named functional tests or nonempty groups of callable tests")
     parser = argparse.ArgumentParser(description="Run Amity functional tests using the CEC harness")
-    parser.add_argument("--test", choices=[*tests, "all"], default=next(iter(tests)),
+    if "firmware_upgrade" in tests:
+        raise ValueError("Register firmware_upgrade using the dedicated callback parameter")
+    choices = [*tests, *(('firmware_upgrade',) if firmware_upgrade is not None else ()), "all"]
+    parser.add_argument("--test", choices=choices, default=next(iter(tests)),
                         help="scenario to run; defaults to the first registered test")
     parser.add_argument("--credentials", type=Path, help="private JSON with an existing DUT admin_password")
     parser.add_argument("--dut-credentials", action="append", default=[], metavar="DUT=PATH",
@@ -92,6 +97,10 @@ def main(test, argv=None):
                         help="scan, membership and activity operation timeout in seconds (default: 180)")
     parser.add_argument("--cec-timeout", type=float, default=5,
                         help="fresh CEC power/routing assertion wait in seconds (default: 5); independent of --timeout")
+    parser.add_argument("--firmware", type=Path, metavar="PATH",
+                        help="upgrade the Amity system from this update file before running selected tests")
+    parser.add_argument("--firmware-timeout", type=float, default=2700,
+                        help="firmware upgrade timeout in seconds (default: 2700); independent of --timeout and --cec-timeout")
     parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
@@ -103,9 +112,17 @@ def main(test, argv=None):
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO",
                         help="stderr detail: INFO progress (default), DEBUG also HTTP and CEC traffic")
     args = parser.parse_args(argv)
-    for option, value in (("--timeout", args.timeout), ("--cec-timeout", args.cec_timeout)):
+    for option, value in (("--timeout", args.timeout), ("--cec-timeout", args.cec_timeout),
+                          ("--firmware-timeout", args.firmware_timeout)):
         if not math.isfinite(value) or value <= 0:
             parser.error(f"{option} must be positive and finite")
+    if args.test == "firmware_upgrade" and args.firmware is None:
+        parser.error("--test firmware_upgrade requires --firmware PATH")
+    if args.firmware is not None:
+        if firmware_upgrade is None:
+            parser.error("--firmware requires a registered firmware upgrade scenario")
+        if not args.firmware.is_file():
+            parser.error("--firmware must name an existing firmware update file")
     credentials = _named_options(parser, args.dut_credentials, "PATH", Path)
     urls = _named_options(parser, args.dut_url, "URL")
     if args.credentials is None and not credentials:
@@ -128,31 +145,37 @@ def main(test, argv=None):
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, cec_timeout=args.cec_timeout,
+                       firmware=args.firmware, firmware_timeout=args.firmware_timeout,
                        session_factory=session_factory, gpio_factory=gpio_factory,
                        keyboard_factory=keyboard_factory)
-    selected = tests if args.test == "all" else {args.test: tests[args.test]}
+    selected = (tests if args.test == "all" else
+                {} if args.test == "firmware_upgrade" else {args.test: tests[args.test]})
+    if args.firmware is not None:
+        selected = {"firmware_upgrade": (firmware_upgrade,), **selected}
+    selected_scenarios = [scenario for group in selected.values() for scenario in group]
     with stdio_logging(args.log_level):
         started = time.monotonic()
         event("run.start", groups=list(selected),
-              tests=[scenario.__name__ for group in selected.values() for scenario in group],
+              tests=[scenario.__name__ for scenario in selected_scenarios],
               log_level=args.log_level, operation_timeout_seconds=config.timeout,
-              cec_timeout_seconds=config.cec_timeout)
+              cec_timeout_seconds=config.cec_timeout, firmware_timeout_seconds=config.firmware_timeout)
         try:
             with (nullcontext() if args.no_status_led else
                   run_status_led(host=args.harness_host, root=args.harness_root, port=args.ssh_port)):
                 reports = []
-                for group in selected.values():
-                    for scenario in group:
-                        result = run_test(scenario, config)
-                        reports.append(result)
-                        if result["passed"]:
-                            print(f"PASS: {result['test']}", flush=True)
-                        else:
-                            # Exception text may contain server-echoed secrets or
-                            # private URLs. Detailed errors remain in the private
-                            # JSON report; stdio carries the type and source stack.
-                            print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
-                                  file=sys.stderr, flush=True)
+                for index, scenario in enumerate(selected_scenarios):
+                    result = run_test(scenario, config)
+                    reports.append(result)
+                    if result["passed"]:
+                        print(f"PASS: {result['test']}", flush=True)
+                    else:
+                        # Exception text may contain server-echoed secrets or
+                        # private URLs. Detailed errors remain in the private
+                        # JSON report; stdio carries the type and source stack.
+                        print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
+                              file=sys.stderr, flush=True)
+                        if args.firmware is not None and index == 0:
+                            break
                 report = (reports[0] if len(reports) == 1 else
                           {"passed": all(result["passed"] for result in reports), "tests": reports})
                 if args.output:

@@ -16,6 +16,7 @@ from functional_tests.default_physical_address import (
 from functional_tests.ble_keyboard import test_ble_keyboard_local, test_ble_keyboard_remote
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
+from functional_tests.firmware_upgrade import test_firmware_upgrade
 from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
 from functional_tests.dual_display import test_dual_display
 from functional_tests.consortium import (
@@ -40,4 +41,5 @@ if __name__ == "__main__":
                            "default_physical_address": (
                                test_default_physical_address_local, test_default_physical_address_local_scanned,
                                test_default_physical_address_remote, test_default_physical_address_remote_scanned),
-                           "ble_keyboard": (test_ble_keyboard_local, test_ble_keyboard_remote)}))
+                           "ble_keyboard": (test_ble_keyboard_local, test_ble_keyboard_remote)},
+                          firmware_upgrade=test_firmware_upgrade))
