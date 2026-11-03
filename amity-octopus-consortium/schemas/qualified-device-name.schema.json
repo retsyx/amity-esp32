@@ -1,6 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://amity.invalid/design/v0.1/qualified-device-name.schema.json",
-  "title": "Persisted fully qualified device name using OSD name",
-  "$ref": "core-types.schema.json#/$defs/QualifiedDeviceName"
-}

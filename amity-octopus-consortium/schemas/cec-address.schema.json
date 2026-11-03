@@ -1,7 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://amity.invalid/design/v0.1/cec-address.schema.json",
-  "title": "Resolved runtime CEC endpoint",
-  "$ref": "core-types.schema.json#/$defs/FullyQualifiedCecAddress",
-  "$comment": "Not a configured device name. Use qualified-device-name.schema.json for persisted device selection."
-}
