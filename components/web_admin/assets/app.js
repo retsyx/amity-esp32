@@ -277,7 +277,6 @@ function deviceIcon(device){
 }
 function renderHostname(name){
  if(!name)return;$('deviceName').textContent=name;document.title=name;
- if(document.activeElement!==$('hostname')&&!$('hostname').dataset.edited)$('hostname').value=name;
 }
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
@@ -561,7 +560,7 @@ function stopHostnameReconnect(){
 }
 function hostnameReady(health,flow){
  return !!health&&health.device_id===flow.deviceId&&health.hostname===flow.hostname&&
-  typeof health.boot_id==='string'&&health.boot_id.length>0&&health.boot_id!==flow.previousBootId&&health.ready===true;
+  health.boot_id===flow.bootId&&health.ready===true;
 }
 async function probeHostnameReconnect(flow){
  if(hostnameReconnect!==flow)return;
@@ -589,26 +588,18 @@ async function probeHostnameReconnect(flow){
  }
  if(hostnameReconnect===flow)flow.timer=setTimeout(()=>{flow.timer=null;probeHostnameReconnect(flow);},2000);
 }
-function startHostnameReconnect({hostname,previousBootId,deviceId}){
+function startHostnameReconnect({hostname,bootId,deviceId}){
  stopHostnameReconnect();
  if(typeof hostname!=='string'||!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(hostname)||
-    typeof previousBootId!=='string'||!previousBootId||typeof deviceId!=='string'||!deviceId)
+    typeof bootId!=='string'||!bootId||typeof deviceId!=='string'||!deviceId)
   throw Error('Could not read Amity’s reconnect details. Open its new address to reconnect.');
- const flow={origin:`https://${hostname}.local`,hostname,previousBootId,deviceId,startedAt:Date.now(),timer:null,timeout:null,abort:null};
+ const flow={origin:`https://${hostname}.local`,hostname,bootId,deviceId,startedAt:Date.now(),timer:null,timeout:null,abort:null};
  hostnameReconnect=flow;renderHostname(hostname);showLogin();$('login').hidden=true;
  const link=$('hostnameLink');link.href=flow.origin;link.textContent=`Open ${hostname}.local`;link.hidden=false;
  message(`Reconnecting to ${hostname}.local… If your browser requires certificate approval, open the link below.`);
  probeHostnameReconnect(flow);
 }
 window.addEventListener('pagehide',stopHostnameReconnect);
-$('hostname').addEventListener('input',()=>{$('hostname').dataset.edited='true';});
-$('changeHostname').addEventListener('submit',run(async e=>{
- e.preventDefault();const submit=e.target.querySelector('button');if(submit.disabled)return;submit.disabled=true;
- try{
-  const r=await request('hostname',{hostname:$('hostname').value});delete $('hostname').dataset.edited;
-  startHostnameReconnect({hostname:r.hostname,previousBootId:r.previous_boot_id,deviceId:r.device_id});
- }finally{submit.disabled=false;}
-}));
 $('factoryReset').addEventListener('click',run(async()=>{
  if(!confirm('This will factory reset Amity. You will need to reconfigure it again. Are you sure?'))return;
  const button=$('factoryReset');button.disabled=true;

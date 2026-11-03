@@ -180,7 +180,6 @@ dialog h3 { margin-bottom: 20px; font-size: 1.25rem; }
 
 #advanced input { max-width: 100%; }
 #advanced input[type=file] { width: 100%; max-width: 360px; }
-#hostname { width: calc(32ch + 26px); }
 #newPassword { width: calc(24ch + 26px); }
 .diagnostics { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 10px 24px; margin: 0 0 20px; font-size: .9rem; }
 .diagnostics dt { color: var(--muted); }
@@ -223,6 +222,7 @@ dialog h3 { margin-bottom: 20px; font-size: 1.25rem; }
 .amity-device-actions button{white-space:nowrap}
 @media(max-width:650px){.amity-device-header{gap:8px}.amity-device-header h3{font-size:1.1rem}.amity-device-actions{gap:6px}.amity-device-actions button{font-size:.875rem;padding:8px 10px}}
 .adapter-settings{width:620px;max-height:90dvh;overflow:auto}
+.adapter-settings input[data-hostname]{width:100%;max-width:calc(32ch + 26px)}
 .adapter-settings table{width:100%;table-layout:fixed;border-collapse:collapse;margin:16px 0;font-size:.875rem;text-align:left}
 .adapter-settings th,.adapter-settings td{padding:10px 6px;border-bottom:1px solid var(--border);vertical-align:middle;overflow-wrap:anywhere}
 .adapter-settings thead th{font-weight:600;line-height:1.3;overflow-wrap:normal}

@@ -61,6 +61,7 @@ std::atomic_bool input_lost{false};
 std::atomic_bool original_interfaces_enabled{false};
 std::mutex admin_mdns_mutex;
 bool admin_mdns_registered=false;
+std::string admin_mdns_hostname;
 QueueHandle_t input_queue;
 void startup_memory(const char* phase){
     ESP_LOGI("startup_memory","%s: internal=%u largest=%u psram=%u",phase,
@@ -68,9 +69,7 @@ void startup_memory(const char* phase){
         unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
         unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)));
 }
-void refresh_admin_mdns() {
-    std::lock_guard<std::mutex> guard(admin_mdns_mutex);
-    if(!original_interfaces_enabled.load())return;
+esp_err_t refresh_admin_mdns_for_host(const char* hostname) {
     // Matter owns the responder's global hostname. Keep the admin hostname as a
     // delegated alias so a Matter republish cannot rename the HTTPS endpoint.
     mdns_ip_addr_t addresses[1+CONFIG_LWIP_IPV6_NUM_ADDRESSES]{};
@@ -91,8 +90,41 @@ void refresh_admin_mdns() {
     }
     for(size_t i=1;i<count;++i)addresses[i-1].next=&addresses[i];
     // The mDNS API deep-copies this list before returning.
-    const auto err=mdns_delegate_hostname_set_address(device_settings::hostname(),count?addresses:nullptr);
+    return mdns_delegate_hostname_set_address(hostname,count?addresses:nullptr);
+}
+void refresh_admin_mdns() {
+    std::lock_guard<std::mutex> guard(admin_mdns_mutex);
+    if(!original_interfaces_enabled.load()||admin_mdns_hostname.empty())return;
+    const auto err=refresh_admin_mdns_for_host(admin_mdns_hostname.c_str());
     if(err!=ESP_OK)ESP_LOGW("amity","Administration mDNS address update: %s",esp_err_to_name(err));
+}
+esp_err_t rename_hostname(const std::string& previous,const std::string& hostname) {
+    auto* netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if(!netif)return ESP_ERR_INVALID_STATE;
+    std::lock_guard<std::mutex> guard(admin_mdns_mutex);
+    auto err=esp_netif_set_hostname(netif,hostname.c_str());
+    if(err!=ESP_OK)return err;
+    if(!original_interfaces_enabled.load())return ESP_OK;
+    bool added=false,home_changed=false;
+    err=mdns_delegate_hostname_add(hostname.c_str(),nullptr);
+    if(err==ESP_OK){added=true;err=refresh_admin_mdns_for_host(hostname.c_str());}
+    if(err==ESP_OK){
+        err=ESP_ERR_INVALID_ARG;
+        for(unsigned attempt=0;attempt<100&&err==ESP_ERR_INVALID_ARG;++attempt){
+            err=mdns_service_add_for_host("Amity Home Theater","_https","_tcp",hostname.c_str(),443,nullptr,0);
+            if(err==ESP_ERR_INVALID_ARG)vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
+    if(err==ESP_OK){err=amity_homekit::rename_hostname(hostname.c_str());home_changed=err==ESP_OK;}
+    if(err==ESP_OK)err=mdns_delegate_hostname_remove(previous.c_str());
+    if(err==ESP_OK){admin_mdns_hostname=hostname;admin_mdns_registered=true;return ESP_OK;}
+    if(home_changed&&amity_homekit::rename_hostname(previous.c_str())!=ESP_OK)
+        ESP_LOGE("amity","Could not restore HomeKit hostname after rename failure");
+    if(added&&mdns_delegate_hostname_remove(hostname.c_str())!=ESP_OK)
+        ESP_LOGE("amity","Could not remove incomplete administration hostname");
+    if(esp_netif_set_hostname(netif,previous.c_str())!=ESP_OK)
+        ESP_LOGE("amity","Could not restore network hostname after rename failure");
+    return err;
 }
 void remote_key(uint16_t page,uint16_t usage,bool down,void *) {
     if(!original_interfaces_enabled.load())return;
@@ -341,7 +373,7 @@ esp_err_t retire_original_interfaces() {
         std::lock_guard<std::mutex> guard(admin_mdns_mutex);
         if(admin_mdns_registered){
             admin_mdns_registered=false;
-            const auto removed=mdns_service_remove_for_host("Amity Home Theater","_https","_tcp",device_settings::hostname());
+            const auto removed=mdns_service_remove_for_host("Amity Home Theater","_https","_tcp",admin_mdns_hostname.c_str());
             if(removed!=ESP_OK)ESP_LOGW("amity","Administration mDNS removal: %s",esp_err_to_name(removed));
         }
     }
@@ -355,6 +387,7 @@ esp_err_t retire_original_interfaces() {
 void start_admin_mdns() {
     std::lock_guard<std::mutex> guard(admin_mdns_mutex);
     if(!original_interfaces_enabled.load())return;
+    admin_mdns_hostname=device_settings::hostname();
     const auto octopus_id=hub.octopus_id();
     // CONFIG_USE_MINIMAL_MDNS=n makes Matter and HTTPS share this responder.
     ESP_ERROR_CHECK(mdns_init());
@@ -363,14 +396,14 @@ void start_admin_mdns() {
         const auto temporary=std::string("amity-")+octopus_id.str().substr(24);
         ESP_ERROR_CHECK(mdns_hostname_set(temporary.c_str()));
     }
-    if(original_interfaces_enabled.load())ESP_ERROR_CHECK(mdns_delegate_hostname_add(device_settings::hostname(),nullptr));
+    if(original_interfaces_enabled.load())ESP_ERROR_CHECK(mdns_delegate_hostname_add(admin_mdns_hostname.c_str(),nullptr));
     // mDNS hostname changes are queued, even when initialization succeeds.
     // Wait for the responder to process them before registering the alias's
     // service; a startup timing difference must not cause an OTA rollback.
     esp_err_t admin_mdns=ESP_ERR_INVALID_STATE;
     if(original_interfaces_enabled.load())admin_mdns=ESP_ERR_INVALID_ARG;
     for(unsigned attempt=0;attempt<100&&admin_mdns==ESP_ERR_INVALID_ARG&&original_interfaces_enabled.load();++attempt){
-        admin_mdns=mdns_service_add_for_host("Amity Home Theater","_https","_tcp",device_settings::hostname(),443,nullptr,0);
+        admin_mdns=mdns_service_add_for_host("Amity Home Theater","_https","_tcp",admin_mdns_hostname.c_str(),443,nullptr,0);
         if(admin_mdns==ESP_ERR_INVALID_ARG)vTaskDelay(pdMS_TO_TICKS(20));
     }
     if(admin_mdns==ESP_OK)admin_mdns_registered=true;
@@ -455,6 +488,7 @@ extern "C" void app_main() {
 #endif
     ESP_ERROR_CHECK(amity::consortium::runtime_finish_reclaim(amity_matter_finish_network_reclaim));
     ESP_ERROR_CHECK(device_settings::init());
+    device_settings::set_hostname_handler(rename_hostname);
     system_services::start_log_capture();
     auto startup_profile=amity::board_profile;
     const auto passive_profile=[&]{

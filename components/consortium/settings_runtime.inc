@@ -19,12 +19,21 @@ std::vector<SettingsCache> settings_caches;
 std::vector<SettingsOperation> settings_operations;
 std::vector<SettingsReceived> settings_received;
 SettingsAuthorization settings_authorization;
+// Caller holds the runtime lock. An admitted rename reserves its name until
+// its outcome is known, including against a concurrent Add operation.
+bool settings_hostname_pending(model::OctopusId owner,const std::string& name){
+    for(const auto& operation:settings_operations)if(operation.owner!=owner&&operation.stage=="admitted"){
+        Json pending;JsonError detail;DeviceSettingsWrite write;
+        if(parse_json(operation.core,pending,detail)&&parse_device_settings_write(pending,write)==Error::none&&write.hostname&&*write.hostname==name)return true;
+    }
+    return false;
+}
 std::string settings_quote(std::string_view text){Json value;value.type=Json::Type::string;value.string=text;return settings_json(value);}
 std::string settings_result(model::MessageId id,std::string_view operation,std::string_view stage,std::string_view error,std::string_view snapshot="null"){
     return "{\"request_id\":\""+id.str()+"\",\"operation\":"+settings_quote(operation)+",\"stage\":"+settings_quote(stage)+",\"error\":"+settings_quote(error)+",\"snapshot\":"+std::string(snapshot)+",\"rebooting\":false}";
 }
 const char* settings_error(Error result){switch(result){case Error::stale_boot:return "STALE_BOOT";case Error::transaction_conflict:case Error::stale_config:return "CONFLICT";case Error::expired:return "EXPIRED";case Error::storage_failure:return "STORAGE_FAILURE";case Error::queue_full:return "QUEUE_FULL";case Error::invalid_message:return "INVALID_MESSAGE";default:return "NOT_READY";}}
-const char* settings_message(std::string_view error){if(error=="STALE_BOOT")return "This device restarted. Open its settings again.";if(error=="CONFLICT")return "Settings changed. Open the settings again.";if(error=="EXPIRED")return "The request expired. Open the settings again.";if(error=="STORAGE_FAILURE")return "The device could not save its settings.";if(error=="QUEUE_FULL")return "The device is busy. Try again shortly.";if(error=="INVALID_MESSAGE")return "Check the selected adapter settings.";return "The device is not ready. Open its settings again.";}
+const char* settings_message(std::string_view error){if(error=="STALE_BOOT")return "This device restarted. Open its settings again.";if(error=="CONFLICT")return "Settings changed. Open the settings again.";if(error=="EXPIRED")return "The request expired. Open the settings again.";if(error=="STORAGE_FAILURE")return "The device could not save its settings.";if(error=="QUEUE_FULL")return "The device is busy. Try again shortly.";if(error=="INVALID_MESSAGE")return "Check the device settings.";return "The device is not ready. Open its settings again.";}
 bool settings_enrolled(model::OctopusId owner){for(const auto& peer:group.peers)if(peer.id==owner&&peer.active)return true;return false;}
 struct SettingsLink {std::shared_ptr<Active> active;RuntimePeerStatus status;};
 SettingsLink settings_link(model::OctopusId owner){
@@ -86,13 +95,13 @@ bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& env
         if(operation=="read"){
             auto* cache=settings_cache(active->peer,false);if(!cache||cache->read_id!=id||cache->read_link!=active->session.scope().link_id)return true;
             cache->read_id={};cache->read_until=0;
-            if(stage=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string==active->session.scope().peer_boot_id.str()){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=active->session.scope().peer_boot_id;cache->received=received;cache->error.clear();}
+            if(stage=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string==active->session.scope().peer_boot_id.str()){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=active->session.scope().peer_boot_id;cache->received=received;cache->error.clear();remember_live_hostname(*active,envelope.payload.get("snapshot")->get("hostname")->string);}
             else cache->error=settings_message(envelope.payload.get("error")->string);
         }else for(auto& pending:settings_operations)if(pending.owner==active->peer&&pending.id==id&&pending.link==active->session.scope().link_id&&pending.target_boot==active->session.scope().peer_boot_id&&pending.stage=="admitted"){
             if(stage=="admitted")return true;
             if(stage=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string!=pending.target_boot.str())return false;
             pending.stage=stage=="applied"?"applied":"failed";pending.error=stage=="applied"?"":settings_message(envelope.payload.get("error")->string);
-            if(stage=="applied"){auto* cache=settings_cache(active->peer,true);if(cache){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=pending.target_boot;cache->received=received;cache->error.clear();}}break;
+            if(stage=="applied"){remember_live_hostname(*active,envelope.payload.get("snapshot")->get("hostname")->string);auto* cache=settings_cache(active->peer,true);if(cache){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=pending.target_boot;cache->received=received;cache->error.clear();}}break;
         }
         settings_expire(received);return true;
     }

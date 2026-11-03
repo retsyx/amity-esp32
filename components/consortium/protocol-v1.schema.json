@@ -2194,11 +2194,34 @@
               "maxContains": 1
             }
           ]
+        },
+        "hostname": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$",
+          "minLength": 1,
+          "maxLength": 32,
+          "not": {
+            "pattern": "[^a-z0-9-]"
+          }
+        },
+        "hostname_revision": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
         }
       },
       "required": [
         "boot_id",
         "settings_revision",
+        "hostname_revision",
+        "hostname",
         "adapters"
       ],
       "additionalProperties": false
@@ -2223,7 +2246,7 @@
         },
         "changes": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 4,
           "items": {
             "type": "object",
@@ -2326,14 +2349,76 @@
               "maxContains": 1
             }
           ]
+        },
+        "hostname": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,30}[A-Za-z0-9])?$",
+          "minLength": 1,
+          "maxLength": 32,
+          "not": {
+            "pattern": "[^A-Za-z0-9-]"
+          }
+        },
+        "expected_hostname_revision": {
+          "allOf": [
+            {
+              "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
+            },
+            {
+              "not": {
+                "const": "0"
+              }
+            }
+          ]
         }
       },
       "required": [
         "expected_boot_id",
-        "expected_settings_revision",
         "changes"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "expected_settings_revision"
+          ],
+          "properties": {
+            "changes": {
+              "minItems": 1
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "hostname"
+                ]
+              },
+              {
+                "required": [
+                  "expected_hostname_revision"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "hostname",
+            "expected_hostname_revision"
+          ],
+          "properties": {
+            "changes": {
+              "maxItems": 0
+            }
+          },
+          "not": {
+            "required": [
+              "expected_settings_revision"
+            ]
+          }
+        }
+      ]
     },
     "SettingsRead": {
       "type": "object",

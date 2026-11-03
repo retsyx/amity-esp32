@@ -57,7 +57,7 @@ struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active{
  Session session;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();model::OctopusId peer;
  std::mutex mutex;bool cancelled=false,retiring=false,lifecycle_only=false,management_ready=false,ready=true,context_ready=true,context_requested=false,refreshing=false;
- RuntimePeerStatus status;std::deque<Queued> queue;std::string endpoint_hint,expected_hostname;
+ RuntimePeerStatus status;std::deque<Queued> queue;std::string endpoint_hint,expected_hostname,advertised_hostname;
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
 };
@@ -133,6 +133,7 @@ void terminal_receive_trace(){
 }
 void coordinator_refresh(){
  auto a=start(true);const auto original=a->session.scope();const auto* tls=a->tls.get();std::vector<std::string> cached={"TV","AVR","Player"};
+ a->advertised_hostname="renamed-main";network.get_hostname=[]{return "renamed-main";};
  unsigned applied=0;std::optional<SnapshotManifest> config_manifest;std::optional<Envelope> stale,result;
  controls.snapshot=[](auto){return owner_state;};controls.configuration_snapshot=[&](auto owner,uint64_t revision){assert(owner==a->peer&&revision==8);return controller_slice(original,revision);};
  controls.synchronize=[&](auto owner,const Json& value){++applied;assert(owner==a->peer&&value.type==Json::Type::string&&value.string==owner_state&&cached.size()==3);return Error::none;};
@@ -142,6 +143,7 @@ void coordinator_refresh(){
   unchanged(active,original,tls);SnapshotManifest m;std::string phase;uint32_t next=0;
   if(e.kind==Kind::snapshot_request){assert(parse_snapshot_manifest(e.payload,m,phase,next)==Error::none);
    if(m.document_kind=="configuration"){assert(phase=="begin"&&e.config_revision==7&&m.config_revision==8);config_manifest=m;
+    feed(active,inbound(original,7,Kind::device_status,"{\"hostname\":\"renamed-member\"}")); // Admitted metadata interleaving the transfer.
     result=inbound(original,7,Kind::scoped_result,observation(original));feed(active,*result);
     feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(m,"ack",0)));}
    else assert(e.config_revision==8&&m.config_revision==8&&(phase=="ack"||phase=="complete"));
@@ -149,6 +151,7 @@ void coordinator_refresh(){
    feed(active,inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(*config_manifest,"complete",1)));
    // Already-in-flight obsolete messages are safely discarded after advance,
    // they cannot masquerade as the new owner-state slice.
+   feed(active,inbound(original,7,Kind::device_status,"{\"hostname\":\"renamed-member\"}")); // Old-scope metadata after local advance.
    stale=inbound(original,7,Kind::heartbeat,heartbeat);feed(active,*stale);
    const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);
    feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));
@@ -163,6 +166,9 @@ void coordinator_refresh(){
  assert(result&&a->session.admit(*result,clock_ms,clock_ms)==Error::stale_config&&a->session.discard_stale(*result,clock_ms,clock_ms)==Error::none);
  assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
  runtime_configuration_changed(6,std::string(64,'c'));assert(configuration==8&&shutdowns==0);
+ assert(a->advertised_hostname.empty());on_send={};assert(refresh_local_hostname(*a));
+ assert(a->tls->sent.size()==5&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-main");
+ assert(refresh_local_hostname(*a)&&a->tls->sent.size()==5);unchanged(*a,original,tls);
 }
 void future_context_recaptures_after_slow_refresh(){
  auto a=start(true);const auto original=a->session.scope();unsigned applied=0;std::optional<SnapshotManifest> config_manifest;
@@ -217,6 +223,7 @@ void rejected_interleaved_observations(){
 }
 void member_refresh(){
  auto a=start(false);const auto original=a->session.scope();const auto* tls=a->tls.get();unsigned applied=0;std::vector<std::string> cached={"Member TV","Member Player"};
+ a->advertised_hostname="renamed-member";network.get_hostname=[]{return "renamed-member";};
  const auto payload=controller_slice(original,8);const auto incoming=manifest(original.local_id,original.local_boot_id,8,"configuration",payload);
  const auto first=inbound(original,7,Kind::snapshot_request,snapshot_manifest_json(incoming,"begin",0));
  assert(a->session.admit(first,clock_ms,clock_ms)==Error::none); // The real outer loop pre-admits the first manifest.
@@ -232,7 +239,9 @@ void member_refresh(){
   }else{assert(outgoing_state&&e.kind==Kind::snapshot_chunk&&e.config_revision==8);feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(*outgoing_state,"complete",1)));}
  };
  assert(synchronize(*a,false,true,8,&first));unchanged(*a,original,tls);assert(configuration==8&&applied==1&&cached.size()==2&&shutdowns==0);
+ assert(a->advertised_hostname.empty());
  assert(a->tls->sent.size()==4&&a->tls->sent[0].config_revision==7&&a->tls->sent[1].config_revision==7&&a->tls->sent[2].config_revision==8&&a->tls->sent[3].config_revision==8);
+ on_send={};assert(refresh_local_hostname(*a));assert(a->tls->sent.size()==5&&a->tls->sent.back().kind==Kind::device_status&&a->tls->sent.back().config_revision==8&&a->tls->sent.back().payload.get("hostname")->string=="renamed-member");unchanged(*a,original,tls);
  assert(!a->context_ready);
 }
 void rejected_frames(){
@@ -304,7 +313,7 @@ def main():
     pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
-        'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(',
+        'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',
         'void runtime_configuration_changed(', 'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal('))
     actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]

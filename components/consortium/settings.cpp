@@ -1,5 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/settings.hpp"
+#include "amity/consortium/hostname.hpp"
 #include <algorithm>
 namespace amity::consortium {
 namespace {
@@ -13,7 +14,7 @@ std::string quote(std::string_view value){std::string out="\"";constexpr char he
 }
 bool is_settings_kind(Kind kind){return kind==Kind::settings_read||kind==Kind::settings_write||kind==Kind::settings_result;}
 bool valid_settings_snapshot(const Json& value){
- model::BootId boot;if(!closed(value,{"boot_id","settings_revision","adapters"})||!id(value.get("boot_id"),boot)||!counter(value.get("settings_revision")))return false;
+ model::BootId boot;if(!closed(value,{"boot_id","settings_revision","hostname_revision","hostname","adapters"})||!id(value.get("boot_id"),boot)||!counter(value.get("settings_revision"))||!counter(value.get("hostname_revision"))||value.get("hostname")->type!=Json::Type::string||!valid_hostname(value.get("hostname")->string))return false;
  const auto* rows=value.get("adapters");if(rows->type!=Json::Type::array||rows->array.size()>amity::max_tentacles)return false;unsigned seen=0;
  for(const auto& row:rows->array){uint64_t slot=0;std::string name;bool configured=false;
   if(!closed(row,{"tentacle_id","name","configured","default_front_physical_address","observed_front_physical_address","effective_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!json_string(row.get("name"),name,0,128)||!json_bool(row.get("configured"),configured)||!pa(row.get("default_front_physical_address"))||!nullable_pa(row.get("observed_front_physical_address"))||!nullable_pa(row.get("effective_front_physical_address")))return false;
@@ -22,17 +23,30 @@ bool valid_settings_snapshot(const Json& value){
     return true;
 }
 Error parse_device_settings_write(const Json& value,DeviceSettingsWrite& out){
- DeviceSettingsWrite next;if(!closed(value,{"expected_boot_id","expected_settings_revision","changes"})||!id(value.get("expected_boot_id"),next.expected_boot)||!decimal(value.get("expected_settings_revision"),next.expected_revision)||!next.expected_revision)return Error::invalid_message;
- const auto* changes=value.get("changes");if(changes->type!=Json::Type::array||changes->array.empty()||changes->array.size()>amity::max_tentacles)return Error::invalid_message;unsigned seen=0;
+ DeviceSettingsWrite next;
+ if(!closed(value,{"expected_boot_id","changes"},{"expected_settings_revision","hostname","expected_hostname_revision"})||!id(value.get("expected_boot_id"),next.expected_boot))return Error::invalid_message;
+ const auto* changes=value.get("changes");
+ if(changes->type!=Json::Type::array||changes->array.size()>amity::max_tentacles)return Error::invalid_message;
+ if(changes->array.empty()){
+  const auto* hostname=value.get("hostname");
+  if(value.get("expected_settings_revision")||!hostname||hostname->type!=Json::Type::string||!decimal(value.get("expected_hostname_revision"),next.expected_hostname_revision)||!next.expected_hostname_revision)return Error::invalid_message;
+  auto name=hostname->string;for(auto& c:name)if(c>='A'&&c<='Z')c+='a'-'A';
+  if(!valid_hostname(name))return Error::invalid_message;
+  next.hostname=std::move(name);
+ }else if(value.get("hostname")||value.get("expected_hostname_revision")||!decimal(value.get("expected_settings_revision"),next.expected_revision)||!next.expected_revision)return Error::invalid_message;
+ unsigned seen=0;
  for(const auto& row:changes->array){uint64_t slot=0;AdapterSettingChange change;
   if(!closed(row,{"tentacle_id","default_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!pa(row.get("default_front_physical_address"),true))return Error::invalid_message;
   seen|=1u<<slot;change.tentacle_id=slot;change.default_front_physical_address=row.get("default_front_physical_address")->string;next.changes.push_back(std::move(change));
  }out=std::move(next);return Error::none;
 }
 std::string device_settings_write_json(const DeviceSettingsWrite& value){
- std::string out="{\"expected_boot_id\":\""+value.expected_boot.str()+"\",\"expected_settings_revision\":\""+std::to_string(value.expected_revision)+"\",\"changes\":[";
+ std::string out="{\"expected_boot_id\":\""+value.expected_boot.str()+"\"";
+ if(value.hostname)out+=",\"hostname\":"+quote(*value.hostname)+",\"expected_hostname_revision\":\""+std::to_string(value.expected_hostname_revision)+"\"";
+ else out+=",\"expected_settings_revision\":\""+std::to_string(value.expected_revision)+"\"";
+ out+=",\"changes\":[";
  for(size_t index=0;index<value.changes.size();++index){const auto& change=value.changes[index];if(index)out+=",";out+="{\"tentacle_id\":"+std::to_string(change.tentacle_id)+",\"default_front_physical_address\":"+quote(change.default_front_physical_address)+"}";}
-    return out+"]}";
+ return out+"]}";
 }
 bool valid_settings_payload(Kind kind,const Json& value){
  model::MessageId request;if(!id(value.get("request_id"),request))return false;

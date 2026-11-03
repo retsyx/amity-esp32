@@ -3,7 +3,7 @@
 #include "amity/consortium/wire.hpp"
 namespace amity::consortium {
 struct AdapterSettingChange {uint8_t tentacle_id=0;std::string default_front_physical_address;};
-struct DeviceSettingsWrite {model::BootId expected_boot;uint64_t expected_revision=0;std::vector<AdapterSettingChange> changes;};
+struct DeviceSettingsWrite {model::BootId expected_boot;uint64_t expected_revision=0,expected_hostname_revision=0;std::vector<AdapterSettingChange> changes;std::optional<std::string> hostname;};
 bool is_settings_kind(Kind);
 bool valid_settings_snapshot(const Json&);
 bool valid_settings_payload(Kind,const Json&);

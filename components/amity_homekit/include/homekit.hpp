@@ -21,6 +21,8 @@ esp_err_t start(amity::SystemControl &hub, const amity_matter_callbacks_t &callb
 // Permanently disable this boot, synchronously close sessions/listener and
 // discovery, preserving pairings. Safe before start and from lifecycle worker.
 esp_err_t stop();
+// Republish discovery only; preserve the listener, sessions and pairing state.
+esp_err_t rename_hostname(const char *hostname);
 Status status();
 esp_err_t open_pairing();
 esp_err_t close_pairing();

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run actual removal admission, dispatch, one-shot permit and result cache with real Session/codecs."""
 from pathlib import Path
-import argparse,os,shlex,subprocess,tempfile,json,copy,itertools
+import argparse,os,shlex,subprocess,tempfile
 from consortium_gatt_callback_test import function
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
@@ -59,6 +59,62 @@ std::shared_ptr<Active> connection(bool receiver,bool management=false,uint32_t 
 }
 Envelope message(const std::shared_ptr<Active>& active,unsigned id=20){const auto& sc=active->session.scope();Envelope e;e.consortium_id=sc.consortium_id;e.origin_octopus_id=sc.peer_id;e.destination_octopus_id=sc.local_id;e.origin_boot_id=sc.peer_boot_id;e.destination_boot_id=sc.local_boot_id;e.coordinator_epoch=1;e.config_revision=1;e.kind=Kind::membership_event;e.ttl_ms=2000;auto mutation=ident<model::MutationId>(id);const auto digest=retirement_hash(sc,mutation,2);e.payload=parsed("{\"mutation_id\":\""+mutation.str()+"\",\"proposal_digest\":\""+digest+"\",\"phase\":\"factory_reset\",\"membership_revision\":\"2\",\"expected_boot_id\":\""+boot.str()+"\"}");return e;}
 bool dispatch(const std::shared_ptr<Active>& active,const Envelope& e){const auto received=clock_ms;return active->session.admit(e,received,received)==Error::none&&retire_member(*active,e,received);}
+void codec_tests(){
+ const auto base=parsed(R"({"protocol_version":1,"consortium_id":"11111111111111111111111111111111","origin_octopus_id":"33333333333333333333333333333333","origin_boot_id":"44444444444444444444444444444444","destination_octopus_id":"55555555555555555555555555555555","destination_boot_id":"66666666666666666666666666666666","coordinator_epoch":"1","config_revision":"1","kind":"membership_event","ttl_ms":2000,"payload":{"mutation_id":"99999999999999999999999999999999","proposal_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","phase":"factory_reset","membership_revision":"2","expected_boot_id":"66666666666666666666666666666666"}})");
+ unsigned cases=0,accepted=0;
+ auto check_body=[&](const std::string& body,bool expected){
+  Envelope envelope;const bool actual=parse_envelope(body,envelope)==Error::none;
+  if(actual!=expected)std::cerr<<"Removal codec expected "<<expected<<" for "<<body<<'\n';
+  assert(actual==expected);++cases;if(actual)++accepted;
+ };
+ auto check=[&](const Json& value,bool expected){check_body(settings_json(value),expected);};
+ auto remove=[](Json& value,std::string_view field){value.object.erase(std::remove_if(value.object.begin(),value.object.end(),[&](const auto& item){return item.first==field;}),value.object.end());};
+ struct ResultCase{const char* value;bool event,result;};
+ const ResultCase results[]={{nullptr,true,false},{"reset_scheduled",false,true},{"rejected",false,true},{"unknown",false,true},{"retired",false,false},{"",false,false}};
+ struct TtlCase{unsigned value;bool accepted;};
+ const TtlCase ttls[]={{0,false},{1,true},{2000,true},{2001,false},{10000,false}};
+ for(bool response:{false,true})for(const auto& result:results)for(const auto& ttl:ttls){
+  auto value=base;value.get("kind")->string=response?"membership_result":"membership_event";value.get("ttl_ms")->integer=ttl.value;
+  if(result.value)value.get("payload")->object.emplace_back("result",parsed('"'+std::string(result.value)+'"'));
+  check(value,(response?result.result:result.event)&&ttl.accepted);
+ }
+ // These exact malformed payload values used to run only when an optional
+ // JSON Schema dependency was installed. They always exercise the C++ parser.
+ for(const auto* field:{"mutation_id","proposal_digest","phase","membership_revision","expected_boot_id"}){
+  for(const auto* replacement:{"null","\"\"","true","0","\"00000000000000000000000000000000\"","\"01\"","\"18446744073709551616\""}){
+   auto value=base;*value.get("payload")->get(field)=parsed(replacement);check(value,false);
+  }
+  auto value=base;remove(*value.get("payload"),field);check(value,false);
+ }
+ for(const auto* phase:{"retire","handover_commit"}){auto value=base;value.get("payload")->get("phase")->string=phase;check(value,false);}
+ {auto value=base;value.get("payload")->object.emplace_back("extra",parsed("true"));check(value,false);}
+ for(const auto* revision:{"0","1","18446744073709551615"}){auto value=base;value.get("payload")->get("membership_revision")->string=revision;check(value,true);}
+ for(const auto& digest:std::vector<std::string>{std::string(63,'a'),std::string(65,'a'),std::string(64,'A'),std::string(64,'g')}){auto value=base;value.get("payload")->get("proposal_digest")->string=digest;check(value,false);}
+ {auto value=base;value.get("payload")->get("proposal_digest")->string=std::string(64,'0');check(value,true);}
+ // Closed envelope shape and typed identity/counter boundaries are checked
+ // separately from Session's authenticated scope and removal authorization.
+ for(const auto& entry:base.object){auto value=base;remove(value,entry.first);check(value,false);}
+ {auto value=base;value.object.emplace_back("extra",parsed("true"));check(value,false);}
+ {auto value=base;value.object.emplace_back("ttl_ms",parsed("2000"));check(value,false);}
+ {auto value=base;value.get("payload")->object.emplace_back("phase",parsed("\"factory_reset\""));check(value,false);}
+ for(const auto* field:{"consortium_id","origin_octopus_id","origin_boot_id","destination_octopus_id","destination_boot_id"}){
+  for(const auto& id:std::vector<std::string>{std::string(32,'0'),std::string(31,'1'),std::string(33,'1'),std::string(32,'A'),std::string(32,'g')}){
+   auto value=base;value.get(field)->string=id;check(value,false);
+  }
+ }
+ for(const auto* field:{"coordinator_epoch","config_revision"}){
+  for(const auto* replacement:{"null","true","0","\"\"","\"01\"","\"-1\"","\"18446744073709551616\""}){
+   auto value=base;*value.get(field)=parsed(replacement);check(value,false);
+  }
+  for(const auto* revision:{"0","18446744073709551615"}){auto value=base;value.get(field)->string=revision;check(value,true);}
+ }
+ for(const auto* replacement:{"null","true","\"1\"","0","2"}){auto value=base;*value.get("protocol_version")=parsed(replacement);check(value,false);}
+ for(const auto* replacement:{"null","true","\"1\"","10001"}){auto value=base;*value.get("ttl_ms")=parsed(replacement);check(value,false);}
+ {auto body=settings_json(base);const auto at=body.find("\"ttl_ms\":2000");assert(at!=std::string::npos);body.replace(at,13,"\"ttl_ms\":-1");check_body(body,false);}
+ {auto value=base;value.get("kind")->string="unknown";check(value,false);}
+ {auto value=base;*value.get("payload")=parsed("null");check(value,false);}
+ std::cout<<"PASS mandatory removal envelope/payload codec cases: "<<cases<<" total, "<<accepted<<" accepted, TTL1/2000 limits, exact result values, closed/unique fields and malformed identity/digest/revision boundaries\n";
+}
 void receiver_tests(){
  for(bool management:{false,true}){reset(false);auto active=connection(true,management);assert(dispatch(active,message(active))&&group.role==Group::retired&&markers==1&&restarts==1);assert(events==std::vector<std::string>({"quiescent","marker","response_attempt","restart"}));assert(parsed(sent.back()).get("result")->string=="reset_scheduled");assert(!runtime_removed_device_reset_authorized(active->peer));assert(!dispatch(active,message(active,21))&&markers==1);}
  for(unsigned fault=0;fault<14;++fault){reset(false);auto active=connection(true);auto e=message(active);switch(fault){case 0:e.origin_boot_id=ident<model::BootId>(99);break;case 1:e.destination_boot_id=ident<model::BootId>(99);break;case 2:e.origin_octopus_id=ident<model::OctopusId>(99);break;case 3:e.destination_octopus_id=ident<model::OctopusId>(99);break;case 4:e.consortium_id=ident<model::ConsortiumId>(99);break;case 5:++e.config_revision;break;case 6:++e.coordinator_epoch;break;case 7:e.payload.get("expected_boot_id")->string=ident<model::BootId>(99).str();break;case 8:e.payload.get("membership_revision")->string="1";break;case 9:e.payload.get("proposal_digest")->string=std::string(64,'a');break;case 10:e.payload.get("phase")->string="retire";break;case 11:active->tls->authenticated=ident<model::OctopusId>(99);break;case 12:e.ttl_ms=2001;break;case 13:configuration=2;break;}assert(!dispatch(active,e)&&!markers&&!restarts);}
@@ -202,41 +258,8 @@ void issued_removal_scope_denials(){
  std::cout<<"PASS issued removal permit survives only local config advance: changed scope/boot/link/epoch/authority/authentication/mutation, unissued/replaced/expired permits and original-deadline exhaustion deny without send\n";
 }
 }
-int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){Envelope value;std::cout<<(parse_envelope(line,value)==Error::none?'1':'0')<<'\n';}return 0;}amity::consortium::receiver_tests();amity::consortium::source_tests();amity::consortium::empty_context_refresh_allows_reviewed_removal();amity::consortium::ack_tests();amity::consortium::inflight_status_does_not_hide_reset_ack();amity::consortium::issued_removal_scope_denials();}
+int main(){amity::consortium::codec_tests();amity::consortium::receiver_tests();amity::consortium::source_tests();amity::consortium::empty_context_refresh_allows_reviewed_removal();amity::consortium::ack_tests();amity::consortium::inflight_status_does_not_hide_reset_ack();amity::consortium::issued_removal_scope_denials();}
 '''
-def schema_vectors(binary):
- try:
-  import jsonschema
-  from referencing import Registry,Resource
- except ImportError:
-  print('Optional JSON Schema comparison unavailable; actual Session/runtime tests passed.')
-  return
- production=json.loads((ROOT/'components/consortium/protocol-v1.schema.json').read_text())
- design=json.loads((ROOT/'amity-octopus-consortium/schemas/wire-envelope.schema.json').read_text())
- resources=[production]+[json.loads(path.read_text()) for path in (ROOT/'amity-octopus-consortium/schemas').glob('*.json')]
- registry=Registry().with_resources((value['$id'],Resource.from_contents(value)) for value in resources)
- jsonschema.Draft202012Validator.check_schema(production)
- payload={'mutation_id':'9'*32,'proposal_digest':'a'*64,'phase':'factory_reset','membership_revision':'2','expected_boot_id':'6'*32}
- base={'protocol_version':1,'consortium_id':'1'*32,'origin_octopus_id':'3'*32,'origin_boot_id':'4'*32,'destination_octopus_id':'5'*32,'destination_boot_id':'6'*32,'coordinator_epoch':'1','config_revision':'1','kind':'membership_event','ttl_ms':2000,'payload':payload}
- vectors=[]
- for kind,result,ttl in itertools.product(['membership_event','membership_result'],[None,'reset_scheduled','rejected','unknown','retired',''],[0,1,2000,2001,10000]):
-  value=copy.deepcopy(base);value.update(kind=kind,ttl_ms=ttl)
-  if result is not None:value['payload']['result']=result
-  vectors.append(value)
- for field in payload:
-  for changed in [None,'',True,0,'0'*32,'01','18446744073709551616']:
-   value=copy.deepcopy(base);value['payload'][field]=changed;vectors.append(value)
-  value=copy.deepcopy(base);del value['payload'][field];vectors.append(value)
- for field,changed in [('phase','retire'),('phase','handover_commit'),('extra',True),('membership_revision','0'),('membership_revision','18446744073709551615')]:
-  value=copy.deepcopy(base);value['payload'][field]=changed;vectors.append(value)
- schemas={kind:jsonschema.Draft202012Validator({'allOf':[{'$ref':design['$id']},{'properties':{'payload':{'$ref':production['$id']+'#/$defs/'+name}}}]},registry=registry) for kind,name in [('membership_event','MembershipEvent'),('membership_result','MembershipResult')]}
- expected=[schemas[value['kind']].is_valid(value) for value in vectors]
- output=subprocess.run([str(binary),'--vectors'],input=''.join(json.dumps(value,separators=(',',':'))+'\n' for value in vectors),capture_output=True,text=True,check=True)
- actual=[line=='1' for line in output.stdout.splitlines()];assert len(actual)==len(vectors)
- for n,(left,right) in enumerate(zip(actual,expected)):assert left==right,(n,left,right,vectors[n])
- report={'vectors':len(vectors),'positive':sum(actual),'negative':len(actual)-sum(actual),'discrepancies':0,'actual_cpp_envelope_parser':True}
- (ROOT/'test-results/removal-reset-schema-vectors.json').write_text(json.dumps(report,indent=2)+'\n')
- print('PASS actual removal codec/closed schemas:',report)
 
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
@@ -248,5 +271,4 @@ def main():
   sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
   subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(temp)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+list(map(str,[cpp]+sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)
-  schema_vectors(binary)
 if __name__=='__main__':main()

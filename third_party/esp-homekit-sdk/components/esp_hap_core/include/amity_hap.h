@@ -20,6 +20,8 @@ void hap_amity_set_pairing_deadline(int64_t deadline);
 bool hap_amity_pairing_allowed(void);
 uint32_t hap_amity_pairing_window(void);
 int hap_amity_refresh_mdns(void);
+// Move discovery to another delegated host without touching sessions/pairings.
+int hap_amity_rename_hostname(const char *hostname);
 int hap_amity_remove_pairings(void);
 // Monotonic service fence; preserve stored pairings and the shared network.
 bool hap_amity_enabled(void);

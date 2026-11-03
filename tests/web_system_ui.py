@@ -14,14 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     # Exact approved main presentation at aa9395aaecdc861e1d4cce040079a5ac6121e67d,
-    # with its global HDMI-CEC block removed for per-device settings. Store the
+    # with HDMI-CEC and hostname controls moved to per-device settings. Store the
     # digest so a consort-only checkout does not need the unrelated main object.
-    baseline_sha256 = 'c9381f4d7dcb056558860a70dc3d840caa853596e06fc26222c42f873a985b34'
+    baseline_sha256 = 'c601c8d7def8e7dc12483886ff01439b2ac9a6b910f13cb16865f732351033d7'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
     assert hashlib.sha256(current.encode()).hexdigest() == baseline_sha256, 'Changes outside the authorized tab and per-device settings relocation'
     assert 'changeFrontPhysicalAddress' not in current and 'frontPhysicalAddress' not in current
+    assert 'changeHostname' not in current and 'id="hostname"' not in current
     aid, second, controller, member = (f'{n:032x}' for n in (7, 8, 2, 3))
     def choice(value, title, location, roles):
         return dict(value='component:'+f'{value:032x}', title=title, location=location, roles=roles)

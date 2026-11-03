@@ -11,7 +11,7 @@
 
 namespace c=amity::consortium;namespace m=amity::system;namespace a=system_services::adapter_settings;
 namespace {
-std::map<std::string,std::string> records;uint64_t clock_ms=100;unsigned writes=0,restarts=0,calls=0;
+std::map<std::string,std::string> records;std::vector<std::string> written_keys;uint64_t clock_ms=100;unsigned writes=0,restarts=0,calls=0;
 bool authorized=true;esp_err_t write_result=ESP_OK;
 template<class T>T id(unsigned n){char bytes[33];snprintf(bytes,sizeof(bytes),"%032x",n);return *T::parse(bytes);}
 c::Json json(const std::string& bytes){c::Json out;c::JsonError detail;assert(c::parse_json(bytes,out,detail));return out;}
@@ -22,7 +22,7 @@ std::string request(m::BootId boot,uint64_t revision=1,std::string changes="{\"t
 int64_t esp_timer_get_time(){return static_cast<int64_t>(clock_ms*1000);}
 namespace config_store {
 esp_err_t read(const char* key,std::string& value){const auto found=records.find(key);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;value=found->second;return ESP_OK;}
-esp_err_t write(const char* key,const std::string& value){++writes;if(write_result==ESP_OK)records[key]=value;return write_result;}
+esp_err_t write(const char* key,const std::string& value){++writes;written_keys.emplace_back(key);if(write_result==ESP_OK)records[key]=value;return write_result;}
 }
 namespace amity::consortium {bool runtime_device_settings_authorized(m::MessageId){return authorized;}}
 namespace system_services {void reboot_later(){++restarts;}}
@@ -31,7 +31,7 @@ esp_err_t esp_partition_read(const esp_partition_t*,size_t,void*,size_t){assert(
 psa_status_t psa_crypto_init(){assert(false);return -1;}
 psa_status_t psa_hash_compute(unsigned,const uint8_t*,size_t,uint8_t*,size_t,size_t*){assert(false);return -1;}
 int main(){
-    records["front_physical"]="3.0.0.0";assert(device_settings::init()==ESP_OK);
+    records["front_defaults"]="AMITYPA1\n1\n3.0.0.0\n1.0.0.0\n1.0.0.0\n1.0.0.0\n";assert(device_settings::init()==ESP_OK);
     amity::SystemControl owner;owner.boot=id<m::BootId>(1);
     owner.rows={{0,true,0x2300,0x2300},{1,false,std::nullopt,std::nullopt},{2,true,std::nullopt,std::nullopt},{3,true,std::nullopt,0x1000}};
     owner.gate=[&](m::BootId boot,std::vector<amity::AdapterAddressChange> adapters,uint64_t deadline,std::function<esp_err_t()> persist){
@@ -81,5 +81,38 @@ int main(){
     assert(writes==3&&!restarts);
     assert(submit(request(owner.boot,3,"{\"tentacle_id\":3,\"default_front_physical_address\":\"\"}"),2000)==c::Error::none);
     assert(writes==4&&device_settings::adapter_defaults().front_physical[3]==0x1000&&c::valid_settings_snapshot(json(a::snapshot())));
+    assert(!records.count("hostname")&&device_settings::hostname_settings().revision==1);
+    for(const auto& key:written_keys)assert(key=="front_defaults");
+    // A rename is a same-boot metadata update, even with an active HDMI owner.
+    // The gate rejects adapter work here; rename-only requests never enter it.
+    owner.gate=[&](m::BootId,std::vector<amity::AdapterAddressChange>,uint64_t,std::function<esp_err_t()>){++calls;return ESP_ERR_INVALID_STATE;};
+    const auto rename=[&](std::string hostname,uint64_t revision){
+        return "{\"expected_boot_id\":\""+owner.boot.str()+"\",\"expected_hostname_revision\":\""+std::to_string(revision)+"\",\"hostname\":\""+hostname+"\",\"changes\":[]}";
+    };
+    const auto rename_calls=calls;const auto adapter_record=records.at("front_defaults");
+    assert(submit(rename("Living-Room",1),2000)==c::Error::none&&writes==5&&calls==rename_calls);
+    auto renamed=json(a::snapshot());
+    assert(renamed.get("hostname")->string=="living-room"&&renamed.get("boot_id")->string==owner.boot.str()&&renamed.get("settings_revision")->string=="4"&&renamed.get("hostname_revision")->string=="2");
+    assert(device_settings::adapter_defaults().front_physical[3]==0x1000&&records.at("front_defaults")==adapter_record&&written_keys.back()=="hostname"&&!restarts);
+    assert(submit(rename("other",1),2000)==c::Error::transaction_conflict&&writes==5);
+    assert(submit(rename("bad.local",2),2000)==c::Error::invalid_message&&writes==5);
+    write_result=ESP_FAIL;
+    assert(submit(rename("den",2),2000)==c::Error::storage_failure&&writes==6);
+    assert(json(a::snapshot()).get("hostname")->string=="living-room"&&device_settings::hostname_settings().revision==2&&records.at("front_defaults")==adapter_record);write_result=ESP_OK;
+    auto mixed=request(owner.boot,4);mixed.insert(mixed.size()-1,",\"hostname\":\"den\",\"expected_hostname_revision\":\"2\"");
+    assert(submit(mixed,2000)==c::Error::invalid_message&&writes==6&&calls==rename_calls);
+    assert(submit(request(owner.boot,4),2000)==c::Error::not_ready&&writes==6);
+    const auto hostname_record=records.at("hostname");
+    owner.gate=[&](m::BootId,std::vector<amity::AdapterAddressChange> adapters,uint64_t,std::function<esp_err_t()> persist){++calls;assert(adapters.size()==1);return persist();};
+    assert(submit(request(owner.boot,4,"{\"tentacle_id\":3,\"default_front_physical_address\":\"2.0.0.0\"}"),2000)==c::Error::none&&writes==7&&written_keys.back()=="front_defaults");
+    assert(records.at("hostname")==hostname_record&&device_settings::hostname_settings().revision==2);
+    const auto updated_adapter_record=records.at("front_defaults");
+    const auto rename_id=id<m::MessageId>(serial++);const auto rename_body=json(rename("den",2));
+    assert(a::apply(rename_id,rename_body,2000,response)==c::Error::none&&writes==8&&written_keys.back()=="hostname");
+    const auto renamed_result=response;
+    assert(a::apply(rename_id,rename_body,2000,response)==c::Error::none&&writes==8&&response==renamed_result);
+    assert(device_settings::adapter_defaults().revision==5&&records.at("front_defaults")==updated_adapter_record&&device_settings::hostname_settings().revision==3&&json(a::snapshot()).get("hostname")->string=="den"&&!restarts);
+    assert(device_settings::adapter_defaults().front_physical[3]==0x2000);
+    std::cout<<"PASS independent live hostname settings: same boot, no HDMI gate, separate records/revisions, normalized names, stale revisions, failed persistence, mixed writes rejected and idempotence\n";
     std::cout<<"PASS actual adapter settings service: stable snapshot/provenance, strict parser, original deadline and authority recheck, owner gate, atomic save, idempotence, stale-cache/boot replay, same-boot consecutive saves without restart\n";
 }

@@ -185,41 +185,30 @@ void tests(){
 }
 namespace N {
 struct Netif{}station;
-bool netif_available=false;int persist_result=ESP_OK,netif_result=ESP_OK,persist_calls=0,netif_calls=0;
-std::string durable="old-room",current="old-room",applied;
-std::vector<std::string>events;
-Netif*esp_netif_get_handle_from_ifkey(const char* key){assert(!strcmp(key,"WIFI_STA_DEF"));events.push_back("lookup");return netif_available?&station:nullptr;}
+int service_result=ESP_OK,service_calls=0,netif_calls=0,lookups=0,hostname_reads=0;
+Netif*esp_netif_get_handle_from_ifkey(const char*){++lookups;return &station;}
 namespace device_settings {
 int apply_enrollment_hostname(const std::string& name){
- assert(name=="Amity-Den"&&netif_calls==0);events.push_back("persist");++persist_calls;
- if(persist_result!=ESP_OK)return persist_result;
- // The production setter is separately tested. Deliberately return a current
- // normalized name different from the argument to detect raw-name application.
- durable=current="amity-den";return ESP_OK;
+ assert(name=="Amity-Den");++service_calls;return service_result;
 }
-const char*hostname(){events.push_back("current");return current.c_str();}
+const char*hostname(){++hostname_reads;return "unused";}
 }
-int esp_netif_set_hostname(Netif* netif,const char* name){
- assert(netif==&station&&persist_calls==1&&durable=="amity-den"&&current==durable);
- assert(std::string(name)==current&&std::string(name)!="Amity-Den");events.push_back("netif");++netif_calls;applied=name;return netif_result;
-}
+int esp_netif_set_hostname(Netif*,const char*){++netif_calls;return ESP_FAIL;}
 struct Hooks{std::function<int(const std::string&)>set_hostname;};
 std::function<int(const std::string&)>actual_hook(){Hooks hooks;
 ''' + hostname_hook + r''';return hooks.set_hostname;}
-void reset(){netif_available=true;persist_result=netif_result=ESP_OK;persist_calls=netif_calls=0;durable=current="old-room";applied.clear();events.clear();}
 void tests(){
  const auto hook=actual_hook();
- reset();netif_available=false;assert(hook("Amity-Den")==ESP_ERR_INVALID_STATE);
- assert(persist_calls==0&&netif_calls==0&&durable=="old-room"&&current==durable&&events==std::vector<std::string>{"lookup"});
- reset();persist_result=ESP_FAIL;assert(hook("Amity-Den")==ESP_FAIL);
- assert(persist_calls==1&&netif_calls==0&&durable=="old-room"&&current==durable&&events==std::vector<std::string>({"lookup","persist"}));
- reset();assert(hook("Amity-Den")==ESP_OK);
- assert(persist_calls==1&&netif_calls==1&&applied=="amity-den"&&events==std::vector<std::string>({"lookup","persist","current","netif"}));
- reset();netif_result=ESP_ERR_TIMEOUT;assert(hook("Amity-Den")==ESP_ERR_TIMEOUT);
- assert(persist_calls==1&&netif_calls==1&&durable=="amity-den"&&current==durable&&events==std::vector<std::string>({"lookup","persist","current","netif"}));
+ // Enrollment delegates to the shared live settings service exactly once.
+ // It must not duplicate network changes after that service commits.
+ for(const auto outcome:{ESP_OK,ESP_FAIL,ESP_ERR_INVALID_STATE,ESP_ERR_TIMEOUT}){
+  service_result=outcome;service_calls=0;
+  assert(hook("Amity-Den")==outcome&&service_calls==1);
+  assert(!lookups&&!netif_calls&&!hostname_reads);
+ }
 }
 }
-int main(){M::tests();H::tests();N::tests();std::cout<<"PASS actual Matter/HAP lifecycle and enrollment hostname hook: no-interface/no-write, storage failure/no-network change, normalized commit-before-apply and network error propagation\n";}
+int main(){M::tests();H::tests();N::tests();std::cout<<"PASS actual Matter/HAP lifecycle and enrollment hostname hook: single shared live-service delegation, no duplicate hostname/network access and exact error propagation\n";}
 '''
 with tempfile.TemporaryDirectory() as directory:
     path=Path(directory);file=path/'controller_integration.cpp';binary=path/'test';file.write_text(source)

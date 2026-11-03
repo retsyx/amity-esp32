@@ -139,9 +139,7 @@ esp_err_t install_consortium_network_hooks(){transaction=xSemaphoreCreateMutex()
     amity::consortium::RuntimeNetworkHooks hooks{export_credentials,stage_connect,commit,rollback};hooks.stage_transaction=stage_transaction;hooks.commit_transaction=commit_transaction;hooks.finish_transaction=finish_transaction;hooks.recover_transaction=recover_transaction;hooks.abort_transaction=abort_transaction;
     hooks.get_hostname=[]{return std::string(device_settings::hostname());};
     hooks.set_hostname=[](const std::string& name){
-        auto* netif=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");if(!netif)return ESP_ERR_INVALID_STATE;
-        const auto saved=device_settings::apply_enrollment_hostname(name);if(saved!=ESP_OK)return saved;
-        return esp_netif_set_hostname(netif,device_settings::hostname());
+        return device_settings::apply_enrollment_hostname(name);
     };
     amity::consortium::runtime_network_hooks(std::move(hooks));return ESP_OK;
 }

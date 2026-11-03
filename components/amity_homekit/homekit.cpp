@@ -329,6 +329,11 @@ esp_err_t stop(){
     {StatusLock lock;current_status.started=current_status.available=current_status.pairing=current_status.busy=false;current_status.error=result;published_deadline=0;memset(current_status.manual_code,0,sizeof(current_status.manual_code));memset(current_status.qr_payload,0,sizeof(current_status.qr_payload));}
     return result;
 }
+esp_err_t rename_hostname(const char* hostname){
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex);
+    if(disabled.load()||!status_lock)return ESP_OK;
+    return hap_amity_rename_hostname(hostname)==HAP_SUCCESS?ESP_OK:ESP_FAIL;
+}
 Status status(){
     if(!status_lock)return {};
     StatusLock lock;auto result=current_status;

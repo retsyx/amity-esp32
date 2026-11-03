@@ -15,6 +15,7 @@ PREFIX = r'''
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include "amity/consortium/enrollment.hpp"
+#include "amity/consortium/settings.hpp"
 #include "hostname_registry.hpp"
 #include <algorithm>
 #include <atomic>
@@ -34,6 +35,12 @@ struct Admission {RuntimeAdmissionStatus view;uint64_t generation=0,deadline=0;s
 std::atomic_bool invitation_running{false},invitation_cancelled{false};
 struct Active {model::OctopusId peer;bool cancelled=false,ready=false;std::mutex mutex;struct{bool ready=false;std::string hostname;}status;};
 std::vector<std::shared_ptr<Active>> links;
+struct SettingsLink {std::shared_ptr<Active> active;RuntimePeerStatus status;};
+SettingsLink settings_link(model::OctopusId owner){for(const auto& active:links)if(active->peer==owner&&!active->cancelled&&active->ready){RuntimePeerStatus status;status.hostname=active->status.hostname;return {active,status};}return {};}
+struct SettingsOperation {model::OctopusId owner;std::string core,stage="admitted";uint64_t expires=0;};
+std::vector<SettingsOperation> settings_operations;
+void settings_expire(uint64_t now){for(auto& operation:settings_operations)if(operation.stage=="admitted"&&now>=operation.expires)operation.stage="unknown";}
+
 enum class AdmissionMode {button,setup_code};
 AdmissionMode mode=AdmissionMode::button;
 AdmissionMode configured_admission_mode(){return mode;}
@@ -102,7 +109,7 @@ void reset(){
     if(task_argument){delete static_cast<InviteRequest*>(task_argument);task_argument=nullptr;}
     group={};group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(1);group.authority=ident<model::OctopusId>(2);group.epoch=group.revision=1;
     identity={};identity.id=group.authority;identity.der="controller-leaf";identity.spki=std::string(64,'a');status={};status.initialized=status.credential_ready=status.authority_ready=true;
-    admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();
+    admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();settings_operations.clear();
     fail_phase.clear();clock_ms=100;during_wait={};mode=AdmissionMode::button;spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
     discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;candidate_snapshots=0;early_candidate_published=false;
     self_tests=connections=handshakes=0;crypto_ok=true;candidate_crypto_failed=false;during_selftest={};
@@ -157,7 +164,21 @@ void roster_capacity(){
     assert(!saves&&!wifi_exports&&group.peers.size()==3&&admission.view.phase=="failed");
     std::cout<<"PASS three secondary Amities admitted; fourth rejected before scan, submission and prepared membership storage\n";
 }
+void rename_name_reservation(){
+    reset();invitation_running=true;admission.view.scan_id=ident<model::MessageId>(1);admission.view.phase="found";admission.deadline=1000;admission.view.candidates={{"two","Amity-654321"}};
+    const auto owner=ident<model::OctopusId>(3);group.peers.push_back({owner,"leaf","pin",true});assert(remember_hostname(owner,"old-room")==Error::none);
+    auto active=std::make_shared<Active>();active->peer=owner;active->ready=active->status.ready=true;active->status.hostname="live-room";links.push_back(active);
+    assert(runtime_add_octopus(ident<model::MessageId>(1),"two","live-room")==ESP_ERR_INVALID_ARG); // Live authenticated name wins if its metadata storage failed.
+    DeviceSettingsWrite rename;rename.expected_boot=ident<model::BootId>(7);rename.expected_hostname_revision=2;rename.hostname="room";
+    settings_operations.push_back({owner,device_settings_write_json(rename),"admitted",500});
+    assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_ERR_INVALID_ARG&&admission.view.phase=="found");
+    assert(!connections&&!saves&&!wifi_exports&&!disconnects); // A rejected conflicting Add has no networking effect.
+    clock_ms=500;assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_OK&&admission.submitted);
+    assert(settings_operations.front().stage=="unknown");
+    std::cout<<"PASS Add preserves hostname uniqueness against current live names and admitted renames before any network or enrollment work\n";
+}
 int run_tests(){
+    rename_name_reservation();
     proposal_record_lifetime();
     roster_capacity();
     for(auto selected_mode:{AdmissionMode::button,AdmissionMode::setup_code}){
@@ -235,7 +256,7 @@ def main():
     source = parser.parse_args().source.read_text()
     names = ['std::string proposal_json(', 'void admission_failed(', 'void invite_worker_work(', 'RuntimeAdmissionStatus runtime_admission_status(',
              'esp_err_t runtime_scan_admission(', 'esp_err_t runtime_cancel_admission(', 'esp_err_t runtime_add_octopus(']
-    actual = ''.join(function(source, name) for name in names)
+    actual = function((ROOT / 'components/consortium/settings_runtime.inc').read_text(), 'bool settings_hostname_pending(') + ''.join(function(source, name) for name in names)
     if 'const Identity& coordinator,const Peer& candidate' not in source:
         actual += 'std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,const Identity& local,const Peer& peer,uint64_t epoch,uint64_t revision,const std::string& host,const std::string& name){return proposal_json(join,consortium,local.id,peer.id,epoch,revision,local.der,peer.der,host,name);}\n'
     with tempfile.TemporaryDirectory(prefix='amity-admission-workflow-') as directory:

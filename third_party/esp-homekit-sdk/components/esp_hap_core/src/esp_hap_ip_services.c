@@ -1692,6 +1692,14 @@ int hap_httpd_stop(void)
 
 static bool first_announce_done;
 
+int hap_mdns_deannounce_for_rename(void)
+{
+    if (!first_announce_done) return HAP_SUCCESS;
+    int ret = hap_mdns_serv_stop(&hap_priv.hap_mdns_handle);
+    if (ret == HAP_SUCCESS) first_announce_done = false;
+    return ret;
+}
+
 int hap_mdns_deannounce(void)
 {
     int ret = HAP_SUCCESS;

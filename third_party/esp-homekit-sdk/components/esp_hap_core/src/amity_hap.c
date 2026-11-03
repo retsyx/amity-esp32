@@ -17,6 +17,7 @@
 #include "freertos/semphr.h"
 #include <string.h>
 #include <stdatomic.h>
+#include "esp_log.h"
 #include "hap_platform_httpd.h"
 static SemaphoreHandle_t lock;
 static char hostname[33];
@@ -42,6 +43,25 @@ bool hap_amity_enabled(void) { return atomic_load(&service_enabled); }
 bool hap_amity_pairing_allowed(void) { return hap_amity_enabled() && pairing_deadline > esp_timer_get_time(); }
 uint32_t hap_amity_pairing_window(void) { return pairing_window; }
 int hap_amity_refresh_mdns(void) { return hap_mdns_announce(false); }
+int hap_amity_rename_hostname(const char *name) {
+    if (!name || !name[0] || strlen(name) >= sizeof(hostname)) return HAP_FAIL;
+    hap_amity_lock();
+    if (!strcmp(hostname, name)) { hap_amity_unlock(); return HAP_SUCCESS; }
+    char previous[sizeof(hostname)];
+    strcpy(previous, hostname);
+    int result = hap_mdns_deannounce_for_rename();
+    if (result == HAP_SUCCESS) {
+        strcpy(hostname, name);
+        result = hap_mdns_announce(false);
+        if (result != HAP_SUCCESS) {
+            strcpy(hostname, previous);
+            if (hap_mdns_announce(false) != HAP_SUCCESS)
+                ESP_LOGE("amity_hap", "Could not restore HomeKit discovery after hostname change");
+        }
+    }
+    hap_amity_unlock();
+    return result;
+}
 int hap_amity_remove_pairings(void) {
     hap_close_all_sessions();
     if (hap_keystore_delete_namespace("hap_ctrl") != HAP_SUCCESS) return HAP_FAIL;

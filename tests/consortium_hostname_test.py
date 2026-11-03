@@ -41,7 +41,7 @@ void reset(){group={};durable={};identity={id<model::OctopusId>(4),"candidate","
 struct FakeTls{std::string incoming;bool receive(std::string& out){out=incoming;return !out.empty();}};
 struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct LinkTrace {const char* phase="",*reason="";Error error=Error::none;bool fail(const char* why,Error result=Error::none){reason=why;error=result;return false;}};
-struct Active {Session session;FakeTls storage;FakeTls* tls=&storage;model::OctopusId peer;std::mutex mutex;struct{std::string hostname;}status;SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;};
+struct Active {Session session;FakeTls storage;FakeTls* tls=&storage;model::OctopusId peer;std::mutex mutex;struct{std::string hostname;}status;SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;std::string advertised_hostname;};
 unsigned sent=0;bool send(Active&,Kind kind,std::string_view payload,uint32_t){assert(kind==Kind::device_status&&payload.find(current_name)!=std::string_view::npos);++sent;return true;}
 bool current_peer_credential(const Active& active,const Group&){return active.peer==id<model::OctopusId>(3);}
 Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}

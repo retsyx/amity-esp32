@@ -124,13 +124,19 @@ window.amityInterface=(()=>{
   let zero=false;for(const digit of value.split('.')){if(digit==='0')zero=true;else if(zero)return null;}return value;
  }
  async function deviceSettings(board){
-  const name=boardName(board),d=dialog(name+' settings'),status=text('Reading adapter settings…'),rows=document.createElement('div');
+  const name=boardName(board),d=dialog(name+' settings'),status=text('Reading settings…'),rows=document.createElement('div'),hostname=field('Hostname',name==='Name unavailable'?'':name);
   d.classList.add('adapter-settings');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-  d.append(text('Leave blank to use 1.0.0.0.'),rows,status);
+  hostname.input.maxLength=32;hostname.input.required=true;hostname.input.pattern='[A-Za-z0-9]([A-Za-z0-9-]{0,30}[A-Za-z0-9])?';hostname.input.autocomplete='off';hostname.input.spellcheck=false;hostname.input.dataset.hostname='';hostname.input.disabled=true;
+  hostname.input.addEventListener('input',()=>hostname.input.setCustomValidity(''));
+  d.append(hostname.label,text('Leave adapter addresses blank to use 1.0.0.0.'),rows,status);
   let snapshot=null,inputs=[],busy=false,loading=false,needsReview=false;
   const path='devices/'+board.octopus_id+'/settings';
   const save=button('Save',async()=>{
    if(busy||!snapshot)return;
+   const nextHostname=hostname.input.value.trim().toLowerCase();
+   hostname.input.setCustomValidity(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(nextHostname)?'':'Use 1–32 letters, digits or hyphens, without a leading or trailing hyphen.');
+   if(!hostname.input.reportValidity())return;
+   const renamed=nextHostname!==snapshot.hostname;
    const changes=[];
    for(const {input,row,editable} of inputs){
     if(!editable)continue;
@@ -139,25 +145,47 @@ window.amityInterface=(()=>{
     if(!input.reportValidity())return;
     if(address!==row.default_front_physical_address)changes.push({tentacle_id:row.tentacle_id,default_front_physical_address:address});
    }
-   if(!changes.length){status.textContent='No settings changed.';return;}
-   busy=true;save.disabled=true;reload.disabled=true;inputs.forEach(({input})=>input.disabled=true);
-   try{
-    status.textContent='Saving settings…';
-    let result=await request(path,{request_id:identifier(),expected_boot_id:snapshot.boot_id,expected_settings_revision:snapshot.settings_revision,changes});
+   if(!changes.length&&!renamed){status.textContent='No settings changed.';return;}
+   const reviewed=snapshot;let adaptersSaved=false,completed=false;
+   busy=true;save.disabled=true;reload.disabled=true;hostname.input.disabled=true;inputs.forEach(({input})=>input.disabled=true);
+   async function apply(data){
+    let result=await request(path,{request_id:identifier(),expected_boot_id:reviewed.boot_id,...data});
     for(let n=0;result.stage==='admitted'&&n<80;n++){
-     await new Promise(resolve=>setTimeout(resolve,250));if(!d.isConnected)return;
-     result=await request('operations/'+result.operation_id);
+     await new Promise(resolve=>setTimeout(resolve,250));if(!d.isConnected)return false;
+     try{result=await request('operations/'+result.operation_id);}catch(error){error.settingsUncertain=true;throw error;}
     }
+    if(!d.isConnected)return false;
     if(result.stage!=='applied'){
-     needsReview=result.stage==='unknown'||result.stage==='admitted';
-     const error=Error(needsReview?'The save outcome is unknown. Refresh and check the saved values before trying again.':customerText(result.message||'Settings were not saved. Refresh and check the settings before trying again.'));error.settingsResult=true;throw error;
+     const uncertain=result.stage==='unknown'||result.stage==='admitted';
+     const error=Error(uncertain?'The save outcome is unknown. Refresh and check the saved values before trying again.':customerText(result.message||'Settings were not saved. Refresh and check the settings before trying again.'));
+     error.settingsResult=true;error.settingsUncertain=uncertain;throw error;
     }
-    if(await load(true))status.textContent='Settings saved.';
-   }catch(error){
-    if(!error.settingsResult&&(!error.status||error.status>=500)){needsReview=true;status.textContent='The save outcome is unknown. Reconnect, refresh and check the saved values before trying again.';throw Error(status.textContent);}
-    status.textContent=customerText(error.message);throw error;
+    return true;
    }
-   finally{busy=false;reload.disabled=false;save.disabled=needsReview||!snapshot||!inputs.some(x=>x.editable);inputs.forEach(({input,editable})=>input.disabled=!editable);}
+   try{
+    if(changes.length){
+     status.textContent='Saving adapter addresses…';
+     if(!await apply({expected_settings_revision:reviewed.settings_revision,changes}))return;
+     adaptersSaved=true;
+    }
+    if(renamed){
+     status.textContent='Saving hostname…';
+     if(!await apply({expected_hostname_revision:reviewed.hostname_revision,hostname:nextHostname,changes:[]}))return;
+    }
+    completed=true;
+    if(renamed&&board.octopus_id===system?.octopus_id){startHostnameReconnect({hostname:nextHostname,bootId:reviewed.boot_id,deviceId:board.octopus_id});return;}
+    if(await load(true))status.textContent='Settings saved.';
+    if(renamed){await refresh().catch(reportError);await refreshActivityConfiguration().catch(reportError);}
+   }catch(error){
+    const uncertain=error.settingsUncertain||!error.settingsResult&&(!error.status||error.status>=500);
+    needsReview=completed||adaptersSaved||uncertain;
+    if(completed)status.textContent='Settings saved. Refresh to read the latest values.';
+    else if(adaptersSaved)status.textContent=uncertain?'Adapter addresses saved. The hostname save outcome is unknown. Refresh and check the saved values before trying again.':'Adapter addresses saved. Hostname was not saved. '+customerText(error.message)+' Refresh before trying again.';
+    else if(uncertain)status.textContent='The save outcome is unknown. Reconnect, refresh and check the saved values before trying again.'+(renamed&&changes.length?' Hostname was not changed.':'');
+    else status.textContent=customerText(error.message)+(renamed&&changes.length?' Hostname was not changed.':'');
+    throw Error(status.textContent);
+   }
+   finally{busy=false;reload.disabled=false;hostname.input.disabled=!snapshot||hostname.input.dataset.editable!=='true';save.disabled=needsReview||hostname.input.disabled;inputs.forEach(({input,editable})=>input.disabled=!editable);}
   });
   const reload=button('Refresh',()=>load()),cancel=button('Close',()=>d.close());save.disabled=true;
   d.append(save,reload,cancel);
@@ -173,11 +201,13 @@ window.amityInterface=(()=>{
     for(let n=0;n<24;n++){
      result=await request(path);if(!d.isConnected)return;
      if(result.status!=='reading')break;
-     status.textContent='Reading adapter settings…';await new Promise(resolve=>setTimeout(resolve,250));
+     status.textContent='Reading settings…';await new Promise(resolve=>setTimeout(resolve,250));
     }
     snapshot=result.settings;needsReview=false;inputs=[];rows.replaceChildren();
-    const fresh=result.status==='ready',named=name!=='Name unavailable';
-    status.textContent=fresh?'':result.status==='unsupported'?'Update this Amity to configure its adapters.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
+    const fresh=result.status==='ready',named=!!snapshot?.hostname;
+    hostname.input.value=snapshot?.hostname||name;hostname.input.disabled=!fresh||!named;hostname.input.dataset.editable=String(fresh&&named);hostname.input.setCustomValidity('');
+    if(named)d.querySelector('h3').textContent=snapshot.hostname+' settings';
+    status.textContent=fresh?'':result.status==='unsupported'?'Update this Amity to edit its settings.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
     if(snapshot?.adapters?.length){
      const table=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody'),headRow=document.createElement('tr');
      table.setAttribute('aria-label','HDMI adapter addresses');
@@ -194,7 +224,7 @@ window.amityInterface=(()=>{
      }
     }
     if(!inputs.length)rows.append(text('No adapter settings are available.'));
-    save.disabled=!inputs.some(x=>x.editable);
+    save.disabled=hostname.input.disabled;
     return fresh;
    }catch(error){status.textContent=customerText(error.message);throw error;}
    finally{loading=false;reload.disabled=false;}

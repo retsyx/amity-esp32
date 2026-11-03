@@ -10,6 +10,7 @@ Local adaptations:
 - Twelve-byte AEAD nonces, per-session record buffers/counters, bounded records,
   complete sends/reads, authentication error handling and session data clearing.
 - Use Matter's existing mDNS responder with Amity's delegated hostname.
+  Live hostname changes republish discovery while preserving sessions and pairings.
 - Explicit application-owned pairing windows checked at every setup phase;
   reopening invalidates in-flight sessions from previous windows.
 - Recursive mutex serializes worker, event loop, HTTP, notification, timer and

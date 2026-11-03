@@ -14,6 +14,7 @@
 #include <string>
 #include <array>
 #include <vector>
+#include <functional>
 namespace device_settings {
 // Called with amity_cfg initialized, before normal NVS/network initialization.
 esp_err_t finish_factory_reset();
@@ -29,7 +30,14 @@ void set_setup_button_handler(SetupButtonHandler, void *context=nullptr);
 // Load immutable factory settings and the separately persisted device overrides.
 esp_err_t init();
 const amity::FactoryCredentials *factory();
+// Snapshot remains valid until this task's next hostname() call.
 const char *hostname();
+struct HostnameSettings {
+    uint64_t revision = 1;
+    std::string hostname = "amity";
+};
+HostnameSettings hostname_settings();
+esp_err_t save_hostname(uint64_t expected_revision, std::string hostname);
 const char *initial_admin_auth();
 uint16_t front_physical_address();
 esp_err_t save_front_physical_address(const std::string &value);
@@ -48,9 +56,11 @@ struct AdapterDefaultChange { uint8_t tentacle_id; uint16_t front_physical; };
 AdapterDefaults adapter_defaults();
 // One atomic NVS blob for the complete batch. Unchanged slots are retained.
 esp_err_t save_adapter_defaults(uint64_t expected_revision, const std::vector<AdapterDefaultChange>&);
+// Installed before network startup. The handler changes service metadata only;
+// it restores the previous name itself when it cannot complete a rename.
+using HostnameHandler = std::function<esp_err_t(const std::string&, const std::string&)>;
+void set_hostname_handler(HostnameHandler);
 bool normalize_hostname(std::string &value);
-esp_err_t save_hostname(std::string value); // Applies on reboot.
-// Headless candidate enrollment only. Commit first, then update the in-memory
-// name; the caller applies it to the network interface before connecting.
+// Candidate enrollment uses the same durable settings and live metadata path.
 esp_err_t apply_enrollment_hostname(std::string value);
 }

@@ -164,7 +164,7 @@ std::optional<std::vector<std::string>> request_fields(const std::string& path){
     else if(path=="/api/updates/chunk")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id","offset","data_hex"});
     else if(path=="/api/updates/install")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id"});
     else if(path=="/api/updates/cancel")allowed.push_back("cohort_job_id");
-    else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","changes"});
+    else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","expected_hostname_revision","hostname","changes"});
     else return {};
     return allowed;
 }
@@ -450,8 +450,8 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         const auto owner=*m::OctopusId::parse(*target);operation.candidate=owner;
         Json core(cJSON_Duplicate(root.get(),true),cJSON_Delete);cJSON_DeleteItemFromObjectCaseSensitive(core.get(),"request_id");
         amity::consortium::Json value;amity::consortium::JsonError parse_error;
-        if(!amity::consortium::parse_json(json(core.get()),value,parse_error)){result=error(req,"invalid_settings","Choose valid adapter settings.");return true;}
-        if(amity::consortium::runtime_write_device_settings(owner,*m::MessageId::parse(id),value,admitted_until_ms)!=ESP_OK){result=error(req,"settings_unavailable","Settings were not sent. Stop activities, check the adapters, and reconnect or update this Amity, then refresh the dialog.","409 Conflict");return true;}
+        if(!amity::consortium::parse_json(json(core.get()),value,parse_error)){result=error(req,"invalid_settings","Choose valid device settings.");return true;}
+        if(amity::consortium::runtime_write_device_settings(owner,*m::MessageId::parse(id),value,admitted_until_ms)!=ESP_OK){result=error(req,"settings_unavailable","Settings were not sent. Check that the hostname is unique and the Amity is connected. For adapter changes, stop activities before saving, then refresh the dialog.","409 Conflict");return true;}
         operation.status="admitted";
         finish();return true;
     }

@@ -228,7 +228,7 @@ esp_err_t api(httpd_req_t *req) {
         bool supported=false;
         for(const auto* command:{"/api/key","/api/remotes/scan","/api/remotes/pair","/api/remotes/unpair",
             "/api/matter/open","/api/matter/close","/api/matter/remove","/api/homekit/open","/api/homekit/close",
-            "/api/homekit/remove","/api/hostname","/api/factory-reset","/api/password","/api/logout","/api/reboot"})supported|=path==command;
+            "/api/homekit/remove","/api/factory-reset","/api/password","/api/logout","/api/reboot"})supported|=path==command;
         if(!supported)return web::error(req,"Unknown endpoint","404 Not Found");
         std::string data;if(!web::body(req,data))return ESP_FAIL;
         Json root(parse_json_input(data.empty()?"{}":data),cJSON_Delete);
@@ -255,21 +255,6 @@ esp_err_t api(httpd_req_t *req) {
         else if(path=="/api/homekit/remove") {
             if(!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root.get(),"confirm")))return web::error(req,"HomeKit removal confirmation required");
             e=amity_homekit::remove_pairings();
-        }
-        else if(path=="/api/hostname") {
-            auto *value=cJSON_GetObjectItemCaseSensitive(root.get(),"hostname");
-            if(!cJSON_IsString(value))return web::error(req,"Hostname required");
-            std::string name=value->valuestring;
-            if(!device_settings::normalize_hostname(name))return web::error(req,"Use 1–32 letters, digits or hyphens, without a leading or trailing hyphen.");
-            e=device_settings::save_hostname(name);
-            if(e!=ESP_OK)return web::error(req,"Could not save hostname.","500 Internal Server Error");
-            Json response_body(cJSON_CreateObject(),cJSON_Delete);
-            cJSON_AddStringToObject(response_body.get(),"hostname",name.c_str());
-            cJSON_AddBoolToObject(response_body.get(),"rebooting",true);
-            cJSON_AddStringToObject(response_body.get(),"previous_boot_id",system_services::boot_id());
-            cJSON_AddStringToObject(response_body.get(),"device_id",hub->octopus_id().str().c_str());
-            auto response=send(req,response_body.get());
-            system_services::reboot_later();return response;
         }
         else if(path=="/api/factory-reset") {
             if(!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root.get(),"confirm")))return web::error(req,"Factory reset confirmation required");

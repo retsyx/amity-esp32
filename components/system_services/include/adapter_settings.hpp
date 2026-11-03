@@ -8,7 +8,7 @@ namespace system_services::adapter_settings {
 void install(amity::SystemControl&);
 std::string snapshot();
 // The deadline is receiver-local and preserves the original HTTP/transport
-// authority. Success means one durable batch applied by the target owner.
+// authority. Hostname and adapter edits use independent durable revisions.
 amity::consortium::Error apply(amity::system::MessageId,
     const amity::consortium::Json&, uint64_t receiver_deadline_ms,
     std::string& response);

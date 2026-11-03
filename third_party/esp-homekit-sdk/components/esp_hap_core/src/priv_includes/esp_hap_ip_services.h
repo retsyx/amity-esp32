@@ -33,5 +33,6 @@ int hap_ip_services_start();
 int hap_ip_services_stop();
 int hap_mdns_announce(bool first);
 int hap_mdns_deannounce();
+int hap_mdns_deannounce_for_rename(void);
 void hap_http_send_notif();
 #endif /* _HAP_IP_SERVICES_H_ */

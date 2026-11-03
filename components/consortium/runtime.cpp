@@ -104,7 +104,7 @@ struct Active {
     SynchronizationRound synchronization;
     std::optional<SynchronizationRound> pending_synchronization;
     bool execution_supported=true;
-    std::string expected_hostname;
+    std::string expected_hostname,advertised_hostname;
 };
 // Caller holds the runtime and link mutexes. This ends application authority
 // immediately; the owning link task performs cleanup and a fresh logical
@@ -138,6 +138,12 @@ RuntimeStatus status;
 RuntimeRadioHooks radio;
 RuntimeNetworkHooks network;
 Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view bytes){return write_record("amity_group","hostnames",bytes)==ESP_OK;});}
+// The caller holds the runtime lock. A metadata storage failure must not
+// discard an authenticated transport or hide the peer's current live name.
+void remember_live_hostname(Active& active,const std::string& name){
+    if(remember_hostname(active.peer,name)!=Error::none)status.last_error="The saved device name could not be updated.";
+    std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;
+}
 RuntimeControlHooks controls;
 RuntimeLifecycleHooks lifecycle;
 RuntimeUpdateHooks updates;
@@ -400,7 +406,10 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
     // each endpoint waits for the other; coordinator sends its owner slice first.
     if(server?(!send_slice()||!advance()||!receive_slice()):(!receive_slice()||!advance()||!send_slice()))return false;
     if(!refresh){const auto synchronized=active.session.synchronized(scope.config_revision,true,true);if(synchronized!=Error::none)return trace.fail("synchronization_ready",synchronized);}
-    {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;}if(!server){std::lock_guard<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(save_group(next)==ESP_OK)group=std::move(next);}}
+    // A hostname update can cross the peer's configuration refresh and be
+    // discarded with old-scope observation traffic. Publish it again in the
+    // new scope without replacing the connection or execution session.
+    {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;if(refresh)active.advertised_hostname.clear();}if(!server){std::lock_guard<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(save_group(next)==ESP_OK)group=std::move(next);}}
     return timing.done(true);
 }
 bool synchronization_current(const Active& active){
@@ -585,6 +594,7 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
     if(!hooks.get_hostname)return trace.fail("hostname_hooks",Error::not_ready);
     const auto local=hooks.get_hostname();if(!valid_hostname(local))return trace.fail("hostname_capture",Error::invalid_message);
     if(!send(active,Kind::device_status,"{\"hostname\":\""+local+"\"}",1000))return trace.fail("hostname_send");
+    active.advertised_hostname=local;
     std::string raw;if(!active.tls->receive(raw))return trace.fail("hostname_receive");
     Envelope response;const auto received=now_ms();
     const auto parsed=parse_envelope(raw,response);if(parsed!=Error::none)return trace.fail("hostname_parse",parsed);
@@ -603,6 +613,22 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
     if(!current_peer_credential(active,group))return trace.fail("hostname_credential",Error::identity_conflict);
     const auto remembered=remember_hostname(active.peer,name);if(remembered!=Error::none)return trace.fail("hostname_persist",remembered);
     std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;return timing.done(true);
+}
+// Hostnames are public observation metadata, independent of the ordered
+// connection's authenticated identity and application synchronization scope.
+bool refresh_local_hostname(Active& active){
+    if(!(active.session.negotiated_capabilities()&hostname_metadata))return true;
+    RuntimeNetworkHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=network;}
+    if(!hooks.get_hostname)return true;
+    const auto name=hooks.get_hostname();if(!valid_hostname(name)||name==active.advertised_hostname)return true;
+    if(!send(active,Kind::device_status,"{\"hostname\":\""+name+"\"}",1000))return false;
+    active.advertised_hostname=name;return true;
+}
+bool receive_live_hostname(Active& active,const Envelope& envelope,uint64_t received){
+    if(envelope.kind!=Kind::device_status||active.session.admit(envelope,received,received)!=Error::none)return false;
+    const auto* name=envelope.payload.get("hostname");if(!name||name->type!=Json::Type::string||!valid_hostname(name->string))return false;
+    std::lock_guard<std::mutex> guard(lock);if(!current_peer_credential(active,group))return false;
+    remember_live_hostname(active,name->string);return true;
 }
 bool notify_link_closed(Active& active){
     std::lock_guard<std::mutex> once(active.close_mutex);
@@ -873,6 +899,7 @@ void active_loop_work(void *arg){
         }
         trace.phase="operational";trace.has_kind=trace.has_queue=false;
         if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context");break;}
+        if(!active->retiring&&!refresh_local_hostname(*active)){trace.fail("hostname_send");break;}
         if(!active->retiring&&now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}")){trace.fail("heartbeat_send");break;}heartbeat=now+1000;}
         now=now_ms();
         Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
@@ -941,6 +968,10 @@ void active_loop_work(void *arg){
         if(server){bool enrolled=false;{std::lock_guard<std::mutex> guard(lock);for(const auto &peer:group.peers)if(peer.id==active->peer&&peer.active)enrolled=true;}if(!enrolled){if(active->retiring){retirement_attempted=true;finish_retirement(*active);trace.reason="retired";}else trace.fail("membership_revoked");break;}}
         if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope,received))trace.fail("retirement");else trace.reason="retired";break;}
 
+        if(envelope.kind==Kind::device_status){
+            if(!receive_live_hostname(*active,envelope,received)){trace.fail("hostname_admission");break;}
+            continue;
+        }
         if(is_settings_kind(envelope.kind)){
             // Preserve wire/security failures as terminal before the settings
             // helper's boolean result can also represent a raced local reset
@@ -1505,7 +1536,11 @@ esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,con
     if(group.role!=Group::coordinator||!status.authority_ready||group.join_id||group.peers.size()>=maximum_roster_peers||!invitation_running||invitation_cancelled||admission.view.scan_id!=scan||admission.view.phase!="found"||!admission.deadline||now_ms()>=admission.deadline)return ESP_ERR_INVALID_STATE;
     if(std::none_of(admission.view.candidates.begin(),admission.view.candidates.end(),[&](const auto& item){return item.token==token;}))return ESP_ERR_INVALID_ARG;
     if(!network.get_hostname||network.get_hostname()==hostname)return ESP_ERR_INVALID_ARG;
-    for(const auto& peer:group.peers)if(hostnames.lookup(peer.id)==hostname)return ESP_ERR_INVALID_ARG;
+    for(const auto& peer:group.peers){
+        const auto linked=settings_link(peer.id);const auto name=linked.status.hostname.empty()?hostnames.lookup(peer.id):linked.status.hostname;
+        if(name==hostname)return ESP_ERR_INVALID_ARG;
+    }
+    settings_expire(now_ms());if(settings_hostname_pending({},hostname))return ESP_ERR_INVALID_ARG;
     admission.selected_token=token;admission.hostname=hostname;admission.pin=pin;admission.submitted=true;admission.view.phase="connecting";timing.finish(selected,true);
     return ESP_OK;
 }
@@ -1617,6 +1652,16 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId 
         for(const auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id)return operation.core==encoded?ESP_OK:ESP_ERR_INVALID_ARG;
         for(const auto& operation:settings_operations)if(operation.owner==owner&&operation.stage=="admitted")return ESP_ERR_INVALID_STATE;
         if(settings_operations.size()>=11)return ESP_ERR_NO_MEM;
+        if(write.hostname){
+            if(owner!=identity.id&&network.get_hostname&&network.get_hostname()==*write.hostname)return ESP_ERR_INVALID_ARG;
+            for(const auto& peer:group.peers)if(peer.id!=owner&&peer.active){
+                const auto linked=settings_link(peer.id);const auto name=linked.status.hostname.empty()?hostnames.lookup(peer.id):linked.status.hostname;
+                if(name==*write.hostname)return ESP_ERR_INVALID_ARG;
+            }
+            if(group.joining_id&&group.joining_id!=owner&&group.join_hostname==*write.hostname)return ESP_ERR_INVALID_ARG;
+            if(admission.submitted&&(admission.view.phase=="connecting"||admission.view.phase=="finishing")&&admission.view.candidate_id!=owner&&admission.hostname==*write.hostname)return ESP_ERR_INVALID_ARG;
+            if(settings_hostname_pending(owner,*write.hostname))return ESP_ERR_INVALID_ARG;
+        }
         local=owner==identity.id;
         if(local){if(write.expected_boot!=boot)return ESP_ERR_INVALID_STATE;settings_operations.push_back({owner,id,boot,{},encoded,"admitted","",admitted_until});}
         else {
@@ -1771,12 +1816,20 @@ std::vector<RuntimePeerStatus> runtime_peers(){
         }
         // Enrollment identity belongs to the durable roster. A TLS handshake
         // with a partial status object cannot replace it with an all-zero ID.
-        result.id=peer.id;result.hostname=hostnames.lookup(peer.id);result.enrolled=peer.active;result.provisional=!peer.active;
+        result.id=peer.id;if(result.hostname.empty())result.hostname=hostnames.lookup(peer.id);result.enrolled=peer.active;result.provisional=!peer.active;
         out.push_back(result);
     }
     return out;
 }
-std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames(){std::lock_guard<std::mutex> guard(lock);return hostnames.entries();}
+std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames(){
+    std::lock_guard<std::mutex> guard(lock);auto out=hostnames.entries();
+    for(const auto& active:links)if(!active->cancelled&&!active->retiring&&current_peer_credential(*active,group)){
+        std::lock_guard<std::mutex> snapshot(active->mutex);if(active->status.hostname.empty())continue;
+        auto found=std::find_if(out.begin(),out.end(),[&](const auto& entry){return entry.first==active->peer;});
+        if(found==out.end())out.emplace_back(active->peer,active->status.hostname);else found->second=active->status.hostname;
+    }
+    return out;
+}
 esp_err_t runtime_crypto_self_test(){return admission_crypto_self_test()&&config_store::production_storage_self_test()?ESP_OK:ESP_FAIL;}
 } // namespace
 #endif

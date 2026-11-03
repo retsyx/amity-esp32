@@ -109,7 +109,8 @@ never included in these outputs; terminal output does not echo passwords. Auto-g
 12 characters long and contain 72 bits of randomness. With no password option, first access shows password onboarding.
 The admin password is separate from the Matter setup PIN.
 
-In **Advanced**, the user can change the hostname or password. Factory reset asks
+In **Amity devices → Settings**, the user can change each device's hostname
+without restarting it. Password changes remain in **Advanced**. Factory reset asks
 for confirmation, clears activity configuration, Wi-Fi, Matter fabrics, remote
 bonds, hostname overrides, password changes and generated TLS identity, then
 restores the provisioned hostname and initial password. If no initial password

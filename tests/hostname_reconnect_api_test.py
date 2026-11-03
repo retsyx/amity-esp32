@@ -26,21 +26,17 @@ constexpr int ESP_OK=0,ESP_FAIL=-1,HTTP_GET=0,HTTP_POST=1,HTTP_OPTIONS=2;
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 struct httpd_req_t {int method=HTTP_GET;size_t content_len=0;const char* uri="/api/ready";std::string response,status,type;std::map<std::string,std::string> headers;bool authenticated=false;};
 std::atomic_bool ui_enabled{true};
-unsigned auth_checks=0,downstream=0,saves=0,reboots=0;
-bool firmware_ready=false,save_failed=false;
-std::string saved_hostname;
+unsigned auth_checks=0,downstream=0;
+bool firmware_ready=false;
 struct Id {std::string str()const{return "0123456789abcdef0123456789abcdef";}};
 struct Control {Id octopus_id()const{return {};}} control;
 Control* hub=&control;
 namespace system_services {
 const char* boot_id(){return "11111111111111111111111111111111";}
 bool firmware_ready(){return ::firmware_ready;}
-void reboot_later(){++reboots;}
 }
 namespace device_settings {
 const char* hostname(){return "current-name";}
-bool normalize_hostname(std::string& value){return value=="new-name";}
-int save_hostname(const std::string& value){++saves;if(save_failed)return ESP_FAIL;saved_hostname=value;return ESP_OK;}
 }
 int httpd_resp_set_status(httpd_req_t* req,const char* value){req->status=value;return ESP_OK;}
 int httpd_resp_set_type(httpd_req_t* req,const char* value){req->type=value;return ESP_OK;}
@@ -75,14 +71,6 @@ int main(){
  {httpd_req_t req;ui_enabled=false;assert(api(&req)==ESP_FAIL&&req.status=="403 Forbidden");no_cors(req);ui_enabled=true;}
  assert(downstream==0);
  std::cout<<"PASS actual readiness router exposes only GET health with no credentials or mutation CORS\n";
- {httpd_req_t req;assert(hostname_save(&req,cJSON_Parse("{\"hostname\":\"new-name\"}"))==ESP_OK);no_cors(req);
-  Json body(cJSON_Parse(req.response.c_str()),cJSON_Delete);assert(body&&cJSON_GetArraySize(body.get())==4);
-  assert(text(body.get(),"hostname")=="new-name"&&text(body.get(),"device_id")==control.octopus_id().str()&&text(body.get(),"previous_boot_id")==system_services::boot_id());
-  assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(body.get(),"rebooting"))&&saves==1&&reboots==1&&saved_hostname=="new-name");
- }
- {httpd_req_t req;save_failed=true;assert(hostname_save(&req,cJSON_Parse("{\"hostname\":\"new-name\"}"))==ESP_FAIL&&req.status=="500 Internal Server Error"&&reboots==1);no_cors(req);save_failed=false;}
- {httpd_req_t req;assert(hostname_save(&req,cJSON_Parse("{\"hostname\":\"https://other.example\"}"))==ESP_FAIL&&saves==2&&reboots==1);no_cors(req);}
- std::cout<<"PASS actual hostname save returns exact previous boot/device only after successful persistence\n";
  {httpd_req_t req;req.uri="/";assert(asset(&req)==ESP_OK);const auto& csp=req.headers.at("Content-Security-Policy");
   assert(csp.find("connect-src 'self' https://*.local;")!=std::string::npos&&csp.find("script-src 'self';")!=std::string::npos&&csp.find("frame-ancestors 'none'")!=std::string::npos);no_cors(req);
  }
@@ -99,12 +87,10 @@ def main():
     public = api[:api.index('    if(path=="/api/setup") {')]
     guard = next(line for line in api.splitlines() if 'if(!web::authenticated(req))' in line)
     public += guard + '\n++downstream;return ESP_OK;\n}\n'
-    branch = function(source, 'else if(path=="/api/hostname")')
-    save = 'esp_err_t hostname_save(httpd_req_t* req,cJSON* parsed){Json root(parsed,cJSON_Delete);esp_err_t e=ESP_OK;\n' + branch[branch.index('{') + 1:]
     request = (ROOT / 'components/web/request.cpp').read_text()
     actual = ('namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
               + function(source, 'esp_err_t send(httpd_req_t *req,cJSON *root)')
-              + public + save + function(source, 'esp_err_t asset(httpd_req_t *req)'))
+              + public + function(source, 'esp_err_t asset(httpd_req_t *req)'))
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     if not (cjson / 'cJSON.c').exists():
         cjson = cjson.parent

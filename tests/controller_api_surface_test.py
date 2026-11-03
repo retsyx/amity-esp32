@@ -53,7 +53,7 @@ int main(){
     assert(request_fields("/api/membership/scan")->size()==1&&request_fields("/api/membership/cancel")->size()==2);
     assert(std::find(addition->begin(),addition->end(),"location")==addition->end());
     const auto settings=request_fields("/api/devices/0123456789abcdef0123456789abcdef/settings");
-    assert(settings&&settings->size()==4);
+    assert(settings&&settings->size()==6&&std::find(settings->begin(),settings->end(),"hostname")!=settings->end()&&std::find(settings->begin(),settings->end(),"expected_hostname_revision")!=settings->end());
     assert(std::find(settings->begin(),settings->end(),"confirm_restart")==settings->end());
     for(const auto* path:{"/api/devices/00000000000000000000000000000000/settings",
         "/api/devices/0123456789ABCDEF0123456789abcdef/settings",

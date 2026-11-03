@@ -14,7 +14,7 @@ def extract(signature):
         elif source[end]=='}':depth-=1
         end+=1
     return source[start:end]
-functions='\n'.join(extract(s) for s in ['void refresh_admin_mdns()', '[[gnu::noinline]] void setup_matter(', 'void setup_button(', 'esp_err_t retire_original_interfaces()', 'void start_admin_mdns()', 'void start_original_interfaces(', 'bool station_has_address(', 'void await_original_work(', 'void await_original_task('])
+functions='\n'.join(extract(s) for s in ['esp_err_t refresh_admin_mdns_for_host(', 'void refresh_admin_mdns()', '[[gnu::noinline]] void setup_matter(', 'void setup_button(', 'esp_err_t retire_original_interfaces()', 'void start_admin_mdns()', 'void start_original_interfaces(', 'bool station_has_address(', 'void await_original_work(', 'void await_original_task('])
 retained=extract('if(group_start==ESP_OK&&membership_read==ESP_OK&&membership.role==amity::consortium::RuntimeStartup::coordinator')
 # Actual app_main composition boundaries, in addition to executed helper bodies.
 main=source[source.index('extern "C" void app_main()'):]
@@ -25,6 +25,7 @@ assert main.index('hub.set_coordinator_authority(!passive_startup,')<main.index(
 assert source.count('web_admin::start(')==1 and source.count('amity_homekit::start(')==1
 assert source.count('xTaskCreate(input_task,')==1
 assert 'runtime_lifecycle_hooks({retire_original_interfaces,' in main
+assert main.index('device_settings::set_hostname_handler(rename_hostname)')<main.index('amity_matter_start(&callbacks)')
 
 fixture=r'''
 #include <atomic>
@@ -53,6 +54,7 @@ template<class...A>void log(A&&...){ }
 #define pdMS_TO_TICKS(v) (v)
 std::atomic<bool>original_interfaces_enabled{false};
 std::mutex admin_mdns_mutex;bool admin_mdns_registered=false;
+std::string admin_mdns_hostname;
 bool responder_live=false;int mdns_initializations=0,mdns_removals=0,mdns_updates=0,matter_stops=0;
 int fence_result=ESP_OK,web_result=ESP_OK,matter_result=ESP_OK,home_result=ESP_OK,mdns_remove_result=ESP_OK,mdns_add_result=ESP_OK;
 std::mutex interleave_mutex;std::condition_variable interleave;

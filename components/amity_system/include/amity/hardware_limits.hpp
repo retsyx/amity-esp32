@@ -2,7 +2,7 @@
 #pragma once
 
 // Shared by firmware and offline tooling. Fixed-format schema/menu boundaries
-// are checked against this value by validate_contracts.py.
+// are checked against this value by tests/hardware_capacity_test.py.
 #define AMITY_MAX_TENTACLES 4
 
 namespace amity {
