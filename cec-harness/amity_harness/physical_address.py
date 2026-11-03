@@ -45,24 +45,30 @@ class AdapterAddressEvidence:
             raise AssertionError("Adapter address evidence changed owner boot or initiator")
         return context[2]
 
-    def _state(self):
+    def _state(self, *, check=None):
         state = self.dut.get_state()
-        if (state.get("expected_boot_id") != self.scan._boot or state.get("discovering") is not False
+        discovering = state.get("discovering")
+        if check is not None:
+            check["aggregate_discovering_after"] = discovering if type(discovering) is bool else None
+        if (state.get("expected_boot_id") != self.scan._boot or type(discovering) is not bool
                 or not isinstance(state.get("devices"), list)
                 or type(state.get("discovery_generation")) is not int):
-            raise AssertionError("Adapter settings changed main boot or began unsolicited discovery")
+            raise AssertionError("Adapter settings returned an invalid main boot or discovery state")
+        # This flag aggregates every owner's adapters. A previous explicit UI
+        # scan may still be finishing elsewhere; it says nothing about whether
+        # this settings change enumerated the target adapter's physical wires.
         # The editor's rows are the current local and remote equipment cache.
         # Their order is presentation; the actual cached identities must stay.
         devices = [deepcopy(row) for row in state["devices"]]
         devices.sort(key=lambda row: json.dumps(row, sort_keys=True))
-        return state["discovery_generation"], devices
+        return state["discovery_generation"], devices, discovering
 
     def __enter__(self):
         if self._entered or self._closed:
             raise RuntimeError("Adapter address evidence cannot be reused")
         self._initiator = self._validate()
         self._owner_boots = dict(self.scan.owner_boots)
-        self._generation, self._cache = self._state()
+        self._generation, self._cache, self._aggregate_discovering = self._state()
         with self.session._lock:
             self._started = time.monotonic_ns()
             for component in self._witnesses:
@@ -150,8 +156,10 @@ class AdapterAddressEvidence:
         selected = physical_address(address)
         expected = Frame(self._initiator, 15, 0x84, selected.to_bytes(2, "big") + b"\x04")
         check = {"selected_address": format_physical_address(selected).upper(),
-                 "changed": changed, "passed": False}
+                 "changed": changed, "passed": False,
+                 "aggregate_discovering_before": self._aggregate_discovering}
         self._report["checks"].append(check)
+        self._state(check=check)
         self._validate()
         if changed:
             deadline_ns = time.monotonic_ns() + int(self.front._power_timeout * 1e9)
@@ -173,7 +181,7 @@ class AdapterAddressEvidence:
         self._drain(through)
         self._validate()
         frames = self._reports(expected)
-        generation, devices = self._state()
+        generation, devices, _ = self._state(check=check)
         check.update(expected_discovery_generation=self._generation,
                      observed_discovery_generation=generation, cache_unchanged=devices == self._cache,
                      cache_entry_count=len(self._cache))

@@ -196,19 +196,53 @@ class AdapterAddressEvidenceTests(unittest.TestCase):
 
     def test_local_and_remote_settings_must_preserve_cache_and_main_scan_state(self):
         for remote in (False, True):
-            for kind in ("generation", "discovering", "boot", "cache"):
+            for kind in ("generation", "invalid_discovering", "boot", "cache"):
                 with self.subTest(remote=remote, kind=kind), self.assertRaisesRegex(AssertionError, "discovery|cache"):
                     with self.fixture(remote=remote) as fixture:
                         with AdapterAddressEvidence(fixture.main, fixture.tv, fixture.scan) as observation:
                             if kind == "generation":
                                 fixture.state["discovery_generation"] += 1
-                            elif kind == "discovering":
-                                fixture.state["discovering"] = True
+                            elif kind == "invalid_discovering":
+                                fixture.state["discovering"] = None
                             elif kind == "boot":
                                 fixture.state["expected_boot_id"] = "other-boot"
                             else:
                                 fixture.state["devices"] = []
                             observation.assert_selected("2.0.0.0", changed=False)
+
+    def test_other_adapter_background_scan_is_diagnostic_for_local_and_remote_settings(self):
+        for remote in (False, True):
+            for before, after in ((False, False), (False, True), (True, False), (True, True)):
+                with self.subTest(remote=remote, before=before, after=after), self.fixture(remote=remote) as fixture:
+                    fixture.state["discovering"] = before
+                    with AdapterAddressEvidence(fixture.main, fixture.tv, fixture.scan) as observation:
+                        fixture.state["discovering"] = after
+                        observation.assert_selected("2.0.0.0", changed=False)
+                    check = fixture.bed.control_observations[-1]["checks"][-1]
+                    self.assertIs(check["aggregate_discovering_before"], before)
+                    self.assertIs(check["aggregate_discovering_after"], after)
+                    self.assertTrue(check["passed"])
+                    self.assertTrue(check["cache_unchanged"])
+                    self.assertEqual(check["expected_discovery_generation"], check["observed_discovery_generation"])
+
+    def test_background_scan_diagnostics_survive_target_wire_and_generation_failures(self):
+        for remote in (False, True):
+            for kind in ("target_query", "generation"):
+                with self.subTest(remote=remote, kind=kind), self.fixture(remote=remote) as fixture:
+                    with self.assertRaisesRegex(AssertionError, "discovery queries|rescanned"):
+                        with AdapterAddressEvidence(fixture.main, fixture.tv, fixture.scan) as observation:
+                            fixture.state["discovering"] = True
+                            if kind == "target_query":
+                                fixture.tv.hooks = Hooks(before_rx=lambda component, frame: None)
+                                fixture.tv.receive(Frame(4, fixture.tv.address.logical, 0x83,
+                                                         timestamp_ns=time.monotonic_ns()))
+                            else:
+                                fixture.state["discovery_generation"] += 1
+                            observation.assert_selected("2.0.0.0", changed=False)
+                    check = fixture.bed.control_observations[-1]["checks"][-1]
+                    self.assertIs(check["aggregate_discovering_before"], False)
+                    self.assertIs(check["aggregate_discovering_after"], True)
+                    self.assertFalse(check["passed"])
 
     def test_unannounced_front_and_back_queries_reject_remote_scan_even_when_hook_drops_them(self):
         for side in ("front", "back"):

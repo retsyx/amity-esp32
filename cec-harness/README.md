@@ -884,7 +884,9 @@ when no address was detected, and retain the scanned address even when it
 equals the old default. Each save checks the three UI address values, unchanged
 owner boots and fresh physical Report Physical Address replies. A changed
 selection also requires the automatic identity announcement before the test's
-query. Cleanup restores the original default before removing the added member.
+query. Discovery checks cover the tested adapter's wires; the UI's combined
+scan indicator also includes other adapters. Cleanup restores the original
+default before removing the added member.
 
 ## Run functional tests
 
