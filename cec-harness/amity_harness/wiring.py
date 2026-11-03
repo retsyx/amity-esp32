@@ -25,7 +25,7 @@ def _section(document, title):
     return document[start.end():end]
 
 
-def _table(document, title, required):
+def _table(document, title, required, *, literal=()):
     lines = _section(document, title).splitlines()
     tables = []
     for index, line in enumerate(lines[:-1]):
@@ -42,9 +42,11 @@ def _table(document, title, required):
             for row in lines[index + 2:]:
                 if not row.lstrip().startswith("|"):
                     break
-                cells = [_text(cell) for cell in row.strip().strip("|").split("|")]
+                cells = row.strip().strip("|").split("|")
                 if len(cells) != len(header):
                     raise ValueError(f"Wrong number of cells in '{title}': {row}")
+                cells = [cell.strip() if column in literal else _text(cell)
+                         for column, cell in zip(header, cells)]
                 rows.append(dict(zip(header, cells)))
             tables.append(rows)
     if len(tables) != 1 or not tables[0]:
@@ -63,6 +65,7 @@ class DeviceIdentity:
     name: str
     mac: str
     device_id: str
+    hostname: str | None = None
 
 
 class Wiring:
@@ -83,20 +86,24 @@ class Wiring:
         path = Path(path)
         document = path.read_text(encoding="utf-8")
         identities = {}
-        for row in _table(document, "DUTs", ("Bench label", "ESP32-S3 MAC / USB serial", "Amity device ID")):
+        for row in _table(document, "DUTs", ("Bench label", "ESP32-S3 MAC / USB serial", "Amity device ID"),
+                          literal=("Administration hostname",)):
             name = row["Bench label"]
             mac = row["ESP32-S3 MAC / USB serial"]
             device_id = row["Amity device ID"]
+            hostname = row.get("Administration hostname", "").lower() or None
             if not name or name in identities:
                 raise ValueError(f"Duplicate or empty DUT name: {name!r}")
             if not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
                 raise ValueError(f"Invalid MAC address for {name}")
             if not re.fullmatch(r"[0-9a-fA-F]{32}", device_id):
                 raise ValueError(f"Invalid Amity device ID for {name}")
+            if hostname is not None and not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", hostname):
+                raise ValueError(f"Invalid administration hostname for {name}")
             if any(item.mac.lower() == mac.lower() or item.device_id.lower() == device_id.lower()
                    for item in identities.values()):
                 raise ValueError(f"Duplicate DUT identity for {name}")
-            identities[name] = DeviceIdentity(name, mac, device_id)
+            identities[name] = DeviceIdentity(name, mac, device_id, hostname)
         cec, reset, used_gpio = {}, {}, {}
         for row in _table(document, "HDMI-CEC harness GPIO mapping",
                           ("Device", "Device Tentacle #", "Tentacle Front/Back", "DUT GPIO", "Harness GPIO")):

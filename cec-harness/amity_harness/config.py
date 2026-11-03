@@ -23,6 +23,8 @@ class RunConfig:
     session_factory: Callable = CecSession
     gpio_factory: Callable | None = None
     keyboard_factory: Callable | None = None
+    enrollment_factory: Callable | None = None
+    enrollment_timeout: float = 240
     timeout: float = 180
     cec_timeout: float = 5
     firmware: Path | None = None
@@ -30,7 +32,8 @@ class RunConfig:
 
     def __post_init__(self):
         for description, value in (("Run timeout", self.timeout), ("CEC timeout", self.cec_timeout),
-                                   ("Firmware timeout", self.firmware_timeout)):
+                                   ("Firmware timeout", self.firmware_timeout),
+                                   ("Enrollment timeout", self.enrollment_timeout)):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{description} must be a positive finite number")
         if not callable(self.session_factory):
@@ -39,6 +42,8 @@ class RunConfig:
             raise ValueError("gpio_factory must be callable or None")
         if self.keyboard_factory is not None and not callable(self.keyboard_factory):
             raise ValueError("keyboard_factory must be callable or None")
+        if self.enrollment_factory is not None and not callable(self.enrollment_factory):
+            raise ValueError("enrollment_factory must be callable or None")
         if not isinstance(self.insecure, bool):
             raise ValueError("insecure must be a boolean")
         if self.cafile is not None and self.insecure:

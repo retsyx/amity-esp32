@@ -264,7 +264,7 @@ class RunnerTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
-        expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input",
+        expected = ["prepare_main", "test_hdmi_scan", "test_activity", "test_activity_switch_input",
                     "test_activity_unselected_equipment_announcement",
                     "test_activity_keys", "test_activity_keys_secondary",
                     "test_activity_keys_disconnected", "test_activity_keys_disconnected_secondary",
@@ -274,7 +274,7 @@ class RunnerTests(unittest.TestCase):
                     "test_removal_cascade", "test_removal_replacement", "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
                     "test_default_physical_address_remote_scanned",
-                    "test_ble_keyboard_local", "test_ble_keyboard_remote"]
+                    "test_ble_keyboard_local", "test_ble_keyboard_remote", "reset_main"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])
@@ -291,8 +291,9 @@ class RunnerTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
-        self.assertEqual(called, ["test_default_physical_address_local", "test_default_physical_address_local_scanned",
-                                 "test_default_physical_address_remote", "test_default_physical_address_remote_scanned"])
+        self.assertEqual(called, ["prepare_main", "test_default_physical_address_local", "test_default_physical_address_local_scanned",
+                                 "test_default_physical_address_remote", "test_default_physical_address_remote_scanned",
+                                 "reset_main"])
 
     def test_removal_cascade_can_be_selected_without_other_scenarios(self):
         called = []
@@ -306,7 +307,7 @@ class RunnerTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
-        self.assertEqual(called, ["test_removal_cascade"])
+        self.assertEqual(called, ["prepare_main", "test_removal_cascade", "reset_main"])
 
     def test_three_dut_consortium_can_be_selected_without_other_scenarios(self):
         called = []
@@ -320,7 +321,7 @@ class RunnerTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
-        self.assertEqual(called, ["test_consortium_three_duts"])
+        self.assertEqual(called, ["prepare_main", "test_consortium_three_duts", "reset_main"])
 
     def test_four_dut_consortium_can_be_selected_without_other_scenarios(self):
         called = []
@@ -334,7 +335,7 @@ class RunnerTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
-        self.assertEqual(called, ["test_consortium_four_duts"])
+        self.assertEqual(called, ["prepare_main", "test_consortium_four_duts", "reset_main"])
 
     def test_dual_display_can_be_selected_without_other_scenarios(self):
         called = []
@@ -348,7 +349,7 @@ class RunnerTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
-        self.assertEqual(called, ["test_dual_display"])
+        self.assertEqual(called, ["prepare_main", "test_dual_display", "reset_main"])
 
     def test_invalid_scenario_groups_are_rejected_before_execution(self):
         def scenario():

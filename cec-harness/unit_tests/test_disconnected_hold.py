@@ -110,7 +110,7 @@ class DisconnectTransportTests(unittest.TestCase):
         result = dut._disconnect_key_request({"key": 65, "duration_ms": 3000}, lambda: "admitted", timeout=3)
         request, timeout = captured[0]
         self.assertEqual(result, "admitted")
-        self.assertEqual(request.full_url, "https://amity-dut.local/api/key")
+        self.assertEqual(request.full_url, "https://amity.local/api/key")
         self.assertEqual(request.get_header("Authorization"), "Bearer PRIVATE_SESSION")
         self.assertEqual(json.loads(request.data), {"key": 65, "duration_ms": 3000})
         self.assertEqual(timeout, 3)

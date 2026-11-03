@@ -313,6 +313,13 @@ adapter without a detector has unknown presence and is read only. The original
 fixed one-adapter hardware is present by construction. Detachable four-adapter
 hardware and its presence wiring still require physical qualification.
 
+## Functional tests
+
+The Raspberry Pi functional harness enrolls a factory-reset main through Matter
+BLE before running tests. Successful runs reset the main afterward; failed runs
+preserve it for debugging. See the [harness README](cec-harness/README.md#main-enrollment)
+for Pi setup, private credentials, commands and reset recovery.
+
 ## License
 
 Amity source code is licensed under the [GPLv3](https://github.com/retsyx/amity-esp32/blob/main/LICENSE). See the [third-party notices](https://github.com/retsyx/amity-esp32/blob/main/THIRD_PARTY.md) for dependency licenses.

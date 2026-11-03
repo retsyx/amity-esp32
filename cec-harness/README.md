@@ -1,5 +1,7 @@
 # Amity functional test harness
 
+Don't log test run results in this file. This file is only for describing the tests.
+
 A Python functional test declares its DUTs, component topology and assertions.
 The common framework configures the run, authenticates DUTs, owns the CEC
 adapters and collects evidence. CEC I/O and physical button holds run on the
@@ -11,8 +13,9 @@ shipping Amity UI. Never add firmware APIs, test-only commands, authentication
 bypasses, or test control surfaces for this framework.** The DUT helpers wrap
 `/api/login`, the current activity editor/status/discover/configuration routes,
 the existing membership scan/add/remove controls, and operation-status routes.
-Additional harness helpers must wrap existing UI operations as well. Firmware CEC, activity, input, commissioning and
-membership behavior remains unchanged.
+Additional test helpers must wrap existing UI operations as well. The runner
+first provisions the factory-reset main through its shipping Matter BLE setup.
+Firmware CEC, activity, input, commissioning and membership behavior is unchanged.
 
 ## Layout
 
@@ -21,6 +24,10 @@ membership behavior remains unchanged.
   assignment, CEC transport and component emulation. Shared `config.py`,
   `testbed.py`, `runner.py` and `discovery.py` own runtime configuration,
   resource/authentication lifetime, CLI/reporting and scan evidence/assertions.
+- `amity_harness/enrollment.py`: Pi Matter controller, factory-state checks,
+  Wi-Fi enrollment and verification after the main's final reset.
+- `setup_matter.py`, `matter-requirements.txt`: installer and pinned dependencies
+  for the Pi Matter controller.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
   repairs the same activity after a power/input disturbance, then verifies
@@ -56,10 +63,127 @@ membership behavior remains unchanged.
   taps, overlapping buttons and disconnect cleanup with local/member equipment.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
-The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
-templates have been removed. The static virtual-device inventory has also been
-removed from `TEST-HARNESS.md`. The remaining wiring tables describe physical
-connections, not simulated equipment.
+## Main enrollment
+
+Each invocation of `cec-harness/run.py` requires a **factory-reset
+`amity-dut`**. Preparation never resets it implicitly or reuses an enrolled
+main. Reachable HTTPS fails preparation. Standard Matter preflight must confirm
+zero fabrics and no configured Wi-Fi before the controller supplies the bench
+network credentials.
+
+The Pi briefly presses FW RESET to reopen initial Matter setup if its
+five-minute boot window expired, then commissions over BLE and verifies the
+main's identity through authenticated HTTPS. This runs before firmware upgrades and scenarios.
+Secondary boards continue to use **Amity devices → Add**.
+
+The bench label `amity-dut` maps to the factory administration address
+`https://amity.local` through `TEST-HARNESS.md`. Its optional Administration
+hostname column supplies the default URL; explicit URL options still override it.
+
+A successful run requests the main's reset through the authenticated UI API,
+then verifies over Matter BLE that no fabrics or Wi-Fi networks remain. A reset
+verification failure fails the run. If preparation or a scenario fails or is
+interrupted, the runner skips this final reset and retains the state reached
+for debugging; ordinary scenario fixture cleanup still runs. Reset the main
+explicitly before the next invocation. If final reset verification fails, inspect
+its log before recovery: the reset may already have taken place.
+
+Factory reset clears activities, equipment, Wi-Fi and pairings. It preserves
+the installed firmware and factory Matter code, and restores the provisioned
+hostname and initial admin password.
+
+Install the controller once on the Pi, from its repository root:
+
+```sh
+python3 cec-harness/setup_matter.py
+python3 cec-harness/setup_matter.py --verify-installed
+```
+
+The pinned controller requires Linux aarch64, Python 3.13, BlueZ with a powered
+`hci0` Bluetooth adapter, and GLib, libnl and libatomic runtime libraries. Supply
+credentials for a 2.4 GHz Wi-Fi network reachable from the Pi. Matter enrollment
+requires working IPv6 and multicast DNS on that LAN; the runner must also reach
+the DUT's HTTPS administration address. The Pi account needs passwordless `sudo`
+for a private mount namespace; the worker drops root
+privileges before loading Matter. This isolates SDK platform storage from other
+controllers. Enrollment finishes before the BLE keyboard fixture starts.
+
+The installer verifies or downloads the exact wheels in
+`matter-requirements.txt`, installs them under `.matter-python/`, and supplies
+official SDK test attestation roots in `paa-root-certs/`. Its wheel cache is
+`.matter-wheels/`. These directories are at the repository root.
+`--verify-installed` checks the existing installation without changing files.
+
+Store the bench's factory enrollment credentials on the Pi in
+`~/.config/amity-harness/enrollment.json`, with mode `0600`:
+
+```json
+{
+  "wifi_ssid": "bench-network",
+  "wifi_password": "replace-with-bench-password",
+  "matter_pin_code": 20202021,
+  "matter_discriminator": 3840
+}
+```
+
+Use exactly these four fields, replacing the examples with the bench network
+and main's factory values. The numeric PIN differs from the longer printed
+manual pairing code. The factory PIN and full discriminator can be read from
+the original `amity-factory.bin` provisioning data or decoded from the Matter QR
+payload in `amity-pairing.txt`; retain these private provisioning files.
+`--enrollment-credentials PATH` optionally supplies this file from the caller.
+
+The separate `--credentials` file lives on the runner host, has mode `0600`, and
+contains the main's **provisioned initial** admin password:
+
+```json
+{"admin_password": "replace-with-initial-admin-password"}
+```
+
+The device must have an initial admin password; automatic preparation does not
+perform password onboarding. Factory reset regenerates the HTTPS certificate,
+so the bench examples explicitly use `--insecure`. Secrets travel over SSH stdin
+and are excluded from reports; the enrollment worker receives no HTTP password
+or session token.
+
+After this one-time setup, normal test commands enroll automatically. To check
+only enrollment and successful reset cleanup, run from the checkout root:
+
+```sh
+python3 cec-harness/run.py --test enrollment \
+  --credentials test-results/credentials/amity-dut.json --insecure \
+  --harness-host pi@test2.local \
+  --output test-results/functional/enrollment.json
+```
+
+Omit `--harness-host` when running directly on the Pi. With SSH, install the same
+harness sources at `/home/pi/amity/esp32/cec-harness`, or set `--harness-root`.
+`--matter-python` selects the Pi's controller interpreter (default `python3`);
+it is independent of the BLE keyboard fixture's `--ble-python`.
+`--enrollment-timeout` defaults to 240 seconds for main preparation and,
+separately, final reset verification, with a bounded worker shutdown allowance.
+It is independent of `--timeout`, `--cec-timeout` and `--firmware-timeout`.
+`--test enrollment` cannot be combined with `--firmware` and leaves the main
+factory reset after success; it does not leave an enrolled interactive session.
+
+After inspecting a failed run, reset through **Advanced → Factory Reset**, hold
+the main's FW RESET button for at least ten seconds, or invoke its wired button
+from the development computer:
+
+```sh
+ssh pi@test2.local 'cd /home/pi/amity/esp32 && ./cec-harness/fw-reset amity-dut 10.5'
+```
+
+The button command runs on the Pi and needs no DUT network connection or HTTP
+credentials. Subsequent test runs reopen the initial Matter window as needed.
+
+Private controller state lives under
+`~/.local/state/amity-harness/matter/<device-id>/` on the Pi. Each enrollment uses
+fresh state. `current/commissioning.log` belongs to the latest successful
+enrollment; failed attempts retain their `generation-*/commissioning.log`.
+Reset checks use `verification-*/commissioning.log`, with `last-verification`
+pointing to the latest successful check. Inspect these logs for BLE, credentials,
+attestation or network failures; they may contain secrets and must remain private.
 
 ## Writing a functional test
 
@@ -247,15 +371,6 @@ remain unchanged. Both test-owned activities are cleaned up before the
 responders close. Shared component and activity helpers perform these checks,
 so the functional body contains no raw CEC commands or HTTP handling.
 
-On 29 October 2026, the three CEC functional scenarios passed on `test2` against
-`amity-dut` firmware `0.1.88`, along with all 204 framework unit tests. The
-source-theft run verified physical directed Standby `03:36` and route
-restoration `0f:86:11:00`, retained the same boot and saved activities/equipment,
-and released all 14 GPIO CEC address masks. Private evidence is in
-`test-results/functional/source-theft-suite-0.1.88.json` and
-`source-theft-verified.json` in the same directory. This exercises simulated
-CEC equipment on tentacle 0; it does not qualify real AV behavior or all adapters.
-
 `add_amity.py` uses the original main and the second board from the inventory:
 
 ```python
@@ -298,29 +413,9 @@ reset was scheduled and verifies its saved owner, equipment, adapter settings
 and named inventory are gone; this deliberately resets the added board. A
 candidate referenced by preexisting user activities is rejected before Add,
 so the test cannot authorize deleting those activities.
-It does not factory-reset the main, run a ten-second reset before the test,
+The Add scenario itself does not factory-reset the main, run a ten-second reset before the test,
 or remove a preexisting member. Failures retain/report uncertain ownership
 rather than removing another device.
-
-An Add-only physical timing run on 29 October 2026 with firmware 0.1.99 took
-95.494 seconds from helper entry to fully verified ready state. The Add POST
-to membership-operation completion took 59.272 seconds; Add POST to verified
-settings/ready took 67.940 seconds. This was one normal-profile run on
-`amity-dut`/`amity-dut-2`, without CEC component traffic, and includes host HTTP
-time. Removal acknowledged reset `scheduled`. It measures enrollment and does
-not establish a CEC response allowance. Evidence is
-`test-results/device-removal-2026-10-29/enrollment-measurement.json` and
-`enrollment-timing.json` in that directory.
-
-On 29 October 2026, all 238 framework unit tests passed. Physical validation
-of `add_amity.py` failed during candidate discovery: the 3.5-second gesture on
-`amity-dut-2` firmware 0.1.84 produced a stack overflow in its `fw_reset` task,
-and the main never found the candidate. The harness confirmed button release
-and completed scan cancellation; it submitted neither Add nor Remove. Admission,
-connected-member checks and the removal/reset acknowledgment remain unqualified.
-No firmware was changed and the existing-API assertions were retained. Private
-evidence is in `test-results/functional/add-amity-retry-2026-10-29.json` and
-`add-amity-retry-amity-dut-2-uart.log` in that directory.
 
 Opening the diagnostic serial ports also caused unintended
 `USB_UART_CHIP_RESET` reboots on both boards; serial capture was stopped.
@@ -432,33 +527,6 @@ before members are removed/reset in reverse Add order, with responders still
 running. Select it with `--test consortium_four_duts`; it also runs in
 `--test all`.
 
-On 1 November 2026, all eight functional cases passed on `test2` with the same
-exact 0.1.115 image on all four DUTs. The four-DUT case proved twelve typed
-equipment locations across eight wires, all twelve owner-to-owner theft
-directions, fresh power/standby commands and four initial routes. Directed
-Standby responses took 66.900029–70.050082 ms within the unchanged 250 ms bound.
-All thirteen temporary activities and seven added members across the complete
-run were cleaned up, with each removal acknowledging a scheduled reset. Final
-checks preserve the main's post-update boot, authority, configuration, pairings
-and two Matter fabrics. Reports are in
-`test-results/consortium-four-duts-0.1.115-2026-11-01/functional.json`,
-`functional-verification.json` and `main-final-postcheck.json`. This qualifies
-the exercised normal-profile, one-adapter-per-owner simulated CEC setup.
-The earlier 0.1.114 failed run remains recorded separately; its deferred
-activity-context completion bug was fixed before this complete rerun.
-
-On 29 October 2026, all six functional cases passed on `test2` with firmware
-0.1.98, including both directions of `consortium.py`. Its scan proved exactly
-six typed equipment locations across the four wires; fourteen fresh physical
-power-command assertions covered both activity cycles and the two thieves.
-Both activities/equipment were removed and member removal acknowledged its
-scheduled reset, with no cleanup errors. All four bench DUTs run the same
-verified image. Reports are in
-`test-results/consortium-live-config-2026-10-29/functional.json` and
-`deployment.json`. This qualifies the exercised two-board, one-adapter-per-board
-normal-profile scenarios with simulated CEC equipment; historical records above
-retain their original scope.
-
 ## DUTs and wiring
 
 `DUT("amity-dut")` implicitly reads `TEST-HARNESS.md`.
@@ -469,10 +537,12 @@ paired sides and overlapping pins are rejected before hardware access.
 
 The runner supplies a scoped `RunConfig` for credential files, DUT URLs, TLS,
 wiring, timeouts and CEC transport. The credential JSON contains `admin_password`
-and must be private (mode `0600`). The default HTTP origin is
-`https://<DUT name>.local`; use `--url` or per-DUT `--dut-url DUT=URL` to override
-it. TLS verification is enabled by default: supply `--cafile` for a trusted
-bench CA or explicitly choose `--insecure` for its self-signed certificate.
+and must be private (mode `0600`). The default HTTP origin uses the inventory's
+Administration hostname, falling back to the bench label when that field is
+blank. Thus `DUT("amity-dut")` uses `https://amity.local`. Use `--url` or per-DUT
+`--dut-url DUT=URL` to override it. TLS verification is enabled by default:
+supply `--cafile` for a trusted bench CA or explicitly choose `--insecure` for
+its self-signed certificate.
 Use `--credentials PATH` for the run's default credentials, or repeat
 `--dut-credentials DUT=PATH` for individual DUTs. `--wiring PATH` selects a
 wiring document. These settings stay outside the functional test body.
@@ -483,8 +553,9 @@ firmware interprets the gesture. FW RESET is active low. A hold drives only
 its documented Pi GPIO low and releases the pin to input with pulls disabled
 in `finally`, including on
 interruption. A three-to-below-ten-second hold has the existing Add gesture
-meaning; ten seconds has the existing factory-reset meaning. The HDMI scan
-test does not press FW RESET, commission, rename, or change saved activities.
+meaning; ten seconds has the existing factory-reset meaning. The runner enrolls
+the already factory-reset main before the HDMI scan scenario. The scenario
+itself does not rename the DUT or change saved activities.
 
 For a standalone button hold on the Pi, run from the checkout root:
 
@@ -655,19 +726,6 @@ Both activities and their fixture equipment are cleaned up before the newly
 added member is removed with acknowledged scheduled reset, while responders
 remain available. Select `--test dual_display`; it also runs in `--test all`.
 
-On 1 November 2026, the complete nine-case suite passed all eight existing
-cases; the new case stopped before enrollment when its three SSH CEC workers
-timed out together. The unchanged standalone retry passed both starts and both
-direct handoffs, proving four typed device locations, sixteen fresh physical
-power commands and four fresh AVR routing commands. The initial failed report
-is preserved in `test-results/dual-display-2026-11-01/functional.json`; the
-passing retry is `dual-display-retry.json` in that directory. All 371 host
-checks passed. Postchecks in `verification.json` confirm activity/equipment
-cleanup, acknowledged member removal/reset, and preservation of the original
-main's boot, authority, ordinary configuration and pairings. This qualifies the
-exercised simulated CEC topology; it is not a clean nine-case suite pass in one
-attempt.
-
 ## Source theft before the AVR
 
 The isolated-source case in `functional_tests/source_theft.py` adds
@@ -729,22 +787,6 @@ that event, so it cannot establish whether the announcement was received or a
 response transmission failed. Preserve the failed report; a later passing run
 does not explain that original failure or relax the 250 ms deadline.
 
-On 1 November 2026, one complete `--test all` run passed all ten cases on
-`test2` with all four DUTs running the exact 0.1.117 image. All 24 source-theft
-Standby responses completed in 66.900–70.050 ms. The isolated case measured
-69.850, 66.900 and 66.900 ms, with no leaked source/routing frames on either
-AVR connection during each five-second window, followed by the legitimate
-source's fresh upstream Active Source. Both activities and address restoration
-passed. All ten beds cleaned up without errors, including nine scheduled-reset
-removal acknowledgments. Final HTTP snapshots preserve the main's boot,
-identity, authority, ordinary configuration, Matter fabrics and HomeKit pairing;
-no fixture activities, equipment or members remain. Evidence is
-`test-results/source-theft-isolated-2026-11-01/full117-final.json` and
-`full117-final-verification.json` in that directory. The full native host runner,
-firmware/provisioning build, browser settings checks and all 414 final harness
-unit tests also passed. This qualifies the exercised simulated CEC topologies,
-not real HDMI video or remote-control hardware.
-
 ## Qualified equipment and missing-source recovery
 
 `functional_tests/qualified_names.py` gives TV/AVR/player triples on `amity-dut`
@@ -782,69 +824,6 @@ the CEC evidence budget. It still requires the original boot, unchanged scan
 generation and no scan in progress; unannounced witness queries fail. Reports
 retain both accepted correlations and rejected query evidence.
 
-On 1 November 2026, the expanded sixteen-case suite ran on `test2` with firmware
-0.1.124. Fifteen cases passed, including repair, both stricter handoffs,
-qualified-name routing and both disconnected holds. The missing-equipment case
-proved fallback, the real cooldown, side-local scanning and passive return,
-then failed its fresh Select assertion: firmware recorded `04 44 00` with
-`LineError`, one attempt and transmission started. All 24 source-theft responses
-completed in 66.899–70.2 ms. This is not a successful complete-suite run.
-
-An unchanged diagnostic retry also failed an existing local Left-key assertion
-with a one-attempt `LineError` and was interrupted after resource cleanup.
-Opening the diagnostic USB capture unexpectedly reset the main
-(`USB_UART_CHIP_RESET`), so that retry cannot establish main-boot preservation.
-Final checks retain saved configuration, activity slots, authority, Matter
-fabrics and HomeKit controllers; the system is ready in Standby with no members
-or pending configuration. All 467 host checks pass. No assertion, wire attempt
-budget or firmware behavior was changed to hide either transmission failure.
-Evidence is under `test-results/functional-expansion-2026-11-01/`:
-`all.json`, `all-verification.json`, `main-failed-run.log`, `all-retry.log`,
-the passive USB logs and `final-verification.json`. Earlier physical results
-above remain evidence for their recorded firmware and assertions.
-
-On 2 November, same-boot HTTP diagnostics traced the key failure to a CEC timer
-gap inside SHA's PSRAM cache writeback: a 2,496-byte flush took 217 microseconds,
-overlapping a 206-microsecond CEC gap on the same core. Firmware 0.1.129 bounds
-the SDK's writeback critical sections to 256-byte chunks; CEC thresholds,
-attempts, FIFO capacity and activity algorithms remain unchanged. Temporary
-task/register, heap and cache-call probes were removed; numeric LineError
-diagnostics remain. See `components/cec/README.md` and
-`test-results/cec-line-errors-2026-11-01/cause-128.json`.
-
-An additional 1,000-key diagnostic run on 0.1.129 verified 974 fresh physical
-press/release pairs, then failed because the Pi receive RPC timed out. Both
-wires lost worker responses; the captured firmware log contained no TX failure,
-the main boot was unchanged, and cleanup completed. This is an interrupted
-stress run, not a successful 1,000-key result. Evidence is
-`test-results/cec-line-errors-2026-11-01/key-diagnosis-129.json` and
-`fixed129-key-failure.json`; receive deadlines and assertions were unchanged.
-
-The first complete 0.1.129 run also passed fifteen cases. The recovered
-player's power, routing and Select now passed, but the new lookup observer
-mistook two AVR identity queries for enumeration. Original wire evidence
-showed a successful AVR PA announcement before both queries, with unchanged
-discovery generation. The observer now retains and validates that exact
-correlation; boot/generation and unannounced-query checks remain mandatory.
-The corrected focused physical case and all 486 framework unit tests pass.
-The failed complete run, cleanup/preservation verification and original query
-evidence remain under `test-results/functional-verification-2026-11-02/`;
-the corrected source and rerun evidence are under
-`test-results/functional-verification-2026-11-02b/`.
-
-The final complete run on 2 November passed all sixteen cases on the same
-0.1.129 image on all four boards in 26 minutes 39 seconds. All 35 independent
-verification checks passed: twelve member removal/reset receipts, cleanup of
-all twenty-four fixture activities, retained main boot/authority/configuration,
-reserved slots, Matter fabrics and HomeKit controllers, and no remaining
-members or pending configuration. All twenty-four source-theft responses
-completed in 66.899–69.600 ms. The native host suite and all 486 framework unit
-tests also pass. Evidence is `all.json` and `all-verification.json` under
-`test-results/functional-verification-2026-11-02b/`, alongside the exact frozen
-source hashes, deployment checks and focused recovery result. This qualifies
-the exercised simulated CEC topologies; the interrupted stress result above
-remains separate.
-
 ## Removal with referenced equipment
 
 `functional_tests/removal_cascade.py` scans TV/AVR/player triples on the main
@@ -863,20 +842,6 @@ local activity then proves fresh physical power, routing and standby commands.
 Dependent activity contexts close only after the cascade has been verified,
 so ordinary fixture cleanup cannot conceal a missing firmware cascade. Select
 `--test removal_cascade` for this case.
-
-On 2 November 2026, all seventeen functional cases passed on unchanged firmware
-0.1.129. The run acknowledged thirteen member resets and cleaned up thirty
-fixture activities. After extending report serialization to retain the new
-cascade proof, a focused rerun also passed with the exact stale rejection,
-four affected IDs, saved-data hashes, settings purge and reset acknowledgment
-recorded. All 41 combined evidence/preservation checks and all 529 integrated
-framework unit tests pass. The main's boot, configuration, slots and pairings
-are retained. Evidence is `test-results/removal-cascade-2026-11-02c/all.json`
-and `all-combined-verification.json`; the final focused proof, source hashes
-and unit log are under `test-results/removal-cascade-2026-11-02d/`. The full
-run used an isolated snapshot while separate status-LED work was in progress;
-the final focused run and unit suite include that subsequently committed work.
-No firmware changes or DUT update were needed.
 
 ## Default physical address changes
 
@@ -940,8 +905,9 @@ Use `--test firmware_upgrade --firmware PATH` to run only this scenario. Without
 upgrade stops the remaining tests. `--firmware-timeout` defaults to 2700 seconds
 and does not extend physical CEC assertion deadlines.
 
-Start with an idle main, no saved activities/equipment or enrolled secondaries,
-and unclaimed secondary boards. The file must differ from the running image.
+Start with a factory-reset main and unclaimed secondary boards. The shared
+preparation enrolls the main before this scenario. The file must differ from
+the running image.
 The scenario adds every secondary, exercises an activity per owner, uploads once
 through the main, checks staging, new boots, exact image identities and retained
 configuration/settings, then exercises the same activities again. Cleanup
@@ -982,10 +948,13 @@ start; an overlapping wire-clock uncertainty interval cannot prove that bound.
 A fresh Select press must work afterward. The shared helper owns the cancellable
 request and receive-drain evidence; the scenario contains no socket handling.
 
-Requires Linux/Pi, Python 3.10 or newer, the existing `cec-gpio` adapters and
-permission to open `/dev/cec*` (normally membership in `video`). GPIO button
-operations additionally require `pinctrl`. The framework has no third-party
-Python dependencies. Stop/remove any previously installed `amity-cec@` follower
+The runner requires Python 3.10 or newer. Pi-side CEC I/O needs Linux, the
+existing `cec-gpio` adapters and permission to open `/dev/cec*` (normally
+membership in `video`); GPIO button operations additionally require `pinctrl`.
+The runner and CEC helpers use the standard library. Automatic enrollment also
+requires the Pi's Python 3.13 controller installation described under
+[Main enrollment](#main-enrollment); the BLE keyboard fixture has its separate
+dependency above. Stop/remove any previously installed `amity-cec@` follower
 services before running it; they must not reclaim the adapters.
 
 From the checkout root **on the Pi**:
@@ -1014,14 +983,20 @@ saved identities, then adding a different board and proving both owners' physica
 `--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
 or `--test all` for all fifteen registered scenarios (twenty-five
 test cases). The same credentials, TLS, SSH and output
-options apply. A multi-test report has
-`passed` and `tests`; each entry keeps the ordinary single-test report format.
-`--timeout` defaults to 180 seconds for scan, enrollment and activity operations,
-based on the measured 95.494-second verified Add above.
+options apply. Reports with multiple entries have `passed` and `tests`; each
+entry keeps the ordinary single-test report format. Even a successful
+single-scenario CLI run includes `prepare_main`, its scenario entries and
+`reset_main`. A preparation failure produces only its failed entry and prevents
+firmware upgrades and scenarios from running. Any scenario failure skips the
+final reset. Successful enrollment-only runs contain preparation and reset
+verification entries.
+
+`--timeout` defaults to 180 seconds for HDMI scans, membership and activity
+operations.
 `--cec-timeout` independently defaults to five seconds for ordinary fresh power
-and routing assertions. Changing the enrollment operation budget does not change
-the CEC budget. Source-theft
-remediation has the stricter 250 ms physical window described above,
+and routing assertions. Main preparation/reset use the separate 240-second
+`--enrollment-timeout`. Source-theft remediation has the stricter 250 ms physical
+window described above,
 including both Standby and shared-wire route restoration, regardless of either
 option. Owner identity proof still uses bounded HTTP requests and can extend
 the caller's wall time while a request is in progress; accepted physical
@@ -1031,7 +1006,8 @@ elapsed run time, run ID and test name on each line. It records setup, identity
 checks, scans, activity and membership operations, component assertions,
 failures and cleanup. PASS/FAIL summaries go to stdout/stderr after each test.
 After writing the JSON report, the final `run.report` line gives its absolute
-path on successful and failed runs.
+path on successful and failed runs. Interruptions can exit before JSON report
+writing; retain the redirected trace when debugging an interrupted run.
 
 The Pi's status LED blinks red while the functional runner is active, including
 test cleanup and report writing. Its previous LED triggers and brightness are
@@ -1049,8 +1025,9 @@ HTTP bodies, credentials and opaque tokens are excluded.
 
 Use `--log-level DEBUG` to include HTTP method/route, request duration and
 status, and individual CEC frames with owner, GPIO and wire/virtual transport.
-HTTP bodies, headers, credentials and opaque tokens are excluded. No separate
-log file is created; capture standard output and error to retain the trace:
+HTTP bodies, headers, credentials and opaque tokens are excluded. The runner
+does not create a separate progress log; native Matter logs remain on the Pi as
+described above. Capture standard output and error to retain the runner trace:
 
 ```sh
 python3 cec-harness/run.py --test all \
@@ -1087,13 +1064,15 @@ the DUT's initiator addresses from wire traffic, since the UI's aggregate
 address fields need not describe the owner-local CEC engine.
 It closes the CEC session and logs out on success or failure. Other DUT wires
 are untouched. The common runner writes private JSON reports under ignored
-`test-results/`. Reports have top-level `test`, `passed` and `testbeds` fields;
-each test bed contains its DUTs, components, scan evidence, CEC records and
-cleanup outcome. A failed run also includes an error. Test functions need no
-report-writing code.
+`test-results/`. Each report entry has `test`, `passed` and `testbeds` fields;
+the runner aggregates preparation, scenarios and successful reset cleanup as
+described above. Each test bed contains its DUTs, components, scan evidence,
+CEC records and cleanup outcome. A failed run also includes an error. Test
+functions need no report-writing code.
 
 Alternatively, keep HTTP authentication and credentials on the development
-computer and run CEC I/O and physical button control over SSH on the Pi:
+computer and run Matter enrollment, CEC I/O and physical button control over SSH
+on the Pi:
 
 ```sh
 python3 cec-harness/run.py \
@@ -1105,17 +1084,20 @@ python3 cec-harness/run.py \
 Install this framework at `/home/pi/amity/esp32/cec-harness` on the Pi first, or
 set `--harness-root`. `--ssh-port` supports an existing SSH tunnel. SSH uses the
 normal known-host and authentication configuration. The harness transport
-carries CEC frames, component identities and bounded physical button requests;
-it receives no DUT password or HTTP session token. This is harness IPC, not an
+carries CEC frames, component identities, bounded physical button requests and
+Matter enrollment settings when an explicit credential file is supplied;
+it receives no DUT HTTP password or session token. This is harness IPC, not an
 additional firmware API. Remote kernel timestamps are mapped conservatively to
 the local monotonic clock so
 queued pre-scan frames cannot count as fresh discovery evidence.
 
 ## Interactive use on test2
 
-Use the Pi's ordinary Python 3; no virtual environment or third-party Python
-packages are required. Start in the framework directory so its package is
-importable:
+This example inspects an enrolled main retained after a failed run. Direct
+`DUT` and `TestBed` calls do not perform the runner's enrollment or final reset.
+Use the Pi's ordinary Python 3 for these HTTP/CEC helpers; their imports do not
+need the Matter SDK on `PYTHONPATH`. Start in the framework directory so its
+package is importable:
 
 ```sh
 cd /home/pi/amity/esp32/cec-harness
@@ -1146,7 +1128,10 @@ _ = scan.assert_contains(tv, avr, player)
 The password prompt does not echo or save the password. `insecure=True` accepts
 this bench's self-signed HTTPS certificate. Wiring lookup and CEC setup are
 automatic. When finished, run `stack.close()` to release the CEC adapters and
-log out. Scripted tests use `with TestBed(...)` for automatic cleanup.
+log out. This closes fixture resources without factory-resetting the main.
+When debugging is complete, explicitly reset it before the next scripted run.
+Scripted scenarios use `with TestBed(...)` for fixture cleanup; the common
+runner separately owns initial enrollment and success-only final reset.
 
 Host-only checks from the checkout root:
 

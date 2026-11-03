@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run Amity functional tests on the Pi CEC harness."""
 
-from amity_harness.runner import main
+from amity_harness.runner import main, prepare_main, reset_main
 from functional_tests.activity import (test_activity, test_activity_switch_input,
                                        test_activity_unselected_equipment_announcement,
                                        test_activity_keys, test_activity_keys_secondary,
@@ -42,4 +42,4 @@ if __name__ == "__main__":
                                test_default_physical_address_local, test_default_physical_address_local_scanned,
                                test_default_physical_address_remote, test_default_physical_address_remote_scanned),
                            "ble_keyboard": (test_ble_keyboard_local, test_ble_keyboard_remote)},
-                          firmware_upgrade=test_firmware_upgrade))
+                          firmware_upgrade=test_firmware_upgrade, prepare=prepare_main, finish=reset_main))

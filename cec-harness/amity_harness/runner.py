@@ -12,7 +12,7 @@ import sys
 import time
 
 from .cec import CecSession
-from .config import RunConfig, track_testbeds, use_config
+from .config import RunConfig, current_config, track_testbeds, use_config
 from .status_led import run_status_led
 from .trace import event, failure_fields, stdio_logging, test_logging
 
@@ -63,10 +63,66 @@ def _named_options(parser, values, description, convert=str):
     return options
 
 
-def main(test, argv=None, *, firmware_upgrade=None):
-    """Run scenario groups after the optional, required-to-pass firmware prelude."""
+def prepare_main():
+    """Enroll the bench main before any firmware or functional scenario."""
+    from .dut import DUT
+    from .enrollment import MatterEnrollment, ensure_enrolled
+
+    config = current_config()
+    dut = DUT("amity-dut")
+    try:
+        commissioner = (config.enrollment_factory or MatterEnrollment)()
+        ensure_enrolled(dut, commissioner, timeout=config.enrollment_timeout)
+    finally:
+        dut.logout()
+
+
+def reset_main():
+    """Reset a successfully tested main and verify its factory Matter state."""
+    from .dut import DUT
+    from .enrollment import MatterEnrollment, _probe_ready, _unreachable
+
+    config = current_config()
+    dut = DUT("amity-dut")
+    deadline = time.monotonic() + config.enrollment_timeout
+    try:
+        dut.authenticate()
+        system = dut.get_system()
+        if system.get("octopus_id") != dut.identity.device_id:
+            raise AssertionError("DUT HTTP identity does not match amity-dut in TEST-HARNESS.md")
+        response = dut.request("/api/factory-reset", {"confirm": True})
+        if response.get("rebooting") is not True:
+            raise RuntimeError("The main did not acknowledge its factory reset")
+        event("enrollment.reset.scheduled", dut=dut.name, device_id=dut.identity.device_id)
+        dut._token = None
+        dut.close()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("The main did not finish its factory reset")
+            try:
+                _probe_ready(dut, timeout=min(3, remaining))
+            except Exception as error:
+                if not _unreachable(error):
+                    raise
+                break
+            time.sleep(min(0.5, remaining))
+        commissioner = (config.enrollment_factory or MatterEnrollment)()
+        commissioner.verify_factory(dut, timeout=deadline - time.monotonic())
+        event("enrollment.reset.complete", dut=dut.name, device_id=dut.identity.device_id)
+    finally:
+        dut._token = None
+        dut.close()
+
+
+def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
+    """Run required preparation, optional firmware upgrade, then scenarios."""
     if firmware_upgrade is not None and not callable(firmware_upgrade):
         raise ValueError("firmware_upgrade must be callable or None")
+    if prepare is not None and not callable(prepare):
+        raise ValueError("prepare must be callable or None")
+    if finish is not None and (not callable(finish) or prepare is None):
+        raise ValueError("finish requires a prepare callback and must be callable")
     tests = {test.__name__: test} if callable(test) else dict(test)
     if not tests or any(not isinstance(name, str) for name in tests):
         raise ValueError("Provide named functional tests or nonempty groups of callable tests")
@@ -80,7 +136,10 @@ def main(test, argv=None, *, firmware_upgrade=None):
     parser = argparse.ArgumentParser(description="Run Amity functional tests using the CEC harness")
     if "firmware_upgrade" in tests:
         raise ValueError("Register firmware_upgrade using the dedicated callback parameter")
-    choices = [*tests, *(('firmware_upgrade',) if firmware_upgrade is not None else ()), "all"]
+    if "enrollment" in tests:
+        raise ValueError("Register enrollment using the prepare callback parameter")
+    choices = [*tests, *(('firmware_upgrade',) if firmware_upgrade is not None else ()),
+               *(('enrollment',) if prepare is not None else ()), "all"]
     parser.add_argument("--test", choices=choices, default=next(iter(tests)),
                         help="scenario to run; defaults to the first registered test")
     parser.add_argument("--credentials", type=Path, help="private JSON with an existing DUT admin_password")
@@ -106,6 +165,12 @@ def main(test, argv=None, *, firmware_upgrade=None):
     parser.add_argument("--ssh-port", type=int)
     parser.add_argument("--ble-python", default="python3",
                         help="Python executable with dbus-next for the BLE keyboard fixture")
+    parser.add_argument("--enrollment-credentials", type=Path,
+                        help="private Wi-Fi/Matter JSON; defaults to the Pi's saved enrollment settings")
+    parser.add_argument("--enrollment-timeout", type=float, default=240,
+                        help="main enrollment deadline in seconds (default: 240)")
+    parser.add_argument("--matter-python", default="python3",
+                        help="Pi Python executable for the Matter controller")
     parser.add_argument("--no-status-led", action="store_true",
                         help="leave the harness Pi's status LED unchanged")
     parser.add_argument("--output", type=Path, help="private JSON evidence under test-results/")
@@ -113,11 +178,14 @@ def main(test, argv=None, *, firmware_upgrade=None):
                         help="stderr detail: INFO progress (default), DEBUG also HTTP and CEC traffic")
     args = parser.parse_args(argv)
     for option, value in (("--timeout", args.timeout), ("--cec-timeout", args.cec_timeout),
-                          ("--firmware-timeout", args.firmware_timeout)):
+                          ("--firmware-timeout", args.firmware_timeout),
+                          ("--enrollment-timeout", args.enrollment_timeout)):
         if not math.isfinite(value) or value <= 0:
             parser.error(f"{option} must be positive and finite")
     if args.test == "firmware_upgrade" and args.firmware is None:
         parser.error("--test firmware_upgrade requires --firmware PATH")
+    if args.test == "enrollment" and args.firmware is not None:
+        parser.error("--test enrollment cannot be combined with --firmware")
     if args.firmware is not None:
         if firmware_upgrade is None:
             parser.error("--firmware requires a registered firmware upgrade scenario")
@@ -141,18 +209,29 @@ def main(test, argv=None, *, firmware_upgrade=None):
                                root=args.harness_root, port=args.ssh_port)
         keyboard_factory = partial(SSHKeyboard, host=args.harness_host,
                                    root=args.harness_root, port=args.ssh_port, python=args.ble_python)
+    from .enrollment import MatterEnrollment
+    enrollment_factory = partial(MatterEnrollment, credentials=args.enrollment_credentials,
+                                 host=args.harness_host, root=args.harness_root, port=args.ssh_port,
+                                 timeout=args.enrollment_timeout, python=args.matter_python)
     config = RunConfig(credentials=credentials, default_credentials=args.credentials,
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, cec_timeout=args.cec_timeout,
                        firmware=args.firmware, firmware_timeout=args.firmware_timeout,
                        session_factory=session_factory, gpio_factory=gpio_factory,
-                       keyboard_factory=keyboard_factory)
+                       keyboard_factory=keyboard_factory, enrollment_factory=enrollment_factory,
+                       enrollment_timeout=args.enrollment_timeout)
     selected = (tests if args.test == "all" else
-                {} if args.test == "firmware_upgrade" else {args.test: tests[args.test]})
+                {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: tests[args.test]})
     if args.firmware is not None:
         selected = {"firmware_upgrade": (firmware_upgrade,), **selected}
     selected_scenarios = [scenario for group in selected.values() for scenario in group]
+    required = set()
+    if prepare is not None:
+        selected_scenarios.insert(0, prepare)
+        required.add(0)
+    if args.firmware is not None:
+        required.add(1 if prepare is not None else 0)
     with stdio_logging(args.log_level):
         started = time.monotonic()
         event("run.start", groups=list(selected),
@@ -174,8 +253,16 @@ def main(test, argv=None, *, firmware_upgrade=None):
                         # JSON report; stdio carries the type and source stack.
                         print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
                               file=sys.stderr, flush=True)
-                        if args.firmware is not None and index == 0:
+                        if index in required:
                             break
+                if finish is not None and all(result["passed"] for result in reports):
+                    result = run_test(finish, config)
+                    reports.append(result)
+                    if result["passed"]:
+                        print(f"PASS: {result['test']}", flush=True)
+                    else:
+                        print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
+                              file=sys.stderr, flush=True)
                 report = (reports[0] if len(reports) == 1 else
                           {"passed": all(result["passed"] for result in reports), "tests": reports})
                 if args.output:

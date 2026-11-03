@@ -1,0 +1,74 @@
+# Isolated Raspberry Pi controller test tools; CPython 3.13 / Linux aarch64.
+# Exact wheels used in the hardware tests. Firmware does not depend on these packages.
+# wheel: aenum-3.1.17-py3-none-any.whl
+aenum==3.1.17 --hash=sha256:8b883a37a04e74cc838ac442bdd28c266eae5bbf13e1342c7ef123ed25230139
+# wheel: asttokens-3.0.2-py3-none-any.whl
+asttokens==3.0.2 --hash=sha256:9da13157f5b28becde0bd374fc677dcd3c290614264eff096f167c469cd9f933
+# wheel: cffi-2.1.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+cffi==2.1.1 --hash=sha256:f16c709686a78c727bbbf059f92b0bf41c6fc60deec706d2dc19f529175a6125
+# wheel: coloredlogs-15.0.1-py2.py3-none-any.whl
+coloredlogs==15.0.1 --hash=sha256:612ee75c546f53e92e70049c9dbfcc18c935a2b9a53b66085ce9ef6a6e5c0934
+# wheel: construct-2.10.70-py3-none-any.whl
+construct==2.10.70 --hash=sha256:c80be81ef595a1a821ec69dc16099550ed22197615f4320b57cc9ce2a672cb30
+# wheel: cryptography-50.0.1-cp311-abi3-manylinux_2_28_aarch64.whl
+cryptography==50.0.1 --hash=sha256:e74591e283fe6eb956416c929eb58262a719fe0311fd9054c62c3350ed8760d8
+# wheel: dacite-1.9.2-py3-none-any.whl
+dacite==1.9.2 --hash=sha256:053f7c3f5128ca2e9aceb66892b1a3c8936d02c686e707bee96e19deef4bc4a0
+# wheel: decorator-5.3.1-py3-none-any.whl
+decorator==5.3.1 --hash=sha256:f47fe6fdbd2edd623ecfe36875d37aba411624e2670dd395dddae1358689bb3c
+# wheel: deprecation-2.1.0-py2.py3-none-any.whl
+deprecation==2.1.0 --hash=sha256:a10811591210e1fb0e768a8c25517cabeabcba6f0bf96564f8ff45189f90b14a
+# wheel: ecdsa-0.19.2-py2.py3-none-any.whl
+ecdsa==0.19.2 --hash=sha256:840f5dc5e375c68f36c1a7a5b9caad28f95daa65185c9253c0c08dd952bb7399
+# wheel: executing-2.2.1-py2.py3-none-any.whl
+executing==2.2.1 --hash=sha256:760643d3452b4d777d295bb167ccc74c64a81df23fb5e08eff250c425a4b2017
+# wheel: home_assistant_chip_clusters-2025.7.0-py3-none-any.whl
+home-assistant-chip-clusters==2025.7.0 --hash=sha256:0e3ae72857b9b7434afefe742ed64c5df035ef3237d067b7aa7c4475dc2746f1
+# wheel: home_assistant_chip_core-2025.7.0-cp37-abi3-manylinux_2_31_aarch64.whl
+home-assistant-chip-core==2025.7.0 --hash=sha256:3f71b071e7a00adf9fc651d4ef05fcdf761e8f695fd8745974dce7bfe7c6999c
+# wheel: humanfriendly-10.0-py2.py3-none-any.whl
+humanfriendly==10.0 --hash=sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477
+# wheel: ipdb-0.13.13-py3-none-any.whl
+ipdb==0.13.13 --hash=sha256:45529994741c4ab6d2388bfa5d7b725c2cf7fe9deffabdb8a6113aa5ed449ed4
+# wheel: ipython-9.17.1-py3-none-any.whl
+ipython==9.17.1 --hash=sha256:6d1645743cfd1a07eb695d85aa2b5fa66721f8cbae9431d4049f7084bbf06509
+# wheel: ipython_pygments_lexers-1.1.1-py3-none-any.whl
+ipython_pygments_lexers==1.1.1 --hash=sha256:a9462224a505ade19a605f71f8fa63c2048833ce50abc86768a0d81d876dc81c
+# wheel: jedi-0.20.0-py2.py3-none-any.whl
+jedi==0.20.0 --hash=sha256:7bdd9c2634f56713299976f4cbd59cb3fa92165cc5e05ea811fb253480728b67
+# wheel: markdown_it_py-4.2.0-py3-none-any.whl
+markdown-it-py==4.2.0 --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
+# wheel: matplotlib_inline-0.2.2-py3-none-any.whl
+matplotlib-inline==0.2.2 --hash=sha256:3c821cf1c209f59fb2d2d64abbf5b23b67bcb2210d663f9918dd851c6da1fcf6
+# wheel: mdurl-0.1.2-py3-none-any.whl
+mdurl==0.1.2 --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8
+# wheel: packaging-26.3-py3-none-any.whl
+packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+# wheel: parso-0.8.7-py2.py3-none-any.whl
+parso==0.8.7 --hash=sha256:a8926eb2a1b915486941fdbd31e86a4baf88fe8c210f25f2f35ecec5b574ca1c
+# wheel: pexpect-4.9.0-py2.py3-none-any.whl
+pexpect==4.9.0 --hash=sha256:7236d1e080e4936be2dc3e326cec0af72acf9212a7e1d060210e70a47e253523
+# wheel: prompt_toolkit-3.0.53-py3-none-any.whl
+prompt_toolkit==3.0.53 --hash=sha256:01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2
+# wheel: psutil-7.2.2-cp36-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+psutil==7.2.2 --hash=sha256:b0726cecd84f9474419d67252add4ac0cd9811b04d61123054b9fb6f57df6e9e
+# wheel: ptyprocess-0.7.0-py2.py3-none-any.whl
+ptyprocess==0.7.0 --hash=sha256:4b41f3967fce3af57cc7e94b888626c18bf37a083e3651ca8feeb66d492fef35
+# wheel: pure_eval-0.2.4-py3-none-any.whl
+pure_eval==0.2.4 --hash=sha256:96cae060a313cfaad51bb761278bfb0e62dc0248d9315a81173752dc546cd37a
+# wheel: pycparser-3.0-py3-none-any.whl
+pycparser==3.0 --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+# wheel: pygments-2.21.0-py3-none-any.whl
+Pygments==2.21.0 --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9
+# wheel: pyyaml-6.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+PyYAML==6.0.3 --hash=sha256:ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c
+# wheel: rich-15.0.0-py3-none-any.whl
+rich==15.0.0 --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb
+# wheel: six-1.17.0-py2.py3-none-any.whl
+six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
+# wheel: stack_data-0.6.3-py3-none-any.whl
+stack-data==0.6.3 --hash=sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695
+# wheel: traitlets-5.16.1-py3-none-any.whl
+traitlets==5.16.1 --hash=sha256:f775618166caa0396c8e337099240f2bd3e5e917d203b2e6fbe21a58d3cb1f6b
+# wheel: wcwidth-0.9.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl
+wcwidth==0.9.1 --hash=sha256:b5da43d6967668982e44a52fb551967d293f86d26cd86036ac95bbdd34394ed9
