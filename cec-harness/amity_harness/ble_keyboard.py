@@ -36,10 +36,11 @@ def _generation(value):
 
 def _reports(keyboard, consumer):
     keyboard = tuple(keyboard)
-    if (len(keyboard) > 6 or len(set(keyboard)) != len(keyboard)
-            or any(type(value) is not int or not 1 <= value <= 255 for value in keyboard)
+    if (any(type(value) is not int or not 4 <= value <= 0xe7 for value in keyboard)
+            or len(set(keyboard)) != len(keyboard)
+            or sum(value < 0xe0 for value in keyboard) > 6
             or type(consumer) is not int or not 0 <= consumer <= 65535):
-        raise ValueError("Use at most six distinct keyboard usages and one 16-bit consumer usage")
+        raise ValueError("Use at most six ordinary keyboard usages, eight modifiers and one 16-bit consumer usage")
     return sorted(keyboard), consumer
 
 
@@ -329,10 +330,13 @@ class PairedKeyboard:
             state = self._status(deadline)
             if state["bonded"] or state["connected"]:
                 raise KeyboardConflict("Another remote was paired during keyboard discovery")
-            matches = [row for row in state.get("devices", []) if isinstance(row, dict)
-                       and row.get("address", "").lower() == self.identity["address"].lower()
-                       and row.get("type") == self.identity["type"]]
-            if len(matches) == 1:
+            if not state["scanning"]:
+                matches = [row for row in state.get("devices", []) if isinstance(row, dict)
+                           and isinstance(row.get("address"), str)
+                           and row["address"].lower() == self.identity["address"].lower()
+                           and row.get("type") == self.identity["type"]]
+                if len(matches) != 1:
+                    raise KeyboardConflict("The completed remote scan did not find this exact test keyboard")
                 break
             self._pause(deadline)
         self._post("pair", state, deadline)

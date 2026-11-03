@@ -161,6 +161,31 @@ class BLEInputEvidence:
         self._checks.append(record)
         return record
 
+    def _change(self, callback, record, phase, *, kind="ble_report"):
+        # The keyboard performs authenticated UI preflight before capturing its
+        # action boundary. Only the subsequent BLE submission and CEC response
+        # consume the ordinary CEC budget, independently for each input change.
+        before = time.monotonic_ns()
+        action = callback()
+        marker = getattr(action, "started_ns", None)
+        if (type(marker) is not int or not before <= marker <= time.monotonic_ns()
+                or getattr(action, "dut", None) is not self.dut
+                or getattr(action, "session", None) is not self.session
+                or getattr(action, "scan", None) is not self.scan
+                or getattr(action, "testbed", None) is not self.bed
+                or getattr(action, "kind", None) != kind
+                or getattr(action, "boot", None) != self.scan._boot
+                or getattr(action, "owner_boots", None) != self._owner_boots
+                or getattr(action, "initiators", None) != self._initiators):
+            raise AssertionError("BLE input has no current post-preflight action boundary")
+        if any(action.state.get(name) != self._state.get(name) for name in
+               ("expected_boot_id", "current_activity", "expected_config_revision", "expected_presentation_revision")):
+            raise AssertionError("The activity changed during BLE report preflight")
+        deadline = marker + self._budget()
+        record.setdefault("input_changes", []).append({"phase": phase,
+            "started_monotonic_ns": marker, "deadline_monotonic_ns": deadline})
+        return marker, deadline
+
     def _finish(self, record, *, routes, released):
         through = time.monotonic_ns()
         record["idle_receive_since_ns"] = self._drain(through)
@@ -209,12 +234,10 @@ class BLEInputEvidence:
         record = self._begin(keyboard, "tap")
         primary = None
         try:
-            started = time.monotonic_ns()
-            keyboard.report(keyboard=(usage,), consumer=0)
-            press = self._press(component, int(key), after=started, deadline_ns=started + self._budget())
-            up = time.monotonic_ns()
-            keyboard.all_up()
-            release = self._release(component, after=up, deadline_ns=up + self._budget())
+            started, deadline = self._change(lambda: keyboard.report(keyboard=(usage,), consumer=0), record, "tap_down")
+            press = self._press(component, int(key), after=started, deadline_ns=deadline)
+            up, deadline = self._change(keyboard.all_up, record, "tap_up")
+            release = self._release(component, after=up, deadline_ns=deadline)
             if release.timestamp_ns <= press.timestamp_ns:
                 raise AssertionError("BLE key release preceded its press")
             record.update(component=component.name, key=int(key), usage=usage,
@@ -235,24 +258,20 @@ class BLEInputEvidence:
         record = self._begin(keyboard, "overlapping_buttons")
         primary = None
         try:
-            started = time.monotonic_ns()
-            deadline = started + self._budget()
-            keyboard.report(keyboard=(), consumer=0xE9)
+            started, deadline = self._change(lambda: keyboard.report(keyboard=(), consumer=0xE9), record, "volume_down")
             first = self._press(volume, Key.VOLUME_UP, after=started, deadline_ns=deadline)
-            both = time.monotonic_ns()
-            keyboard.report(keyboard=(0x4F,), consumer=0xE9)
+            both, deadline = self._change(lambda: keyboard.report(keyboard=(0x4F,), consumer=0xE9), record, "right_down")
             right = self._press(navigation, Key.RIGHT, after=both, deadline_ns=deadline)
-            right_up = time.monotonic_ns()
-            keyboard.report(keyboard=(), consumer=0xE9)
+            right_up, deadline = self._change(lambda: keyboard.report(keyboard=(), consumer=0xE9), record, "right_up")
             released_right = self._release(navigation, after=right_up, deadline_ns=deadline)
             uncertainty = getattr(self.session._backends[navigation.gpio], "clock_uncertainty_ns", 0)
             if type(uncertainty) is not int or uncertainty < 0:
                 raise AssertionError("BLE key wire clock uncertainty is unavailable")
-            continued = self._press(volume, Key.VOLUME_UP,
-                                    after=released_right.timestamp_ns + 2 * uncertainty, deadline_ns=deadline)
-            final_up = time.monotonic_ns()
-            keyboard.all_up()
-            final_release = self._release(volume, after=final_up, deadline_ns=final_up + self._budget())
+            continuation = released_right.timestamp_ns + 2 * uncertainty
+            continued = self._press(volume, Key.VOLUME_UP, after=continuation,
+                                    deadline_ns=continuation + self._budget())
+            final_up, deadline = self._change(keyboard.all_up, record, "all_up")
+            final_release = self._release(volume, after=final_up, deadline_ns=deadline)
             coverage = time.monotonic_ns()
             self._drain(coverage)
             frames = self._snapshot()
@@ -285,15 +304,13 @@ class BLEInputEvidence:
         record = self._begin(keyboard, "disconnect_cleanup")
         primary, disconnected = None, False
         try:
-            started = time.monotonic_ns()
-            keyboard.report(keyboard=(), consumer=0xE9)
-            first = self._press(component, Key.VOLUME_UP, after=started, deadline_ns=started + self._budget())
+            started, deadline = self._change(lambda: keyboard.report(keyboard=(), consumer=0xE9), record, "volume_down")
+            first = self._press(component, Key.VOLUME_UP, after=started, deadline_ns=deadline)
             repeated = self._press(component, Key.VOLUME_UP, after=first.timestamp_ns,
-                                   deadline_ns=started + self._budget())
-            lost = time.monotonic_ns()
-            keyboard.disconnect()
+                                   deadline_ns=first.timestamp_ns + self._budget())
+            lost, deadline = self._change(keyboard.disconnect, record, "disconnect", kind="ble_disconnect")
             disconnected = True
-            release = self._release(component, after=lost, deadline_ns=lost + self._budget())
+            release = self._release(component, after=lost, deadline_ns=deadline)
             observed_until = release.timestamp_ns + self._budget()
             self._drain(observed_until)
             frames = self._snapshot()

@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -49,6 +50,17 @@ class Keyboard:
         self.disconnect_release, self.disconnect_restart, self.ui_disconnected = True, False, True
         self.report_error = None
         self.mutate = None
+        self.preflight = self.delivery = None
+
+    def action(self, kind):
+        if self.preflight is not None:
+            self.preflight()
+        action = SimpleNamespace(started_ns=time.monotonic_ns(), dut=self.f.main,
+            session=self.f.session, scan=self.f.scan, testbed=self.f.bed, kind=kind, boot=self.f.scan._boot,
+            owner_boots=dict(self.f.scan.owner_boots), initiators=dict(self.f.scan.initiators), state=deepcopy(self.f.state))
+        if self.delivery is not None:
+            self.delivery()
+        return action
 
     def assert_paired(self):
         if self.disconnected:
@@ -70,6 +82,7 @@ class Keyboard:
         if self.mutate is not None:
             mutate, self.mutate = self.mutate, None
             mutate()
+        action = self.action("ble_report")
         volume, right, select = consumer == 0xE9, 0x4F in keyboard, 0x28 in keyboard
         if select and not self.select:
             if self.wrong_target:
@@ -93,17 +106,20 @@ class Keyboard:
         if not volume and self.volume:
             self.emit(self.f.avr, 0x45)
         self.volume, self.right, self.select = volume, right, select
+        return action
 
     def all_up(self):
         return self.report()
 
     def disconnect(self):
         self.commands.append(("disconnect",))
+        action = self.action("ble_disconnect")
         self.disconnected = True
         if self.disconnect_release:
             self.emit(self.f.avr, 0x45)
         if self.disconnect_restart:
             self.emit(self.f.avr, 0x44, 0x41)
+        return action
 
     def assert_disconnected(self):
         if not self.disconnected or not self.ui_disconnected:
@@ -240,6 +256,38 @@ class BLEInputEvidenceTests(unittest.TestCase):
                     with BLEInputEvidence(f.main, f.scan) as evidence:
                         evidence.assert_tap(f.keyboard, f.player)
                 self.assertEqual(f.keyboard.commands[-1], ((), 0))
+
+    def test_slow_ui_preflight_does_not_consume_each_input_changes_cec_budget(self):
+        # Advance only the monotonic clock: each UI preflight takes six seconds
+        # without making this host regression wait on a real network or clock.
+        real_clock, offset = time.monotonic_ns, [0]
+        with self.fixture() as f:
+            f.main._runtime.cec_timeout = 5
+            f.keyboard.preflight = lambda: offset.__setitem__(0, offset[0] + 6_000_000_000)
+            with patch("amity_harness.ble_input.time.monotonic_ns", side_effect=lambda: real_clock() + offset[0]):
+                with BLEInputEvidence(f.main, f.scan) as evidence:
+                    evidence.assert_tap(f.keyboard, f.player)
+                    evidence.assert_overlapping_buttons(f.keyboard, volume=f.avr, navigation=f.player)
+            tap, overlap = f.bed.control_observations[-1]["checks"]
+            self.assertTrue(tap["passed"] and overlap["passed"])
+            self.assertGreater(tap["input_changes"][0]["started_monotonic_ns"] - tap["started_monotonic_ns"], 5_000_000_000)
+            self.assertGreater(overlap["continuing_volume_press_wire_timestamp_ns"]
+                               - overlap["first_volume_press_wire_timestamp_ns"], 5_000_000_000)
+            for check in (tap, overlap):
+                self.assertTrue(all(change["deadline_monotonic_ns"] - change["started_monotonic_ns"] == 5_000_000_000
+                                    for change in check["input_changes"]))
+
+    def test_cec_response_after_five_seconds_from_actual_report_still_fails(self):
+        real_clock, offset = time.monotonic_ns, [0]
+        with self.fixture() as f:
+            f.main._runtime.cec_timeout = 5
+            f.keyboard.delivery = lambda: offset.__setitem__(0, offset[0] + 6_000_000_000)
+            with patch("amity_harness.ble_input.time.monotonic_ns", side_effect=lambda: real_clock() + offset[0]):
+                with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key press"):
+                    with BLEInputEvidence(f.main, f.scan) as evidence:
+                        evidence.assert_tap(f.keyboard, f.player)
+            self.assertFalse(f.bed.control_observations[-1]["checks"][-1]["passed"])
+            self.assertEqual(f.keyboard.commands[-1], ((), 0))
 
     def test_report_retains_proof_but_drops_private_top_level_fields(self):
         with self.fixture() as f:

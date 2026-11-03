@@ -429,6 +429,10 @@ def _interfaces(owner):
             return "peripheral"
 
         @dbus_property(access=PropertyAccess.READ)
+        def Discoverable(self) -> 'b':
+            return True
+
+        @dbus_property(access=PropertyAccess.READ)
         def ServiceUUIDs(self) -> 'as':
             return [uuid("1812")]
 

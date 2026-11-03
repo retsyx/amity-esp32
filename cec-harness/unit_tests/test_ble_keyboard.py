@@ -48,18 +48,34 @@ class Fixture:
                                              owner_duts={self.main.identity.device_id: self.main},
                                              expected=(), validate_owners=lambda expected: None)
         self.lose_pair_reply = self.lose_unpair_reply = self.reject_pair = False
+        self.scan_started = self.omit_candidate = False
+        self.scan_reads_remaining = 0
+        self.completed_scan_generation = None
+        self.scan_statuses = []
 
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
         if path == "/api/remotes" and data is None:
+            if self.scan_started and self.state["scanning"]:
+                if self.scan_reads_remaining:
+                    self.scan_reads_remaining -= 1
+                else:
+                    self.state["scanning"] = False
+                    if self.completed_scan_generation is not None:
+                        self.state["remote_generation"] = self.completed_scan_generation
+                self.scan_statuses.append(deepcopy(self.state))
             return deepcopy(self.state)
         if path == "/api/remotes/scan":
-            self.state["devices"] = [{"address": "12:34:56:78:9a:bc", "name": "Amity Test Keyboard", "type": 0}]
+            self.state["devices"] = [] if self.omit_candidate else [
+                {"address": "12:34:56:78:9a:bc", "name": "Amity Test Keyboard", "type": 0}]
             self.state["scanning"] = True
+            self.scan_started = True
             return {"saved": True}
         if path not in ("/api/remotes/pair", "/api/remotes/unpair"):
             raise AssertionError("Unexpected DUT route: " + path)
         self.assert_payload(path, data)
+        if path.endswith("/pair"):
+            assert not self.state["scanning"], "The completed manual scan must release radio admission before pairing"
         if self.reject_pair and path.endswith("/pair"):
             raise AmityHTTPError(409, "Changed pairing review")
         self.state["remote_generation"] = str(int(self.state["remote_generation"]) + 1)
@@ -150,6 +166,31 @@ class PairedKeyboardTests(unittest.TestCase):
                 self.assertEqual(fixture.worker_calls, [])
                 self.assertFalse(any(data is not None for _, data in fixture.calls))
 
+    def test_visible_candidate_waits_for_scan_completion_and_uses_its_fresh_review(self):
+        fixture = Fixture()
+        fixture.scan_reads_remaining = 3
+        fixture.completed_scan_generation = "7"
+        with fixture.main.pair_ble_keyboard():
+            self.assertEqual([row["scanning"] for row in fixture.scan_statuses], [True, True, True, False])
+            self.assertTrue(all(len(row["devices"]) == 1 for row in fixture.scan_statuses))
+            pairs = [data for path, data in fixture.calls if path == "/api/remotes/pair"]
+            self.assertEqual(len(pairs), 1)
+            self.assertEqual(pairs[0]["expected_remote_generation"], "7")
+        self.assertEqual(fixture.state["remote_generation"], "9")
+
+    def test_completed_scan_without_exact_fixture_fails_without_pair_or_another_scan(self):
+        fixture = Fixture()
+        fixture.scan_reads_remaining = 2
+        fixture.omit_candidate = True
+        keyboard = PairedKeyboard(fixture.main)
+        with self.assertRaisesRegex(KeyboardConflict, "completed remote scan"):
+            keyboard.create()
+        keyboard.close()
+        paths = [path for path, _ in fixture.calls]
+        self.assertEqual(paths.count("/api/remotes/scan"), 1)
+        self.assertNotIn("/api/remotes/pair", paths)
+        self.assertNotIn("/api/remotes/unpair", paths)
+
     def test_original_main_authority_and_same_boot_are_required(self):
         for mutation in ("authority", "member", "identity", "boot"):
             with self.subTest(mutation=mutation):
@@ -228,6 +269,16 @@ class PairedKeyboardTests(unittest.TestCase):
                 with self.subTest(keys=keys, consumer=consumer), self.assertRaises(ValueError):
                     keyboard.report(keyboard=keys, consumer=consumer)
             self.assertFalse(any(row[0] == "report" for row in fixture.worker_calls))
+
+    def test_six_ordinary_keys_and_all_modifiers_can_overlap_a_consumer_key(self):
+        fixture = Fixture()
+        usages = (*range(4, 10), *range(0xe0, 0xe8))
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            keyboard.report(keyboard=usages, consumer=0xe9)
+            self.assertEqual(fixture.worker_calls[-1], ("report", usages, 0xe9))
+            for usage in (0, 1, 2, 3, 0xe8, 255):
+                with self.subTest(usage=usage), self.assertRaises(ValueError):
+                    keyboard.report(keyboard=(usage,))
 
 
 class KeyboardTransportTests(unittest.TestCase):
