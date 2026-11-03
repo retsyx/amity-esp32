@@ -139,6 +139,8 @@ class TestBed:
     ``control_only`` DUTs are physical resources without HTTP or components.
     ``members`` DUTs can host CEC components without a member HTTP session;
     their owner identity is verified through the main's Add Amity flow.
+    ``preserve_dut_on_failure`` skips remaining UI cleanup after a failure so
+    the DUT can be inspected, while releasing CEC and HTTP resources normally.
     Each owned login is logged out after session cleanup, including failures.
     Foreign active DUTs are rejected before this bed acquires any resource.
     Reports retain only selected fixture/UI/CEC evidence, never runtime config,
@@ -147,7 +149,12 @@ class TestBed:
 
     __test__ = False
 
-    def __init__(self, *resources, session_factory=None, control_only=(), members=()):
+    def __init__(self, *resources, session_factory=None, control_only=(), members=(),
+                 preserve_dut_on_failure=False):
+        if not isinstance(preserve_dut_on_failure, bool):
+            raise ValueError("preserve_dut_on_failure must be a boolean")
+        self.preserve_dut_on_failure = preserve_dut_on_failure
+        self._dut_state_retained = False
         self.session = None
         self.duts = ()
         self.components = ()
@@ -295,6 +302,9 @@ class TestBed:
             callbacks = sorted(reversed(self._cleanups),
                                key=lambda callback: getattr(getattr(callback, "__self__", None), "_cleanup_priority", 1))
             self._cleanups.clear()
+            if self.preserve_dut_on_failure and (exc is not None or self._failure is not None):
+                self._retain_dut_state()
+                callbacks = []
             for priority in sorted({getattr(getattr(callback, "__self__", None), "_cleanup_priority", 1)
                                     for callback in callbacks}):
                 pending = [callback for callback in callbacks
@@ -315,20 +325,27 @@ class TestBed:
                             if getattr(owner, "_cleanup_deferred", False):
                                 raise RuntimeError("Owned cleanup is waiting for another fixture")
                         except BaseException as error:
-                            if not attempt and getattr(owner, "_cleanup_retryable", False):
+                            if self.preserve_dut_on_failure:
+                                self._retain_dut_state()
+                                failures.append(error)
+                            elif not attempt and getattr(owner, "_cleanup_retryable", False):
                                 retry.append(callback)
                             else:
                                 failures.append(error)
                             event("testbed.cleanup.callback.failed", level=logging.ERROR,
                                   callback=label, attempt=attempt + 1, error_type=type(error).__name__)
+                            if self._dut_state_retained:
+                                break
                         else:
                             if owner in self._activities and owner not in completed_activities:
                                 completed_activities.append(owner)
                             event("testbed.cleanup.callback.complete", callback=label, attempt=attempt + 1)
                     errors.extend(failures)
-                    if not retry:
+                    if self._dut_state_retained or not retry:
                         break
                     pending = retry
+                if self._dut_state_retained:
+                    break
                 # A sibling may remove its row only on the recovery pass.
                 # Revisit successful, closed activities before settings/member
                 # cleanup so their exact-record pruning sees those new orphans.
@@ -340,10 +357,16 @@ class TestBed:
                         activity.close()
                     except BaseException as error:
                         errors.append(error)
+                        if self.preserve_dut_on_failure:
+                            self._retain_dut_state()
                         event("testbed.cleanup.activity_equipment.failed", level=logging.ERROR,
                               activity_id=activity.activity_id, error_type=type(error).__name__)
+                        if self._dut_state_retained:
+                            break
                     else:
                         event("testbed.cleanup.activity_equipment.complete", activity_id=activity.activity_id)
+                if self._dut_state_retained:
+                    break
             if self.session is not None:
                 event("testbed.cleanup.cec.start")
                 try:
@@ -392,6 +415,11 @@ class TestBed:
                   duts=[dut.name for dut in self._owned],
                   error_types=[type(error).__name__ for error in errors])
         return errors
+
+    def _retain_dut_state(self):
+        if not self._dut_state_retained:
+            self._dut_state_retained = True
+            event("testbed.dut_state_retained", duts=[dut.name for dut in self._owned])
 
     def __exit__(self, exc_type, exc, traceback):
         health_error = None
@@ -475,4 +503,6 @@ class TestBed:
         if self._failure is not None:
             result["error"] = self._failure
             result["failure"] = deepcopy(self._failure_details)
+        if self._dut_state_retained:
+            result["dut_state_retained"] = True
         return result

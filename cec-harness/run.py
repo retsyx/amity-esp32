@@ -16,6 +16,7 @@ from functional_tests.default_physical_address import (
 from functional_tests.ble_keyboard import test_ble_keyboard_local, test_ble_keyboard_remote
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
+from functional_tests.hostname import test_hostname_local, test_hostname_consortium
 from functional_tests.firmware_upgrade import test_firmware_upgrade
 from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
 from functional_tests.dual_display import test_dual_display
@@ -32,6 +33,7 @@ if __name__ == "__main__":
                            "consortium": test_consortium,
                            "consortium_three_duts": test_consortium_three_duts,
                            "consortium_four_duts": test_consortium_four_duts,
+                           "hostname": (test_hostname_local, test_hostname_consortium),
                            "dual_display": test_dual_display,
                            "source_theft_isolated": test_source_theft_isolated,
                            "qualified_names": test_qualified_names,

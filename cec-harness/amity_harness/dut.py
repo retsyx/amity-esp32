@@ -10,6 +10,7 @@ import json
 import logging
 import math
 from pathlib import Path
+import re
 import ssl
 import stat
 import subprocess
@@ -118,7 +119,8 @@ class DUT:
         self.identity = self.wiring.identities[name]
         self.gpio = (gpio if gpio is not None else
                      self._runtime.gpio_factory() if self._runtime.gpio_factory is not None else PinctrlGPIO())
-        url = (self._runtime.url_for(name) or f"https://{self.identity.hostname or name}.local") if url is None else url
+        url = (self._runtime.admin_origins.get(name) or self._runtime.url_for(name)
+               or f"https://{self.identity.hostname or name}.local") if url is None else url
         parsed = urlsplit(url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("DUT URL must be HTTPS without embedded credentials")
@@ -135,6 +137,7 @@ class DUT:
         if insecure:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+        self._ssl_context = context
         self._opener = opener if opener is not None else HTTPSOpener(self.url, context, dut=self.name)
         self._token = None
         if credentials is not None:
@@ -347,6 +350,26 @@ class DUT:
         close = getattr(getattr(self, "_opener", None), "close", None)
         if callable(close):
             close()
+
+    def reconnect_hostname(self, hostname):
+        """Follow a reviewed hostname edit with a fresh authenticated origin.
+
+        No bearer token is forwarded across origins. The caller must probe
+        the board identity before authenticating at the new name.
+        """
+        if not isinstance(hostname, str) or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", hostname) is None:
+            raise ValueError("Use a valid Amity hostname")
+        self.close()
+        self._token = None
+        self.url = f"https://{hostname}.local"
+        self._opener = HTTPSOpener(self.url, self._ssl_context, dut=self.name)
+
+    def probe_ready(self, *, timeout=15):
+        """Read the UI's credential-free hostname reconnect identity proof."""
+        _positive_seconds(timeout, "Readiness timeout")
+        with self._opener.open(Request(self.url + "/api/ready", headers={"Accept": "application/json"}),
+                               timeout=timeout) as response:
+            return json.load(response)
 
     def get_state(self):
         return self.request("/api/activity-editor/status")

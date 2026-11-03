@@ -161,6 +161,8 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
     parser.add_argument("--firmware-timeout", type=float, default=2700,
                         help="firmware upgrade timeout in seconds (default: 2700); independent of --timeout and --cec-timeout")
     parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
+    parser.add_argument("--usb-python", default=sys.executable, metavar="PATH",
+                        help="local Python with pyserial and esp-pylib for USB chip reboots; defaults to the runner Python")
     parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
     parser.add_argument("--ssh-port", type=int)
     parser.add_argument("--ble-python", default="python3",
@@ -210,6 +212,7 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
         keyboard_factory = partial(SSHKeyboard, host=args.harness_host,
                                    root=args.harness_root, port=args.ssh_port, python=args.ble_python)
     from .enrollment import MatterEnrollment
+    from .usb import USBReset
     enrollment_factory = partial(MatterEnrollment, credentials=args.enrollment_credentials,
                                  host=args.harness_host, root=args.harness_root, port=args.ssh_port,
                                  timeout=args.enrollment_timeout, python=args.matter_python)
@@ -220,6 +223,7 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
                        firmware=args.firmware, firmware_timeout=args.firmware_timeout,
                        session_factory=session_factory, gpio_factory=gpio_factory,
                        keyboard_factory=keyboard_factory, enrollment_factory=enrollment_factory,
+                       usb_reset=USBReset(python=args.usb_python),
                        enrollment_timeout=args.enrollment_timeout)
     selected = (tests if args.test == "all" else
                 {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: tests[args.test]})
@@ -253,7 +257,8 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
                         # JSON report; stdio carries the type and source stack.
                         print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
                               file=sys.stderr, flush=True)
-                        if index in required:
+                        if index in required or any(bed.get("dut_state_retained") is True
+                                                    for bed in result.get("testbeds", [])):
                             break
                 if finish is not None and all(result["passed"] for result in reports):
                     result = run_test(finish, config)

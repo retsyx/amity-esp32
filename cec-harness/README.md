@@ -60,9 +60,27 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   preservation of unrelated local activities and configuration.
 - `functional_tests/default_physical_address.py`: changes adapter defaults on
   the main and a headless member, with and without a scanned back address.
+- `functional_tests/hostname.py` (`--test hostname`): changes the main or member
+  hostname to its bench label plus `-t`, verifies fresh activity power, routing
+  and key commands, and repeats after rebooting the main, member or both.
+  Each successful case restores the canonical bench names; failures retain DUT state.
 - `functional_tests/ble_keyboard.py`: pairs a Pi BLE HID keyboard and verifies
   taps, overlapping buttons and disconnect cleanup with local/member equipment.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
+
+The hostname tests also verify saved activities, adapter settings and stable
+device identities. The temporary names are `amity-dut-t` and `amity-dut-2-t`;
+canonical names are `amity-dut` and `amity-dut-2`. After restart, the test verifies
+hostname persistence and reconnection before refreshing physical scan proof.
+All hostname and configuration changes use the main's authenticated web UI
+operations. USB is used only for secondary chip restarts on the runner computer.
+The reset worker needs `pyserial` and `esp-pylib`; use `--usb-python PATH` to
+select an ESP-IDF Python environment when the runner Python lacks them. USB
+serials come from `TEST-HARNESS.md`. Resets use DTR/RTS control lines and send
+no serial bytes, bootloader commands or configuration writes.
+Failed hostname tests leave names, activities and membership unchanged for
+debugging and stop subsequent scenarios. CEC and HTTP resources are released;
+factory reset after debugging restores any board, including the main.
 
 ## Pi software setup
 
@@ -1021,8 +1039,9 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test removal_replacement` for removing an earlier member, retaining a later member's
 saved identities, then adding a different board and proving both owners' physical control,
 `--test default_physical_address` for four local/member scanned/fallback cases,
+`--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all fifteen registered scenarios (twenty-five
+or `--test all` for all sixteen registered scenarios (twenty-seven
 test cases). The same credentials, TLS, SSH and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful

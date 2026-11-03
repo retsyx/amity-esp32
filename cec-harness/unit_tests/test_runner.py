@@ -155,6 +155,34 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(report["tests"][2]["passed"])
             self.assertTrue(report["tests"][3]["passed"])
 
+    def test_retained_dut_failure_stops_later_scenarios_and_final_reset(self):
+        called = []
+
+        def prepare():
+            pass
+
+        def failing():
+            pass
+
+        def later():
+            pass
+
+        def finish():
+            pass
+
+        def execute(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": test is not failing,
+                    "testbeds": [{"dut_state_retained": True}] if test is failing else []}
+
+        with patch("amity_harness.runner.run_test", side_effect=execute), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main({"hostname": (failing, later)},
+                        ["--credentials", "/private/main.json", "--no-status-led"],
+                        prepare=prepare, finish=finish)
+        self.assertEqual(code, 1)
+        self.assertEqual(called, ["prepare", "failing"])
+
     def test_harness_host_selects_remote_gpio_and_cec_without_performing_io(self):
         def scenario():
             pass
@@ -270,6 +298,7 @@ class RunnerTests(unittest.TestCase):
                     "test_activity_keys_disconnected", "test_activity_keys_disconnected_secondary",
                     "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
+                    "test_hostname_local", "test_hostname_consortium",
                     "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
                     "test_removal_cascade", "test_removal_replacement", "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",

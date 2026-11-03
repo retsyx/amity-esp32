@@ -327,6 +327,73 @@ class TestBedLifetimeTests(unittest.TestCase):
                                         ("session", "close"), (dut.name, "logout")])
         self.assertEqual(bed.report["cleanup_errors"], [])
 
+    def test_preserved_failure_skips_ui_cleanup_but_releases_session_and_http(self):
+        dut = UnitDUT("first-board", self.log)
+        dut._opener = SimpleNamespace(close=lambda: self.log.append((dut.name, "http_close")))
+        bed = TestBed(dut, session_factory=self.factory(), preserve_dut_on_failure=True)
+        with self.assertRaisesRegex(AssertionError, "retain failed state"):
+            with bed:
+                bed.add_cleanup(lambda: self.log.append(("rename", "cleanup")))
+                bed.add_cleanup(lambda: self.log.append(("remove", "cleanup")))
+                raise AssertionError("retain failed state")
+        self.assertFalse(any(action == "cleanup" for _, action in self.log))
+        self.assertEqual(self.log[-3:], [("session", "close"), (dut.name, "logout"),
+                                        (dut.name, "http_close")])
+        self.assertTrue(bed.report["dut_state_retained"])
+        self.assertFalse(bed.report["passed"])
+        self.assertEqual(bed.report["cleanup_errors"], [])
+        self.assertIsNone(dut._testbed)
+
+    def test_preserved_worker_failure_skips_registered_ui_cleanup(self):
+        dut = UnitDUT("first-board", self.log)
+        bed = TestBed(dut, session_factory=self.factory(), preserve_dut_on_failure=True)
+        with self.assertRaises(ArithmeticError):
+            with bed:
+                bed.add_cleanup(lambda: self.log.append(("rename", "cleanup")))
+                bed.session.unhealthy = True
+        self.assertNotIn(("rename", "cleanup"), self.log)
+        self.assertTrue(bed.report["dut_state_retained"])
+        self.assertEqual(self.log[-2:], [("session", "close"), (dut.name, "logout")])
+
+    def test_preserved_cleanup_failure_stops_other_callbacks_and_retries(self):
+        dut = UnitDUT("first-board", self.log)
+        bed = TestBed(dut, session_factory=self.factory(), preserve_dut_on_failure=True)
+        log = self.log
+
+        class RetryableCleanup:
+            _cleanup_priority = 0
+            _cleanup_retryable = True
+
+            def close(self):
+                log.append(("broken", "cleanup"))
+                raise LookupError("failed restoration")
+
+        with self.assertRaises(TestBedCleanupError) as raised:
+            with bed:
+                bed.add_cleanup(lambda: log.append(("remove", "cleanup")))
+                bed.add_cleanup(RetryableCleanup().close)
+        self.assertEqual([entry for entry in log if entry[1] == "cleanup"], [("broken", "cleanup")])
+        self.assertEqual(len(raised.exception.errors), 1)
+        self.assertIsInstance(raised.exception.errors[0], LookupError)
+        self.assertTrue(bed.report["dut_state_retained"])
+        self.assertEqual(bed.report["cleanup_errors"], ["LookupError"])
+        self.assertEqual(log[-2:], [("session", "close"), (dut.name, "logout")])
+
+    def test_preserve_policy_keeps_normal_successful_cleanup(self):
+        dut = UnitDUT("first-board", self.log)
+        bed = TestBed(dut, session_factory=self.factory(), preserve_dut_on_failure=True)
+        with bed:
+            bed.add_cleanup(lambda: self.log.append(("rename", "cleanup")))
+        self.assertEqual(self.log[-3:], [("rename", "cleanup"), ("session", "close"), (dut.name, "logout")])
+        self.assertTrue(bed.report["passed"])
+        self.assertNotIn("dut_state_retained", bed.report)
+
+    def test_preserve_policy_requires_explicit_boolean_before_io(self):
+        for value in (None, 1, "yes"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                TestBed(UnitDUT("first-board", self.log), preserve_dut_on_failure=value)
+        self.assertEqual(self.log, [])
+
     def test_ui_cleanup_failure_does_not_skip_other_cleanup_or_cec_release(self):
         dut = UnitDUT("first-board", self.log)
         bed = TestBed(dut, session_factory=self.factory())
