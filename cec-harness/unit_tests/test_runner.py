@@ -265,6 +265,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
         expected = ["test_hdmi_scan", "test_activity", "test_activity_switch_input",
+                    "test_activity_unselected_equipment_announcement",
                     "test_activity_keys", "test_activity_keys_secondary",
                     "test_activity_keys_disconnected", "test_activity_keys_disconnected_secondary",
                     "test_source_theft", "test_add_amity",

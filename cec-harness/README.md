@@ -24,8 +24,11 @@ membership behavior remains unchanged.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
   repairs the same activity after a power/input disturbance, then verifies
-  standby using physical component power commands. Its separate cases cover
-  switch input, local/member key routing, and client disconnect during a hold.
+  standby using physical component power commands. It checks that the selected
+  source's Active Source announcement causes no Standby, and that an announcement
+  during global standby receives broadcast Standby without changing selection.
+  Its separate cases cover passive discovery of never-selected equipment during
+  standby, switch input, local/member key routing, and client disconnect during a hold.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
   Its isolated-source case places the thief behind another tentacle and
@@ -935,7 +938,7 @@ python3 cec-harness/run.py \
 ```
 
 The default remains `hdmi_scan`. Select `--test activity` for the activity
-power-cycle/repair, explicit switch-input, two remote-key and two disconnected
+power-cycle/repair, passive standby discovery, explicit switch-input, two remote-key and two disconnected
 hold sub-tests,
 `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
@@ -947,7 +950,7 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test missing_equipment` for source disappearance, cooldown and passive return,
 `--test removal_cascade` for stale removal confirmation and exact activity/member cleanup,
 `--test default_physical_address` for four local/member scanned/fallback cases,
-or `--test all` for all thirteen registered scenarios (twenty-one
+or `--test all` for all thirteen registered scenarios (twenty-two
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.

@@ -1,9 +1,10 @@
-"""Activity repair and disconnected-hold scenarios require their evidence helpers."""
+"""Activity announcements, repair and disconnected holds require wire evidence."""
 
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import time
 import unittest
 from unittest.mock import patch
 
@@ -17,14 +18,23 @@ from unit_tests.test_consortium_scenarios import Scenario
 
 class ActivityScenario(Scenario):
     def __init__(self, *, missing_repair_power=None, missing_repair_route=False,
-                 repair_standby=False, disconnect_failure=False, missing_followup=False):
+                 repair_standby=False, disconnect_failure=False, missing_followup=False,
+                 selected_standby=False, changed_active_selection=False,
+                 directed_standby=False, changed_standby_selection=False,
+                 standby_settling=False):
         super().__init__()
         self.missing_repair_power = missing_repair_power
         self.missing_repair_route = missing_repair_route
         self.repair_standby = repair_standby
         self.disconnect_failure = disconnect_failure
         self.missing_followup = missing_followup
+        self.selected_standby = selected_standby
+        self.changed_active_selection = changed_active_selection
+        self.directed_standby = directed_standby
+        self.changed_standby_selection = changed_standby_selection
+        self.standby_settling = standby_settling
         self.actions = []
+        self.announcements = []
         self.observation = None
 
     @contextmanager
@@ -102,7 +112,17 @@ class ActivityScenario(Scenario):
 
         return Activity()
 
-    def wait_power(self, component, power, *, since, command=None, directed=False):
+    def wait_power(self, component, power, *, since, command=None, directed=False, broadcast=False):
+        announcement = next((item for item in self.announcements if item.timestamp_ns == since), None)
+        if announcement is not None:
+            if (announcement.kind != "standby" or announcement.source is not component
+                    or not broadcast or directed or command != "standby"):
+                raise AssertionError("Standby theft requires this announcement's broadcast command")
+            if announcement.destination != 15:
+                raise TimeoutError("No fresh broadcast Standby command")
+            self.assert_power(component, power)
+            self.events.append(("announcement.standby", component, announcement))
+            return component
         if since not in self.actions or component not in since.power_commands:
             raise AssertionError("Missing fresh physical power command")
         if power == PowerState.STANDBY and command != "standby":
@@ -110,6 +130,35 @@ class ActivityScenario(Scenario):
         self.assert_power(component, power)
         self.events.append(("power.wait", since.kind, component))
         return component
+
+    def activate(self, component):
+        kind = "selected" if self.current is not None else "standby"
+        announcement = SimpleNamespace(ok=True, timestamp_ns=time.monotonic_ns(),
+                                       kind=kind, source=component,
+                                       destination=component.address.logical if self.directed_standby else 15)
+        self.announcements.append(announcement)
+        self.events.append(("announcement.sent", kind, component))
+        if kind == "selected":
+            if self.observation is None:
+                raise AssertionError("Observe selected equipment before its announcement")
+            self.observation.saw_standby = self.selected_standby
+            # A transient Standby must fail even after final model power recovers.
+            component._power = PowerState.ON
+            component.active = True
+            if self.changed_active_selection:
+                self.current = object()
+        else:
+            # Directed-only suppression can leave every model in Standby; the
+            # scenario must still demand the original broadcast wire command.
+            for recipient in self.components:
+                recipient._power = PowerState.STANDBY
+            component.active = False
+        return announcement
+
+    def state(self, main):
+        self.events.append(("standby.state", main))
+        return {"current_activity": 0 if self.changed_standby_selection else -1,
+                "activity_settling": self.standby_settling}
 
     def route(self, avr, player, *, since):
         if (since not in self.actions or not since.route or since.audio is not avr
@@ -139,6 +188,15 @@ class ActivityScenario(Scenario):
                     raise AssertionError("Repair emitted an unexpected physical Standby")
                 self.checked = True
                 fixture.events.append(("preserve.checked", since))
+
+            def assert_preserved_after(self, announcement, *, within):
+                if (announcement not in fixture.announcements or announcement.kind != "selected"
+                        or announcement.source not in components or within != 0.250):
+                    raise AssertionError("Selected-source observation needs its actual announcement and response window")
+                if self.saw_standby:
+                    raise AssertionError("Selected source received an unexpected physical Standby")
+                self.checked = True
+                fixture.events.append(("announcement.checked", announcement))
 
             def __exit__(self, exc_type, exc, traceback):
                 fixture.observation = None
@@ -179,10 +237,12 @@ class ActivityScenario(Scenario):
             patches.enter_context(patch.object(DUT, "create_activity", lambda main, name, **kw: self.activity(main, name, **kw)))
             patches.enter_context(patch.object(DUT, "press_key_disconnected", lambda main, key, recipient: self.disconnected(main, key, recipient)))
             patches.enter_context(patch.object(DUT, "press_key", lambda main, key, **kw: self.key(main, key, **kw)))
+            patches.enter_context(patch.object(DUT, "get_state", lambda main: self.state(main)))
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kw: self.route(avr, player, **kw)))
             patches.enter_context(patch.object(Component, "standby", lambda component: self.disturb(component)))
+            patches.enter_context(patch.object(PlaybackComponent, "activate", lambda component: self.activate(component)))
             test()
 
 
@@ -215,6 +275,47 @@ class ActivityScenarioTests(unittest.TestCase):
                              set(fixture.components))
         self.assertEqual([row[1] for row in fixture.events if row[0] == "route.wait"], ["start", "repair"])
         self.assert_cleanup(fixture)
+
+    def test_selected_and_standby_announcements_are_checked_without_reselecting_activity(self):
+        fixture = ActivityScenario()
+        fixture.run()
+        selected, standby = fixture.announcements
+        self.assertEqual((selected.kind, standby.kind), ("selected", "standby"))
+        self.assertIs(selected.source, standby.source)
+        self.assertIn(("announcement.checked", selected), fixture.events)
+        self.assertIn(("announcement.standby", standby.source, standby), fixture.events)
+        self.assertEqual(len([row for row in fixture.events if row[0] == "activity.start"]), 2)
+        self.assertEqual(len([row for row in fixture.events if row[0] == "standby.state"]), 1)
+        self.assert_cleanup(fixture)
+
+    def test_selected_source_transient_standby_fails_even_when_final_power_recovers(self):
+        fixture = ActivityScenario(selected_standby=True)
+        with self.assertRaisesRegex(AssertionError, "unexpected physical Standby"):
+            fixture.run()
+        self.assertTrue(all(component.power == PowerState.ON for component in fixture.components))
+        self.assert_cleanup(fixture)
+
+    def test_changed_selection_after_selected_announcement_fails(self):
+        fixture = ActivityScenario(changed_active_selection=True)
+        with self.assertRaisesRegex(AssertionError, "selected activity changed"):
+            fixture.run()
+        self.assert_cleanup(fixture)
+
+    def test_directed_only_standby_response_fails_even_when_all_equipment_is_asleep(self):
+        fixture = ActivityScenario(directed_standby=True)
+        with self.assertRaisesRegex(TimeoutError, "broadcast Standby"):
+            fixture.run()
+        self.assertTrue(all(component.power == PowerState.STANDBY for component in fixture.components))
+        self.assert_cleanup(fixture)
+
+    def test_changed_or_settling_standby_selection_fails_after_broadcast(self):
+        for option in ("changed_standby_selection", "standby_settling"):
+            with self.subTest(option=option):
+                fixture = ActivityScenario(**{option: True})
+                with self.assertRaises(AssertionError):
+                    fixture.run()
+                self.assertTrue(any(row[0] == "announcement.standby" for row in fixture.events))
+                self.assert_cleanup(fixture)
 
     def test_missing_repair_power_fails_even_when_final_model_power_is_on(self):
         for recipient in range(3):

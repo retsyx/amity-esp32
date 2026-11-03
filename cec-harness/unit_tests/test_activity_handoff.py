@@ -205,6 +205,90 @@ class ActivityHandoffTests(unittest.TestCase):
                     self.receive(avr, action, 0x36)
                     observation.assert_preserved(since=action)
 
+    def test_source_announcement_observes_full_window_and_retains_physical_trigger(self):
+        with self.fixture() as fixture:
+            self.commands(fixture)
+            fixture[0].assert_ordered(since=fixture[1])
+            previous, _, avr, player = fixture[2:6]
+            with observe_no_standby(previous, avr, player) as observation:
+                announcement = player.activate()
+                observation.assert_preserved_after(announcement, within=0.010)
+                self.assertGreaterEqual(time.monotonic_ns(), announcement.timestamp_ns + 10_000_000)
+            report = TestBed(previous, avr, player).report
+            for row in report["components"]:
+                proof = row["power_assertions"][-1]
+                self.assertEqual(proof["kind"], "wire_no_standby")
+                self.assertEqual(proof["trigger_frame"], announcement.frame.raw.hex(":"))
+                self.assertEqual(proof["trigger_wire_timestamp_ns"], announcement.timestamp_ns)
+                self.assertEqual(proof["max_elapsed_ns"], 10_000_000)
+                self.assertGreaterEqual(proof["observation_end_monotonic_ns"], announcement.timestamp_ns + 10_000_000)
+
+    def test_source_announcement_rejects_transient_or_hook_hidden_power_down(self):
+        for opcode, operands, hook in ((0x36, b"", None), (0x44, b"\x6c", None),
+                                       (0x44, b"\x40", None), (0x36, b"", lambda c, f: None),
+                                       (0x36, b"", lambda c, f: Frame(f.source, f.destination, 0x8f))):
+            with self.subTest(opcode=opcode, operands=operands, hook=hook):
+                with self.assertRaisesRegex(AssertionError, "Standby during source announcement"):
+                    with self.fixture() as fixture:
+                        self.commands(fixture)
+                        fixture[0].assert_ordered(since=fixture[1])
+                        previous, _, avr, player = fixture[2:6]
+                        with observe_no_standby(previous, avr, player) as observation:
+                            announcement = player.activate()
+                            avr.hooks = Hooks(before_rx=hook)
+                            self.receive(avr, fixture[1], opcode, operands)
+                            avr.hooks = Hooks()
+                            self.receive(avr, fixture[1], 0x44, b"\x6d")
+                            observation.assert_preserved_after(announcement, within=0.001)
+                self.assertFalse(any(component._wire_observers for component in (previous, avr, player)))
+
+    def test_source_announcement_catches_power_down_arriving_during_window(self):
+        with self.assertRaisesRegex(AssertionError, "Standby during source announcement"):
+            with self.fixture() as fixture:
+                self.commands(fixture)
+                fixture[0].assert_ordered(since=fixture[1])
+                previous, _, avr, player = fixture[2:6]
+                with observe_no_standby(previous, avr, player) as observation:
+                    announcement = player.activate()
+                    timer = threading.Timer(0.010, self.receive, args=(previous, fixture[1], 0x36),
+                                            kwargs={"destination": 15})
+                    timer.start()
+                    try:
+                        observation.assert_preserved_after(announcement, within=0.030)
+                    finally:
+                        timer.join()
+
+    def test_virtual_stale_and_other_initiator_power_down_cannot_spoil_announcement(self):
+        with self.fixture() as fixture:
+            self.commands(fixture)
+            fixture[0].assert_ordered(since=fixture[1])
+            previous, _, avr, player = fixture[2:6]
+            with observe_no_standby(previous, avr, player) as observation:
+                announcement = player.activate()
+                self.receive(avr, fixture[1], 0x36, transport="virtual")
+                self.receive(avr, fixture[1], 0x36, timestamp=announcement.timestamp_ns - 1)
+                self.receive(avr, fixture[1], 0x36, source=8)
+                observation.assert_preserved_after(announcement, within=0.001)
+
+    def test_no_standby_requires_observed_fresh_successful_physical_announcement(self):
+        for wrong in ("failed", "virtual", "opcode", "unobserved", "stale"):
+            with self.subTest(wrong=wrong), self.assertRaises(AssertionError):
+                with self.fixture() as fixture:
+                    self.commands(fixture)
+                    fixture[0].assert_ordered(since=fixture[1])
+                    previous, _, avr, player = fixture[2:6]
+                    before = player.activate() if wrong == "stale" else None
+                    with observe_no_standby(previous, avr, *(() if wrong == "unobserved" else (player,))) as observation:
+                        announcement = before or player.activate()
+                        if wrong == "failed":
+                            announcement = TxResult(announcement.frame, 0, announcement.timestamp_ns)
+                        elif wrong == "virtual":
+                            announcement = TxResult(announcement.frame, 1, announcement.timestamp_ns, "virtual")
+                        elif wrong == "opcode":
+                            announcement = TxResult(Frame(player.address.logical, 15, 0x84), 1,
+                                                    announcement.timestamp_ns)
+                        observation.assert_preserved_after(announcement, within=0.001)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,8 +69,8 @@ class ComponentPowerAssertionTests(unittest.TestCase):
                                started_ns=time.monotonic_ns() if started is None else started,
                                initiators=dict(dut.last_scan.initiators))
 
-    def receive(self, component, source, opcode, operands=b"", *, timestamp=None, transport="wire"):
-        component.receive(Frame(source, component.address.logical, opcode, operands,
+    def receive(self, component, source, opcode, operands=b"", *, timestamp=None, transport="wire", destination=None):
+        component.receive(Frame(source, component.address.logical if destination is None else destination, opcode, operands,
                                 timestamp_ns=time.monotonic_ns() if timestamp is None else timestamp),
                           transport=transport)
 
@@ -187,6 +187,53 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             for command in ("0x36", "Standby", "", 36, [], {}):
                 with self.subTest(command=command), self.assertRaises(ValueError):
                     avr.wait_for_power("standby", since=stop, command=command)
+
+    def test_broadcast_standby_requires_original_broadcast_destination(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            directed = self.boundary(dut, session)
+            self.receive(player, 0, 0x36)
+            player.wait_for_power("standby", since=directed, command="standby", directed=True)
+            player.wait_for_power("standby", since=directed, command="standby")
+            with self.assertRaises(TimeoutError):
+                player.wait_for_power("standby", since=directed, command="standby", broadcast=True, timeout=0.005)
+
+            broadcast = player.checkpoint()
+            self.receive(player, 0, 0x36, destination=15)
+            self.assertIs(player.wait_for_power("standby", since=broadcast, command="standby", broadcast=True), player)
+            self.assertEqual(player.power_assertions[-1]["destination"], 15)
+            player.wait_for_power("standby", since=broadcast, command="standby")
+            with self.assertRaises(TimeoutError):
+                player.wait_for_power("standby", since=broadcast, command="standby", directed=True, timeout=0.005)
+
+    def test_broadcast_standby_rejects_stale_virtual_and_rewritten_wire_evidence(self):
+        for evidence in ("stale", "virtual", "rewritten_directed", "rewritten_broadcast"):
+            with self.subTest(evidence=evidence), self.fixture() as (dut, tv, avr, player, session):
+                old = time.monotonic_ns()
+                player.power_on()
+                marker = player.checkpoint()
+                destination = 15
+                timestamp, transport = None, "wire"
+                if evidence == "stale":
+                    timestamp = old
+                    player.hooks.before_rx = lambda component, frame: replace(frame, timestamp_ns=time.monotonic_ns())
+                elif evidence == "virtual":
+                    transport = "virtual"
+                elif evidence == "rewritten_directed":
+                    destination = player.address.logical
+                    player.hooks.before_rx = lambda component, frame: replace(frame, destination=15)
+                else:
+                    player.hooks.before_rx = lambda component, frame: replace(frame, destination=component.address.logical)
+                self.receive(player, 0, 0x36, destination=destination, timestamp=timestamp, transport=transport)
+                player.assert_power(PowerState.STANDBY)
+                with self.assertRaises(TimeoutError):
+                    player.wait_for_power("standby", since=marker, command="standby", broadcast=True, timeout=0.005)
+
+    def test_power_destination_filters_reject_conflicting_or_non_boolean_options(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            marker = player.checkpoint()
+            for options in ({"directed": True, "broadcast": True}, {"directed": 1}, {"broadcast": 1}):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    player.wait_for_power("standby", since=marker, **options)
 
     def test_local_and_virtual_power_changes_never_replace_physical_dut_command_proof(self):
         with self.fixture() as (dut, tv, avr, player, session):

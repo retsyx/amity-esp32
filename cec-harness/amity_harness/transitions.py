@@ -5,6 +5,7 @@ order across an owner's isolated wires; it does not measure the first edge of
 a frame or qualify electrical timing between wires.
 """
 
+import math
 import threading
 import time
 
@@ -77,15 +78,15 @@ class _WireObservation:
             raise AssertionError("Handoff wire clock uncertainty is unavailable")
         return frame.timestamp_ns + 2 * uncertainty
 
-    def _complete(self, since):
+    def _complete(self, since, *, through=None):
         if self._session is None or self._closed or self._checked:
             raise RuntimeError("Assert one active activity wire observation")
         session, initiators = self._validate(since)
-        started = getattr(since, "started_ns", None)
+        started = since if type(since) is int else getattr(since, "started_ns", None)
         if type(started) is not int or started < self._started or initiators != self._initiators:
             raise AssertionError("The activity action predates its wire observation")
-        ended = time.monotonic_ns()
-        deadline = time.monotonic() + min(component._power_timeout for component in self.components)
+        ended = max(time.monotonic_ns(), through or 0)
+        deadline = max(time.monotonic(), ended / 1e9) + min(component._power_timeout for component in self.components)
         wires = {component.gpio for component in self.components}
         while True:
             session.assert_healthy()
@@ -93,7 +94,7 @@ class _WireObservation:
                 raise AssertionError("The CEC session ended during the activity observation")
             with session._lock:
                 drained = all(session._wire_idle_since_ns.get(gpio, 0) >= ended for gpio in wires)
-            if drained:
+            if drained and time.monotonic_ns() >= ended:
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -180,13 +181,36 @@ class ActivityHandoff(_WireObservation):
 class _NoStandby(_WireObservation):
     def assert_preserved(self, *, since):
         """Reject physical Standby, power-off or toggle during a repair."""
-        session, started, ended, wires, frames = self._complete(since)
+        return self._assert_preserved(self._complete(since), context="activity repair")
+
+    def assert_preserved_after(self, announcement, *, within=0.250):
+        """Observe the full response window after a selected source announces."""
+        if (isinstance(within, bool) or not isinstance(within, (int, float))
+                or not math.isfinite(within) or not 0 < within <= 0.250):
+            raise ValueError("Source announcement observation needs a positive window of at most 250 ms")
+        started = None
+        for component in self.components:
+            try:
+                started = component._activation_timestamp(announcement, exact_component=True)
+                break
+            except AssertionError:
+                continue
+        if started is None:
+            raise AssertionError("No-Standby observation needs a physical Active Source from observed equipment")
+        timing = {"trigger_wire_timestamp_ns": started,
+                  "trigger_frame": announcement.frame.raw.hex(":"),
+                  "max_elapsed_ns": int(within * 1e9)}
+        completed = self._complete(started, through=started + timing["max_elapsed_ns"])
+        return self._assert_preserved(completed, context="source announcement", timing=timing)
+
+    def _assert_preserved(self, completed, *, context, timing=None):
+        session, started, ended, wires, frames = completed
         if any(self._power(component, frame) in ("standby", "off", "toggle") for component, frame in frames):
-            raise AssertionError("Selected equipment received Standby during activity repair")
+            raise AssertionError(f"Selected equipment received Standby during {context}")
         proof = {"kind": "wire_no_standby", "timestamp_ns": time.monotonic_ns(),
                  "since_monotonic_ns": started, "observation_end_monotonic_ns": ended,
                  "idle_receive_since_ns": {str(gpio): session._wire_idle_since_ns[gpio] for gpio in wires},
-                 "observed_wires": sorted(wires)}
+                 "observed_wires": sorted(wires), **(timing or {})}
         for component in self.components:
             with component._power_condition:
                 component._power_checks.append(dict(proof))
@@ -196,5 +220,5 @@ class _NoStandby(_WireObservation):
 
 
 def observe_no_standby(*components):
-    """Observe all selected equipment before submitting same-activity repair."""
+    """Observe selected equipment before a repair or source announcement."""
     return _NoStandby(components)

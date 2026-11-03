@@ -3,6 +3,7 @@
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent,
                            Key, PowerState)
 from functional_tests.hdmi_scan import scanned_devices
+from amity_harness.recovery import LookupScans, assert_returned
 from amity_harness.transitions import observe_no_standby
 
 
@@ -17,6 +18,15 @@ def test_activity():
             for component in components:
                 component.wait_for_power(PowerState.ON, since=started)
             avr.wait_for_input(player, since=started)
+            activity.assert_active()
+
+            with observe_no_standby(*components) as preserved:
+                announcement = player.activate()
+                assert announcement.ok
+                preserved.assert_preserved_after(announcement, within=0.250)
+            for component in components:
+                component.assert_power(PowerState.ON)
+            assert player.active
             activity.assert_active()
 
             # Disturb the fixture, then reselect this exact saved activity.
@@ -34,6 +44,46 @@ def test_activity():
             stopped = activity.standby()
             for component in components:
                 component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+
+            # The former source is now a thief: global standby broadcasts
+            # Standby rather than selecting an activity or a directed response.
+            announcement = player.activate()
+            assert announcement.ok
+            player.wait_for_power(PowerState.STANDBY, since=announcement.timestamp_ns,
+                                  command="standby", broadcast=True)
+            for component in components:
+                component.assert_power(PowerState.STANDBY)
+            state = dut.get_state()
+            assert state["current_activity"] == -1
+            assert state["activity_settling"] is False
+
+
+def test_activity_unselected_equipment_announcement():
+    dut = DUT("amity-dut")
+    tentacle = dut.tentacle(0)
+    tv = TvComponent(tentacle.front, "Idle TV")
+    avr = AvrComponent(tentacle.back, "Idle AVR")
+    player = PlaybackComponent(avr, "Idle Player", port=1, power=PowerState.OFF)
+
+    with TestBed(dut, tv, avr, player):
+        scan = dut.scan_hdmi()
+        scan.assert_contains(tv, avr)
+        scan.assert_contains_only(tv, avr)
+        scan.assert_on(tv, tentacle.front)
+        scan.assert_on(avr, tentacle.back)
+        with dut.create_activity("Functional standby cache", display=tv, source=None, audio=avr):
+            # Never select this source. Its first announcement must populate
+            # the UI cache and request its identity without enumerating peers.
+            with LookupScans(scan, tv, avr) as announcements:
+                announced = player.checkpoint()
+                player.standby()
+                assert_returned(scan, player, since=announced)
+                announcements.assert_no_scan()
+            for component in (tv, avr, player):
+                component.assert_power(PowerState.STANDBY)
+            state = dut.get_state()
+            assert state["current_activity"] == -1
+            assert state["activity_settling"] is False
 
 
 def test_activity_switch_input():

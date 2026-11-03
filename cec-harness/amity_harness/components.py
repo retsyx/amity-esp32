@@ -376,7 +376,8 @@ class Component:
             self._trace("component.power.assert_passed", power=power.value, kind="state")
         return self
 
-    def wait_for_power(self, power, *, since, timeout=None, command=None, directed=False, after=None, within=None):
+    def wait_for_power(self, power, *, since, timeout=None, command=None, directed=False, broadcast=False,
+                       after=None, within=None):
         """Require a fresh physical DUT power command and its resulting state.
 
         ``since`` is an activity action boundary or a checkpoint() integer.
@@ -386,10 +387,15 @@ class Component:
         ``command='standby'`` specifically requires Standby opcode 0x36 rather
         than another command that also leaves the component in Standby.
         ``directed=True`` excludes broadcasts to all components on the wire.
+        ``broadcast=True`` requires the original command to address all devices.
         """
         power = PowerState(power)
         if not isinstance(directed, bool):
             raise ValueError("Directed power assertion must be a boolean")
+        if not isinstance(broadcast, bool):
+            raise ValueError("Broadcast power assertion must be a boolean")
+        if directed and broadcast:
+            raise ValueError("Power assertions cannot require both directed and broadcast commands")
         if command is not None and (not isinstance(command, str) or command not in _POWER_COMMANDS):
             raise ValueError("Unknown component power command")
         if power == PowerState.OFF:
@@ -403,7 +409,7 @@ class Component:
         if timing:
             deadline = min(deadline, (timing["trigger_wire_timestamp_ns"] + timing["max_elapsed_ns"]) / 1_000_000_000)
         self._trace("component.power.wait", power=power.value, command=command,
-                    directed=directed, since_monotonic_ns=started, initiator=source,
+                    directed=directed, broadcast=broadcast, since_monotonic_ns=started, initiator=source,
                     timeout=timeout, **timing)
         owner_checked = owner_scan is None
         while True:
@@ -416,6 +422,7 @@ class Component:
                                  if owner is session and event["transport"] == "wire"
                                  and event["source"] == source and event["applied"]
                                  and (not directed or event["destination"] == self.address.logical)
+                                 and (not broadcast or event["destination"] == 15)
                                  and (command is None or event["command"] == command)
                                  and event["wire_timestamp_ns"] >= started
                                  and event["processed_monotonic_ns"] >= started
