@@ -22,5 +22,6 @@ Runtime dependencies are provided by ESP-IDF / ESP-Matter and their declared man
 | dbus-next (test fixture only) | PyPI 0.2.3 | MIT |
 | Playwright (browser test only) | PyPI 1.56.0 | Apache-2.0 |
 | Home Assistant Matter Server core / CHIP controller (Pi test only) | PyPI 2025.7.0 | Apache-2.0; bundled third-party notices apply |
+| Linux GPIO CEC driver (Pi test only, when missing from the kernel) | Linux v6.12/v6.18 sources, hash-pinned by `cec-harness/amity_harness/pi_cec_driver.py`; adapted adapter-private pin storage | GPL-2.0-only; source notices retained in the installed DKMS tree |
 
 The optional encrypted HomeKit test controller uses `aiohomekit==3.2.20` (Apache-2.0) and its dependencies in an isolated, ignored cache. It is not part of the firmware.

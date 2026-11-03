@@ -26,6 +26,7 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   resource/authentication lifetime, CLI/reporting and scan evidence/assertions.
 - `amity_harness/enrollment.py`: Pi Matter controller, factory-state checks,
   Wi-Fi enrollment and verification after the main's final reset.
+- `setup.py`: Pi software installation, deployment, reboot and readiness checks.
 - `setup_matter.py`, `matter-requirements.txt`: installer and pinned dependencies
   for the Pi Matter controller.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
@@ -63,6 +64,50 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   taps, overlapping buttons and disconnect cleanup with local/member equipment.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
+## Pi software setup
+
+Use Raspberry Pi Imager to prepare a Pi 5 with **Raspberry Pi OS Lite 64-bit
+(Trixie, Python 3.13)**, network access, a hostname and SSH public-key access.
+The installation account must have passwordless `sudo`. From this checkout on
+the development computer, run:
+
+```sh
+python3 cec-harness/setup.py --host pi@new-harness.local
+```
+
+Initial setup records a previously unseen SSH host key; changed keys are rejected.
+
+This deploys the harness, installs its system and Python dependencies, prepares
+Bluetooth and Matter, builds the CEC kernel modules with DKMS if needed, and
+configures CEC adapters from `TEST-HARNESS.md`. Building a missing driver supports
+kernel series 6.12 and 6.18. Setup also grants the harness
+account access to CEC, GPIO and the required privileged helpers, and disables
+old `amity-cec@` followers. It reboots the Pi when needed, reconnects and checks
+readiness. Rerunning the command updates the installation without creating
+duplicate adapters. Test scenarios still own their simulated equipment; setup
+does not create permanent CEC responders or configure DUTs.
+
+For a checkout already on the Pi:
+
+```sh
+sudo python3 cec-harness/setup.py
+```
+
+Local installation exits with status `2` if a reboot is required. Reboot, then
+rerun the installation command to finish setup and check readiness. Add
+`--reboot` to reboot automatically; rerun installation afterward. To inspect an
+existing installation without deploying or changing anything:
+
+```sh
+python3 cec-harness/setup.py --check                 # on the Pi
+python3 cec-harness/setup.py --host pi@new-harness.local --check
+```
+
+Setup installs infrastructure only. Supply the private bench Wi-Fi, factory
+Matter and initial administration credentials described below when running
+tests. The bench LAN must support IPv6 and multicast DNS, and the runner must
+be able to reach the DUT's HTTPS administration address.
+
 ## Main enrollment
 
 Each invocation of `cec-harness/run.py` requires a **factory-reset
@@ -92,21 +137,19 @@ Factory reset clears activities, equipment, Wi-Fi and pairings. It preserves
 the installed firmware and factory Matter code, and restores the provisioned
 hostname and initial admin password.
 
-Install the controller once on the Pi, from its repository root:
+Pi software setup installs the Matter controller automatically. To verify just
+its pinned files later, run on the Pi from the repository root:
 
 ```sh
-python3 cec-harness/setup_matter.py
 python3 cec-harness/setup_matter.py --verify-installed
 ```
 
-The pinned controller requires Linux aarch64, Python 3.13, BlueZ with a powered
-`hci0` Bluetooth adapter, and GLib, libnl and libatomic runtime libraries. Supply
-credentials for a 2.4 GHz Wi-Fi network reachable from the Pi. Matter enrollment
-requires working IPv6 and multicast DNS on that LAN; the runner must also reach
-the DUT's HTTPS administration address. The Pi account needs passwordless `sudo`
-for a private mount namespace; the worker drops root
-privileges before loading Matter. This isolates SDK platform storage from other
-controllers. Enrollment finishes before the BLE keyboard fixture starts.
+The controller uses Linux aarch64, Python 3.13, a powered `hci0` Bluetooth
+adapter, and GLib, libnl and libatomic runtime libraries supplied by setup.
+Supply credentials for a 2.4 GHz Wi-Fi network reachable from the Pi. The worker
+uses a private mount namespace and drops root privileges before loading Matter
+to isolate SDK platform storage from other controllers. Enrollment finishes
+before the BLE keyboard fixture starts.
 
 The installer verifies or downloads the exact wheels in
 `matter-requirements.txt`, installs them under `.matter-python/`, and supplies
@@ -156,8 +199,9 @@ python3 cec-harness/run.py --test enrollment \
   --output test-results/functional/enrollment.json
 ```
 
-Omit `--harness-host` when running directly on the Pi. With SSH, install the same
-harness sources at `/home/pi/amity/esp32/cec-harness`, or set `--harness-root`.
+Omit `--harness-host` when running directly on the Pi. Remote setup installs the
+harness at `/home/pi/amity/esp32/cec-harness`; use `--harness-root` for another
+installation location.
 `--matter-python` selects the Pi's controller interpreter (default `python3`);
 it is independent of the BLE keyboard fixture's `--ble-python`.
 `--enrollment-timeout` defaults to 240 seconds for main preparation and,
@@ -873,15 +917,17 @@ Volume Up continues, and disconnect ends the remaining stream. No `/api/key`
 request supplies these inputs. Generic HID exercises the keyboard input path;
 Siri touch gestures and Power macros remain separate.
 
-The Pi needs BlueZ with peripheral support and an isolated Python environment:
+Pi software setup installs BlueZ and the distribution's `python3-dbus-next`;
+the normal `python3` works without `--ble-python`. A custom isolated environment
+is optional:
 
 ```sh
 python3 -m venv /home/pi/amity/ble-keyboard-venv
 /home/pi/amity/ble-keyboard-venv/bin/python -m pip install dbus-next==0.2.3
 ```
 
-Use `--ble-python /home/pi/amity/ble-keyboard-venv/bin/python` together with
-the existing `--harness-host` and `--harness-root` options. Only BLE fixture
+For that environment, use `--ble-python /home/pi/amity/ble-keyboard-venv/bin/python`
+together with the existing `--harness-host` and `--harness-root` options. Only BLE fixture
 control and HID reports cross SSH; DUT credentials remain on the runner host.
 The worker releases buttons, unregisters its services and advertisement, restores
 the Pi's pairing setting and removes its new peer bond on exit. It does not
@@ -896,7 +942,6 @@ listed in `TEST-HARNESS.md` before the selected tests. For example:
 python3 cec-harness/run.py --test all --firmware build/amity-update.bin \
   --credentials test-results/credentials/amity-dut.json --insecure \
   --harness-host pi@test2.local \
-  --ble-python /home/pi/amity/ble-keyboard-venv/bin/python \
   --output test-results/functional/with-upgrade.json
 ```
 
@@ -948,14 +993,10 @@ start; an overlapping wire-clock uncertainty interval cannot prove that bound.
 A fresh Select press must work afterward. The shared helper owns the cancellable
 request and receive-drain evidence; the scenario contains no socket handling.
 
-The runner requires Python 3.10 or newer. Pi-side CEC I/O needs Linux, the
-existing `cec-gpio` adapters and permission to open `/dev/cec*` (normally
-membership in `video`); GPIO button operations additionally require `pinctrl`.
-The runner and CEC helpers use the standard library. Automatic enrollment also
-requires the Pi's Python 3.13 controller installation described under
-[Main enrollment](#main-enrollment); the BLE keyboard fixture has its separate
-dependency above. Stop/remove any previously installed `amity-cec@` follower
-services before running it; they must not reclaim the adapters.
+The runner requires Python 3.10 or newer on the development computer. Pi-side
+dependencies, CEC adapters and permissions are installed by
+[Pi software setup](#pi-software-setup). The runner and CEC helpers use the
+standard library; enrollment uses the Pi's pinned Python 3.13 Matter controller.
 
 From the checkout root **on the Pi**:
 
@@ -1081,8 +1122,9 @@ python3 cec-harness/run.py \
   --output test-results/functional/hdmi-scan-framework.json
 ```
 
-Install this framework at `/home/pi/amity/esp32/cec-harness` on the Pi first, or
-set `--harness-root`. `--ssh-port` supports an existing SSH tunnel. SSH uses the
+Run [Pi software setup](#pi-software-setup) first; its default deployment matches
+the runner's `/home/pi/amity/esp32/cec-harness` location. Set `--harness-root`
+for another installation. `--ssh-port` supports an existing SSH tunnel. SSH uses the
 normal known-host and authentication configuration. The harness transport
 carries CEC frames, component identities, bounded physical button requests and
 Matter enrollment settings when an explicit credential file is supplied;
