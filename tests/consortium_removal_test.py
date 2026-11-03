@@ -170,7 +170,6 @@ void ack_tests(){
  std::cout<<"PASS exact authenticated durable-marker ACK updates only its removal operation; admission never claims completed reset\n";
 }
 std::string inflight_payload(const LinkScope& scope,Kind kind){
- if(kind==Kind::heartbeat)return "{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
  if(kind==Kind::device_status)return "{\"hostname\":\"member\"}";
  if(kind==Kind::scoped_result){model::OwnedAdapterSnapshot report;report.owner=scope.peer_id;report.boot=scope.peer_boot_id;report.ready=true;const auto bytes=owned_snapshot_json(report);assert(!bytes.empty());return "{\"snapshot\":"+bytes+"}";}
  if(kind==Kind::settings_result)return "{\"request_id\":\""+ident<model::MessageId>(90).str()+"\",\"operation\":\"read\",\"stage\":\"failed\",\"error\":\"NOT_READY\",\"snapshot\":null,\"rebooting\":false}";
@@ -180,12 +179,12 @@ Envelope inflight_frame(const std::shared_ptr<Active>& active,Kind kind,uint64_t
  const auto& scope=active->session.scope();Envelope e;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=scope.epoch;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;e.payload=parsed(inflight_payload(scope,kind));return e;
 }
 void queue_reset_ack(const std::shared_ptr<Active>& active,uint64_t revision=0){
- auto ack=inflight_frame(active,Kind::heartbeat,revision?revision:active->session.scope().config_revision);ack.kind=Kind::membership_result;ack.ttl_ms=2000;
+ auto ack=inflight_frame(active,Kind::device_status,revision?revision:active->session.scope().config_revision);ack.kind=Kind::membership_result;ack.ttl_ms=2000;
  auto payload=active->retirement_payload;payload.pop_back();payload+=",\"result\":\"reset_scheduled\"}";
  active->tls->frames.push_back(envelope_json(ack,payload));
 }
 void inflight_status_does_not_hide_reset_ack(){
- for(bool older:{false,true})for(auto kind:{Kind::heartbeat,Kind::device_status,Kind::scoped_result,Kind::settings_result,Kind::update_result}){
+ for(bool older:{false,true})for(auto kind:{Kind::device_status,Kind::scoped_result,Kind::settings_result,Kind::update_result}){
   reset(true);auto active=connection(false);configuration=2;assert(active->session.advance_configuration(2)==Error::none);active->status.config_revision=2;
   auto prior=inflight_frame(active,kind,older?1:2);Envelope checked;
   assert(parse_envelope(envelope_json(prior,settings_json(prior.payload)),checked)==Error::none);

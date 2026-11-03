@@ -15,7 +15,14 @@ SUITE = r'''
 void real_tcp_records(const Identity& main,const Identity& member){
  int fd[2];tcp_pair(fd);TlsLink server,client;
  check(server.setup(main,{peer(member)},true,fd[0])&&client.setup(member,{peer(main)},false,fd[1],main.id),"real TCP setup failed");
- for(int socket:fd){int flag=0;socklen_t size=sizeof(flag);check(!::getsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&flag,&size)&&flag!=0,"TLS socket retained Nagle coalescing");}
+ for(int socket:fd){
+  int value=0;socklen_t size=sizeof(value);
+  check(!::getsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&value,&size)&&value!=0,"TLS socket retained Nagle coalescing");
+  check(!::getsockopt(socket,SOL_SOCKET,SO_KEEPALIVE,&value,&size)&&value!=0,"TLS socket did not enable TCP keepalive");
+  check(!::getsockopt(socket,IPPROTO_TCP,TCP_KEEPIDLE,&value,&size)&&value==10,"TLS socket keepalive idle delay changed");
+  check(!::getsockopt(socket,IPPROTO_TCP,TCP_KEEPINTVL,&value,&size)&&value==3,"TLS socket keepalive probe interval changed");
+  check(!::getsockopt(socket,IPPROTO_TCP,TCP_KEEPCNT,&value,&size)&&value==3,"TLS socket keepalive probe count changed");
+ }
  bool sh=false,ch=false;const auto deadline=now_ms()+5000;
  while(now_ms()<deadline&&!(sh&&ch)){
   if(!sh){const auto r=mbedtls_ssl_handshake(&server.ssl);if(!r)sh=true;else check(r==MBEDTLS_ERR_SSL_WANT_READ||r==MBEDTLS_ERR_SSL_WANT_WRITE,"server handshake failed");}
@@ -36,7 +43,7 @@ void real_tcp_records(const Identity& main,const Identity& member){
   check(server.established()&&client.established(),"frame exchange lost the authenticated transport");
   slowest=std::max(slowest,now_ms()-began);++frames;
  }
- std::cout<<"PASS actual pinned-Mbed-TLS TCP: checked TCP_NODELAY on both peers, exact mutual authentication, "<<frames<<" framed exchanges across 512-byte records on the same stream; native maximum="<<slowest<<"ms\n";
+ std::cout<<"PASS actual pinned-Mbed-TLS TCP: checked TCP_NODELAY and TCP keepalive enabled with 10s idle/3s interval/3 probes on both peers, exact mutual authentication, "<<frames<<" framed exchanges across 512-byte records on the same stream; native maximum="<<slowest<<"ms\n";
 }
 void unsupported_socket_fails_setup(const Identity& main,const Identity& member){
  int fd[2];check(!::socketpair(AF_UNIX,SOCK_STREAM,0,fd),"local socketpair failed");

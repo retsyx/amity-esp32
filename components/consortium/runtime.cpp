@@ -48,7 +48,7 @@ struct LinkTrace {
     const char* phase="handshake";
     const char* reason="cancelled";
     Error error=Error::none;
-    Kind kind=Kind::heartbeat;
+    Kind kind=Kind::device_status;
     bool has_kind=false,unexpected=false,has_queue=false,retained=false;
     uint64_t created=0,queued_revision=0;
     uint32_t ttl=0;
@@ -562,11 +562,11 @@ bool application_failure_recoverable(const Active& active,const LinkTrace& trace
     // lost ordinary application work. Keep their existing terminal fences.
     for(const auto* terminal:{"socket_select","envelope_parse","synchronization_control_admit","synchronization_control_parse","stale_frame",
         "live_configuration_role","live_configuration_admit","live_configuration_manifest","membership_revoked","retirement","retirement_admit",
-        "update_admit","update_authority","control_admit","owned_intent_parse","heartbeat_admit","settings_admit","settings_boot","settings_authority"})
+        "update_admit","update_authority","control_admit","owned_intent_parse","settings_admit","settings_boot","settings_authority"})
         if(!strcmp(trace.reason,terminal))return false;
     if(active.restart_requested)return true;
     for(const auto* recoverable:{"application_restart_requested","causal_expired","cleanup_queue_full","causal_result_fence","context_recapture_failed",
-        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","heartbeat_send","settings_dispatch","update_not_ready","live_configuration_not_ready"})
+        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","live_configuration_not_ready"})
         if(!strcmp(trace.reason,recoverable))return true;
     return false;
 }
@@ -878,13 +878,12 @@ void active_loop_work(void *arg){
         if(!synchronize_connection(*active,server,active->execution_supported,0,&trace))active->cancelled=true;
         else{std::lock_guard<std::mutex> guard(lock);status.synchronized=active->ready.load();status.phase=active->ready?"enrollment_ready":"membership_committed";}
     }
-    uint64_t heartbeat=0,sequence=0,receive_until=0;bool retirement_attempted=false;
+    uint64_t receive_until=0;bool retirement_attempted=false;
     while(!active->cancelled){
       while(!active->cancelled){
         trace=LinkTrace{};trace.phase="operational";
         if(active->restart_requested){trace.fail("application_restart_requested");break;}
         if(active->retiring&&!receive_until){retirement_attempted=true;finish_retirement(*active);break;}
-        auto now=now_ms();
         if(server&&active->ready&&!active->retiring&&!receive_until&&(active->status.negotiated_capabilities&live_configuration)){
             uint64_t target;{std::lock_guard<std::mutex> guard(lock);target=configuration;}
             if(target>active->session.scope().config_revision){
@@ -893,15 +892,13 @@ void active_loop_work(void *arg){
                     drain=!active->queue.empty()&&active->queue.front().revision==active->session.scope().config_revision;}
                 if(!drain&&!synchronize(*active,true,true,target,nullptr,&trace)){
                     if(!synchronization_recoverable(*active,trace)||!synchronize_connection(*active,true,true,target,&trace))break;
-                    heartbeat=0;
                 }
             }
         }
         trace.phase="operational";trace.has_kind=trace.has_queue=false;
         if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context");break;}
         if(!active->retiring&&!refresh_local_hostname(*active)){trace.fail("hostname_send");break;}
-        if(!active->retiring&&now>=heartbeat){if(!send(*active,Kind::heartbeat,"{\"sequence\":\""+std::to_string(++sequence)+"\",\"observation_cursor\":\"0\",\"ready\":"+(active->ready?"true":"false")+"}")){trace.fail("heartbeat_send");break;}heartbeat=now+1000;}
-        now=now_ms();
+        const auto now=now_ms();
         Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
             if(!active->queue.empty()){
@@ -942,10 +939,8 @@ void active_loop_work(void *arg){
             if(!server&&phase=="begin"){
                 active->pending_synchronization=round;
                 if(!synchronize_connection(*active,false,active->execution_supported,round.revision,&trace))break;
-                heartbeat=0;
             }else if(server&&phase=="reject"&&round.id==active->synchronization.id&&round.revision==active->synchronization.revision){
                 if(!synchronize_connection(*active,true,active->execution_supported,round.revision,&trace))break;
-                heartbeat=0;
             }
             continue;
         }
@@ -1018,7 +1013,7 @@ void active_loop_work(void *arg){
                 }
             }
         }
-        else if(envelope.kind!=Kind::heartbeat){
+        else{
             const auto admitted=active->session.admit(envelope,received,received);
             if(admitted!=Error::none){trace.fail("control_admit",admitted);break;}
             if(active->restart_requested){trace.fail("application_restart_requested");break;}
@@ -1041,13 +1036,12 @@ void active_loop_work(void *arg){
                 trace.fail("control_dispatch",Error::not_ready);break;
             }
         }
-        else{const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("heartbeat_admit",admitted);break;}}
       }
       if(active->cancelled||active->retiring||!application_failure_recoverable(*active,trace))break;
       trace.retained=true;trace.receive=active->tls->receive_diagnostic();
       emit_link_trace(snapshot_link_trace(*active,trace,now_ms()));
       if(!recover_operational_frame(*active,server,trace))break;
-      heartbeat=receive_until=0;
+      receive_until=0;
     }
     if(server&&active->retiring&&!retirement_attempted)finish_retirement(*active);
     if(active->update_begin_id) {RuntimeUpdateHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=updates;}if(hooks.disconnected) hooks.disconnected(active->peer,active->update_begin_id);}

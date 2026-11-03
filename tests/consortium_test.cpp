@@ -44,7 +44,7 @@ void frame_tests(std::string_view body){
 
 LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),1,7};}
 HelloFrame hello(const LinkScope& s){HelloFrame h;h.consortium_id=s.consortium_id;h.octopus_id=s.peer_id;h.boot_id=s.peer_boot_id;h.coordinator_epoch=s.epoch;h.config_revision=s.config_revision;h.required_capabilities=known_capabilities;return h;}
-Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::heartbeat;return e;}
+Envelope envelope(const LinkScope& s){Envelope e;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.destination_octopus_id=s.local_id;e.origin_boot_id=s.peer_boot_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=10000;e.kind=Kind::device_status;JsonError detail;assert(parse_json("{\"hostname\":\"member\"}",e.payload,detail));return e;}
 std::string packet(const LinkScope& s,Kind kind,const std::string& payload){return "{\"protocol_version\":1,\"consortium_id\":\""+s.consortium_id.str()+"\",\"origin_octopus_id\":\""+s.peer_id.str()+"\",\"origin_boot_id\":\""+s.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+s.local_id.str()+"\",\"destination_boot_id\":\""+s.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"7\",\"kind\":\""+kind_name(kind)+"\",\"ttl_ms\":1000,\"payload\":"+payload+"}";}
 m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntentKind::activity;x.target={{s.consortium_id,s.local_id,0,m::Side::back},"Player"};x.generation=1;x.selected=true;x.source=x.target;return x;}
 void envelope_tests(const std::string& body){
@@ -195,7 +195,7 @@ void synchronization_tests(){
     auto rollback=begin;assert(parse_json(payload("begin",7),rollback.payload,detail));assert(member.admit(rollback,100,101)==Error::stale_config);
     auto positive=envelope(expected);positive.kind=Kind::scoped_intent;assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
     assert(member.admit(positive,100,101)==Error::unauthorized_role);
-    auto heartbeat=envelope(expected);assert(member.admit(heartbeat,100,101)==Error::none);
+    auto status=envelope(expected);assert(member.admit(status,100,101)==Error::none);
     assert(member.synchronized(7,true,true)==Error::stale_config&&member.synchronized(8,true,true)==Error::none);
     assert(member.admit(positive,100,101)==Error::none);
     assert(member.discard_synchronization_frame(stale_work,100,101)==Error::not_ready);
@@ -224,7 +224,7 @@ void logical_session_restart_tests(){
     assert(session.begin_synchronization(7,logical_link)==Error::none);
     auto expected=original;expected.link_id=logical_link;
     assert(session.scope()==expected&&session.state()==ConnectionState::synchronizing);
-    assert(session.admit(remembered,100,101)==Error::none); // Ordinary heartbeats remain admissible during synchronization.
+    assert(session.admit(remembered,100,101)==Error::none); // Hostname metadata remains admissible during synchronization.
     auto positive=envelope(expected);positive.kind=Kind::scoped_intent;
     assert(parse_json(owned_intent_json(action(expected)),positive.payload,detail));
     assert(session.admit(positive,100,101)==Error::unauthorized_role);
@@ -240,7 +240,7 @@ void logical_session_restart_tests(){
 void original_controller_tests(){
     using namespace amity::consortium::platform;const auto local=ident<m::OctopusId>(2);Group group;assert(controller_membership_compatible(group)&&!original_controller(group,local));group.role=Group::coordinator;group.authority=local;group.epoch=1;assert(original_controller(group,local)&&!original_controller(group,ident<m::OctopusId>(3)));
     for(auto role:{Group::member,Group::prepared,Group::retired}){group.role=role;assert(controller_membership_compatible(group)&&!original_controller(group,local));}group.role=Group::coordinator;group.epoch=2;assert(!controller_membership_compatible(group));
-    for(auto role:{PeerRole::coordinator,PeerRole::actuator}){const auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(unsigned number:{1u,2u,3u,4u,5u,6u,12u,13u,18u,19u,20u,21u,22u,23u,24u,25u,26u,33u,34u,35u,36u}){auto e=envelope(sc);e.kind=static_cast<Kind>(number);assert(retired_kind(e.kind)&&session.admit(e,100,100)==Error::unauthorized_role);}}}
+    for(auto role:{PeerRole::coordinator,PeerRole::actuator}){const auto sc=scope();Session session;assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none&&session.synchronized(7,true,true)==Error::none);for(unsigned restricted=0;restricted<2;++restricted){if(restricted)session.restrict_management();for(unsigned number:{0u,1u,2u,3u,4u,5u,6u,12u,13u,18u,19u,20u,21u,22u,23u,24u,25u,26u,33u,34u,35u,36u}){auto e=envelope(sc);e.kind=static_cast<Kind>(number);assert(retired_kind(e.kind)&&session.admit(e,100,100)==Error::unauthorized_role);}}}
     auto profile=hello(scope());assert(execution_profile_supported(profile,true,true,4,15));profile.required_capabilities&=~qualified_lookup;assert(!execution_profile_supported(profile,true,true,1,1));profile.optional_capabilities|=qualified_lookup;assert(execution_profile_supported(profile,true,true,1,1));assert(!execution_profile_supported(profile,false,true,1,1)&&!execution_profile_supported(profile,true,false,4,15));
     profile.required_capabilities&=~live_configuration;assert(!execution_profile_supported(profile,true,true,4,15));profile.optional_capabilities|=live_configuration;assert(execution_profile_supported(profile,true,true,4,15));
 }
@@ -251,18 +251,17 @@ void live_configuration_tests(){
         assert(value.authenticate(old,old.peer_id,role,true)==Error::none&&value.hello(h,known_capabilities)==Error::none&&value.synchronized(old.config_revision,true,true)==Error::none);
     };
     start(session);
-    auto heartbeat=envelope(old);assert(parse_json("{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}",heartbeat.payload,detail));
-    assert(session.admit(heartbeat,100,100)==Error::none);
+    auto status=envelope(old);assert(session.admit(status,100,100)==Error::none);
     for(auto invalid:{0u,6u,7u})assert(session.advance_configuration(invalid)==Error::stale_config);
     assert(session.advance_configuration(8)==Error::none);
     auto current=old;current.config_revision=8;assert(session.scope()==current&&session.state()==ConnectionState::ready);
-    assert(session.discard_stale(heartbeat,100,101)==Error::none); // Obsolete observations are discarded without executing them.
-    heartbeat.config_revision=8;assert(session.admit(heartbeat,100,101)==Error::none);
+    assert(session.discard_stale(status,100,101)==Error::none); // Obsolete observations are discarded without executing them.
+    status.config_revision=8;assert(session.admit(status,100,101)==Error::none);
     auto intent=envelope(current);intent.kind=Kind::scoped_intent;
     assert(parse_json(owned_intent_json(action(current)),intent.payload,detail));
     assert(session.admit(intent,101,101)==Error::none); // Current synchronized authority is sufficient.
     assert(parse_json(owned_intent_json(action(current)),intent.payload,detail));assert(session.admit(intent,101,102)==Error::none);
-    auto stale=envelope(old);stale.payload=heartbeat.payload;
+    auto stale=envelope(old);stale.payload=status.payload;
     assert(session.admit(stale,100,102)==Error::stale_config);
     assert(session.discard_stale(stale,100,102)==Error::none&&session.discard_stale(stale,100,102)==Error::none);
     assert(session.discard_stale(stale,100,103)==Error::none);

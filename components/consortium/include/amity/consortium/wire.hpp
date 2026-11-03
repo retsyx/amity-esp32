@@ -11,20 +11,19 @@ enum class Error { none, invalid_message, unsupported_kind, protocol_mismatch, u
     identity_conflict, unknown_outcome, storage_failure, transaction_conflict };
 const char *error_name(Error);
 // Numeric slots of retired features are never reassigned or dispatched.
-enum class Kind { heartbeat=0,
-    enrollment_control=11,
+enum class Kind { enrollment_control=11,
     membership_event=14, membership_result=15, snapshot_request=16, snapshot_chunk=17,
     update_begin=27, update_chunk=28, update_install=29, update_status=30, update_abort=31, update_result=32,
     device_status=37, settings_read=38, settings_write=39, settings_result=40,
     scoped_intent=41, scoped_result=42, synchronization=43 };
-inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n==1||n==2||n==3||n==4||n==5||n==6||(n>=7&&n<=10)||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
+inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n<=10||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
 const char *kind_name(Kind);
 struct Envelope {
     model::ConsortiumId consortium_id;
     model::OctopusId origin_octopus_id, destination_octopus_id;
     model::BootId origin_boot_id, destination_boot_id;
     uint64_t coordinator_epoch = 0, config_revision = 0;
-    Kind kind = Kind::heartbeat;
+    Kind kind = Kind::device_status;
     uint32_t ttl_ms = 0;
     Json payload;
 };

@@ -109,7 +109,7 @@ std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
 }
 std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}
 const std::string owner_state="{\"adapters\":[]}";
-const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
+const std::string device_status="{\"hostname\":\"amity-member\"}";
 std::string observation(const LinkScope& scope){model::OwnedAdapterSnapshot report;report.owner=scope.peer_id;report.boot=scope.peer_boot_id;report.ready=true;return "{\"snapshot\":"+owned_snapshot_json(report)+"}";}
 void unchanged(const Active& active,const LinkScope& original,const FakeTls* tls){
  auto expected=original;expected.config_revision=active.session.scope().config_revision;
@@ -152,7 +152,7 @@ void coordinator_refresh(){
    // Already-in-flight obsolete messages are safely discarded after advance,
    // they cannot masquerade as the new owner-state slice.
    feed(active,inbound(original,7,Kind::device_status,"{\"hostname\":\"renamed-member\"}")); // Old-scope metadata after local advance.
-   stale=inbound(original,7,Kind::heartbeat,heartbeat);feed(active,*stale);
+   stale=inbound(original,7,Kind::device_status,device_status);feed(active,*stale);
    const auto state=manifest(original.peer_id,original.peer_boot_id,8,"owner_state",owner_state);
    feed(active,inbound(original,8,Kind::snapshot_request,snapshot_manifest_json(state,"begin",0)));
    feed(active,inbound(original,8,Kind::snapshot_chunk,snapshot_chunk_json(state,0,owner_state)));
@@ -321,7 +321,7 @@ def main():
     actual += ''.join(function(source, name) for name in ('bool initialize_context(', 'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned('))
     refresh_start=source.index('        if(server&&active->ready&&')
     refresh_end=source.index('        trace.phase="operational";',refresh_start)
-    refresh='\nbool refresh_turn(Active& storage){auto* active=&storage;const bool server=true;const uint64_t receive_until=0;uint64_t heartbeat=0;LinkTrace trace;while(true){'+source[refresh_start:refresh_end]+'(void)heartbeat;return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    refresh='\nbool refresh_turn(Active& storage){auto* active=&storage;const bool server=true;const uint64_t receive_until=0;LinkTrace trace;while(true){'+source[refresh_start:refresh_end]+'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     queued = function(source, 'enum class QueuedState').rstrip() + ';\n' + function(source, 'QueuedState prepare_queued(')
     with tempfile.TemporaryDirectory(prefix='amity-live-configuration-') as directory:
         temp = Path(directory)

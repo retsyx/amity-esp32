@@ -97,6 +97,12 @@ bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool
     // instead of waiting for a delayed ACK to flush the rest of the frame.
     const int no_delay=1;
     if(setsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay)))return timing.done(false);
+    // Detect an unreachable idle peer in TCP without application traffic.
+    const int keep_alive=1,keep_idle=10,keep_interval=3,keep_count=3;
+    if(setsockopt(socket,SOL_SOCKET,SO_KEEPALIVE,&keep_alive,sizeof(keep_alive))||
+       setsockopt(socket,IPPROTO_TCP,TCP_KEEPIDLE,&keep_idle,sizeof(keep_idle))||
+       setsockopt(socket,IPPROTO_TCP,TCP_KEEPINTVL,&keep_interval,sizeof(keep_interval))||
+       setsockopt(socket,IPPROTO_TCP,TCP_KEEPCNT,&keep_count,sizeof(keep_count)))return timing.done(false);
     struct timeval timeout{0,100000};setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));mbedtls_ssl_set_bio(&ssl,&socket,send_socket,receive_socket,nullptr);timing.finish(configured,true);this->configured=true;return timing.done(true);
 }
 bool TlsLink::handshake(){

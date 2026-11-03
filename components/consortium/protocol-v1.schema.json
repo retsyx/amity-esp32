@@ -1247,26 +1247,6 @@
       ],
       "additionalProperties": false
     },
-    "Heartbeat": {
-      "type": "object",
-      "properties": {
-        "sequence": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "observation_cursor": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "ready": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "sequence",
-        "observation_cursor",
-        "ready"
-      ],
-      "additionalProperties": false
-    },
     "EnrollmentControl": {
       "oneOf": [
         {

@@ -67,13 +67,13 @@ bool Session::permitted(Kind kind,bool discarding)const {
     if(retired_kind(kind))return false;
     if(kind==Kind::synchronization)return active_&&role_!=PeerRole::provisional_candidate&&
         (state_==ConnectionState::ready||state_==ConnectionState::synchronizing||(state_==ConnectionState::restricted&&management_));
-    if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::heartbeat||kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
+    if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
     if(!discarding&&state_==ConnectionState::restricted){
-        if(management_){if(kind==Kind::heartbeat||kind==Kind::device_status)return true;if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind==Kind::settings_read:kind==Kind::settings_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return kind==Kind::membership_event||kind==Kind::membership_result;}
-        return role_==PeerRole::provisional_candidate?(kind==Kind::enrollment_control||kind==Kind::heartbeat):(kind==Kind::membership_event||kind==Kind::membership_result);
+        if(management_){if(kind==Kind::device_status)return true;if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind==Kind::settings_read:kind==Kind::settings_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return kind==Kind::membership_event||kind==Kind::membership_result;}
+        return role_==PeerRole::provisional_candidate?kind==Kind::enrollment_control:(kind==Kind::membership_event||kind==Kind::membership_result);
     }
     if(!active_)return false;
-    if(kind==Kind::heartbeat||kind==Kind::device_status)return true;
+    if(kind==Kind::device_status)return true;
     if(kind==Kind::snapshot_request||kind==Kind::snapshot_chunk)return ((capabilities_&live_configuration)||(discarding&&state_==ConnectionState::synchronizing))&&role_!=PeerRole::provisional_candidate;
     if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::settings_result:role_==PeerRole::actuator&&kind==Kind::settings_result;
     if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:role_==PeerRole::actuator&&kind==Kind::update_result;
@@ -125,7 +125,7 @@ Error Session::discard_synchronization_frame(const Envelope& e,uint64_t received
 Error Session::discard_lifecycle_frame(const Envelope& e,uint64_t received,uint64_t now){
     if(state_!=ConnectionState::restricted||management_||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
     switch(e.kind){
-    case Kind::heartbeat:case Kind::device_status:case Kind::scoped_result:
+    case Kind::device_status:case Kind::scoped_result:
     case Kind::settings_result:case Kind::update_result:break;
     default:return Error::unsupported_kind;
     }

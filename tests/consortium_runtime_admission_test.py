@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Compile actual runtime heartbeat/retirement paths with real wire/session code."""
+"""Compile actual runtime retirement paths with real wire/session code."""
 import os
 import argparse
 from pathlib import Path
-import re
 import shlex
 import subprocess
 import tempfile
@@ -58,36 +57,19 @@ void start(Active &active,uint64_t config=7,uint32_t capabilities=known_capabili
 }
 Envelope envelope(Kind kind,uint64_t config=7){const auto s=scope(config);Envelope e;e.kind=kind;e.consortium_id=s.consortium_id;e.origin_octopus_id=s.peer_id;e.origin_boot_id=s.peer_boot_id;e.destination_octopus_id=s.local_id;e.destination_boot_id=s.local_boot_id;e.coordinator_epoch=s.epoch;e.config_revision=s.config_revision;e.ttl_ms=2000;return e;}
 std::string packet(const Envelope&e,std::string payload){return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":2000,\"payload\":"+payload+"}";}
-const std::string heartbeat="{\"sequence\":\"1\",\"observation_cursor\":\"0\",\"ready\":true}";
+const std::string device_status="{\"hostname\":\"amity-member\"}";
 const std::string requested="{\"mutation_id\":\"00000000000000000000000000000020\",\"proposal_digest\":\""+std::string(64,'a')+"\",\"phase\":\"factory_reset\",\"membership_revision\":\"2\",\"expected_boot_id\":\"00000000000000000000000000000006\"}";
 std::string acknowledgement(bool correct=true){auto payload=requested;if(!correct)payload.replace(payload.find(std::string(64,'a')),64,std::string(64,'b'));payload.pop_back();return packet(envelope(Kind::membership_result),payload+",\"result\":\"reset_scheduled\"}");}
 const std::string settings_payload="{\"request_id\":\"00000000000000000000000000000100\",\"operation\":\"read\",\"stage\":\"applied\",\"error\":\"\",\"snapshot\":{\"boot_id\":\"00000000000000000000000000000006\",\"settings_revision\":\"1\",\"hostname_revision\":\"1\",\"hostname\":\"amity\",\"adapters\":[{\"tentacle_id\":0,\"name\":\"HDMI adapter 1\",\"configured\":true,\"default_front_physical_address\":\"1.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]},\"rebooting\":false}";
 std::string settings_reply(){return packet(envelope(Kind::settings_result),settings_payload);}
 '''
 SUITE = r'''
-void heartbeat_tests(){
-    Active active;start(active);const auto valid=envelope(Kind::heartbeat);
-    check(dispatch_heartbeat(active,valid),"valid heartbeat rejected");
-    check(dispatch_heartbeat(active,valid),"repeated heartbeat on an authenticated stream was rejected");
-    for(unsigned failure=0;failure<7;++failure){auto bad=envelope(Kind::heartbeat);
-        switch(failure){case 0:bad.origin_boot_id=ident<m::BootId>(99);break;case 1:bad.destination_boot_id=ident<m::BootId>(99);break;case 2:bad.destination_octopus_id=ident<m::OctopusId>(99);break;case 3:bad.consortium_id=ident<m::ConsortiumId>(99);break;case 4:bad.config_revision=8;break;case 5:bad.coordinator_epoch=2;break;case 6:bad.origin_octopus_id=ident<m::OctopusId>(99);break;}
-        LinkTrace trace;check(!dispatch_heartbeat(active,bad,&trace),"foreign heartbeat bypassed actual runtime admission");
-        check(trace.unexpected&&trace.error!=Error::none&&std::string(trace.reason)=="heartbeat_admit","heartbeat rejection lost its admission diagnostic");
-    }
-    // A committed new config must not relabel an existing TLS link: old-scope
-    // heartbeats remain valid until reconnect; the new link accepts only8.
-    check(dispatch_heartbeat(active,envelope(Kind::heartbeat)),"old scoped heartbeat rejected during transition");
-    Active updated;start(updated,8);check(dispatch_heartbeat(updated,envelope(Kind::heartbeat,8)),"new scoped heartbeat rejected");
-    check(!dispatch_heartbeat(updated,envelope(Kind::heartbeat)),"old revision accepted on new link");
-    updated.session.restrict_management();check(dispatch_heartbeat(updated,envelope(Kind::heartbeat,8)),"valid management heartbeat rejected");
-    std::cout<<"PASS actual heartbeat dispatch: exact boots/identities/group/epoch/config; old/new config transition and management\n";
-}
 void retirement_tests(){
-    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::heartbeat),heartbeat),packet(envelope(Kind::heartbeat),heartbeat),acknowledgement()};
-     check(finish_retirement(active),"retirement failed behind in-flight heartbeats");check(!active.ready&&!active.status.ready&&active.queue.empty(),"retirement did not fence queue");check(active.session.state()==ConnectionState::restricted,"drained frame restored authority");check(active.transport.largest_timeout<=2000,"retirement extended two-second deadline");}
+    {Active active;start(active);active.retirement_payload=requested;active.transport.frames={packet(envelope(Kind::device_status),device_status),packet(envelope(Kind::device_status),device_status),acknowledgement()};
+     check(finish_retirement(active),"retirement failed behind in-flight device status");check(!active.ready&&!active.status.ready&&active.queue.empty(),"retirement did not fence queue");check(active.session.state()==ConnectionState::restricted,"drained frame restored authority");check(active.transport.largest_timeout<=2000,"retirement extended two-second deadline");}
     {Active active;start(active);active.retirement_payload=requested;active.transport.frames={acknowledgement(false)};check(!finish_retirement(active),"wrong retirement digest accepted");}
-    {Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::heartbeat);foreign.config_revision=8;active.transport.frames={packet(foreign,heartbeat),acknowledgement()};check(!finish_retirement(active)&&active.transport.next==1,"foreign frame was drained or acknowledged");}
-    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(packet(envelope(Kind::heartbeat),heartbeat));active.transport.frames.push_back(acknowledgement());check(!finish_retirement(active)&&active.transport.next==32,"retirement drain exceeded32 frames");}
+    {Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::device_status);foreign.config_revision=8;active.transport.frames={packet(foreign,device_status),acknowledgement()};check(!finish_retirement(active)&&active.transport.next==1,"foreign frame was drained or acknowledged");}
+    {Active active;start(active);active.retirement_payload=requested;for(unsigned i=0;i<33;++i)active.transport.frames.push_back(packet(envelope(Kind::device_status),device_status));active.transport.frames.push_back(acknowledgement());check(!finish_retirement(active)&&active.transport.next==32,"retirement drain exceeded32 frames");}
     {Active active;start(active);active.retirement_payload=requested;check(!finish_retirement(active)&&active.transport.largest_timeout<=2000,"absent ACK did not time out bounded");}
     std::cout<<"PASS actual retirement:32-frame/2s drain, no restored authority, exact ACK digest, foreign-scope and missing-ACK rejection\n";
 }
@@ -98,7 +80,7 @@ void settings_retirement_tests(){
      check(finish_retirement(active)&&active.transport.next==2,"in-flight settings reply hid the matching reset ACK");
      check(active.session.state()==ConnectionState::restricted&&!active.ready&&!active.status.ready&&active.queue.empty(),"drained settings reply restored work authority");
      check(active.transport.largest_timeout<=2000,"settings reply drain extended the removal deadline");
-     check(!dispatch_heartbeat(active,envelope(Kind::heartbeat)),"settings reply left the session in management mode");}
+     check(active.session.admit(envelope(Kind::device_status),clock_ms,clock_ms)!=Error::none,"settings reply left the session in management mode");}
     for(unsigned failure=0;failure<7;++failure){Active active;start(active);active.retirement_payload=requested;auto foreign=envelope(Kind::settings_result);
      switch(failure){case 0:foreign.origin_boot_id=ident<m::BootId>(99);break;case 1:foreign.destination_boot_id=ident<m::BootId>(99);break;case 2:foreign.origin_octopus_id=ident<m::OctopusId>(99);break;case 3:foreign.destination_octopus_id=ident<m::OctopusId>(99);break;case 4:foreign.consortium_id=ident<m::ConsortiumId>(99);break;case 5:foreign.coordinator_epoch=2;break;case 6:foreign.config_revision=8;break;}
      active.transport.frames={packet(foreign,settings_payload),acknowledgement()};
@@ -123,7 +105,7 @@ void settings_retirement_tests(){
      check(!finish_retirement(active)&&active.transport.next==32,"settings reply drain exceeded32 frames");}
     std::cout<<"PASS actual retirement behind settings replies: exact ACK required; scope/capability/32-frame/2s fences retained; no settings work or restored authority\n";
 }
-int main(){try{heartbeat_tests();retirement_tests();settings_retirement_tests();return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
+int main(){try{retirement_tests();settings_retirement_tests();return 0;}catch(const std::exception&e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}}
 '''
 
 
@@ -131,26 +113,12 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
     source=parser.parse_args().source.read_text()
-    # The heartbeat fallback follows the non-heartbeat control branch. Locate
-    # that structural boundary, then retain the entire actual fallback body,
-    # including diagnostics and break-on-rejection, regardless of line layout.
-    loop = function(source, 'void active_loop_work(')
-    control = re.search(r'else\s+if\s*\(\s*envelope\.kind\s*!=\s*Kind::heartbeat\s*\)\s*\{', loop)
-    if control is None:
-        raise ValueError('The runtime non-heartbeat control branch was not found')
-    control_body = function(loop, control.group()).rstrip('\n')
-    tail = loop[control.start() + len(control_body):]
-    fallback = re.match(r'\s*(else\s*\{)', tail)
-    if fallback is None:
-        raise ValueError('The runtime heartbeat fallback was not found after control dispatch')
-    branch = function(tail, fallback.group(1))
     trace = function(source, 'struct LinkTrace {').rstrip() + ';\n'
-    dispatch = '\nbool dispatch_heartbeat(Active &storage,Envelope envelope,LinkTrace* diagnostic=nullptr){Active *active=&storage;LinkTrace local;auto& trace=diagnostic?*diagnostic:local;const auto received=now_ms();while(true){if(false){}' + branch + 'return true;}return false;}\n'
     actual = function(source, 'bool lifecycle_receive(Active &active,') + function(source, 'std::string retirement_hash(') + function(source, 'bool finish_retirement(Active &active)')
     operation = function((ROOT / 'components/consortium/removal_runtime.inc').read_text(), 'struct RemovalOperation {').rstrip() + ';\nstd::vector<RemovalOperation> removal_operations;\n'
     with tempfile.TemporaryDirectory(prefix='amity-runtime-admission-') as directory:
         cpp = Path(directory) / 'test.cpp'; binary = Path(directory) / 'test'
-        cpp.write_text(PREFIX.replace('// REMOVAL_OPERATION', operation) + trace + dispatch + actual + SUITE)
+        cpp.write_text(PREFIX.replace('// REMOVAL_OPERATION', operation) + trace + actual + SUITE)
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',

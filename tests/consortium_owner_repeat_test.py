@@ -71,7 +71,7 @@ model::OwnedIntent down(){model::OwnedIntent i;i.kind=model::OwnedIntentKind::ke
 void logical_restart_pending(const Active& active){
  assert(active.restart_requested&&active.execution_fenced&&!active.ready&&!active.status.ready&&!active.management_ready&&!active.status.management_ready);
  assert(!active.context_ready&&!active.context_requested&&active.queue.empty()&&!active.cancelled&&active.tls->usable()&&shutdowns==0);
- assert(runtime_send_control(active.peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE&&active.queue.empty());
+ assert(runtime_send_control(active.peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_ERR_INVALID_STATE&&active.queue.empty());
  assert(!diagnostic_logs.empty()&&diagnostic_logs.back().find("Session restart requested reason=")==0);
 }
 void closure(){
@@ -91,7 +91,7 @@ void duplicate_connections(){
   const auto original=old->session.scope();HelloFrame hello;hello.consortium_id=original.consortium_id;hello.octopus_id=original.peer_id;hello.boot_id=original.peer_boot_id;hello.coordinator_epoch=1;hello.required_capabilities=known_capabilities;
   assert(old->session.hello(hello,known_capabilities)==Error::none);if(ready)assert(old->session.synchronized(1,true,true)==Error::none);
   const auto state=old->session.state();
-  old->refreshing=!ready;old->queue.push_back({Kind::heartbeat,"canonical work",1000,clock_ms,1,{}});
+  old->refreshing=!ready;old->queue.push_back({Kind::device_status,"{\"hostname\":\"canonical-work\"}",1000,clock_ms,1,{}});
   controls.disconnected=[&](auto,auto,auto){++fences;old->queue.clear();old->context_ready=false;return true;};
   assert(!fence_replaced_links(*duplicate)&&duplicate->cancelled&&!old->cancelled&&old->ready==ready&&old->session.scope()==original&&old->session.state()==state&&fences==0);
   // Rejection is followed by the real worker/reaper close path. That path
@@ -100,7 +100,7 @@ void duplicate_connections(){
   reap_closed_links();
   assert(links.size()==1&&links.front()==old&&fences==0&&!old->cancelled&&old->ready==ready&&old->status.ready==ready
       &&old->session.scope()==original&&old->session.state()==state&&old->refreshing==!ready
-      &&old->context_ready&&old->queue.size()==1&&old->queue.front().payload=="canonical work");
+      &&old->context_ready&&old->queue.size()==1&&old->queue.front().payload=="{\"hostname\":\"canonical-work\"}");
  }
  // Whichever authenticated Hello claims the peer first owns that boot. Its
  // competitor cannot cancel it, including before Ready/status publication.
@@ -169,18 +169,18 @@ void connection_launch(){
 void queues(){
  reset();auto a=connection();links={a};auto i=down();
  auto foreign=i;foreign.target.port.consortium_id=ident<model::ConsortiumId>(99);assert(runtime_send_owned(foreign)==ESP_ERR_INVALID_ARG&&a->queue.empty());
- assert(runtime_send_control(a->peer,Kind::heartbeat,"first",1000)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);
- assert(a->queue.size()==3&&a->queue[0].payload=="first"&&a->queue[1].kind==Kind::scoped_intent&&queued_cleanup(a->queue[2])); // strict causal FIFO, no cleanup priority reordering
- reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_NO_MEM);i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM);logical_restart_pending(*a);assert(a->queue.empty());
- reset();a=connection();links={a};i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent age_ms=2000 ttl_ms=2000")!=std::string::npos);
- reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
+ assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"first\"}",1000)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);
+ assert(a->queue.size()==3&&a->queue[0].payload=="{\"hostname\":\"first\"}"&&a->queue[1].kind==Kind::scoped_intent&&queued_cleanup(a->queue[2])); // strict causal FIFO, no cleanup priority reordering
+ reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_OK);assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_ERR_NO_MEM);i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM);logical_restart_pending(*a);assert(a->queue.empty());
+ reset();a=connection();links={a};i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent age_ms=2000 ttl_ms=2000")!=std::string::npos);
+ reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
  reset();a=connection();links={a};model::OwnedAdapterSnapshot report;report.owner=a->session.scope().local_id;report.boot=a->session.scope().local_boot_id;
  const auto result="{\"snapshot\":"+owned_snapshot_json(report)+"}";
  assert(runtime_send_owned_result(a->peer,ident<model::LinkId>(99),result)==ESP_ERR_INVALID_STATE&&a->queue.empty());
- for(unsigned n=0;n<14;++n)assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_OK);
+ for(unsigned n=0;n<14;++n)assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_OK);
  assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_OK&&a->queue.size()==15);
  assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_ERR_NO_MEM&&!a->restart_requested&&diagnostic_logs.empty());a->queue.clear();
- reset();a=connection();links={a};assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",100)==ESP_OK);clock_ms+=100;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",100)==ESP_OK&&a->queue.size()==1);assert(runtime_send_control(a->peer,static_cast<Kind>(21),"{}",1000)==ESP_ERR_NOT_SUPPORTED);
+ reset();a=connection();links={a};assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",100)==ESP_OK);clock_ms+=100;assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",100)==ESP_OK&&a->queue.size()==1);assert(runtime_send_control(a->peer,static_cast<Kind>(21),"{}",1000)==ESP_ERR_NOT_SUPPORTED);
  // A quiet authenticated stream needs no periodic permission before fresh input.
  reset();a=connection();links={a};
  const auto scope=a->session.scope();HelloFrame hello;hello.consortium_id=scope.consortium_id;hello.octopus_id=scope.peer_id;hello.boot_id=scope.peer_boot_id;hello.coordinator_epoch=1;hello.required_capabilities=known_capabilities;
@@ -231,7 +231,7 @@ void future_context_is_recaptured(){
  assert(a->queue[0].owned->generation==9&&a->queue[0].created==clock_ms&&a->queue[0].revision==2);
  action.generation=9;assert(runtime_send_owned(action)==ESP_OK&&a->queue.size()==2&&a->queue[1].owned->generation==9);
  // Once ordinary work is admitted, its original TTL and fence remain intact.
- a->queue.pop_front();clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
+ a->queue.pop_front();clock_ms+=1000;assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
  assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired")!=std::string::npos);
 }
 void asynchronous_context_failure_is_scoped(){
@@ -299,7 +299,7 @@ void restart_flags_gate_front_doors_before_scope_rotation(){
   reset();auto a=connection();links={a};const auto original=a->session.scope();const auto transport=a->tls;
   a->execution_fenced=!pending;a->restart_requested=pending;
   assert(a->ready); // Explicit flags fence any transiently retained ready view.
-  assert(runtime_send_control(a->peer,Kind::heartbeat,"{}",1000)==ESP_ERR_INVALID_STATE);
+  assert(runtime_send_control(a->peer,Kind::device_status,"{\"hostname\":\"amity-main\"}",1000)==ESP_ERR_INVALID_STATE);
   assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);
   model::OwnedAdapterSnapshot report;report.owner=original.local_id;report.boot=original.local_boot_id;
   assert(runtime_send_owned_result(a->peer,original.link_id,"{\"snapshot\":"+owned_snapshot_json(report)+"}",1000,1)==ESP_ERR_INVALID_STATE);

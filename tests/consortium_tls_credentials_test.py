@@ -28,6 +28,9 @@ PREFIX=r'''
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#ifdef __APPLE__
+#define TCP_KEEPIDLE TCP_KEEPALIVE
+#endif
 #include <unistd.h>
 #include <fcntl.h>
 #include <algorithm>

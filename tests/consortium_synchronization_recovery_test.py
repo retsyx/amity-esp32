@@ -179,8 +179,8 @@ void recovery_revision_preserves_identity_and_fences_ordinary_revision(){
   else{member.begin(*active);on_send=[&](auto& a,const auto& e){member(a,e);};}
   assert(synchronize_connection(*active,server,true,8));same_connection(*active,original,tls,8);
   assert(server?main.rounds==1:member.rounds==1&&member.acks==1);
-  auto old=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(old,clock_ms,clock_ms)==Error::stale_config);
-  auto future=inbound(original,9,Kind::heartbeat,heartbeat);assert(active->session.admit(future,clock_ms,clock_ms)==Error::stale_config);
+  auto old=inbound(original,7,Kind::device_status,device_status);assert(active->session.admit(old,clock_ms,clock_ms)==Error::stale_config);
+  auto future=inbound(original,9,Kind::device_status,device_status);assert(active->session.admit(future,clock_ms,clock_ms)==Error::stale_config);
  }
 }
 void broken_transport_and_wrong_boot_stop_recovery(){
@@ -225,7 +225,7 @@ void observation_interleaving_preserves_identity_fences(){
 }
 void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
- auto old_scope_frame=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::none);
+ auto old_scope_frame=inbound(original,7,Kind::device_status,device_status);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::none);
  model::OwnedIntent work;work.kind=model::OwnedIntentKind::activity;work.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};work.config_revision=7;work.generation=1;work.on=true;
  const auto admitted=std::make_shared<const model::OwnedIntent>(work);
  active->queue.push_back({Kind::scoped_intent,{},1000,clock_ms,7,admitted});
@@ -288,7 +288,7 @@ void expired_operational_frame_uses_existing_connection(){
 }
 void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();
- auto old_scope_frame=inbound(original,7,Kind::heartbeat,heartbeat);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::none);
+ auto old_scope_frame=inbound(original,7,Kind::device_status,device_status);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::none);
  model::OwnedIntent work;work.kind=model::OwnedIntentKind::activity;work.target={{original.consortium_id,original.peer_id,0,model::Side::back},"Player"};work.config_revision=7;work.generation=1;work.on=true;
  auto pending=std::make_shared<const model::OwnedIntent>(work);std::weak_ptr<const model::OwnedIntent> abandoned=pending;
  active->queue.push_back({Kind::scoped_intent,{},1000,clock_ms,7,pending});pending.reset();
