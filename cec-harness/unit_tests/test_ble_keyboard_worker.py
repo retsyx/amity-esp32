@@ -258,6 +258,68 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("UnregisterAgent", [event[0] for event in events])
         self.assertEqual(events[-1], ("bus_disconnect",))
 
+    async def test_status_claims_an_early_bond_before_agent_or_gatt_and_cleans_it_after_disconnect(self):
+        owner, events = self.fixture()
+        device = owner.peer
+        owner.peer = None
+        objects = {device: {"org.bluez.Device1": {
+            "Adapter": owner.adapter, "Connected": True, "Paired": True, "Bonded": True,
+            "Address": "11:22:33:44:55:66"}}}
+
+        async def current():
+            return objects
+
+        owner._objects = current
+        status = await owner.status()
+        self.assertEqual(owner.peer, device)
+        self.assertTrue(status["connected"])
+        self.assertTrue(status["bonded"])
+        self.assertFalse(status["ready"])
+        objects[device]["org.bluez.Device1"]["Connected"] = False
+        await owner.close()
+        self.assertEqual([event[2] for event in events if event[0] == "RemoveDevice"], [[device]])
+
+    async def test_status_never_adopts_preexisting_bonds_or_active_connections(self):
+        for previous in ({"Paired": True}, {"Bonded": True}, {"Paired": True, "Bonded": False},
+                         {"Connected": True}):
+            with self.subTest(previous=previous):
+                owner, events = self.fixture()
+                device = owner.peer
+                owner.peer = None
+                owner._before_devices = {device: previous}
+                owner._before_connected = {device} if previous.get("Connected") else set()
+                objects = {device: {"org.bluez.Device1": {
+                    "Adapter": owner.adapter, "Connected": True, "Paired": True, "Bonded": True}}}
+
+                async def current():
+                    return objects
+
+                owner._objects = current
+                status = await owner.status()
+                self.assertIsNone(owner.peer)
+                self.assertFalse(status["connected"])
+                await owner.close()
+                self.assertNotIn("RemoveDevice", [event[0] for event in events])
+                self.assertNotIn("Disconnect", [event[0] for event in events])
+
+    async def test_status_rejects_ambiguous_new_connections_without_claiming_or_removing_either(self):
+        owner, events = self.fixture()
+        device = owner.peer
+        owner.peer = None
+        second = owner.adapter + "/dev_22_33_44_55_66_77"
+        objects = {path: {"org.bluez.Device1": {"Adapter": owner.adapter, "Connected": True,
+                                                 "Bonded": True}} for path in (device, second)}
+
+        async def current():
+            return objects
+
+        owner._objects = current
+        with self.assertRaisesRegex(RuntimeError, "Multiple new"):
+            await owner.status()
+        self.assertIsNone(owner.peer)
+        await owner.close()
+        self.assertNotIn("RemoveDevice", [event[0] for event in events])
+
     async def test_open_refuses_power_changes_and_existing_advertising(self):
         for powered, active in ((False, 0), (True, 1), (True, None)):
             with self.subTest(powered=powered, active=active):

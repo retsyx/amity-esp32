@@ -52,6 +52,7 @@ class Fixture:
         self.scan_reads_remaining = 0
         self.completed_scan_generation = None
         self.scan_statuses = []
+        self.terminal_pair_error = None
 
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
@@ -82,6 +83,10 @@ class Fixture:
         paired = path.endswith("/pair")
         self.state.update(bonded=paired, connected=paired, scanning=False)
         self.worker.connected = self.worker.bonded = self.worker.ready = paired
+        if paired and self.terminal_pair_error is not None:
+            self.state.update(bonded=False, connected=False, connecting=False, pairing=False,
+                              unpairing=False, last_error=self.terminal_pair_error)
+            self.worker.connected = self.worker.ready = False
         if paired and self.lose_pair_reply:
             self.lose_pair_reply = False
             raise OSError("Pair reply lost")
@@ -232,6 +237,29 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/pair"), 1)
         self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
         self.assertFalse(fixture.state["bonded"])
+
+    def test_terminal_pair_failure_stops_polling_and_only_cleans_the_new_pi_bond(self):
+        for error in (13, 1292):
+            with self.subTest(error=error):
+                fixture = Fixture()
+                fixture.terminal_pair_error = error
+                keyboard = PairedKeyboard(fixture.main)
+                with patch.object(keyboard, "_pause", side_effect=AssertionError("A terminal failure must not poll")):
+                    with self.assertRaisesRegex(KeyboardConflict, "error " + str(error)):
+                        keyboard.create()
+                self.assertIsNone(keyboard._pair_pending)
+                self.assertFalse(fixture.state["bonded"])
+                self.assertTrue(fixture.worker.bonded)
+                keyboard.close()
+                keyboard.close()
+                self.assertFalse(fixture.worker.bonded)
+                self.assertEqual(fixture.worker_calls, [("open",), ("close",)])
+                paths = [path for path, _ in fixture.calls]
+                self.assertEqual(paths.count("/api/remotes/pair"), 1)
+                self.assertNotIn("/api/remotes/unpair", paths)
+                record = fixture.bed.control_observations[0]["checks"][-1]
+                self.assertEqual(record["phase"], "pair_failed")
+                self.assertEqual(record["last_error"], error)
 
     def test_rejected_pair_does_not_authorize_unpair_and_worker_is_closed(self):
         fixture = Fixture()

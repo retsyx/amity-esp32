@@ -300,6 +300,13 @@ class PairedKeyboard:
             state = self._status(deadline)
             if state["remote_generation"] != pending["generation"]:
                 raise KeyboardConflict("Remote administration changed while pairing the keyboard")
+            error = state.get("last_error")
+            if (type(error) is int and error != 0
+                    and not any(state[name] for name in ("bonded", "connected", "connecting", "pairing", "unpairing"))):
+                self._pair_pending = None
+                self._note("pair_failed", main_boot=self.boot, remote_generation=pending["generation"],
+                           last_error=error, bonded=False, connected=False)
+                raise KeyboardConflict("The DUT rejected keyboard connection or discovery (error " + str(error) + ")")
             if self._ready(state):
                 self._created = True
                 self._pair_generation = pending["generation"]

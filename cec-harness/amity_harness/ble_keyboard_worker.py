@@ -248,6 +248,21 @@ class BlueZKeyboard:
 
     async def status(self):
         objects = await self._objects()
+        if self.peer is None:
+            candidates = []
+            for path, interfaces in objects.items():
+                device = interfaces.get("org.bluez.Device1", {})
+                previous = self._before_devices.get(path, {})
+                if (device.get("Adapter") == self.adapter and device.get("Connected") is True
+                        and path not in self._before_connected
+                        and previous.get("Bonded") is not True and previous.get("Paired") is not True):
+                    candidates.append(path)
+            if len(candidates) > 1:
+                raise RuntimeError("Multiple new Bluetooth connections cannot identify the keyboard peer")
+            if candidates:
+                # Just Works can complete before any Agent or GATT callback.
+                # Keep that exact connection's identity for failure cleanup.
+                await self.claim_peer(candidates[0])
         peer = objects.get(self.peer, {}).get("org.bluez.Device1", {}) if self.peer else {}
         connected = peer.get("Connected") is True
         bonded = peer.get("Bonded", peer.get("Paired", False)) is True
@@ -292,7 +307,7 @@ class BlueZKeyboard:
                 await attempt(self.disconnect)
                 if self.peer:
                     previous = self._before_devices.get(self.peer, {})
-                    if previous.get("Bonded", previous.get("Paired", False)) is not True:
+                    if previous.get("Bonded") is not True and previous.get("Paired") is not True:
                         await attempt(lambda: self._call(self.adapter, "org.bluez.Adapter1", "RemoveDevice", "o", [self.peer]))
                 if self._application:
                     await attempt(lambda: self._call(self.adapter, "org.bluez.GattManager1", "UnregisterApplication", "o", [self.path]))
