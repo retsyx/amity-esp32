@@ -6,10 +6,10 @@ struct SettingsCache {
 };
 struct SettingsOperation {
     model::OctopusId owner;model::MessageId id;model::BootId target_boot;model::LinkId link;
-    std::string core,stage="admitted",error;uint64_t expires=0;bool awaiting_response=false;
+    std::string core,stage="admitted",error;uint64_t expires=0;
 };
 struct SettingsReceived {
-    model::MessageId id;model::BootId issuer_boot;std::string core,response;bool pending=true,restarted=false,committed=false;
+    model::MessageId id;model::BootId issuer_boot;std::string core,response;bool pending=true;
 };
 struct SettingsAuthorization {
     model::MessageId id;bool local=false;uint64_t expires=0,config=0;
@@ -20,8 +20,8 @@ std::vector<SettingsOperation> settings_operations;
 std::vector<SettingsReceived> settings_received;
 SettingsAuthorization settings_authorization;
 std::string settings_quote(std::string_view text){Json value;value.type=Json::Type::string;value.string=text;return settings_json(value);}
-std::string settings_result(model::MessageId id,std::string_view operation,std::string_view stage,std::string_view error,std::string_view snapshot="null",bool rebooting=false){
-    return "{\"request_id\":\""+id.str()+"\",\"operation\":"+settings_quote(operation)+",\"stage\":"+settings_quote(stage)+",\"error\":"+settings_quote(error)+",\"snapshot\":"+std::string(snapshot)+",\"rebooting\":"+(rebooting?"true":"false")+"}";
+std::string settings_result(model::MessageId id,std::string_view operation,std::string_view stage,std::string_view error,std::string_view snapshot="null"){
+    return "{\"request_id\":\""+id.str()+"\",\"operation\":"+settings_quote(operation)+",\"stage\":"+settings_quote(stage)+",\"error\":"+settings_quote(error)+",\"snapshot\":"+std::string(snapshot)+",\"rebooting\":false}";
 }
 const char* settings_error(Error result){switch(result){case Error::stale_boot:return "STALE_BOOT";case Error::transaction_conflict:case Error::stale_config:return "CONFLICT";case Error::expired:return "EXPIRED";case Error::storage_failure:return "STORAGE_FAILURE";case Error::queue_full:return "QUEUE_FULL";case Error::invalid_message:return "INVALID_MESSAGE";default:return "NOT_READY";}}
 const char* settings_message(std::string_view error){if(error=="STALE_BOOT")return "This device restarted. Open its settings again.";if(error=="CONFLICT")return "Settings changed. Open the settings again.";if(error=="EXPIRED")return "The request expired. Open the settings again.";if(error=="STORAGE_FAILURE")return "The device could not save its settings.";if(error=="QUEUE_FULL")return "The device is busy. Try again shortly.";if(error=="INVALID_MESSAGE")return "Check the selected adapter settings.";return "The device is not ready. Open its settings again.";}
@@ -41,8 +41,8 @@ SettingsCache* settings_cache(model::OctopusId owner,bool create){
 }
 void settings_expire(uint64_t now){
     for(auto& item:settings_operations)if(item.stage=="admitted"&&now>=item.expires){item.stage="unknown";item.error="The result was not confirmed. The request will not be repeated.";}
-    while(std::count_if(settings_operations.begin(),settings_operations.end(),[](const auto& item){return item.stage!="admitted"&&!item.awaiting_response;})>8){auto old=std::find_if(settings_operations.begin(),settings_operations.end(),[](const auto& item){return item.stage!="admitted"&&!item.awaiting_response;});settings_operations.erase(old);}
-    while(std::count_if(settings_received.begin(),settings_received.end(),[](const auto& item){return !item.pending&&(!item.committed||item.restarted);})>8){auto old=std::find_if(settings_received.begin(),settings_received.end(),[](const auto& item){return !item.pending&&(!item.committed||item.restarted);});settings_received.erase(old);}
+    while(std::count_if(settings_operations.begin(),settings_operations.end(),[](const auto& item){return item.stage!="admitted";})>8){auto old=std::find_if(settings_operations.begin(),settings_operations.end(),[](const auto& item){return item.stage!="admitted";});settings_operations.erase(old);}
+    while(std::count_if(settings_received.begin(),settings_received.end(),[](const auto& item){return !item.pending;})>8){auto old=std::find_if(settings_received.begin(),settings_received.end(),[](const auto& item){return !item.pending;});settings_received.erase(old);}
 }
 bool settings_authorized_locked(model::MessageId id){
     const auto& permit=settings_authorization;const auto now=now_ms();
@@ -69,16 +69,12 @@ std::string settings_apply(const std::shared_ptr<Active>& active,model::MessageI
     Json returned;JsonError detail;bool applied=false;std::string wire;
     if(parse_json(response,returned,detail,4096)&&closed(returned,{"request_id","stage","error","snapshot"})&&returned.get("request_id")->type==Json::Type::string&&returned.get("request_id")->string==id.str()&&returned.get("stage")->type==Json::Type::string&&returned.get("error")->type==Json::Type::string){
         const auto stage=returned.get("stage")->string;applied=result==Error::none&&stage=="applied";
-        wire=settings_result(id,"write",applied?"applied":"failed",applied?"":settings_error(result),applied?settings_json(*returned.get("snapshot")):"null",applied);
+        wire=settings_result(id,"write",applied?"applied":"failed",applied?"":settings_error(result),applied?settings_json(*returned.get("snapshot")):"null");
         Json validated;if(!parse_json(wire,validated,detail,4096)||!valid_settings_payload(Kind::settings_result,validated))wire.clear();
     }
     if(wire.empty())wire=settings_result(id,"write","failed",settings_error(result==Error::none?Error::invalid_message:result));
-    {std::lock_guard<std::mutex> guard(lock);settings_authorization={};for(auto& saved:settings_received)if(saved.id==id&&saved.issuer_boot==issuer){saved.pending=false;saved.response=wire;saved.committed=result==Error::none;}settings_expire(now_ms());}
+    {std::lock_guard<std::mutex> guard(lock);settings_authorization={};for(auto& saved:settings_received)if(saved.id==id&&saved.issuer_boot==issuer){saved.pending=false;saved.response=wire;}settings_expire(now_ms());}
     return wire;
-}
-void settings_after_response(model::MessageId id,model::BootId issuer){
-    RuntimeSettingsHooks hooks;{std::lock_guard<std::mutex> guard(lock);for(auto& saved:settings_received)if(saved.id==id&&saved.issuer_boot==issuer&&!saved.pending&&!saved.restarted&&saved.committed){saved.restarted=true;hooks=settings_hooks;break;}}
-    if(hooks.after_apply)hooks.after_apply();
 }
 bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& envelope,uint64_t received){
     if(!is_settings_kind(envelope.kind))return false;
@@ -106,8 +102,5 @@ bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& env
     if(!id.valid()||parse_device_settings_write(*envelope.payload.get("settings"),write)!=Error::none||write.expected_boot!=boot)return false;
     if(received>UINT64_MAX-envelope.ttl_ms)return false;
     const auto response=settings_apply(active,id,*envelope.payload.get("settings"),received+envelope.ttl_ms);
-    const bool delivered=send(*active,Kind::settings_result,response,2000);
-    // Explicit Save authorized this target restart after durable commit. A lost
-    // reply leaves the client uncertain; it must not strand the owner in maintenance.
-    settings_after_response(id,active->session.scope().peer_boot_id);return delivered;
+    return send(*active,Kind::settings_result,response,2000);
 }

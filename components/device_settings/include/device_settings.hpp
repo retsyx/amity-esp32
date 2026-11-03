@@ -32,9 +32,9 @@ const amity::FactoryCredentials *factory();
 const char *hostname();
 const char *initial_admin_auth();
 uint16_t front_physical_address();
-esp_err_t save_front_physical_address(const std::string &value); // Applies on reboot.
-// Stable hardware slots, never a compact list of attached adapters. The boot
-// copy is immutable; saved preferences become active only after a restart.
+esp_err_t save_front_physical_address(const std::string &value);
+// Stable hardware slots, never a compact list of attached adapters. The owner
+// applies durable defaults to fallback-selected addresses on its task.
 constexpr std::array<uint16_t, amity::max_tentacles> default_adapter_physical_addresses() {
     std::array<uint16_t, amity::max_tentacles> result{};
     for(auto& address:result)address=default_front_physical_address;
@@ -46,7 +46,6 @@ struct AdapterDefaults {
 };
 struct AdapterDefaultChange { uint8_t tentacle_id; uint16_t front_physical; };
 AdapterDefaults adapter_defaults();
-AdapterDefaults startup_adapter_defaults();
 // One atomic NVS blob for the complete batch. Unchanged slots are retained.
 esp_err_t save_adapter_defaults(uint64_t expected_revision, const std::vector<AdapterDefaultChange>&);
 bool normalize_hostname(std::string &value);

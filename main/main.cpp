@@ -497,16 +497,16 @@ extern "C" void app_main() {
     const auto boot=amity::system::BootId::parse(system_services::boot_id());
     if(!boot)return;
     hub.set_boot_identity(*boot);
-    auto cec_start=hub.start(startup_profile,device_settings::startup_adapter_defaults().front_physical);
+    auto cec_start=hub.start(startup_profile,device_settings::adapter_defaults().front_physical);
     if(cec_start!=ESP_OK&&startup_profile.id==cec::BoardProfileId::Development4Tentacle){
         ESP_LOGE("amity","HDMI adapter startup failed (%s); retaining administration with all CEC outputs disabled",esp_err_to_name(cec_start));
         hub.set_hardware_error("HDMI control could not start. Check the device wiring or install firmware intended for this hardware. Administration remains available.");
-        passive_profile();cec_start=hub.start(startup_profile,device_settings::startup_adapter_defaults().front_physical);
+        passive_profile();cec_start=hub.start(startup_profile,device_settings::adapter_defaults().front_physical);
     }
     ESP_ERROR_CHECK(cec_start);
     system_services::adapter_settings::install(hub);
     amity::consortium::runtime_settings_hooks({system_services::adapter_settings::snapshot,
-        system_services::adapter_settings::apply,system_services::adapter_settings::after_apply});
+        system_services::adapter_settings::apply});
     const auto configuration_load=web_admin::load(hub,passive_startup);
     if(configuration_load!=ESP_OK){
         ESP_LOGE("amity","Equipment configuration needs recovery; retaining storage and passive CEC isolation");

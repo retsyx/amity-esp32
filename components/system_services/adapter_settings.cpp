@@ -3,7 +3,6 @@
 #include "amity/system_control.hpp"
 #include "amity/consortium/runtime.hpp"
 #include "device_settings.hpp"
-#include "system_services.hpp"
 #include "esp_timer.h"
 #include <algorithm>
 #include <atomic>
@@ -16,7 +15,6 @@ namespace c=amity::consortium;
 namespace m=amity::system;
 amity::SystemControl* owner=nullptr;
 std::mutex mutation;
-bool restart_pending=false,restart_scheduled=false;
 struct Receipt {m::MessageId id;std::string fingerprint,response;c::Error outcome;};
 std::vector<Receipt> receipts;
 uint64_t now(){return static_cast<uint64_t>(esp_timer_get_time()/1000);}
@@ -37,10 +35,8 @@ std::string result(m::MessageId id,c::Error error){return "{\"request_id\":\""+i
 struct Change {device_settings::AdapterDefaultChange preference;};
 struct Request {m::BootId boot;uint64_t revision=0;std::vector<Change> changes;std::string fingerprint;};
 bool parse(const c::Json& json,Request& request){
-    bool confirm=false;
-    if(!c::closed(json,{"expected_boot_id","expected_settings_revision","confirm_restart","changes"})||
-       !c::id(json.get("expected_boot_id"),request.boot)||!c::decimal(json.get("expected_settings_revision"),request.revision)||!request.revision||
-       !c::json_bool(json.get("confirm_restart"),confirm)||!confirm)return false;
+    if(!c::closed(json,{"expected_boot_id","expected_settings_revision","changes"})||
+       !c::id(json.get("expected_boot_id"),request.boot)||!c::decimal(json.get("expected_settings_revision"),request.revision)||!request.revision)return false;
     const auto* changes=json.get("changes");
     if(!changes||changes->type!=c::Json::Type::array||changes->array.empty()||changes->array.size()>amity::max_tentacles)return false;
     uint8_t seen=0;
@@ -57,7 +53,7 @@ bool parse(const c::Json& json,Request& request){
     return true;
 }
 }
-void install(amity::SystemControl& value){std::lock_guard<std::mutex> lock(mutation);owner=&value;restart_pending=false;restart_scheduled=false;receipts.clear();}
+void install(amity::SystemControl& value){std::lock_guard<std::mutex> lock(mutation);owner=&value;receipts.clear();}
 std::string snapshot(){
     if(!owner)return "{}";
     const auto defaults=device_settings::adapter_defaults();
@@ -68,7 +64,7 @@ std::string snapshot(){
         if(row.tentacle_id>=owner->supported_tentacles()||row.tentacle_id>=amity::max_tentacles)continue;
         if(!first)out+=',';
         first=false;
-        out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+"}";
+        out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+",\"selected_from_default\":"+(row.selected_from_default?"true":"false")+"}";
     }
     return out+"]}";
 }
@@ -85,11 +81,11 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
     else if(request.boot!=owner->boot_identity())error=c::Error::stale_boot;
     else if(request.revision!=device_settings::adapter_defaults().revision)error=c::Error::transaction_conflict;
     else if(!deadline||now()>=deadline)error=c::Error::expired;
-    else if(restart_pending||!c::runtime_device_settings_authorized(id))error=c::Error::not_ready;
+    else if(!c::runtime_device_settings_authorized(id))error=c::Error::not_ready;
     else {
         std::vector<device_settings::AdapterDefaultChange> preferences;
-        std::vector<uint8_t> adapters;
-        for(const auto& change:request.changes){preferences.push_back(change.preference);adapters.push_back(change.preference.tentacle_id);}
+        std::vector<amity::AdapterAddressChange> adapters;
+        for(const auto& change:request.changes){preferences.push_back(change.preference);adapters.push_back({change.preference.tentacle_id,change.preference.front_physical});}
         auto failure=std::make_shared<std::atomic<c::Error>>(c::Error::none);
         const auto applied=owner->commit_adapter_settings(request.boot,std::move(adapters),deadline,
             [id,deadline,revision=request.revision,preferences=std::move(preferences),failure]{
@@ -102,16 +98,10 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
             });
         error=failure->load();
         if(error==c::Error::none&&applied!=ESP_OK)error=now()>=deadline?c::Error::expired:applied==ESP_ERR_NO_MEM?c::Error::queue_full:c::Error::not_ready;
-        if(error==c::Error::none)restart_pending=true;
     }
     response=result(id,error);
     if(receipts.size()==8)receipts.erase(receipts.begin());
     receipts.push_back({id,std::move(request.fingerprint),response,error});
     return error;
-}
-void after_apply(){
-    bool schedule=false;
-    {std::lock_guard<std::mutex> lock(mutation);if(restart_pending&&!restart_scheduled){restart_scheduled=true;schedule=true;}}
-    if(schedule)reboot_later();
 }
 }

@@ -24,11 +24,13 @@ class SettingsFixture(Fixture):
         self.restarts = 0
         self.current_activity = -1
         self.bad_operation_id = self.bad_main_boot = self.reject_settings = False
-        self.lose_settings_reply = self.stay_on_old_boot = self.change_other_default = False
-        self.post_boot_unready_reads = 0
+        self.lose_settings_reply = self.restart_during_save = self.change_other_default = False
+        self.post_save_unready_reads = 0
         self.pending_address_reads = 0
         self.observed_address = None
         self.effective_override = None
+        self.selected_from_default = True
+        self.provenance_override = None
 
     @property
     def settings_path(self):
@@ -47,12 +49,17 @@ class SettingsFixture(Fixture):
                 "adapters": [{"tentacle_id": index, "configured": True,
                               "default_front_physical_address": address,
                               "observed_front_physical_address": None,
-                              "effective_front_physical_address": address}
+                              "effective_front_physical_address": address,
+                              "selected_from_default": True}
                              for index, address in self.defaults.items()]}}
             if self.observed_address is not None:
-                result["settings"]["adapters"][2].update(
-                    observed_front_physical_address=self.observed_address,
-                    effective_front_physical_address=self.observed_address)
+                result["settings"]["adapters"][2]["observed_front_physical_address"] = self.observed_address
+            selected = result["settings"]["adapters"][2]
+            selected["selected_from_default"] = self.selected_from_default
+            if not self.selected_from_default:
+                selected["effective_front_physical_address"] = self.observed_address
+            if self.provenance_override is not None:
+                selected["selected_from_default"] = self.provenance_override
             if self.effective_override is not None:
                 result["settings"]["adapters"][2]["effective_front_physical_address"] = self.effective_override
             if self.pending_address_reads:
@@ -70,15 +77,15 @@ class SettingsFixture(Fixture):
         if self.change_other_default:
             self.defaults[0] = "3.0.0.0"
         self.revision += 1
-        self.pending_address_reads = self.post_boot_unready_reads
-        if not self.stay_on_old_boot:
+        self.pending_address_reads = self.post_save_unready_reads
+        if self.restart_during_save:
             self.restarts += 1
             self.settings_boot = str(self.restarts) * 32
             peer, = (peer for peer in self.system["membership"]["peers"]
                      if peer["octopus_id"] == self.candidate.identity.device_id)
             peer["boot_id"] = self.settings_boot
         result = self.operation(data["request_id"], "applied")
-        result["rebooting"] = True
+        result["rebooting"] = False
         if self.bad_operation_id:
             result["operation_id"] = "9" * 32
         if self.bad_main_boot:
@@ -103,22 +110,22 @@ class AdapterSettingsTests(unittest.TestCase):
         member = fixture.added(timeout=0.2).create()
         return fixture, member
 
-    def test_ui_write_and_restore_prove_each_new_boot_and_keep_other_defaults(self):
+    def test_ui_write_and_restore_preserve_boot_and_keep_other_defaults(self):
         fixture, member = self.fixture()
         old_boot = member.member_boot
         with member.front_physical_address(2, "1.2.0.0"):
-            self.assertNotEqual(member.member_boot, old_boot)
+            self.assertEqual(member.member_boot, old_boot)
             self.assertIs(fixture.bed._member_proofs[member.device_id], member)
             self.assertEqual(fixture.defaults, {0: "1.0.0.0", 1: "1.0.0.0", 2: "1.2.0.0", 3: "1.0.0.0"})
             selected_boot = member.member_boot
-        self.assertNotEqual(member.member_boot, selected_boot)
+        self.assertEqual(member.member_boot, selected_boot)
+        self.assertEqual(fixture.restarts, 0)
         self.assertEqual(fixture.defaults, {index: "1.0.0.0" for index in range(4)})
         self.assertEqual(len(fixture.writes), 2)
         first, restore = fixture.writes
-        self.assertEqual(set(first), {"request_id", "expected_boot_id", "expected_settings_revision", "confirm_restart", "changes"})
+        self.assertEqual(set(first), {"request_id", "expected_boot_id", "expected_settings_revision", "changes"})
         self.assertEqual(first["expected_boot_id"], old_boot)
         self.assertEqual(first["expected_settings_revision"], "7")
-        self.assertIs(first["confirm_restart"], True)
         self.assertEqual(first["changes"], [{"tentacle_id": 2, "default_front_physical_address": "1.2.0.0"}])
         self.assertEqual(restore["expected_boot_id"], selected_boot)
         self.assertEqual(restore["expected_settings_revision"], "8")
@@ -134,9 +141,9 @@ class AdapterSettingsTests(unittest.TestCase):
             self.assertEqual(fixture.writes, [])
         self.assertEqual(fixture.restarts, 0)
 
-    def test_post_restart_effective_address_must_finish_initializing(self):
+    def test_applied_selected_address_must_be_available(self):
         fixture, member = self.fixture()
-        fixture.post_boot_unready_reads = 2
+        fixture.post_save_unready_reads = 2
         with member.front_physical_address(2, "1.2.0.0"):
             self.assertEqual(fixture.pending_address_reads, 0)
             self.assertEqual(fixture.defaults[2], "1.2.0.0")
@@ -145,6 +152,7 @@ class AdapterSettingsTests(unittest.TestCase):
     def test_restore_previous_default_keeps_live_observed_address_effective(self):
         fixture, member = self.fixture()
         fixture.observed_address = "1.2.0.0"
+        fixture.selected_from_default = False
         with member.front_physical_address(2, "1.2.0.0"):
             self.assertEqual(fixture.defaults[2], "1.2.0.0")
         self.assertEqual(fixture.defaults[2], "1.0.0.0")
@@ -153,17 +161,55 @@ class AdapterSettingsTests(unittest.TestCase):
         self.assertEqual(adapter["default_front_physical_address"], "1.0.0.0")
         self.assertEqual(adapter["observed_front_physical_address"], "1.2.0.0")
         self.assertEqual(adapter["effective_front_physical_address"], "1.2.0.0")
-        self.assertEqual(fixture.restarts, 2)
+        self.assertEqual(fixture.restarts, 0)
 
-    def test_restore_default_does_not_override_owner_cec_address_selection(self):
+    def test_wrong_selected_address_is_rejected_even_when_default_was_saved(self):
         fixture, member = self.fixture()
-        fixture.effective_override = "1.2.0.0"
+        original = fixture.request
+        def wrong_after_save(path, data=None, **kwargs):
+            if path == fixture.settings_path and data is None and fixture.writes:
+                fixture.effective_override = "4.0.0.0"
+            return original(path, data, **kwargs)
+        fixture.main.request = wrong_after_save
+        with self.assertRaisesRegex(MembershipConflict, "selection source"):
+            member.front_physical_address(2, "1.2.0.0")
+
+    def test_detected_address_equal_to_old_default_is_not_replaced(self):
+        fixture, member = self.fixture()
+        fixture.observed_address = "1.0.0.0"
+        fixture.selected_from_default = False
         with member.front_physical_address(2, "1.2.0.0"):
-            self.assertEqual(fixture.defaults[2], "1.2.0.0")
-        self.assertEqual(fixture.defaults[2], "1.0.0.0")
-        snapshot = fixture.request(fixture.settings_path)["settings"]["adapters"][2]
-        self.assertIsNone(snapshot["observed_front_physical_address"])
-        self.assertEqual(snapshot["effective_front_physical_address"], "1.2.0.0")
+            selected = fixture.request(fixture.settings_path)["settings"]["adapters"][2]
+            self.assertEqual(selected["default_front_physical_address"], "1.2.0.0")
+            self.assertEqual(selected["effective_front_physical_address"], "1.0.0.0")
+        self.assertEqual(fixture.restarts, 0)
+
+    def test_later_observed_address_does_not_change_fallback_selection_origin(self):
+        fixture, member = self.fixture()
+        fixture.observed_address = "4.0.0.0"
+        with member.front_physical_address(2, "1.2.0.0"):
+            selected = fixture.request(fixture.settings_path)["settings"]["adapters"][2]
+            self.assertEqual(selected["observed_front_physical_address"], "4.0.0.0")
+            self.assertEqual(selected["effective_front_physical_address"], "1.2.0.0")
+        self.assertEqual(fixture.restarts, 0)
+
+    def test_equal_saved_default_with_different_detected_selection_needs_no_write(self):
+        fixture, member = self.fixture()
+        fixture.observed_address = "4.0.0.0"
+        fixture.selected_from_default = False
+        with member.front_physical_address(2, "1.0.0.0"):
+            self.assertEqual(fixture.writes, [])
+
+    def test_changed_selection_source_is_rejected(self):
+        fixture, member = self.fixture()
+        original = fixture.request
+        def changed_after_save(path, data=None, **kwargs):
+            if path == fixture.settings_path and data is None and fixture.writes:
+                fixture.provenance_override = False
+            return original(path, data, **kwargs)
+        fixture.main.request = changed_after_save
+        with self.assertRaisesRegex(MembershipConflict, "selection source"):
+            member.front_physical_address(2, "1.2.0.0")
 
     def test_wrong_operation_or_main_boot_cannot_replace_member_proof(self):
         for field in ("bad_operation_id", "bad_main_boot"):
@@ -175,10 +221,10 @@ class AdapterSettingsTests(unittest.TestCase):
                     member.front_physical_address(2, "1.2.0.0")
                 self.assertEqual(member.member_boot, old_boot)
 
-    def test_new_boot_and_unchanged_other_defaults_are_required(self):
+    def test_same_boot_and_unchanged_other_defaults_are_required(self):
         fixture, member = self.fixture()
-        fixture.stay_on_old_boot = True
-        with self.assertRaises(TimeoutError):
+        fixture.restart_during_save = True
+        with self.assertRaisesRegex(MembershipConflict, "restarted"):
             member.front_physical_address(2, "1.2.0.0", timeout=0.01)
         fixture, member = self.fixture()
         fixture.change_other_default = True

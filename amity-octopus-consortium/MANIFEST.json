@@ -1,6 +1,6 @@
 {
   "package": "Amity qualified owner lookup",
-  "amendment_date": "2026-11-01",
+  "amendment_date": "2026-11-02",
   "behavior_baseline": "98e64a6 plus explicit user amendments in AGENTS.md",
   "contract": "Stable Amity device ID / HDMI adapter / CEC side / OSD name; canonical schema3 saved intent and original local algorithms through authenticated owner delivery. No persistent enabled or executable graph approvals.",
   "hash_algorithm": "SHA-256",
@@ -13,8 +13,8 @@
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 7029,
-      "sha256": "3627a1689e5a4e15a32866d963f02effb97da8c54da8ddc53b88960979a66d5c"
+      "size_bytes": 7478,
+      "sha256": "1dc7f5058a61c80f7f5e77474b6fcc033b373c75fd74574f174668333d733a2e"
     },
     {
       "path": "05-discovery-and-topology.md",
@@ -33,8 +33,8 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 27905,
-      "sha256": "057cd19b20df0d68aad930f19b950d5c39d4c984acde43d9f632be2b3a2573a3"
+      "size_bytes": 28071,
+      "sha256": "3eea60dbeb054d90419ec7fee229207635e9da228f7d6119f0b8b3ba32f1183b"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -48,13 +48,13 @@
     },
     {
       "path": "11-configuration-storage.md",
-      "size_bytes": 7051,
-      "sha256": "7a93d3f3bc7488eeffac5844b609f4ccff96da6b9ba20cb6eaf22ab074ec1a7e"
+      "size_bytes": 7351,
+      "sha256": "f0933699cd7259863957b9b132ba6c6740c531cfde1f792d59938fc526751a5c"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 9649,
-      "sha256": "46b731e0eefd6daac72a5abd742d610088726a48cd6e0d12f8ea953b0814d43a"
+      "size_bytes": 10121,
+      "sha256": "afdad5b99a2dd55f288fca07558ca5e39621e8921c4bbee4209cf93c97f4a50b"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
@@ -68,8 +68,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 24480,
-      "sha256": "ac18078954aec3dfbae7ff4fda30caf7508d44719b855c0e4d4a3359c0f10d3b"
+      "size_bytes": 26457,
+      "sha256": "28dfe5d87cd78e47483ce29b69b18b49b474782ce2a526bf58d2c5dbdbb5935b"
     },
     {
       "path": "19-source-baseline.md",
@@ -78,13 +78,13 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 31978,
-      "sha256": "b29e9aa2d25f042a48a19647e13ab388751659919b99524dbcc66d0adfec73f8"
+      "size_bytes": 32705,
+      "sha256": "e90ad9367a662c132f8ed267df206de0de0cb8300dc82b6c91e778a6d7bcff69"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 10675,
-      "sha256": "1c79dbaea0719e379dc79970f8cab43faf1569545a0b76bb13b7c0d4c8f0bfd3"
+      "size_bytes": 10956,
+      "sha256": "adae69a1f21d6e42ed0db82031169db6e27f8268f30761d16f0599e21c9b86ec"
     },
     {
       "path": "README.md",
@@ -143,8 +143,8 @@
     },
     {
       "path": "schemas/adapter-settings.schema.json",
-      "size_bytes": 6715,
-      "sha256": "a6acbbea1571ac97696ca9d03efe25a65b7d95e10ae14c7b3698240dd4383a50"
+      "size_bytes": 6649,
+      "sha256": "e4c779f9f60ec7e646e11986fceaced988720abbfaf0bda31a3aa3daede23e2f"
     },
     {
       "path": "schemas/cec-address.schema.json",

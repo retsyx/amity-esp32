@@ -4,7 +4,6 @@ from copy import deepcopy
 import time
 from uuid import uuid4
 
-from .discovery import _identifier
 from .dut import AmityHTTPError, _positive_seconds
 from .membership import MembershipConflict
 from .topology import format_physical_address
@@ -18,9 +17,9 @@ def _counter(value):
 class FrontPhysicalAddress:
     """Save, verify and restore one test-owned member's adapter default.
 
-    The ordinary UI operation restarts the member. Only its applied receipt,
-    a new ready member boot, and matching settings authorize replacing this
-    fixture's old boot proof. Existing scans retain and enforce their old boot.
+    Applying and restoring preserve the verified member boot and scan proofs.
+    A saved fallback changes the selected address only while that selection
+    originates from the default, independently of matching address numbers.
     """
 
     _cleanup_priority = 1
@@ -74,7 +73,11 @@ class FrontPhysicalAddress:
                 if (not isinstance(body, dict) or body.get("boot_id") != self.member.member_boot
                         or not _counter(body.get("settings_revision"))):
                     raise MembershipConflict("Adapter settings do not match the proven member boot/revision")
-                return self._validate_snapshot(body)
+                snapshot, selected = self._validate_snapshot(body)
+                if selected["effective_front_physical_address"] is not None:
+                    return snapshot, selected
+                self._pause(deadline)
+                continue
             if result.get("status") not in {"reading", "offline", "error"}:
                 raise MembershipConflict("The member cannot edit adapter settings")
             self._pause(deadline)
@@ -100,8 +103,16 @@ class FrontPhysicalAddress:
                 if not isinstance(row.get("default_front_physical_address"), str):
                     raise ValueError("A UI physical address must be text")
                 format_physical_address(row.get("default_front_physical_address"))
+                for name in ("observed_front_physical_address", "effective_front_physical_address"):
+                    value = row.get(name)
+                    if value is not None:
+                        if not isinstance(value, str):
+                            raise ValueError("A UI physical address must be text")
+                        format_physical_address(value)
+                if type(row.get("selected_from_default")) is not bool:
+                    raise ValueError("The selected address needs its actual selection source")
             except (TypeError, ValueError) as error:
-                raise MembershipConflict("Adapter settings returned an invalid physical address") from error
+                raise MembershipConflict("Adapter settings returned an invalid physical address or selection source") from error
         return deepcopy(body), deepcopy(selected[0])
 
     @staticmethod
@@ -117,10 +128,10 @@ class FrontPhysicalAddress:
                     or operation.get("boot_id") != self.member.boot):
                 raise MembershipConflict("The adapter settings operation changed identity or main boot")
             pending["record"]["stage"] = operation.get("stage")
-            if operation.get("stage") == "applied" and operation.get("rebooting") is True:
+            if operation.get("stage") == "applied" and operation.get("rebooting") is False:
                 return
             if operation.get("stage") != "admitted":
-                raise MembershipConflict("The adapter settings write was not confirmed applied with restart")
+                raise MembershipConflict("The adapter settings write was not confirmed applied without restart")
             self._pause(deadline)
             operation = None
 
@@ -128,8 +139,10 @@ class FrontPhysicalAddress:
         pending = self._pending
         self._operation(pending.get("operation"), pending, deadline)
         while True:
-            system, peer, ready = self.member._connected_snapshot(deadline=deadline)
-            if ready and _identifier(peer.get("boot_id")) and peer["boot_id"] != pending["old_boot"]:
+            _, peer, ready = self.member._connected_snapshot(deadline=deadline)
+            if peer.get("boot_id") != pending["owner_boot"]:
+                raise MembershipConflict("The member restarted during the live adapter settings change")
+            if ready:
                 result = self._request(self.path, deadline=deadline)
                 if self.member._settings_match(result, peer):
                     body, selected = self._validate_snapshot(result["settings"], require_configured=False)
@@ -137,36 +150,19 @@ class FrontPhysicalAddress:
                     expected[self.tentacle] = pending["address"]
                     if (self._defaults(body) != expected or not _counter(body.get("settings_revision"))
                             or int(body["settings_revision"]) <= int(pending["revision"])):
-                        raise MembershipConflict("Restarted member did not apply exactly the reviewed adapter address")
-                    observed = selected.get("observed_front_physical_address")
-                    if observed is not None:
-                        try:
-                            if not isinstance(observed, str):
-                                raise ValueError("A UI physical address must be text")
-                            observed = format_physical_address(observed).upper()
-                        except (TypeError, ValueError) as error:
-                            raise MembershipConflict("Adapter settings returned an invalid observed address") from error
-                    # Applying must establish the topology requested by the
-                    # scenario. Restoring saves the previous fallback while
-                    # live discovery may still select the attached source's
-                    # observed address over that fallback.
+                        raise MembershipConflict("The member did not apply exactly the reviewed adapter address")
                     effective = selected.get("effective_front_physical_address")
                     if selected.get("configured") is not True or effective is None:
                         self._pause(deadline)
                         continue
-                    try:
-                        effective = format_physical_address(effective).upper()
-                    except (TypeError, ValueError) as error:
-                        raise MembershipConflict("Adapter settings returned an invalid effective address") from error
-                    if pending["phase"] == "apply" and effective != pending["address"]:
-                        self._pause(deadline)
-                        continue
-                    # This intentionally invalidates old ScanResult boot proofs.
-                    # It is allowed only after the exact write's reboot receipt
-                    # and full ready/configuration/settings evidence above.
-                    self.member.member_boot = peer["boot_id"]
+                    effective = format_physical_address(effective).upper()
+                    if (selected["selected_from_default"] != pending["selected_from_default"]
+                            or effective != pending["selected_address"]):
+                        raise MembershipConflict("The selected address did not follow its reviewed selection source")
                     self.member.assert_connected(timeout=self._remaining(deadline))
-                    pending["record"].update(member_boot=peer["boot_id"], settings_revision=body["settings_revision"])
+                    pending["record"].update(member_boot=peer["boot_id"], settings_revision=body["settings_revision"],
+                                              selected_address=effective,
+                                              selected_from_default=selected["selected_from_default"])
                     self._changed = pending["phase"] != "restore"
                     self._pending = None
                     event("adapter_settings.verified", **pending["record"])
@@ -177,14 +173,17 @@ class FrontPhysicalAddress:
         request_id = uuid4().hex
         record = {"phase": phase, "dut": self.main.name, "device_id": self.member.device_id,
                   "tentacle_id": self.tentacle, "request_id": request_id,
-                  "old_boot": self.member.member_boot, "address": address,
+                  "owner_boot": self.member.member_boot, "address": address,
                   "previous_address": selected["default_front_physical_address"]}
         self.main.adapter_settings_operations.append(record)
-        self._pending = {"phase": phase, "request_id": request_id, "old_boot": self.member.member_boot,
+        self._pending = {"phase": phase, "request_id": request_id, "owner_boot": self.member.member_boot,
                          "address": address, "defaults": self._defaults(snapshot),
+                         "selected_from_default": selected["selected_from_default"],
+                         "selected_address": address if selected["selected_from_default"] else
+                                             format_physical_address(selected["effective_front_physical_address"]).upper(),
                          "revision": snapshot["settings_revision"], "record": record}
         payload = {"request_id": request_id, "expected_boot_id": snapshot["boot_id"],
-                   "expected_settings_revision": snapshot["settings_revision"], "confirm_restart": True,
+                   "expected_settings_revision": snapshot["settings_revision"],
                    "changes": [{"tentacle_id": self.tentacle,
                                 "default_front_physical_address": address}]}
         event("adapter_settings.submit", **record)
@@ -207,8 +206,9 @@ class FrontPhysicalAddress:
         snapshot, selected = self._snapshot(deadline)
         self._before = selected["default_front_physical_address"].upper()
         if self._before == self.address:
-            if selected.get("effective_front_physical_address") != self.address:
-                raise MembershipConflict("The adapter's effective address differs from its saved default")
+            if (selected["selected_from_default"]
+                    and selected["effective_front_physical_address"].upper() != self.address):
+                raise MembershipConflict("The selected fallback differs from its saved default")
             return self
         self._change(snapshot, selected, self.address, "apply", deadline)
         return self

@@ -79,7 +79,7 @@ struct HubService::Impl : Transport {
         system::OwnedIntent owned;system::OwnedAuthorization auth;
         system::OctopusId controller;system::LinkId link;uint64_t config_revision=0,presentation_revision=1;
         std::shared_ptr<Reply> reply;std::function<esp_err_t()> persist;std::function<void(system::OwnedContextResult)> context_completion;
-        system::BootId settings_boot;std::vector<uint8_t> settings_adapters;uint64_t settings_deadline=0;
+        system::BootId settings_boot;std::vector<AdapterAddressChange> settings_adapters;uint64_t settings_deadline=0;
     };
     std::atomic<uint32_t> intent_generation{0},key_generation{0},activity_selection{0},owned_wire_generation{1};
     std::atomic<unsigned> owner_activity_commands{0};
@@ -104,7 +104,7 @@ struct HubService::Impl : Transport {
     system::ConsortiumId consortium;system::OctopusId octopus;system::BootId local_boot;
     std::atomic<bool> local_coordinator{true},authority_transition{false},maintenance{false},maintenance_applied{false},settings_gate{false},retiring{false};
     uint64_t coordinator_epoch=1;
-    std::shared_ptr<Reply> pending_settings;system::BootId settings_boot;std::vector<uint8_t> settings_adapters;
+    std::shared_ptr<Reply> pending_settings;system::BootId settings_boot;std::vector<AdapterAddressChange> settings_adapters;
     uint64_t settings_deadline=0;std::function<esp_err_t()> settings_persist;bool settings_paused=false,owner_started=false,legacy_enabled=false;
     std::atomic<bool> maintenance_started{false};
     Hub hub{*this},activity_hub{*this};
@@ -335,7 +335,7 @@ struct HubService::Impl : Transport {
         };
         if (pending_settings->canceled.load() || now >= settings_deadline) { fail(ESP_ERR_TIMEOUT, "Settings request expired before persistence"); return; }
         if (!settings_boot || settings_boot != local_boot || retiring.load() || authority_transition.load()) { fail(ESP_ERR_INVALID_STATE, "Amity identity changed before settings apply"); return; }
-        for (const auto id : settings_adapters) if (!connector_configured(id)) {
+        for (const auto& change : settings_adapters) if (!connector_configured(change.tentacle_id)) {
             fail(ESP_ERR_INVALID_STATE, "HDMI adapter is not configured; reopen Settings"); return;
         }
         if (!wires_idle() || false) return;
@@ -344,11 +344,22 @@ struct HubService::Impl : Transport {
         const auto result = settings_persist ? settings_persist() : ESP_ERR_INVALID_ARG;
         pending_settings->settings_effect.store(3);
         if (result != ESP_OK) { fail(result, "Settings were not saved"); return; }
+        // Apply on the same task that owns the CEC identity. A detected
+        // selection keeps its address even when it equals the old default.
+        // The new fallback also covers an initial scan that is still pending.
+        for (const auto& change : settings_adapters) {
+            front_defaults[change.tentacle_id] = change.default_physical;
+            auto* engine = adapter(change.tentacle_id);
+            engine->fallback_physical = change.default_physical;
+            if (engine->hub.apply_default_front_physical_address(change.default_physical))
+                engine->hub.announce(BusSide::Front);
+        }
         pending_settings->settings_result = ESP_OK;
-        // Durable success cannot reopen old authority: the service sends its
-        // acknowledgment, then restarts this selected device.
-        maintenance.store(true); maintenance_applied.store(true);
-        passive_ports(); finish(pending_settings, {system::AdmissionCode::accepted, {}});
+        maintenance_started = false; maintenance_applied.store(false);
+        settings_paused = false;
+        publish();
+        settings_gate.store(false);
+        finish(pending_settings, {system::AdmissionCode::accepted, {}});
         pending_settings.reset(); settings_persist = {}; settings_adapters.clear();
     }
 
@@ -1369,8 +1380,8 @@ struct HubService::Impl : Transport {
         state.activity_settling=activity_settling(esp_timer_get_time());state.activity_error=last_activity_error;
         state.applied_config_revision=owned_config_revision;state.applied_presentation_revision=owned_presentation_revision;state.processed_activity_selection=processed_selection;
         xSemaphoreTake(lock,portMAX_DELAY);cached=state;cached_revision=owned_config_revision;
-        for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();
-            if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;}
+        for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();a.selected_from_default=false;
+            if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;a.observed_front_physical=engine->hub.detected_front_physical_address();a.selected_from_default=engine->hub.selected_from_default();}
         }
         auto observer=std::atomic_load(&observer_slot);auto cb=callback;xSemaphoreGive(lock);
         if(observer)for(const auto& report:changed)(*observer)(report);
@@ -1446,7 +1457,8 @@ struct HubService::Impl : Transport {
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::MaintenanceEnd:maintenance_started=false;maintenance.store(false);maintenance_applied.store(false);finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::SettingsCommit:
-            if(pending_settings||maintenance_started||control_hub().snapshot().current_activity>=0||any_keys_active()){command.reply->settings_result=ESP_ERR_INVALID_STATE;settings_gate.store(false);finish(command.reply,{system::AdmissionCode::overloaded,"Stop the activity before changing settings"});return true;}
+            if(pending_settings||maintenance_started||activity_setup_in_progress()||control_hub().activity_pending()||step_pending||
+               control_hub().snapshot().current_activity>=0||any_keys_active()){command.reply->settings_result=ESP_ERR_INVALID_STATE;settings_gate.store(false);finish(command.reply,{system::AdmissionCode::overloaded,"Stop the activity before changing settings"});return true;}
             pending_settings=command.reply;settings_boot=command.settings_boot;settings_adapters=command.settings_adapters;settings_deadline=command.settings_deadline;settings_persist=std::move(command.persist);settings_paused=true;maintenance_started=true;return true;
         default:return false;
         }
@@ -1558,14 +1570,14 @@ std::vector<AdapterRuntimeState> HubService::adapter_runtime_snapshot() const {
     xSemaphoreGive(p.lock); return snapshot;
 }
 esp_err_t HubService::commit_adapter_settings(system::BootId boot,
-        std::vector<uint8_t> adapters, uint64_t deadline,
+        std::vector<AdapterAddressChange> adapters, uint64_t deadline,
         std::function<esp_err_t()> persist) {
     auto& p = *impl_;
     if (!boot || !persist || adapters.empty() || adapters.size() > amity::max_tentacles) return ESP_ERR_INVALID_ARG;
     bool used[amity::max_tentacles]{};
-    for (const auto id : adapters) {
-        if (id >= amity::max_tentacles || used[id]) return ESP_ERR_INVALID_ARG;
-        used[id] = true;
+    for (const auto& change : adapters) {
+        if (change.tentacle_id >= amity::max_tentacles || used[change.tentacle_id]) return ESP_ERR_INVALID_ARG;
+        used[change.tentacle_id] = true;
     }
     const auto now = uint64_t(esp_timer_get_time()) / 1000;
     if (deadline <= now) return ESP_ERR_TIMEOUT;
@@ -1589,7 +1601,7 @@ esp_err_t HubService::commit_adapter_settings(system::BootId boot,
         }
         // Once the bounded persistence callback starts, cancellation cannot
         // undo its write. Obtain its real result so durable success still gets
-        // acknowledged and restarted, even if storage crosses the deadline.
+        // applied and acknowledged, even if storage crosses the deadline.
         if (waiting == 1 || waiting == 3) {
             xSemaphoreTake(reply->done, portMAX_DELAY);
             return reply->settings_result;

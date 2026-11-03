@@ -121,13 +121,35 @@ existing warning for unsaved activity edits.
 
 Each named device row, including the main, offers **Settings** in its title row. Read settings through the original main; added devices do not gain an HTTP server or UI. Opening or refreshing the dialog only reads metadata: no Scan HDMI, CEC probe, wake, route, identity claim, persistence or restart. Unknown legacy names, offline owners and unsupported firmware are shown honestly and cannot be edited.
 
-Show slots in stable connector order within the hardware profile's advertised capacity: **HDMI adapter 1** on fixed one-adapter hardware, or **HDMI adapter 1** through **HDMI adapter 4** on four-adapter hardware (internal TentacleIds 0–3). Zero, one, several or four connectors may be configured; holes never compress the numbering. There are no separate adapter-presence inputs or attachment generations. A configured CEC wire remains usable, with actual CEC replies and command ACKs determining communication results. Do not add detection pulses or pull-downs to a live CEC line; [runtime contract](04-hardware-and-cec-runtime.md).
+Show slots in stable connector order within the hardware profile's advertised capacity: **1** on fixed one-adapter hardware, or **1** through **4** on four-adapter hardware (internal TentacleIds 0–3). Zero, one, several or four connectors may be configured; holes never compress the numbering. There are no separate adapter-presence inputs or attachment generations. A configured CEC wire remains usable, with actual CEC replies and command ACKs determining communication results. Do not add detection pulses or pull-downs to a live CEC line; [runtime contract](04-hardware-and-cec-runtime.md).
 
-Show each slot's saved **Default front physical address**, **Detected front physical address** and **Selected front physical address** separately. Detected follows the original same-adapter back-device physical-address algorithm. Selected is the original lowest usable detected address, otherwise that adapter's saved default, fixed for the boot. No separate physical-address approval is required for ordinary local handling. Settings follow the connector, not a removable physical module moved to another connector.
+Use one table with the columns **Adapter**, **Default**, **Detected Address**
+and **Selected Address**. Adapter cells contain stable numbers 1–4 within the
+hardware capacity; Default cells contain the editable text fields. Avoid
+repeating “front” or presenting each address as a separate panel. Do not show
+“Configured HDMI adapters can be edited.” Detected follows the original
+same-adapter back-device physical-address algorithm. At startup Selected is the
+lowest usable detected address, otherwise that adapter's saved default.
+Settings follow the connector, not a removable module moved to another one.
 
 A configured adapter on the fresh named owner is editable, including a quiet wire with no responding CEC device. Unconfigured slots and offline/unsupported owners retain read-only defaults with their state explained. A blank value resets that slot to **1.0.0.0**; a nonblank value must be a valid dotted hierarchical CEC address. Do not infer a sibling slot's setting or address. Each slot starts independently at 1.0.0.0.
 
-**Save and restart Amity** explicitly confirms restart of the selected device only. Submit exact owner BootId, settings revision and each changed configured slot. A busy owner, stale boot/revision, expired authority or unconfigured slot rejects before writing. Reserve the owner, close positive admission, cancel discovery, drain current wire work and matching cleanup, then recheck configured slots, boot, revision and authority immediately before the bounded atomic write. A started flash write obtains its actual result even if it crosses the original request deadline. On durable success keep old authority closed, attempt the applied response, and schedule the selected device's restart even if response delivery fails. Admission alone never permits restart. If the browser loses the result, show an unknown outcome and require explicit fresh read/reconciliation; do not resubmit automatically. Failure before persistence restores eligibility only for fresh requests. Restart does not resume an activity or held input.
+**Save** applies the changed defaults without rebooting. This 2 November 2026
+amendment replaces the earlier settings restart workflow. Submit exact owner
+BootId, settings revision and each changed configured slot. A busy owner, stale
+boot/revision, expired authority or unconfigured slot rejects before writing.
+Reserve the owner, drain current wire work and matching cleanup, then recheck
+configured slots, boot, revision and authority immediately before the bounded
+atomic write. A started flash write obtains its actual result even if it
+crosses the original request deadline. After durable success, change a selected
+address only if its actual startup selection used the default because no usable
+address was found; retain a scanned-selected address even when it numerically
+equals the previous default. Keep that source as transient per-adapter state,
+without turning later observations into a new selection decision. Publish the
+applied snapshot, resume normal admission and retain boot, connections and
+caches. Do not scan or replay an activity. The dialog stays open and shows the
+saved, detected and selected values. An unknown outcome requires an explicit
+fresh read/reconciliation; do not resubmit automatically.
 
 | Case | Required result |
 |---|---|
@@ -136,11 +158,14 @@ A configured adapter on the fresh named owner is editable, including a quiet wir
 | Sparse connectors, e.g. 1 and 4 | Rows and saved values retain indices 1 and 4; no renumbering or sibling fallback. |
 | Configured wire with no CEC replies | Default address is editable; ordinary command attempts report their actual ACK/result. |
 | Unconfigured slot | Read-only; no adapter or detector is invented. |
-| Native PA report on adapter 4 | Only adapter 4's detected/selected values change; its saved default stays unchanged. |
-| Activity, held input, update or pending configuration | Busy response, no settings write/restart; no interruption of another device. |
-| Stale/revoked queued request | No persistence callback after cancellation, no restart, no automatic replay. |
+| Default edit on a fallback-selected adapter | Only that adapter's selected address adopts its new default; boot and caches remain intact. |
+| Default edit on a scanned-selected adapter | Save the new fallback and retain the selected scanned address, including equal-number cases. |
+| Later observation after fallback selection | Retain fallback provenance; the next explicit default edit still updates the selected address. |
+| Native PA report on adapter 4 after startup | Only adapter 4's detected value changes; no sibling setting or selected provenance is overwritten. |
+| Activity, held input, update or pending configuration | Busy response, no settings write; no interruption of another device. |
+| Stale/revoked queued request | No persistence callback after cancellation and no automatic replay. |
 | Flash completion crosses deadline | Return its actual durable outcome; never strand a successful write as a definitive failed save. |
-| Applied response lost | Selected device still restarts after the transmission attempt; client reports unknown, never automatic retry. |
+| Applied response lost | Keep the live applied setting; client reports unknown and requires Refresh, never automatic retry. |
 
 The exact [HTTP contract](12-control-surfaces-and-admin.md#per-device-settings-contract) and [storage/provenance rules](11-configuration-storage.md#per-adapter-default-front-address-preferences) apply. Electrical, multi-device and recovery qualification remain separate from browser and host tests.
 
@@ -163,7 +188,7 @@ The exact [HTTP contract](12-control-surfaces-and-admin.md#per-device-settings-c
 | UX-13 | Members have no UI/integrations/remote permission; foreign remote/promotion requests are rejected. |
 | UX-14 | Original Advanced backup, restore, logs, restart and remaining settings retain their baseline workflow; only the former global default front address moves to the per-device Settings dialog. Fresh replacement-main recovery uses existing Upload/Restore with old-main isolation, preserved portable logical IDs/names/order, fresh authority and explicit re-pairing/member re-enrollment; no separate wizard. |
 | UX-15 | Reboot/reconnect/stale input cannot replay activity or end a newer hold. Key operations use the current activity target through the normal resolver. |
-| UX-17 | Per-device Settings meets the zero-to-four/sparse/configured-slot matrix above; reads have no CEC side effects and only an applied durable save restarts the selected owner after response attempt. |
+| UX-17 | Per-device Settings meets the zero-to-four/sparse/configured-slot matrix above; reads have no CEC side effects and an applied durable save updates only default-selected addresses without reboot, cache loss or connection replacement. |
 | UX-16 | Desktop/mobile, keyboard/focus/error behavior and actual baseline comparison are recorded; historical guided-wizard checks are not substitute evidence. |
 
 Scoped identities, non-actuating configuration, explicit intent, stable references and bounded recovery remain backend requirements behind the unchanged interface. Validate baseline parity and [SC-01–SC-08](21-original-controller-policy.md); record physical remote/integration and observed-user results separately.

@@ -3,6 +3,26 @@
   "audit_date": "2026-11-01",
   "firmware_version": "0.1.115",
   "branch": "consort",
+  "live_adapter_defaults_2026_11_02": {
+    "firmware_version": "0.1.130",
+    "matter_software_version": 131,
+    "result": "PASS software-only validation; not deployed",
+    "behavior": "Atomic same-boot adapter default changes update fallback-selected addresses and preserve scanned-selected addresses using explicit transient source provenance. No reboot, new scan, cache clearing, activity replay or connection replacement.",
+    "ui": "Single Adapter / Default / Detected Address / Selected Address table; Save applies live.",
+    "checks": {
+      "firmware_build": true,
+      "firmware_layout_records": 35,
+      "native_host_suite": true,
+      "final_pending_activity_regression": true,
+      "harness_unit_tests": 533,
+      "browser_checks": 22,
+      "codec_schema_vectors": 340,
+      "full_design_contracts": true
+    },
+    "evidence": "test-results/live-adapter-defaults-2026-11-02/verification.json",
+    "physical_functional_tests_run": false,
+    "firmware_deployed": false
+  },
   "source_baseline": {
     "behavior_commit": "98e64a6",
     "policy": "AGENTS.md plus explicit user amendments",

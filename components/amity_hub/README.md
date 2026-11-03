@@ -4,7 +4,17 @@
 
 The configured equipment address is Amity device ID / HDMI adapter / CEC side / OSD name, scoped to the installation. `SystemControl` carries original activity choices and stable presentation/slot identity. The main delivers shared activity selections; each Amity runs the original local sequence for its own equipment and resolves its own adapter/side/OSD devices. Each activity step waits for lookup and CEC transmission completion before the next step. Each Amity runs independently; old-only Standby commands precede new-only power-on commands within that Amity, without waiting for other owners. Activity startup never waits for a device application response or reported power state. Missing equipment stays configured and uses ordinary lookup rather than an enabled/approved-route gate.
 
-Each configured adapter is an independent original front/back pair. `HubService` owns local input/RX/setup/discovery and CEC completion work. Preserve the original allocation candidates, asynchronous scans, lowest usable back-device PA or that adapter's saved fallback, fixed-for-boot front PA, announcement order and original received-frame/configuration effects. An adapter's default/observations never determine another adapter's identity.
+Each configured adapter is an independent original front/back pair. `HubService` owns local input/RX/setup/discovery and CEC completion work. Preserve the original allocation candidates, asynchronous scans, lowest usable back-device PA or that adapter's saved fallback, selected front PA (with the explicit live-default exception below), announcement order and original received-frame/configuration effects. An adapter's default/observations never determine another adapter's identity.
+
+A 2 November 2026 user amendment allows an explicit saved-default change to
+apply live on the selected idle owner. Record whether startup selected a scanned
+physical address or the fallback. A fallback-selected address adopts the new
+default after atomic persistence; a scanned-selected address stays unchanged,
+even if it equals the old default. Address-source tracking is transient, per
+adapter, and never an activity permission. Reannounce an actually changed CEC
+identity through the original transmitter without enumeration, cache clearing,
+connection teardown, activity replay or board restart. Preserve idle/admission,
+configured-slot, exact boot, settings revision, authority and deadline fences.
 
 The sole original controller hosts UI, home integrations and the remote. Added devices remain headless and accept only authenticated original-controller delivery. No planner/resource/domain/profile graph, prepared global execution plan or durable current-activity/resume ledger is part of normal execution. Canonical schema 3 stores original activity fields, qualified selectors, labels/order/slots. [Addressing](../../amity-octopus-consortium/03-domain-model-and-addressing.md) and [execution](../../amity-octopus-consortium/07-activity-planning-and-execution.md).
 

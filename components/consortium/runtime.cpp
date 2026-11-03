@@ -1630,7 +1630,7 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId 
         }
     }
     if(local){const auto response=settings_apply({},id,normalized,admitted_until);Json result;if(!parse_json(response,result,detail)||!valid_settings_payload(Kind::settings_result,result))return ESP_FAIL;
-        {std::lock_guard<std::mutex> guard(lock);for(auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id){operation.stage=result.get("stage")->string;operation.awaiting_response=std::any_of(settings_received.begin(),settings_received.end(),[&](const auto& saved){return saved.id==id&&saved.issuer_boot==boot&&saved.committed&&!saved.restarted;});operation.error=operation.stage=="applied"?"":settings_message(result.get("error")->string);break;}settings_expire(now_ms());}
+        {std::lock_guard<std::mutex> guard(lock);for(auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id){operation.stage=result.get("stage")->string;operation.error=operation.stage=="applied"?"":settings_message(result.get("error")->string);break;}settings_expire(now_ms());}
     }
     return ESP_OK;
 }
@@ -1638,14 +1638,9 @@ std::string runtime_device_settings_operation(model::OctopusId owner,model::Mess
     std::string response;
     {std::lock_guard<std::mutex> guard(lock);settings_expire(now_ms());for(auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id){
         if(operation.stage=="admitted"&&owner!=identity.id){const auto link=settings_link(owner);if(!link.active||link.active->session.scope().link_id!=operation.link){operation.stage="unknown";operation.error="The connection changed before the result was confirmed. The request will not be repeated.";}}
-        response="{\"stage\":"+settings_quote(operation.stage)+",\"message\":"+settings_quote(operation.error)+",\"rebooting\":"+(operation.stage=="applied"?"true":"false")+"}";break;
+        response="{\"stage\":"+settings_quote(operation.stage)+",\"message\":"+settings_quote(operation.error)+",\"rebooting\":false}";break;
     }}
     return response.empty()?"{\"stage\":\"unknown\",\"message\":\"The result is no longer available. The request will not be repeated.\",\"rebooting\":false}":response;
-}
-void runtime_device_settings_response_attempted(model::OctopusId owner,model::MessageId id){
-    {std::lock_guard<std::mutex> guard(lock);if(owner!=identity.id||!original_controller(group,identity.id)||!status.authority_ready)return;}
-    settings_after_response(id,boot);
-    {std::lock_guard<std::mutex> guard(lock);for(auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id)operation.awaiting_response=false;settings_expire(now_ms());}
 }
 esp_err_t runtime_send_update(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){
     if(!is_update_kind(kind)||!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;

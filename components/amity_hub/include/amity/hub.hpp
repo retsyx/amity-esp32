@@ -121,6 +121,11 @@ public:
     void clear_devices();
     void begin_discovery(uint8_t sides = 3);
     void determine_front_physical_address(uint16_t fallback);
+    bool apply_default_front_physical_address(uint16_t fallback);
+    std::optional<uint16_t> detected_front_physical_address() const {
+        return detected_physical_ == 0xffff ? std::nullopt : std::optional<uint16_t>{detected_physical_};
+    }
+    bool selected_from_default() const { return physical_from_default_; }
     void finish_discovery();
     // Callers submit the same operation again only when this opaque lookup
     // continuation is ready. Cache access and scan throttling stay in get_device.
@@ -182,7 +187,8 @@ private:
     uint32_t activity_generation_ = 0;
     uint32_t binding_generation_ = 0, uncertain_releases_ = 0;
     uint8_t front_ = 15, back_ = 15;
-    uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff;
+    uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff, detected_physical_ = 0xffff;
+    bool physical_from_default_ = false;
     bool playing_ = false;
     bool owner_audio_held_ = false;
     struct HeldKey {

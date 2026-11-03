@@ -674,12 +674,15 @@ harness GPIOs. The scan requires five qualified observations for the four
 physical devices, including the AVR on both connected endpoints.
 
 Without EDID, `member.front_physical_address(2, "1.2.0.0")` uses the existing
-authenticated UI Save and restart operation to set the address for AVR input 2.
-It reviews the member boot, settings revision and configured adapter,
-then proves the restarted member and effective address before scanning. After
-activities close it restores the prior saved default through the same API and
-proves the next boot before member removal. Discovery may legitimately select
-a different effective address than the restored fallback.
+authenticated UI Save operation to set the default for AVR input 2 without
+reboot. It reviews the member boot, settings revision, configured adapter and
+actual selected-address source, then proves the same boot, exact saved defaults
+and correct selected address before scanning. A fallback-selected address adopts
+the new default; a scanned-selected address remains unchanged, even when its
+number matched the old default. After activities close it restores the prior
+saved default through the same API and verifies that same source rule on the
+unchanged boot before member removal. Settings preserve scan proofs and device
+caches and do not themselves enumerate.
 
 The media-player activity requires fresh power and AVR routing commands. Three
 physical Active Source attempts from the isolated thief must each receive
@@ -695,7 +698,7 @@ return their selected devices to Standby through fresh commands.
 
 Select `--test source_theft_isolated`; it also runs in `--test all`. Functional
 scenarios contain equipment and behavior only; the shared framework owns the
-settings, restart proof, protocol monitoring and cleanup.
+settings, same-boot address proof, protocol monitoring and cleanup.
 
 Cleanup finishes activity rows and exact, unreferenced fixture equipment before
 restoring settings and removing members. An unused activity can defer behind

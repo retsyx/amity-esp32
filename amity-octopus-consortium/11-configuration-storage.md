@@ -56,7 +56,7 @@ The ordinary Advanced workflow accepts only a current-format backup and preserve
 
 ## Independent device state
 
-Identity, membership trust, credentials, durable original-controller role, reset journals and hardware/adapter settings are separate records with their existing contracts. Preserve stable adapter slots, independently saved defaults and original back-first physical-address selection. CEC silence is not detachment. Explicit member removal retains the durable reset journal and response-attempt boundary; authority loss alone does not reset a device.
+Identity, membership trust, credentials, durable original-controller role, reset journals and hardware/adapter settings are separate records with their existing contracts. Preserve stable adapter slots, independently saved defaults and original back-first physical-address selection. An explicit default edit applies live after atomic persistence: update a fallback-selected address and retain a scanned-selected address, including equal-number cases. Selection-source provenance is transient per adapter and is recomputed at boot; it is not saved topology or an activity permission. CEC silence is not detachment. Explicit member removal retains the durable reset journal and response-attempt boundary; authority loss alone does not reset a device.
 
 ## Evidence
 

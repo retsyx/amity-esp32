@@ -11,7 +11,7 @@ Required cases:
 - Selective power transitions and same-target repair, one device used in several roles, TV/source power differences, standby and original completion-paced activity-settling/input readiness.
 - Separate AVR/audio equipment, source routing, missing source with explicit switch-device/input fallback and non-CEC source use. Power/key work reaches the owner even with no coordinator observation; source presence comes from owner lookup, and FIFO overload must not masquerade as absence.
 - Missing owner/adapter/OSD name and later return with zero activity-enable/configuration mutation; identical OSD text on separate owners/adapters/sides.
-- Per-adapter original allocation, back-first discovery, lowest usable detected front PA or saved fallback, fixed-for-boot selection, received-frame effects and discovery-triggered original handling.
+- Per-adapter original allocation, back-first discovery, lowest usable detected front PA or saved fallback, stable selection with the explicit live-default exception, received-frame effects and discovery-triggered original handling.
 - Independent simultaneous keys, completion-paced repetition, new input during outstanding ACK, finite taps, aggregate recipient release, failed-key termination and matching late-up no-op.
 - Eight total active/queued CEC messages per wire, immediate final up, permanently dropped full-FIFO release, every dropped TX logged and no outgoing executor/retry backlog.
 - Original startup/accepted-selection wait-for-release gate, swallowed hold behavior, Siri-only Power macros, unchanged swipe/tap recognition and generated event sequence.
@@ -28,11 +28,39 @@ Verify temporarily absent equipment remains selected, AVR/switch activities rema
 
 Test current exact owner/controller membership, boot/link/config/input context, sequence/replay rejection, bounded IPC and stale messages. Locally and remotely delivered original intents must use the same executor behavior. Auth rejection and state cleanup must not redirect a release or restart a failed key.
 
-Retain direct enrollment discovery/physical-window, encrypted ephemeral admission and optional printed-Matter-code PAKE with profile-mismatch rejection, exact-leaf TLS, durable original role/headless boot, settings generation/atomic-save/response-attempt restart, explicit removal/reset and exact-image update checks. Those are separate management/security contracts and do not justify persisted HDMI route approval.
+Retain direct enrollment discovery/physical-window, encrypted ephemeral admission and optional printed-Matter-code PAKE with profile-mismatch rejection, exact-leaf TLS, durable original role/headless boot, settings generation/atomic-save/same-boot live application, explicit removal/reset and exact-image update checks. Those are separate management/security contracts and do not justify persisted HDMI route approval.
 
 ## User interface
 
 Preserve approved tab/form/layout behavior and original activity controls. Device choices include actual owning hostname and stable adapter context while carrying complete qualified identity. Missing choices stay saved. There is no Enable/Approve-path control, disabled import workflow, receiver-profile wizard or member UI. Verify backend dispatch as well as rendered controls.
+
+The 2 November 2026 settings amendment requires one Adapter/Default/Detected
+Address/Selected Address table and a Save operation without reboot language.
+Native owner and service regressions must prove atomic same-boot application,
+unchanged caches/connections and scan triggers, restored ordinary admission,
+per-adapter isolation, stale boot/revision/authority/deadline rejection and
+failure-before-save retaining both default and selected address. Exercise
+fallback-selected, scanned-selected and equal-number/different-source cases,
+plus later observed metadata after fallback selection. Test both local and
+member transport paths. Harness settings apply/restore must verify the same
+member boot, exact revision/default batch and selected address from explicit
+runtime provenance; it must never replace old scan boot proofs after a save.
+These host checks do not establish physical wire or firmware qualification.
+
+Software verification for firmware **0.1.130** passed: the ESP-IDF build and
+35 public-record layout checks, native host suites, 533 harness unit tests,
+340 settings codec/schema vectors and 22 local browser checks. The final owner
+regressions prove that cold pending activity and standby repair reject a save,
+then finish normally and allow a fresh save. The browser table was checked at
+320, 430 and 816 pixels. Native loopback tests required execution outside the
+sandbox, and the final production vectors used the pinned SDK Python for
+cryptography; both original environment failures are retained. The final owner
+checks and firmware rebuild include the pending-activity guard. Software-only
+results, source hashes, build logs and screenshots are in
+`test-results/live-adapter-defaults-2026-11-02/verification.json` and that
+folder. No board was flashed and no physical functional test or active bench
+operation was performed. Earlier physical qualifications retain their original
+firmware and settings/restart scope.
 
 ## Physical qualification
 

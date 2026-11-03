@@ -19,26 +19,32 @@ stored address, retains the four supported entries and their durable revision,
 and writes only four entries on the next save. It rejects malformed trailing
 addresses or extra data; it does not expose an additional adapter slot.
 
-The stored copy and boot-applied copy remain separate until restart. Empty input
-resets that slot to `1.0.0.0`; the existing dotted hexadecimal topology validator
-rejects holes and `F.F.F.F`. Defaults are excluded from activity backup/restore
-and reset with the application namespace. A usable address from applicable
-native evidence takes priority over that same front's default. Each adapter uses its default only when the original back-first startup scan
-finds no usable physical address; the original selected front address stays
-fixed for that boot. No separately approved topology or persistent PA-evidence
-gate is required. Settings do not themselves replay an activity.
+Empty input resets that slot to `1.0.0.0`; the existing dotted hexadecimal
+topology validator rejects holes and `F.F.F.F`. Defaults are excluded from
+activity backup/restore and reset with the application namespace. Startup uses
+the original back-first scan and selects its lowest usable physical address,
+otherwise the adapter's own default.
+
+The 2 November 2026 live-settings amendment applies a saved default without
+reboot. The owner records the actual selection source: a fallback-selected
+address adopts the new default after the atomic write; a scanned-selected
+address remains unchanged, including when it equals the previous default.
+Later observations do not rewrite this provenance. A changed selected address
+is announced through the existing CEC transmitter without another scan or cache
+clear. The source flag is transient runtime metadata, not a persisted approval
+or a permission to use an activity. Settings do not replay activities.
 
 The shared settings service checks the configured slot, target BootId, durable
 settings revision and original authority deadline before persistence on the
 owner task. There are no adapter-presence inputs, detector states or attachment
 generations. Settings do not require a responding CEC device; actual CEC replies
 and command ACKs determine communication results. The target must be idle and
-quiescent. The durable applied result's transmission is attempted before
-scheduling that target's restart, even if the connection has already closed.
-A lost reply leaves the client uncertain; it does not cancel the explicitly
-requested restart or repeat the write. Other devices are not restarted. The dialog reports saved, observed and
-selected addresses separately and performs no scan on read. Software tests do
-not qualify physical four-adapter wiring.
+quiescent. After a durable write the owner applies its per-adapter defaults,
+publishes the selected addresses and resumes normal admission on the same boot.
+A lost reply leaves the client uncertain and requires an explicit fresh read;
+it does not authorize another write. The dialog uses one table with Adapter,
+Default, Detected Address and Selected Address columns and performs no scan on
+read. Software tests do not qualify physical four-adapter wiring.
 
 Factory reset writes a durable marker in `amity_cfg/amity_reset`, then reboots.
 Before starting network or application tasks, the boot path erases normal NVS

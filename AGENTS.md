@@ -15,9 +15,28 @@ selection, cache observation or an assumed physical topology. Keep the original
 resolver, scan triggers, electrical CEC handling and attempt budgets.
 
 Adapter settings use the configured slot, current owner boot, settings revision
-and authority, followed by atomic save and selected-device restart. They do not
-require a responding CEC device or physical attachment proof. Preserve actual
-binding, activity, boot, authority, deadline and transport fences.
+and authority, followed by atomic save and live application on the selected
+owner without reboot. They do not require a responding CEC device or physical
+attachment proof. Preserve actual binding, activity, boot, authority, deadline
+and transport fences.
+
+## Live adapter address settings — 2 November 2026
+
+Changing an adapter's default physical address must not reboot an Amity. After
+an atomic save, update that adapter's selected address only if its in-use
+address was selected from the default because startup discovery found no usable
+address. Keep a selected scanned address unchanged, even when it numerically
+matches the old default. Track that selection source explicitly as transient
+runtime state; later observations or number equality do not change it. Preserve
+independent adapter settings, device caches, authenticated connections and the
+original scan triggers. No settings-triggered enumeration or activity replay
+is added.
+
+The settings dialog uses one table with **Adapter**, **Default**, **Detected
+Address** and **Selected Address** columns. Adapter numbers are 1–4 within the
+hardware capacity; Default contains the editable text field. Use **Save** and
+remove settings-restart wording, repeated front-address labels and the text
+“Configured HDMI adapters can be edited.”
 
 ## TLS connection reuse — 1 November 2026
 

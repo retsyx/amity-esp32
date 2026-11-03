@@ -119,6 +119,38 @@ static void core_selection() {
     assert(deduplicated.devices.size() == 1 && deduplicated.devices[0].physical_address == 0x2000);
 }
 
+static void live_default_selection() {
+    Capture wire; amity::Hub fallback(wire);
+    fallback.set_addresses(4, 0, 0xffff); fallback.begin_discovery();
+    fallback.determine_front_physical_address(0x1000); fallback.finish_discovery();
+    assert(fallback.selected_from_default() && !fallback.detected_front_physical_address());
+    assert(fallback.apply_default_front_physical_address(0x2000));
+    assert(fallback.snapshot().front_physical_address == 0x2000);
+    assert(!fallback.apply_default_front_physical_address(0x2000));
+
+    // A later scan records real detection but does not silently replace the
+    // selected fallback identity. The next explicit default edit still does.
+    fallback.begin_discovery(); fallback.receive(BusSide::Back, physical_report(5, 0x3000));
+    fallback.determine_front_physical_address(0x2000); fallback.finish_discovery();
+    assert(fallback.detected_front_physical_address() == 0x3000 && fallback.selected_from_default());
+    assert(fallback.snapshot().front_physical_address == 0x2000);
+    assert(fallback.apply_default_front_physical_address(0x4000));
+    assert(fallback.snapshot().front_physical_address == 0x4000 && fallback.detected_front_physical_address() == 0x3000);
+
+    Capture detected_wire; amity::Hub detected(detected_wire);
+    detected.set_addresses(4, 0, 0xffff); detected.begin_discovery();
+    detected.receive(BusSide::Back, physical_report(5, 0x1000));
+    detected.determine_front_physical_address(0x1000); detected.finish_discovery();
+    // Equality with the old default cannot turn detected selection into a
+    // fallback selection. Nor can losing that observation in a later scan.
+    assert(!detected.selected_from_default() && detected.detected_front_physical_address() == 0x1000);
+    assert(!detected.apply_default_front_physical_address(0x2000));
+    detected.begin_discovery(); detected.determine_front_physical_address(0x2000); detected.finish_discovery();
+    assert(!detected.detected_front_physical_address() && !detected.selected_from_default());
+    assert(!detected.apply_default_front_physical_address(0x3000));
+    assert(detected.snapshot().front_physical_address == 0x1000);
+}
+
 static void reset_wire() {
     fixture_present = false; fixture_tick = 100000; fixture_time = 1000000;
     fixture_sent.clear(); fixture_transmitted.clear(); fixture_incoming.clear();
@@ -128,6 +160,7 @@ static void reset_wire() {
 static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_avr = false) {
     reset_wire();
     bool back_report_requested = false, delayed_queued = false, saw_front_announcement = false;
+    uint16_t announced_address = ack_only || !reported ? 0x5000 : reported;
     fixture_transmit = [&](int gpio, const cec::Frame &frame) {
         // This assertion also covers allocation polls on the front: even
         // claiming its logical address waits until after the back scan.
@@ -147,7 +180,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
             delayed_queued = true;
         if (gpio == 1 && frame.data[1] == 0x84) {
             saw_front_announcement = true;
-            assert(carries_physical(frame, 0x84, ack_only || !reported ? 0x5000 : reported));
+            assert(carries_physical(frame, 0x84, announced_address));
         }
         return true;
     };
@@ -166,6 +199,8 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
         delayed_queued = false;
     };
     amity::HubService service;
+    const auto boot = amity::system::BootId::parse("11111111111111111111111111111111").value();
+    service.set_boot_identity(boot);
     assert(service.start(1, 2, 0x5000) == ESP_OK);
     assert(service.snapshot().front_physical_address == 0xffff);
     // A pending allocation probe must leave the owner free to apply incoming
@@ -182,20 +217,57 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     assert(state.ready && !state.discovering && state.front_physical_address == expected);
     assert(state.discovery_generation >= 1 && saw_front_announcement);
 
+    const bool from_default = ack_only || !reported;
+    auto address_state = service.adapter_runtime_snapshot()[0];
+    assert(address_state.selected_from_default == from_default);
+    assert(from_default ? !address_state.observed_front_physical : address_state.observed_front_physical == reported);
+    // Execute the real owner save path without altering the boot, cache,
+    // logical addresses or discovery generation. Only fallback selection moves.
+    announced_address = from_default ? 0x6000 : reported;
+    fixture_sent.clear(); fixture_delay = {};
+    const auto stopped = fixture_stopped_buses.size();
+    unsigned writes = 0;
+    assert(service.commit_adapter_settings(boot, {{0,0x6000}}, uint64_t(fixture_time)/1000 + 5000,
+        [&]{ ++writes; return ESP_OK; }) == ESP_OK);
+    assert(writes == 1 && !service.maintenance_ready() && fixture_stopped_buses.size() == stopped);
+    const auto applied = service.snapshot();
+    assert(applied.front_physical_address == announced_address && applied.front_address == state.front_address && applied.back_address == state.back_address);
+    assert(applied.discovery_generation == state.discovery_generation && applied.devices.size() == state.devices.size());
+    for(size_t n=0;n<state.devices.size();++n){const auto& old=state.devices[n];const auto& current=applied.devices[n];
+        assert(old.name==current.name && old.bus==current.bus && old.address==current.address && old.physical_address==current.physical_address);
+    }
+    address_state = service.adapter_runtime_snapshot()[0];
+    assert(address_state.effective_front_physical == announced_address && address_state.selected_from_default == from_default);
+    if(from_default){assert(fixture_sent.size()==3 && carries_physical(fixture_sent[1].frame,0x84,announced_address));}
+    else assert(fixture_sent.empty());
+
     fixture_sent.clear(); fixture_delay = {};
     fixture_incoming.push_back({1, physical_query(state.front_address)});
     fixture_incoming.push_back({2, physical_report(8, 0x1000)});
     assert(service.select_activity(0)); run_one_command();
     bool identity = false, active = false;
     for (const auto &sent : fixture_sent) if (sent.gpio == 1) {
-        identity |= carries_physical(sent.frame, 0x84, expected);
-        active |= carries_physical(sent.frame, 0x82, expected);
+        identity |= carries_physical(sent.frame, 0x84, announced_address);
+        active |= carries_physical(sent.frame, 0x82, announced_address);
     }
-    assert(identity && active && service.snapshot().front_physical_address == expected);
+    assert(identity && active && service.snapshot().front_physical_address == announced_address);
     const auto generation = service.snapshot().discovery_generation;
+    reported = 0x1000; ack_only = false; delayed_avr = false;
     assert(service.discover()); run_one_command();
     fixture_finish_discovery(service, generation);
-    assert(service.snapshot().front_physical_address == expected);
+    assert(service.snapshot().front_physical_address == announced_address);
+    // The scan above now saw a different real address. It still does not
+    // replace the selected identity or change how a later edit is applied.
+    const auto after_scan = service.adapter_runtime_snapshot()[0];
+    assert(after_scan.observed_front_physical == 0x1000 && after_scan.selected_from_default == from_default);
+    const auto next_address = from_default ? uint16_t{0x7000} : expected;
+    announced_address = next_address;
+    assert(service.standby()); run_one_command();
+    for(unsigned pass=0;pass<64 && service.activity_setup_in_progress();++pass)run_idle(1);
+    assert(service.commit_adapter_settings(boot, {{0,0x7000}}, uint64_t(fixture_time)/1000 + 5000,
+        [&]{ ++writes; return ESP_OK; }) == ESP_OK);
+    assert(writes == 2 && service.snapshot().front_physical_address == next_address);
+    assert(service.adapter_runtime_snapshot()[0].observed_front_physical == 0x1000);
     fixture_send = {}; fixture_transmit = {}; fixture_delay = {};
 }
 
@@ -267,10 +339,12 @@ static void service_claim_requires_two_nacks() {
 
 int main() {
     core_selection();
+    live_default_selection();
     // Independent service instances model fresh power-ups, and must never
     // reuse the previous instance's discovered or fallback physical address.
     service_boot(0x2000, false, true);
     service_boot(0x3000);
+    service_boot(0x5000); // Detected address numerically equals the saved fallback.
     service_boot(0); // No physical-address replies.
     service_boot(0x2000, true); // Present device ACKs but supplies no metadata.
     service_without_back_logical_address();

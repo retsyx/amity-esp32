@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://amity.invalid/design/v0.1/adapter-settings.schema.json",
   "title": "Per-device HDMI-adapter settings projection",
-  "$comment": "Closed structural projection; unique slot indices, physical truth, exact current generations/revisions, authority, deadline and safe persistence/restart require semantic checks. Production settings codec additionally owns peer payloads.",
+  "$comment": "Closed structural projection; unique slot indices, physical truth, exact current generations/revisions, authority, deadline and safe persistence/live application require semantic checks. Production settings codec additionally owns peer payloads.",
   "$defs": {
     "PhysicalAddress": {
       "type": "string",
@@ -74,6 +74,9 @@
               "$ref": "#/$defs/PhysicalAddress"
             }
           ]
+        },
+        "selected_from_default": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -82,7 +85,8 @@
         "configured",
         "default_front_physical_address",
         "observed_front_physical_address",
-        "effective_front_physical_address"
+        "effective_front_physical_address",
+        "selected_from_default"
       ],
       "additionalProperties": false,
       "allOf": [
@@ -204,9 +208,6 @@
             }
           ]
         },
-        "confirm_restart": {
-          "const": true
-        },
         "changes": {
           "type": "array",
           "minItems": 1,
@@ -219,7 +220,6 @@
       "required": [
         "expected_boot_id",
         "expected_settings_revision",
-        "confirm_restart",
         "changes"
       ],
       "additionalProperties": false
@@ -245,9 +245,6 @@
             }
           ]
         },
-        "confirm_restart": {
-          "const": true
-        },
         "changes": {
           "type": "array",
           "minItems": 1,
@@ -261,7 +258,6 @@
         "request_id",
         "expected_boot_id",
         "expected_settings_revision",
-        "confirm_restart",
         "changes"
       ],
       "additionalProperties": false

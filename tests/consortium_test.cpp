@@ -333,7 +333,7 @@ void adapter_index_tests(){
     DeviceSettingsWrite write,parsed_write;write.expected_boot=s.local_boot_id;write.expected_revision=1;write.changes.push_back({3,"2.0.0.0"});
     assert(parse_json(device_settings_write_json(write),value,detail)&&parse_device_settings_write(value,parsed_write)==Error::none);
     value.get("changes")->array[0].get("tentacle_id")->integer=4;assert(parse_device_settings_write(value,parsed_write)==Error::invalid_message);
-    const auto snapshot="{\"boot_id\":\""+s.local_boot_id.str()+"\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"default_front_physical_address\":\"2.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":null}]}";
+    const auto snapshot="{\"boot_id\":\""+s.local_boot_id.str()+"\",\"settings_revision\":\"1\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"default_front_physical_address\":\"2.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":null,\"selected_from_default\":false}]}";
     assert(parse_json(snapshot,value,detail)&&valid_settings_snapshot(value));
     value.get("adapters")->array[0].get("tentacle_id")->integer=4;assert(!valid_settings_snapshot(value));
 }

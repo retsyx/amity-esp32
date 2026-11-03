@@ -21,9 +21,8 @@ namespace {
 amity::FactoryCredentials provisioned{};
 bool has_factory = false;
 std::string current_hostname = "amity";
-uint16_t current_front_physical = default_front_physical_address;
 std::mutex defaults_mutex;
-AdapterDefaults saved_defaults, boot_defaults;
+AdapterDefaults saved_defaults;
 bool parse_defaults(const std::string& bytes, AdapterDefaults& result) {
     constexpr std::string_view prefix="AMITYPA1\n";
     if(bytes.compare(0,prefix.size(),prefix)!=0)return false;
@@ -63,8 +62,7 @@ esp_err_t init() {
     std::lock_guard<std::mutex> lock(defaults_mutex);
     has_factory = false;
     current_hostname = "amity";
-    current_front_physical = default_front_physical_address;
-    saved_defaults=AdapterDefaults{};boot_defaults=AdapterDefaults{};
+    saved_defaults=AdapterDefaults{};
     const auto *partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "amity_factory");
     if (partition) {
         uint8_t record[amity::factory_record_size], digest[32];
@@ -100,11 +98,10 @@ esp_err_t init() {
         if(err==ESP_OK){if(!parse_front_physical_address(override,saved_defaults.front_physical[0]))return ESP_ERR_INVALID_STATE;}
         else if(err!=ESP_ERR_NVS_NOT_FOUND)return err;
     }
-    boot_defaults=saved_defaults;current_front_physical=boot_defaults.front_physical[0];
     return ESP_OK;
 }
 const amity::FactoryCredentials *factory() { return has_factory ? &provisioned : nullptr; }
-uint16_t front_physical_address() { return current_front_physical; }
+uint16_t front_physical_address() { std::lock_guard<std::mutex> lock(defaults_mutex);return saved_defaults.front_physical[0]; }
 esp_err_t save_front_physical_address(const std::string &value) {
     uint16_t address;
     if (!parse_front_physical_address(value, address)) return ESP_ERR_INVALID_ARG;
@@ -112,7 +109,6 @@ esp_err_t save_front_physical_address(const std::string &value) {
     return save_adapter_defaults(current.revision,{{0,address}});
 }
 AdapterDefaults adapter_defaults(){std::lock_guard<std::mutex> lock(defaults_mutex);return saved_defaults;}
-AdapterDefaults startup_adapter_defaults(){std::lock_guard<std::mutex> lock(defaults_mutex);return boot_defaults;}
 esp_err_t save_adapter_defaults(uint64_t expected_revision,const std::vector<AdapterDefaultChange>& changes){
     std::lock_guard<std::mutex> lock(defaults_mutex);
     if(expected_revision!=saved_defaults.revision||saved_defaults.revision==std::numeric_limits<uint64_t>::max())return ESP_ERR_INVALID_STATE;

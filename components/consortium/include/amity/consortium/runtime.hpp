@@ -125,7 +125,6 @@ esp_err_t runtime_send_control(model::OctopusId,Kind,std::string payload,uint32_
 struct RuntimeSettingsHooks {
     std::function<std::string()> snapshot;
     std::function<Error(model::MessageId,const Json&,uint64_t receiver_deadline_ms,std::string& response)> apply;
-    std::function<void()> after_apply;
 };
 void runtime_settings_hooks(RuntimeSettingsHooks);
 std::string runtime_device_settings(model::OctopusId owner);
@@ -133,8 +132,6 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId,
 std::string runtime_device_settings_operation(model::OctopusId owner,model::MessageId);
 // Owner service rechecks this immediately before persisting; never renews TTL.
 bool runtime_device_settings_authorized(model::MessageId);
-// Local HTTP adapter calls after attempting its applied response, even if delivery fails.
-void runtime_device_settings_response_attempted(model::OctopusId owner,model::MessageId);
 struct RuntimeUpdateHooks {
     std::function<Error(model::OctopusId,const Envelope &)> handle;
     std::function<Error(model::OctopusId,const Json &)> result;

@@ -546,10 +546,18 @@ void Hub::begin_discovery(uint8_t sides) {
     discovering_ = true;
 }
 void Hub::determine_front_physical_address(uint16_t fallback) {
+    detected_physical_ = discovered_physical_;
     if (physical_ != 0xffff) return;
     // A parent precedes its descendants numerically (2.0.0.0 < 2.1.0.0).
-    // Keep the chosen address, including fallback, for the rest of this boot.
+    // Later discovery observes topology without changing the selected identity.
+    // An explicit settings save may replace only a fallback-based selection.
+    physical_from_default_ = discovered_physical_ == 0xffff;
     physical_ = discovered_physical_ != 0xffff ? discovered_physical_ : fallback;
+}
+bool Hub::apply_default_front_physical_address(uint16_t fallback) {
+    if (!physical_from_default_ || physical_ == fallback) return false;
+    physical_ = fallback;
+    return true;
 }
 void Hub::finish_discovery() {
     if (!discovering_) return;
@@ -707,10 +715,11 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
         auto *d = discovery_device(side, frame.source());
         const auto physical = static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]);
         d->physical_address = physical;
-        // Only actual reports from the initial back scan count; a poll ACK or
-        // a synthesized TV record is not physical-address evidence. Collect
-        // before name/address deduplication can remove a responding device.
-        if (discovering_ && physical_ == 0xffff && side == BusSide::Back &&
+        // Only actual reports during a back scan count; a poll ACK or a
+        // synthesized TV record is not physical-address evidence. The first
+        // scan chooses identity; later scans refresh only its observation.
+        // Collect before name/address deduplication can remove a responder.
+        if (discovering_ && side == BusSide::Back &&
             usable_front_physical_address(d->physical_address))
             discovered_physical_ = std::min(discovered_physical_, d->physical_address);
         d->type = frame.data[4];

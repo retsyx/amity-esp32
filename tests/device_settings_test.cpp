@@ -44,7 +44,6 @@ int main(){
     const auto initial_writes=writes;
     assert(device_settings::save_adapter_defaults(1,{{3,0x5200},{1,0x2100}})==ESP_OK&&writes==initial_writes+1);
     defaults=device_settings::adapter_defaults();assert(defaults.revision==2&&defaults.front_physical[0]==0x3000&&defaults.front_physical[1]==0x2100&&defaults.front_physical[3]==0x5200);
-    assert(device_settings::startup_adapter_defaults().revision==1&&device_settings::startup_adapter_defaults().front_physical[3]==0x1000);
     assert(device_settings::front_physical_address()==0x3000);
     auto durable=records.at("front_defaults");const auto saved_writes=writes;
     assert(device_settings::save_adapter_defaults(1,{{0,0x4000}})==ESP_ERR_INVALID_STATE);
@@ -54,16 +53,17 @@ int main(){
     write_result=ESP_FAIL;assert(device_settings::save_adapter_defaults(2,{{0,0x4000},{3,0x6000}})==ESP_FAIL);
     assert(device_settings::adapter_defaults().revision==2&&records.at("front_defaults")==durable);
     write_result=ESP_OK;
-    // A reboot adopts the batch without compacting sparse slots. The legacy
+    // Reloading preserves the live batch without compacting sparse slots. The legacy
     // scalar cannot override a newer record or leak into the other slots.
     records["front_physical"]="7.0.0.0";assert(device_settings::init()==ESP_OK);
-    assert(device_settings::startup_adapter_defaults().front_physical==defaults.front_physical);
+    assert(device_settings::adapter_defaults().front_physical==defaults.front_physical);
     assert(device_settings::save_adapter_defaults(2,{{3,0}})==ESP_OK);
     assert(device_settings::init()==ESP_OK&&device_settings::adapter_defaults().front_physical[3]==0);
+    defaults=device_settings::adapter_defaults();
     durable=records.at("front_defaults");
     // Upgrade the prior storage shape without losing the first four defaults.
     records["front_defaults"]+="5.0.0.0\n";
-    assert(device_settings::init()==ESP_OK&&device_settings::adapter_defaults().front_physical==device_settings::startup_adapter_defaults().front_physical);
+    assert(device_settings::init()==ESP_OK&&device_settings::adapter_defaults().front_physical==defaults.front_physical);
     assert((device_settings::adapter_defaults().front_physical==std::array<uint16_t,4>({0x3000,0x2100,0x1000,0})));
     assert(device_settings::save_adapter_defaults(3,{{3,0x4000}})==ESP_OK);
     assert(records.at("front_defaults")=="AMITYPA1\n4\n3.0.0.0\n2.1.0.0\n1.0.0.0\n4.0.0.0\n");
@@ -74,5 +74,5 @@ int main(){
     records["front_defaults"]="AMITYPA1\n18446744073709551615\n1.0.0.0\n1.0.0.0\n1.0.0.0\n1.0.0.0\n1.0.0.0\n";
     assert(device_settings::init()==ESP_OK&&device_settings::save_adapter_defaults(UINT64_MAX,{{0,0x2000}})==ESP_ERR_INVALID_STATE);
     std::cout<<"PASS actual enrollment hostname: normalized durable commit precedes live name, write failure preserves old name, invalid names make no writes, Advanced remains reboot-applied\n";
-    std::cout<<"PASS stable adapter defaults: scalar migrates only slot0, atomic sparse batch, legacy record migration, revision CAS/exhaustion, invalid/duplicate rejection, write failure, reboot-only application\n";
+    std::cout<<"PASS stable adapter defaults: scalar migrates only slot0, atomic sparse batch, legacy record migration, revision CAS/exhaustion, invalid/duplicate rejection, write failure, live defaults and durable reload\n";
 }

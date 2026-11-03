@@ -430,8 +430,8 @@ class AddedAmity:
     def front_physical_address(self, tentacle, address, *, timeout=None):
         """Temporarily change a configured adapter through the main's UI settings.
 
-        Both applying and restoring restart this added member and prove its
-        new boot before returning. Close activities before restoring settings.
+        Applying and restoring preserve this member's proven boot and verify
+        its live selected address. Close activities before restoring settings.
         """
         from .settings import FrontPhysicalAddress
         return FrontPhysicalAddress(self, tentacle, address, timeout=timeout).apply()

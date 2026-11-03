@@ -164,7 +164,7 @@ std::optional<std::vector<std::string>> request_fields(const std::string& path){
     else if(path=="/api/updates/chunk")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id","offset","data_hex"});
     else if(path=="/api/updates/install")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id"});
     else if(path=="/api/updates/cancel")allowed.push_back("cohort_job_id");
-    else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","confirm_restart","changes"});
+    else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","changes"});
     else return {};
     return allowed;
 }
@@ -249,7 +249,6 @@ esp_err_t operation_response(httpd_req_t* req,Tracked& operation){
     cJSON_AddBoolToObject(result.get(),"rebooting",operation.rebooting);
     if(operation.path=="/api/membership/remove"||(operation.path=="/api/replacements/apply"&&operation.candidate))cJSON_AddStringToObject(result.get(),"reset",operation.reset.c_str());
     const auto sent=send(req,result.get());
-    if(device_settings_target(operation.path))amity::consortium::runtime_device_settings_response_attempted(operation.candidate,*m::MessageId::parse(operation.id));
     return sent;
 }
 esp_err_t snapshot(httpd_req_t* req){

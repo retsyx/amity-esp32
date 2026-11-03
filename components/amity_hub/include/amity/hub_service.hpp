@@ -10,7 +10,9 @@
 namespace amity {
 struct AdapterRuntimeState {
     uint8_t tentacle_id=0;bool configured=false;std::optional<uint16_t> observed_front_physical,effective_front_physical;
+    bool selected_from_default=false;
 };
+struct AdapterAddressChange { uint8_t tentacle_id=0;uint16_t default_physical=0x1000; };
 // One owner task advances every original per-adapter discovery/key executor.
 class HubService {
 public:
@@ -19,7 +21,7 @@ public:
     esp_err_t start(const cec::BoardProfile&,uint16_t physical=0x1000);
     esp_err_t start(const cec::BoardProfile&,const std::array<uint16_t,amity::max_tentacles>&);
     std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const;
-    esp_err_t commit_adapter_settings(system::BootId,std::vector<uint8_t>,uint64_t,std::function<esp_err_t()>);
+    esp_err_t commit_adapter_settings(system::BootId,std::vector<AdapterAddressChange>,uint64_t,std::function<esp_err_t()>);
     bool configure(std::vector<Activity>);
     esp_err_t configure_with_commit(std::vector<Activity>,std::function<esp_err_t()>);
     esp_err_t request_activity(int,uint32_t* accepted_selection=nullptr);esp_err_t repair_activity();uint32_t activity_selection()const;int activity_target()const;

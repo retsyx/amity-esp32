@@ -129,7 +129,7 @@ window.amityInterface=(()=>{
   d.append(text('Leave blank to use 1.0.0.0.'),rows,status);
   let snapshot=null,inputs=[],busy=false,loading=false,needsReview=false;
   const path='devices/'+board.octopus_id+'/settings';
-  const save=button('Save and restart Amity',async()=>{
+  const save=button('Save',async()=>{
    if(busy||!snapshot)return;
    const changes=[];
    for(const {input,row,editable} of inputs){
@@ -143,7 +143,7 @@ window.amityInterface=(()=>{
    busy=true;save.disabled=true;reload.disabled=true;inputs.forEach(({input})=>input.disabled=true);
    try{
     status.textContent='Saving settings…';
-    let result=await request(path,{request_id:identifier(),expected_boot_id:snapshot.boot_id,expected_settings_revision:snapshot.settings_revision,confirm_restart:true,changes});
+    let result=await request(path,{request_id:identifier(),expected_boot_id:snapshot.boot_id,expected_settings_revision:snapshot.settings_revision,changes});
     for(let n=0;result.stage==='admitted'&&n<80;n++){
      await new Promise(resolve=>setTimeout(resolve,250));if(!d.isConnected)return;
      result=await request('operations/'+result.operation_id);
@@ -152,8 +152,7 @@ window.amityInterface=(()=>{
      needsReview=result.stage==='unknown'||result.stage==='admitted';
      const error=Error(needsReview?'The save outcome is unknown. Refresh and check the saved values before trying again.':customerText(result.message||'Settings were not saved. Refresh and check the settings before trying again.'));error.settingsResult=true;throw error;
     }
-    status.textContent='Settings saved. Restarting '+name+'. Activities will not resume automatically.';
-    inputs=[];snapshot=null;
+    if(await load(true))status.textContent='Settings saved.';
    }catch(error){
     if(!error.settingsResult&&(!error.status||error.status>=500)){needsReview=true;status.textContent='The save outcome is unknown. Reconnect, refresh and check the saved values before trying again.';throw Error(status.textContent);}
     status.textContent=customerText(error.message);throw error;
@@ -167,8 +166,8 @@ window.amityInterface=(()=>{
    const bounds=d.getBoundingClientRect();
    if(event.clientX<bounds.left||event.clientX>=bounds.right||event.clientY<bounds.top||event.clientY>=bounds.bottom)cancel.click();
   });
-  async function load(){
-   if(loading||busy)return;loading=true;reload.disabled=true;save.disabled=true;
+  async function load(afterSave=false){
+   if(loading||(busy&&!afterSave))return;loading=true;reload.disabled=true;save.disabled=true;
    try{
     let result;
     for(let n=0;n<24;n++){
@@ -178,18 +177,25 @@ window.amityInterface=(()=>{
     }
     snapshot=result.settings;needsReview=false;inputs=[];rows.replaceChildren();
     const fresh=result.status==='ready',named=name!=='Name unavailable';
-    status.textContent=fresh?'Configured HDMI adapters can be edited.':result.status==='unsupported'?'Update this Amity to configure its adapters.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
-    for(const row of snapshot?.adapters||[]){
-     const section=document.createElement('fieldset'),heading=document.createElement('legend');section.dataset.adapterId=String(row.tentacle_id);heading.textContent=row.name||'HDMI adapter '+(row.tentacle_id+1);section.append(heading);
-     if(!row.configured)section.append(text('Not configured'));
-     const setting=field('Default front physical address',row.default_front_physical_address),editable=fresh&&named&&row.configured;
-     setting.input.maxLength=7;setting.input.placeholder='1.0.0.0';setting.input.autocomplete='off';setting.input.spellcheck=false;setting.input.disabled=!editable;setting.input.addEventListener('input',()=>setting.input.setCustomValidity(''));
-     const selected=row.effective_front_physical_address,source=selected?(selected===row.observed_front_physical_address?' (detected)':' (saved default)'):'';
-     section.append(setting.label,text('Detected front address: '+(row.observed_front_physical_address||'Unavailable')),text('Selected front address: '+(selected||'Unavailable')+source));
-     inputs.push({input:setting.input,row,editable});rows.append(section);
+    status.textContent=fresh?'':result.status==='unsupported'?'Update this Amity to configure its adapters.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
+    if(snapshot?.adapters?.length){
+     const table=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody'),headRow=document.createElement('tr');
+     table.setAttribute('aria-label','HDMI adapter addresses');
+     for(const title of ['Adapter','Default','Detected Address','Selected Address']){const cell=document.createElement('th');cell.scope='col';cell.textContent=title;headRow.append(cell);}
+     head.append(headRow);table.append(head,body);rows.append(table);
+     for(const row of snapshot.adapters){
+      const tr=document.createElement('tr'),adapter=document.createElement('th'),setting=document.createElement('td'),detected=document.createElement('td'),selected=document.createElement('td'),input=document.createElement('input'),editable=fresh&&named&&row.configured;
+      tr.dataset.adapterId=String(row.tentacle_id);adapter.scope='row';adapter.textContent=String(row.tentacle_id+1);
+      if(!row.configured){const note=document.createElement('small');note.textContent='Not configured';adapter.append(note);}
+      input.value=row.default_front_physical_address;input.setAttribute('aria-label','Default address for adapter '+(row.tentacle_id+1));
+      input.maxLength=7;input.placeholder='1.0.0.0';input.autocomplete='off';input.spellcheck=false;input.disabled=!editable;input.addEventListener('input',()=>input.setCustomValidity(''));
+      detected.textContent=row.observed_front_physical_address||'—';selected.textContent=row.effective_front_physical_address||'—';
+      setting.append(input);tr.append(adapter,setting,detected,selected);body.append(tr);inputs.push({input,row,editable});
+     }
     }
     if(!inputs.length)rows.append(text('No adapter settings are available.'));
     save.disabled=!inputs.some(x=>x.editable);
+    return fresh;
    }catch(error){status.textContent=customerText(error.message);throw error;}
    finally{loading=false;reload.disabled=false;}
   }
