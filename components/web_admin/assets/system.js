@@ -162,6 +162,11 @@ window.amityInterface=(()=>{
   });
   const reload=button('Refresh',()=>load()),cancel=button('Close',()=>d.close());save.disabled=true;
   d.append(save,reload,cancel);
+  d.addEventListener('click',event=>{
+   if(event.target!==d)return;
+   const bounds=d.getBoundingClientRect();
+   if(event.clientX<bounds.left||event.clientX>=bounds.right||event.clientY<bounds.top||event.clientY>=bounds.bottom)cancel.click();
+  });
   async function load(){
    if(loading||busy)return;loading=true;reload.disabled=true;save.disabled=true;
    try{
