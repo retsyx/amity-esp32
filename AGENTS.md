@@ -400,8 +400,9 @@ input-1 player's activity remains selected; `add_amity.py`, which uses
 and `consortium.py`, whose two-owner case adds that headless member and
 exercises one TV/AVR/player triple on each owner in both activity/theft
 directions, whose three-owner case adds `amity-dut-2` and `amity-dut-3`, and
-whose four-owner case also adds `amity-dut-4`; plus `dual-display.py` for a
-TV/projector activity and `source-theft.py` for isolated-source suppression.
+whose four-owner case also adds `amity-dut-4`; plus `dual_display.py` for a
+TV/projector activity and the isolated-source case in `source_theft.py` for
+suppression before the announcement reaches the AVR.
 `qualified_names.py` verifies exact routing of identical equipment names and
 addresses on two owners, and `missing_equipment.py` verifies saved source
 retention, numeric switch fallback, actual lookup cooldown and passive return.

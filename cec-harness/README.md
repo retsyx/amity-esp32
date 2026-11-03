@@ -28,14 +28,14 @@ membership behavior remains unchanged.
   switch input, local/member key routing, and client disconnect during a hold.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
-- `functional_tests/source-theft.py`: isolates the thief behind another
-  tentacle and requires suppression before its announcement reaches the AVR.
+  Its isolated-source case places the thief behind another tentacle and
+  requires suppression before its announcement reaches the AVR.
 - `functional_tests/add_amity.py`: adds the second bench board through the main
   Amity, verifies its membership, then removes and resets that added board.
 - `functional_tests/consortium.py`: scans equipment on the main and up to three
   headless members, then checks activity power and source-theft suppression in
   every ownership direction.
-- `functional_tests/dual-display.py`: switches between a TV and projector on
+- `functional_tests/dual_display.py`: switches between a TV and projector on
   one headless member, checking command completion order and preserving shared
   AVR/player power throughout both activity handoffs.
 - `functional_tests/qualified_names.py`: uses identical equipment names and
@@ -613,7 +613,7 @@ Claim failures remain explicit; the backend does not retry using another type.
 
 ## Dual-display activity scenario
 
-`functional_tests/dual-display.py` uses `amity-dut` as the original main and
+`functional_tests/dual_display.py` uses `amity-dut` as the original main and
 adds `amity-dut-4` as a headless member through the existing Add flow. Only the
 main needs HTTP credentials. The TV connects to member tentacle 1/front; the
 AVR's CEC-capable output connects to 1/back, with the player on AVR input 1.
@@ -663,8 +663,9 @@ attempt.
 
 ## Source theft before the AVR
 
-`functional_tests/source-theft.py` adds `amity-dut-4` to the original main
-`amity-dut`. Its TV attaches to tentacle 1/front, the AVR output to 1/back,
+The isolated-source case in `functional_tests/source_theft.py` adds
+`amity-dut-4` to the original main `amity-dut`. Its TV attaches to tentacle
+1/front, the AVR output to 1/back,
 and the ordinary media player to AVR input 1. AVR input 2 attaches to tentacle
 2/front, with the thief on 2/back. `AvrAttachment` represents the same AVR at
 the second endpoint: power, audio and input state are shared, while received

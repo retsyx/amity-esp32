@@ -1,7 +1,6 @@
 """Scenario coverage; physical-frame qualification belongs to shared helpers."""
 
 from contextlib import ExitStack, contextmanager
-from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -12,9 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrAttachment, Component, DUT, PlaybackComponent, PowerState
 from amity_harness.config import current_config
+from functional_tests import source_theft
 from unit_tests.test_consortium_scenarios import Scenario
-
-source_theft = import_module("functional_tests.source-theft")
 
 
 class IsolatedScenario(Scenario):

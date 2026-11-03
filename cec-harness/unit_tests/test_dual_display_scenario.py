@@ -1,7 +1,6 @@
 """Host checks for dual-display coverage and failure propagation, not wire qualification."""
 
 from contextlib import ExitStack
-from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -11,9 +10,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, Component, DUT, PlaybackComponent, PowerState, TvComponent
+from functional_tests import dual_display
 from unit_tests.test_consortium_scenarios import Scenario
-
-dual_display = import_module("functional_tests.dual-display")
 
 
 class DualDisplayScenario(Scenario):
