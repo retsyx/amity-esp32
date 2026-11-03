@@ -354,6 +354,11 @@ class DUT:
         """Read the existing UI system snapshot, including this DUT's identity."""
         return self.request("/api/system")
 
+    def front_physical_address(self, tentacle, address, *, timeout=None):
+        """Temporarily edit this original main's adapter through the shipping UI."""
+        from .settings import FrontPhysicalAddress
+        return FrontPhysicalAddress.local(self, tentacle, address, timeout=timeout).apply()
+
     def capture_logs(self, *, expected_boot=None, timeout=15):
         """Read existing UI logs with before/after boot proof, without serial I/O."""
         from .diagnostics import capture_logs

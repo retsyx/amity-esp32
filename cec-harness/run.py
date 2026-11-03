@@ -9,6 +9,9 @@ from functional_tests.activity import (test_activity, test_activity_switch_input
 from functional_tests.qualified_names import test_qualified_names
 from functional_tests.missing_equipment import test_missing_equipment
 from functional_tests.removal_cascade import test_removal_cascade
+from functional_tests.default_physical_address import (
+    test_default_physical_address_local, test_default_physical_address_local_scanned,
+    test_default_physical_address_remote, test_default_physical_address_remote_scanned)
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
 from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
@@ -29,4 +32,7 @@ if __name__ == "__main__":
                            "source_theft_isolated": test_source_theft_isolated,
                            "qualified_names": test_qualified_names,
                            "missing_equipment": test_missing_equipment,
-                           "removal_cascade": test_removal_cascade}))
+                           "removal_cascade": test_removal_cascade,
+                           "default_physical_address": (
+                               test_default_physical_address_local, test_default_physical_address_local_scanned,
+                               test_default_physical_address_remote, test_default_physical_address_remote_scanned)}))

@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness.dut import AmityHTTPError
 from amity_harness.membership import MembershipConflict
 from amity_harness.settings import FrontPhysicalAddress
-from unit_tests.test_membership import Fixture
+from amity_harness.testbed import TestBed
+from unit_tests.test_membership import Fixture, UnitSession
 
 
 class SettingsFixture(Fixture):
@@ -295,6 +296,163 @@ class AdapterSettingsTests(unittest.TestCase):
                 with setting:
                     pass
         setting.close()
+
+
+class LocalSettingsFixture(SettingsFixture):
+    def __init__(self):
+        super().__init__()
+        self.settings_boot = self.boot
+        for board in self.config["octopuses"]:
+            board["supported_tentacles"] = self.capacity
+        self.restart_main_after_save = False
+
+    @property
+    def settings_path(self):
+        return "/api/devices/" + self.main.identity.device_id + "/settings"
+
+    def request(self, path, data=None, **kwargs):
+        result = super().request(path, data, **kwargs)
+        if path == self.settings_path and data is not None and self.restart_main_after_save:
+            self.system["boot_id"] = "9" * 32
+        return result
+
+
+class LocalAdapterSettingsTests(unittest.TestCase):
+    def setUp(self):
+        sleeper = patch("amity_harness.settings.time.sleep")
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+
+    def test_local_ui_write_restore_and_three_independent_address_fields(self):
+        fixture = LocalSettingsFixture()
+        original = deepcopy(fixture.config)
+        with fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2) as setting:
+            setting.assert_address(detected=None, selected="2.0.0.0")
+            self.assertEqual(setting.read()["configured"], True)
+            self.assertEqual(fixture.defaults[2], "2.0.0.0")
+        self.assertEqual(fixture.defaults, {index: "1.0.0.0" for index in range(4)})
+        self.assertEqual(fixture.config, original)
+        self.assertEqual(fixture.restarts, 0)
+        self.assertEqual(len(fixture.writes), 2)
+        for write, revision in zip(fixture.writes, ("7", "8")):
+            self.assertEqual(write["expected_boot_id"], fixture.boot)
+            self.assertEqual(write["expected_settings_revision"], revision)
+            self.assertEqual([row["tentacle_id"] for row in write["changes"]], [2])
+        self.assertFalse(hasattr(fixture.bed, "_member_proofs"))
+        self.assertFalse(fixture.posts("add"))
+        self.assertFalse(fixture.posts("remove"))
+
+    def test_local_scan_equal_to_old_default_retains_priority_on_edit(self):
+        fixture = LocalSettingsFixture()
+        fixture.observed_address = "1.0.0.0"
+        with fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2) as setting:
+            setting.assert_address(detected="1.0.0.0", selected="1.0.0.0")
+            with self.assertRaisesRegex(AssertionError, "observed_front"):
+                setting.assert_address(detected=None, selected="1.0.0.0")
+            with self.assertRaisesRegex(AssertionError, "effective_front"):
+                setting.assert_address(detected="1.0.0.0", selected="2.0.0.0")
+            with self.assertRaisesRegex(AssertionError, "default_front"):
+                setting.assert_address(default="3.0.0.0", detected="1.0.0.0", selected="1.0.0.0")
+        self.assertEqual(fixture.defaults[2], "1.0.0.0")
+        self.assertEqual(fixture.selected[2], "1.0.0.0")
+
+    def test_local_same_boot_identity_authority_and_testbed_are_required(self):
+        for mutation in ("boot", "identity", "authority", "member", "bed"):
+            with self.subTest(mutation=mutation):
+                fixture = LocalSettingsFixture()
+                setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.02)
+                if mutation == "boot":
+                    fixture.system["boot_id"] = "9" * 32
+                elif mutation == "identity":
+                    fixture.system["octopus_id"] = "9" * 32
+                elif mutation == "authority":
+                    fixture.system["membership"]["authority_ready"] = False
+                elif mutation == "member":
+                    fixture.system["membership"]["member"] = True
+                else:
+                    fixture.main._testbed = None
+                with self.assertRaises(MembershipConflict):
+                    setting.apply()
+                self.assertEqual(fixture.writes, [])
+
+    def test_local_owner_cannot_be_a_headless_member(self):
+        fixture = LocalSettingsFixture()
+        fixture.bed.members = (fixture.main,)
+        with self.assertRaisesRegex(RuntimeError, "original main"):
+            fixture.main.front_physical_address(2, "2.0.0.0")
+        self.assertEqual(fixture.writes, [])
+
+    def test_local_restart_during_save_fails_without_rebinding_boot(self):
+        fixture = LocalSettingsFixture()
+        fixture.restart_main_after_save = True
+        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.02)
+        with self.assertRaisesRegex(MembershipConflict, "restarted"):
+            setting.apply()
+        self.assertEqual(setting.member.member_boot, fixture.boot)
+        self.assertEqual(len(fixture.writes), 1)
+
+    def test_local_uncertain_write_is_reconciled_without_retry_then_restored(self):
+        fixture = LocalSettingsFixture()
+        fixture.lose_settings_reply = True
+        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.2)
+        with self.assertRaises(OSError):
+            setting.apply()
+        setting.close()
+        self.assertEqual(len(fixture.writes), 2)
+        self.assertNotEqual(fixture.writes[0]["request_id"], fixture.writes[1]["request_id"])
+        self.assertEqual(fixture.defaults[2], "1.0.0.0")
+
+    def test_local_cleanup_refuses_overwriting_external_edit(self):
+        fixture = LocalSettingsFixture()
+        setting = fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2)
+        fixture.defaults[2] = "3.0.0.0"
+        with self.assertRaisesRegex(MembershipConflict, "changed before fixture cleanup"):
+            setting.close()
+        self.assertEqual(len(fixture.writes), 1)
+
+    def test_local_settings_require_current_boot_revision_and_complete_capacity(self):
+        for mutation in ("boot", "revision", "capacity"):
+            with self.subTest(mutation=mutation):
+                fixture = LocalSettingsFixture()
+                if mutation == "boot":
+                    fixture.settings_boot = "9" * 32
+                elif mutation == "revision":
+                    fixture.revision = 0
+                else:
+                    del fixture.defaults[3]
+                with self.assertRaises((MembershipConflict, TimeoutError)):
+                    fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.01)
+                self.assertEqual(fixture.writes, [])
+
+    def test_local_stale_review_rejection_does_not_retry_or_restore(self):
+        fixture = LocalSettingsFixture()
+        fixture.reject_settings = True
+        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.2)
+        with self.assertRaises(AmityHTTPError):
+            setting.apply()
+        setting.close()
+        self.assertEqual(len(fixture.writes), 1)
+        self.assertEqual(fixture.defaults[2], "1.0.0.0")
+
+    def test_report_retains_three_ui_values_and_owner_boot_without_private_fields(self):
+        fixture = LocalSettingsFixture()
+        fixture.main._testbed = None
+        fixture.main.adapter_settings_operations = [{"phase": "prior", "address": "3.0.0.0"}]
+        bed = TestBed(fixture.main, session_factory=UnitSession)
+        with bed:
+            with fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2) as setting:
+                setting.assert_address(detected=None, selected="2.0.0.0")
+                fixture.main.adapter_settings_operations[-1].update(
+                    password="PRIVATE_PASSWORD", Authorization="PRIVATE_TOKEN",
+                    raw_settings={"token": "PRIVATE_TOKEN"})
+        records = bed.report["adapter_settings"]
+        self.assertEqual([row["phase"] for row in records], ["apply", "assert_address", "restore"])
+        self.assertEqual(records[1], {"phase": "assert_address", "dut": fixture.main.name,
+                                     "device_id": fixture.main.identity.device_id,
+                                     "owner_boot": fixture.boot, "tentacle_id": 2,
+                                     "address": "2.0.0.0", "detected_address": None,
+                                     "selected_address": "2.0.0.0"})
+        self.assertNotIn("PRIVATE_", repr(bed.report))
 
 
 if __name__ == "__main__":

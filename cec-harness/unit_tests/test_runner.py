@@ -270,10 +270,27 @@ class RunnerTests(unittest.TestCase):
                     "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
                     "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
-                    "test_removal_cascade"]
+                    "test_removal_cascade", "test_default_physical_address_local",
+                    "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
+                    "test_default_physical_address_remote_scanned"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])
+
+    def test_default_physical_address_selects_all_four_paths_without_other_scenarios(self):
+        called = []
+
+        def capture(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": True, "testbeds": []}
+
+        arguments = ["run.py", "--test", "default_physical_address", "--credentials", "/private/main.json"]
+        with patch("sys.argv", arguments), patch("amity_harness.runner.run_test", side_effect=capture), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+            runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
+        self.assertEqual(exited.exception.code, 0)
+        self.assertEqual(called, ["test_default_physical_address_local", "test_default_physical_address_local_scanned",
+                                 "test_default_physical_address_remote", "test_default_physical_address_remote_scanned"])
 
     def test_removal_cascade_can_be_selected_without_other_scenarios(self):
         called = []

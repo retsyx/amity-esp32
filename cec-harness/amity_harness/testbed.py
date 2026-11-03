@@ -68,7 +68,7 @@ _ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "input", "com
                                       "routing_wire_timestamp_ns", "standby_completion_upper_ns", "power_on_completion_upper_ns", "timestamp_kind", "count"))
 _SETTINGS_FIELDS = frozenset(("phase", "dut", "device_id", "tentacle_id", "request_id", "old_boot", "address",
                               "previous_address", "stage", "member_boot", "settings_revision", "error_type",
-                              "configured"))
+                              "configured", "owner_boot", "detected_address", "selected_address"))
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
                               "removed_activity", "removed_equipment", "retained_equipment"))

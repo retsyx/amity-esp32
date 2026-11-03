@@ -4,8 +4,9 @@ from copy import deepcopy
 import time
 from uuid import uuid4
 
+from .config import current_config
 from .dut import AmityHTTPError, _positive_seconds
-from .membership import MembershipConflict
+from .membership import AddedAmity, MembershipConflict, _identifier
 from .topology import format_physical_address
 from .trace import event
 
@@ -14,10 +15,83 @@ def _counter(value):
     return isinstance(value, str) and value.isascii() and value.isdecimal() and int(value) > 0
 
 
-class FrontPhysicalAddress:
-    """Save, verify and restore one test-owned member's adapter default.
+class _LocalOwner:
+    """Use the same settings transaction checks for the original main."""
 
-    Applying and restoring preserve the verified member boot and scan proofs.
+    _settings_match = staticmethod(AddedAmity._settings_match)
+
+    def __init__(self, main):
+        bed = getattr(main, "_testbed", None)
+        if (bed is None or not bed._entered or bed._closed
+                or not any(dut is main for dut in bed.duts)
+                or any(dut is main for dut in getattr(bed, "members", ()))):
+            raise RuntimeError("Local adapter settings require this TestBed's original main")
+        self.main, self.bed = main, bed
+        self.device_id = main.identity.device_id
+        self.timeout = current_config().timeout
+        self.boot = self.member_boot = self.group = None
+        system = self._system()
+        self.boot = self.member_boot = system["boot_id"]
+        self.group = system["consortium_id"]
+
+    def _system(self):
+        if (self.main._testbed is not self.bed or not self.bed._entered or self.bed._closed):
+            raise MembershipConflict("The local adapter settings TestBed changed")
+        self.bed.session.assert_healthy()
+        system = self.main.get_system()
+        membership = system.get("membership", {})
+        if (system.get("octopus_id") != self.device_id or system.get("mode") != "coordinator"
+                or membership.get("coordinator") is not True or membership.get("authority_ready") is not True
+                or membership.get("member") is not False):
+            raise MembershipConflict("The original main no longer has its controller authority")
+        if (not _identifier(system.get("boot_id")) or not _identifier(system.get("consortium_id"))
+                or self.boot is not None and (system["boot_id"] != self.boot
+                                             or system["consortium_id"] != self.group)):
+            raise MembershipConflict("The original main restarted or changed system identity")
+        return system
+
+    def _connected_snapshot(self, *, deadline):
+        system = self._system()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Adapter settings operation deadline expired")
+        config = self.main.request("/api/config", timeout=min(15, remaining))
+        if (not isinstance(config, dict) or config.get("controller_octopus_id") != self.device_id
+                or config.get("consortium_id") != self.group):
+            raise MembershipConflict("The original main's saved configuration changed identity")
+        boards = [board for board in config.get("octopuses", [])
+                  if isinstance(board, dict) and board.get("octopus_id") == self.device_id]
+        if (len(boards) != 1 or type(boards[0].get("supported_tentacles")) is not int
+                or not 1 <= boards[0]["supported_tentacles"] <= 4):
+            raise MembershipConflict("The original main has no proven adapter capacity")
+        ready = (system.get("ready") is True and system.get("configuration_pending") is False
+                 and system.get("applied_config_revision") == config.get("config_revision")
+                 and system.get("applied_presentation_revision") == config.get("presentation_revision"))
+        return system, {"boot_id": self.boot, "supported_tentacles": boards[0]["supported_tentacles"]}, ready
+
+    def assert_connected(self, *, timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            _, peer, ready = self._connected_snapshot(deadline=deadline)
+            if ready:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Adapter settings operation deadline expired")
+                settings = self.main.request("/api/devices/" + self.device_id + "/settings",
+                                             timeout=min(15, remaining))
+                if self._settings_match(settings, peer):
+                    self._system()
+                    return self
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("The original main did not become ready for adapter settings")
+            time.sleep(min(0.25, remaining))
+
+
+class FrontPhysicalAddress:
+    """Save, verify and restore an adapter default on the main or added member.
+
+    Applying and restoring preserve the verified owner boot and scan proofs.
     A save selects the latest stored scanned address when one exists,
     otherwise the new default. Ordinary scans do not change the selection.
     """
@@ -27,7 +101,7 @@ class FrontPhysicalAddress:
 
     def __init__(self, member, tentacle, address, *, timeout=None):
         bed = getattr(member.main, "_testbed", None)
-        if (bed is None or not bed._entered or bed._closed or not member._created
+        if not isinstance(member, _LocalOwner) and (bed is None or not bed._entered or bed._closed or not member._created
                 or member._closed or member.candidate._testbed is not bed
                 or getattr(bed, "_member_proofs", {}).get(member.device_id) is not member):
             raise RuntimeError("Adapter settings require this TestBed's verified added member")
@@ -45,6 +119,10 @@ class FrontPhysicalAddress:
         if not hasattr(self.main, "adapter_settings_operations"):
             self.main.adapter_settings_operations = []
         bed.add_cleanup(self.close)
+
+    @classmethod
+    def local(cls, main, tentacle, address, *, timeout=None):
+        return cls(_LocalOwner(main), tentacle, address, timeout=timeout)
 
     def _remaining(self, deadline):
         remaining = deadline - time.monotonic()
@@ -204,6 +282,35 @@ class FrontPhysicalAddress:
         if self._before == self.address:
             return self
         self._change(snapshot, selected, self.address, "apply", deadline)
+        return self
+
+    def read(self):
+        """Read this adapter's current UI values on the same proven owner boot."""
+        deadline = time.monotonic() + self.timeout
+        self.member.assert_connected(timeout=self._remaining(deadline))
+        _, selected = self._snapshot(deadline)
+        return selected
+
+    def assert_address(self, *, detected, selected, default=None):
+        """Check the saved, scanned and selected addresses independently."""
+        row = self.read()
+        expected = {"default_front_physical_address": self.address if default is None else default,
+                    "observed_front_physical_address": detected,
+                    "effective_front_physical_address": selected}
+        for key, value in expected.items():
+            wanted = None if value is None else format_physical_address(value).upper()
+            actual = row[key]
+            actual = None if actual is None else format_physical_address(actual).upper()
+            if actual != wanted:
+                raise AssertionError(f"Adapter {self.tentacle} {key}: expected {wanted}, got {actual}")
+        record = {"phase": "assert_address", "dut": self.main.name, "device_id": self.member.device_id,
+                  "owner_boot": self.member.member_boot, "tentacle_id": self.tentacle,
+                  "address": row["default_front_physical_address"].upper(),
+                  "detected_address": row["observed_front_physical_address"].upper()
+                  if row["observed_front_physical_address"] is not None else None,
+                  "selected_address": row["effective_front_physical_address"].upper()}
+        self.main.adapter_settings_operations.append(record)
+        event("adapter_settings.address", **record)
         return self
 
     def close(self):

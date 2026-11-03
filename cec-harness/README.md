@@ -47,6 +47,8 @@ membership behavior remains unchanged.
   activities referencing its source, display, audio and switch equipment,
   rejects a stale confirmation, and verifies exact cascading deletion and
   preservation of unrelated local activities and configuration.
+- `functional_tests/default_physical_address.py`: changes adapter defaults on
+  the main and a headless member, with and without a scanned back address.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The former `tools/cec-harness/` fixed profiles, setup scripts and systemd service
@@ -871,6 +873,19 @@ run used an isolated snapshot while separate status-LED work was in progress;
 the final focused run and unit suite include that subsequently committed work.
 No firmware changes or DUT update were needed.
 
+## Default physical address changes
+
+`--test default_physical_address` runs four cases on adapter 1 of `amity-dut`
+and an added `amity-dut-2`. A front TV alone establishes no scannable back
+address; adding a back AVR and its player establishes the detected address
+`1.0.0.0`. After an explicit scan, each case changes the default from
+`1.0.0.0` to `2.0.0.0` and back. The selected address must follow the default
+when no address was detected, and retain the scanned address even when it
+equals the old default. Each save checks the three UI address values, unchanged
+owner boots and fresh physical Report Physical Address replies. A changed
+selection also requires the automatic identity announcement before the test's
+query. Cleanup restores the original default before removing the added member.
+
 ## Run functional tests
 
 `activity.py` exercises remote key routing twice: once with the TV/AVR/player
@@ -929,7 +944,8 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test qualified_names` for identical equipment identities on two owners,
 `--test missing_equipment` for source disappearance, cooldown and passive return,
 `--test removal_cascade` for stale removal confirmation and exact activity/member cleanup,
-or `--test all` for all twelve registered scenarios (seventeen
+`--test default_physical_address` for four local/member scanned/fallback cases,
+or `--test all` for all thirteen registered scenarios (twenty-one
 test cases). The same credentials, TLS, SSH and output
 options apply. A multi-test report has
 `passed` and `tests`; each entry keeps the ordinary single-test report format.
