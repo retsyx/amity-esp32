@@ -13,8 +13,8 @@
     },
     {
       "path": "04-hardware-and-cec-runtime.md",
-      "size_bytes": 7478,
-      "sha256": "1dc7f5058a61c80f7f5e77474b6fcc033b373c75fd74574f174668333d733a2e"
+      "size_bytes": 7536,
+      "sha256": "a7868036d8064e0e9a334b9ae46539b0d8f4f7e4417d0ab5ba422523812a2f0a"
     },
     {
       "path": "05-discovery-and-topology.md",
@@ -33,8 +33,8 @@
     },
     {
       "path": "08-consortium-transport-and-routing.md",
-      "size_bytes": 28071,
-      "sha256": "3eea60dbeb054d90419ec7fee229207635e9da228f7d6119f0b8b3ba32f1183b"
+      "size_bytes": 28099,
+      "sha256": "3ae96decd237ad41212ac3cab9253c20a76691168753c94f564b6d245cfa734e"
     },
     {
       "path": "09-membership-security-and-enrollment.md",
@@ -48,13 +48,13 @@
     },
     {
       "path": "11-configuration-storage.md",
-      "size_bytes": 7351,
-      "sha256": "f0933699cd7259863957b9b132ba6c6740c531cfde1f792d59938fc526751a5c"
+      "size_bytes": 7373,
+      "sha256": "ef3a8e792862a22e94e82162c08f9627d864dba09296ea7047c1cad02580136c"
     },
     {
       "path": "12-control-surfaces-and-admin.md",
-      "size_bytes": 10121,
-      "sha256": "afdad5b99a2dd55f288fca07558ca5e39621e8921c4bbee4209cf93c97f4a50b"
+      "size_bytes": 10239,
+      "sha256": "ee7867440f675d614d5e76f8c23063eeaf5b60ff11ea793777cf48a77e0929cf"
     },
     {
       "path": "13-faults-removal-and-recovery.md",
@@ -68,8 +68,8 @@
     },
     {
       "path": "15-validation-and-release-gates.md",
-      "size_bytes": 26457,
-      "sha256": "28dfe5d87cd78e47483ce29b69b18b49b474782ce2a526bf58d2c5dbdbb5935b"
+      "size_bytes": 28208,
+      "sha256": "4aaf1187547f47e02b9a400725dba2ebbc046356ab5cdbba5c2f4487566f2785"
     },
     {
       "path": "19-source-baseline.md",
@@ -78,13 +78,13 @@
     },
     {
       "path": "20-user-interface.md",
-      "size_bytes": 32705,
-      "sha256": "e90ad9367a662c132f8ed267df206de0de0cb8300dc82b6c91e778a6d7bcff69"
+      "size_bytes": 32914,
+      "sha256": "dea7405ee5d6e3708c992755ea82d676ea03ee7c8ae504ac33e6e0f5b1bf3080"
     },
     {
       "path": "21-original-controller-policy.md",
-      "size_bytes": 10956,
-      "sha256": "adae69a1f21d6e42ed0db82031169db6e27f8268f30761d16f0599e21c9b86ec"
+      "size_bytes": 11078,
+      "sha256": "4fd06d0471fc9733b17e5cce551021ce1246e71691cdf47de4e78c8ae6583f41"
     },
     {
       "path": "README.md",
@@ -143,8 +143,8 @@
     },
     {
       "path": "schemas/adapter-settings.schema.json",
-      "size_bytes": 6649,
-      "sha256": "e4c779f9f60ec7e646e11986fceaced988720abbfaf0bda31a3aa3daede23e2f"
+      "size_bytes": 6542,
+      "sha256": "fa46e70249b86c2725d75d3e8771a4c1126cc7461365ad8a04271b8df5910cd2"
     },
     {
       "path": "schemas/cec-address.schema.json",

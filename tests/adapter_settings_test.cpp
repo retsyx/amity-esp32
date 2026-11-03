@@ -33,7 +33,7 @@ psa_status_t psa_hash_compute(unsigned,const uint8_t*,size_t,uint8_t*,size_t,siz
 int main(){
     records["front_physical"]="3.0.0.0";assert(device_settings::init()==ESP_OK);
     amity::SystemControl owner;owner.boot=id<m::BootId>(1);
-    owner.rows={{0,true,0x2300,0x2300},{1,false,std::nullopt,std::nullopt},{2,true,std::nullopt,std::nullopt},{3,true,std::nullopt,0x1000,true}};
+    owner.rows={{0,true,0x2300,0x2300},{1,false,std::nullopt,std::nullopt},{2,true,std::nullopt,std::nullopt},{3,true,std::nullopt,0x1000}};
     owner.gate=[&](m::BootId boot,std::vector<amity::AdapterAddressChange> adapters,uint64_t deadline,std::function<esp_err_t()> persist){
         ++calls;assert(boot==owner.boot&&adapters.size()==1&&adapters[0].tentacle_id==3&&adapters[0].default_physical==0x5200&&deadline==1000);return persist();
     };

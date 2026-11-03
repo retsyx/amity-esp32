@@ -25,14 +25,16 @@ activity backup/restore and reset with the application namespace. Startup uses
 the original back-first scan and selects its lowest usable physical address,
 otherwise the adapter's own default.
 
-The 2 November 2026 live-settings amendment applies a saved default without
-reboot. The owner records the actual selection source: a fallback-selected
-address adopts the new default after the atomic write; a scanned-selected
-address remains unchanged, including when it equals the previous default.
-Later observations do not rewrite this provenance. A changed selected address
-is announced through the existing CEC transmitter without another scan or cache
-clear. The source flag is transient runtime metadata, not a persisted approval
-or a permission to use an activity. Settings do not replay activities.
+The final 2 November 2026 live-settings amendment applies a saved default
+without reboot. The owner retains the latest usable scanned address separately
+from the selected address; an applicable scan that finds none clears that
+observation. After the atomic write select the stored scanned address when
+present, otherwise the new default. Normal scans update only the observation;
+the next explicit default edit uses its latest result, without a redundant
+startup source flag. A changed selected address is announced through the
+existing CEC transmitter without another scan or cache clear. The scanned
+observation is transient runtime metadata, not a persisted approval or a
+permission to use an activity. Settings do not replay activities.
 
 The shared settings service checks the configured slot, target BootId, durable
 settings revision and original authority deadline before persistence on the

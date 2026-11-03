@@ -15,8 +15,8 @@ bool is_settings_kind(Kind kind){return kind==Kind::settings_read||kind==Kind::s
 bool valid_settings_snapshot(const Json& value){
  model::BootId boot;if(!closed(value,{"boot_id","settings_revision","adapters"})||!id(value.get("boot_id"),boot)||!counter(value.get("settings_revision")))return false;
  const auto* rows=value.get("adapters");if(rows->type!=Json::Type::array||rows->array.size()>amity::max_tentacles)return false;unsigned seen=0;
- for(const auto& row:rows->array){uint64_t slot=0;std::string name;bool configured=false,selected_from_default=false;
-  if(!closed(row,{"tentacle_id","name","configured","default_front_physical_address","observed_front_physical_address","effective_front_physical_address","selected_from_default"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!json_string(row.get("name"),name,0,128)||!json_bool(row.get("configured"),configured)||!pa(row.get("default_front_physical_address"))||!nullable_pa(row.get("observed_front_physical_address"))||!nullable_pa(row.get("effective_front_physical_address"))||!json_bool(row.get("selected_from_default"),selected_from_default))return false;
+ for(const auto& row:rows->array){uint64_t slot=0;std::string name;bool configured=false;
+  if(!closed(row,{"tentacle_id","name","configured","default_front_physical_address","observed_front_physical_address","effective_front_physical_address"})||!json_uint(row.get("tentacle_id"),slot,0,amity::last_tentacle_id)||(seen&(1u<<slot))||!json_string(row.get("name"),name,0,128)||!json_bool(row.get("configured"),configured)||!pa(row.get("default_front_physical_address"))||!nullable_pa(row.get("observed_front_physical_address"))||!nullable_pa(row.get("effective_front_physical_address")))return false;
   seen|=1u<<slot;
  }
     return true;

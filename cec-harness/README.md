@@ -676,11 +676,12 @@ physical devices, including the AVR on both connected endpoints.
 Without EDID, `member.front_physical_address(2, "1.2.0.0")` uses the existing
 authenticated UI Save operation to set the default for AVR input 2 without
 reboot. It reviews the member boot, settings revision, configured adapter and
-actual selected-address source, then proves the same boot, exact saved defaults
-and correct selected address before scanning. A fallback-selected address adopts
-the new default; a scanned-selected address remains unchanged, even when its
-number matched the old default. After activities close it restores the prior
-saved default through the same API and verifies that same source rule on the
+latest stored scanned address, then proves the same boot, exact saved defaults
+and correct selected address before scanning. Saving selects that scanned
+address when present, otherwise the new default. Ordinary scans can update or
+clear the observation without changing selection until the next default edit.
+After activities close the helper restores the prior saved default through the
+same API and verifies selection against the latest stored scan result on the
 unchanged boot before member removal. Settings preserve scan proofs and device
 caches and do not themselves enumerate.
 

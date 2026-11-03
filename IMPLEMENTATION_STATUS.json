@@ -3147,5 +3147,32 @@
       "current_state": "Ready and idle, no enrolled peers or removed-owner observations, no pending configuration or discovery, and no activity or hardware error.",
       "diagnostic_limits": "The final snapshot retains a nonempty membership last_error and cumulative tx_errors=4694 (before the cases: 114); rx_dropped remains zero. These passing checks do not assert the absence of transport or CEC transmission failures."
     }
+  },
+  "scanned_address_defaults_2026_11_02": {
+    "firmware_version": "0.1.131",
+    "matter_software_version": 132,
+    "result": "PASS software/native/browser checks and exact-image main-only OTA with full saved-configuration and pairing preservation",
+    "behavior": "Explicit default save selects the stored latest scanned address when present, otherwise the new default. Normal scans preserve selection until the next explicit save. No redundant startup-source flag, reboot, scan trigger, cache clearing or connection replacement.",
+    "checks": {
+      "cec_hub_native_suites": 4,
+      "native_ports_including_busy_fences": true,
+      "adapter_settings_service": true,
+      "consortium_protocol": true,
+      "runtime_admission": true,
+      "settings_codec_schema_vectors": 340,
+      "codec_schema_discrepancies": 0,
+      "harness_unit_tests": 533,
+      "focused_harness_settings_tests": 18,
+      "browser_checks": 22
+    },
+    "firmware_build": true,
+    "evidence": "test-results/scanned-address-defaults-2026-11-02/verification.json",
+    "physical_functional_tests_run": false,
+    "firmware_deployed": true,
+    "deployed_targets": [
+      "amity-dut"
+    ],
+    "deployment_evidence": "test-results/amity-dut-0.1.131-update-2026-11-02/deployment.json",
+    "deployment_checks_passed": 20
   }
 }

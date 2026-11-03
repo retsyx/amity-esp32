@@ -31,7 +31,7 @@ static void adapter_settings_owner_tests() {
         }) == ESP_OK);
         assert(writes == 2 && !owner.maintenance_ready() && !fixture_late_reply);
         auto applied = owner.adapter_runtime_snapshot();
-        assert(applied[0].effective_front_physical == 0x6000 && applied[0].selected_from_default);
+        assert(applied[0].effective_front_physical == 0x6000);
         assert(!applied[0].observed_front_physical);
         assert(owner.snapshot().discovery_generation == initial.discovery_generation);
         // A fresh same-boot save and normal work remain available immediately.
@@ -64,7 +64,7 @@ static void adapter_settings_owner_tests() {
         // using the new fallback, without a reboot or a new scan request.
         for(unsigned pass=0;pass<2000&&!owner.adapter_runtime_snapshot()[3].effective_front_physical;++pass)run_idle(1);
         const auto applied=owner.adapter_runtime_snapshot()[3];
-        assert(applied.effective_front_physical==0x5200&&applied.selected_from_default&&!applied.observed_front_physical);
+        assert(applied.effective_front_physical==0x5200&&!applied.observed_front_physical);
     }
     fixture_tick=100000;fixture_present=true;
 }
@@ -97,7 +97,7 @@ static void pending_activity_rejects_settings(bool repair) {
     for(size_t n=0;n<before.devices.size();++n){const auto& old=before.devices[n];const auto& current=after.devices[n];
         assert(old.name==current.name&&old.bus==current.bus&&old.address==current.address&&old.physical_address==current.physical_address);
     }
-    assert(unchanged.effective_front_physical==address.effective_front_physical&&unchanged.selected_from_default==address.selected_from_default);
+    assert(unchanged.effective_front_physical==address.effective_front_physical&&unchanged.observed_front_physical==address.observed_front_physical);
     fixture_complete_all();fixture_async_autocomplete=true;
     if(!repair)fixture_finish_discovery(owner,boot_scan);
     run_idle(32);

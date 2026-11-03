@@ -32,8 +32,7 @@ configuration=dict(version=3,controller_octopus_id=MAIN,config_revision='1',pres
 def adapter(slot,configured=True,default='1.0.0.0',observed=None):
     return dict(tentacle_id=slot,name=f'HDMI adapter {slot+1}',configured=configured,
                 default_front_physical_address=default,observed_front_physical_address=observed,
-                effective_front_physical_address=(observed or default) if configured else None,
-                selected_from_default=configured and observed is None)
+                effective_front_physical_address=(observed or default) if configured else None)
 settings={MAIN:dict(boot_id=BOOT,settings_revision='1',adapters=[adapter(0)]),
           MEMBER:dict(boot_id=REMOTE_BOOT,settings_revision='9007199254740993',adapters=[
               adapter(0,default='2.0.0.0',observed='3.0.0.0'),adapter(1,default='4.0.0.0'),
@@ -89,8 +88,7 @@ class Handler(SimpleHTTPRequestHandler):
             for change in data['changes']:
                 row=current['adapters'][change['tentacle_id']]
                 row['default_front_physical_address']=change['default_front_physical_address'] or '1.0.0.0'
-                if row['selected_from_default']:
-                    row['effective_front_physical_address']=row['default_front_physical_address']
+                row['effective_front_physical_address']=row['observed_front_physical_address'] or row['default_front_physical_address']
             current['settings_revision']=str(int(current['settings_revision'])+1)
             if fixture['settings_http500']:return self.reply(dict(error='Connection closed after saving'),500)
             operation_id=f'{fixture["next_id"]:032x}';fixture['next_id']+=1
@@ -180,8 +178,7 @@ def main():
             applied_revision=settings[MEMBER]['settings_revision'];input_for(d,3).fill('A.C.0.0');save.click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['expected_settings_revision']==applied_revision
             expect(d.locator('[data-adapter-id="3"] td').nth(2)).to_have_text('A.C.0.0')
-            # Even equality with the default does not make a detected selection
-            # become fallback-derived on the next save.
+            # A stored scanned address wins over both equal and different defaults.
             for address in ('3.0.0.0','5.0.0.0'):
                 input_for(d,0).fill(address);save.click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
                 expect(input_for(d,0)).to_have_value(address)

@@ -22,15 +22,16 @@ and transport fences.
 
 ## Live adapter address settings — 2 November 2026
 
-Changing an adapter's default physical address must not reboot an Amity. After
-an atomic save, update that adapter's selected address only if its in-use
-address was selected from the default because startup discovery found no usable
-address. Keep a selected scanned address unchanged, even when it numerically
-matches the old default. Track that selection source explicitly as transient
-runtime state; later observations or number equality do not change it. Preserve
-independent adapter settings, device caches, authenticated connections and the
-original scan triggers. No settings-triggered enumeration or activity replay
-is added.
+Changing an adapter's default physical address must not reboot an Amity. Store
+the latest usable scanned address, or no address if the most recent applicable
+scan found none. On an explicit atomic default save, select that stored scanned
+address when present, otherwise the new default. Normal scans update the stored
+observation while leaving the selected address unchanged; the next default edit
+uses the latest scan result, including when a scan finds or loses an address.
+Do not retain a separate flag recording whether startup used the default.
+Preserve independent adapter settings, device caches, authenticated connections
+and the original scan triggers. No settings-triggered enumeration or activity
+replay is added.
 
 The settings dialog uses one table with **Adapter**, **Default**, **Detected
 Address** and **Selected Address** columns. Adapter numbers are 1–4 within the

@@ -30,7 +30,7 @@ bool send(Active&,Kind kind,std::string_view payload,uint32_t){assert(kind==Kind
 '''
 HELPERS=r'''
 namespace amity::consortium {
-std::string snapshot(model::BootId target={}){if(!target)target=boot;return "{\"boot_id\":\""+target.str()+"\",\"settings_revision\":\""+std::to_string(revision)+"\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"default_front_physical_address\":\"A.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\",\"selected_from_default\":true}]}";}
+std::string snapshot(model::BootId target={}){if(!target)target=boot;return "{\"boot_id\":\""+target.str()+"\",\"settings_revision\":\""+std::to_string(revision)+"\",\"adapters\":[{\"tentacle_id\":3,\"name\":\"HDMI adapter 4\",\"configured\":true,\"default_front_physical_address\":\"A.0.0.0\",\"observed_front_physical_address\":null,\"effective_front_physical_address\":\"1.0.0.0\"}]}";}
 Json parsed(std::string_view text){Json out;JsonError detail;assert(parse_json(text,out,detail));return out;}
 Json core(model::BootId target={},uint64_t expected=2){if(!target)target=boot;return parsed("{\"expected_boot_id\":\""+target.str()+"\",\"expected_settings_revision\":\""+std::to_string(expected)+"\",\"changes\":[{\"tentacle_id\":3,\"default_front_physical_address\":\"A.0.0.0\"}]}");}
 Error apply(model::MessageId id,const Json& body,uint64_t deadline,std::string& response){
@@ -148,7 +148,7 @@ def schema_vectors(binary):
  resources=[protocol]+[json.loads(path.read_text()) for path in (ROOT/'amity-octopus-consortium/schemas').glob('*.json')]
  registry=Registry().with_resources((value['$id'],Resource.from_contents(value)) for value in resources)
  jsonschema.Draft202012Validator.check_schema(protocol)
- snapshot={'boot_id':'1'*32,'settings_revision':'2','adapters':[{'tentacle_id':3,'name':'HDMI adapter 4','configured':True,'default_front_physical_address':'A.0.0.0','observed_front_physical_address':None,'effective_front_physical_address':'1.0.0.0','selected_from_default':True}]}
+ snapshot={'boot_id':'1'*32,'settings_revision':'2','adapters':[{'tentacle_id':3,'name':'HDMI adapter 4','configured':True,'default_front_physical_address':'A.0.0.0','observed_front_physical_address':None,'effective_front_physical_address':'1.0.0.0'}]}
  core={'expected_boot_id':'1'*32,'expected_settings_revision':'2','changes':[{'tentacle_id':3,'default_front_physical_address':'A.0.0.0'}]}
  vectors=[('DeviceSettingsSnapshot',snapshot),('DeviceSettingsWrite',core),('SettingsRead',{'request_id':'2'*32}),('SettingsWrite',{'request_id':'2'*32,'settings':core})]
  for pa in ['', '0.0.0.0','A.0.0.0','a.b.0.0','1.2.3.4','F.F.F.E','F.F.F.F','f.f.f.f','1.0.1.0','0.1.0.0','1.2.0.3','x.0.0.0','1.0.0','1.0.0.0.0']:

@@ -18,8 +18,8 @@ class FrontPhysicalAddress:
     """Save, verify and restore one test-owned member's adapter default.
 
     Applying and restoring preserve the verified member boot and scan proofs.
-    A saved fallback changes the selected address only while that selection
-    originates from the default, independently of matching address numbers.
+    A save selects the latest stored scanned address when one exists,
+    otherwise the new default. Ordinary scans do not change the selection.
     """
 
     _cleanup_priority = 1
@@ -109,10 +109,8 @@ class FrontPhysicalAddress:
                         if not isinstance(value, str):
                             raise ValueError("A UI physical address must be text")
                         format_physical_address(value)
-                if type(row.get("selected_from_default")) is not bool:
-                    raise ValueError("The selected address needs its actual selection source")
             except (TypeError, ValueError) as error:
-                raise MembershipConflict("Adapter settings returned an invalid physical address or selection source") from error
+                raise MembershipConflict("Adapter settings returned an invalid physical address") from error
         return deepcopy(body), deepcopy(selected[0])
 
     @staticmethod
@@ -156,13 +154,11 @@ class FrontPhysicalAddress:
                         self._pause(deadline)
                         continue
                     effective = format_physical_address(effective).upper()
-                    if (selected["selected_from_default"] != pending["selected_from_default"]
-                            or effective != pending["selected_address"]):
-                        raise MembershipConflict("The selected address did not follow its reviewed selection source")
+                    if effective != pending["selected_address"]:
+                        raise MembershipConflict("The selected address did not follow the reviewed scanned address or default")
                     self.member.assert_connected(timeout=self._remaining(deadline))
                     pending["record"].update(member_boot=peer["boot_id"], settings_revision=body["settings_revision"],
-                                              selected_address=effective,
-                                              selected_from_default=selected["selected_from_default"])
+                                              selected_address=effective)
                     self._changed = pending["phase"] != "restore"
                     self._pending = None
                     event("adapter_settings.verified", **pending["record"])
@@ -178,9 +174,9 @@ class FrontPhysicalAddress:
         self.main.adapter_settings_operations.append(record)
         self._pending = {"phase": phase, "request_id": request_id, "owner_boot": self.member.member_boot,
                          "address": address, "defaults": self._defaults(snapshot),
-                         "selected_from_default": selected["selected_from_default"],
-                         "selected_address": address if selected["selected_from_default"] else
-                                             format_physical_address(selected["effective_front_physical_address"]).upper(),
+                         "selected_address": format_physical_address(
+                             selected["observed_front_physical_address"]).upper()
+                             if selected.get("observed_front_physical_address") is not None else address,
                          "revision": snapshot["settings_revision"], "record": record}
         payload = {"request_id": request_id, "expected_boot_id": snapshot["boot_id"],
                    "expected_settings_revision": snapshot["settings_revision"],
@@ -206,9 +202,6 @@ class FrontPhysicalAddress:
         snapshot, selected = self._snapshot(deadline)
         self._before = selected["default_front_physical_address"].upper()
         if self._before == self.address:
-            if (selected["selected_from_default"]
-                    and selected["effective_front_physical_address"].upper() != self.address):
-                raise MembershipConflict("The selected fallback differs from its saved default")
             return self
         self._change(snapshot, selected, self.address, "apply", deadline)
         return self

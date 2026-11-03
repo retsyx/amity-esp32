@@ -70,8 +70,8 @@ static void core_selection() {
         wire.sent.clear(); assert(hub.select_activity(0));
         assert(wire.sent.size() == 1 && carries_physical(wire.sent[0].frame, 0x82, 0x2000));
 
-        // Late broadcasts, a completed rescan, and changed defaults cannot
-        // replace either a discovered or a fallback decision during a boot.
+        // Late broadcasts and ordinary rescans preserve selection, including
+        // a changed fallback passed to the scan. Explicit settings apply below.
         hub.receive(BusSide::Back, physical_report(8, 0x1000));
         hub.begin_discovery(); hub.receive(BusSide::Back, physical_report(8, 0x1000));
         hub.determine_front_physical_address(0x3000); hub.finish_discovery();
@@ -122,33 +122,40 @@ static void core_selection() {
 static void live_default_selection() {
     Capture wire; amity::Hub fallback(wire);
     fallback.set_addresses(4, 0, 0xffff); fallback.begin_discovery();
+    assert(!fallback.apply_default_front_physical_address(0x1000));
+    assert(fallback.snapshot().front_physical_address == 0xffff); // Initial scan still owns selection.
     fallback.determine_front_physical_address(0x1000); fallback.finish_discovery();
-    assert(fallback.selected_from_default() && !fallback.detected_front_physical_address());
+    assert(!fallback.detected_front_physical_address());
     assert(fallback.apply_default_front_physical_address(0x2000));
     assert(fallback.snapshot().front_physical_address == 0x2000);
     assert(!fallback.apply_default_front_physical_address(0x2000));
 
-    // A later scan records real detection but does not silently replace the
-    // selected fallback identity. The next explicit default edit still does.
+    // Scanning updates the optional observation without changing selection.
+    // An explicit default save then selects that scanned address first.
     fallback.begin_discovery(); fallback.receive(BusSide::Back, physical_report(5, 0x3000));
     fallback.determine_front_physical_address(0x2000); fallback.finish_discovery();
-    assert(fallback.detected_front_physical_address() == 0x3000 && fallback.selected_from_default());
+    assert(fallback.detected_front_physical_address() == 0x3000);
     assert(fallback.snapshot().front_physical_address == 0x2000);
     assert(fallback.apply_default_front_physical_address(0x4000));
-    assert(fallback.snapshot().front_physical_address == 0x4000 && fallback.detected_front_physical_address() == 0x3000);
+    assert(fallback.snapshot().front_physical_address == 0x3000);
+    assert(!fallback.apply_default_front_physical_address(0x5000));
+    fallback.begin_discovery(); fallback.determine_front_physical_address(0x5000); fallback.finish_discovery();
+    assert(!fallback.detected_front_physical_address() && fallback.snapshot().front_physical_address == 0x3000);
+    assert(fallback.apply_default_front_physical_address(0x6000));
+    assert(fallback.snapshot().front_physical_address == 0x6000);
 
     Capture detected_wire; amity::Hub detected(detected_wire);
     detected.set_addresses(4, 0, 0xffff); detected.begin_discovery();
     detected.receive(BusSide::Back, physical_report(5, 0x1000));
     detected.determine_front_physical_address(0x1000); detected.finish_discovery();
-    // Equality with the old default cannot turn detected selection into a
-    // fallback selection. Nor can losing that observation in a later scan.
-    assert(!detected.selected_from_default() && detected.detected_front_physical_address() == 0x1000);
+    // A scanned address equal to the old default still takes precedence.
+    assert(detected.detected_front_physical_address() == 0x1000);
     assert(!detected.apply_default_front_physical_address(0x2000));
-    detected.begin_discovery(); detected.determine_front_physical_address(0x2000); detected.finish_discovery();
-    assert(!detected.detected_front_physical_address() && !detected.selected_from_default());
-    assert(!detected.apply_default_front_physical_address(0x3000));
     assert(detected.snapshot().front_physical_address == 0x1000);
+    detected.begin_discovery(); detected.determine_front_physical_address(0x2000); detected.finish_discovery();
+    assert(!detected.detected_front_physical_address());
+    assert(detected.apply_default_front_physical_address(0x3000));
+    assert(detected.snapshot().front_physical_address == 0x3000);
 }
 
 static void reset_wire() {
@@ -219,10 +226,9 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
 
     const bool from_default = ack_only || !reported;
     auto address_state = service.adapter_runtime_snapshot()[0];
-    assert(address_state.selected_from_default == from_default);
     assert(from_default ? !address_state.observed_front_physical : address_state.observed_front_physical == reported);
     // Execute the real owner save path without altering the boot, cache,
-    // logical addresses or discovery generation. Only fallback selection moves.
+    // logical addresses or discovery generation. A scanned address wins.
     announced_address = from_default ? 0x6000 : reported;
     fixture_sent.clear(); fixture_delay = {};
     const auto stopped = fixture_stopped_buses.size();
@@ -237,7 +243,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
         assert(old.name==current.name && old.bus==current.bus && old.address==current.address && old.physical_address==current.physical_address);
     }
     address_state = service.adapter_runtime_snapshot()[0];
-    assert(address_state.effective_front_physical == announced_address && address_state.selected_from_default == from_default);
+    assert(address_state.effective_front_physical == announced_address);
     if(from_default){assert(fixture_sent.size()==3 && carries_physical(fixture_sent[1].frame,0x84,announced_address));}
     else assert(fixture_sent.empty());
 
@@ -256,18 +262,29 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     assert(service.discover()); run_one_command();
     fixture_finish_discovery(service, generation);
     assert(service.snapshot().front_physical_address == announced_address);
-    // The scan above now saw a different real address. It still does not
-    // replace the selected identity or change how a later edit is applied.
+    // The scan alone preserves selection. The next explicit save picks its
+    // scanned address, regardless of the old selected address or default.
     const auto after_scan = service.adapter_runtime_snapshot()[0];
-    assert(after_scan.observed_front_physical == 0x1000 && after_scan.selected_from_default == from_default);
-    const auto next_address = from_default ? uint16_t{0x7000} : expected;
-    announced_address = next_address;
+    assert(after_scan.observed_front_physical == 0x1000);
+    announced_address = 0x1000;
     assert(service.standby()); run_one_command();
     for(unsigned pass=0;pass<64 && service.activity_setup_in_progress();++pass)run_idle(1);
     assert(service.commit_adapter_settings(boot, {{0,0x7000}}, uint64_t(fixture_time)/1000 + 5000,
         [&]{ ++writes; return ESP_OK; }) == ESP_OK);
-    assert(writes == 2 && service.snapshot().front_physical_address == next_address);
+    assert(writes == 2 && service.snapshot().front_physical_address == 0x1000);
     assert(service.adapter_runtime_snapshot()[0].observed_front_physical == 0x1000);
+
+    // A later completed scan with no usable address clears the observation.
+    // Selection remains until a save, which now uses the requested default.
+    const auto observed_generation=service.snapshot().discovery_generation;
+    reported=0; ack_only=false; delayed_avr=false;
+    assert(service.discover());run_one_command();fixture_finish_discovery(service,observed_generation);
+    assert(!service.adapter_runtime_snapshot()[0].observed_front_physical);
+    assert(service.snapshot().front_physical_address==0x1000);
+    announced_address=0x8000;
+    assert(service.commit_adapter_settings(boot,{{0,0x8000}},uint64_t(fixture_time)/1000+5000,
+        [&]{++writes;return ESP_OK;})==ESP_OK);
+    assert(writes==3&&service.snapshot().front_physical_address==0x8000);
     fixture_send = {}; fixture_transmit = {}; fixture_delay = {};
 }
 

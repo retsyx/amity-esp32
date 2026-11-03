@@ -2110,9 +2110,6 @@
                     "type": "null"
                   }
                 ]
-              },
-              "selected_from_default": {
-                "type": "boolean"
               }
             },
             "required": [
@@ -2121,8 +2118,7 @@
               "configured",
               "default_front_physical_address",
               "observed_front_physical_address",
-              "effective_front_physical_address",
-              "selected_from_default"
+              "effective_front_physical_address"
             ],
             "additionalProperties": false
           },

@@ -141,12 +141,13 @@ boot/revision, expired authority or unconfigured slot rejects before writing.
 Reserve the owner, drain current wire work and matching cleanup, then recheck
 configured slots, boot, revision and authority immediately before the bounded
 atomic write. A started flash write obtains its actual result even if it
-crosses the original request deadline. After durable success, change a selected
-address only if its actual startup selection used the default because no usable
-address was found; retain a scanned-selected address even when it numerically
-equals the previous default. Keep that source as transient per-adapter state,
-without turning later observations into a new selection decision. Publish the
-applied snapshot, resume normal admission and retain boot, connections and
+crosses the original request deadline. After durable success, select the
+adapter's stored latest scanned address when present, otherwise the new default.
+An applicable scan that finds no address clears the stored observation. Ordinary
+scans keep the selected address stable; the next explicit default edit uses the
+latest scan result, including an address found or lost since startup. Do not
+retain or expose a redundant startup-source flag. Publish the applied snapshot,
+resume normal admission and retain boot, connections and
 caches. Do not scan or replay an activity. The dialog stays open and shows the
 saved, detected and selected values. An unknown outcome requires an explicit
 fresh read/reconciliation; do not resubmit automatically.
@@ -158,10 +159,11 @@ fresh read/reconciliation; do not resubmit automatically.
 | Sparse connectors, e.g. 1 and 4 | Rows and saved values retain indices 1 and 4; no renumbering or sibling fallback. |
 | Configured wire with no CEC replies | Default address is editable; ordinary command attempts report their actual ACK/result. |
 | Unconfigured slot | Read-only; no adapter or detector is invented. |
-| Default edit on a fallback-selected adapter | Only that adapter's selected address adopts its new default; boot and caches remain intact. |
-| Default edit on a scanned-selected adapter | Save the new fallback and retain the selected scanned address, including equal-number cases. |
-| Later observation after fallback selection | Retain fallback provenance; the next explicit default edit still updates the selected address. |
-| Native PA report on adapter 4 after startup | Only adapter 4's detected value changes; no sibling setting or selected provenance is overwritten. |
+| Default edit with no stored scanned address | Only that adapter's selected address adopts its new default; boot and caches remain intact. |
+| Default edit with a stored scanned address | Save the new fallback and select the scanned address, including equal-number cases. |
+| Later scan finds an address | Update Detected Address, retain Selected Address until the next default edit, then select the stored scanned address. |
+| Later scan loses its address | Clear Detected Address, retain Selected Address until the next default edit, then select the new default. |
+| Native PA report on adapter 4 during an applicable scan | Only adapter 4's detected value changes; no sibling setting or selected address is overwritten. |
 | Activity, held input, update or pending configuration | Busy response, no settings write; no interruption of another device. |
 | Stale/revoked queued request | No persistence callback after cancellation and no automatic replay. |
 | Flash completion crosses deadline | Return its actual durable outcome; never strand a successful write as a definitive failed save. |

@@ -40,11 +40,14 @@ Native owner and service regressions must prove atomic same-boot application,
 unchanged caches/connections and scan triggers, restored ordinary admission,
 per-adapter isolation, stale boot/revision/authority/deadline rejection and
 failure-before-save retaining both default and selected address. Exercise
-fallback-selected, scanned-selected and equal-number/different-source cases,
-plus later observed metadata after fallback selection. Test both local and
-member transport paths. Harness settings apply/restore must verify the same
-member boot, exact revision/default batch and selected address from explicit
-runtime provenance; it must never replace old scan boot proofs after a save.
+stored scanned address present/absent and equal-number cases. A later scan
+that finds or loses an address must preserve the current selection until the
+next explicit default edit, which then uses the latest scanned address or new
+default. Do not retain a redundant source flag. Test both local and member
+transport paths. Harness settings apply/restore must verify the same member
+boot, exact revision/default batch and selected address against the stored
+scanned address or fallback; it must never replace old scan boot proofs after
+a save.
 These host checks do not establish physical wire or firmware qualification.
 
 Software verification for firmware **0.1.130** passed: the ESP-IDF build and
@@ -60,7 +63,30 @@ results, source hashes, build logs and screenshots are in
 `test-results/live-adapter-defaults-2026-11-02/verification.json` and that
 folder. No board was flashed and no physical functional test or active bench
 operation was performed. Earlier physical qualifications retain their original
-firmware and settings/restart scope.
+firmware and settings/restart scope. The 0.1.130 software evidence covers the
+earlier startup-source implementation; it does not qualify the subsequent
+latest-scanned-address amendment or firmware 0.1.131.
+
+The final scanned-address refinement in **0.1.131** passed the ESP-IDF build
+and 35 layout checks, four CEC hub native suites, native adapter/busy-fence
+checks, settings service, consortium protocol/admission checks, 340 codec/schema
+vectors, 533 harness unit tests and 22 browser checks. Found and lost scan
+observations select the stored scanned address or new default only on the next
+explicit save; no startup-source flag remains. Software-only evidence and
+source hashes are in `test-results/scanned-address-defaults-2026-11-02/`.
+
+The same **0.1.131** image was then installed only on **amity-dut** through
+its authenticated firmware-upload endpoint. Exact ELF identity, new healthy
+boot and standby were verified. Before/after raw configuration and activity
+editor documents, adapter preferences, identity/authority, Matter fabrics,
+HomeKit controllers and remote bond were preserved. Read-only polling then
+observed all configured adapters finish their normal startup address selection:
+the settings snapshot has no source flag and selects the scanned address or
+default. All 20 deployment checks pass. Evidence is
+`test-results/amity-dut-0.1.131-update-2026-11-02/deployment.json`. No other board
+was updated and no physical functional scenario was run. The earlier 0.1.130
+upload/reconciliation and its narrower raw-configuration evidence remain
+separate in `test-results/amity-dut-0.1.130-update-2026-11-02/`.
 
 ## Physical qualification
 

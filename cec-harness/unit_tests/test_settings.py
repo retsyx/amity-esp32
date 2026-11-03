@@ -19,6 +19,7 @@ class SettingsFixture(Fixture):
         super().__init__()
         self.capacity = 4
         self.defaults = {index: "1.0.0.0" for index in range(4)}
+        self.selected = dict(self.defaults)
         self.revision = 7
         self.writes = []
         self.restarts = 0
@@ -29,8 +30,6 @@ class SettingsFixture(Fixture):
         self.pending_address_reads = 0
         self.observed_address = None
         self.effective_override = None
-        self.selected_from_default = True
-        self.provenance_override = None
 
     @property
     def settings_path(self):
@@ -49,17 +48,10 @@ class SettingsFixture(Fixture):
                 "adapters": [{"tentacle_id": index, "configured": True,
                               "default_front_physical_address": address,
                               "observed_front_physical_address": None,
-                              "effective_front_physical_address": address,
-                              "selected_from_default": True}
+                              "effective_front_physical_address": self.selected[index]}
                              for index, address in self.defaults.items()]}}
             if self.observed_address is not None:
                 result["settings"]["adapters"][2]["observed_front_physical_address"] = self.observed_address
-            selected = result["settings"]["adapters"][2]
-            selected["selected_from_default"] = self.selected_from_default
-            if not self.selected_from_default:
-                selected["effective_front_physical_address"] = self.observed_address
-            if self.provenance_override is not None:
-                selected["selected_from_default"] = self.provenance_override
             if self.effective_override is not None:
                 result["settings"]["adapters"][2]["effective_front_physical_address"] = self.effective_override
             if self.pending_address_reads:
@@ -73,7 +65,9 @@ class SettingsFixture(Fixture):
                 or data["expected_settings_revision"] != str(self.revision)):
             raise AssertionError("A settings write must use its fresh reviewed boot and revision")
         for row in data["changes"]:
-            self.defaults[row["tentacle_id"]] = row["default_front_physical_address"]
+            index = row["tentacle_id"]
+            self.defaults[index] = row["default_front_physical_address"]
+            self.selected[index] = self.observed_address if index == 2 and self.observed_address is not None else self.defaults[index]
         if self.change_other_default:
             self.defaults[0] = "3.0.0.0"
         self.revision += 1
@@ -152,7 +146,7 @@ class AdapterSettingsTests(unittest.TestCase):
     def test_restore_previous_default_keeps_live_observed_address_effective(self):
         fixture, member = self.fixture()
         fixture.observed_address = "1.2.0.0"
-        fixture.selected_from_default = False
+        fixture.selected[2] = fixture.observed_address
         with member.front_physical_address(2, "1.2.0.0"):
             self.assertEqual(fixture.defaults[2], "1.2.0.0")
         self.assertEqual(fixture.defaults[2], "1.0.0.0")
@@ -171,45 +165,45 @@ class AdapterSettingsTests(unittest.TestCase):
                 fixture.effective_override = "4.0.0.0"
             return original(path, data, **kwargs)
         fixture.main.request = wrong_after_save
-        with self.assertRaisesRegex(MembershipConflict, "selection source"):
+        with self.assertRaisesRegex(MembershipConflict, "scanned address or default"):
             member.front_physical_address(2, "1.2.0.0")
 
     def test_detected_address_equal_to_old_default_is_not_replaced(self):
         fixture, member = self.fixture()
         fixture.observed_address = "1.0.0.0"
-        fixture.selected_from_default = False
+        fixture.selected[2] = fixture.observed_address
         with member.front_physical_address(2, "1.2.0.0"):
             selected = fixture.request(fixture.settings_path)["settings"]["adapters"][2]
             self.assertEqual(selected["default_front_physical_address"], "1.2.0.0")
             self.assertEqual(selected["effective_front_physical_address"], "1.0.0.0")
         self.assertEqual(fixture.restarts, 0)
 
-    def test_later_observed_address_does_not_change_fallback_selection_origin(self):
+    def test_later_scan_keeps_selection_until_save_then_supplies_selected_address(self):
         fixture, member = self.fixture()
         fixture.observed_address = "4.0.0.0"
+        self.assertEqual(fixture.request(fixture.settings_path)["settings"]["adapters"][2][
+            "effective_front_physical_address"], "1.0.0.0")
         with member.front_physical_address(2, "1.2.0.0"):
             selected = fixture.request(fixture.settings_path)["settings"]["adapters"][2]
             self.assertEqual(selected["observed_front_physical_address"], "4.0.0.0")
-            self.assertEqual(selected["effective_front_physical_address"], "1.2.0.0")
+            self.assertEqual(selected["effective_front_physical_address"], "4.0.0.0")
         self.assertEqual(fixture.restarts, 0)
 
     def test_equal_saved_default_with_different_detected_selection_needs_no_write(self):
         fixture, member = self.fixture()
         fixture.observed_address = "4.0.0.0"
-        fixture.selected_from_default = False
+        fixture.selected[2] = fixture.observed_address
         with member.front_physical_address(2, "1.0.0.0"):
             self.assertEqual(fixture.writes, [])
 
-    def test_changed_selection_source_is_rejected(self):
+    def test_scan_loses_address_then_next_save_selects_new_default(self):
         fixture, member = self.fixture()
-        original = fixture.request
-        def changed_after_save(path, data=None, **kwargs):
-            if path == fixture.settings_path and data is None and fixture.writes:
-                fixture.provenance_override = False
-            return original(path, data, **kwargs)
-        fixture.main.request = changed_after_save
-        with self.assertRaisesRegex(MembershipConflict, "selection source"):
-            member.front_physical_address(2, "1.2.0.0")
+        fixture.selected[2] = "4.0.0.0"
+        self.assertIsNone(fixture.observed_address)
+        with member.front_physical_address(2, "1.2.0.0"):
+            self.assertEqual(fixture.selected[2], "1.2.0.0")
+        self.assertEqual(fixture.selected[2], "1.0.0.0")
+        self.assertEqual(fixture.restarts, 0)
 
     def test_wrong_operation_or_main_boot_cannot_replace_member_proof(self):
         for field in ("bad_operation_id", "bad_main_boot"):

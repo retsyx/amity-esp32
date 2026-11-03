@@ -546,17 +546,18 @@ void Hub::begin_discovery(uint8_t sides) {
     discovering_ = true;
 }
 void Hub::determine_front_physical_address(uint16_t fallback) {
-    detected_physical_ = discovered_physical_;
+    detected_physical_ = discovered_physical_ == 0xffff ? std::nullopt : std::optional<uint16_t>{discovered_physical_};
     if (physical_ != 0xffff) return;
     // A parent precedes its descendants numerically (2.0.0.0 < 2.1.0.0).
     // Later discovery observes topology without changing the selected identity.
-    // An explicit settings save may replace only a fallback-based selection.
-    physical_from_default_ = discovered_physical_ == 0xffff;
-    physical_ = discovered_physical_ != 0xffff ? discovered_physical_ : fallback;
+    // An explicit settings save selects this observation or its new fallback.
+    physical_ = detected_physical_.value_or(fallback);
 }
 bool Hub::apply_default_front_physical_address(uint16_t fallback) {
-    if (!physical_from_default_ || physical_ == fallback) return false;
-    physical_ = fallback;
+    if (physical_ == 0xffff) return false; // Let the pending initial scan choose.
+    const auto selected = detected_physical_.value_or(fallback);
+    if (physical_ == selected) return false;
+    physical_ = selected;
     return true;
 }
 void Hub::finish_discovery() {

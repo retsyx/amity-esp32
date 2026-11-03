@@ -10,7 +10,6 @@
 namespace amity {
 struct AdapterRuntimeState {
     uint8_t tentacle_id=0;bool configured=false;std::optional<uint16_t> observed_front_physical,effective_front_physical;
-    bool selected_from_default=false;
 };
 struct AdapterAddressChange { uint8_t tentacle_id=0;uint16_t default_physical=0x1000; };
 // One owner task advances every original per-adapter discovery/key executor.

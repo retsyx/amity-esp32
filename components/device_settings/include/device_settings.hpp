@@ -34,7 +34,7 @@ const char *initial_admin_auth();
 uint16_t front_physical_address();
 esp_err_t save_front_physical_address(const std::string &value);
 // Stable hardware slots, never a compact list of attached adapters. The owner
-// applies durable defaults to fallback-selected addresses on its task.
+// selects the stored scanned address or durable default on its task.
 constexpr std::array<uint16_t, amity::max_tentacles> default_adapter_physical_addresses() {
     std::array<uint16_t, amity::max_tentacles> result{};
     for(auto& address:result)address=default_front_physical_address;

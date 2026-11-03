@@ -344,8 +344,8 @@ struct HubService::Impl : Transport {
         const auto result = settings_persist ? settings_persist() : ESP_ERR_INVALID_ARG;
         pending_settings->settings_effect.store(3);
         if (result != ESP_OK) { fail(result, "Settings were not saved"); return; }
-        // Apply on the same task that owns the CEC identity. A detected
-        // selection keeps its address even when it equals the old default.
+        // Apply on the same task that owns the CEC identity. The latest scanned
+        // address takes precedence over the new default, without another scan.
         // The new fallback also covers an initial scan that is still pending.
         for (const auto& change : settings_adapters) {
             front_defaults[change.tentacle_id] = change.default_physical;
@@ -1380,8 +1380,8 @@ struct HubService::Impl : Transport {
         state.activity_settling=activity_settling(esp_timer_get_time());state.activity_error=last_activity_error;
         state.applied_config_revision=owned_config_revision;state.applied_presentation_revision=owned_presentation_revision;state.processed_activity_selection=processed_selection;
         xSemaphoreTake(lock,portMAX_DELAY);cached=state;cached_revision=owned_config_revision;
-        for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();a.selected_from_default=false;
-            if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;a.observed_front_physical=engine->hub.detected_front_physical_address();a.selected_from_default=engine->hub.selected_from_default();}
+        for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();
+            if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.snapshot().front_physical_address;if(pa!=0xffff)a.effective_front_physical=pa;a.observed_front_physical=engine->hub.detected_front_physical_address();}
         }
         auto observer=std::atomic_load(&observer_slot);auto cb=callback;xSemaphoreGive(lock);
         if(observer)for(const auto& report:changed)(*observer)(report);

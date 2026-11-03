@@ -64,7 +64,7 @@ std::string snapshot(){
         if(row.tentacle_id>=owner->supported_tentacles()||row.tentacle_id>=amity::max_tentacles)continue;
         if(!first)out+=',';
         first=false;
-        out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+",\"selected_from_default\":"+(row.selected_from_default?"true":"false")+"}";
+        out+="{\"tentacle_id\":"+std::to_string(row.tentacle_id)+",\"name\":\"HDMI adapter "+std::to_string(row.tentacle_id+1)+"\",\"configured\":"+(row.configured?"true":"false")+",\"default_front_physical_address\":\""+device_settings::format_physical_address(defaults.front_physical[row.tentacle_id])+"\",\"observed_front_physical_address\":"+address(row.observed_front_physical)+",\"effective_front_physical_address\":"+address(row.effective_front_physical)+"}";
     }
     return out+"]}";
 }
