@@ -14,6 +14,7 @@ from setup_timing_support import timing_support
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/runtime.hpp"
+#include "amity/consortium/update.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include <algorithm>
 #include <functional>
@@ -31,6 +32,7 @@ template<class T>T random_id(){return ident<T>(90);}
 uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms;}
 struct FakeTls {
+    bool received_bulk()const{return false;}
     std::vector<std::string> frames;size_t next=0;
     bool receive(std::string& out){if(next==frames.size())return false;out=frames[next++];return true;}
 };

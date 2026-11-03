@@ -45,7 +45,8 @@ struct TlsLink {
     bool established()const{return handshaken&&usable();}
     bool extended_profile()const;
     bool hardware_profile()const;
-    bool send(std::string_view);
+    // The caller supplies framing class; TLS does not inspect application data.
+    bool send(std::string_view,bool bulk=false);
     enum class ReceiveResult {pending,frame,expired,failed};
     // One bounded nonblocking turn on an established transport; partial
     // framing belongs to this TLS link, including across wrapper timeouts.
@@ -54,6 +55,8 @@ struct TlsLink {
     // Its remaining bytes are drained; the authenticated TLS stays available.
     ReceiveResult expire_receive();
     bool receive(std::string &,uint32_t timeout_ms=5000);
+    bool receiving_bulk()const{return incoming_reader.bulk();}
+    bool received_bulk()const{return completed_bulk;}
     const TlsReceiveDiagnostic& receive_diagnostic()const{return incoming_diagnostic;}
     static int verify(void *,mbedtls_x509_crt *,int,uint32_t *);
 private:
@@ -64,6 +67,7 @@ private:
     size_t incoming_size=0,incoming_expected=4;
     std::atomic_bool incoming_failed{false};
     bool incoming_expired=false;
+    bool completed_bulk=false;
     uint64_t incoming_last_poll_end=0,incoming_max_poll_gap=0,incoming_max_read_ms=0;
     TlsReceiveDiagnostic incoming_diagnostic;
     ReceiveResult receive_failed(TlsReceiveDiagnostic::Cause,int,uint64_t);

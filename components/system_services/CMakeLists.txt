@@ -4,4 +4,4 @@
 # GNU General Public License as published by the Free Software Foundation, either version 3 of the
 # License, or (at your option) any later version.
 
-idf_component_register(SRCS "system_services.cpp" "release_manifest.cpp" "firmware_update.cpp" "peer_firmware_update.cpp" "group_firmware_update.cpp" "adapter_settings.cpp" "member_removal.cpp" INCLUDE_DIRS "include" REQUIRES esp_http_server app_update esp_app_format esp_timer esp_system consortium config_store web PRIV_REQUIRES bootloader_support mbedtls amity_hub device_settings)
+idf_component_register(SRCS "system_services.cpp" "release_manifest.cpp" "firmware_update.cpp" "partition_image.cpp" "peer_firmware_update.cpp" "group_firmware_update.cpp" "adapter_settings.cpp" "member_removal.cpp" INCLUDE_DIRS "include" REQUIRES esp_http_server app_update esp_app_format esp_timer esp_system consortium config_store web PRIV_REQUIRES bootloader_support mbedtls amity_hub device_settings)

@@ -159,11 +159,6 @@ std::optional<std::vector<std::string>> request_fields(const std::string& path){
     else if(path=="/api/membership/cancel")allowed.push_back("scan_id");
     else if(path=="/api/membership/add")allowed.insert(allowed.end(),{"scan_id","candidate_token","setup_code","name"});
     else if(path=="/api/membership/remove")allowed.insert(allowed.end(),{"octopus_id","confirm","expected_membership_revision","expected_target_boot_id","expected_config_revision","expected_presentation_revision","affected_activity_ids"});
-    else if(path=="/api/updates/validate")allowed.insert(allowed.end(),{"manifest","signature"});
-    else if(path=="/api/updates/cohort")allowed.insert(allowed.end(),{"manifest","signature","targets"});
-    else if(path=="/api/updates/chunk")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id","offset","data_hex"});
-    else if(path=="/api/updates/install")allowed.insert(allowed.end(),{"cohort_job_id","target_octopus_id"});
-    else if(path=="/api/updates/cancel")allowed.push_back("cohort_job_id");
     else if(device_settings_target(path))allowed.insert(allowed.end(),{"expected_boot_id","expected_settings_revision","expected_hostname_revision","hostname","changes"});
     else return {};
     return allowed;
@@ -454,32 +449,6 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         if(amity::consortium::runtime_write_device_settings(owner,*m::MessageId::parse(id),value,admitted_until_ms)!=ESP_OK){result=error(req,"settings_unavailable","Settings were not sent. Check that the hostname is unique and the Amity is connected. For adapter changes, stop activities before saving, then refresh the dialog.","409 Conflict");return true;}
         operation.status="admitted";
         finish();return true;
-    }
-    if(path=="/api/updates/validate"){
-        std::string message;const auto e=system_services::updates::stage_release(string(root.get(),"manifest"),string(root.get(),"signature"),message);
-        if(e!=ESP_OK){result=error(req,"incompatible_release",message,"409 Conflict");return true;}
-        finish();return true;
-    }
-    if(path=="/api/updates/cohort"){
-        auto* values=cJSON_GetObjectItemCaseSensitive(root.get(),"targets");std::vector<m::OctopusId> targets;
-        if(!cJSON_IsArray(values)||cJSON_GetArraySize(values)<1||cJSON_GetArraySize(values)>3){result=error(req,"invalid_targets","Choose one to three Amity boards.");return true;}
-        for(auto* value=values->child;value;value=value->next){const auto owner=cJSON_IsString(value)?m::OctopusId::parse(value->valuestring):std::nullopt;if(!owner){result=error(req,"invalid_targets","Choose a valid Amity board.");return true;}targets.push_back(*owner);}
-        std::string message;const auto e=system_services::updates::stage_cohort(string(root.get(),"manifest"),string(root.get(),"signature"),std::move(targets),message);
-        if(e!=ESP_OK){result=error(req,"update_unavailable",message,"409 Conflict",true);return true;}finish();return true;
-    }
-    if(path=="/api/updates/chunk"){
-        uint64_t offset=0;const auto encoded=string(root.get(),"data_hex");std::string bytes,message;
-        const auto job=m::MessageId::parse(string(root.get(),"cohort_job_id"));const auto target=m::OctopusId::parse(string(root.get(),"target_octopus_id"));
-        const auto digit=[](char b){return b>='0'&&b<='9'?b-'0':b>='a'&&b<='f'?b-'a'+10:-1;};
-        if(!job||!target||!uint64(root.get(),"offset",offset)||encoded.empty()||encoded.size()>4096||encoded.size()%2){result=error(req,"invalid_chunk","Choose an exact update job, target and ordered image block of up to 2 KiB.");return true;}
-        for(size_t n=0;n<encoded.size();n+=2){const int a=digit(encoded[n]),b=digit(encoded[n+1]);if(a<0||b<0){result=error(req,"invalid_chunk","Image blocks use lowercase hexadecimal.");return true;}bytes+=char(a*16+b);}
-        const auto e=system_services::updates::cohort_chunk(*job,*target,offset,bytes,message);if(e!=ESP_OK){result=error(req,"update_checkpoint",message,"409 Conflict",true);return true;}finish();return true;
-    }
-    if(path=="/api/updates/install"||path=="/api/updates/cancel"){
-        const auto job=m::MessageId::parse(string(root.get(),"cohort_job_id"));const auto target=m::OctopusId::parse(string(root.get(),"target_octopus_id"));
-        if(!job||(path=="/api/updates/install"&&!target)){result=error(req,"invalid_job","Choose the current update job and target.");return true;}
-        std::string message;const auto e=path=="/api/updates/install"?system_services::updates::cohort_install(*job,*target,message):system_services::updates::cancel_cohort(*job,message);
-        if(e!=ESP_OK){result=error(req,"update_uncertain",message,"409 Conflict",true);return true;}finish();return true;
     }
     if(path=="/api/replacements/preview"||path=="/api/replacements/apply"){
         config_store::RevisionPair expected;std::string message;

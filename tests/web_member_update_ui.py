@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise shipped member-update controls against a localhost-only API fixture.
+"""Exercise the shipped system-update UI against a localhost-only API fixture.
 
-This verifies browser transfer/admission behavior. It does not qualify publisher
-signatures, a physical update, or peer health reporting.
+Checks one browser upload, autonomous per-device progress, and exact new-boot
+verification. Physical transfer, signature checks, and firmware are not mocked
+as passing here; those belong to the updater's host and bench tests.
 """
 import hashlib
 import json
@@ -14,34 +15,39 @@ from threading import Thread
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTROLLER, MEMBER, OTHER, JOB = (f'{n:032x}' for n in (1, 2, 3, 4))
-VERSION = '0.1.73'
+MAIN, MEMBER, OFFLINE = (f'{n:032x}' for n in (1, 2, 3))
+VERSION, OLD = '0.1.73', '0.1.72'
+IDENTITY, OLD_IDENTITY = 'ab' * 32, 'cd' * 32
 IMAGE = bytearray((n * 17) % 256 for n in range(6000))
 IMAGE[0] = 0xe9
 IMAGE[32:36] = bytes.fromhex('3254cdab')
 IMAGE[48:80] = VERSION.encode().ljust(32, b'\0')
+IMAGE[176:208] = bytes.fromhex(IDENTITY)
 IMAGE = bytes(IMAGE)
 MANIFEST = json.dumps(dict(firmware_version=VERSION, image_bytes=str(len(IMAGE)),
                           image_sha256=hashlib.sha256(IMAGE).hexdigest(),
-                          signing_key_id='fixture-public-root'), sort_keys=True, separators=(',', ':'))
+                          image_elf_sha256=IDENTITY), sort_keys=True, separators=(',', ':'))
 SIGNATURE = bytes(range(64))
 BUNDLE = struct.pack('>16sIIQ', b'AMITY-UPDATE-V1\n', len(MANIFEST), len(SIGNATURE), len(IMAGE)) + MANIFEST.encode() + SIGNATURE + IMAGE
 
 
 def main():
-    fixture = dict(posts=[], phase='transferring', offset=0, polls=0, ready=True,
-                   management_ready=False, capabilities=512, boot_release=False,
-                   reject_admission=False, wrong_target=False)
-    errors, checks, all_posts = [], [], []
-    config = dict(version=3, controller_octopus_id=CONTROLLER, config_revision='1', presentation_revision='1',
-                  octopuses=[dict(octopus_id=MEMBER, label='Bedroom Amity', supported_tentacles=1),
-                             dict(octopus_id=CONTROLLER, label='Living room Amity', supported_tentacles=1)],
+    fixture = {}
+    checks, errors = [], []
+    config = dict(version=3, controller_octopus_id=MAIN, config_revision='1', presentation_revision='1',
+                  octopuses=[dict(octopus_id=n, supported_tentacles=1) for n in (MAIN, MEMBER, OFFLINE)],
                   activities=[], zones=[])
-    editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1',
-                  activities=[], device_choices=[])
-    status = dict(version=VERSION, hostname='amity-living-room', front_physical_address='1.0.0.0',
-                  hardware='Amity', ready=True, current_activity=-1, devices=[], device_choices=[],
-                  expected_boot_id='a' * 32, expected_state_revision='1')
+    editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1', activities=[], device_choices=[])
+
+    def reset(**values):
+        fixture.clear()
+        fixture.update(posts=[], reads=[], phase='distributing', automatic=False, ready=True, management_ready=False,
+                       boot='old-boot', version=OLD, identity=OLD_IDENTITY, reject=False, offline=False,
+                       auth_revoked=False, login_fail=False, login_calls=0, upload_abort=False, last_failed_upload=None, automatic_failures=[],
+                       targets=[dict(octopus_id=MAIN, phase='staged', offset=str(len(IMAGE))),
+                                dict(octopus_id=MEMBER, phase='uploading', offset='2048'),
+                                dict(octopus_id=OFFLINE, phase='queued', offset='0')])
+        fixture.update(values)
 
     def passed(label):
         checks.append(label)
@@ -54,194 +60,208 @@ def main():
         def log_message(self, *args):
             pass
 
-        def reply(self, value, code=200):
-            data = json.dumps(value).encode()
-            self.send_response(code)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def do_GET(self):
-            if self.path == '/api/system':
-                peer = {key: fixture[key] for key in ('ready', 'management_ready', 'capabilities')}
-                if fixture['ready']:
-                    peer['hostname'] = 'amity-bedroom'
-                return self.reply(dict(octopus_id=CONTROLLER, hostname='amity-living-room',
-                                       named_devices=[dict(octopus_id=CONTROLLER, hostname='amity-living-room'),
-                                                      dict(octopus_id=MEMBER, hostname='amity-bedroom')],
-                                       membership=dict(membership_revision='1', peers=[dict(octopus_id=MEMBER, enrolled=True, boot_id='b'*32, **peer)])))
-            if self.path == '/api/updates/cohort':
-                fixture['polls'] += 1
-                if fixture['phase'] == 'boot_checking' and fixture['boot_release']:
-                    fixture['phase'] = 'complete'
-                return self.reply(dict(job_id=JOB, phase=fixture['phase'], current_index='0',
-                                       targets=[dict(octopus_id=OTHER if fixture['wrong_target'] else MEMBER,
-                                                     offset=str(fixture['offset']))]))
-            values = {'/api/setup': dict(required=False), '/api/activity-editor': editor,
-                      '/api/activity-editor/status': status, '/api/config': config,
-                      '/api/remotes': dict(bonded=False, ready=True, devices=[]),
-                      '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False)}
-            if self.path in values:
-                return self.reply(deepcopy(values[self.path]))
-            return super().do_GET()
-
-        def do_POST(self):
-            assert self.headers.get('Authorization') == 'Bearer fixture-session'
-            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
-            fixture['posts'].append((self.path, deepcopy(body)))
-            all_posts.append(self.path)
-            if self.path == '/api/updates/cohort':
-                if fixture['reject_admission']:
-                    return self.reply(dict(error='This release is incompatible with the selected device.'), 409)
-                assert body['manifest'] == MANIFEST and body['signature'] == SIGNATURE.hex()
-                assert body['targets'] == [MEMBER]
-            elif self.path == '/api/updates/chunk':
-                assert body['cohort_job_id'] == JOB and body['target_octopus_id'] == MEMBER
-                assert body['offset'] == str(fixture['offset'])
-                chunk = bytes.fromhex(body['data_hex'])
-                assert 0 < len(chunk) <= 2048
-                assert chunk == IMAGE[fixture['offset']:fixture['offset'] + len(chunk)]
-                fixture['offset'] += len(chunk)
-            elif self.path == '/api/updates/install':
-                assert body['cohort_job_id'] == JOB and body['target_octopus_id'] == MEMBER
-                assert fixture['offset'] == len(IMAGE)
-                fixture['phase'] = 'boot_checking'
-            else:
-                return self.reply(dict(error='Unexpected fixture mutation'), 404)
-            assert len(body['request_id']) == 32
-            return self.reply(dict(stage='complete'))
-
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     Thread(target=server.serve_forever, daemon=True).start()
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
 
-            def open_page(**overrides):
-                fixture.update(posts=[], phase='transferring', offset=0, polls=0, ready=True,
-                               management_ready=False, capabilities=512, boot_release=False,
-                               reject_admission=False, wrong_target=False)
-                fixture.update(overrides)
+            def api(route):
+                path = route.request.url.split('/api/')[1]
+                fixture['reads'].append(path)
+                if path == 'login':
+                    fixture['login_calls'] += 1
+                    if fixture['login_fail']:
+                        return route.fulfill(status=401, json=dict(error='Incorrect password.'))
+                    fixture['auth_revoked'] = False
+                    return route.fulfill(json=dict(token='fixture-session'))
+                if path == 'firmware':
+                    assert route.request.headers['authorization'] == 'Bearer fixture-session'
+                    assert route.request.headers['content-type'] == 'application/octet-stream'
+                    fixture['posts'].append((path, route.request.post_data_buffer))
+                    if fixture['reject']:
+                        return route.fulfill(status=409, json=dict(error='The release is incompatible with this Amity.'))
+                    if fixture['upload_abort']:
+                        fixture['last_failed_upload'] = dict(phase='failed', automatic=False, image_elf_sha256=IDENTITY,
+                            image_bytes=str(len(IMAGE)), targets=[dict(octopus_id=MAIN, phase='failed', offset='2048')],
+                            error='Firmware validation failed.')
+                        fixture['automatic'] = True
+                        return route.abort('connectionreset')
+                    return route.fulfill(json=dict(staged=True))
+                if route.request.method == 'POST':
+                    fixture['posts'].append((path, route.request.post_data))
+                    raise AssertionError('The browser must not send per-device update commands: ' + path)
+                if path == 'setup':
+                    if fixture['offline']:
+                        return route.abort('connectionrefused')
+                    return route.fulfill(json=dict(required=False, hostname='amity-main', version=fixture['version'],
+                        image_elf_sha256=fixture['identity'], boot_id=fixture['boot'], ready=True, update_manifest_required=True))
+                if path == 'updates/cohort':
+                    assert route.request.headers['authorization'] == 'Bearer fixture-session'
+                    if fixture['auth_revoked']:
+                        return route.fulfill(status=401, json=dict(error='Session ended.'))
+                    return route.fulfill(json=dict(phase=fixture['phase'], automatic=fixture['automatic'],
+                        firmware_version=VERSION, image_elf_sha256=IDENTITY, image_bytes=str(len(IMAGE)),
+                        targets=deepcopy(fixture['targets']), last_failed_upload=fixture['last_failed_upload'], automatic_failures=fixture['automatic_failures'],
+                        error='Firmware validation failed.' if fixture['phase']=='failed' else ''))
+                if path == 'system':
+                    return route.fulfill(json=dict(octopus_id=MAIN, hostname='amity-main',
+                        named_devices=[dict(octopus_id=n, hostname=name) for n, name in [(MAIN, 'amity-main'), (MEMBER, 'amity-bedroom'), (OFFLINE, 'amity-den')]],
+                        membership=dict(membership_revision='1', peers=[dict(octopus_id=MEMBER, hostname='amity-bedroom', enrolled=True,
+                            ready=fixture['ready'], management_ready=fixture['management_ready'], capabilities=512),
+                            dict(octopus_id=OFFLINE, enrolled=True, ready=False, management_ready=False)])))
+                values = {'config': config, 'activity-editor': editor,
+                          'activity-editor/status': dict(version=fixture['version'], current_activity=-1, devices=[], device_choices=[],
+                              expected_boot_id=fixture['boot'], expected_state_revision='1', hostname='amity-main'),
+                          'remotes': dict(devices=[]), 'matter': dict(fabrics=[]), 'homekit': dict(available=False)}
+                return route.fulfill(json=deepcopy(values[path]))
+
+            def open_page(**values):
+                reset(**values)
                 page = browser.new_page(viewport=dict(width=430, height=900))
-                page.on('pageerror', lambda e: errors.append(str(e)))
-                # Accelerate only the member reboot polling interval; execute
-                # shipped scripts and their real file-input event handlers.
-                page.add_init_script("sessionStorage.setItem('amityToken','fixture-session'); const delay=window.setTimeout.bind(window); window.setTimeout=(fn,ms,...args)=>delay(fn,ms===1500?30:ms,...args);")
+                page.set_default_timeout(12000)
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                page.add_init_script("if(!sessionStorage.getItem('fixtureInitialized')){sessionStorage.setItem('amityToken','fixture-session');sessionStorage.setItem('fixtureInitialized','yes');} const delay=window.setTimeout.bind(window); window.setTimeout=(fn,ms,...args)=>delay(fn,ms===2000?30:ms,...args);")
+                page.route('**/api/**', api)
                 page.goto(f'http://127.0.0.1:{server.server_port}/')
                 expect(page.locator('#admin')).to_be_visible()
-                page.locator('[data-tab=amityDevices]').click()
-                rows = page.locator('#managedAmityList > article')
-                expect(rows).to_have_count(2)
-                expect(rows.first).to_contain_text('amity-living-room')
-                expect(rows.first.locator('h3')).to_have_text('amity-living-room (this device)')
-                expect(rows.nth(1)).to_contain_text('amity-bedroom')
-                expect(page.locator('#managedAmityList')).not_to_contain_text('Living room Amity')
-                expect(page.locator('#managedAmityList')).not_to_contain_text('Bedroom Amity')
-                expect(page.get_by_role('button', name='Location', exact=True)).to_have_count(0)
-                for action in ('Remove', 'Replace', 'Update firmware'):
-                    expect(rows.first.get_by_role('button', name=action, exact=True)).to_have_count(0)
                 return page
 
-            def choose(page, payload=BUNDLE):
-                with page.expect_file_chooser() as selected:
-                    page.locator('#managedAmityList').get_by_role('button', name='Update firmware', exact=True).click()
-                selected.value.set_files(dict(name='amity-update.bin', mimeType='application/octet-stream', buffer=payload))
+            def upload(page, data=BUNDLE):
+                page.locator('[data-tab=advanced]').click()
+                page.once('dialog', lambda dialog: dialog.accept())
+                page.locator('#firmware').set_input_files(dict(name='amity-update.bin', mimeType='application/octet-stream', buffer=data))
 
-            def posts(path):
-                return [body for endpoint, body in fixture['posts'] if endpoint == '/api/' + path]
+            page = open_page(ready=False, management_ready=True, automatic=True)
+            page.locator('[data-tab=amityDevices]').click()
+            expect(page.locator('#managedAmityList')).to_contain_text('Uploading: 34%')
+            expect(page.locator('#managedAmityList button').filter(has_text='Update firmware')).to_have_count(0)
+            assert fixture['posts'] == []
+            passed('mismatched secondary reports automatic firmware progress without a manual update control')
+            page.close()
+
+            page = open_page(ready=False, management_ready=True, automatic=True, phase='failed',
+                targets=[dict(octopus_id=MEMBER, phase='failed', offset=str(len(IMAGE)))])
+            page.locator('[data-tab=amityDevices]').click()
+            expect(page.locator('#managedAmityList')).to_contain_text('Firmware update failed')
+            expect(page.locator('#managedAmityList')).not_to_contain_text('will retry when available')
+            expect(page.locator('#managedAmityList')).not_to_contain_text('Restarting')
+            passed('terminal automatic update failure is visible without promising another retry')
+            page.close()
+
+            page = open_page(ready=False, management_ready=True, automatic=True, phase='failed',
+                targets=[dict(octopus_id=OFFLINE, phase='failed', offset='0')],
+                automatic_failures=[dict(octopus_id=MEMBER, phase='failed')])
+            page.locator('[data-tab=amityDevices]').click()
+            expect(page.locator('#managedAmityList article').filter(has_text='amity-bedroom')).to_contain_text('Firmware update failed')
+            passed('an earlier member failure stays visible after another member replaces the latest update job')
+            page.close()
 
             page = open_page()
-            expect(page.locator('#advanced input#firmware')).to_have_count(1)
-            expect(page.locator('#advanced')).to_contain_text('Update Firmware')
-            choose(page)
-            dialog = page.locator('dialog:visible')
-            expect(dialog).to_contain_text('Install firmware ' + VERSION + '?')
-            assert not fixture['posts']
-            passed('this main is listed without member update controls; added-device update preserves Advanced and requires deliberate install')
-            dialog.get_by_role('button', name='Install firmware', exact=True).click()
-            expect(dialog.get_by_role('status')).to_contain_text('Waiting for Amity to restart')
-            page.wait_for_function('() => document.querySelector("dialog [role=status]")?.textContent.includes("Waiting for Amity to restart")')
+            upload(page)
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('amity-main — Ready to restart')
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('amity-bedroom — Uploading: 34%')
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('amity-den — Waiting')
+            assert fixture['posts'] == [('firmware', BUNDLE)]
+            assert page.evaluate("sessionStorage.getItem('amityToken')") == 'fixture-session'
+            expect(page.locator('#login')).to_be_hidden()
+            passed('one unchanged authenticated browser upload supplies every device; authenticated polling shows named progress')
+            page.set_viewport_size(dict(width=320, height=900))
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'update progress overflows the mobile viewport'
+            page.reload()
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('amity-bedroom — Uploading: 34%')
+            assert fixture['posts'] == [('firmware', BUNDLE)]
+            passed('reload resumes autonomous distribution without uploading again')
+            page.evaluate('firmwareUpdateRecord.startedAt = Date.now() - 21 * 60000')
             page.wait_for_timeout(150)
-            assert len(posts('updates/cohort')) == 1 and len(posts('updates/install')) == 1
-            assert len(posts('updates/chunk')) == 3 and fixture['offset'] == len(IMAGE)
-            assert b''.join(bytes.fromhex(b['data_hex']) for b in posts('updates/chunk')) == IMAGE
-            assert fixture['polls'] >= 2
-            passed('exact target, manifest and signature; 2 KiB chunks contain only native image bytes')
-            before = deepcopy(fixture['posts'])
-            page.wait_for_timeout(120)
-            assert fixture['posts'] == before
-            fixture['boot_release'] = True
-            expect(dialog.get_by_role('status')).to_contain_text('reported the expected firmware')
-            assert fixture['posts'] == before
-            passed('boot checking polls health without resending chunks or install')
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
+            expect(page.locator('#retryFirmwareWait')).to_be_hidden()
+            passed('a slow multi-device distribution remains visible after twenty minutes')
+            fixture['targets'][1].update(phase='staged', offset=str(len(IMAGE)))
+            fixture['targets'][2].update(phase='skipped', error='timeout')
+            fixture['phase'] = 'activating'
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Restarting your Amity devices')
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('will retry when available')
+            assert fixture['boot'] == 'old-boot'
+            expect(page.locator('#login')).to_be_hidden()
+            passed('skipped devices are visible and activation acknowledgement alone never claims completion')
+            fixture.update(boot='new-boot', version=VERSION, identity=IDENTITY)
+            expect(page.locator('#message')).to_contain_text('Firmware update complete')
+            expect(page.locator('#message')).to_contain_text('Unavailable devices will update automatically when they reconnect')
+            expect(page.locator('#login')).to_be_visible()
+            assert fixture['posts'] == [('firmware', BUNDLE)]
+            passed('expected healthy image confirms completion after reboot and explains automatic late-device updates')
             page.close()
 
-            page = open_page(ready=False, management_ready=True, offset=2048)
-            choose(page)
-            dialog = page.locator('dialog:visible')
-            dialog.get_by_role('button', name='Install firmware', exact=True).click()
-            expect(dialog.get_by_role('status')).to_contain_text('Waiting for Amity to restart')
-            assert len(posts('updates/cohort')) == 1 and posts('updates/chunk')[0]['offset'] == '2048'
-            assert len(posts('updates/chunk')) == 2
-            fixture['boot_release'] = True
-            expect(dialog.get_by_role('status')).to_contain_text('reported the expected firmware')
-            passed('management-only peer resumes only from the exact server checkpoint after explicit file choice')
+            page = open_page()
+            upload(page)
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
+            fixture.update(boot='different-boot', version=VERSION, identity='ef'*32)
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('did not report the expected firmware image')
+            expect(page.locator('#firmwareUpdateLogin')).to_be_visible()
+            expect(page.locator('#login')).to_be_hidden()
+            passed('same version with another image never passes reboot verification')
             page.close()
 
-            for label, payload in [('raw image', IMAGE), ('bad magic', b'X' + BUNDLE[1:]),
-                                   ('truncated image', BUNDLE[:-1]), ('trailing image', BUNDLE + b'x'),
-                                   ('bad signature length', BUNDLE[:20] + struct.pack('>I', 63) + BUNDLE[24:]),
-                                   ('oversized manifest', BUNDLE[:16] + struct.pack('>I', 8193) + BUNDLE[20:])]:
-                page = open_page()
-                choose(page, payload)
-                expect(page.locator('#message')).not_to_be_empty()
-                expect(page.locator('dialog:visible')).to_have_count(0)
-                assert not fixture['posts']
-                passed(label + ' rejected before cohort admission')
-                page.close()
-
-            page = open_page(phase='interrupted')
-            choose(page)
-            dialog = page.locator('dialog:visible')
-            dialog.get_by_role('button', name='Install firmware', exact=True).click()
-            expect(dialog.get_by_role('status')).to_contain_text('explicit retry')
-            page.wait_for_timeout(120)
-            assert len(posts('updates/cohort')) == 1 and not posts('updates/chunk') and not posts('updates/install')
-            passed('interrupted outcome stops and requires deliberate retry without automatic upload')
+            page = open_page()
+            upload(page)
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
+            fixture['auth_revoked'] = True
+            expect(page.locator('#login')).to_be_visible()
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Your session ended')
+            assert page.evaluate("sessionStorage.getItem('amityToken')") is None
+            assert page.evaluate("JSON.parse(sessionStorage.getItem('amityFirmwareUpdate')).imageIdentity") == IDENTITY
+            page.reload()
+            expect(page.locator('#login')).to_be_visible()
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('amity-bedroom')
+            fixture['login_fail'] = True
+            page.locator('#password').fill('wrong')
+            page.locator('#password').press('Enter')
+            expect(page.locator('#firmwareUpdateStatus')).to_have_text('Incorrect password.')
+            fixture['login_fail'] = False
+            page.locator('#password').fill('test-password')
+            page.locator('#password').press('Enter')
+            expect(page.locator('#login')).to_be_hidden()
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
+            assert fixture['login_calls'] == 2 and fixture['posts'] == [('firmware', BUNDLE)]
+            passed('revoked authorization preserves progress across reload and resumes after login without another upload')
             page.close()
 
-            page = open_page(wrong_target=True)
-            choose(page)
-            dialog = page.locator('dialog:visible')
-            dialog.get_by_role('button', name='Install firmware', exact=True).click()
-            expect(dialog.get_by_role('status')).to_contain_text('target changed')
-            assert not posts('updates/chunk') and not posts('updates/install')
-            passed('changed cohort target fails before any image transfer')
+            page = open_page(upload_abort=True)
+            upload(page)
+            expect(page.locator('#firmwareUpdateStatus')).to_have_text('Firmware validation failed.')
+            expect(page.locator('#firmwareUpdateLogin')).to_be_visible()
+            expect(page.locator('#firmwareUpdateTargets')).to_contain_text('Firmware update failed')
+            assert fixture['posts'] == [('firmware', BUNDLE)]
+            passed('lost upload error remains visible even after automatic catch-up replaces the current job')
             page.close()
 
-            page = open_page(reject_admission=True)
-            choose(page)
-            dialog = page.locator('dialog:visible')
-            dialog.get_by_role('button', name='Install firmware', exact=True).click()
-            expect(dialog.get_by_role('status')).to_contain_text('incompatible')
-            assert not fixture['polls'] and not posts('updates/chunk') and not posts('updates/install')
-            passed('server release rejection remains visible and never starts an upload')
+            page = open_page()
+            upload(page)
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
+            page.evaluate('firmwareUpdateRecord.startedAt = Date.now() - 46 * 60000')
+            expect(page.locator('#retryFirmwareWait')).to_be_visible()
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Could not confirm the update')
+            assert fixture['posts'] == [('firmware', BUNDLE)]
+            passed('distribution timeout offers reconnection without replaying the firmware upload')
             page.close()
 
-            for overrides in (dict(ready=False, management_ready=False), dict(capabilities=0)):
-                page = open_page(**overrides)
-                expect(page.locator('#managedAmityList').get_by_role('button', name='Update firmware')).to_have_count(0)
-                assert not fixture['posts']
-                page.close()
-            passed('offline or unsupported peer has no update control')
-            assert set(all_posts) <= {'/api/updates/cohort', '/api/updates/chunk', '/api/updates/install'}, all_posts
+            page = open_page(reject=True)
+            upload(page)
+            expect(page.locator('#message')).to_have_text('The release is incompatible with this Amity.')
+            expect(page.locator('#admin')).to_be_visible()
+            expect(page.locator('#firmware')).to_be_enabled()
+            passed('upload validation failure restores controls without starting per-device commands')
+            page.close()
+
             assert not errors, errors
             browser.close()
     finally:
         server.shutdown()
         server.server_close()
-    print(f'{len(checks)} member-update browser checks passed; no physical firmware operation performed')
+    (ROOT / 'test-results/web-member-update-ui.json').write_text(json.dumps(dict(passed=checks), indent=2))
+    print(f'{len(checks)} system-update browser checks passed; no physical firmware operation performed')
 
 
 if __name__ == '__main__':

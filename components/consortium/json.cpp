@@ -113,19 +113,19 @@ bool closed(const Json &v,std::initializer_list<std::string_view> required,std::
 bool json_string(const Json *v,std::string &out,size_t min,size_t max) {if(!v||v->type!=Json::Type::string||v->string.size()<min||v->string.size()>max)return false;out=v->string;return true;}
 bool json_uint(const Json *v,uint64_t &out,uint64_t min,uint64_t max) {if(!v||v->type!=Json::Type::integer||v->integer<min||v->integer>max)return false;out=v->integer;return true;}
 bool json_bool(const Json *v,bool &out) {if(!v||v->type!=Json::Type::boolean)return false;out=v->boolean;return true;}
-FrameReader::Result FrameReader::check_deadline(uint64_t now) {if(failed_)return Result::failed;if(begun_&&!complete_&&(now<last_progress_||now-last_progress_>=progress_timeout_ms||now-started_at_>=frame_timeout_ms)){failed_=true;return Result::timed_out;}return complete_?Result::frame:Result::incomplete;}
+FrameReader::Result FrameReader::check_deadline(uint64_t now) {if(failed_)return Result::failed;if(begun_&&!complete_&&(now<last_progress_||now-last_progress_>=progress_timeout()||now-started_at_>=frame_timeout())){failed_=true;return Result::timed_out;}return complete_?Result::frame:Result::incomplete;}
 FrameReader::Result FrameReader::feed(const uint8_t *bytes,size_t size,size_t &consumed,uint64_t now) {
     consumed=0;auto r=check_deadline(now);if(r!=Result::incomplete)return r;
     if(size&&!bytes){failed_=true;return Result::failed;}
     while(consumed<size&&!complete_) {
         if(!begun_)started_at_=now;
         begun_=true;last_progress_=now;
-        if(prefix_size_<4) {prefix_[prefix_size_++]=bytes[consumed++];if(prefix_size_==4){expected_=(uint32_t(prefix_[0])<<24)|(uint32_t(prefix_[1])<<16)|(uint32_t(prefix_[2])<<8)|prefix_[3];if(!expected_||expected_>max_frame_bytes){failed_=true;return Result::invalid_length;}body_.reserve(expected_);}}
+        if(prefix_size_<4) {prefix_[prefix_size_++]=bytes[consumed++];if(prefix_size_==4){const uint32_t encoded=(uint32_t(prefix_[0])<<24)|(uint32_t(prefix_[1])<<16)|(uint32_t(prefix_[2])<<8)|prefix_[3];bulk_=(encoded&bulk_frame_flag)!=0;expected_=encoded&~bulk_frame_flag;if(!expected_||expected_>max_frame_bytes){failed_=true;return Result::invalid_length;}body_.reserve(expected_);}}
         else {const auto n=std::min(size-consumed,expected_-body_.size());body_.append(reinterpret_cast<const char *>(bytes+consumed),n);consumed+=n;complete_=body_.size()==expected_;}
     }
     return complete_?Result::frame:Result::incomplete;
 }
 void FrameReader::next_frame(){if(complete_)reset();}
-void FrameReader::reset(){prefix_size_=expected_=0;body_.clear();begun_=complete_=failed_=false;last_progress_=started_at_=0;}
-std::vector<uint8_t> frame(std::string_view body){if(body.empty()||body.size()>max_frame_bytes)return {};const auto n=static_cast<uint32_t>(body.size());std::vector<uint8_t> out{uint8_t(n>>24),uint8_t(n>>16),uint8_t(n>>8),uint8_t(n)};out.insert(out.end(),body.begin(),body.end());return out;}
+void FrameReader::reset(){prefix_size_=expected_=0;body_.clear();begun_=complete_=failed_=bulk_=false;last_progress_=started_at_=0;}
+std::vector<uint8_t> frame(std::string_view body,bool bulk){if(body.empty()||body.size()>max_frame_bytes)return {};const auto n=static_cast<uint32_t>(body.size())|(bulk?bulk_frame_flag:0);std::vector<uint8_t> out{uint8_t(n>>24),uint8_t(n>>16),uint8_t(n>>8),uint8_t(n)};out.insert(out.end(),body.begin(),body.end());return out;}
 } // namespace amity::consortium

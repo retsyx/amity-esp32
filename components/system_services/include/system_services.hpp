@@ -10,6 +10,7 @@
 #include "esp_err.h"
 #include "esp_http_server.h"
 #include <string>
+#include <cstdint>
 namespace system_services {
 void start_log_capture();
 // Poll from one task; drain allocation-failure events, and log memory totals
@@ -19,6 +20,7 @@ std::string logs();
 size_t log_size();
 esp_err_t upload_firmware(httpd_req_t *req);
 void reboot_later();
+void reboot_later(uint32_t delay_ms);
 esp_err_t confirm_firmware();
 // Public boot-health metadata; contains no configuration or credentials.
 const char *boot_id();

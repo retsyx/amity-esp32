@@ -33,17 +33,17 @@ void real_tcp_records(const Identity& main,const Identity& member){
  check(server.authenticated==member.id&&client.authenticated==main.id&&!mbedtls_ssl_get_verify_result(&server.ssl)&&!mbedtls_ssl_get_verify_result(&client.ssl),"TCP lost exact mutual peer authentication");
  uint64_t slowest=0;unsigned frames=0;
  // The four-byte prefix puts 508/509-byte bodies on opposite sides of the
- // production 512-byte TLS-record boundary. Both directions reuse one stream.
- for(unsigned bytes:{64u,508u,509u,800u,2048u})for(bool reverse:{false,true}){
+ // ordinary512-byte and bulk2048-byte boundaries. Both directions reuse one stream.
+ for(unsigned bytes:{64u,508u,509u,800u,2044u,2045u,2048u,4775u})for(bool reverse:{false,true})for(bool bulk:{false,true}){
   auto& sender=reverse?server:client;auto& receiver=reverse?client:server;
-  const std::string body(bytes,reverse?'s':'c');const auto began=now_ms();check(sender.send(body),"TCP frame send failed");
+  const std::string body(bytes,reverse?'s':'c');const auto began=now_ms();check(sender.send(body,bulk),"TCP frame send failed");
   std::string received;auto result=TlsLink::ReceiveResult::pending;
   while(now_ms()-began<2000&&(result=receiver.poll_receive(received))==TlsLink::ReceiveResult::pending)std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  check(result==TlsLink::ReceiveResult::frame&&received==body,"TCP split records did not yield one exact frame");
+  check(result==TlsLink::ReceiveResult::frame&&received==body&&receiver.received_bulk()==bulk&&!receiver.receiving_bulk(),"TCP split records did not yield one exact frame/class");
   check(server.established()&&client.established(),"frame exchange lost the authenticated transport");
   slowest=std::max(slowest,now_ms()-began);++frames;
  }
- std::cout<<"PASS actual pinned-Mbed-TLS TCP: checked TCP_NODELAY and TCP keepalive enabled with 10s idle/3s interval/3 probes on both peers, exact mutual authentication, "<<frames<<" framed exchanges across 512-byte records on the same stream; native maximum="<<slowest<<"ms\n";
+ std::cout<<"PASS actual pinned-Mbed-TLS TCP: checked TCP_NODELAY and TCP keepalive enabled with 10s idle/3s interval/3 probes on both peers, exact mutual authentication, "<<frames<<" ordinary/bulk framed exchanges across512/2048-byte records on the same stream; native maximum="<<slowest<<"ms\n";
 }
 void unsupported_socket_fails_setup(const Identity& main,const Identity& member){
  int fd[2];check(!::socketpair(AF_UNIX,SOCK_STREAM,0,fd),"local socketpair failed");

@@ -45,8 +45,8 @@ void reset(){clock_ms=read_elapsed=jump_to=0;clock_reads=jump_on_clock=0;waits.c
 int mbedtls_ssl_handshake(int*){++handshake_calls;return handshake_error;}
 uint32_t mbedtls_ssl_get_verify_result(int*){return verify_flags;}
 void reject_handshake(int&,int,bool,int){}
-void append(const std::string& body,uint64_t prefix_at=0,uint64_t body_at=0){
-    const auto bytes=frame(body);for(size_t i=0;i<bytes.size();++i)incoming.push_back({i<4?prefix_at:body_at,bytes[i]});
+void append(const std::string& body,uint64_t prefix_at=0,uint64_t body_at=0,bool bulk=false){
+    const auto bytes=frame(body,bulk);for(size_t i=0;i<bytes.size();++i)incoming.push_back({i<4?prefix_at:body_at,bytes[i]});
 }
 int mbedtls_ssl_read(int*,uint8_t* bytes,size_t capacity){
     ++reads;clock_ms+=read_elapsed;if(read_error)return *read_error;
@@ -72,11 +72,14 @@ struct TlsLink {
     ReceiveResult poll_receive(std::string&);
     ReceiveResult expire_receive();
     bool receive(std::string&,uint32_t duration=5000);
-    bool send(std::string_view);
+    bool send(std::string_view,bool bulk=false);
     FrameReader incoming_reader;
     uint8_t incoming_prefix[4]{};
     size_t incoming_size=0,incoming_expected=4;
     bool incoming_failed=false,incoming_expired=false;
+    bool completed_bulk=false;
+    bool receiving_bulk()const{return incoming_reader.bulk();}
+    bool received_bulk()const{return completed_bulk;}
     uint64_t incoming_last_poll_end=0,incoming_max_poll_gap=0,incoming_max_read_ms=0;
     TlsReceiveDiagnostic incoming_diagnostic;
     const TlsReceiveDiagnostic& receive_diagnostic()const{return incoming_diagnostic;}
@@ -206,6 +209,52 @@ void bounded_application_writes(){
     }
 }
 
+void bulk_transfer_deadlines_and_class_boundaries(){
+    using Result=TlsLink::ReceiveResult;using Cause=TlsReceiveDiagnostic::Cause;
+    std::string body;
+    reset();TlsLink bulk;append("firmware payload",0,2500,true);append("ordinary after bulk",2500,5001);
+    check(bulk.poll_receive(body)==Result::pending&&bulk.receiving_bulk(),"bulk frame class was not decoded from its prefix");
+    clock_ms=2499;check(bulk.poll_receive(body)==Result::pending&&bulk.usable(),"bulk stalled at ordinary two-second deadline");
+    clock_ms=2500;check(bulk.poll_receive(body)==Result::frame&&body=="firmware payload"&&bulk.received_bulk()&&!bulk.receiving_bulk(),"bulk payload/class did not complete together");
+    check(bulk.poll_receive(body)==Result::pending&&!bulk.receiving_bulk(),"next ordinary frame inherited bulk class");
+    clock_ms=4500;check(bulk.poll_receive(body)==Result::expired&&bulk.receive_diagnostic().cause==Cause::progress_timeout&&bulk.usable(),"ordinary frame inherited bulk progress budget");
+    clock_ms=5001;check(bulk.poll_receive(body)==Result::pending&&body.empty()&&bulk.usable(),"expired ordinary payload was delivered after a bulk frame");
+    append("ordinary recovered",5001,5001);check(bulk.poll_receive(body)==Result::frame&&!bulk.received_bulk()&&body=="ordinary recovered","next ordinary class was lost while draining");
+
+    reset();TlsLink stalled;append("late bulk",0,31000,true);append("fresh ordinary",31000,31000);
+    check(stalled.poll_receive(body)==Result::pending&&stalled.receiving_bulk(),"bulk stall fixture missing prefix");
+    clock_ms=FrameReader::bulk_progress_timeout_ms-1;check(stalled.poll_receive(body)==Result::pending,"bulk progress expiry fired early");
+    ++clock_ms;check(stalled.poll_receive(body)==Result::expired&&stalled.usable()&&stalled.receive_diagnostic().cause==Cause::progress_timeout&&stalled.receive_diagnostic().progress_ms==30000,"bulk progress budget was extended or closed TLS");
+    clock_ms=31000;check(stalled.poll_receive(body)==Result::pending&&body.empty()&&stalled.usable(),"expired bulk payload reached the application");
+    check(stalled.poll_receive(body)==Result::frame&&body=="fresh ordinary"&&!stalled.received_bulk(),"draining bulk crossed/corrupted ordinary frame boundary");
+
+    reset();TlsLink total;const auto slow=frame(std::string(100,'x'),true);
+    for(size_t i=0;i<slow.size();++i)incoming.push_back({i<4?0:(i-3)*1000,slow[i]});
+    append("after bulk total",101000,101000);
+    for(clock_ms=0;clock_ms<FrameReader::bulk_frame_timeout_ms;clock_ms+=1000)check(total.poll_receive(body)==Result::pending,"bulk total deadline fired early");
+    check(total.poll_receive(body)==Result::expired&&total.usable()&&total.receive_diagnostic().cause==Cause::frame_timeout&&total.receive_diagnostic().total_ms==60000,"bulk progress renewed its total frame budget");
+    clock_ms=101000;check(total.poll_receive(body)==Result::pending&&body.empty(),"total-expired bulk payload was accepted");
+    check(total.poll_receive(body)==Result::frame&&body=="after bulk total"&&!total.received_bulk(),"bulk total expiry lost next ordinary frame");
+
+    for(bool read_want:{false,true}){
+        reset();TlsLink sender;want_read=read_want;writable_at=4000;
+        check(sender.send("bulk send",true)&&clock_ms==4000&&written==frame("bulk send",true)&&maximum_write<=512,"bulk send did not retain WANT buffer/class beyond ordinary three-second budget");
+    }
+    reset();TlsLink blocked;writable_at=31000;
+    check(!blocked.send("late bulk send",true)&&clock_ms==30000&&written.empty()&&!blocked.usable(),"bulk send deadline exceeded thirty seconds");
+    reset();TlsLink slow_sender;partial_write=1;write_elapsed=10;
+    check(!slow_sender.send(std::string(max_frame_bytes,'x'),true)&&clock_ms==30000&&write_calls==3000,"partial bulk writes renewed total send budget");
+    reset();TlsLink ordinary;writable_at=4000;
+    check(!ordinary.send("ordinary remains bounded")&&clock_ms==3000&&!ordinary.usable(),"bulk support expanded ordinary send deadline");
+    for(bool bulk:{false,true}){
+        reset();TlsLink sender;partial_write=max_frame_bytes;const std::string body(4775,'x');
+        check(sender.send(body,bulk)&&written==frame(body,bulk),"record sizing changed frame bytes/class");
+        check(maximum_write==(bulk?2048u:512u)&&write_calls==(bulk?3u:10u),"bulk record cap or ordinary512-byte cap changed");
+    }
+    reset();TlsLink bounded_bulk;partial_write=97;writable_at=4000;want_read=true;
+    check(bounded_bulk.send(std::string(max_frame_bytes,'x'),true)&&maximum_write==2048&&written==frame(std::string(max_frame_bytes,'x'),true),"partial/WANT bulk write exceeded2KiB or changed pending buffer");
+}
+
 void terminal_receive_diagnostics(){
     using Cause=TlsReceiveDiagnostic::Cause;
     reset();TlsLink starved;append("buffered body",0,100);std::string body;
@@ -283,8 +332,8 @@ void expired_frames_drain_without_replacing_tls(){
 }
 }
 int main(){using namespace amity::consortium::platform;try{
-    lazy_handshake_and_transport_health();ipc_during_partial_frame();fragments_and_frame_boundaries();unchanged_terminal_deadlines_and_errors();blocking_wrapper_and_nonblocking_socket();bounded_application_writes();terminal_receive_diagnostics();expired_frames_drain_without_replacing_tls();
-    std::cout<<"PASS actual TLS lifecycle/receive/send: one lazy handshake reused; expired frames are rejected once and drained without replacing TLS, including512/582/prefix/total/outer deadlines; no late payload executes; fatal errors remain unusable; bounded nonblocking polls,512-byte writes and partial/WANT continuation\n";
+    lazy_handshake_and_transport_health();ipc_during_partial_frame();fragments_and_frame_boundaries();unchanged_terminal_deadlines_and_errors();blocking_wrapper_and_nonblocking_socket();bounded_application_writes();bulk_transfer_deadlines_and_class_boundaries();terminal_receive_diagnostics();expired_frames_drain_without_replacing_tls();
+    std::cout<<"PASS actual TLS lifecycle/receive/send: ordinary deadlines/512-byte writes unchanged; explicit bulk class30sprogress/60stotal/30ssend with bounded2048-byte records; exact4779-byte frame uses3 bulk/10 ordinary records; class-safe drain and partial/WANT continuation\n";
     return 0;
 }catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''

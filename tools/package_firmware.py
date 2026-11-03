@@ -28,7 +28,7 @@ def package(build, output):
         ('bootloader.bin', 'bootloader/bootloader.bin', 0),
         ('partition-table.bin', 'partition_table/partition-table.bin', 0xc000),
         ('ota-data.bin', 'ota_data_initial.bin', 0x21000),
-        ('amity.bin', 'amity.bin', 0x40000),
+        ('amity.bin', 'amity-partition.bin', 0x40000),
     ]
     manifest = dict(format='amity-firmware', version=3, firmware_version=description['project_version'],
                     chip='esp32s3', flash_size=0x800000, factory_offset=0xf000, factory_size=0x1000,

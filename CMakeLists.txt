@@ -5,8 +5,8 @@
 # License, or (at your option) any later version.
 
 cmake_minimum_required(VERSION 3.22)
-set(PROJECT_VER "0.1.132")
-set(PROJECT_VER_NUMBER 133)
+set(PROJECT_VER "0.1.133")
+set(PROJECT_VER_NUMBER 134)
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Source tools/env.sh before building")
 endif()
@@ -43,10 +43,31 @@ add_custom_target(ota-release-manifest ALL
         --image ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.bin
         --manifest ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.release.json
         --output ${CMAKE_BINARY_DIR}/amity-update.bin ${AMITY_BUNDLE_ARGUMENTS}
+    COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/partition_image.py
+        --image ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.bin
+        --manifest ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.release.json
+        --output ${CMAKE_BINARY_DIR}/${PROJECT_NAME}-partition.bin ${AMITY_BUNDLE_ARGUMENTS}
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/${PROJECT_NAME}-partition.bin
     DEPENDS gen_project_binary check-firmware-layouts VERBATIM)
+
+# Direct USB flashing and provisioning must install the same self-contained OTA
+# partition as remote staging, so a first-boot primary can update its members.
+foreach(AMITY_FLASH_TARGET flash app-flash encrypted-flash encrypted-app-flash)
+    if(TARGET ${AMITY_FLASH_TARGET})
+        foreach(AMITY_FLASH_PROPERTY FLASH_FILE FLASH_ENTRY IMAGES ENCRYPTED_IMAGES NON_ENCRYPTED_IMAGES)
+            get_property(AMITY_FLASH_VALUE TARGET ${AMITY_FLASH_TARGET} PROPERTY ${AMITY_FLASH_PROPERTY})
+            if(AMITY_FLASH_VALUE)
+                string(REPLACE "$<TARGET_PROPERTY:__idf_build_target,EXECUTABLE_NAME>.bin" "${PROJECT_NAME}-partition.bin" AMITY_FLASH_VALUE "${AMITY_FLASH_VALUE}")
+                string(REPLACE "${PROJECT_NAME}.bin" "${PROJECT_NAME}-partition.bin" AMITY_FLASH_VALUE "${AMITY_FLASH_VALUE}")
+                set_property(TARGET ${AMITY_FLASH_TARGET} PROPERTY ${AMITY_FLASH_PROPERTY} "${AMITY_FLASH_VALUE}")
+            endif()
+        endforeach()
+        add_dependencies(${AMITY_FLASH_TARGET} ota-release-manifest)
+    endif()
+endforeach()
 
 # Release package consumed by the standalone Go provisioning tool.
 add_custom_target(provisioning-package
     COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/package_firmware.py --build ${CMAKE_BINARY_DIR}
-    DEPENDS gen_project_binary check-firmware-layouts bootloader partition_table_bin ${CMAKE_BINARY_DIR}/ota_data_initial.bin
+    DEPENDS ota-release-manifest bootloader partition_table_bin ${CMAKE_BINARY_DIR}/ota_data_initial.bin
     VERBATIM)

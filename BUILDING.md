@@ -92,7 +92,8 @@ idf.py build provisioning-package
 |---|---|
 | `build/amity-firmware.zip` | Input to the setup tool for a fresh installation |
 | `build/amity-update.bin` | One browser update file containing the release manifest, optional publisher signature and exact image |
-| `build/amity.bin` | Raw application image for USB/debugging or an explicitly pre-staged update |
+| `build/amity.bin` | Raw application image for inspection and debug tooling |
+| `build/amity-partition.bin` | Application and release metadata used by `idf.py flash` and the provisioning package |
 | `build/amity-provision-native` | Setup tool for the build computer |
 
 The default board profile keeps the existing GPIO1/GPIO2 HDMI adapter mapping and GPIO4 setup/reset button. For a custom development carrier, run `idf.py menuconfig` and select **Amity board profile → Development carrier**. Its default isolated CEC GPIO assignments use the standard XIAO ESP32-S3 edge headers:
@@ -147,6 +148,12 @@ Technical references: [hardware pins](main/board_pins.h), [Matter](components/am
 One firmware serves both roles. A fresh unclaimed device with no Matter fabric automatically opens a bounded Matter setup window at boot, including after factory reset; this requires no setup-button GPIO. It has no saved Wi-Fi credentials and hosts no UI. Completing Matter BLE enrollment establishes the original controller; adding a device over the authenticated Amity BLE channel selects its subordinate role. That durable choice survives removing Matter fabrics. The proven original main also opens Matter setup at boot if its current fabric count is zero, while keeping its main role/UI/authority. Saved activities and previous commissioning history do not gate this behavior. Boards with current Matter fabrics and headless/prepared/retired/recovery roles do not open it automatically. The original main retains explicit Matter pairing controls. Added devices retain the shared CHIP Wi-Fi/NimBLE substrate and authenticated peer config/OTA/status only; they host no UI or user-control integration and cannot promote themselves after reset or controller loss. No separate actuator-only build is required.
 
 The 20 October 2026 amendment fixes the original device as sole controller/UI/admin/remote/Matter/HomeKit owner. The saved original controller identity must be proven, never inferred from ordering; ordinary portable import cannot replace it within a live installation. Supported failed-main recovery instead Matter-enrolls replacement hardware as a new main, restores portable configuration through existing Advanced upload/restore, and explicitly re-pairs integrations/remote and re-enrolls members after old-main isolation. Preserve baseline UI commit `d50af8026938797fc0820d0107f4c4e064c2d2bc` with only canonical Amity-hostname context and one Amity management tab. Historical hardware/startup evidence is separate from the current qualified-lookup implementation. Current software checks and remaining physical qualification follow the [original-controller contract](amity-octopus-consortium/21-original-controller-policy.md) and [validation requirements](amity-octopus-consortium/15-validation-and-release-gates.md).
+
+## Firmware distribution
+
+Authenticated TLS hellos compare running ELF identities before configuration synchronization. A mismatch permits firmware and explicit removal traffic only. The main updates newly added or returning members from its own running partition; no desired-release setting is persisted.
+
+A browser upload stages the main's inactive partition, then the main stages members sequentially. Complete-image validation precedes coordinated boot selection and delayed reboot. Each OTA partition carries its release manifest and signature in a reserved trailer, so the running image remains an update source after reboot. Firmware frames use a marked class on the existing TLS stream with longer fixed deadlines; control frames retain their ordinary deadlines, and receivers reject incorrectly marked controls.
 
 ## Adding Amity devices
 

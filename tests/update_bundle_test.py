@@ -35,7 +35,7 @@ PREFIX=r'''
 #include <vector>
 #include <openssl/sha.h>
 using esp_err_t=int;using esp_ota_handle_t=int;
-constexpr int ESP_OK=0,ESP_FAIL=1,ESP_ERR_TIMEOUT=2,ESP_ERR_INVALID_CRC=3;
+constexpr int ESP_OK=0,ESP_FAIL=1;
 constexpr int CONFIG_IDF_FIRMWARE_CHIP_ID=9,ESP_IMAGE_HEADER_MAGIC=0xe9;constexpr uint32_t ESP_APP_DESC_MAGIC_WORD=0xabcd5432u;
 struct esp_image_header_t{uint8_t magic=ESP_IMAGE_HEADER_MAGIC;uint8_t rest[11]{};uint16_t chip_id=CONFIG_IDF_FIRMWARE_CHIP_ID;uint8_t end[10]{};};
 struct esp_image_segment_header_t{uint32_t address=0,bytes=0;};
@@ -44,7 +44,7 @@ static_assert(sizeof(esp_image_header_t)==24&&sizeof(esp_app_desc_t)==256);
 struct esp_partition_t{size_t size=0x3d0000;}partition;
 struct httpd_req_t{std::string input,response;size_t content_len=0,cursor=0,fragment=4096,fail_after=SIZE_MAX,delay_after=SIZE_MAX;uint64_t receive_delay_us=0;int status=0;bool connection_close=false;};
 esp_app_desc_t running;
-unsigned erases=0,writes=0,selections=0,reboots=0,stages=0,aborts=0,failures=0;bool admitted=false;
+unsigned erases=0,writes=0,selections=0,reboots=0,stages=0,aborts=0,failures=0,cohort_starts=0,cohort_finishes=0;bool admitted=false;
 std::vector<uint64_t> reader_timeouts;unsigned live_readers=0,fail_reader_number=0;
 std::string native,written,expected_manifest="canonical-exact-manifest",expected_signature;
 const esp_partition_t*esp_ota_get_next_update_partition(void*){return &partition;}
@@ -78,37 +78,45 @@ public:
 };
 }
 std::string digest_hex(std::string_view input){unsigned char bytes[32];SHA256(reinterpret_cast<const unsigned char*>(input.data()),input.size(),bytes);std::string result;constexpr char hex[]="0123456789abcdef";for(auto b:bytes){result+=hex[b>>4];result+=hex[b&15];}return result;}
-struct psa_hash_operation_t{std::string input;};
-#define PSA_HASH_OPERATION_INIT {}
-constexpr int PSA_ALG_SHA_256=1,PSA_SUCCESS=0;
-int psa_hash_setup(psa_hash_operation_t*,int){return 0;}
-int psa_hash_update(psa_hash_operation_t*op,const void*bytes,size_t count){op->input.append(static_cast<const char*>(bytes),count);return 0;}
-int psa_hash_finish(psa_hash_operation_t*op,uint8_t*out,size_t,size_t*count){SHA256(reinterpret_cast<const unsigned char*>(op->input.data()),op->input.size(),out);*count=32;return 0;}
-int psa_hash_abort(psa_hash_operation_t*){return 0;}
 namespace system_services {
 std::optional<int> compare_firmware_versions(std::string_view,std::string_view){return 0;}
 namespace updates{
 std::optional<ReleaseManifest> staged;
 std::optional<ReleaseManifest> staged_release(){return staged;}
 int stage_release(std::string_view manifest,std::string_view signature,std::string&error){++stages;assert(!erases);if(manifest!=expected_manifest||signature!=expected_signature){error="Publisher/profile admission rejected";return ESP_FAIL;}ReleaseManifest value;value.image_bytes=native.size();value.image_sha256=digest_hex(native);value.firmware_version=running.version;for(auto b:running.app_elf_sha256){constexpr char hex[]="0123456789abcdef";value.image_elf_sha256+=hex[b>>4];value.image_elf_sha256+=hex[b&15];}staged=value;admitted=true;return ESP_OK;}
-int begin_install(std::string&){assert(admitted);return ESP_OK;}void install_failed(const std::string&){++failures;}void install_progress(uint64_t){}int install_selected(){return ESP_OK;}
+bool parse_release_manifest(std::string_view manifest,ReleaseManifest&out,std::string&error){if(manifest!=expected_manifest){error="Invalid release";return false;}out.release_id="test-release";out.image_bytes=native.size();return true;}
+int begin_system_upload(const ReleaseManifest&release,std::string&){assert(release.release_id=="test-release"&&release.image_bytes==native.size());++cohort_starts;return ESP_OK;}
+void system_upload_progress(uint64_t count){assert(count==written.size());}
+int finish_system_upload(std::string&){assert(written==native);++cohort_finishes;return ESP_OK;}
+void fail_system_upload(const std::string&){++failures;}
+int peer_begin(std::string_view manifest,std::string_view signature,std::string&error){return stage_release(manifest,signature,error);}
+int peer_chunk(std::string_view release,uint64_t offset,std::string_view bytes,std::string&error){
+ assert(admitted&&release=="test-release"&&offset==written.size()&&bytes.size()<=2048);
+ if(!offset){esp_image_header_t image;esp_app_desc_t app;memcpy(&image,bytes.data(),sizeof(image));memcpy(&app,bytes.data()+32,sizeof(app));
+  if(image.magic!=ESP_IMAGE_HEADER_MAGIC||image.chip_id!=CONFIG_IDF_FIRMWARE_CHIP_ID||app.magic_word!=ESP_APP_DESC_MAGIC_WORD||memcmp(app.project_name,running.project_name,sizeof(app.project_name))||!memchr(app.version,0,sizeof(app.version))||staged->firmware_version!=app.version||memcmp(app.app_elf_sha256,running.app_elf_sha256,32)){error="Application header differs from release";return ESP_FAIL;}
+  esp_ota_handle_t handle;esp_ota_begin(&partition,staged->image_bytes,&handle);
+ }
+ return esp_ota_write(1,bytes.data(),bytes.size());
+}
+int peer_stage(std::string_view,std::string&error){if(written.size()!=staged->image_bytes||digest_hex(written)!=staged->image_sha256){error="Image digest differs from release";return ESP_FAIL;}return ESP_OK;}
+void peer_abort(const std::string&){if(erases)esp_ota_abort(1);}
 }
 '''
 SUITE=r'''
 }
 using namespace system_services;
 std::string header(uint32_t manifest,uint32_t signature,uint64_t image){std::string out(updates::update_bundle_magic);auto add=[&](uint64_t value,unsigned bytes){for(unsigned n=bytes;n>0;--n)out+=char(value>>(8*(n-1)));};add(manifest,4);add(signature,4);add(image,8);assert(out.size()==32);return out;}
-void reset(){assert(live_readers==0);reader_timeouts.clear();fail_reader_number=0;clock_us=0;erases=writes=selections=reboots=stages=aborts=failures=0;admitted=false;written.clear();updates::staged.reset();expected_signature.clear();}
+void reset(){assert(live_readers==0);reader_timeouts.clear();fail_reader_number=0;clock_us=0;erases=writes=selections=reboots=stages=aborts=failures=cohort_starts=cohort_finishes=0;admitted=false;written.clear();updates::staged.reset();expected_signature.clear();}
 httpd_req_t request(std::string input,size_t fragment=4096){httpd_req_t req;req.input=std::move(input);req.content_len=req.input.size();req.fragment=fragment;return req;}
 bool upload_error(httpd_req_t*req,int status=400){return upload_firmware(req)==ESP_FAIL&&req->status==status&&req->connection_close&&live_readers==0;}
 int main(int argc,char**argv){
  if(argc==2){std::ifstream stream(argv[1],std::ios::binary);std::string bytes((std::istreambuf_iterator<char>(stream)),{}),error;updates::UpdateBundleHeader parsed;assert(updates::parse_update_bundle_header(std::string_view(bytes).substr(0,32),bytes.size(),parsed,error));assert(static_cast<unsigned char>(bytes[parsed.image_offset()])==0xe9);return 0;}
  native.resize(5000,'x');esp_image_header_t ih;esp_image_segment_header_t segment;memcpy(native.data(),&ih,sizeof(ih));memcpy(native.data()+24,&segment,8);for(unsigned n=0;n<32;++n)running.app_elf_sha256[n]=uint8_t(n+1);memcpy(native.data()+32,&running,sizeof(running));
  for(auto fragment:{1u,17u,31u,32u,255u,2048u}){
-  reset();auto file=header(expected_manifest.size(),0,native.size())+expected_manifest+native;auto req=request(file,fragment);assert(upload_firmware(&req)==ESP_OK&&stages==1&&erases==1&&written==native&&selections==1&&reboots==1&&req.cursor==file.size());
+  reset();auto file=header(expected_manifest.size(),0,native.size())+expected_manifest+native;auto req=request(file,fragment);assert(upload_firmware(&req)==ESP_OK&&stages==1&&erases==1&&written==native&&!selections&&!reboots&&cohort_starts==1&&cohort_finishes==1&&req.cursor==file.size());
  }
  reset();auto req=request(native,13);assert(upload_error(&req)&&!erases&&!stages);
- reset();std::string error;assert(updates::stage_release(expected_manifest,"",error)==ESP_OK);req=request(native,13);assert(upload_firmware(&req)==ESP_OK&&written==native&&erases==1);
+ reset();std::string error;assert(updates::stage_release(expected_manifest,"",error)==ESP_OK);req=request(native,13);assert(upload_error(&req)&&written.empty()&&!erases&&!cohort_starts); // Metadata admission never bypasses the required bundle format.
  for(unsigned kind=0;kind<11;++kind){
   reset();auto manifest=expected_manifest;auto image=native;std::string signature;uint32_t ml=manifest.size(),sl=0;uint64_t il=image.size();
   switch(kind){case 0:ml=0;break;case 1:ml=8193;break;case 2:sl=63;break;case 3:il=UINT64_MAX;break;case 4:manifest[0]='!';break;case 5:sl=64;signature=std::string(64,'z');break;case 6:image[0]=0;break;case 7:image[48]='9';break;case 8:image[176]='!';break;case 9:il=0;break;case 10:il=0x3d0001;break;}
@@ -125,10 +133,10 @@ int main(int argc,char**argv){
  reset();req=request(complete_file,1);req.delay_after=0;req.receive_delay_us=2000000;
  assert(upload_error(&req)&&!erases&&!selections);
  assert((reader_timeouts==std::vector<uint64_t>{120000000,30000000}));
- reset();req=request(complete_file,32);req.delay_after=32+expected_manifest.size()+288;req.receive_delay_us=130000000;
+ reset();req=request(complete_file,32);req.delay_after=32+expected_manifest.size()+2048;req.receive_delay_us=130000000;
  assert(upload_error(&req)&&erases==1&&aborts==1&&failures==1&&!selections&&!reboots);
  for(unsigned failure:{1u,2u}){reset();fail_reader_number=failure;req=request(complete_file);assert(upload_error(&req,503)&&!erases&&!selections&&req.cursor==0);}
- std::cout<<"PASS actual bundle header/upload: fragmented input, exact metadata before erase, signature admission, native bytes only, raw staged path, bounded lengths/truncation/trailing/header/hash rejection, absolute deadlines and close-on-error\n";
+ std::cout<<"PASS actual bundle header/upload: fragmented input, metadata admission before erase, shared receiver staging without activation, exact native bytes, bounded lengths/truncation/trailing/header/hash rejection, absolute deadlines and close-on-error\n";
 }
 '''
 

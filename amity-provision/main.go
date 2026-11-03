@@ -33,7 +33,7 @@ func run(args []string, out io.Writer) error {
 	pass := fs.String("passcode", "", "optional Matter setup PIN; default: cryptographically random")
 	disc := fs.Int("discriminator", -1, "optional discriminator 0..4095; default: random")
 	fs.Usage = func() {
-		fmt.Fprintln(out, "Usage: amity-provision [options] amity-firmware.zip\n\nCreates a fresh-install flash image, factory partition, pairing text and a setup-card PNG (QR, code, hostname and auto-generated password).\nThe full image replaces device data. Use amity.bin through the admin UI for OTA updates.")
+		fmt.Fprintln(out, "Usage: amity-provision [options] amity-firmware.zip\n\nCreates a fresh-install flash image, factory partition, pairing text and a setup-card PNG (QR, code, hostname and auto-generated password).\nThe full image replaces device data. Use amity-update.bin through the admin UI for OTA updates.")
 		fs.PrintDefaults()
 	}
 	if e := fs.Parse(args); e != nil {
@@ -114,7 +114,7 @@ func run(args []string, out io.Writer) error {
 	} else if adminAuth == "" {
 		passwordLine = "Initial admin password: Not set\n"
 	}
-	text := fmt.Sprintf("Amity ESP32 — Matter pairing\nFirmware: %s\nHostname: %s\nAdministration: https://%s.local\nManual pairing code: %s\nQR payload: %s\n%s\nKeep these files for this device. Factory reset preserves the code; full flash erase does not.\nFlash amity-provisioned.bin at offset 0x0 on an 8 MB ESP32-S3 for a FRESH installation.\nDo not upload this full image through the admin UI. Use the original amity.bin for OTA updates.\n", b.FirmwareVersion, *hostname, *hostname, manual, payload, passwordLine)
+	text := fmt.Sprintf("Amity ESP32 — Matter pairing\nFirmware: %s\nHostname: %s\nAdministration: https://%s.local\nManual pairing code: %s\nQR payload: %s\n%s\nKeep these files for this device. Factory reset preserves the code; full flash erase does not.\nFlash amity-provisioned.bin at offset 0x0 on an 8 MB ESP32-S3 for a FRESH installation.\nDo not upload this full image through the admin UI. Use amity-update.bin for OTA updates.\n", b.FirmwareVersion, *hostname, *hostname, manual, payload, passwordLine)
 	// Exclusive directory creation prevents accidental replacement of an existing device's codes.
 	target, e := filepath.Abs(*dir)
 	if e != nil {

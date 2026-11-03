@@ -48,10 +48,11 @@ template<class... Args>void capture_log(const char* level,const char* tag,const 
 template<class... Args>void ESP_LOGW(const char* tag,const char* format,Args... args){capture_log("W",tag,format,args...);}
 template<class... Args>void ESP_LOGI(const char* tag,const char* format,Args... args){capture_log("I",tag,format,args...);}
 struct FakeTls{
+ bool last_bulk=false,bulk_receiving=false;bool received_bulk()const{return last_bulk;}bool receiving_bulk()const{return bulk_receiving;}
  int socket=-1;model::OctopusId authenticated;std::deque<std::string> incoming;std::vector<Envelope> sent;unsigned receives=0;
  bool healthy=true;bool usable()const{return healthy;}TlsReceiveDiagnostic receive_diagnostic()const{return {};}
  std::function<void()> before_receive;
- bool receive(std::string& value,uint32_t timeout=10000){++receives;if(before_receive)before_receive();if(incoming.empty()){clock_ms+=timeout;return false;}value=std::move(incoming.front());incoming.pop_front();return true;}
+ bool receive(std::string& value,uint32_t timeout=10000){++receives;if(before_receive)before_receive();if(incoming.empty()){clock_ms+=timeout;return false;}value=std::move(incoming.front());incoming.pop_front();Envelope envelope;last_bulk=parse_envelope(value,envelope)==Error::none&&is_update_kind(envelope.kind);return true;}
 };
 struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active{

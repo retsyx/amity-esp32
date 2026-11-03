@@ -1,5 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "firmware_update.hpp"
+#include "partition_image.hpp"
 #include "system_services.hpp"
 #include "config_store.hpp"
 #include "system_configuration.hpp"
@@ -68,10 +69,15 @@ void recover(){
 }
 }
 void maintenance_hooks(std::function<esp_err_t()> begin,std::function<void()> end){std::lock_guard<std::mutex> lock(mutex);begin_maintenance=std::move(begin);end_maintenance=std::move(end);}
-esp_err_t stage_release(std::string_view bytes,std::string_view proof,std::string& error){
-    ReleaseManifest manifest;if(!parse_release_manifest(bytes,manifest,error))return ESP_ERR_INVALID_ARG;
+esp_err_t validate_release(std::string_view bytes,std::string_view proof,ReleaseManifest& manifest,std::string& error){
+    if(bytes.size()>4096){error="Firmware release information exceeds the supported size";return ESP_ERR_INVALID_ARG;}
+    if(!parse_release_manifest(bytes,manifest,error))return ESP_ERR_INVALID_ARG;
     const auto* partition=esp_ota_get_next_update_partition(nullptr);
-    if(!partition||!compatible_release(manifest,partition->size,2,2,c::known_capabilities,production(),error)||!signature(manifest,proof)){if(error.empty())error="Publisher signature is missing, invalid or untrusted";return ESP_ERR_INVALID_ARG;}
+    if(!partition||partition->size<=partition_release_bytes||manifest.image_bytes>partition->size-partition_release_bytes||!compatible_release(manifest,partition->size,2,2,c::known_capabilities,production(),error)||!signature(manifest,proof)){if(error.empty())error="Publisher signature is missing, invalid, untrusted or the image exceeds the available space";return ESP_ERR_INVALID_ARG;}
+    return ESP_OK;
+}
+esp_err_t stage_release(std::string_view bytes,std::string_view proof,std::string& error){
+    ReleaseManifest manifest;const auto checked=validate_release(bytes,proof,manifest,error);if(checked!=ESP_OK)return checked;
     std::lock_guard<std::mutex> lock(mutex);if(installing){error="A firmware installation is already in progress";return ESP_ERR_INVALID_STATE;}
     uint8_t bytes_id[16];esp_fill_random(bytes_id,sizeof(bytes_id));job=hex(bytes_id,sizeof(bytes_id));staged=std::move(manifest);deadline=now()+300000;received=0;phase="staged";reason.clear();old_boot=boot_id();
     const auto stored=persist();if(stored!=ESP_OK){staged.reset();phase="failed";error="Update report could not be stored";}return stored;
@@ -91,6 +97,7 @@ esp_err_t begin_install(std::string& error){
 void install_progress(uint64_t bytes){std::lock_guard<std::mutex> lock(mutex);received=bytes;}
 esp_err_t install_checkpoint(uint64_t bytes){std::lock_guard<std::mutex> lock(mutex);received=bytes;return persist();}
 esp_err_t install_selected(){std::lock_guard<std::mutex> lock(mutex);phase="boot_checking";return persist();}
+esp_err_t install_staged(){std::function<void()> end;esp_err_t result;{std::lock_guard<std::mutex> lock(mutex);phase="staged_image";installing=false;received=staged?staged->image_bytes:0;result=persist();end=end_maintenance;}if(end)end();return result;}
 void install_failed(const std::string& error){std::function<void()> end;{std::lock_guard<std::mutex> lock(mutex);phase="failed";reason=error;installing=false;persist();end=end_maintenance;}if(end)end();}
 void local_boot_healthy(){std::lock_guard<std::mutex> lock(mutex);recover();if(phase=="boot_checking"&&staged&&old_boot!=boot_id()){phase=staged->image_elf_sha256==image_identity()&&staged->firmware_version==esp_app_get_description()->version?"healthy":"rolled_back";reason=phase=="healthy"?"":"The selected image did not reach local boot health";persist();}}
 } // namespace system_services::updates

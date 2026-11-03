@@ -97,6 +97,7 @@ void hostname_tests(){
 }
 void live_hostname_tests(){
  reset(true);auto active=connection(false);const auto original=active->session.scope();const auto tls=active->tls;
+ active->management_ready=true;active->ready=false;assert(refresh_local_hostname(*active)&&sent.empty());active->management_ready=false;active->ready=true;
  active->advertised_hostname=local_hostname;assert(refresh_local_hostname(*active)&&sent.empty());
  local_hostname="renamed-main";assert(refresh_local_hostname(*active)&&sent.size()==1&&parsed(sent.back()).get("hostname")->string==local_hostname);
  assert(refresh_local_hostname(*active)&&sent.size()==1);
@@ -185,6 +186,11 @@ void rename_sender_tests(){
  std::cout<<"PASS rename sender: pending duplicate-name reservation, main/member name collision rejection and immediate authenticated member metadata on the existing connection\n";
 }
 void sender_tests(){
+ reset(true);auto blocked=connection(false);const auto transport=blocked->tls;
+ blocked->ready=blocked->status.ready=false;blocked->management_ready=blocked->status.management_ready=true;blocked->session.restrict_management();
+ assert(parsed(runtime_device_settings(blocked->peer)).get("status")->string=="unsupported"&&blocked->queue.empty());
+ assert(runtime_write_device_settings(blocked->peer,ident<model::MessageId>(79),core(blocked->status.boot_id),clock_ms+500)==ESP_ERR_INVALID_STATE&&blocked->queue.empty());
+ assert(blocked->tls==transport&&!blocked->cancelled&&blocked->management_ready);
  reset(true);auto active=connection(false);auto wrapper=parsed(runtime_device_settings(active->peer));assert(wrapper.get("status")->string=="reading"&&active->queue.size()==1);runtime_device_settings(active->peer);assert(active->queue.size()==1);
  active->execution_fenced=true;assert(!settings_link(active->peer).active);active->execution_fenced=false;
  active->restart_requested=true;assert(!settings_link(active->peer).active);active->restart_requested=false;

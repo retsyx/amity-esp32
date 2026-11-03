@@ -174,6 +174,7 @@ bool abort_peer_credential(const Active &link,const Group &current){
 }
 bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
     if(retired_kind(kind)||link.cancelled|| (link.lifecycle_only&&!lifecycle_kind(kind)) || (link.retiring&&kind!=Kind::membership_event&&kind!=Kind::membership_result))return false;
+    if(link.management_ready&&!is_update_kind(kind)&&!lifecycle_kind(kind))return false;
     if(link.restart_requested&&kind!=Kind::synchronization&&kind!=Kind::snapshot_request&&kind!=Kind::snapshot_chunk&&kind!=Kind::device_status&&!lifecycle_kind(kind))return false;
     // The TLS anchor snapshot may predate a roster mutation. Ordinary work must
     // still belong to the current allowlist immediately before it is sent.
@@ -184,7 +185,7 @@ bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
             if(kind!=Kind::enrollment_control||!abort_peer_credential(link,group)||!parse_json(payload,parsed,detail)||!link.enrollment_abort->may_send(parsed))return false;
         }
     }
-    return link.tls->send(envelope_json(outgoing(link,kind,ttl),payload));
+    return link.tls->send(envelope_json(outgoing(link,kind,ttl),payload),is_update_kind(kind));
 }
 #include "settings_runtime.inc"
 #include "removal_runtime.inc"
@@ -201,7 +202,7 @@ bool finish_enrollment_abort(Active& active){
         std::string body;Envelope reply;const auto now=now_ms();if(now>=until)break;const auto remaining=until-now;
         if(!active.tls->receive(body,static_cast<uint32_t>(remaining)))break;
         const auto received=now_ms();
-        if(parse_envelope(body,reply)!=Error::none||active.session.admit(reply,received,received)!=Error::none||reply.kind!=Kind::enrollment_control)break;
+        if(parse_envelope(body,reply)!=Error::none||active.tls->received_bulk()!=is_update_kind(reply.kind)||active.session.admit(reply,received,received)!=Error::none||reply.kind!=Kind::enrollment_control)break;
         const auto state=enrollment_abort_status(pending,reply.payload);
         if(state==EnrollmentAbortStatus::ignore)continue;
         if(state==EnrollmentAbortStatus::aborted){std::lock_guard<std::mutex> guard(lock);status.phase="enrollment_aborted";status.last_error.clear();return false;}
@@ -259,7 +260,7 @@ bool enroll_lan(Active &active,bool server){
     if(!current.join_id||(server&&current.joining_id!=active.peer))return timing.done(current.role!=Group::prepared);
     const auto digest=current.join_digest;std::string incoming;Envelope envelope;auto receive=[&](){
         while(active.tls->receive(incoming)){
-            const auto received=now_ms();if(parse_envelope(incoming,envelope)!=Error::none||active.session.admit(envelope,received,received)!=Error::none||envelope.kind!=Kind::enrollment_control||envelope.payload.get("join_id")->string!=current.join_id.str()||envelope.payload.get("join_digest")->string!=digest)return false;
+            const auto received=now_ms();if(parse_envelope(incoming,envelope)!=Error::none||active.tls->received_bulk()!=is_update_kind(envelope.kind)||active.session.admit(envelope,received,received)!=Error::none||envelope.kind!=Kind::enrollment_control||envelope.payload.get("join_id")->string!=current.join_id.str()||envelope.payload.get("join_digest")->string!=digest)return false;
             const auto phase=envelope.payload.get("phase")->string;
             if(!server&&phase=="status"&&envelope.payload.get("request")->boolean){if(!candidate_join_status(active,current.join_id,digest))return false;continue;}
             if(!server&&phase=="abort")return abort_candidate_enrollment(active,current.join_id,digest);
@@ -329,6 +330,7 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
             const auto before=now_ms();if(before>=until)return trace.fail("synchronization_timeout");
             std::string body;if(!active.tls->receive(body,static_cast<uint32_t>(until-before)))return trace.fail("synchronization_receive");
             const auto parsed=parse_envelope(body,envelope);if(parsed!=Error::none)return trace.fail("synchronization_parse",parsed);
+            if(active.tls->received_bulk()!=is_update_kind(envelope.kind))return trace.fail("synchronization_frame_class",Error::invalid_message);
             trace.kind=envelope.kind;trace.has_kind=true;
             const auto now=now_ms();const auto result=active.session.admit(envelope,now,now);
             if(result==Error::stale_config){const auto discarded=active.session.discard_stale(envelope,now,now);if(discarded==Error::none)continue;}
@@ -440,6 +442,7 @@ bool synchronization_barrier(Active& active,bool server,SynchronizationRound& ro
         const auto now=now_ms();if(now>=until)break;
         std::string body;if(!active.tls->receive(body,static_cast<uint32_t>(until-now)))return trace.fail("synchronization_barrier_receive");
         Envelope envelope;const auto parsed=parse_envelope(body,envelope);if(parsed!=Error::none)return trace.fail("synchronization_barrier_parse",parsed);
+        if(active.tls->received_bulk()!=is_update_kind(envelope.kind))return trace.fail("synchronization_frame_class",Error::invalid_message);
         const auto received=now_ms();auto admitted=active.session.admit(envelope,received,received);
         if(admitted==Error::stale_config){admitted=active.session.discard_stale(envelope,received,received);if(admitted==Error::none)continue;}
         if(admitted!=Error::none&&envelope.kind!=Kind::synchronization){
@@ -464,18 +467,23 @@ bool synchronization_barrier(Active& active,bool server,SynchronizationRound& ro
 bool fence_synchronization_scope(Active& active,LinkTrace& trace){
     const auto scope=active.session.scope();
     RuntimeControlHooks hooks;RuntimeUpdateHooks update_hooks;
+    model::MessageId interrupted_update;bool already_cleaned=false;
     {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
         // End execution before waiting for the peer's barrier. A late callback
         // for this ended scope cannot treat withheld readiness as lost delivery
         // and tear down the independently healthy transport.
         active.execution_fenced=true;active.ready=false;active.management_ready=false;active.status.ready=false;active.status.management_ready=false;
-        if(active.cleaned_link==scope.link_id)return true;
+        interrupted_update=active.update_begin_id;active.update_begin_id={};
+        already_cleaned=active.cleaned_link==scope.link_id;
         hooks=controls;update_hooks=updates;
     }
+    // End the exact upload before owner cleanup or a repeated fence can return.
+    // Its maintenance state must not block synchronization on retained TLS.
+    if(interrupted_update&&update_hooks.disconnected)update_hooks.disconnected(active.peer,interrupted_update);
+    if(already_cleaned)return true;
     // This is an execution-session fence, not a device disconnect. Keep its
     // independently discovered HDMI observations and authenticated TLS object.
     if(!hooks.restart_session||!hooks.restart_session(active.peer,scope.peer_boot_id,scope.link_id))return trace.fail("synchronization_fence",Error::not_ready);
-    if(active.update_begin_id){if(update_hooks.disconnected)update_hooks.disconnected(active.peer,active.update_begin_id);active.update_begin_id={};}
     {std::lock_guard<std::mutex> queue(active.mutex);active.queue.clear();}
     active.cleaned_link=scope.link_id;
     return true;
@@ -500,6 +508,17 @@ bool restart_synchronization_scope(Active& active,const SynchronizationRound& ro
 bool exchange_hostname(Active&,const std::string&,LinkTrace*);
 bool synchronize_connection(Active& active,bool server,bool publish_ready=true,uint64_t revision=0,LinkTrace* diagnostic=nullptr){
     LinkTrace local;auto& trace=diagnostic?*diagnostic:local;
+    // An authenticated peer running another image may only receive firmware
+    // and explicit removal. Do not exchange application state on this stream
+    // until it reboots into the same image and completes a fresh hello.
+    if(!active.execution_supported||!publish_ready){
+        std::lock_guard<std::mutex> guard(active.mutex);
+        active.session.restrict_management();active.ready=false;active.status.ready=false;
+        active.management_ready=true;active.status.management_ready=true;
+        active.context_ready=false;active.context_requested=false;active.queue.clear();
+        active.execution_fenced=false;active.restart_requested=false;
+        return true;
+    }
     // Connection ownership and authentication are already established. Failed
     // application rounds only withhold readiness; they never replace TLS.
     bool retry=false;
@@ -526,9 +545,8 @@ bool synchronize_connection(Active& active,bool server,bool publish_ready=true,u
             trace.fail("synchronization_barrier_ack_send");if(!synchronization_recoverable(active,trace))return false;continue;
         }
         const bool named=exchange_hostname(active,active.expected_hostname,&trace);
-        if(named&&synchronize(active,server,publish_ready,round.revision,nullptr,&trace)){
-            if(!publish_ready){active.session.restrict_management();active.management_ready=true;}
-            {std::lock_guard<std::mutex> guard(active.mutex);active.status.config_revision=round.revision;active.status.management_ready=!publish_ready;active.execution_fenced=false;active.restart_requested=false;}
+        if(named&&synchronize(active,server,true,round.revision,nullptr,&trace)){
+            {std::lock_guard<std::mutex> guard(active.mutex);active.status.config_revision=round.revision;active.status.management_ready=false;active.execution_fenced=false;active.restart_requested=false;}
             return true;
         }
         if(!synchronization_recoverable(active,trace))return false;
@@ -575,7 +593,7 @@ bool lifecycle_receive(Active &active,Envelope &envelope,uint32_t timeout=5000){
     unsigned frames=0;
     while(!active.cancelled&&now_ms()<deadline&&frames++<32){
         const auto before=now_ms();if(before>=deadline)return false;
-        std::string bytes;if(!active.tls->receive(bytes,std::min<uint64_t>(5000,deadline-before))||parse_envelope(bytes,envelope)!=Error::none)return false;
+        std::string bytes;if(!active.tls->receive(bytes,std::min<uint64_t>(5000,deadline-before))||parse_envelope(bytes,envelope)!=Error::none||active.tls->received_bulk()!=is_update_kind(envelope.kind))return false;
         const auto now=now_ms();if(now>=deadline)return false;const auto admitted=active.session.admit(envelope,now,now);
         if(admitted==Error::none)return true;
         // Valid observations/results can precede the reset ACK on the same
@@ -598,6 +616,7 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
     std::string raw;if(!active.tls->receive(raw))return trace.fail("hostname_receive");
     Envelope response;const auto received=now_ms();
     const auto parsed=parse_envelope(raw,response);if(parsed!=Error::none)return trace.fail("hostname_parse",parsed);
+    if(active.tls->received_bulk()!=is_update_kind(response.kind))return trace.fail("hostname_frame_class",Error::invalid_message);
     const auto admitted=active.session.admit(response,received,received);if(admitted!=Error::none)return trace.fail("hostname_admission",admitted);
     if(response.kind==Kind::synchronization){
         SynchronizationRound round;std::string phase;
@@ -617,6 +636,7 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
 // Hostnames are public observation metadata, independent of the ordered
 // connection's authenticated identity and application synchronization scope.
 bool refresh_local_hostname(Active& active){
+    if(active.management_ready)return true;
     if(!(active.session.negotiated_capabilities()&hostname_metadata))return true;
     RuntimeNetworkHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=network;}
     if(!hooks.get_hostname)return true;
@@ -681,15 +701,18 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
     if(cancelled_join){if(!active.tls->extended_profile())return trace.fail("enrollment_abort_profile");ours.pending_join_id=cancelled_join->join;ours.join_digest=cancelled_join->digest;}
     const auto hello=timing.begin("hello_exchange");
     std::string incoming;if(!active.tls->send(hello_json(ours)))return trace.fail("hello_send");if(!active.tls->receive(incoming))return trace.fail("hello_receive");
+    if(active.tls->received_bulk())return trace.fail("hello_frame_class",Error::invalid_message);
     HelloFrame peer;const auto parsed=parse_hello(incoming,peer);if(parsed!=Error::none)return trace.fail("hello_parse",parsed);
-    if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch||!supports_capabilities(peer,ours.required_capabilities))return trace.fail("hello_validation");
+    const bool matching_firmware=peer.firmware_identity==ours.firmware_identity;
+    if(peer.octopus_id!=active.tls->authenticated||peer.consortium_id!=current.consortium||peer.coordinator_epoch!=current.epoch||
+       !supports_capabilities(peer,matching_firmware?ours.required_capabilities:peer_firmware_update))return trace.fail("hello_validation");
     if(peer.hardware_profile!=active.tls->hardware_profile())return trace.fail("hardware_profile");
     timing.peer=peer.octopus_id;timing.finish(hello,true);const auto link_stage=timing.begin("link_id");
     {std::lock_guard<std::mutex> guard(lock);if(group.consortium!=current.consortium||group.authority!=current.authority||group.epoch!=current.epoch||group.revision!=current.revision||!current_peer_credential(active,group)){
         if(!(server&&abort_peer_credential(active,group)))return trace.fail("hello_roster_changed");
     }active.peer=peer.octopus_id;}model::LinkId link;trace.phase="link_id";
     if(server){link=random_id<model::LinkId>();if(!active.tls->send("{\"type\":\"link\",\"link_id\":\""+link.str()+"\"}"))return trace.fail("link_id_send");}
-    else{Json j;JsonError error;if(!active.tls->receive(incoming)||!parse_json(incoming,j,error)||!closed(j,{"type","link_id"})||j.get("type")->type!=Json::Type::string||j.get("type")->string!="link"||!id(j.get("link_id"),link))return trace.fail("link_id_receive");}
+    else{Json j;JsonError error;if(!active.tls->receive(incoming)||active.tls->received_bulk()||!parse_json(incoming,j,error)||!closed(j,{"type","link_id"})||j.get("type")->type!=Json::Type::string||j.get("type")->string!="link"||!id(j.get("link_id"),link))return trace.fail("link_id_receive");}
     timing.link=link;timing.finish(link_stage,true);
     if(peer.pending_join_id&&!server&&(!current.join_id||*peer.pending_join_id!=current.join_id||peer.join_digest!=current.join_digest))return trace.fail("join_scope");
     const bool pending_join=current.join_id&&((server&&current.joining_id==peer.octopus_id)||(!server&&peer.pending_join_id.has_value()));
@@ -708,7 +731,7 @@ bool establish(Active &active,bool server,LinkTrace* diagnostic=nullptr){
         admitted=active.session.hello(peer,known_capabilities);if(admitted!=Error::none)return trace.fail("member_hello",admitted);}
     {std::lock_guard<std::mutex> guard(active.mutex);active.status.id=peer.octopus_id;active.status.boot_id=peer.boot_id;active.status.config_revision=scope.config_revision;active.status.negotiated_capabilities=(peer.required_capabilities|peer.optional_capabilities)&known_capabilities;active.status.firmware_identity=peer.firmware_identity;active.status.supported_tentacles=peer.supported_tentacles;active.status.configured_tentacles_mask=peer.configured_tentacles_mask;active.status.hardware_profile=peer.hardware_profile;}
     active.expected_hostname=server&&pending_join?current.join_hostname:std::string{};
-    active.execution_supported=execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask);
+    active.execution_supported=matching_firmware&&execution_profile_supported(peer,active.tls->extended_profile(),active.tls->hardware_profile(),profile_count,profile_mask);
     return timing.done(true);
 }
 std::string retirement_hash(const LinkScope &scope,model::MutationId mutation,uint64_t revision){
@@ -878,7 +901,7 @@ void active_loop_work(void *arg){
         if(!synchronize_connection(*active,server,active->execution_supported,0,&trace))active->cancelled=true;
         else{std::lock_guard<std::mutex> guard(lock);status.synchronized=active->ready.load();status.phase=active->ready?"enrollment_ready":"membership_committed";}
     }
-    uint64_t receive_until=0;bool retirement_attempted=false;
+    uint64_t receive_started=0,receive_until=0;bool retirement_attempted=false;
     while(!active->cancelled){
       while(!active->cancelled){
         trace=LinkTrace{};trace.phase="operational";
@@ -915,11 +938,12 @@ void active_loop_work(void *arg){
             if(!send(*active,queued.kind,payload,queued.ttl-static_cast<uint32_t>(now-queued.created))){trace.queued(queued);trace.fail("queued_send");break;}
         }
         fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}
-        // An idle connection has no receive deadline. Once socket/TLS input
-        // begins, retain the original five-second operational bound through
-        // incomplete polls, including encrypted records with no plaintext yet.
+        // An idle connection has no receive deadline. Input fixes the start;
+        // a decoded bulk prefix selects sixty seconds from that same edge.
+        // Ordinary input, including an undecoded TLS record, retains five.
         if(!ready&&mbedtls_ssl_check_pending(&active->tls->ssl)==0&&!receive_until)continue;
-        const auto polled_at=now_ms();if(!receive_until)receive_until=polled_at+5000;
+        const auto polled_at=now_ms();if(!receive_until){receive_started=polled_at;receive_until=polled_at+5000;}
+        if(active->tls->receiving_bulk())receive_until=receive_started+FrameReader::bulk_frame_timeout_ms;
         // Poll even on an idle socket while a frame is in flight, advancing its
         // existing progress/total deadlines without blocking the IPC pump.
         std::string text;const auto input=polled_at>=receive_until?active->tls->expire_receive():active->tls->poll_receive(text);
@@ -931,6 +955,7 @@ void active_loop_work(void *arg){
             break;
         }
         Envelope envelope;const auto parsed=parse_envelope(text,envelope);if(parsed!=Error::none){trace.fail("envelope_parse",parsed);break;}const auto received=now_ms();trace.kind=envelope.kind;trace.has_kind=true;
+        if(active->tls->received_bulk()!=is_update_kind(envelope.kind)){trace.fail("frame_class",Error::invalid_message);break;}
         if(envelope.kind==Kind::synchronization){
             const auto admitted=active->session.admit(envelope,received,received);
             if(admitted!=Error::none){trace.fail("synchronization_control_admit",admitted);break;}
@@ -1008,7 +1033,7 @@ void active_loop_work(void *arg){
                     }
                 }
                 if(hooks.handle&&hooks.handle(active->peer,envelope)==Error::none) {
-                    if(envelope.kind==Kind::update_begin&&(!envelope.payload.get("validate_only")||!envelope.payload.get("validate_only")->boolean)) active->update_begin_id=*model::MessageId::parse(envelope.payload.get("request_id")->string);
+                    if(envelope.kind==Kind::update_begin) active->update_begin_id=*model::MessageId::parse(envelope.payload.get("request_id")->string);
                     if(envelope.kind==Kind::update_install||envelope.kind==Kind::update_abort) active->update_begin_id={};
                 }
             }
@@ -1627,6 +1652,7 @@ std::string runtime_device_settings(model::OctopusId owner){
     const auto wrapper=[&](std::string_view state,std::string_view error){return "{\"status\":"+settings_quote(state)+",\"settings\":"+old+",\"error\":"+settings_quote(error)+"}";};
     const auto link=settings_link(owner);
     if(!settings_enrolled(owner)||!link.active)return wrapper("offline","The device is offline. Saved details cannot be edited.");
+    if(!link.active->ready)return wrapper("unsupported","Update this device before reading or editing its settings.");
     if(!(link.status.negotiated_capabilities&per_adapter_settings))return wrapper("unsupported","Update this device to edit its adapter settings.");
     if(!cache)return wrapper("error","Settings are busy. Try again shortly.");
     if(cache->boot==link.status.boot_id&&cache->received&&now>=cache->received&&now-cache->received<2000&&cache->error.empty())return wrapper("ready","");

@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
-    assert 'path=="/api/front-physical-address"' not in (ROOT / 'components/web_admin/web_admin.cpp').read_text()
+    web_source = (ROOT / 'components/web_admin/web_admin.cpp').read_text()
+    assert 'path=="/api/front-physical-address"' not in web_source
     start = source.index('std::optional<std::string> device_settings_target(')
     router = source[start:source.index('void publish_inputs()', start)]
     capacity = next(line for line in source.splitlines()
@@ -17,6 +18,12 @@ def main():
     # Unknown routes are rejected before reading a request body or admitting work.
     rejection = source.index('const auto fields=request_fields(path);if(!fields)')
     assert rejection < source.index('std::string data;if(!web::body(req,data))', rejection)
+    get_start = source.index('if(req->method==HTTP_GET)', source.index('bool admin_request('))
+    post_start = source.index('if(req->method!=HTTP_POST)', get_start)
+    assert 'if(path=="/api/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}' in source[get_start:post_start]
+    firmware = web_source.index('if(path=="/api/firmware")return system_services::upload_firmware(req);')
+    assert web_source.index('if(!web::authenticated(req))') < firmware
+    assert web_source.index('if(req->method==HTTP_POST)', web_source.index('if(!web::authenticated(req))')) < firmware
     program = r'''
 #include <algorithm>
 #include <cassert>
@@ -34,13 +41,12 @@ int main(){
         "input-context",
         "scans","zones/0123456789abcdef0123456789abcdef/activity",
         "zones/0123456789abcdef0123456789abcdef/key",
-        "zones/0123456789abcdef0123456789abcdef/standby","settings/remotes"}){
+        "zones/0123456789abcdef0123456789abcdef/standby","settings/remotes",
+        "updates/validate","updates/cohort","updates/chunk","updates/install","updates/cancel"}){
         assert(!request_fields(std::string("/api/")+path));
     }
     for(const auto* path:{"config","config/validate","replacements/preview",
-        "replacements/apply","membership/scan","membership/cancel","membership/add","membership/remove",
-        "updates/validate","updates/cohort","updates/chunk","updates/install",
-        "updates/cancel"}){
+        "replacements/apply","membership/scan","membership/cancel","membership/add","membership/remove"}){
         const auto fields=request_fields(std::string("/api/")+path);
         assert(fields&&std::count(fields->begin(),fields->end(),"request_id")==1);
         for(const auto& field:*fields)assert(field!="remote_id"&&field!="allow"&&field!="primary_remote_id");
@@ -66,7 +72,7 @@ int main(){
         assert(!administrative_path(path));
     for(const auto* path:{"/api/system","/api/config","/api/backup","/api/config/validate",
         "/api/membership/admission","/api/operations/0123456789abcdef0123456789abcdef",
-        "/api/devices/0123456789abcdef0123456789abcdef/settings","/api/updates"})
+        "/api/devices/0123456789abcdef0123456789abcdef/settings","/api/updates","/api/updates/cohort"})
         assert(administrative_path(path));
     auto* body=cJSON_CreateObject();auto* capabilities=cJSON_AddObjectToObject(body,"capabilities");
 ''' + capacity + r'''
@@ -74,7 +80,7 @@ int main(){
     assert(cJSON_IsNumber(advertised)&&advertised->valuedouble==4
         &&advertised->valuedouble==amity::consortium::maximum_roster_peers+1);
     cJSON_Delete(body);
-    std::cout<<"PASS actual administration router rejects retired routes before admission and advertises four total Amity devices\n";
+    std::cout<<"PASS actual administration router: shared authenticated firmware upload, read-only update status, retired mutations rejected before admission and four total Amity devices\n";
 }
 '''
     json_dir = ROOT / 'managed_components/espressif__cjson/cJSON'

@@ -228,11 +228,16 @@ esp_err_t volume(int16_t steps,void *) {
     amity::VolumeAdjustment v{steps,state.activity_generation};
     return xQueueSend(volume_queue,&v,0)==pdTRUE?ESP_OK:ESP_ERR_NO_MEM;
 }
+void firmware_update_task(void *) {
+    for (;;) {
+        system_services::updates::poll_group_update();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
 void remote_battery_task(void *) {
     for (;;) {
         system_services::log_memory_if_due();
         system_services::updates::poll_peer_timeout();
-        system_services::updates::poll_group_update();
         ble_remote_status_t remote{};
         ble_remote_get_status(&remote);
         const auto err = amity_matter_update_remote(remote.bonded,remote.connected,remote.battery_percent,remote.charging);
@@ -594,6 +599,7 @@ extern "C" void app_main() {
         original_interfaces_enabled.store(true);
         start_original_interfaces();
     }
+    ESP_ERROR_CHECK(xTaskCreateWithCaps(firmware_update_task,"firmware_update",12288,nullptr,3,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(xTaskCreate(remote_battery_task,"remote_battery",4096,nullptr,3,nullptr)==pdPASS?ESP_OK:ESP_ERR_NO_MEM);
     amity_matter_status_t status{};
     if(!passive_member&&amity_matter_get_status(&status)==ESP_OK&&status.fabric_count==0)

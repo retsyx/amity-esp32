@@ -31,7 +31,7 @@ Error Session::synchronized(uint64_t config,bool membership,bool owner_metadata)
 }
 Error Session::begin_synchronization(uint64_t target,model::LinkId new_link) {
     if(!active_||role_==PeerRole::provisional_candidate||
-       (state_!=ConnectionState::ready&&state_!=ConnectionState::synchronizing&&!(state_==ConnectionState::restricted&&management_)))return Error::not_ready;
+       (state_!=ConnectionState::ready&&state_!=ConnectionState::synchronizing))return Error::not_ready;
     if(!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
     if(!target||target<scope_.config_revision)return Error::stale_config;
     if(new_link&&new_link==scope_.link_id)return Error::identity_conflict;
@@ -66,10 +66,10 @@ Error Session::common(const Envelope &e,uint64_t received,uint64_t now,bool stal
 bool Session::permitted(Kind kind,bool discarding)const {
     if(retired_kind(kind))return false;
     if(kind==Kind::synchronization)return active_&&role_!=PeerRole::provisional_candidate&&
-        (state_==ConnectionState::ready||state_==ConnectionState::synchronizing||(state_==ConnectionState::restricted&&management_));
+        (state_==ConnectionState::ready||state_==ConnectionState::synchronizing);
     if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
     if(!discarding&&state_==ConnectionState::restricted){
-        if(management_){if(kind==Kind::device_status)return true;if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind==Kind::settings_read:kind==Kind::settings_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return kind==Kind::membership_event||kind==Kind::membership_result;}
+        if(management_){if(!active_||role_==PeerRole::provisional_candidate)return false;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return role_==PeerRole::coordinator?kind==Kind::membership_event:kind==Kind::membership_result;}
         return role_==PeerRole::provisional_candidate?kind==Kind::enrollment_control:(kind==Kind::membership_event||kind==Kind::membership_result);
     }
     if(!active_)return false;

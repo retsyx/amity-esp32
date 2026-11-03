@@ -54,8 +54,11 @@ def main():
                     if fixture['missing_health']:
                         return route.fulfill(json={'required': False, 'hostname': 'amity-dut'})
                     return route.fulfill(json={'required': False, 'hostname': 'amity-dut',
-                        'version': fixture['current'], 'boot_id': fixture['boot'],
+                        'version': fixture['current'], 'boot_id': fixture['boot'], 'image_elf_sha256': '0' * 64,
                         'ready': fixture['stage'] == 'ready'})
+                if path == 'updates/cohort':
+                    return route.fulfill(json={'phase': 'activating', 'image_elf_sha256': '0' * 64,
+                                               'targets': [], 'image_bytes': '300'})
                 if path == 'firmware':
                     body = route.request.post_data_buffer
                     fixture['uploads'].append((route.request.headers, body))
@@ -68,7 +71,10 @@ def main():
                     if fixture['upload_abort']:
                         return route.abort('connectionreset')
                     return route.fulfill(json={'rebooting': True})
-                values = {'login': {'token': 'test'}, 'config': {'version': 1, 'activities': []},
+                values = {'login': {'token': 'test'}, 'config': {'version': 3, 'activities': [], 'octopuses': []},
+                          'activity-editor': {'version': 1, 'activities': [], 'device_choices': [], 'expected_config_revision': '1', 'expected_presentation_revision': '1'},
+                          'activity-editor/status': {'version': fixture['current'], 'current_activity': -1, 'devices': [], 'device_choices': []},
+                          'system': {'octopus_id': '1'*32, 'hostname': 'amity-dut', 'membership': {'peers': []}},
                           'status': {'version': fixture['current'], 'current_activity': -1, 'devices': []},
                           'remotes': {'devices': []}, 'matter': {'fabrics': []}}
                 route.fulfill(json=values[path])
@@ -150,7 +156,7 @@ def main():
             fixture.update(current='0.1.41', fail=False, auto_restart=False)
             enter()
             select('0.1.41', True, 'Install firmware', wait=False)
-            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Restarting Amity')
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Restarting your Amity devices')
             expect(page.locator('#login')).to_be_hidden()
             expect(page.locator('#uploadProgress')).to_be_visible()
             assert page.locator('#uploadProgress').get_attribute('value') is None

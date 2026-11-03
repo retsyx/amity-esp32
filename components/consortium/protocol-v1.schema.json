@@ -1690,9 +1690,6 @@
         "signature_hex": {
           "type": "string",
           "pattern": "^([0-9a-f]{128})?$"
-        },
-        "validate_only": {
-          "type": "boolean"
         }
       },
       "required": [
@@ -1760,14 +1757,50 @@
           "pattern": "^[0-9a-f]{64}$",
           "minLength": 64,
           "maxLength": 64
+        },
+        "phase": {
+          "enum": [
+            "stage",
+            "activate"
+          ]
+        },
+        "reboot_delay_ms": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,3}|1[0-4][0-9]{3}|15000)$",
+          "minLength": 1,
+          "maxLength": 5
         }
       },
       "required": [
         "request_id",
         "release_id",
-        "image_sha256"
+        "image_sha256",
+        "phase"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "activate"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reboot_delay_ms"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "reboot_delay_ms"
+              ]
+            }
+          }
+        }
+      ]
     },
     "UpdateStatus": {
       "type": "object",
@@ -1848,6 +1881,7 @@
           "enum": [
             "ready",
             "progress",
+            "staged",
             "installing",
             "aborted",
             "rejected",
@@ -1901,6 +1935,7 @@
           "enum": [
             "idle",
             "staged",
+            "staged_image",
             "installing",
             "boot_checking",
             "healthy",

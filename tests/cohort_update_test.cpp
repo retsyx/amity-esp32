@@ -4,39 +4,43 @@
 #include "system_services.hpp"
 #include "esp_app_desc.h"
 #include <openssl/sha.h>
+#include <algorithm>
 #include <cassert>
-#include <map>
-#include <set>
+#include <chrono>
+#include <cstring>
 #include <fstream>
 #include <iostream>
-#include <cstring>
-#include <tuple>
-namespace c=amity::consortium; namespace m=amity::system; namespace u=system_services::updates;
+#include <map>
+#include <set>
+#include <sys/wait.h>
+#include <unistd.h>
+namespace c=amity::consortium;namespace m=amity::system;namespace u=system_services::updates;
 template<class T>T identity(unsigned n){char text[33];std::snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 const auto local=identity<m::OctopusId>(1),one=identity<m::OctopusId>(2),two=identity<m::OctopusId>(3);
-struct Node {m::BootId boot;std::string elf=std::string(64,'e'),version="old",phase="idle",release,hash,last_hash;uint64_t offset=0,last_offset=0,revision=7;bool healthy=true,selected=false,maintenance=false;};
+uint64_t clock_ms=100;
+int64_t esp_timer_get_time(){return int64_t(clock_ms*1000);}
+struct Node {
+    m::BootId boot;std::string elf=std::string(64,'e'),version="old",phase="idle",bytes;
+    std::optional<u::ReleaseManifest> received,staged;m::MessageId accepted_begin;
+    uint64_t reboot_at=0;bool healthy=true,selected=false,maintenance=false;
+};
+struct Event {m::OctopusId owner;std::string action;uint64_t time;};
 std::map<m::OctopusId,Node> nodes;
-std::map<std::string,std::string> disk;
-std::vector<c::RuntimePeerStatus> peers;
-c::RuntimeUpdateHooks transport;
-std::vector<std::pair<m::OctopusId,bool>> fences;
-std::vector<std::pair<m::OctopusId,c::Kind>> sent;
-m::OctopusId destination=local;
-std::optional<u::ReleaseManifest> staged;
-bool drop_next=false,reject_install=false;
-std::set<m::OctopusId> incompatible;
-std::string manifest;
-m::MessageId accepted_begin;
-unsigned disk_writes=0,release_checks=0,begin_calls=0,chunk_calls=0,install_calls=0,abort_calls=0;
-c::RuntimeStatus runtime_role;
+std::vector<c::RuntimePeerStatus> peers;std::vector<Event> events;c::RuntimeUpdateHooks transport;c::RuntimeStatus runtime_role;
+std::vector<std::pair<m::OctopusId,bool>> maintenance_fences;
+bool interrupt_next_chunk=false,drop_result=false,missing_running_release=false,release_allows_sync=false;
+m::OctopusId destination=local;u::ReleaseManifest uploaded_release,running_release;
+std::string manifest,staged_bytes(4096,'s'),running_bytes(4096,'r');std::set<m::OctopusId> reject_stage;
+unsigned disk_writes=0,staged_reads=0,running_reads=0;
 c::Json parse(std::string_view body){c::Json value;c::JsonError error;assert(c::parse_json(body,value,error));return value;}
-std::string field(const c::Json& j,const char* key){const auto* v=j.get(key);return v&&v->type==c::Json::Type::string?v->string:"";}
+std::string field(const c::Json& value,const char* key){const auto* v=value.get(key);return v&&v->type==c::Json::Type::string?v->string:"";}
 std::string sha(std::string_view data){unsigned char bytes[32];SHA256(reinterpret_cast<const unsigned char*>(data.data()),data.size(),bytes);char text[65]{};for(unsigned n=0;n<32;++n)std::snprintf(text+2*n,3,"%02x",bytes[n]);return text;}
+void event(std::string action){events.push_back({destination,std::move(action),clock_ms});}
 void esp_fill_random(void* data,size_t size){static uint64_t n=1;std::memset(data,0,size);auto* bytes=static_cast<unsigned char*>(data);for(size_t i=0;i<size&&i<8;++i)bytes[size-1-i]=static_cast<unsigned char>(n>>(8*i));++n;}
-const esp_app_desc_t* esp_app_get_description(){static esp_app_desc_t app{};std::snprintf(app.version,sizeof(app.version),"%s",nodes[destination].version.c_str());return &app;}
+const esp_app_desc_t* esp_app_get_description(){static esp_app_desc_t app{};std::snprintf(app.version,sizeof(app.version),"%s",nodes[destination].version.c_str());for(size_t n=0;n<32;++n)app.app_elf_sha256[n]=uint8_t(std::stoul(nodes[destination].elf.substr(2*n,2),nullptr,16));return &app;}
 namespace config_store {
-esp_err_t read(const char* key,std::string& value){auto found=disk.find(key);if(found==disk.end())return ESP_FAIL;value=found->second;return ESP_OK;}
-esp_err_t write(const char* key,const std::string& value){++disk_writes;disk[key]=value;return ESP_OK;}
+esp_err_t read(const char*,std::string&){assert(false);return ESP_FAIL;}
+esp_err_t write(const char*,const std::string&){++disk_writes;assert(false);return ESP_FAIL;}
 std::string sha256_hex(std::string_view data){return sha(data);}
 }
 namespace system_services {
@@ -44,13 +48,30 @@ const char* boot_id(){static std::string text;text=nodes[destination].boot.str()
 bool firmware_ready(){return nodes[destination].healthy;}
 }
 namespace system_services::updates {
-std::string status_json(){const auto& n=nodes[destination];return "{\"phase\":\""+n.phase+"\",\"received_bytes\":\""+std::to_string(n.offset)+"\",\"running_elf_sha256\":\""+n.elf+"\",\"running_version\":\""+n.version+"\",\"release_id\":\""+n.release+"\",\"expected_image_sha256\":\""+n.hash+"\"}";}
-esp_err_t stage_release(std::string_view body,std::string_view,std::string& error){++release_checks;if(incompatible.count(destination)){error="Wrong hardware profile";return ESP_ERR_INVALID_ARG;}ReleaseManifest release;if(!parse_release_manifest(body,release,error))return ESP_ERR_INVALID_ARG;staged=release;return ESP_OK;}
-esp_err_t peer_begin(std::string_view body,std::string_view,std::string& error){++begin_calls;ReleaseManifest r;if(!parse_release_manifest(body,r,error))return ESP_ERR_INVALID_ARG;auto& n=nodes[destination];n.release=r.release_id;n.hash=r.image_sha256;n.offset=0;n.phase="installing";n.maintenance=true;return ESP_OK;}
-esp_err_t peer_chunk(std::string_view release,uint64_t offset,std::string_view data,std::string&){++chunk_calls;auto& n=nodes[destination];if(n.release!=release)return ESP_ERR_INVALID_ARG;if(n.offset&&offset==n.last_offset&&sha(data)==n.last_hash)return ESP_OK;if(offset!=n.offset)return ESP_ERR_INVALID_ARG;n.last_offset=offset;n.last_hash=sha(data);n.offset+=data.size();return ESP_OK;}
-esp_err_t peer_install(std::string_view release,std::string&){++install_calls;auto& n=nodes[destination];if(reject_install||n.release!=release||!staged||n.offset!=staged->image_bytes){n.phase="failed";return ESP_FAIL;}n.selected=true;n.phase="boot_checking";return ESP_OK;}
-void peer_abort(const std::string&){++abort_calls;auto& n=nodes[destination];if(n.phase=="installing"){n.phase="aborted";n.maintenance=false;n.offset=0;}}
-bool installation_active(){return nodes[destination].phase=="installing"||nodes[destination].phase=="boot_checking";}
+std::string status_json(){const auto& n=nodes[destination];return "{\"phase\":\""+n.phase+"\",\"received_bytes\":\""+std::to_string(n.bytes.size())+"\"}";}
+esp_err_t partition_release(bool running,ReleaseManifest& release,std::string& signature,std::string& error){
+    signature.clear();if(running){assert(destination==local);if(missing_running_release){error="Running firmware release could not be verified";return ESP_FAIL;}release=running_release;return ESP_OK;}
+    if(!nodes[destination].staged){error="No durable staged image";return ESP_ERR_INVALID_STATE;}release=*nodes[destination].staged;return ESP_OK;
+}
+esp_err_t read_running_image(uint64_t offset,size_t count,std::string& bytes,std::string&){assert(destination==local&&offset+count<=running_bytes.size());++running_reads;bytes=running_bytes.substr(offset,count);return ESP_OK;}
+esp_err_t read_staged_image(uint64_t offset,size_t count,std::string& bytes,std::string&){assert(destination==local&&nodes[local].staged&&offset+count<=staged_bytes.size());++staged_reads;bytes=staged_bytes.substr(offset,count);return ESP_OK;}
+esp_err_t peer_begin(std::string_view body,std::string_view,std::string& error){
+    event("begin");ReleaseManifest release;if(!parse_release_manifest(body,release,error))return ESP_ERR_INVALID_ARG;
+    auto& n=nodes[destination];n.received=release;n.bytes.clear();n.phase="installing";n.maintenance=true;return ESP_OK;
+}
+esp_err_t peer_chunk(std::string_view release,uint64_t offset,std::string_view bytes,std::string&){
+    auto& n=nodes[destination];if(!n.received||n.received->release_id!=release||offset!=n.bytes.size())return ESP_ERR_INVALID_ARG;
+    event("chunk");n.bytes.append(bytes);return ESP_OK;
+}
+esp_err_t peer_stage(std::string_view release,std::string&){
+    auto& n=nodes[destination];if(reject_stage.count(destination)||!n.received||n.received->release_id!=release||n.bytes.size()!=n.received->image_bytes)return ESP_ERR_INVALID_STATE;
+    event("stage");n.staged=n.received;n.received.reset();n.phase="staged_image";n.maintenance=false;return ESP_OK;
+}
+esp_err_t peer_install(std::string_view release,std::string&,uint32_t delay){
+    auto& n=nodes[destination];if(!n.staged||n.staged->release_id!=release||delay>15000)return ESP_ERR_INVALID_STATE;
+    event("activate");n.selected=true;n.reboot_at=clock_ms+delay;n.phase="boot_checking";return ESP_OK;
+}
+void peer_abort(const std::string&){event("abort");auto& n=nodes[destination];n.received.reset();n.maintenance=false;if(n.staged)n.phase="staged_image";else {n.phase="aborted";n.bytes.clear();}}
 }
 namespace amity::consortium {
 RuntimeStatus runtime_status(){return runtime_role;}
@@ -58,107 +79,187 @@ std::vector<RuntimePeerStatus> runtime_peers(){return peers;}
 void runtime_update_hooks(RuntimeUpdateHooks hooks){transport=std::move(hooks);}
 esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_t){
     auto value=parse(body);assert(valid_update(kind,value));
-    if(kind==Kind::update_result){if(drop_next){drop_next=false;return ESP_OK;}return transport.result(destination,value)==Error::none?ESP_OK:ESP_FAIL;}
-    for(const auto& peer:peers)if(peer.id==to&&peer.management_ready&&!(peer.negotiated_capabilities&qualified_lookup)&&kind==Kind::update_begin)assert(!value.get("validate_only"));
-    sent.emplace_back(to,kind);const auto old=destination;destination=to;
-    Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;envelope.coordinator_epoch=1;
+    if(kind==Kind::update_result){if(drop_result){drop_result=false;return ESP_OK;}transport.result(destination,value);return ESP_OK;} // Wire admission is independent of accepting a late completion.
+    assert(to!=local); // The primary stages one browser upload locally.
+    assert(kind==Kind::update_begin||kind==Kind::update_chunk||kind==Kind::update_install||kind==Kind::update_status||kind==Kind::update_abort);
+    const auto old=destination;destination=to;
+    Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;
+    envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;envelope.coordinator_epoch=1;
+    const bool interrupted=kind==Kind::update_chunk&&interrupt_next_chunk;
+    if(interrupted){interrupt_next_chunk=false;drop_result=true;}
     const auto handled=transport.handle(local,envelope);
-    if(handled==Error::none&&kind==Kind::update_begin&&(!value.get("validate_only")||!value.get("validate_only")->boolean))accepted_begin=*m::MessageId::parse(field(value,"request_id"));
+    if(handled==Error::none&&kind==Kind::update_begin)nodes[to].accepted_begin=*m::MessageId::parse(field(value,"request_id"));
+    if(interrupted){transport.disconnected(local,nodes[to].accepted_begin);for(auto& peer:peers)if(peer.id==to)peer.ready=peer.management_ready=false;}
     destination=old;return ESP_OK;
 }
 }
 c::Json cohort(){return parse(u::cohort_status_json());}
-m::MessageId job(){return *m::MessageId::parse(field(cohort(),"job_id"));}
-m::OctopusId current_target(){auto s=cohort();uint64_t index=0;assert(c::decimal(s.get("current_index"),index));return *m::OctopusId::parse(field(s.get("targets")->array[index],"octopus_id"));}
-void boot(m::OctopusId owner,unsigned id,const std::string& elf,const std::string& version,uint64_t revision=7,bool healthy=true){auto& n=nodes[owner];n.boot=identity<m::BootId>(id);n.elf=elf;n.version=version;n.revision=revision;n.healthy=healthy;n.phase="healthy";for(auto& p:peers)if(p.id==owner){p.boot_id=n.boot;p.firmware_identity=elf;p.ready=true;p.management_ready=false;p.negotiated_capabilities=c::known_capabilities;}}
-int main(int argc,char** argv){
-    assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});
-    nodes[local].boot=identity<m::BootId>(10);nodes[one].boot=identity<m::BootId>(11);nodes[two].boot=identity<m::BootId>(12);
-    for(auto owner:{one,two}){c::RuntimePeerStatus p;p.id=owner;p.boot_id=nodes[owner].boot;p.ready=true;p.negotiated_capabilities=c::known_capabilities;peers.push_back(p);}
-    peers[0].ready=false;peers[0].management_ready=true;peers[0].negotiated_capabilities=1023; // Older updater; no sequenced execution.
-    auto start=[] {u::start_group_updates(local,{[](m::OctopusId owner,bool value){fences.emplace_back(owner,value);},[]{return nodes[destination].revision;},[]{return std::string(64,'f');}});};
-    runtime_role.initialized=true;runtime_role.coordinator=true;runtime_role.authority_ready=true;runtime_role.phase="coordinator";runtime_role.epoch=1;
-    const auto authorized_main=runtime_role;std::vector<c::RuntimeStatus> denied_roles;
-    auto unclaimed=runtime_role;unclaimed.coordinator=unclaimed.authority_ready=false;unclaimed.phase="unclaimed";denied_roles.push_back(unclaimed);
-    auto member=unclaimed;member.member=true;member.phase="member";denied_roles.push_back(member);
-    auto unready=runtime_role;unready.authority_ready=false;denied_roles.push_back(unready);
-    auto retired=runtime_role;retired.phase="retired";denied_roles.push_back(retired);
-    auto uninitialized=runtime_role;uninitialized.initialized=false;denied_roles.push_back(uninitialized);
-    auto contradictory=runtime_role;contradictory.member=true;denied_roles.push_back(contradictory);
-    // Capture actual externally visible effects, not just return values. These
-    // fixtures exercise otherwise admissible stage/chunk/install checkpoints.
-    const auto effects=[] {return std::make_tuple(disk,sent.size(),fences.size(),disk_writes,release_checks,begin_calls,chunk_calls,install_calls,abort_calls);};
-    start();std::string error;
-    for(const auto& role:denied_roles){runtime_role=role;const auto before=effects();assert(u::stage_cohort(manifest,"",{local,one,two},error)==ESP_ERR_INVALID_STATE&&effects()==before);}
-    runtime_role=authorized_main;
-    incompatible.insert(two);
-    assert(u::stage_cohort(manifest,"",{local,one,two},error)!=ESP_OK);
-    assert(fences.empty()&&nodes[one].offset==0&&!nodes[one].maintenance&&!nodes[one].selected&&disk.count("ota_cohort")==0); // Later incompatible executor rejects before first-node effects.
-    incompatible.clear();
-    assert(u::stage_cohort(manifest,"",{local,one,two},error)==ESP_OK);
-    assert(fences.empty()&&!nodes[one].maintenance&&!nodes[two].maintenance);
-    const auto stage_messages=sent.size();
-    auto state=cohort();assert(field(state,"phase")=="staged"&&field(state.get("targets")->array[0],"octopus_id")==one.str()&&field(state.get("targets")->array[2],"octopus_id")==local.str());
-    const auto staged_job=job();const auto staged_target=current_target();const std::string positive_chunk(2048,'x');
-    for(const auto& role:denied_roles){runtime_role=role;const auto before=effects();assert(u::cohort_chunk(staged_job,staged_target,0,positive_chunk,error)==ESP_ERR_INVALID_STATE&&effects()==before);}
-    runtime_role=authorized_main;
-    std::string bytes(2048,'x');assert(u::cohort_chunk(job(),current_target(),1,bytes,error)!=ESP_OK);assert(sent.size()==stage_messages);
-    assert(u::cohort_chunk(job(),current_target(),0,bytes,error)==ESP_OK);assert(fences.back()==std::make_pair(one,true));
-    // A repeated browser checkpoint is a no-op, including after a lost HTTP response.
-    assert(u::cohort_chunk(job(),current_target(),0,bytes,error)==ESP_OK);
-    assert(u::cohort_chunk(job(),current_target(),2048,bytes,error)==ESP_OK);
-    const auto received_job=job();const auto received_target=current_target();
-    for(const auto& role:denied_roles){runtime_role=role;const auto before=effects();assert(u::cohort_install(received_job,received_target,error)==ESP_ERR_INVALID_STATE&&effects()==before);}
-    runtime_role=authorized_main;assert(u::cohort_install(job(),current_target(),error)==ESP_OK);
-    state=cohort();assert(field(state,"phase")=="boot_checking"); // Same boot cannot complete.
-    boot(one,21,std::string(64,'b'),"0.1.55",8);assert(field(cohort(),"phase")=="boot_checking"); // Exact applied config required.
-    boot(one,21,std::string(64,'b'),"0.1.55",7,false);assert(field(cohort(),"phase")=="boot_checking");
-    boot(one,21,std::string(64,'b'),"0.1.55");assert(field(cohort(),"phase")=="next_target");assert(fences.back()==std::make_pair(one,false));
-    const auto initial_job=job();const auto before_stale=sent.size();
-    assert(u::cohort_chunk(initial_job,one,0,bytes,error)==ESP_ERR_INVALID_STATE&&sent.size()==before_stale); // Delayed old-target HTTP cannot write next peer.
-    assert(u::cohort_chunk(job(),current_target(),0,bytes,error)==ESP_OK);assert(fences.back()==std::make_pair(two,true));
-    start();assert(field(cohort(),"phase")=="interrupted"); // Durable checkpoint never resumes bytes automatically.
-    assert(field(cohort().get("targets")->array[0],"phase")=="healthy");
-    assert(u::cancel_cohort(job(),error)==ESP_OK);assert(u::stage_cohort(manifest,"",{local,one,two},error)==ESP_OK);
-    assert(field(cohort().get("targets")->array[0],"phase")=="healthy"); // Completed cohort members retained.
-    assert(u::cohort_chunk(job(),current_target(),0,bytes,error)==ESP_OK);assert(u::cohort_chunk(job(),current_target(),2048,bytes,error)==ESP_OK);
-    assert(u::cohort_install(job(),current_target(),error)==ESP_OK);boot(two,22,std::string(64,'d'),"old");assert(field(cohort(),"phase")=="rolled_back");
-    assert(u::stage_cohort(manifest,"",{local,one,two},error)==ESP_OK);
-    assert(field(cohort().get("targets")->array[0],"phase")=="healthy");
-    assert(u::cohort_chunk(job(),current_target(),0,bytes,error)==ESP_OK&&u::cohort_chunk(job(),current_target(),2048,bytes,error)==ESP_OK);
-    assert(u::cohort_install(job(),current_target(),error)==ESP_OK);boot(two,23,std::string(64,'b'),"0.1.55");assert(field(cohort(),"phase")=="next_target");
-    assert(current_target()==local);assert(u::cohort_chunk(job(),local,0,bytes,error)==ESP_OK);assert(fences.back()==std::make_pair(local,true)&&nodes[local].maintenance);
-    assert(u::cohort_chunk(job(),local,2048,bytes,error)==ESP_OK&&u::cohort_install(job(),local,error)==ESP_OK);
-    assert(field(cohort(),"phase")=="boot_checking");boot(local,24,std::string(64,'b'),"0.1.55");assert(field(cohort(),"phase")=="complete");
-    assert(fences.back()==std::make_pair(local,false));
-    // Cleanup of the exact local unfinished transfer remains allowed after
-    // authority is lost. It cannot select firmware or create a new transfer.
-    assert(u::stage_cohort(manifest,"",{local},error)==ESP_OK&&u::cohort_chunk(job(),local,0,bytes,error)==ESP_OK);
-    const auto cleanup_job=job();const auto before_cleanup_messages=sent.size();const auto before_cleanup_installs=install_calls,before_cleanup_begins=begin_calls,before_cleanup_aborts=abort_calls;
-    runtime_role=unclaimed;assert(u::cancel_cohort(cleanup_job,error)==ESP_OK);assert(sent.size()==before_cleanup_messages&&install_calls==before_cleanup_installs&&begin_calls==before_cleanup_begins&&abort_calls==before_cleanup_aborts+1);assert(nodes[local].phase=="aborted"&&!nodes[local].maintenance&&fences.back()==std::make_pair(local,false));runtime_role=authorized_main;
-    // Exact accepted begin ID scopes disconnect cleanup across reconnects.
-    assert(u::stage_cohort(manifest,"",{one},error)==ESP_OK&&u::cohort_chunk(job(),one,0,bytes,error)==ESP_OK);
-    const auto begin=accepted_begin;destination=one;
-    transport.disconnected(local,identity<m::MessageId>(99999));assert(nodes[one].maintenance);
-    transport.disconnected(local,begin);assert(!nodes[one].maintenance&&nodes[one].phase=="aborted");destination=local;
-    assert(u::cancel_cohort(job(),error)==ESP_OK);
-    const auto valid_record=disk.at("ota_cohort").substr(78);
-    const auto replace_once=[](std::string input,const std::string& before,const std::string& after){const auto at=input.find(before);assert(at!=std::string::npos);input.replace(at,before.size(),after);return input;};
-    std::vector<std::string> corrupt{
-        replace_once(valid_record,"\"phase\":\"aborted\"","\"phase\":\"invented\""),
-        replace_once(valid_record,"\"config_revision\":\"7\"","\"config_revision\":\"07\""),
-        replace_once(valid_record,"\"signature_hex\":\"\"","\"signature_hex\":null"),
-        replace_once(valid_record,"\"current_index\":\"0\"","\"current_index\":\"999\""),
-        replace_once(valid_record,"\"previous_boot_id\":\""+nodes[one].boot.str()+"\"","\"previous_boot_id\":\"00000000000000000000000000000000\""),
-        replace_once(valid_record,"\"offset\":\"2048\"","\"offset\":\"02048\"")
-    };
-    auto unknown=valid_record;unknown.insert(unknown.size()-1,",\"unexpected\":true");corrupt.push_back(unknown);
-    for(const auto& malformed:corrupt){
-        disk["ota_cohort"]="AMITYCOHORT1\n"+sha(malformed)+"\n"+malformed; // Valid checksum must not hide malformed persisted fields.
-        const auto before_fences=fences.size(),before_messages=sent.size();
-        const auto before_offset=nodes[one].offset;start();
-        assert(field(cohort(),"phase")=="recovery_required"&&fences.size()==before_fences&&sent.size()==before_messages);
-        assert(nodes[one].offset==before_offset&&!nodes[one].maintenance);
-    }
-    std::cout<<"PASS cohort original-main authority denials/no effects, exact local cleanup, ordering/checkpoints/restart, boot/hash/config health and maintenance boundaries\n";
+std::string phase(){return field(cohort(),"phase");}
+c::RuntimePeerStatus& add_peer(m::OctopusId owner,bool online=true,bool management=false){
+    auto& n=nodes[owner];n.boot=identity<m::BootId>(owner==one?11:12);
+    c::RuntimePeerStatus peer;peer.id=owner;peer.boot_id=n.boot;peer.enrolled=true;peer.ready=online&&!management;peer.management_ready=online&&management;peer.negotiated_capabilities=c::known_capabilities;peer.firmware_identity=n.elf;peers.push_back(peer);return peers.back();
 }
+void setup(){
+    std::string error;assert(u::parse_release_manifest(manifest,uploaded_release,error));running_release=uploaded_release;
+    running_release.release_id="running-release";running_release.image_elf_sha256=std::string(64,'d');
+    running_release.canonical=manifest;auto at=running_release.canonical.find(uploaded_release.release_id);assert(at!=std::string::npos);running_release.canonical.replace(at,uploaded_release.release_id.size(),running_release.release_id);
+    at=running_release.canonical.find(uploaded_release.image_elf_sha256);assert(at!=std::string::npos);running_release.canonical.replace(at,64,running_release.image_elf_sha256);
+    nodes[local].boot=identity<m::BootId>(10);nodes[local].elf=running_release.image_elf_sha256;
+    runtime_role.initialized=runtime_role.coordinator=runtime_role.authority_ready=true;
+    u::start_group_updates(local,{[](m::OctopusId owner,bool active){maintenance_fences.emplace_back(owner,active);
+        if(release_allows_sync&&owner==one&&!active){assert(field(parse(u::cohort_status_json()),"phase")=="activating");peers.front().ready=true;release_allows_sync=false;}
+    },{},{}});assert(phase()=="idle");
+}
+void upload_once(){
+    std::string error;assert(u::begin_system_upload(uploaded_release,error)==ESP_OK&&phase()=="uploading");
+    // HTTP upload tests cover writes and validation; model its completed source partition.
+    nodes[local].staged=uploaded_release;nodes[local].bytes=staged_bytes;nodes[local].phase="staged_image";event("stage");
+    u::system_upload_progress(staged_bytes.size());assert(u::finish_system_upload(error)==ESP_OK&&phase()=="distributing");
+}
+void poll(){u::poll_group_update();clock_ms+=1000;}
+template<class Predicate>void until(Predicate condition,unsigned limit=400){for(unsigned n=0;n<limit&&!condition();++n)poll();assert(condition());}
+size_t find(m::OctopusId owner,std::string_view action){for(size_t i=0;i<events.size();++i)if(events[i].owner==owner&&events[i].action==action)return i;assert(false);return 0;}
+void distribution(){
+    setup();add_peer(one);add_peer(two);upload_once();until([]{return nodes[local].selected;});
+    assert(nodes[one].bytes==staged_bytes&&nodes[two].bytes==staged_bytes&&staged_reads==4&&running_reads==0);
+    assert(find(one,"stage")<find(two,"begin")&&find(two,"stage")<find(one,"activate"));
+    assert(find(two,"stage")<find(two,"activate")&&find(two,"activate")<find(local,"activate"));
+    assert(nodes[one].reboot_at==nodes[two].reboot_at&&nodes[two].reboot_at==nodes[local].reboot_at);
+    assert(phase()=="activating");const auto count=events.size();for(unsigned n=0;n<10;++n)poll();assert(events.size()==count&&disk_writes==0);
+    std::cout<<"PASS one primary upload, ordered peer staging before any activation, common delayed restart and no persisted desired release\n";
+}
+void skipped(bool offline){
+    setup();add_peer(one,!offline);add_peer(two);if(!offline)reject_stage.insert(one);upload_once();const auto started=clock_ms;until([]{return nodes[local].selected;});
+    const auto targets=cohort().get("targets")->array;assert(field(targets[1],"phase")=="skipped");
+    assert(find(two,"begin")<find(two,"stage")&&find(two,"stage")<find(two,"activate")&&find(two,"activate")<find(local,"activate"));
+    assert(events[find(two,"begin")].time-started>=120000&&!nodes[one].selected&&nodes[two].selected);
+    assert(nodes[two].bytes==staged_bytes&&clock_ms-started<150000&&disk_writes==0);
+    std::cout<<"PASS "<<(offline?"offline":"rejected")<<" peer times out at 120 seconds; later peers stage and activate with primary\n";
+}
+void catchup(){
+    setup();add_peer(one,true,true);peers.front().negotiated_capabilities=c::peer_firmware_update;
+    assert(!peers.front().ready&&peers.front().management_ready);poll();assert(phase()=="distributing"&&cohort().get("automatic")->boolean);
+    until([]{return nodes[one].selected;});assert(nodes[one].bytes==running_bytes&&running_reads==2&&staged_reads==0&&!nodes[local].selected);
+    assert(find(one,"stage")<find(one,"activate"));
+    nodes[one].elf=running_release.image_elf_sha256;nodes[one].boot=identity<m::BootId>(21);peers.front().firmware_identity=nodes[one].elf;peers.front().boot_id=nodes[one].boot;peers.front().ready=true;peers.front().management_ready=false;
+    until([]{return phase()=="complete";});const auto count=events.size();for(unsigned n=0;n<4;++n)poll();assert(events.size()==count&&disk_writes==0);
+    std::cout<<"PASS newly added/returning update-only peer receives primary running image; matching reconnect completes without another update\n";
+}
+void matching_hello_releases_sync_fence(){
+    alarm(5); // A maintenance callback under the cohort lock would deadlock.
+    setup();add_peer(one,true,true);until([]{return nodes[one].selected;});
+    assert(maintenance_fences.back()==std::make_pair(one,true));
+    nodes[one].elf=running_release.image_elf_sha256;nodes[one].boot=identity<m::BootId>(21);
+    peers.front().firmware_identity=nodes[one].elf;peers.front().boot_id=nodes[one].boot;
+    peers.front().ready=peers.front().management_ready=false;release_allows_sync=true;
+    const auto arrived=clock_ms;poll();
+    assert(!release_allows_sync&&peers.front().ready&&phase()=="activating"&&maintenance_fences.back()==std::make_pair(one,false));
+    poll();assert(phase()=="complete"&&clock_ms-arrived==2000&&!nodes[local].selected);
+    alarm(0);std::cout<<"PASS matching authenticated hello releases sender maintenance before readiness; synchronization then completes catch-up promptly without120s failure\n";
+}
+void same_image(){
+    setup();add_peer(one);peers.front().firmware_identity=nodes[local].elf;
+    for(unsigned n=0;n<4;++n)poll();assert(phase()=="idle"&&events.empty()&&staged_reads==0&&running_reads==0&&disk_writes==0);
+    std::cout<<"PASS matching firmware does no catch-up work\n";
+}
+void receiver_staging(){
+    setup();add_peer(one,true,true);upload_once();until([]{return nodes[one].staged.has_value();});
+    const auto accepted=nodes[one].accepted_begin;assert(accepted);destination=one;
+    transport.disconnected(local,identity<m::MessageId>(999));assert(nodes[one].staged&&!nodes[one].selected);
+    transport.disconnected(local,accepted);assert(nodes[one].staged&&!nodes[one].selected&&nodes[one].phase=="staged_image");
+    destination=local;until([]{return nodes[local].selected;});assert(nodes[one].selected);
+    std::cout<<"PASS finalized peer image survives authenticated connection cleanup and activates on a fresh stream\n";
+}
+void retry_transient(){
+    setup();add_peer(one,true,true);reject_stage.insert(one);
+    const auto begins=[] {size_t count=0;for(const auto& item:events)if(item.owner==one&&item.action=="begin")++count;return count;};
+    until([&]{return begins()>=4;},1000);assert(!nodes[one].selected&&!nodes[local].selected);
+    reject_stage.clear();until([]{return nodes[one].selected;});assert(nodes[one].bytes==running_bytes&&disk_writes==0);
+    std::cout<<"PASS transient transfer failures remain retryable after three attempts without rebooting primary\n";
+}
+void authority_denials(){
+    setup();add_peer(one,true,true);const auto allowed=runtime_role;
+    for(unsigned failure=0;failure<5;++failure){runtime_role=allowed;nodes[local].healthy=true;
+        if(failure==0)runtime_role.initialized=false;
+        if(failure==1)runtime_role.coordinator=false;
+        if(failure==2)runtime_role.authority_ready=false;
+        if(failure==3)runtime_role.member=true;
+        if(failure==4)nodes[local].healthy=false;
+        std::string error;assert(u::begin_system_upload(uploaded_release,error)==ESP_ERR_INVALID_STATE);poll();assert(phase()=="idle"&&events.empty());
+    }
+    assert(disk_writes==0);std::cout<<"PASS current healthy main authority is required for user upload and automatic catch-up\n";
+}
+void rollback_budget(){
+    setup();add_peer(one,true,true);
+    const auto activations=[] {size_t count=0;for(const auto& item:events)if(item.owner==one&&item.action=="activate")++count;return count;};
+    for(unsigned attempt=1;attempt<=3;++attempt){
+        nodes[one].selected=false;until([]{return nodes[one].selected;});assert(activations()==attempt);
+        // A real new boot came back with the same failed image instead of the
+        // selected primary image. Its changed BootId cannot reset this budget.
+        nodes[one].boot=identity<m::BootId>(20+attempt);peers.front().boot_id=nodes[one].boot;
+        until([]{return phase()=="failed";});
+        const auto failed=cohort().get("targets")->array.front();assert(field(failed,"phase")=="failed"&&!field(failed,"error").empty());
+    }
+    for(unsigned n=0;n<200;++n)poll();assert(activations()==3);
+    nodes[one].boot=identity<m::BootId>(99);peers.front().boot_id=nodes[one].boot;
+    for(unsigned n=0;n<100;++n)poll();assert(activations()==3&&phase()=="failed");
+    // A different starting image receives a fresh budget.
+    nodes[one].selected=false;nodes[one].elf=std::string(64,'f');peers.front().firmware_identity=nodes[one].elf;
+    until([]{return nodes[one].selected;});assert(activations()==4&&!nodes[local].selected&&disk_writes==0);
+    std::cout<<"PASS three actual rollback boots stop repeated activation for the same image pair; reboot alone cannot reset the budget, changed image can\n";
+}
+void upload_failure_reporting(){
+    setup();add_peer(one,true,true);std::string error;
+    assert(u::begin_system_upload(uploaded_release,error)==ESP_OK);
+    assert(field(cohort(),"image_elf_sha256")==uploaded_release.image_elf_sha256&&field(cohort(),"image_bytes")==std::to_string(uploaded_release.image_bytes));
+    u::fail_system_upload("Firmware upload was interrupted");
+    const auto failed=*cohort().get("last_failed_upload");
+    assert(field(failed,"phase")=="failed"&&field(failed,"image_elf_sha256")==uploaded_release.image_elf_sha256);
+    assert(field(failed.get("targets")->array.front(),"phase")=="failed");
+    poll();assert(phase()=="distributing"&&cohort().get("automatic")->boolean);
+    assert(field(*cohort().get("last_failed_upload"),"job_id")==field(failed,"job_id"));
+    until([]{return nodes[one].selected;});peers.front().firmware_identity=running_release.image_elf_sha256;peers.front().ready=true;peers.front().management_ready=false;
+    until([]{return phase()=="complete";});
+    assert(u::begin_system_upload(uploaded_release,error)==ESP_OK&&cohort().get("last_failed_upload")->type==c::Json::Type::null_value);
+    assert(disk_writes==0);
+    std::cout<<"PASS incoming image identity is available before staging; failed upload survives automatic catch-up reporting and clears only on a new user upload\n";
+}
+void source_failure_reporting(){
+    setup();add_peer(one,true,true);missing_running_release=true;poll();
+    const auto report=cohort();assert(field(report,"phase")=="failed"&&report.get("automatic")->boolean);
+    assert(field(report,"image_elf_sha256")==nodes[local].elf);
+    const auto target=report.get("targets")->array.front();assert(field(target,"octopus_id")==one.str()&&field(target,"phase")=="failed"&&!field(target,"error").empty());
+    for(unsigned n=0;n<5;++n)poll();assert(events.empty()&&disk_writes==0);
+    std::cout<<"PASS unavailable primary source reports the exact automatic target as failed without pretending to transfer\n";
+}
+void multiple_failure_reporting(){
+    setup();add_peer(one,true,true);add_peer(two,true,true);missing_running_release=true;
+    poll();poll();const auto report=cohort();
+    assert(field(report.get("targets")->array.front(),"octopus_id")==two.str());
+    const auto failures=report.get("automatic_failures")->array;assert(failures.size()==2);
+    assert(field(failures[0],"octopus_id")==one.str()&&field(failures[1],"octopus_id")==two.str());
+    peers.erase(peers.begin());assert(cohort().get("automatic_failures")->array.size()==1);
+    peers.front().firmware_identity=nodes[local].elf;assert(cohort().get("automatic_failures")->array.empty());
+    peers.front().firmware_identity=nodes[two].elf;nodes[local].elf=std::string(64,'c');
+    assert(cohort().get("automatic_failures")->array.empty()&&events.empty()&&disk_writes==0);
+    std::cout<<"PASS terminal failures remain visible for multiple members and are filtered after removal, matching image, or primary image change\n";
+}
+void logical_restart_during_chunk(){
+    setup();auto& peer=add_peer(one);nodes[one].elf=nodes[local].elf;peer.firmware_identity=nodes[one].elf;
+    const auto original_boot=nodes[one].boot;upload_once();until([]{return nodes[one].bytes.size()==2048;});
+    assert(nodes[one].maintenance&&maintenance_fences.back()==std::make_pair(one,true));
+    interrupt_next_chunk=true;const auto began=std::chrono::steady_clock::now();poll();
+    assert(std::chrono::steady_clock::now()-began<std::chrono::seconds(3));
+    const auto target=cohort().get("targets")->array[1];assert(field(target,"phase")=="queued"&&field(target,"offset")=="0");
+    assert(maintenance_fences.back()==std::make_pair(one,false)&&!nodes[one].maintenance&&!nodes[one].received&&nodes[one].bytes.empty());
+    assert(nodes[one].boot==original_boot);peers.front().ready=true;
+    until([]{return nodes[one].staged.has_value();});
+    const auto last_member_fence=std::find_if(maintenance_fences.rbegin(),maintenance_fences.rend(),[](const auto& fence){return fence.first==one;});
+    assert(last_member_fence!=maintenance_fences.rend()&&!last_member_fence->second);
+    until([]{return nodes[local].selected;});assert(nodes[one].selected&&nodes[one].bytes==staged_bytes&&nodes[one].boot==original_boot);
+    size_t begins=0;for(const auto& item:events)if(item.owner==one&&item.action=="begin")++begins;assert(begins==2);
+    std::cout<<"PASS lost chunk result plus same-TLS logical recovery releases maintenance within250ms polling and restarts exact image at offsetzero\n";
+}
+void run(void(*scenario)()){const auto child=fork();assert(child>=0);if(child==0){scenario();std::cout.flush();_exit(0);}int status=0;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);}
+void offline(){skipped(true);}void rejected(){skipped(false);}
+int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}

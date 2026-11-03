@@ -237,19 +237,28 @@ void logical_restart_clears_old_ipc_and_update_without_replaying_work(){
   assert(owner==original.peer_id&&boot==original.peer_boot_id&&link==active->session.scope().link_id&&active->tls.get()==tls&&cache.size()==3);
   ++fences;return fence_ready;
  };
- updates.disconnected=[&](auto owner,auto request){++aborted_updates;assert(owner==original.peer_id&&request==update_id&&active->session.scope()==original&&active->queue.size()==1);};
+ updates.disconnected=[&](auto owner,auto request){++aborted_updates;assert(owner==original.peer_id&&request==update_id&&active->session.scope()==original&&active->queue.size()==1&&!active->update_begin_id);
+  assert(lock.try_lock());lock.unlock();assert(active->mutex.try_lock());active->mutex.unlock();};
  SynchronizationRound round{ident<model::MessageId>(501),7};LinkTrace trace;
  assert(!restart_synchronization_scope(*active,round,trace)&&std::string(trace.reason)=="synchronization_fence");
- assert(active->session.scope()==original&&active->queue.size()==1&&active->queue.front().owned==admitted&&active->update_begin_id==update_id&&aborted_updates==0&&cache.size()==3);
+ assert(active->session.scope()==original&&active->queue.size()==1&&active->queue.front().owned==admitted&&!active->update_begin_id&&aborted_updates==1&&cache.size()==3);
  fence_ready=true;assert(restart_synchronization_scope(*active,round,trace));
  same_connection(*active,original,tls,7);
  assert(active->queue.empty()&&!active->update_begin_id&&fences==2&&aborted_updates==1&&disconnects==0&&cache.size()==3&&active->tls->sent.empty());
  assert(!active->context_ready&&!active->context_requested&&active->refreshing);
+ // A fresh upload can start after this logical scope was already fenced. A
+ // repeated fence must still abort it exactly once before taking its shortcut.
+ const auto resumed_update=ident<model::MessageId>(504);active->update_begin_id=resumed_update;
+ updates.disconnected=[&](auto owner,auto request){++aborted_updates;assert(owner==original.peer_id&&request==resumed_update&&!active->update_begin_id);
+  assert(lock.try_lock());lock.unlock();assert(active->mutex.try_lock());active->mutex.unlock();};
+ active->cleaned_link=active->session.scope().link_id;
+ assert(fence_synchronization_scope(*active,trace)&&aborted_updates==2&&!active->update_begin_id);
+ assert(fence_synchronization_scope(*active,trace)&&aborted_updates==2);
  old_scope_frame.destination_boot_id=ident<model::BootId>(999);assert(active->session.admit(old_scope_frame,clock_ms,clock_ms)==Error::stale_boot);
  assert(active->session.synchronized(7,true,true)==Error::none);
  assert(active->queue.empty()&&active->tls->sent.empty()); // Fresh authentication never resurrects admitted work from the ended link.
  round.id=ident<model::MessageId>(503);assert(restart_synchronization_scope(*active,round,trace));
- assert(aborted_updates==1&&disconnects==0&&cache.size()==3&&active->queue.empty());
+ assert(aborted_updates==2&&disconnects==0&&cache.size()==3&&active->queue.empty());
 }
 void late_old_link_callbacks_cannot_cancel_fenced_tls(){
  auto active=start(true);credentials_current=true;const auto original=active->session.scope();const auto* tls=active->tls.get();unsigned fences=0,barrier_callbacks=0;

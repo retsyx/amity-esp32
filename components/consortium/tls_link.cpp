@@ -122,14 +122,14 @@ bool TlsLink::handshake(){
 }
 bool TlsLink::extended_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&(strcmp(profile,"amity-consortium-v1.extended")==0||strcmp(profile,"amity-consortium-v1.hardware")==0);}
 bool TlsLink::hardware_profile()const{const auto *profile=mbedtls_ssl_get_alpn_protocol(&ssl);return profile&&strcmp(profile,"amity-consortium-v1.hardware")==0;}
-bool TlsLink::send(std::string_view body){
-    auto bytes=frame(body);if(bytes.empty())return false;
+bool TlsLink::send(std::string_view body,bool bulk){
+    auto bytes=frame(body,bulk);if(bytes.empty())return false;
     if(!handshake())return false;
-    size_t offset=0;const auto deadline=now_ms()+3000;
-    // Bound PSRAM-to-DMA AES bounce allocations for application data without
-    // reducing the TLS buffers used by certificates or incoming records.
+    size_t offset=0;const auto deadline=now_ms()+(bulk?30000:3000);
+    // Bound PSRAM-to-DMA AES bounce allocations. Bulk transfers use fewer
+    // records while ordinary input retains its existing 512-byte bound.
     while(offset<bytes.size()&&now_ms()<deadline){
-        const auto count=std::min(size_t{512},bytes.size()-offset);
+        const auto count=std::min(bulk?size_t{2048}:size_t{512},bytes.size()-offset);
         const int n=mbedtls_ssl_write(&ssl,bytes.data()+offset,count);
         if(n>0)offset+=n;
         else if(n!=MBEDTLS_ERR_SSL_WANT_READ&&n!=MBEDTLS_ERR_SSL_WANT_WRITE){transport_failed=true;return false;}
@@ -182,7 +182,7 @@ TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
         if(!incoming_expired&&incoming_reader.check_deadline(now)!=FrameReader::Result::incomplete){
             const auto progress=incoming_reader.progress(now);
             return receive_expired(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
-                progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);
+                progress.total_ms>=incoming_reader.frame_timeout()?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,0,now);
         }
         const auto request=std::min(incoming_expected-incoming_size,sizeof(bytes));
         const auto read_at=now_ms();const int count=mbedtls_ssl_read(&ssl,bytes,request);now=now_ms();
@@ -192,8 +192,8 @@ TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
         if(incoming_size<4)std::copy(bytes,bytes+count,incoming_prefix+incoming_size);
         incoming_size+=count;
         if(incoming_size==4&&incoming_expected==4){
-            const uint32_t length=(uint32_t(incoming_prefix[0])<<24)|(uint32_t(incoming_prefix[1])<<16)|
-                (uint32_t(incoming_prefix[2])<<8)|incoming_prefix[3];
+            const uint32_t length=((uint32_t(incoming_prefix[0])<<24)|(uint32_t(incoming_prefix[1])<<16)|
+                (uint32_t(incoming_prefix[2])<<8)|incoming_prefix[3])&~bulk_frame_flag;
             if(!length||length>max_frame_bytes)return receive_failed(TlsReceiveDiagnostic::Cause::invalid_length,0,now);
             incoming_expected=4+length;
         }
@@ -202,11 +202,11 @@ TlsLink::ReceiveResult TlsLink::poll_receive(std::string &out){
         if(used!=static_cast<size_t>(count)||(result!=FrameReader::Result::incomplete&&result!=FrameReader::Result::frame)){
             const auto progress=incoming_reader.progress(fed_at);
             if(result==FrameReader::Result::timed_out)return receive_expired(progress.clock_reversed?TlsReceiveDiagnostic::Cause::clock_reversed:
-                progress.total_ms>=FrameReader::frame_timeout_ms?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,static_cast<int>(result),fed_at);
+                progress.total_ms>=incoming_reader.frame_timeout()?TlsReceiveDiagnostic::Cause::frame_timeout:TlsReceiveDiagnostic::Cause::progress_timeout,static_cast<int>(result),fed_at);
             return receive_failed(TlsReceiveDiagnostic::Cause::parser_rejected,static_cast<int>(result),fed_at);
         }
         if(result==FrameReader::Result::frame){
-            out=std::string(incoming_reader.body());incoming_reader.reset();incoming_size=0;incoming_expected=4;
+            out=std::string(incoming_reader.body());completed_bulk=incoming_reader.bulk();incoming_reader.reset();incoming_size=0;incoming_expected=4;
             incoming_max_poll_gap=incoming_max_read_ms=0;
             incoming_diagnostic={};
             return ReceiveResult::frame;

@@ -29,8 +29,7 @@ bool valid_update(Kind k, const Json& v) {
     if (!base(v)) return false;
     if (k == Kind::update_begin) {
         std::string manifest;
-        return closed(v, {"request_id", "release_id", "image_sha256", "canonical_manifest", "signature_hex"}, {"validate_only"}) &&
-            (!v.get("validate_only") || v.get("validate_only")->type == Json::Type::boolean) &&
+        return closed(v, {"request_id", "release_id", "image_sha256", "canonical_manifest", "signature_hex"}) &&
             json_string(v.get("canonical_manifest"), manifest, 1, 4096) && (hex(v.get("signature_hex"), 128) || hex(v.get("signature_hex"), 0));
     }
     if (k == Kind::update_chunk) {
@@ -39,14 +38,20 @@ bool valid_update(Kind k, const Json& v) {
             data && data->type == Json::Type::string && !data->string.empty() && data->string.size() <= 4096 &&
             data->string.size() % 2 == 0 && hex(data, data->string.size()) && hex(v.get("chunk_sha256"), 64);
     }
-    if (k == Kind::update_install || k == Kind::update_status)
+    if (k == Kind::update_install) {
+        if (text(v.get("phase"), {"stage"})) return closed(v, {"request_id", "release_id", "image_sha256", "phase"});
+        uint64_t delay = 0;
+        return text(v.get("phase"), {"activate"}) && closed(v, {"request_id", "release_id", "image_sha256", "phase", "reboot_delay_ms"}) &&
+            decimal(v.get("reboot_delay_ms"), delay) && delay <= 15000;
+    }
+    if (k == Kind::update_status)
         return closed(v, {"request_id", "release_id", "image_sha256"});
     if (k == Kind::update_abort)
         return closed(v, {"request_id", "release_id", "image_sha256"}, {"reason"}) &&
             (!v.get("reason") || text(v.get("reason"), {"cancelled", "timeout", "link_lost", "failed"}));
     if (k != Kind::update_result || !closed(v, {"request_id", "release_id", "image_sha256", "offset", "stage", "error"},
         {"boot_id", "image_elf_sha256", "version", "local_healthy", "config_revision", "policy_hash", "update_phase"}) || !offset(v) ||
-        !text(v.get("stage"), {"ready", "progress", "installing", "aborted", "rejected", "status"}) ||
+        !text(v.get("stage"), {"ready", "progress", "staged", "installing", "aborted", "rejected", "status"}) ||
         !text(v.get("error"), {"", "INVALID_MESSAGE", "NOT_READY", "UNAUTHORIZED_ROLE", "CONFLICT", "INVALID_MANIFEST", "INVALID_SIGNATURE",
             "WRONG_TARGET", "HASH_MISMATCH", "OFFSET_MISMATCH", "STORAGE_FAILURE", "TIMEOUT", "INTERNAL_ERROR"})) return false;
     model::BootId boot; std::string version; bool healthy = false; uint64_t revision = 0;
@@ -56,6 +61,6 @@ bool valid_update(Kind k, const Json& v) {
         (!v.get("local_healthy") || json_bool(v.get("local_healthy"), healthy)) &&
         (!v.get("config_revision") || decimal(v.get("config_revision"), revision)) &&
         (!v.get("policy_hash") || hex(v.get("policy_hash"), 64)) &&
-        (!v.get("update_phase") || text(v.get("update_phase"), {"idle", "staged", "installing", "boot_checking", "healthy", "failed", "aborted", "interrupted", "rolled_back", "recovery_required"}));
+        (!v.get("update_phase") || text(v.get("update_phase"), {"idle", "staged", "staged_image", "installing", "boot_checking", "healthy", "failed", "aborted", "interrupted", "rolled_back", "recovery_required"}));
 }
 }

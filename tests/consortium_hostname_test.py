@@ -10,6 +10,7 @@ PREFIX=r'''
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include "amity/consortium/session.hpp"
+#include "amity/consortium/update.hpp"
 #include <cassert>
 #include <cstdio>
 #include <iostream>
@@ -38,7 +39,7 @@ std::string escaped(std::string_view value){std::string out;for(char c:value){if
 std::string prepare(){return "{\"phase\":\"prepare\",\"proposal\":\""+escaped(proposal_bytes)+"\",\"digest\":\""+std::string(64,'a')+"\"}";}
 JoinProposal proposal(){JoinProposal p;p.join_id=id<model::JoinId>(1);p.consortium_id=id<model::ConsortiumId>(2);p.coordinator_id=id<model::OctopusId>(3);p.candidate_id=id<model::OctopusId>(4);p.epoch=1;p.revision=2;p.coordinator_leaf="authority";p.candidate_leaf="candidate";p.coordinator_pin=std::string(64,'c');p.candidate_pin=std::string(64,'d');p.host="192.0.2.1";p.candidate_hostname="living-room";return p;}
 void reset(){group={};durable={};identity={id<model::OctopusId>(4),"candidate","",std::string(64,'d')};current_name="factory-name";status={};candidate_passive=false;saves=0;save_failure=registry_failure=false;effects.clear();hostnames={};network={};network.set_hostname=[](const std::string& name){effects.push_back("persist_hostname");current_name=name;return ESP_OK;};network.get_hostname=[]{return current_name;};lifecycle.retire=[]{assert(group.role==Group::prepared);effects.push_back("retire");return ESP_OK;};proposal_bytes=encode_join_proposal(proposal());assert(!proposal_bytes.empty());}
-struct FakeTls{std::string incoming;bool receive(std::string& out){out=incoming;return !out.empty();}};
+struct FakeTls{std::string incoming;bool received_bulk()const{return false;}bool receive(std::string& out){out=incoming;return !out.empty();}};
 struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct LinkTrace {const char* phase="",*reason="";Error error=Error::none;bool fail(const char* why,Error result=Error::none){reason=why;error=result;return false;}};
 struct Active {Session session;FakeTls storage;FakeTls* tls=&storage;model::OctopusId peer;std::mutex mutex;struct{std::string hostname;}status;SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;std::string advertised_hostname;};

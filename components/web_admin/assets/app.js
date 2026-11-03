@@ -365,6 +365,7 @@ async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect
  renderRemotes(await request('remotes'));
  renderMatter(await request('matter'));
  if(!$('homekit').hidden)await refreshHomekit();
+ if(!$('amityDevices').hidden)await window.amityInterface?.refresh();
  }finally{polling=false;updateActivityButtons();}}
 async function enter(){const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
@@ -385,8 +386,11 @@ $('setupForm').addEventListener('submit',run(async e=>{
 }));
 $('loginForm').addEventListener('submit',run(async e=>{
  e.preventDefault();const submit=e.target.querySelector('button');if(submit.disabled)return;submit.disabled=true;
- try{const r=await request('login',{password:$('password').value});token=r.token;sessionStorage.setItem('amityToken',token);$('password').value='';message('');await enter();}
- catch(error){reportError(error);if(error.retryAfter){submit.textContent=`Try again in ${error.retryAfter}s`;await new Promise(resolve=>setTimeout(resolve,error.retryAfter*1000));}}
+ try{const r=await request('login',{password:$('password').value});token=r.token;sessionStorage.setItem('amityToken',token);$('password').value='';message('');
+  if(firmwareUpdating&&firmwareUpdateRecord?.authRequired){firmwareUpdateRecord.authRequired=false;firmwareUpdateRecord.startedAt=Date.now();$('login').hidden=true;saveFirmwareUpdate();await waitForFirmware();}
+  else await enter();
+ }
+ catch(error){if(firmwareUpdating&&firmwareUpdateRecord?.authRequired)firmwareWaitMessage(error.message||'Could not log in. Try again.');else reportError(error);if(error.retryAfter){submit.textContent=`Try again in ${error.retryAfter}s`;await new Promise(resolve=>setTimeout(resolve,error.retryAfter*1000));}}
  finally{submit.disabled=false;submit.textContent='Log in';}
 }));
 $('logout').addEventListener('click',run(async()=>{await request('logout',{});showLogin();}));
@@ -459,13 +463,16 @@ function compareFirmwareVersions(candidate,running){
  return a.pre.length===b.pre.length?0:a.pre.length<b.pre.length?-1:1;
 }
 async function firmwareVersion(file){
+ return (await firmwareImage(file)).version;
+}
+async function firmwareImage(file){
  // A release container keeps the same choose-one-file interface and carries
  // exact compatibility metadata. USB/debug images retain their native header.
  let offset=0;
  const header=new Uint8Array(await file.slice(0,32).arrayBuffer());
  if(header.length===32&&new TextDecoder().decode(header.slice(0,16))==='AMITY-UPDATE-V1\n'){
   const view=new DataView(header.buffer),manifest=view.getUint32(16),signature=view.getUint32(20),image=view.getBigUint64(24);
-  if(manifest<1||manifest>8192||![0,64].includes(signature)||image<288n||image>0x3d0000n)throw Error('Invalid Amity update file.');
+  if(manifest<1||manifest>8192||![0,64].includes(signature)||image<288n||image>0x3cd000n)throw Error('Invalid Amity update file.');
   offset=32+manifest+signature;
   if(BigInt(file.size)!==BigInt(offset)+image)throw Error('Incomplete Amity update file.');
  }
@@ -473,7 +480,7 @@ async function firmwareVersion(file){
  if(bytes.length<288||bytes[0]!==0xe9||view.getUint32(32,true)!==0xabcd5432)throw Error('Select an Amity application firmware binary.');
  const field=bytes.slice(48,80),end=field.indexOf(0);
  if(end<0)throw Error('Invalid firmware version field.');
- return new TextDecoder().decode(field.slice(0,end));
+ return {version:new TextDecoder().decode(field.slice(0,end)),imageIdentity:Array.from(bytes.slice(176,208),b=>b.toString(16).padStart(2,'0')).join(''),release:offset>0};
 }
 
 function saveFirmwareUpdate(){sessionStorage.setItem(firmwareUpdateKey,JSON.stringify(firmwareUpdateRecord));}
@@ -483,19 +490,65 @@ function showFirmwareUpdate(record,text){
  $('admin').hidden=true;$('login').hidden=true;$('onboarding').hidden=true;$('logout').hidden=true;$('connection').textContent='';
  $('firmwareUpdate').hidden=false;$('firmwareUpdateStatus').textContent=text;
  $('retryFirmwareWait').hidden=true;$('firmwareUpdateLogin').hidden=true;$('uploadProgress').hidden=false;
+ $('firmwareUpdateTargets').replaceChildren();
+ for(const target of record.targets||[])renderFirmwareTarget(target,record);
+}
+function firmwareTargetText(target,bytes){
+ const offset=Number(target.offset),size=Number(bytes),percent=Number.isFinite(offset)&&Number.isFinite(size)&&size>0?Math.max(0,Math.min(100,Math.floor(100*offset/size))):0;
+ switch(target.phase){
+ case 'uploading':case 'receiving':return `Uploading: ${percent}%`;
+ case 'staged':return 'Ready to restart';
+ case 'skipped':return 'Could not update now; will retry when available';
+ case 'failed':return 'Firmware update failed';
+ case 'activating':case 'boot_checking':return 'Restarting';
+ case 'complete':return 'Updated';
+ default:return 'Waiting';
+ }
+}
+function renderFirmwareTarget(target,record){
+ const item=document.createElement('li'),name=document.createElement('strong');
+ name.textContent=record.deviceNames?.[target.octopus_id]||'Amity device';
+ item.append(name,document.createTextNode(' — '+firmwareTargetText(target,record.imageBytes)));
+ $('firmwareUpdateTargets').append(item);
+}
+function renderFirmwareDistribution(job,record){
+ if(job.last_failed_upload?.image_elf_sha256===record.imageIdentity)job=job.last_failed_upload;
+ if(job.automatic||job.image_elf_sha256!==record.imageIdentity)return false;
+ record.targets=Array.isArray(job.targets)?job.targets:[];record.imageBytes=job.image_bytes;
+ $('firmwareUpdateTargets').replaceChildren();for(const target of record.targets)renderFirmwareTarget(target,record);
+ if(job.phase==='distributing'||job.phase==='uploading'){
+  record.updatePhase='distributing';
+  $('firmwareUpdateStatus').textContent='Uploading firmware to your Amity devices. They will restart together when the upload is complete.';
+  const total=Number(job.image_bytes)*record.targets.length;
+  const sent=record.targets.reduce((sum,target)=>sum+(['staged','activating','complete','skipped','failed'].includes(target.phase)?Number(job.image_bytes):Math.max(0,Math.min(Number(job.image_bytes),Number(target.offset)||0))),0);
+  if(total>0)$('uploadProgress').value=100*sent/total;else $('uploadProgress').removeAttribute('value');
+ }else if(job.phase==='activating'||job.phase==='complete'){
+  if(record.updatePhase!=='activating'){record.startedAt=Date.now();record.updatePhase='activating';}
+  firmwareWaitMessage('Firmware is ready. Restarting your Amity devices…');
+ }else if(job.phase==='failed'){
+  firmwareWaitMessage(customerText(job.error||'The firmware update could not complete. Upload the update again to retry.'));
+  $('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;saveFirmwareUpdate();return true;
+ }
+ saveFirmwareUpdate();return false;
 }
 function firmwareWaitMessage(text){$('firmwareUpdateStatus').textContent=text;$('uploadProgress').removeAttribute('value');}
+function requireFirmwareLogin(record){
+ token='';sessionStorage.removeItem('amityToken');record.authRequired=true;saveFirmwareUpdate();
+ firmwareWaitMessage('Your session ended. Log in to view update progress. The update continues on Amity.');
+ $('login').hidden=false;$('retryFirmwareWait').hidden=true;$('firmwareUpdateLogin').hidden=true;$('password').focus();
+}
 function finishFirmwareUpdate(text){
  sessionStorage.removeItem(firmwareUpdateKey);sessionStorage.setItem(firmwareResultKey,text);
+ token='';sessionStorage.removeItem('amityToken');
  dirty=false;location.reload();
 }
 async function waitForFirmware(){
- if(firmwareWaitRunning)return;firmwareWaitRunning=true;token='';sessionStorage.removeItem('amityToken');
+ if(firmwareWaitRunning)return;firmwareWaitRunning=true;
  const record=firmwareUpdateRecord;record.phase='waiting';saveFirmwareUpdate();
- firmwareWaitMessage(record.uncertain?'Upload connection interrupted. Checking whether Amity restarted…':'Firmware uploaded. Restarting Amity…');
+ firmwareWaitMessage(record.uncertain?'Upload connection interrupted. Checking the update…':'Firmware uploaded. Preparing your Amity devices…');
  let lastHealth=null;
  try{
-  while(Date.now()-record.startedAt<120000){
+  while(Date.now()-record.startedAt<(record.updatePhase==='activating'?120000:2700000)){
    const abort=new AbortController(),timeout=setTimeout(()=>abort.abort(),5000);
    try{
     const response=await fetch('/api/setup',{cache:'no-store',signal:abort.signal});
@@ -503,11 +556,23 @@ async function waitForFirmware(){
     const health=await response.json();if(!validFirmwareHealth(health))throw Error('Invalid boot status');lastHealth=health;
     if(health.boot_id!==record.previousBootId){
      if(health.ready){
-      if(health.version===record.version)return finishFirmwareUpdate(`Firmware update complete. Amity is running version ${health.version}. Please log in.`);
+      if(health.version===record.version&&health.image_elf_sha256===record.imageIdentity){
+       const skipped=(record.targets||[]).filter(target=>target.phase==='skipped'||target.phase==='failed').length;
+       return finishFirmwareUpdate(`Firmware update complete. Amity is running version ${health.version}. ${skipped?'Unavailable devices will update automatically when they reconnect. ':''}Please log in.`);
+      }
+      if(health.version===record.version){firmwareWaitMessage('The restarted Amity did not report the expected firmware image. Upload the update again to retry.');$('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;}
       firmwareWaitMessage(`Update did not complete. Amity is running version ${health.version} instead of ${record.version}.`);
       $('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;
      }
      firmwareWaitMessage('Amity is starting. Waiting for it to be ready…');
+    }else if(token){
+     try{
+      const status=await fetch('/api/updates/cohort',{cache:'no-store',headers:{Authorization:'Bearer '+token},signal:abort.signal});
+      if(status.status===401){requireFirmwareLogin(record);return;}
+      if(status.ok&&renderFirmwareDistribution(await status.json(),record))return;
+     }catch{}
+    }else{
+     requireFirmwareLogin(record);return;
     }
    }catch{
     lastHealth=null;
@@ -529,15 +594,19 @@ $('firmware').addEventListener('change',run(async e=>{
  const input=e.target,file=input.files[0];if(!file)return;
  const progress=$('uploadProgress');input.disabled=true;progress.hidden=true;progress.value=0;
  try{
-  const version=await firmwareVersion(file),current=(await request('status')).version,comparison=compareFirmwareVersions(version,current);
+  const image=await firmwareImage(file),version=image.version,current=(await request('status')).version,comparison=compareFirmwareVersions(version,current);
   const warning=comparison===null?
    `The selected firmware version (${version||'unknown'}) cannot be compared with the running version (${current}). It may be a downgrade. Downgrading is not supported. Continue at your own risk?`:
    comparison<0?`You are installing version ${version} over version ${current}. Downgrading is not supported. Continue at your own risk?`:
-   `Install firmware ${version} and restart Amity? Current version: ${current}.`;
+   `Install firmware ${version} on all Amity devices and restart them together? Current version: ${current}.`;
   if(!confirm(warning))return;
   const health=await request('setup');
   if(!validFirmwareHealth(health))throw Error('Could not read Amity’s boot status. Reload and try again.');
-  const record={version,previousBootId:health.boot_id,startedAt:Date.now(),phase:'uploading'};
+  if(health.update_manifest_required&&!image.release)throw Error('Choose amity-update.bin, which includes the release information.');
+  const system=window.amityInterface?.enabled?await request('system'):null,deviceNames={};
+  if(system?.octopus_id)deviceNames[system.octopus_id]=system.hostname||'Main Amity';
+  for(const device of [...(system?.membership?.peers||[]),...(system?.named_devices||[])])if(device.hostname)deviceNames[device.octopus_id]=device.hostname;
+  const record={version,imageIdentity:image.imageIdentity,deviceNames,previousBootId:health.boot_id,startedAt:Date.now(),phase:'uploading',updatePhase:'distributing'};
   showFirmwareUpdate(record,'Uploading firmware… Keep Amity powered on.');progress.value=0;
   const result=await new Promise((resolve,reject)=>{
    const xhr=new XMLHttpRequest();xhr.open('POST','/api/firmware');xhr.setRequestHeader('Authorization','Bearer '+token);xhr.setRequestHeader('Content-Type','application/octet-stream');

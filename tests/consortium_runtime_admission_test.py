@@ -11,6 +11,7 @@ from consortium_gatt_callback_test import function
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/session.hpp"
+#include "amity/consortium/update.hpp"
 #include "tls_receive_trace.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/credential_types.hpp"
@@ -27,6 +28,7 @@ uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms++;}
 struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls {
+    bool received_bulk()const{Envelope envelope;return next&&parse_envelope(frames[next-1],envelope)==Error::none&&is_update_kind(envelope.kind);}
     bool server=true;model::OctopusId authenticated;
     std::vector<std::string> frames;size_t next=0;uint32_t largest_timeout=0;
     bool receive(std::string &out,uint32_t timeout){largest_timeout=std::max(largest_timeout,timeout);if(next==frames.size()){clock_ms+=timeout;return false;}out=frames[next++];return true;}

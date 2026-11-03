@@ -67,6 +67,30 @@ void partial_encrypted_record_keeps_original_outer_bound(){
  assert(a->tls.get()==tls&&a->queue.empty()&&a->tls->sent.empty()&&dropped.expired()&&shutdowns==0);
  assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("Session restart requested reason=frame_receive_expired")!=std::string::npos);
 }
+void bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound(){
+ for(bool expire:{false,true}){
+  auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0,began=0;unsigned polls=0;
+  a->tls->poller=[&](std::string& text){
+   if(recoveries){a->tls->bulk_receiving=false;text=device_status;return FakeTls::ReceiveResult::frame;}
+   if(++polls==1){began=clock_ms;a->tls->bulk_receiving=true;}
+   if(expire||clock_ms-began<7000)return FakeTls::ReceiveResult::pending;
+   a->tls->bulk_receiving=false;text=device_status;return FakeTls::ReceiveResult::frame;
+  };
+  assert(operational_receive(*a,budget)&&budget==0&&polls>1);
+  if(expire)assert(recoveries==1&&recovered_at-began==60000&&a->tls->expirations==1);
+  else assert(recoveries==0&&clock_ms-began==7000&&a->tls->expirations==0);
+  assert(a->tls->usable()&&shutdowns==0);
+ }
+}
+void bulk_class_never_authorizes_controls(){
+ auto a=start(true);
+ for(auto kind:{Kind::scoped_intent,Kind::scoped_result,Kind::device_status,Kind::settings_read,Kind::synchronization,Kind::membership_event}){
+  a->tls->last_bulk=false;assert(classify_received(*a,kind));a->tls->last_bulk=true;assert(!classify_received(*a,kind));
+ }
+ for(auto kind:{Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result}){
+  a->tls->last_bulk=true;assert(classify_received(*a,kind));a->tls->last_bulk=false;assert(!classify_received(*a,kind));
+ }
+}
 void application_failures_restart_scope_without_replaying_work(){
  for(bool asynchronous:{false,true}){
   auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto* tls=a->tls.get();const auto original=a->session.scope();
@@ -108,7 +132,7 @@ void retiring_does_not_pump_ordinary_work_during_partial_receive(){
  assert(operational_receive(*a,budget)&&a->tls->sent.empty()&&a->queue.size()==1&&budget==0);
 }
 }
-int main(){using namespace amity::consortium;pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();std::cout<<"PASS actual operational worker: pending RX keeps original IPC pump responsive; idle partial plaintext2s/encrypted5s bounds and causal/async/invalid local IPC failures trigger sameTLS logical recovery without replay; fatal reads end worker; retirement emits no queued positive work\n";}
+int main(){using namespace amity::consortium;pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();std::cout<<"PASS actual operational worker: original plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences\n";}
 '''
 def main():
     source=(ROOT/'components/consortium/runtime.cpp').read_text()
@@ -119,7 +143,10 @@ def main():
     recovery_end=source.index('\n    }',recovery_start)
     restart_start=source.index('        if(active->restart_requested){',source.index('void active_loop_work('))
     restart_end=source.index('\n',restart_start)
-    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){auto* active=&storage;const bool server=true;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+'const auto now=now_ms();'+source[queue_start:receive_start]+source[receive_start:receive_end]+'return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){uint64_t receive_started=0;auto* active=&storage;const bool server=true;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+'const auto now=now_ms();'+source[queue_start:receive_start]+source[receive_start:receive_end]+'return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    class_start=source.index('        if(active->tls->received_bulk()!=is_update_kind(envelope.kind))')
+    class_end=source.index('\n',class_start)
+    worker+='\nbool classify_received(Active& storage,Kind kind){auto* active=&storage;Envelope envelope;envelope.kind=kind;LinkTrace trace;while(true){'+source[class_start:class_end]+'return true;}return false;}\n'
     helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
     actual=function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(','static bool pure_key_release(', 'static bool queued_cleanup(','static bool queued_causal('))
     actual+=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]

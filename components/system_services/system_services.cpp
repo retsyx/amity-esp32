@@ -19,6 +19,7 @@
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "firmware_update.hpp"
+#include "group_firmware_update.hpp"
 #include "update_bundle.hpp"
 #include "psa/crypto.h"
 #include "esp_timer.h"
@@ -108,7 +109,7 @@ int capture(const char *fmt, va_list args) {
     }
     return original ? original(fmt, args) : length;
 }
-void restart_task(void *) { vTaskDelay(pdMS_TO_TICKS(1500)); esp_restart(); }
+void restart_task(void *delay) { vTaskDelay(pdMS_TO_TICKS(reinterpret_cast<uintptr_t>(delay))); esp_restart(); }
 }
 void start_log_capture() {
     uint32_t entropy[4];
@@ -159,7 +160,8 @@ std::string logs() {
     result.resize(n);
     return result;
 }
-void reboot_later() { xTaskCreate(restart_task,"restart",2048,nullptr,3,nullptr); }
+void reboot_later(uint32_t delay_ms) { xTaskCreate(restart_task,"restart",2048,reinterpret_cast<void*>(uintptr_t(delay_ms)),3,nullptr); }
+void reboot_later() { reboot_later(1500); }
 esp_err_t confirm_firmware() {
     esp_ota_img_states_t state;
     const auto *running=esp_ota_get_running_partition();
@@ -170,106 +172,60 @@ esp_err_t confirm_firmware() {
     return result;
 }
 esp_err_t upload_firmware(httpd_req_t *req) {
-    const auto *target=esp_ota_get_next_update_partition(nullptr);
     constexpr size_t header_size=sizeof(esp_image_header_t)+sizeof(esp_image_segment_header_t)+sizeof(esp_app_desc_t);
+    const auto *target=esp_ota_get_next_update_partition(nullptr);
     constexpr size_t metadata_cap=updates::update_bundle_header_bytes+8192+64;
     if(!target||req->content_len<header_size||uint64_t(req->content_len)>uint64_t(target->size)+metadata_cap)
         return web::error(req,"Invalid firmware size");
     web::BodyReader reader(req,120ULL*1000000);
     if(!reader.valid())return web::error(req,"Cannot receive firmware","503 Service Unavailable");
-    // Keep the existing metadata deadline as well as the total upload deadline.
-    // Both watchdogs interrupt blocked TLS record assembly through socket shutdown.
     std::optional<web::BodyReader> metadata_reader;
     metadata_reader.emplace(req,30ULL*1000000);
     if(!metadata_reader->valid())return web::error(req,"Cannot receive firmware metadata","503 Service Unavailable");
-    std::array<uint8_t,2048> buf{};
     auto read_exact=[&](char* destination,size_t count){
         size_t received=0;
-        while(received<count){
-            const int n=metadata_reader->receive(destination+received,count-received);
-            if(n<=0)return false;
-            received+=n;
-        }
+        while(received<count){const int n=metadata_reader->receive(destination+received,count-received);if(n<=0)return false;received+=n;}
         return true;
     };
-    if(!read_exact(reinterpret_cast<char*>(buf.data()),updates::update_bundle_header_bytes))
-        return web::error(req,"Incomplete firmware header");
-    uint64_t image_bytes=static_cast<uint64_t>(req->content_len);size_t read=updates::update_bundle_header_bytes;
-    auto release=updates::staged_release();
-    const std::string_view prefix(reinterpret_cast<const char*>(buf.data()),updates::update_bundle_header_bytes);
-    if(prefix.substr(0,updates::update_bundle_magic.size())==updates::update_bundle_magic){
-        updates::UpdateBundleHeader bundle;std::string error;
-        if(!updates::parse_update_bundle_header(prefix,req->content_len,bundle,error))return web::error(req,error.c_str());
-        std::string manifest(bundle.manifest_bytes,'\0'),signature(bundle.signature_bytes,'\0');
-        if(!read_exact(manifest.data(),manifest.size())||!read_exact(signature.data(),signature.size()))
-            return web::error(req,"Incomplete update bundle metadata");
-        std::string signature_hex;signature_hex.reserve(signature.size()*2);constexpr char digits[]="0123456789abcdef";
-        for(unsigned char byte:signature){signature_hex+=digits[byte>>4];signature_hex+=digits[byte&15];}
-        // Publisher/profile/hardware/rollback checks run before any slot erase.
-        if(updates::stage_release(manifest,signature_hex,error)!=ESP_OK)return web::error(req,error.c_str());
-        release=updates::staged_release();image_bytes=bundle.image_bytes;read=0;
-    }
-    if(!release)return web::error(req,"Select the complete Amity update file, or validate the release manifest before uploading a raw application image");
-    if(image_bytes<header_size||image_bytes>target->size||image_bytes!=release->image_bytes)
-        return web::error(req,"Invalid firmware size");
-    // Validate the complete native application header before erasing the slot.
-    if(!read_exact(reinterpret_cast<char*>(buf.data()+read),header_size-read))
-        return web::error(req,"Incomplete firmware header");
-    read=header_size;
+    std::array<char,updates::update_bundle_header_bytes> prefix{};
+    if(!read_exact(prefix.data(),prefix.size()))return web::error(req,"Incomplete firmware header");
+    updates::UpdateBundleHeader bundle;std::string error;
+    if(!updates::parse_update_bundle_header(std::string_view(prefix.data(),prefix.size()),req->content_len,bundle,error))return web::error(req,error.c_str());
+    std::string manifest(bundle.manifest_bytes,'\0'),signature(bundle.signature_bytes,'\0');
+    if(!read_exact(manifest.data(),manifest.size())||!read_exact(signature.data(),signature.size()))return web::error(req,"Incomplete update file metadata");
+    std::string signature_hex;signature_hex.reserve(signature.size()*2);constexpr char digits[]="0123456789abcdef";
+    for(unsigned char byte:signature){signature_hex+=digits[byte>>4];signature_hex+=digits[byte&15];}
+    updates::ReleaseManifest release;
+    if(!updates::parse_release_manifest(manifest,release,error)||release.image_bytes!=bundle.image_bytes)return web::error(req,"Firmware image size does not match the release");
+    std::array<char,2048> buf{};
+    const auto first=std::min<uint64_t>(buf.size(),bundle.image_bytes);
+    if(first<header_size||!read_exact(buf.data(),first))return web::error(req,"Incomplete firmware header");
     metadata_reader.reset();
-    esp_image_header_t image{};
     esp_app_desc_t app{};
-    memcpy(&image,buf.data(),sizeof(image));
-    memcpy(&app,buf.data()+sizeof(image)+sizeof(esp_image_segment_header_t),sizeof(app));
-    const esp_app_desc_t *running=esp_app_get_description();
-    if(image.magic!=ESP_IMAGE_HEADER_MAGIC || image.chip_id!=CONFIG_IDF_FIRMWARE_CHIP_ID ||
-       app.magic_word!=ESP_APP_DESC_MAGIC_WORD || memcmp(app.project_name,running->project_name,sizeof(app.project_name))!=0)
-        return web::error(req,"Firmware is not for this Amity target");
-    if(!memchr(app.version,'\0',sizeof(app.version)))
-        return web::error(req,"Invalid firmware version field");
-    char elf_identity[65]{};for(size_t n=0;n<sizeof(app.app_elf_sha256);++n)snprintf(elf_identity+2*n,3,"%02x",app.app_elf_sha256[n]);
-    if(release->firmware_version!=app.version||release->image_elf_sha256!=elf_identity)
-        return web::error(req,"Application identity does not match the validated release");
+    memcpy(&app,buf.data()+sizeof(esp_image_header_t)+sizeof(esp_image_segment_header_t),sizeof(app));
+    const auto *running=esp_app_get_description();
+    if(!memchr(app.version,'\0',sizeof(app.version)))return web::error(req,"Invalid firmware version field");
     const auto comparison=compare_firmware_versions(app.version,running->version);
-    if(!comparison||*comparison<0) {
-        // Bind approval to the running version, so a stale browser cannot silently approve a downgrade.
+    if(!comparison||*comparison<0){
         char confirmed[sizeof(running->version)]{};
-        if(httpd_req_get_hdr_value_str(req,"X-Amity-Confirm-Version",confirmed,sizeof(confirmed))!=ESP_OK||
-           strcmp(confirmed,running->version)!=0) {
-            return web::error(req,comparison?
-                "Firmware downgrade requires explicit confirmation. Reload the page and select the file again.":
-                "Firmware versions cannot be compared. Reload the page and select the file again to confirm.","409 Conflict");
-        }
+        if(httpd_req_get_hdr_value_str(req,"X-Amity-Confirm-Version",confirmed,sizeof(confirmed))!=ESP_OK||strcmp(confirmed,running->version)!=0)
+            return web::error(req,"Firmware downgrade requires explicit confirmation. Reload the page and select the file again.","409 Conflict");
     }
-    std::string maintenance_error;
-    if(updates::begin_install(maintenance_error)!=ESP_OK)return web::error(req,maintenance_error.c_str());
-    psa_hash_operation_t digest=PSA_HASH_OPERATION_INIT;
-    if(psa_hash_setup(&digest,PSA_ALG_SHA_256)!=PSA_SUCCESS){updates::install_failed("Image digest initialization failed");return web::error(req,"Image digest initialization failed","500 Internal Server Error");}
-    esp_ota_handle_t handle;
-    esp_err_t e=esp_ota_begin(target,image_bytes,&handle);
-    if(e!=ESP_OK){psa_hash_abort(&digest);updates::install_failed("Inactive image could not be opened");return web::error(req,esp_err_to_name(e),"500 Internal Server Error");}
-    e=esp_ota_write(handle,buf.data(),read);
-    if(e==ESP_OK&&psa_hash_update(&digest,buf.data(),read)!=PSA_SUCCESS)e=ESP_FAIL;
-    while(e==ESP_OK && read<image_bytes) {
-        int n=reader.receive(reinterpret_cast<char *>(buf.data()),std::min<uint64_t>(buf.size(),image_bytes-read));
-        if(n<=0) { e=ESP_ERR_TIMEOUT; break; }
-        e=esp_ota_write(handle,buf.data(),n);
-        if(e==ESP_OK&&psa_hash_update(&digest,buf.data(),n)!=PSA_SUCCESS)e=ESP_FAIL;
-        read+=n;
-        updates::install_progress(read);
+    if(updates::begin_system_upload(release,error)!=ESP_OK)return web::error(req,error.c_str(),"409 Conflict");
+    auto fail=[&](const std::string& message){updates::peer_abort(message);updates::fail_system_upload(message);return web::error(req,message.c_str());};
+    // The same receiver validates and stages local browser uploads and member
+    // transfers. Neither path selects a boot partition during staging.
+    if(updates::peer_begin(manifest,signature_hex,error)!=ESP_OK)return fail(error);
+    if(updates::peer_chunk(release.release_id,0,std::string_view(buf.data(),first),error)!=ESP_OK)return fail(error);
+    uint64_t read=first;updates::system_upload_progress(read);
+    while(read<bundle.image_bytes){
+        const auto count=size_t(std::min<uint64_t>(buf.size(),bundle.image_bytes-read));size_t received=0;
+        while(received<count){const int n=reader.receive(buf.data()+received,count-received);if(n<=0)return fail("Firmware upload was interrupted; current firmware retained");received+=n;}
+        if(updates::peer_chunk(release.release_id,read,std::string_view(buf.data(),count),error)!=ESP_OK)return fail(error);
+        read+=count;updates::system_upload_progress(read);
     }
-    uint8_t hash[32];size_t hash_size=0;char hash_text[65]{};
-    if(e==ESP_OK&&(psa_hash_finish(&digest,hash,sizeof(hash),&hash_size)!=PSA_SUCCESS||hash_size!=32))e=ESP_FAIL;
-    psa_hash_abort(&digest);
-    if(e==ESP_OK){for(size_t n=0;n<sizeof(hash);++n)snprintf(hash_text+2*n,3,"%02x",hash[n]);if(release->image_sha256!=hash_text)e=ESP_ERR_INVALID_CRC;}
-    if(e!=ESP_OK) { esp_ota_abort(handle);updates::install_failed("Firmware stream or image digest failed; current image retained");return web::error(req,"Firmware upload failed; current firmware retained"); }
-    e=esp_ota_end(handle);
-    if(e==ESP_OK)e=updates::install_selected();
-    if(e==ESP_OK) e=esp_ota_set_boot_partition(target);
-    if(e!=ESP_OK){updates::install_failed("Firmware validation or activation failed");return web::error(req,"Firmware validation failed");}
+    if(updates::peer_stage(release.release_id,error)!=ESP_OK||updates::finish_system_upload(error)!=ESP_OK)return fail(error);
     httpd_resp_set_type(req,"application/json");
-    e=httpd_resp_sendstr(req,"{\"rebooting\":true}");
-    reboot_later();
-    return e;
+    return httpd_resp_sendstr(req,"{\"staged\":true}");
 }
 }

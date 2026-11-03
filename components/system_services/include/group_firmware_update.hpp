@@ -8,13 +8,14 @@ struct CohortHooks {
     std::function<uint64_t()> applied_config_revision;
     std::function<std::string()> applied_policy_hash;
 };
-// Called before the operational synchronization service starts accepting peers.
 void start_group_updates(amity::system::OctopusId,CohortHooks);
-esp_err_t stage_cohort(std::string_view manifest,std::string_view signature_hex,
-    std::vector<amity::system::OctopusId> targets,std::string& error);
-esp_err_t cohort_chunk(amity::system::MessageId job,amity::system::OctopusId target,uint64_t offset,std::string_view bytes,std::string& error);
-esp_err_t cohort_install(amity::system::MessageId job,amity::system::OctopusId target,std::string& error);
-esp_err_t cancel_cohort(amity::system::MessageId job,std::string& error);
+// One authenticated browser upload stages the primary. Distribution and
+// activation proceed independently of the browser on the update worker.
+esp_err_t begin_system_upload(const ReleaseManifest&,std::string& error);
+void system_upload_progress(uint64_t bytes);
+esp_err_t finish_system_upload(std::string& error);
+void fail_system_upload(const std::string& error);
 std::string cohort_status_json();
+// Call only from the dedicated update task, never the owner/CEC task.
 void poll_group_update();
 } // namespace system_services::updates

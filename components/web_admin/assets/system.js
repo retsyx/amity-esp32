@@ -96,6 +96,7 @@ window.amityInterface=(()=>{
  async function refresh(){
   if(!enabled||!token)return;
   [configuration,system]=await Promise.all([request('backup'),request('system')]);
+  const update=(system.membership?.peers||[]).some(peer=>peer.management_ready)?await request('updates/cohort').catch(()=>null):null;
   const root=$('managedAmityList');root.replaceChildren();
   const original=configuration.controller_octopus_id||system.octopus_id;
   const localRow=document.createElement('article'),localActions=deviceHeader(localRow,(system.hostname||'Name unavailable')+' (this device)');
@@ -106,14 +107,10 @@ window.amityInterface=(()=>{
   for(const known of system.named_devices||[])if(!boards.some(board=>board.octopus_id===known.octopus_id))boards.push({octopus_id:known.octopus_id});
   for(const board of boards){
    if(board.octopus_id===original)continue;
-   const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));row.append(text(peer?.ready?'Connected':peer?.management_ready?'Firmware update required':peer?.enrolled?'Not responding':'Not added'));
+   const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));
+   const target=update?.targets?.find(target=>target.octopus_id===board.octopus_id)||update?.automatic_failures?.find(target=>target.octopus_id===board.octopus_id);
+   row.append(text(peer?.ready?'Connected':peer?.management_ready?(target?firmwareTargetText(target,update.image_bytes):'Updating firmware automatically'):peer?.enrolled?'Not responding':'Not added'));
    actions.append(button('Settings',()=>deviceSettings(board)));
-   if((peer?.ready||peer?.management_ready)&&(peer.capabilities&512)){
-    const upload=document.createElement('input');upload.type='file';upload.accept='.bin';upload.hidden=true;
-    upload.addEventListener('change',run(async()=>{const file=upload.files[0];upload.value='';if(file)await updateDevice(board,file);}));
-    row.append(button('Update firmware',()=>upload.click()),upload);
-   }
-
    actions.append(button('Remove',()=>remove(board)),button('Replace',()=>replace(board)));
    root.append(row);
   }
@@ -343,35 +340,6 @@ window.amityInterface=(()=>{
   });
   const closeButton=button('Cancel',()=>d.close());d.append(start,closeButton);controls();
   void (async()=>{try{await request('membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
- }
- async function updateDevice(board,file){
-  const header=new Uint8Array(await file.slice(0,32).arrayBuffer());
-  if(header.length!==32||new TextDecoder().decode(header.slice(0,16))!=='AMITY-UPDATE-V1\n')throw Error('Choose amity-update.bin, which includes the release information.');
-  const view=new DataView(header.buffer),manifestSize=view.getUint32(16),signatureSize=view.getUint32(20),imageSize=view.getBigUint64(24),offset=32+manifestSize+signatureSize;
-  if(manifestSize<1||manifestSize>8192||![0,64].includes(signatureSize)||imageSize<288n||imageSize>0x3d0000n||BigInt(file.size)!==BigInt(offset)+imageSize)throw Error('Invalid Amity update file.');
-  const manifest=await file.slice(32,32+manifestSize).text(),release=JSON.parse(manifest),signature=Array.from(new Uint8Array(await file.slice(32+manifestSize,offset).arrayBuffer()),b=>b.toString(16).padStart(2,'0')).join(''),image=file.slice(offset),version=await firmwareVersion(file);
-  if(release.firmware_version!==version)throw Error('The update image does not match its release information.');
-  const d=dialog('Update '+boardName(board)),status=text(`Install firmware ${version}? Equipment connected to this Amity will pause during the update.`),progress=document.createElement('progress');progress.max=100;progress.value=0;status.setAttribute('role','status');d.append(status,progress);
-  let stopped=false,jobId='';d.addEventListener('close',()=>{stopped=true;});
-  const done=button('Cancel',()=>d.close()),start=button('Install firmware',async()=>{
-   start.disabled=true;done.disabled=true;
-   try{
-    await mutation('updates/cohort',{manifest,signature,targets:[board.octopus_id]});
-    const deadline=Date.now()+900000;
-    while(!stopped){
-     const job=await request('updates/cohort');jobId=job.job_id;
-     if(job.phase==='complete'){status.textContent='Amity restarted and reported the expected firmware. Choose an activity when you are ready.';progress.value=100;break;}
-     if(['failed','interrupted','rolled_back','recovery_required','aborted'].includes(job.phase))throw Error(job.error||'The update needs an explicit retry. Choose the same update file to resume.');
-     if(Date.now()>deadline)throw Error('The device has not reported a healthy restart. Check its power and network before retrying.');
-     const target=job.targets?.[Number(job.current_index)];if(!target||target.octopus_id!==board.octopus_id)throw Error('The update target changed. Review the current update before continuing.');
-     if(job.phase==='boot_checking'){status.textContent='Waiting for Amity to restart and report its firmware…';await new Promise(resolve=>setTimeout(resolve,1500));continue;}
-     let sent=Number(target.offset);if(!Number.isSafeInteger(sent)||sent<0||sent>image.size)throw Error('Invalid firmware transfer checkpoint.');
-     while(sent<image.size&&!stopped){const bytes=new Uint8Array(await image.slice(sent,sent+2048).arrayBuffer());await mutation('updates/chunk',{cohort_job_id:jobId,target_octopus_id:board.octopus_id,offset:String(sent),data_hex:Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('')});sent+=bytes.length;progress.value=100*sent/image.size;status.textContent=`Sending firmware: ${Math.round(progress.value)}%`;}
-     if(!stopped){status.textContent='Installing firmware…';await mutation('updates/install',{cohort_job_id:jobId,target_octopus_id:board.octopus_id});}
-    }
-   }catch(error){status.textContent=customerText(error.message);throw error;}
-   finally{done.disabled=false;done.textContent='Close';await refresh();}
-  });d.append(start,done);
  }
  function replace(board){
   const snapshot=structuredClone(configuration),current=structuredClone(system),previousPeer=current.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id);

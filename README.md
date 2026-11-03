@@ -117,7 +117,7 @@ Matter setup opens automatically at boot on a fresh board or original main with 
 
 To add an unclaimed board to an existing system, open **Amity devices → Add** on the main, hold the new board’s **FW RESET** for at least three seconds, and release before ten seconds. Choose it if several boards appear, enter its name, and add it. Holding for ten seconds performs factory reset.
 
-Adding devices requires updated firmware on both boards. Normal setup needs no code. If Amity asks for one, use the new board's existing Matter manual code or QR payload. Existing Matter setup cards remain valid. Adding a device does not enroll it in a Matter home.
+The main updates an added Amity automatically if its firmware differs. Normal setup needs no code. If Amity asks for one, use the new board's existing Matter manual code or QR payload. Existing Matter setup cards remain valid. Adding a device does not enroll it in a Matter home.
 
 ### HDMI Connections
 
@@ -259,9 +259,11 @@ The qualified-lookup release uses a new saved configuration format. Existing **0
 
 1. Download `amity-update.bin` from the release. This one file contains the unchanged application image, its exact manifest, and the publisher signature for a signed release. Local development builds produce an unsigned update file.
 2. Open **Advanced → Update Firmware** and select `amity-update.bin`. Review the version and confirm installation.
-3. Keep Amity powered and the page open while it uploads and restarts. The page waits for a new boot and local health. An interrupted upload keeps the current image; reselect the same update file to retry.
+3. Keep all Amities powered. The main uploads the firmware to each added device in turn and shows progress. After staging completes, available devices restart together. Unavailable devices are skipped after a timeout and update automatically when they reconnect. A device running different firmware accepts only updates until it matches the main.
 
-The full `amity-provisioned.bin` image is for USB installation. `amity.bin` is the raw application for USB/debug tooling; raw browser uploads require its exact manifest to have been validated separately. The manifest and optional `amity.release.sig` are also published for release inspection. An older development installer that predates update bundles may need a supported bridge release. A separately generated compatibility manifest (`tools/release_manifest.py --compatibility-capabilities 511`) changes no image bytes; signed compatibility manifests must be produced and signed by the publisher.
+Each image is validated in its inactive partition before boot selection. An interrupted upload keeps the current firmware; reselect the update file to retry.
+
+The full `amity-provisioned.bin` image is for a fresh USB installation. Local builds also produce `amity-partition.bin`, which contains the application and its release metadata for existing-device USB flashing. The installed main serves its own running image to newly added or returning devices; no browser upload is needed for those updates.
 
 Production builds require a separate P-256 publisher key, native secure boot, release-mode flash encryption and provisioned encrypted NVS. `tools/production_profile.py` prepares and audits an offline build profile without flashing or programming eFuses. Its `derive-storage-keys` command creates private per-partition NVS key files from provisioned master material; firmware uses the same HKDF scheme. Native signing and publisher signing use separate keys. The baseline fresh-install provisioner rejects the encrypted production layout; production provisioning and physical recovery must be qualified separately on disposable hardware.
 

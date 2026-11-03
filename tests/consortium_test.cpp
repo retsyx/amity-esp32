@@ -40,6 +40,16 @@ void frame_tests(std::string_view body){
     reader.reset();assert(reader.feed(bytes.data(),1,used,0)==FrameReader::Result::incomplete);assert(reader.check_deadline(2000)==FrameReader::Result::timed_out);
     reader.reset();for(uint64_t i=0;i<10;++i)assert(reader.feed(bytes.data()+i,1,used,i*1000)==FrameReader::Result::incomplete);assert(reader.check_deadline(10000)==FrameReader::Result::timed_out);
     reader.reset();auto two=bytes;two.insert(two.end(),bytes.begin(),bytes.end());assert(reader.feed(two.data(),two.size(),used,0)==FrameReader::Result::frame);assert(used==bytes.size());reader.next_frame();assert(reader.feed(two.data()+used,two.size()-used,used,1)==FrameReader::Result::frame);
+    const auto bulk=frame(body,true);assert(bulk.size()==bytes.size()&&(bulk[0]&0x80)!=0);
+    for(size_t split=0;split<=bulk.size();++split){reader.reset();assert(reader.feed(bulk.data(),split,used,0)==(split==bulk.size()?FrameReader::Result::frame:FrameReader::Result::incomplete));if(split<bulk.size())assert(reader.feed(bulk.data()+split,bulk.size()-split,used,1)==FrameReader::Result::frame);assert(reader.bulk()&&reader.body()==body);}
+    reader.reset();assert(reader.feed(bulk.data(),4,used,0)==FrameReader::Result::incomplete&&reader.bulk());
+    assert(reader.check_deadline(29999)==FrameReader::Result::incomplete&&reader.check_deadline(30000)==FrameReader::Result::timed_out);
+    reader.reset();assert(reader.feed(bulk.data(),4,used,0)==FrameReader::Result::incomplete);
+    assert(reader.feed(bulk.data()+4,1,used,20000)==FrameReader::Result::incomplete&&reader.feed(bulk.data()+5,1,used,40000)==FrameReader::Result::incomplete);
+    assert(reader.check_deadline(60000)==FrameReader::Result::timed_out); // Progress never renews the frame bound.
+    reader.reset();assert(reader.feed(bulk.data(),bulk.size(),used,0)==FrameReader::Result::frame);reader.next_frame();
+    assert(reader.feed(bytes.data(),4,used,1)==FrameReader::Result::incomplete&&!reader.bulk()&&reader.check_deadline(2001)==FrameReader::Result::timed_out);
+    reader.reset();assert(reader.feed(bulk.data(),1,used,0)==FrameReader::Result::incomplete&&!reader.bulk()&&reader.check_deadline(2000)==FrameReader::Result::timed_out); // Incomplete prefixes retain the ordinary bound.
 }
 
 LinkScope scope(){return {ident<m::LinkId>(1),ident<m::ConsortiumId>(2),ident<m::OctopusId>(3),ident<m::OctopusId>(4),ident<m::OctopusId>(4),ident<m::BootId>(5),ident<m::BootId>(6),1,7};}
@@ -199,11 +209,11 @@ void synchronization_tests(){
     assert(member.synchronized(7,true,true)==Error::stale_config&&member.synchronized(8,true,true)==Error::none);
     assert(member.admit(positive,100,101)==Error::none);
     assert(member.discard_synchronization_frame(stale_work,100,101)==Error::not_ready);
-    member.restrict_management();assert(member.begin_synchronization(8)==Error::none&&member.synchronized(8,true,true)==Error::none);
+    member.restrict_management();assert(member.begin_synchronization(8)==Error::not_ready&&member.synchronized(8,true,true)==Error::not_ready);
     member.restrict_lifecycle();assert(member.begin_synchronization(8)==Error::not_ready&&member.admit(begin,100,101)==Error::unauthorized_role);
     Session no_chunks;start(no_chunks,PeerRole::coordinator,known_capabilities&~chunked_snapshots);assert(no_chunks.begin_synchronization(8)==Error::unsupported_kind&&no_chunks.admit(begin,100,100)==Error::unsupported_kind);
-    Session management;start(management,PeerRole::coordinator,known_capabilities&~live_configuration);assert(management.synchronized(7,true,true)==Error::none);management.restrict_management();assert(management.admit(begin,100,100)==Error::none&&management.begin_synchronization(8)==Error::none);
-    assert(management.discard_synchronization_frame(stale_work,100,101)==Error::none);
+    Session management;start(management,PeerRole::coordinator,known_capabilities&~live_configuration);assert(management.synchronized(7,true,true)==Error::none);management.restrict_management();assert(management.admit(begin,100,100)==Error::unauthorized_role&&management.begin_synchronization(8)==Error::not_ready);
+    assert(management.discard_synchronization_frame(stale_work,100,101)==Error::not_ready);
     Session controller;start(controller,PeerRole::actuator);assert(controller.begin_synchronization(8)==Error::none);
     for(const auto role:{PeerRole::coordinator,PeerRole::actuator}){
         Session value;start(value,role);
@@ -349,11 +359,24 @@ void update_tests() {
     assert(!valid(Kind::update_chunk,replace(chunk,"\"offset\":\"0\"","\"offset\":\"0\",\"force\":true")));
     const auto begin="{"+base+",\"canonical_manifest\":\"{}\",\"signature_hex\":\"\"}";
     assert(valid(Kind::update_begin,begin));
-    assert(valid(Kind::update_begin,begin.substr(0,begin.size()-1)+",\"validate_only\":true}"));
-    assert(!valid(Kind::update_begin,begin.substr(0,begin.size()-1)+",\"validate_only\":1}")); // Only the compiled actuator verifier may allow unsigned development.
+    assert(!valid(Kind::update_begin,begin.substr(0,begin.size()-1)+",\"validate_only\":true}"));
+    {Json document;JsonError detail;assert(parse_json(begin,document,detail));
+     document.get("canonical_manifest")->string=std::string(4096,'a');assert(valid_update(Kind::update_begin,document));
+     document.get("canonical_manifest")->string.push_back('a');assert(!valid_update(Kind::update_begin,document));}
     assert(!valid(Kind::update_begin,replace(begin,"\"signature_hex\":\"\"","\"signature_hex\":\"ff\"")));
+    const auto stage="{"+base+",\"phase\":\"stage\"}";
+    assert(valid(Kind::update_install,stage)&&!valid(Kind::update_install,"{"+base+"}"));
+    assert(!valid(Kind::update_install,replace(stage,"stage","install")));
+    assert(!valid(Kind::update_install,stage.substr(0,stage.size()-1)+",\"reboot_delay_ms\":\"0\"}"));
+    const auto activate=replace(stage,"stage","activate");
+    assert(!valid(Kind::update_install,activate));
+    for(const auto delay:{"0","1","9999","10000","14999","15000"})assert(valid(Kind::update_install,activate.substr(0,activate.size()-1)+",\"reboot_delay_ms\":\""+delay+"\"}"));
+    for(const auto delay:{"","00","01","15001","99999","-1","1.0","18446744073709551616"})assert(!valid(Kind::update_install,activate.substr(0,activate.size()-1)+",\"reboot_delay_ms\":\""+delay+"\"}"));
+    assert(!valid(Kind::update_install,activate.substr(0,activate.size()-1)+",\"reboot_delay_ms\":0}"));
     const auto result="{"+base+",\"offset\":\"2048\",\"stage\":\"progress\",\"error\":\"\"}";
     assert(valid(Kind::update_result,result));
+    assert(valid(Kind::update_result,replace(result,"progress","staged")));
+    assert(valid(Kind::update_result,result.substr(0,result.size()-1)+",\"update_phase\":\"staged_image\"}"));
     assert(!valid(Kind::update_result,replace(result,"\"error\":\"\"","\"error\":\"arbitrary text\"")));
     for(auto role:{PeerRole::coordinator,PeerRole::actuator,PeerRole::provisional_candidate}) {
         auto sc=scope();Session session;auto h=hello(sc);assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none);
