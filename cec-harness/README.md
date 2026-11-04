@@ -870,6 +870,12 @@ owner's wires, including transient commands hidden by hooks. Both directions
 finish in Standby, and fixture configuration closes before member removal.
 Select `--test qualified_names`.
 
+The activity group's `test_activity_same_osd_locations` applies the same checks
+to three identical triples on `amity-dut` adapter 0 and `amity-dut-4` adapters
+0 and 1. Matching adapter numbers across owners and matching owners across
+adapters independently exercise both parts of device location. Each activity
+must control only its selected triple; observations cover both inactive triples.
+
 `functional_tests/missing_equipment.py` saves a local activity with a CEC source
 and explicit AVR input fallback. It electrically removes the source responder,
 then explicitly scans to establish its absence. Starts of the unchanged saved
@@ -1035,6 +1041,7 @@ python3 cec-harness/run.py \
 
 The default remains `hdmi_scan`. Select `--test activity` for the activity
 power-cycle/repair, passive standby discovery, explicit switch-input, two manual-component,
+same-name devices across owners and adapters,
 two remote-key and two disconnected
 hold sub-tests,
 `--test source_theft` for unselected-source recovery,
@@ -1051,7 +1058,7 @@ saved identities, then adding a different board and proving both owners' physica
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all sixteen registered scenarios (twenty-nine
+or `--test all` for all sixteen registered scenarios (thirty
 test cases). The same credentials, TLS, SSH and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful

@@ -14,6 +14,7 @@ from amity_harness import Component, DUT, Hooks, Key, PowerState, TestBed, TvCom
 from amity_harness.cec import Frame
 from amity_harness.qualified_names import observe_no_control
 from functional_tests import qualified_names
+from functional_tests import activity as activity_scenarios
 from unit_tests.test_consortium_scenarios import Scenario
 
 
@@ -59,7 +60,7 @@ class QualifiedNamesScenario(Scenario):
 
         return Action()
 
-    def run(self):
+    def run(self, test=qualified_names.test_qualified_names):
         with ExitStack() as patches:
             patches.enter_context(patch.object(qualified_names, "TestBed", self.bed))
             patches.enter_context(patch.object(qualified_names, "observe_no_control", self.observe))
@@ -70,7 +71,78 @@ class QualifiedNamesScenario(Scenario):
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kw: self.route(avr, player, **kw)))
-            qualified_names.test_qualified_names()
+            test()
+
+
+class AdapterQualifiedNamesScenario(QualifiedNamesScenario):
+    """Keep final model state correct while independently routing wire evidence."""
+
+    def __init__(self, *, wrong_command=None, wrong_scope=None, forbidden_control=False):
+        super().__init__(forbidden_control=forbidden_control)
+        self.wrong_command, self.wrong_scope = wrong_command, wrong_scope
+        self.selected, self.key_targets, self.route_targets, self.created = [], [], [], []
+
+    @staticmethod
+    def scope(component):
+        return component.dut.name, component.tentacle
+
+    def activity(self, main, name, *, display, audio, source):
+        result = super().activity(main, name, display=display, audio=audio, source=source)
+        triple = (display, audio, source)
+        self.created.append((name, triple))
+        result.components = triple
+        for method in ("start", "standby"):
+            original = getattr(result, method)
+
+            def action(original=original, method=method):
+                boundary = original()
+                boundary.components = triple
+                if method == "start":
+                    self.selected.append(self.scope(source))
+                return boundary
+
+            setattr(result, method, action)
+        return result
+
+    def actual_targets(self, selected, command):
+        if self.wrong_command != command:
+            return selected
+        scope = self.scope(selected[0])
+        alternatives = [tuple(component for component in self.components if self.scope(component) == other)
+                        for other in dict.fromkeys(self.scope(component) for component in self.components)
+                        if (other[0] != scope[0] if self.wrong_scope == "owner"
+                            else other[0] == scope[0] and other[1] != scope[1])]
+        return alternatives[0] if alternatives else selected
+
+    def wait_power(self, component, power, *, since, **kwargs):
+        if component not in self.actual_targets(since.components, "power"):
+            raise AssertionError("Wrong physical power recipient")
+        return super().wait_power(component, power, since=since, **kwargs)
+
+    def route(self, avr, player, *, since):
+        targets = self.actual_targets(since.components, "route")
+        if avr is not targets[1] or player is not targets[2]:
+            raise AssertionError("Wrong physical route recipient")
+        self.route_targets.append((avr, player))
+        return super().route(avr, player, since=since)
+
+    def key(self, main, key):
+        fixture = self
+        actual = self.actual_targets(self.current.components, "key")
+        expected = actual[1] if key == Key.VOLUME_UP else actual[2]
+
+        class Action:
+            def assert_received_by(self, target):
+                if target is not expected:
+                    raise AssertionError("Wrong physical key recipient")
+                fixture.key_targets.append((key, target))
+                return self
+
+        return Action()
+
+    def run(self):
+        with patch.object(activity_scenarios, "TestBed", self.bed):
+            super().run(activity_scenarios.test_activity_same_osd_locations)
 
 
 class QualifiedNamesScenarioTests(unittest.TestCase):
@@ -111,6 +183,57 @@ class QualifiedNamesScenarioTests(unittest.TestCase):
                 self.assertFalse(fixture.members)
                 self.assertFalse(fixture.activities)
                 self.assertEqual(fixture.events[-1], ("bed.close",))
+
+
+class AdapterQualifiedNamesScenarioTests(unittest.TestCase):
+    def test_same_identity_is_qualified_independently_by_owner_and_adapter(self):
+        fixture = AdapterQualifiedNamesScenario()
+        fixture.run()
+        self.assertEqual([dut.name for dut in fixture.duts], ["amity-dut", "amity-dut-4"])
+        expected_scopes = [("amity-dut", 0), ("amity-dut-4", 0), ("amity-dut-4", 1)]
+        systems = [tuple(component for component in fixture.components if fixture.scope(component) == scope)
+                   for scope in expected_scopes]
+        self.assertEqual(len(fixture.components), 9)
+        identities = [[(component.name, component.address.logical, component.address.physical)
+                       for component in system] for system in systems]
+        self.assertEqual(identities, [identities[0]] * 3)
+        self.assertEqual([row[0] for row in identities[0]], ["Same TV", "Same AVR", "Same Player"])
+        self.assertEqual(len({component.gpio for component in fixture.components}), 6)
+        self.assertEqual(fixture.selected, expected_scopes)
+        self.assertEqual([name for name, _ in fixture.created],
+                         ["Qualified main", "Qualified member adapter 1", "Qualified member adapter 2"])
+        self.assertEqual([triple for _, triple in fixture.created], systems)
+        self.assertEqual(fixture.observations,
+                         [tuple(component for other in systems if other is not system for component in other)
+                          for system in systems])
+        self.assertEqual(fixture.key_targets,
+                         [(key, system[index]) for system in systems
+                          for key, index in ((Key.VOLUME_UP, 1), (Key.RIGHT, 2))])
+        self.assertEqual(fixture.route_targets, [(system[1], system[2]) for system in systems])
+        for kind in ("scan.contains", "scan.only"):
+            self.assertEqual([event[1] for event in fixture.events if event[0] == kind], [fixture.components])
+        self.assertEqual(len([event for event in fixture.events if event[0] == "scan.on"]), 9)
+        self.assertEqual([event[0] for event in fixture.events
+                          if event[0] in ("activity.remove", "member.remove", "bed.close")],
+                         ["activity.remove"] * 3 + ["member.remove", "bed.close"])
+
+    def test_wrong_owner_or_same_owner_wrong_adapter_commands_fail_and_cleanup(self):
+        for command in ("power", "route", "key"):
+            for scope in ("owner", "adapter"):
+                with self.subTest(command=command, scope=scope):
+                    fixture = AdapterQualifiedNamesScenario(wrong_command=command, wrong_scope=scope)
+                    with self.assertRaisesRegex(AssertionError, f"Wrong physical {command} recipient"):
+                        fixture.run()
+                    self.assertFalse(fixture.members or fixture.activities)
+                    self.assertEqual(fixture.events[-1], ("bed.close",))
+
+    def test_control_on_any_inactive_system_is_asserted_and_failure_cleans_up(self):
+        fixture = AdapterQualifiedNamesScenario(forbidden_control=True)
+        with self.assertRaisesRegex(AssertionError, "Wrong-owner control"):
+            fixture.run()
+        self.assertEqual(len(fixture.observations[0]), 6)
+        self.assertFalse(fixture.members or fixture.activities)
+        self.assertEqual(fixture.events[-1], ("bed.close",))
 
 
 class NegativeControlEvidenceTests(unittest.TestCase):

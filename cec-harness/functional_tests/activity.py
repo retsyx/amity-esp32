@@ -5,6 +5,7 @@ from contextlib import ExitStack
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent,
                            Key, PowerState)
 from functional_tests.hdmi_scan import scanned_devices
+from functional_tests.qualified_names import same_name_equipment, exercise_qualified_activities
 from amity_harness.recovery import LookupScans, assert_returned
 from amity_harness.transitions import observe_no_standby
 
@@ -168,6 +169,21 @@ def test_activity_manual_component():
 
 def test_activity_manual_component_secondary():
     _exercise_manual_component("amity-dut-2")
+
+
+def test_activity_same_osd_locations():
+    main, secondary = DUT("amity-dut"), DUT("amity-dut-4")
+    # The first pair differs only by owner; the second only by adapter.
+    systems = (same_name_equipment(main), same_name_equipment(secondary),
+               same_name_equipment(secondary, 1))
+    components = tuple(component for system in systems for component in system)
+    with TestBed(main, secondary, *components, members=(secondary,)):
+        with main.add_amity(secondary) as member:
+            member.assert_connected()
+            exercise_qualified_activities(main, systems,
+                                          ("Qualified main", "Qualified member adapter 1",
+                                           "Qualified member adapter 2"))
+            member.assert_connected()
 
 
 def _exercise_keys(dut, tv, avr, player):
