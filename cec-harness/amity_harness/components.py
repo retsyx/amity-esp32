@@ -491,7 +491,7 @@ class Component:
                 return candidates[0]
         return getattr(self.dut, "last_scan", None)
 
-    def _validate_action_owners(self, since, scan, session):
+    def _validate_action_owners(self, since, scan, session, *, _system=None):
         bed = getattr(scan, "_testbed", None)
         coordinator = getattr(scan, "dut", None)
         owner = self.dut.identity.device_id
@@ -520,7 +520,10 @@ class Component:
         validator = getattr(scan, "validate_owners", None)
         if not callable(validator):
             raise AssertionError("The scan cannot verify the current physical owner")
-        validator((self,))
+        if _system is None:
+            validator((self,))
+        else:
+            validator((self,), _system=_system)
 
     def _wire_context(self, since):
         """Validate a boundary and the scan-proven initiator on this wire."""
@@ -695,7 +698,8 @@ class Component:
                                      and event["processed_monotonic_ns"] >= started
                                      and event["state_revision"] == revision
                                      and self._response_in_time(event, timing)), None)
-                    ready = self.power != PowerState.OFF and actual == expected and matching is not None
+                    ready = (self.power != PowerState.OFF and actual == expected and matching is not None
+                             and (not isinstance(self, PlaybackComponent) or self.active))
                     if ready and owner_checked:
                         self._routing_checks.append({"kind": "wire_command", field: expected, "command": command,
                                                      "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": started,
@@ -889,7 +893,10 @@ class Component:
             self._power_condition.notify_all()
 
     def _retain_routing(self, original, handled, transport, controlled, physical, revision):
-        if (not self.can_route or original.source == 15 or original.destination != 15
+        source_request = (isinstance(self, PlaybackComponent) and original.opcode == 0x86
+                          and len(original.operands) == 2
+                          and int.from_bytes(original.operands, "big") == self.address.physical)
+        if (not (self.can_route or source_request) or original.source == 15 or original.destination != 15
                 or original.opcode not in (0x82, 0x86) or len(original.operands) != 2):
             return
         target = int.from_bytes(original.operands, "big")
@@ -902,7 +909,8 @@ class Component:
                  "processed_monotonic_ns": time.monotonic_ns(), "state_revision": self._input_revision,
                  "payload_modified": changed,
                  "applied": controlled and not changed and physical == target
-                            and self.active_input == target and revision == self._input_revision}
+                            and self.active_input == target and revision == self._input_revision
+                            and (not source_request or self.active)}
         with self._power_condition:
             self._routing_history.append((self._session, event))
             self._power_condition.notify_all()
@@ -1088,6 +1096,12 @@ class PlaybackComponent(Component):
         super().set_power(power)
         if self.power != PowerState.ON:
             self.active = self.playing = False
+            self.active_input = None
+
+    def wait_for_source_request(self, *, since, timeout=None):
+        """Require a fresh physical Set Stream Path and this source's activation."""
+        return self._wait_for_routing(self.address.physical, since=since, timeout=timeout,
+                                     command="set_stream_path")
 
     def activate(self):
         self._trace("component.activate", physical_address=self.address.physical)
@@ -1102,6 +1116,7 @@ class PlaybackComponent(Component):
                 self.send(15, 0x82, self.address.physical.to_bytes(2, "big"))
         elif opcode == 0x86 and frame.destination == 15 and len(operands) == 2:
             if int.from_bytes(operands, "big") == self.address.physical:
+                self.active_input = self.address.physical
                 self.activate()
         elif opcode == 0x82 and frame.destination == 15 and len(operands) == 2:
             if int.from_bytes(operands, "big") != self.address.physical:

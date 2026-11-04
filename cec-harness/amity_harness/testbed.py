@@ -470,7 +470,7 @@ class TestBed:
                 row["address_type"] = component.address_type
             row["power_events"] = [_select(event, _POWER_FIELDS) for event in component.power_events]
             row["power_assertions"] = [_select(event, _POWER_ASSERTION_FIELDS) for event in component.power_assertions]
-            if component.can_route:
+            if component.can_route or component.routing_assertions:
                 row["active_input"] = component.active_input
                 row["selected_input"] = component.selected_input
                 row["routing_events"] = [_select(event, _ROUTING_FIELDS) for event in component.routing_events]

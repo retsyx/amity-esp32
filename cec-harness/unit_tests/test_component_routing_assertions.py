@@ -86,6 +86,69 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             tv.wait_for_amity_input(since=boundary, timeout=0.005)
 
+    def test_source_request_proves_fresh_back_routing_and_activation_without_a_router_role(self):
+        with self.fixture(tv_input=3) as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            self.receive(player, 0, player.address.physical)
+            self.assertIs(player.wait_for_source_request(since=start), player)
+            self.assertTrue(player.active)
+            self.assertFalse(player.can_route)
+            proof = player.routing_assertions[-1]
+            self.assertEqual(proof["frame"], "0f:86:31:00")
+            self.assertEqual(proof["command"], "set_stream_path")
+            player._routing_checks[-1]["private_token"] = "PRIVATE_SOURCE_TOKEN"
+            report = TestBed(dut, tv, avr, player).report
+            row = next(component for component in report["components"] if component["name"] == player.name)
+            self.assertEqual(row["routing_assertions"][0]["frame"], proof["frame"])
+            self.assertNotIn("private_token", row["routing_assertions"][0])
+            with self.assertRaises(ValueError):
+                player.wait_for_input(player, since=start)
+
+    def test_source_request_rejects_virtual_stale_wrong_sender_destination_and_input(self):
+        for fault in ("virtual", "stale", "sender", "destination", "input", "opcode"):
+            with self.subTest(fault=fault), self.fixture() as (dut, tv, avr, player, session):
+                start = self.boundary(dut, session)
+                self.receive(player, 8 if fault == "sender" else 0,
+                             0x1200 if fault == "input" else player.address.physical,
+                             transport="virtual" if fault == "virtual" else "wire",
+                             timestamp=start.started_ns - 1 if fault == "stale" else None,
+                             destination=4 if fault == "destination" else 15,
+                             opcode=0x82 if fault == "opcode" else 0x86)
+                with self.assertRaises(TimeoutError):
+                    player.wait_for_source_request(since=start, timeout=0.005)
+
+    def test_source_request_needs_applied_unmodified_handler_and_current_active_state(self):
+        for fault in ("local", "drop", "rewrite", "ignore", "inactive"):
+            with self.subTest(fault=fault), self.fixture() as (dut, tv, avr, player, session):
+                start = self.boundary(dut, session)
+                if fault == "local":
+                    player.active_input, player.active = player.address.physical, True
+                else:
+                    if fault == "drop":
+                        player.hooks.before_rx = lambda component, frame: None
+                    elif fault == "rewrite":
+                        player.hooks.before_rx = lambda component, frame: replace(frame, opcode=0x82)
+                    elif fault == "ignore":
+                        player.handle = lambda frame: None
+                        player.active_input, player.active = player.address.physical, True
+                    elif fault == "inactive":
+                        player.hooks.after_rx = lambda component, frame: setattr(component, "active", False)
+                    self.receive(player, 0, player.address.physical)
+                with self.assertRaises(TimeoutError):
+                    player.wait_for_source_request(since=start, timeout=0.005)
+
+    def test_standby_invalidates_source_request_evidence(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            self.receive(player, 0, player.address.physical)
+            player.wait_for_source_request(since=start)
+            player.standby()
+            player.active_input, player.active = player.address.physical, True
+            with self.assertRaises(TimeoutError):
+                player.wait_for_source_request(since=start, timeout=0.005)
+            self.receive(player, 0, player.address.physical)
+            player.wait_for_source_request(since=start)
+
     def test_amity_display_input_requires_its_own_front_active_source_for_default_and_other_tv_ports(self):
         for tv_input in (1, 3):
             with self.subTest(tv_input=tv_input), self.fixture(tv_input=tv_input) as (dut, tv, avr, player, session):

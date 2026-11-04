@@ -847,6 +847,18 @@ Select `--test source_theft_isolated`; it also runs in `--test all`. Functional
 scenarios contain equipment and behavior only; the shared framework owns the
 settings, same-boot address proof, protocol monitoring and cleanup.
 
+The `split_theater` cases put one Amity between the source and AVR input 2,
+and another between that AVR's output and the TV. `AvrAttachment` shares the
+AVR's physical state while preserving separate wire evidence. Both main/member
+role assignments run. After saving the activity, the fixture source withholds
+its OSD name through an explicit scan and the real 120-second lookup cooldown.
+The original activity start must power and select the TV and power the AVR on
+the display-side Amity while the source-side lookup remains pending. The test
+compares no command order across Amities. Releasing the source name completes
+that same start, then source routing, key receivers and Standby are verified.
+Source cleanup explicitly scans after disconnecting its responder before the
+ordinary adapter setting is restored.
+
 Cleanup finishes activity rows and exact, unreferenced fixture equipment before
 restoring settings and removing members. An unused activity can defer behind
 another unchanged activity from the same bed; its shared equipment is revisited
@@ -1107,6 +1119,7 @@ hold sub-tests,
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
 three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test dual_display` for the TV/projector scenario on `amity-dut-4`,
+`--test split_theater` for independent owner progress through a shared AVR,
 `--test source_theft_isolated` for suppression ahead of the AVR,
 `--test qualified_names` for identical equipment identities on two owners,
 `--test missing_equipment` for source disappearance, cooldown and passive return,

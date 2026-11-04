@@ -50,6 +50,29 @@ class ActivityAction:
         return self.started_ns
 
 
+class PendingActivity:
+    """One admitted UI selection whose original operation can be awaited later."""
+
+    def __init__(self, action, finish):
+        self._action, self._finish, self._result = action, finish, None
+
+    def action(self):
+        return self._action
+
+    def wait(self):
+        if self._result is None:
+            self._result = self._finish()
+        return self._result
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if exc_type is None and self._result is None:
+            raise RuntimeError("The pending activity selection was not awaited")
+        return False
+
+
 _OPERATION = ("operation_id", "stage", "saved", "partial")
 _STATE = ("current_activity", "activity_settling", "expected_boot_id", "expected_state_revision")
 
@@ -370,7 +393,7 @@ class Activity:
                 return False
         return True
 
-    def _write(self, path, payload, deadline, trace, *, stage):
+    def _write(self, path, payload, deadline, trace, *, stage, wait=True):
         try:
             response = self.dut.request(path, payload, timeout=min(15, self._remaining(deadline)))
         except AmityHTTPError:
@@ -385,12 +408,17 @@ class Activity:
             self._creation_operation = deepcopy(response)
         if response.get("operation_id") != payload["request_id"]:
             raise AssertionError("Amity returned a different activity operation identity")
+        if not wait:
+            return response
+        return self._finish_write(response, payload["request_id"], deadline, trace, stage=stage)
+
+    def _finish_write(self, response, request_id, deadline, trace, *, stage):
         result = self.dut.wait_operation(response, timeout=self._remaining(deadline))
         trace["operation"] = {key: result[key] for key in _OPERATION if key in result}
-        self._log("activity.operation", phase=trace["phase"], request_id=payload["request_id"],
+        self._log("activity.operation", phase=trace["phase"], request_id=request_id,
                   operation_id=result.get("operation_id"), stage=result.get("stage"),
                   saved=result.get("saved"), partial=result.get("partial"))
-        if result.get("operation_id") != payload["request_id"] or result.get("stage") != stage or result.get("partial"):
+        if result.get("operation_id") != request_id or result.get("stage") != stage or result.get("partial"):
             raise AssertionError("The requested activity operation did not complete successfully")
         return result
 
@@ -461,7 +489,35 @@ class Activity:
                       request_id=self._creation_request_id, error_type=type(error).__name__)
             raise
 
-    def _action(self, kind, *, check_health=True):
+    def _pending_scan(self, scan):
+        """Refresh owner/wire proof while saved equipment is being resolved.
+
+        Saved selectors retain their creation proof. A later scan may lack a
+        selected name, but must still prove the same owners and wire initiators.
+        """
+        bed = self._testbed
+        if (not bed._entered or bed._closed or bed.session is not self.session
+                or self.dut._testbed is not bed
+                or scan is not self.dut.last_scan or scan.dut is not self.dut
+                or scan._session is not self.session or scan._testbed is not bed
+                or scan._boot != self.boot or scan._group != self._saved_group
+                or not scan.started):
+            raise AssertionError("Pending activity evidence changed its scan, session or system")
+        equipment = tuple(component for component in self.components.values() if component is not None)
+        for component in equipment:
+            owner = component.dut.identity.device_id
+            if (component not in scan.expected or component._session is not self.session
+                    or component.dut._testbed is not bed
+                    or scan.owner_duts.get(owner) is not component.dut
+                    or not _identifier(scan.owner_boots.get(owner))
+                    or scan.owner_boots.get(owner) != self.scan.owner_boots.get(owner)
+                    or component.gpio not in scan.initiators
+                    or scan.initiators[component.gpio] != self.scan.initiators.get(component.gpio)):
+                raise AssertionError("Pending activity evidence changed a selected owner or CEC wire")
+        scan.validate_owners(equipment)
+        return scan
+
+    def _action(self, kind, *, check_health=True, pending=False, scan=None):
         if self._closed or not self._created:
             raise RuntimeError("The test activity is not available")
         if check_health:
@@ -477,10 +533,10 @@ class Activity:
         payload = {"request_id": uuid4().hex, "activity_id": self.activity_id if kind == "start" else None,
                    "expected_config_revision": document["expected_config_revision"],
                    "expected_state_revision": state["expected_state_revision"], "expected_boot_id": self.boot}
-        scan = self._action_scan
+        scan = self._pending_scan(scan) if scan is not None else self._action_scan
         action = ActivityAction(self.dut, self.session, time.monotonic_ns(), self.boot,
                                 deepcopy(scan.initiators), kind, payload["request_id"], payload["activity_id"],
-                                scan=scan, testbed=self._testbed,
+                                state=deepcopy(state), scan=scan, testbed=self._testbed,
                                 owner_boots=dict(getattr(scan, "owner_boots", {})),
                                 owner_duts=dict(getattr(scan, "owner_duts", {})))
         trace = self._record(kind, request_id=action.request_id, started_monotonic_ns=action.started_ns,
@@ -489,7 +545,22 @@ class Activity:
             self._needs_standby = True  # Admission may succeed even if its HTTP reply is lost.
             self._last_start_request, self._last_start_terminal = action.request_id, False
         try:
-            action.operation = self._write("/api/activity-editor/activity", payload, deadline, trace, stage="complete")
+            action.operation = self._write("/api/activity-editor/activity", payload, deadline, trace,
+                                           stage="complete", wait=not pending)
+        except BaseException as error:
+            trace["error_type"] = type(error).__name__
+            self._log("activity.action.failed", level=logging.ERROR, phase=kind,
+                      request_id=action.request_id, error_type=type(error).__name__)
+            raise
+        finish = lambda: self._finish_action(kind, action, document, matches, deadline, trace,
+                                             check_health=check_health, pending=pending)
+        return PendingActivity(action, finish) if pending else finish()
+
+    def _finish_action(self, kind, action, document, matches, deadline, trace, *, check_health, pending):
+        try:
+            if pending:
+                action.operation = self._finish_write(action.operation, action.request_id, deadline,
+                                                     trace, stage="complete")
             if kind == "start":
                 self._last_start_terminal = True
             previous_state = None
@@ -528,6 +599,10 @@ class Activity:
 
     def start(self):
         return self._action("start")
+
+    def start_pending(self, *, scan=None):
+        """Submit once through the UI, exposing its boundary before completion."""
+        return self._action("start", pending=True, scan=scan)
 
     def standby(self):
         return self._action("standby")
