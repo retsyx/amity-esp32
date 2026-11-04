@@ -4,7 +4,93 @@
 #include <iostream>
 namespace ae=web_admin::activity_editor;
 ae::Row row(const ConfiguredActivity& a){return {a.activity_id,a.label,ae::component_value(a.display),ae::component_value(a.source),ae::component_value(a.audio),ae::component_value(a.switch_device),a.switch_input};}
+void test_current_activity_retention(){
+    auto previous=switch_configuration(direct_configuration());
+    previous.activities[1].switch_device=fixture_equipment(previous,"Matrix","switch",model::Side::back);
+    const auto current=previous.activities[1].activity_id;
+    assert(retains_activity(previous,previous,current));
+    const auto rejects=[&](auto change){
+        auto candidate=previous;change(candidate);
+        assert(!retains_activity(previous,candidate,current));
+    };
+    rejects([](auto& c){c.activities.erase(c.activities.begin()+1);});
+    rejects([](auto& c){c.activities[1].activity_id=id<model::ActivityId>(900);});
+    rejects([](auto& c){c.activities[1].zone_id=id<model::ZoneId>(900);});
+    rejects([](auto& c){c.activities[1].label="Renamed current activity";});
+    rejects([](auto& c){c.activities[1].generated_label="Different generated name";});
+    rejects([](auto& c){c.activities[1].label_override=!c.activities[1].label_override;});
+    rejects([](auto& c){++c.activities[1].switch_input;});
+    for(auto role:{&ConfiguredActivity::source,&ConfiguredActivity::display,
+                  &ConfiguredActivity::audio,&ConfiguredActivity::switch_device}){
+        rejects([role](auto& c){(c.activities[1].*role).reset();});
+    }
+    // Shared equipment is part of the running activity even when a change
+    // originates through another activity that selects the same display.
+    assert(previous.activities[0].display==previous.activities[1].display);
+    for(auto selected:{previous.activities[1].source,previous.activities[1].display,
+                      previous.activities[1].audio,previous.activities[1].switch_device}){
+        rejects([selected](auto& c){
+            auto component=std::find_if(c.components.begin(),c.components.end(),
+                [&](const auto& value){return value.record.component_id==selected;});
+            component->record.qualified_names[0].osd_name="Moved source";
+        });
+    }
+    rejects([](auto& c){
+        const auto source=c.activities[1].source;
+        auto component=std::find_if(c.components.begin(),c.components.end(),
+            [&](const auto& value){return value.record.component_id==source;});
+        component->record.qualified_names[0].port.side=model::Side::front;
+    });
+    rejects([](auto& c){
+        const auto source=c.activities[1].source;
+        c.components.erase(std::remove_if(c.components.begin(),c.components.end(),
+            [&](const auto& value){return value.record.component_id==source;}),c.components.end());
+    });
+
+    // Reordering the rows themselves must resolve the current activity by ID.
+    // Other activity edits and presentation-only equipment changes are free
+    // to commit without changing the running activity's execution choices.
+    auto candidate=previous;
+    candidate.activities[0].label="Renamed inactive activity";
+    candidate.activities[0].source.reset();
+    const auto unused=previous.activities[0].source;
+    for(auto& component:candidate.components){
+        component.record.label="Updated equipment label";
+        component.generated_label="Updated generated label";
+        component.label_override=true;
+        if(component.record.component_id==unused)
+            component.record.qualified_names[0].osd_name="Other source";
+    }
+    ++candidate.config_revision;++candidate.presentation_revision;
+    std::reverse(candidate.activities.begin(),candidate.activities.end());
+    std::reverse(candidate.activity_order.begin(),candidate.activity_order.end());
+    std::reverse(candidate.zones[0].activity_order.begin(),candidate.zones[0].activity_order.end());
+    assert(retains_activity(previous,candidate,current));
+
+    // Saving another row through the editor must preserve the current row's
+    // name metadata, including a generated name behind a personal override.
+    for(bool overridden:{false,true}){
+        auto saved=switch_configuration(direct_configuration());
+        saved.activities[0].label_override=overridden;
+        if(overridden)saved.activities[0].label="Personal Watch";
+        const auto before=saved.activities[0];
+        std::vector<ae::Row> rows;for(const auto& activity:saved.activities)rows.push_back(row(activity));
+        rows[1].name="Renamed other activity";
+        std::reverse(rows.begin(),rows.end());
+        const auto available=ae::choices(saved,{},{});
+        Configuration edited;std::vector<std::string> unresolved;std::string error;
+        assert(ae::edit(saved,rows,available,random_source(),edited,unresolved,error));
+        assert(unresolved.empty()&&retains_activity(saved,edited,before.activity_id));
+        const auto retained=std::find_if(edited.activities.begin(),edited.activities.end(),
+            [&](const auto& activity){return activity.activity_id==before.activity_id;});
+        assert(retained!=edited.activities.end()&&retained->label==before.label&&
+               retained->generated_label==before.generated_label&&retained->label_override==overridden);
+        assert(edited.activity_order==std::vector<model::ActivityId>({saved.activities[1].activity_id,before.activity_id}));
+        assert(edited.activities[0].label=="Renamed other activity");
+    }
+}
 int main(){
+    test_current_activity_retention();
     auto c=direct_configuration();auto avr=switch_configuration(c,"Play Wii");std::vector<std::string> unresolved;std::string error;
     // No equipment observations or path approval are required to retain or save
     // local and remote selections, including AVR volume and switching.

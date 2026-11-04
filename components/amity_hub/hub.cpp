@@ -46,6 +46,23 @@ bool Hub::configure(std::vector<Activity> activities, ActionReady ready) {
     if (owned_sender_) publish_owned_context(true);
     return true;
 }
+bool Hub::configure_scoped(std::vector<Activity> activities) {
+    if(activity_execution_)return false;
+    int selected=-1;
+    if(selected_>=0){
+        const auto before=current();
+        if(!before.activity_id)return false;
+        for(size_t i=0;i<activities.size();++i){const auto& next=activities[i];
+            if(next.activity_id!=before.activity_id)continue;
+            if(selected>=0||next.name!=before.name||next.display!=before.display||next.source!=before.source||next.audio!=before.audio||
+               next.switch_device!=before.switch_device||next.switch_input!=before.switch_input)return false;
+            selected=static_cast<int>(i);
+        }
+        if(selected<0)return false;
+    }
+    activities_=std::move(activities);selected_=selected;
+    return true;
+}
 int Hub::stage_activity(Activity next,std::vector<system::ScopedSelector> selectors,bool selected,uint64_t generation){
     const auto before=current();const bool had_selection=selected_>=0;
     const bool same=had_selection&&generation==owned_generation_&&before.display==next.display&&before.source==next.source&&before.audio==next.audio&&before.switch_device==next.switch_device&&before.switch_input==next.switch_input;
@@ -54,10 +71,10 @@ int Hub::stage_activity(Activity next,std::vector<system::ScopedSelector> select
     return selected?(same?0:1):-1;
 }
 void Hub::scoped_transport(std::vector<system::ScopedSelector> selectors, OwnedDispatcher sender, OwnedLookup lookup,
-        std::optional<system::CecPortRef> default_port) {
+        std::optional<system::CecPortRef> default_port,bool publish_context) {
     scoped_selectors_ = std::move(selectors); owned_sender_ = std::move(sender); owned_lookup_ = std::move(lookup);
     scoped_default_port_ = std::move(default_port);
-    if(owned_sender_)publish_owned_context(true);
+    if(owned_sender_&&publish_context)publish_owned_context(true);
 }
 std::optional<system::QualifiedDeviceName> Hub::target(const std::string& value) const {
     for (const auto& selector : scoped_selectors_) if (selector.value == value) return selector.target;

@@ -68,6 +68,9 @@ std::string sha256_hex(std::string_view);
 std::string executable_policy_hash(const Configuration&);
 const ConfiguredActivity* activity_for_slot(const Configuration&, unsigned slot);
 std::vector<model::ActivityId> ordered_activities(const Configuration&);
+// A running activity keeps its saved recipe and selected equipment targets.
+// Presentation order and changes to other activities do not change that intent.
+bool retains_activity(const Configuration& previous,const Configuration& candidate,model::ActivityId);
 // Preserve slots and tombstones independently of presentation ordering.
 bool reconcile_external_slots(const Configuration& previous, Configuration& candidate, std::string& error);
 // Explicit user removal deletes every recipe referring to this owner's saved

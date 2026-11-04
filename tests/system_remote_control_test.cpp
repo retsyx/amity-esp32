@@ -119,8 +119,31 @@ int main(){
     assert(!web_admin::submit_key_request(original,key_request,[](uint16_t){assert(false);}));original.end_maintenance();drain();assert(original.accepts_local_input()&&!original.snapshot().activity_settling);
     // A stable ID request uses presentation order; integration slots stay fixed.
     auto reordered=config;auto second=config.activities[0];second.activity_id=id<ActivityId>(800);second.label="Other screen";reordered.activities.push_back(second);reordered.zones[0].activity_order.push_back(second.activity_id);reordered.activity_order={second.activity_id,first};reordered.external_slots.push_back({1,second.activity_id,false,false,{}});reordered.config_revision=2;reordered.presentation_revision=2;
-    assert(original.configure(reordered)==ESP_OK);assert(original.execution_snapshot().sessions.empty());drain();const auto request=id<MessageId>(801);assert(original.request_activity(second.zone_id,first,request,original.execution_snapshot().state_revision)==ESP_OK);drain();assert(original.snapshot().current_activity==1&&original.execution_snapshot().sessions[0].activity_id==first);assert(original.external_activity(0)->activity_id==first&&original.external_activity_index()==0);assert(outcome(original,same)=="applied");
-    auto sparse=reordered;sparse.config_revision=3;sparse.presentation_revision=3;sparse.external_slots[0].slot=7;assert(original.configure(sparse)==ESP_OK);drain();assert(original.request_activity(7)==ESP_OK);drain();assert(original.snapshot().current_activity==1&&original.external_activity_index()==7);assert(original.request_activity(0)==ESP_ERR_INVALID_ARG);
+    assert(original.configure(reordered)==ESP_OK);
+    assert(original.execution_snapshot().sessions[0].activity_id==first&&original.external_activity_index()==0);
+    assert(original.execution_snapshot().applied_config_revision==0);
+    drain();const auto request=id<MessageId>(801);assert(original.request_activity(second.zone_id,first,request,original.execution_snapshot().state_revision)==ESP_OK);drain();assert(original.snapshot().current_activity==1&&original.execution_snapshot().sessions[0].activity_id==first);assert(original.external_activity(0)->activity_id==first&&original.external_activity_index()==0);assert(outcome(original,same)=="applied");
+    // The actual facade rejects changes/removal before invoking persistence.
+    unsigned protected_writes=0;
+    auto active_edit=reordered;active_edit.config_revision=3;active_edit.activities[0].label="Changed current";
+    assert(original.configure(active_edit,[&]{++protected_writes;return ESP_OK;})!=ESP_OK&&protected_writes==0);
+    auto active_delete=reordered;active_delete.config_revision=3;
+    active_delete.activities.erase(active_delete.activities.begin());
+    active_delete.activity_order.erase(std::remove(active_delete.activity_order.begin(),active_delete.activity_order.end(),first),active_delete.activity_order.end());
+    for(auto& zone:active_delete.zones)zone.activity_order.erase(std::remove(zone.activity_order.begin(),zone.activity_order.end(),first),zone.activity_order.end());
+    active_delete.external_slots[0].tombstone=true;
+    assert(original.configure(active_delete,[&]{++protected_writes;return ESP_OK;})!=ESP_OK&&protected_writes==0);
+    const auto retained=original.snapshot();const auto retained_selection=original.activity_selection(),retained_input=original.remote_input_epoch();
+    auto sparse=reordered;sparse.config_revision=3;sparse.presentation_revision=3;sparse.external_slots[0].slot=7;
+    sparse.activities[1].label="Updated inactive";sparse.activities[1].source.reset();sparse.activity_order={first,second.activity_id};
+    fixture_sent.clear();assert(original.configure(sparse)==ESP_OK);
+    assert(original.snapshot().current_activity==1&&original.execution_snapshot().sessions[0].activity_id==first&&original.external_activity_index()==7);
+    drain();
+    assert(original.snapshot().current_activity==0&&original.execution_snapshot().sessions[0].activity_id==first);
+    assert(original.snapshot().activity_generation==retained.activity_generation&&original.activity_selection()==retained_selection&&original.remote_input_epoch()==retained_input);
+    assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){const auto op=frame.frame.data[1];return op==0x36||op==0x44||op==0x04||op==0x0d||op==0x86;}));
+    assert(original.press_remote_key(3));drain();assert(presses(3)==1);
+    assert(original.request_activity(7)==ESP_OK);drain();assert(original.snapshot().current_activity==0&&original.external_activity_index()==7);assert(original.request_activity(0)==ESP_ERR_INVALID_ARG);
     assert(original.request_activity(second.zone_id,first,id<MessageId>(802),original.execution_snapshot().state_revision+1)==ESP_ERR_INVALID_STATE);
     // The original algorithm decides what a missing AVR/source means. Saved
     // selections do not acquire a persistent unavailable state or lose fields.
@@ -137,6 +160,8 @@ int main(){
     // Equal activity labels are insufficient to acknowledge a selector-only
     // update: the owner task must have installed its exact configuration.
     auto relocated=offline;relocated.config_revision=5;for(auto& component:relocated.components)if(component.record.label=="AVR")component.record.qualified_names[0].osd_name="AVR2";
+    assert(original.configure(relocated,[&]{++protected_writes;return ESP_OK;})!=ESP_OK&&protected_writes==0);
+    assert(original.stop_remote_zone()==ESP_OK);drain();
     assert(original.configure(relocated)==ESP_OK);assert(original.execution_snapshot().applied_config_revision!=relocated.config_revision);drain();assert(original.execution_snapshot().applied_config_revision==relocated.config_revision);
     auto labels=relocated;++labels.presentation_revision;labels.activities[0].label="Renamed";assert(original.configure(labels)==ESP_OK);assert(original.execution_snapshot().applied_presentation_revision==0);drain();assert(original.execution_snapshot().applied_presentation_revision==labels.presentation_revision);
     // A foreign owner's lookup and loss never stall the main's local recipe.

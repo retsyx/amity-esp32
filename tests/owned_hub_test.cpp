@@ -359,7 +359,8 @@ static void configuration_preserves_discovery(){
     fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
     const auto local_display=named(controller,m::Side::front,"TV"),local_source=named(controller,m::Side::back,"Source");
     const auto remote_source=named(member,m::Side::back,"Remote");
-    assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
+    const Activity retained{"Watch","display","source","source","",0,*m::ActivityId::parse("77777777777777777777777777777777")};
+    assert(hub.configure_scoped({retained},
         {{"display",local_display},{"source",local_source},{"remote",remote_source}},[](const auto&){return true;},controller,1)==ESP_OK);
     run_one_command();fixture_finish_discovery(hub);
     m::OwnedAdapterSnapshot remote;remote.owner=member;remote.boot=controller_boot;remote.adapter=0;remote.ready=true;remote.discovery_generation=7;
@@ -389,11 +390,11 @@ static void configuration_preserves_discovery(){
     fixture_sent.clear();
     // Removing the last saved reference to an owner/adapter does not remove
     // that owner's physical observations, or force any native discovery.
-    assert(hub.configure_scoped({{"Renamed","display","source","source","",0}},
+    assert(hub.configure_scoped({retained},
         {{"display",local_display},{"source",local_source}},[](const auto&){return true;},controller,2)==ESP_OK);
     run_one_command();run_idle(2);verify();
-    assert(hub.configure_scoped({}, {},[](const auto&){return true;},controller,3)==ESP_OK);
-    run_one_command();run_idle(2);verify();
+    assert(hub.configure_scoped({}, {},[](const auto&){return true;},controller,3)==ESP_ERR_INVALID_STATE);
+    verify();
     std::puts("Activity configuration preserves native device records/discovery and selected/unselected remote HDMI snapshots without rediscovery");
 }
 static void activity_commits_after_source_tx_without_peer_status(bool scoped){

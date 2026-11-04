@@ -26,6 +26,8 @@ function updateActivityButtons(){
  document.querySelectorAll('#activities button, #recommendationEditor button').forEach(b=>{
   b.disabled=locked||(b.hasAttribute('data-add-recommendation')&&config.activities.length>=16)||(b.id==='addActivity'&&config.activities.length>=16);
  });
+ $('saveActivities').disabled=locked||!currentActivityUnchanged(config.activities);
+ $('saveActivities').title=currentActivityUnchanged(config.activities)?'':activeActivityMessage;
  if(locked)endActivityDrag(true);updateActivityState();
 }
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
@@ -62,7 +64,7 @@ function deviceField(text,value,onChange,list){
  i.setAttribute('role','combobox');i.setAttribute('aria-autocomplete','list');i.setAttribute('aria-controls',options.id);i.setAttribute('aria-expanded','false');
  let active=-1,filter=false;
  const close=()=>{options.hidden=true;i.setAttribute('aria-expanded','false');i.removeAttribute('aria-activedescendant');active=-1;};
- const choose=value=>{i.value=value;onChange(value);filter=false;close();};
+ const choose=value=>{if(i.closest('#activityEditor')&&activityActive(editingActivity?.target))return close();i.value=value;onChange(value);filter=false;close();};
  const highlight=()=>{[...options.children].forEach((b,n)=>b.setAttribute('aria-selected',String(n===active)));if(active>=0){const b=options.children[active];i.setAttribute('aria-activedescendant',b.id);b.scrollIntoView({block:'nearest'});}else i.removeAttribute('aria-activedescendant');};
  const render=()=>{
   if(i.disabled)return close();
@@ -139,6 +141,13 @@ function rememberSaved(activities=config.activities){
  renderDeviceNames();
 }
 function activityActive(activity){const saved=savedEntry(activity);return !!saved&&saved.index===state.current_activity;}
+const activeActivityMessage='Stop this activity before editing or deleting it.';
+function currentActivityUnchanged(activities,currentState=state){
+ const current=savedActivities[currentState.current_activity];
+ if(!current)return true;
+ const selected=activities.find(a=>a.activity_id===current.activity_id);
+ return !!selected&&activitySnapshot([selected])===activitySnapshot([current]);
+}
 function activityLocked(){return activitiesScanning()||saving||activityActionPending||!!window.amityInterface?.componentPending;}
 function activitiesScanning(){return !!(scanPending||state.discovering||(scanAfter!==null&&state.discovery_generation===scanAfter));}
 function updateActivityState(){
@@ -147,6 +156,7 @@ function updateActivityState(){
   start.textContent=activityActive(a)?'Repair':'Start';
   start.disabled=activityLocked()||!matchesSaved(a);
   start.title=matchesSaved(a)?'':'Save activity changes before starting.';
+  row.querySelectorAll('[data-edit], [data-delete]').forEach(b=>{b.disabled=activityLocked()||activityActive(a);b.title=activityActive(a)?activeActivityMessage:'';});
   row.classList.toggle('active',activityActive(a));
   row.querySelector('.activity-badge').hidden=!activityActive(a);
   row.querySelector('[data-drag]').setAttribute('aria-disabled',String(activityLocked()));
@@ -163,6 +173,7 @@ function validateActivity(a,others){
 }
 function openActivityEditor(target=null){
  if(activityLocked())return;
+ if(activityActive(target))return message(activeActivityMessage,true);
  if(!target&&config.activities.length>=16)return message('Up to 16 activities are supported.',true);
  editingActivity={target,activity:structuredClone(target||{name:'New activity',display:'',source:'',audio:''})};
  $('activityEditorTitle').textContent=target?'Edit activity':'Add activity';$('activityEditorError').textContent='';
@@ -175,10 +186,17 @@ function updateActivityEditor(){
  const {target,activity}=editingActivity,needsSave=!matchesSaved(activity,target),active=activityActive(target);
  $('editorStart').textContent=needsSave?(active?'Save and repair':'Save and start'):(active?'Repair':'Start');
  $('activityEditor').querySelectorAll('button').forEach(b=>b.disabled=activityLocked());
- $('activityEditor').querySelectorAll('input').forEach(i=>i.disabled=activityLocked()||(i.hasAttribute('data-switch-input')&&!activity.switch));
+ $('activityForm').querySelector('button[type=submit]').disabled=activityLocked()||active;
+ $('editorStart').disabled=activityLocked()||(active&&needsSave);
+ $('activityFields').querySelectorAll('button').forEach(b=>b.disabled=activityLocked()||active);
+ $('activityEditor').querySelectorAll('input').forEach(i=>i.disabled=activityLocked()||active||(i.hasAttribute('data-switch-input')&&!activity.switch));
+ $('activityFields').querySelectorAll('.device-field').forEach(field=>{if(field.querySelector('input').disabled)field.dispatchEvent(new Event('devicechoiceschange'));});
+ if(active)$('activityEditorError').textContent=activeActivityMessage;
+ else if($('activityEditorError').textContent===activeActivityMessage)$('activityEditorError').textContent='';
 }
 function applyActivityDraft(){
  const {target,activity}=editingActivity;
+ if(activityActive(target))throw Error(activeActivityMessage);
  validateActivity(activity,config.activities.filter(a=>a!==target));
  if(target){Object.keys(target).forEach(key=>delete target[key]);Object.assign(target,structuredClone(activity));}
  else {if(config.activities.length>=16)throw Error('Up to 16 activities are supported.');config.activities.push(structuredClone(activity));editingActivity.target=config.activities.at(-1);}
@@ -203,7 +221,10 @@ async function persistActivities(editor=null){
  }
  saving=true;updateActivityButtons();
  try{
-  const latest=await currentSavedConfiguration(),submitted=JSON.stringify({...latest,activities:references.map(a=>editor&&a===target?editor.activity:a)});
+  const latest=await currentSavedConfiguration(),current=await request('status'),activities=references.map(a=>editor&&a===target?editor.activity:a);
+  state=current;
+  if(!currentActivityUnchanged(activities,current))throw Error(activeActivityMessage);
+  const submitted=JSON.stringify({...latest,activities});
   const result=await request('config',submitted);const applied=window.amityInterface?.enabled?await request('config'):JSON.parse(submitted),saved=applied.activities;
   config.expected_config_revision=applied.expected_config_revision;config.expected_presentation_revision=applied.expected_presentation_revision;
   if(editor){
@@ -285,8 +306,8 @@ function renderActivities(){
   const badge=document.createElement('span');badge.className='activity-badge';badge.textContent='Active';badge.hidden=true;
   heading.append(title,badge);
   const controls=document.createElement('div');controls.className='activity-controls';
-  const edit=button('Edit',()=>openActivityEditor(a));edit.className='quiet';
-  const remove=button('Delete',()=>{if(activityLocked())return;config.activities.splice(index,1);renderActivities();});remove.className='danger quiet';
+  const edit=button('Edit',()=>openActivityEditor(a));edit.dataset.edit='';edit.className='quiet';
+  const remove=button('Delete',()=>{if(activityLocked())return;if(activityActive(a))return message(activeActivityMessage,true);config.activities.splice(index,1);renderActivities();});remove.dataset.delete='';remove.className='danger quiet';
   const start=button('Start',()=>startActivity(a));start.dataset.start=index;start.className='primary';
   controls.append(edit,remove,start);
   row.append(dragHandle(index,a),heading,controls);list.append(row);

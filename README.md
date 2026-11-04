@@ -181,6 +181,8 @@ Amity supports up to 16 activities. Drag activities to change their order. The p
 
 Use 'Add activity' to create an activity, 'Edit' to change one, and 'Delete' to remove one. Press 'Save activities' when finished. 'Discard changes' returns to the saved configuration.
 
+Stop the current activity before editing or deleting it. Editing other activities or changing their order keeps the current activity running.
+
 #### Editing an Activity
 
 The activity fields appear in one column:

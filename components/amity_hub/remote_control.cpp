@@ -11,7 +11,7 @@ esp_err_t SystemControl::request_activity(int index){
     const auto* activity=config_store::activity_for_slot(*config,static_cast<unsigned>(index));
     if(!activity)return ESP_ERR_INVALID_ARG;
     auto order=config_store::ordered_activities(*config);auto found=std::find(order.begin(),order.end(),activity->activity_id);
-    return found==order.end()?ESP_ERR_INVALID_ARG:local_.request_activity(static_cast<int>(found-order.begin()));
+    return found==order.end()?ESP_ERR_INVALID_ARG:local_.request_activity(static_cast<int>(found-order.begin()),nullptr,activity->activity_id);
 }
 bool SystemControl::press_key(uint8_t key,bool repeat){return accepts_local_input()&&local_.press_key(key,repeat);}
 bool SystemControl::release_key(uint8_t key){return local_coordinator_.load()&&(key==0xff?local_.release_key():local_.release_key(key));}

@@ -197,7 +197,8 @@ bool edit(const cs::Configuration& previous,const std::vector<Row>& rows,const s
             activity.activity_id=fresh(m::ActivityId{});activity.zone_id=previous.primary_zone_id;
             if(!activity.activity_id||contains(projection,activity.activity_id)||!retained.insert(activity.activity_id).second)return fail("Activity identity allocation failed");
         }
-        activity.label=row.name;activity.generated_label=row.name;activity.label_override=true;activity.switch_input=row.switch_input;
+        if(!row.activity_id||activity.label!=row.name){activity.label=row.name;activity.generated_label=row.name;activity.label_override=true;}
+        activity.switch_input=row.switch_input;
         if(!selected(row.display,"display",activity.display)||!selected(row.source,"source",activity.source)||!selected(row.audio,"audio",activity.audio)||!selected(row.switch_device,"switch",activity.switch_device))return false;
         candidate.activities.erase(std::remove_if(candidate.activities.begin(),candidate.activities.end(),[&](const auto& a){return a.activity_id==activity.activity_id;}),candidate.activities.end());candidate.activities.push_back(activity);order.push_back(activity.activity_id);
     }

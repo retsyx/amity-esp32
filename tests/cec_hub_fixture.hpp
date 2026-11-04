@@ -38,6 +38,7 @@ static std::function<bool(int)> fixture_completion_ready;
 static std::function<bool(int, const cec::Frame&)> fixture_submit_admission;
 static std::function<cec::TxResult(int, const cec::Frame&)> fixture_wait_outcome;
 static bool fixture_driver_paused = false;
+static bool fixture_require_available_mutex = false;
 static bool fixture_wire_deadlines = false;
 static int64_t fixture_time = 1000000;
 static int64_t fixture_tick = 100000;
@@ -99,6 +100,8 @@ void vQueueDelete(QueueHandle_t q) { assert(q->items.empty()); delete q; }
 SemaphoreHandle_t xSemaphoreCreateMutex() { return new FakeSemaphore{1, 1}; }
 SemaphoreHandle_t xSemaphoreCreateCounting(unsigned capacity, unsigned initial) { return new FakeSemaphore{capacity, initial, true}; }
 int xSemaphoreTake(SemaphoreHandle_t s, unsigned wait) {
+    if(fixture_require_available_mutex&&!s->pump_owner&&wait==portMAX_DELAY)
+        assert(s->count&&"Owner snapshot mutex would deadlock this synchronous callback");
     const bool waiting_for_reply = !s->count && wait && s->pump_owner;
     if (!s->count && wait && s->pump_owner && latest_task) {
         const auto previous = worker_receives, previous_idle = idle_passes;

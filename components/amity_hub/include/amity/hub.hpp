@@ -20,6 +20,7 @@ enum class BusSide : uint8_t { Front, Back };
 struct Activity {
     std::string name, display, source, audio, switch_device;
     uint8_t switch_input = 0;
+    system::ActivityId activity_id{};
 };
 struct Device {
     std::string name;
@@ -68,13 +69,15 @@ public:
     explicit Hub(Transport &transport) : transport_(transport) {}
     using ActionReady = std::function<void()>;
     bool configure(std::vector<Activity> activities, ActionReady ready = {});
+    // Saved edits retain the selected recipe and its execution state.
+    bool configure_scoped(std::vector<Activity> activities);
     using OwnedSender = std::function<system::OwnedDispatchResult(const system::OwnedIntent&)>;
     // Dispatch stamps the caller's request synchronously; senders only read it.
     // A callback retaining work beyond the call must own its own copy.
     using OwnedDispatcher = std::function<system::OwnedDispatchResult(system::OwnedIntent&)>;
     using OwnedLookup = std::function<std::optional<Device>(const system::QualifiedDeviceName&)>;
     void scoped_transport(std::vector<system::ScopedSelector>, OwnedDispatcher, OwnedLookup,
-                          std::optional<system::CecPortRef> default_port = {});
+                          std::optional<system::CecPortRef> default_port = {},bool publish_context=true);
     bool scoped() const { return bool(owned_sender_); }
     void scoped_owner(system::OctopusId owner){scoped_owner_=owner;}
     void scoped_ports(std::vector<system::CecPortRef> ports){scoped_owner_ports_=std::move(ports);}

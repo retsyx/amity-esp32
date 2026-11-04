@@ -7,6 +7,7 @@ from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComp
 from functional_tests.hdmi_scan import scanned_devices
 from functional_tests.qualified_names import same_name_equipment, exercise_qualified_activities
 from amity_harness.recovery import LookupScans, assert_returned
+from amity_harness.activity_edits import ActiveActivityEdits, ActivityEditObservation
 from amity_harness.transitions import observe_no_standby
 
 
@@ -90,16 +91,77 @@ def test_activity_unselected_equipment_announcement():
 
 
 def test_activity_switch_input():
-    with scanned_devices() as (dut, tv, avr, player):
-        # No CEC source: select the AVR's requested input for a non-CEC source.
-        with dut.create_activity("Functional switch input", display=tv, source=None, audio=avr,
-                                 switch_device=avr, switch_input=4) as activity:
-            started = activity.start()
-            for component in (tv, avr):
-                component.wait_for_power(PowerState.ON, since=started)
-            avr.wait_for_switch_input(4, since=started)
-            player.assert_power(PowerState.STANDBY)
-            activity.assert_active()
+    dut, secondary = DUT("amity-dut"), DUT("amity-dut-2")
+    systems = []
+    for owner, label in ((dut, "Local"), (secondary, "Remote")):
+        connector = owner.tentacle(0)
+        tv = TvComponent(connector.front, f"{label} TV")
+        avr = AvrComponent(connector.back, f"{label} AVR")
+        systems.append((tv, avr, PlaybackComponent(avr, f"{label} Player", port=1)))
+    local, remote = systems
+    components = (*local, *remote)
+    with TestBed(dut, secondary, *components, members=(secondary,)):
+        with dut.add_amity(secondary) as member:
+            member.assert_connected()
+            scan = dut.scan_hdmi()
+            scan.assert_contains_only(*components)
+            for component in components:
+                scan.assert_on(component, component.endpoint)
+
+            # Save the local numeric-input row first. Its edit moves the
+            # running member activity's UI index without selecting it again.
+            with dut.create_activity("Functional switch input", display=local[0], source=None,
+                                     audio=local[1], switch_device=local[1], switch_input=4) as other:
+                with dut.create_activity("Functional editing playback", display=remote[0],
+                                         source=remote[2], audio=remote[1]) as activity:
+                    started = activity.start()
+                    for component in remote:
+                        component.wait_for_power(PowerState.ON, since=started)
+                    for component in local:
+                        component.assert_power(PowerState.STANDBY)
+                    remote[1].wait_for_input(remote[2], since=started)
+                    activity.assert_active()
+                    dut.press_key(Key.RIGHT).assert_received_by(remote[2])
+                    dut.press_key(Key.VOLUME_UP).assert_received_by(remote[1])
+
+                    with LookupScans(scan, local[0], local[1], remote[0], remote[1]) as discovery:
+                        with ActivityEditObservation(*components, keys=(Key.SELECT, Key.VOLUME_DOWN)) as preserved:
+                            edits = ActiveActivityEdits(activity)
+                            edits.assert_active_rejected()
+                            edits.assert_active_rejected(delete=True)
+                            edits.edit_other(other, switch_input=3)
+                            # Exercise the member immediately after saving;
+                            # receive-coverage observation completes afterward.
+                            dut.press_key(Key.SELECT).assert_received_by(remote[2])
+                            dut.press_key(Key.VOLUME_DOWN).assert_received_by(remote[1])
+                            preserved.assert_preserved()
+                        for component in remote:
+                            component.assert_power(PowerState.ON)
+                        for component in local:
+                            component.assert_power(PowerState.STANDBY)
+                        activity.assert_active()
+                        assert remote[1].active_input == remote[2].address.physical
+                        discovery.assert_no_scan()
+
+                    stopped = activity.standby()
+                    for component in remote:
+                        component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+
+                    # Start the same edited row on the main and require its
+                    # new numeric input, without any further configuration save.
+                    started = other.start()
+                    for component in local[:2]:
+                        component.wait_for_power(PowerState.ON, since=started)
+                    local[1].wait_for_switch_input(3, since=started)
+                    local[2].assert_power(PowerState.STANDBY)
+                    for component in remote:
+                        component.assert_power(PowerState.STANDBY)
+                    other.assert_active()
+                    dut.press_key(Key.VOLUME_UP).assert_received_by(local[1])
+                    stopped = other.standby()
+                    for component in local[:2]:
+                        component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+            member.assert_connected()
 
 
 def _exercise_manual_component(owner_name):

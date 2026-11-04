@@ -191,10 +191,15 @@ def main():
                         row[role] = visible_name(row[role])
                     if row.get('switch'):
                         row['switch']['device'] = visible_name(row['switch']['device'])
+                active_index = fixture['status']['current_activity']
+                active = fixture['config']['activities'][active_index] if active_index >= 0 else None
+                if active and next((row for row in rows if row.get('activity_id') == active['activity_id']), None) != active:
+                    return self.reply({'error': 'Stop this activity before editing or deleting it.'}, 409)
                 fixture['config'] = dict(activities=rows)
                 normalize_rows()
                 fixture['config_revision'] += 1
-                fixture['status']['current_activity'] = -1
+                fixture['status']['current_activity'] = next((index for index, row in enumerate(rows)
+                    if active and row['activity_id'] == active['activity_id']), -1)
                 fixture['state_revision'] += 1
                 if fixture['save_gate']:
                     assert fixture['save_gate'].wait(20)
@@ -320,6 +325,65 @@ def main():
                     page.mouse.move(handle['x']+handle['width']/2,handle['y']+handle['height']/2)
                     page.mouse.down();page.mouse.move(handle['x']+handle['width']/2,row['y']+row['height']/2,steps=10);page.mouse.up()
                     expect(page.locator('#activityList .activity-name')).to_have_text(expected)
+                def standby():
+                    page.locator('#standby').click()
+                    expect(page.locator('#standby')).to_be_hidden()
+                    page.wait_for_function('() => !polling && !activityActionPending')
+
+                starts.first.click();page.wait_for_function('() => !activityActionPending')
+                current_id=fixture['config']['activities'][0]['activity_id']
+                current_row=deepcopy(fixture['config']['activities'][0])
+                active_row=page.locator('#activityList article').first
+                for control in ('Edit','Delete'):
+                    expect(active_row.get_by_role('button',name=control,exact=True)).to_be_disabled()
+                    expect(active_row.get_by_role('button',name=control,exact=True)).to_have_attribute('title','Stop this activity before editing or deleting it.')
+                expect(page.locator('#activityList article').nth(1).get_by_role('button',name='Edit',exact=True)).to_be_enabled()
+                page.evaluate('() => openActivityEditor(config.activities[0])')
+                expect(page.locator('#activityEditor')).to_be_hidden()
+                expect(page.locator('#message')).to_have_text('Stop this activity before editing or deleting it.')
+                before_calls=len(fixture['activity_calls'])
+                rename('Music during playback',1);save.click();expect(save).to_be_hidden()
+                assert fixture['status']['current_activity']==0 and fixture['config']['activities'][0]==current_row
+                assert len(fixture['activity_calls'])==before_calls
+                rename('Music',1);save.click();expect(save).to_be_hidden()
+                drag(0,1);save.click();expect(save).to_be_hidden()
+                assert fixture['status']['current_activity']==1 and fixture['config']['activities'][1]['activity_id']==current_id
+                expect(starts.nth(1)).to_have_text('Repair')
+                expect(page.locator('#activityList article').nth(1).get_by_role('button',name='Delete',exact=True)).to_be_disabled()
+                drag(1,0);save.click();expect(save).to_be_hidden();standby()
+                passed('current activity cannot be edited or deleted; editing another activity and reordering preserve its identity and playback')
+
+                edit(1);page.locator('#activityFields input').first.fill('Pending Music edit')
+                page.evaluate('''() => {
+                    window.savedAddComponent=window.amityInterface.addComponent;
+                    window.amityInterface.addComponent=async (role,name,selected)=>{window.pendingEquipmentChoice=selected;};
+                }''')
+                page.locator('#activityFields input[data-device-role=source]').click()
+                page.locator('#activityFields .device-options:not([hidden])').get_by_role('option',name='Add component…',exact=True).click()
+                page.evaluate('() => { window.amityInterface.addComponent=window.savedAddComponent; }')
+                page.locator('#activityFields input[data-device-role=source]').click()
+                expect(page.locator('#activityFields .device-options:not([hidden])')).to_be_visible()
+                fixture['status']['current_activity']=1;page.evaluate('() => refresh()')
+                expect(page.locator('#activityFields input').first).to_be_disabled()
+                expect(page.locator('#activityFields .device-options:not([hidden])')).to_have_count(0)
+                assert page.locator('#activityFields button:enabled').count()==0
+                expect(page.locator('#activityForm button[type=submit]')).to_be_disabled()
+                expect(page.locator('#editorStart')).to_be_disabled()
+                expect(page.locator('#activityEditorError')).to_have_text('Stop this activity before editing or deleting it.')
+                page.evaluate("() => window.pendingEquipmentChoice('Changed source')")
+                expect(page.locator('#activityFields input[data-device-role=source]')).to_have_value('Player')
+                assert page.evaluate('() => editingActivity.activity.source')=='Player'
+                page.locator('#cancelActivity').click();expect(save).to_be_hidden();standby()
+                rename('Staged TV edit');fixture['status']['current_activity']=0;page.evaluate('() => refresh()')
+                expect(save).to_be_disabled();writes_before=fixture['config_calls']
+                page.evaluate('() => persistActivities().catch(reportError)')
+                expect(page.locator('#message')).to_have_text('Stop this activity before editing or deleting it.')
+                assert fixture['config_calls']==writes_before
+                discard.click();standby()
+                page.locator('#activityList article').nth(1).get_by_role('button',name='Delete',exact=True).click()
+                fixture['status']['current_activity']=1;page.evaluate('() => refresh()');expect(save).to_be_disabled()
+                discard.click();standby()
+                passed('activity changes arriving during an open dialog or after staged edits or deletion block saving the now current activity')
                 expect(page.locator('#activityList input')).to_have_count(0)
                 expect(page.locator('#activityList article').first.locator('button')).to_have_text(['Edit','Delete','Start'])
                 passed('main list contains only names, reorder handles, and Edit/Delete/Start controls')
@@ -340,11 +404,11 @@ def main():
                 edit();page.locator('#editorStart').click();expect(page.locator('#editorStart')).to_have_text('Repair')
                 page.locator('#editorStart').click();expect(page.locator('#editorStart')).to_be_enabled()
                 page.wait_for_function('() => !activityActionPending');assert fixture['activity_calls'][-2:]==[0,0]
-                page.locator('#activityFields input').first.fill('Cancelled edit')
-                expect(page.locator('#editorStart')).to_have_text('Save and repair')
+                expect(page.locator('#activityFields input').first).to_be_disabled()
+                expect(page.locator('#activityForm button[type=submit]')).to_be_disabled()
                 expect(page.locator('#activityList .activity-name').first).to_have_text('TV')
-                page.locator('#cancelActivity').click();expect(save).to_be_hidden()
-                passed('modal starts and repairs saved activity; cancelling draft leaves saved list unchanged')
+                page.locator('#cancelActivity').click();expect(save).to_be_hidden();standby()
+                passed('modal starts and repairs saved activity; its fields become read only until standby')
                 edit();page.locator('#activityFields input').first.fill('Escape edit');page.keyboard.press('Escape')
                 expect(page.locator('#activityEditor')).to_be_hidden();expect(save).to_be_hidden()
                 passed('Escape dismisses modal without applying edits')
@@ -358,11 +422,11 @@ def main():
                 passed('activity backdrop discards edits without saving; inside padding and a press dragged outside do not cancel')
                 rename('Changed');expect(save).to_be_visible();expect(starts.first).to_be_disabled();expect(starts.nth(1)).to_be_enabled()
                 edit();page.locator('#activityFields input').first.fill('TV');before_calls=len(fixture['activity_calls'])
-                expect(page.locator('#editorStart')).to_have_text('Repair');page.locator('#editorStart').click();page.wait_for_function('() => !activityActionPending')
+                expect(page.locator('#editorStart')).to_have_text('Start');page.locator('#editorStart').click();page.wait_for_function('() => !activityActionPending')
                 assert len(fixture['activity_calls'])==before_calls+1 and fixture['activity_calls'][-1]==0
                 assert fixture['config']['activities'][0]['name']=='TV'
-                page.locator('#cancelActivity').click();expect(page.locator('#activityList .activity-name').first).to_have_text('Changed')
-                passed('modal draft reverted to saved settings can repair without persisting other staged edits')
+                page.locator('#cancelActivity').click();expect(page.locator('#activityList .activity-name').first).to_have_text('Changed');standby()
+                passed('modal draft reverted to saved settings can start without persisting other staged edits')
                 rename('TV');expect(save).to_be_hidden();expect(starts.first).to_be_enabled()
                 passed('reverting staged edits restores saved baseline; unaffected saved activity stays runnable')
                 edit();page.locator('#activityFields input').nth(3).fill('Receiver');page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click();expect(save).to_be_visible()
@@ -383,7 +447,7 @@ def main():
                 page.locator('[data-drag]').nth(1).press('ArrowUp');expect(save).to_be_hidden()
                 expect(page.locator('#activityList .activity-name')).to_have_text(['TV','Music'])
                 passed('keyboard reorder and reversing a drag restore the persisted order')
-                page.locator('#activityList article').first.get_by_role('button',name='Delete',exact=True).click();starts.first.click();expect(starts.first).to_have_text('Repair');page.wait_for_function('() => !activityActionPending');assert fixture['activity_calls'][-1]==1
+                standby();page.locator('#activityList article').first.get_by_role('button',name='Delete',exact=True).click();starts.first.click();expect(starts.first).to_have_text('Repair');page.wait_for_function('() => !activityActionPending');assert fixture['activity_calls'][-1]==1
                 page.reload();expect(page.locator('#admin')).to_be_visible();page.wait_for_function('() => !polling && !activityActionPending')
                 passed('deleting an earlier draft row never shifts the index sent to the device')
                 fixture['fail_save']=True;edit();page.locator('#activityFields input').first.fill('Changed');before_calls=len(fixture['activity_calls']);page.locator('#editorStart').click()
@@ -393,11 +457,11 @@ def main():
                 passed('failed Save and start retains modal draft without changing the list or starting stale settings')
                 fixture['fail_save']=False;page.locator('#editorStart').click();expect(page.locator('#editorStart')).to_have_text('Repair');expect(page.locator('#editorStart')).to_be_enabled()
                 assert fixture['config']['activities'][0]['name']=='Changed' and fixture['activity_calls'][-1]==0
-                page.locator('#cancelActivity').click();expect(save).to_be_hidden()
+                page.locator('#cancelActivity').click();expect(save).to_be_hidden();standby()
                 rename('TV');expect(save).to_be_visible();rename('Changed');expect(save).to_be_hidden()
                 passed('Save and start persists first; successful save becomes comparison baseline')
                 rename('Unwanted after save');discard.click();expect(page.locator('#activityList .activity-name')).to_have_text(['Changed','Music'])
-                expect(starts.first).to_have_text('Repair');expect(starts.first).to_be_enabled();expect(save).to_be_hidden();expect(discard).to_be_hidden()
+                expect(starts.first).to_have_text('Start');expect(starts.first).to_be_enabled();expect(save).to_be_hidden();expect(discard).to_be_hidden()
                 assert page.evaluate('() => config.activities')==fixture['config']['activities']
                 passed('Discard uses the latest successful save and restores correct Repair mapping')
                 rename('Submitted');gate=Event();fixture['save_gate']=gate;save.click();expect(save).to_be_disabled()

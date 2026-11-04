@@ -37,6 +37,9 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   during global standby receives broadcast Standby without changing selection.
   Its separate cases cover passive discovery of never-selected equipment during
   standby, switch input, local/member key routing, and client disconnect during a hold.
+  The switch-input case rejects active activity edits/deletion, edits and reorders
+  an inactive activity during member playback without CEC disruption or discovery,
+  then proves the saved input change through fresh physical commands.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
   Its isolated-source case places the thief behind another tentacle and

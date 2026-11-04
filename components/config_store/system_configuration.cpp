@@ -183,6 +183,23 @@ const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slo
     for (const auto& s : c.external_slots) if (s.slot == slot && !s.tombstone) for (const auto& a : c.activities) if (a.activity_id == s.activity_id) return &a;
     return nullptr;
 }
+bool retains_activity(const Configuration& previous,const Configuration& candidate,model::ActivityId id) {
+    const auto find=[&](const Configuration& config)->const ConfiguredActivity* {
+        const auto found=std::find_if(config.activities.begin(),config.activities.end(),[&](const auto& a){return a.activity_id==id;});
+        return found==config.activities.end()?nullptr:&*found;
+    };
+    const auto* before=find(previous);const auto* after=find(candidate);
+    if(!before||!after||before->zone_id!=after->zone_id||before->label!=after->label||
+       before->generated_label!=after->generated_label||before->label_override!=after->label_override||
+       before->source!=after->source||before->display!=after->display||before->audio!=after->audio||
+       before->switch_device!=after->switch_device||before->switch_input!=after->switch_input)return false;
+    for(const auto& selected:{before->source,before->display,before->audio,before->switch_device})if(selected){
+        const auto old=std::find_if(previous.components.begin(),previous.components.end(),[&](const auto& c){return c.record.component_id==*selected;});
+        const auto next=std::find_if(candidate.components.begin(),candidate.components.end(),[&](const auto& c){return c.record.component_id==*selected;});
+        if(old==previous.components.end()||next==candidate.components.end()||old->record.qualified_names!=next->record.qualified_names)return false;
+    }
+    return true;
+}
 std::vector<model::ActivityId> ordered_activities(const Configuration& c) {
     std::vector<model::ActivityId> result;
     const auto add=[&](model::ActivityId id){if(std::find(result.begin(),result.end(),id)==result.end()&&std::any_of(c.activities.begin(),c.activities.end(),[&](const auto& a){return a.activity_id==id;}))result.push_back(id);};

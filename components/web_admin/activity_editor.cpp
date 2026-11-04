@@ -38,6 +38,7 @@ bool revision(const cJSON* value,const char* key,uint64_t& out){const auto parse
 void decimal(cJSON* value,const char* key,uint64_t number){cJSON_AddStringToObject(value,key,m::format_uint64(number).c_str());}
 esp_err_t respond(httpd_req_t* req,cJSON* value){return web::json(req,printed(value));}
 esp_err_t reject(httpd_req_t* req,const std::string& reason,const char* code="409 Conflict"){return web::error(req,reason.c_str(),code);}
+esp_err_t reject_active(httpd_req_t* req){return web::json(req,"{\"code\":\"active_activity\",\"error\":\"Stop this activity before editing or deleting it.\"}","409 Conflict");}
 bool pending(const std::string& phase){return phase=="admitted"||phase=="configuring"||phase=="activating";}
 struct Operation {
     m::MessageId id;std::string digest,kind,stage="admitted",error;
@@ -133,6 +134,7 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         ae::Submission submission;std::string parse_error;if(!ae::parse_submission(body,*config,submission,parse_error)){result=reject(req,parse_error);return true;}
         const auto& edits=submission.rows;
         cs::Configuration candidate;std::string error;if(!ae::edit(*config,edits,choices,[](uint8_t* data,size_t size){esp_fill_random(data,size);return true;},candidate,op.unresolved,error)){result=reject(req,error);return true;}
+        for(const auto& session:state.sessions)if(!cs::retains_activity(*config,candidate,session.activity_id)){result=reject_active(req);return true;}
         if(amity::activate_distributed_configuration(std::move(candidate),config->revisions(),op.id)!=ESP_OK){result=reject(req,"The activity configuration could not be saved");return true;}op.kind="config";op.stage="configuring";
     }else{
         uint64_t revision_value,semantic;if(!keys(root.get(),{"request_id","activity_id","expected_config_revision","expected_state_revision","expected_boot_id"})||!revision(root.get(),"expected_config_revision",semantic)||semantic!=config->config_revision||!revision(root.get(),"expected_state_revision",revision_value)||revision_value!=state.state_revision||text(root.get(),"expected_boot_id")!=current_boot().str()){result=reject(req,"Playback changed. Review the current activity before continuing");return true;}
