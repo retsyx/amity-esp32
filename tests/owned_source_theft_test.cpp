@@ -109,6 +109,8 @@ static void distributed_source_comparison(){
             assert(fixture_complete_next(cec::TxResult::Success,3));advance(2);
             assert(count(4,15,0x86)==1&&count(2,4,0x36)==0);
             assert(fixture_complete_next(cec::TxResult::Success,4));advance(2);
+            assert(count(3,0,0x71)==1&&count(2,4,0x36)==0);
+            assert(fixture_complete_next(cec::TxResult::Success,3));advance(2);
             assert(!other.activity_setup_in_progress()&&count(2,4,0x36)==0);
             assert(fixture_complete_next(cec::TxResult::Success,1));advance(2);
             assert(count(2,4,0x36)==1&&count(3,0,0x04)==1);

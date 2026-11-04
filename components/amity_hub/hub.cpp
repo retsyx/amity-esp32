@@ -130,8 +130,10 @@ bool Hub::execute_owned(const system::OwnedIntent& intent) {
         if (intent.source && intent.source->port.octopus_id == intent.target.port.octopus_id && intent.source->port.tentacle_id == intent.target.port.tentacle_id) {
             context.source = intent.source->osd_name; owner_source_side_ = intent.source->port.side == system::Side::front ? BusSide::Front : BusSide::Back;
         }
-        if (intent.audio && intent.audio->port.octopus_id == intent.target.port.octopus_id && intent.audio->port.tentacle_id == intent.target.port.tentacle_id) {
-            context.audio = intent.audio->osd_name; owner_audio_side_ = intent.audio->port.side == system::Side::front ? BusSide::Front : BusSide::Back;
+        const auto audio=audio_recipient(intent.audio,intent.display);
+        if(audio)context.audio="@foreign:"+audio->port.octopus_id.str()+":"+audio->osd_name;
+        if (audio && audio->port.octopus_id == intent.target.port.octopus_id && audio->port.tentacle_id == intent.target.port.tentacle_id) {
+            context.audio = audio->osd_name; owner_audio_side_ = audio->port.side == system::Side::front ? BusSide::Front : BusSide::Back;
         }
         if(intent.display&&intent.display->port.octopus_id==intent.target.port.octopus_id&&intent.display->port.tentacle_id==intent.target.port.tentacle_id)context.display=intent.display->osd_name;
         if(intent.switch_device&&intent.switch_device->port.octopus_id==intent.target.port.octopus_id&&intent.switch_device->port.tentacle_id==intent.target.port.tentacle_id){context.switch_device=intent.switch_device->osd_name;context.switch_input=intent.input;}
@@ -220,9 +222,10 @@ Device *Hub::find_device(const std::string &name, std::optional<BusSide> side) {
         scoped_device_ = device.value_or(Device{});scoped_device_.name=name;
         scoped_device_.bus=selector->port.side==system::Side::front?BusSide::Front:BusSide::Back;return &scoped_device_;
     }
-    // A qualified source assigned to another owner/adapter is not a local
+    // A source or audio recipient on another owner/adapter is not a local
     // OSD name. Its current-activity marker must never broaden lookup scope.
-    if(!side&&!owner_source_side_&&name==current().source&&name.size()>42&&name[41]==':'&&name.rfind("@foreign:",0)==0)return nullptr;
+    if(!side&&((!owner_source_side_&&name==current().source)||(!owner_audio_side_&&name==current().audio))&&
+       name.size()>42&&name[41]==':'&&name.rfind("@foreign:",0)==0)return nullptr;
     if (!side && owner_source_side_ && name == current().source) side = owner_source_side_;
     if (!side && owner_audio_side_ && name == current().audio) side = owner_audio_side_;
     for (auto& device : devices_) if (device.name == name && (!side || device.bus == *side)) return &device;
@@ -416,10 +419,11 @@ void Hub::fix_current_activity() {
     select_activity(selected_);
 }
 void Hub::request_audio_status() {
-    if(scoped_owner_){const auto audio=target(current().audio);if(!audio||audio->port.octopus_id!=scoped_owner_)return;}
-    const auto *audio = find_device(current().audio,owner_audio_side_);
+    const auto recipient=key_name(0x41);
+    if(scoped_owner_){const auto audio=target(recipient);if(!audio||audio->port.octopus_id!=scoped_owner_)return;}
+    const auto *audio = find_device(recipient,owner_audio_side_);
     if (const auto *d = audio) {
-        if (owned_sender_) { owned(system::OwnedIntentKind::query_audio,current().audio); return; }
+        if (owned_sender_) { owned(system::OwnedIntentKind::query_audio,recipient); return; }
         audio_query_pending_ = !send(d->bus, d->address, {0x71});
         if (audio_query_pending_) audio_query_due_ = now_us_ + 500000;
     } else audio_query_pending_ = pending_resolution_ != 0;
@@ -456,7 +460,7 @@ bool Hub::audio_key(uint8_t key){
     return (key>=0x41&&key<=0x43)||key==0x65||key==0x66;
 }
 std::string Hub::key_name(uint8_t key)const{
-    const auto activity=current();return audio_key(key)?activity.audio:activity.source;
+    const auto activity=current();return audio_key(key)?audio_recipient(activity.audio,activity.display):activity.source;
 }
 std::optional<system::QualifiedDeviceName> Hub::key_target(uint8_t key)const{
     return target(key_name(key));
@@ -765,7 +769,7 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
         discovered(side,frame.source());
         if (auto *d = discovery_device(side, frame.source())) d->vendor_id = (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
     } else if (op == 0x7a && frame.size >= 3 && frame.destination() != 15) {
-        auto* d = find_device(current().audio,owner_audio_side_);
+        auto* d = find_device(key_name(0x41),owner_audio_side_);
         if (d && d->bus == side && d->address == frame.source()) {
             muted_ = (frame.data[2] & 0x80) != 0;
             const auto volume = frame.data[2] & 0x7f;

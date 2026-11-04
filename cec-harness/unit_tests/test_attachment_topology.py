@@ -30,6 +30,24 @@ class AttachmentTopologyTests(unittest.TestCase):
         self.assertEqual(avr.gpio, player.gpio)
         self.assertEqual((avr.direction, player.direction), ("back", "back"))
 
+    def test_tv_port_three_with_direct_player_or_receiver_input_two_uses_the_right_address_depth(self):
+        for receiver in (False, True):
+            with self.subTest(receiver=receiver):
+                connector = DUT("amity-dut").tentacle(0, tv_input=3)
+                tv = TvComponent(connector.front, "Input3 TV")
+                avr = AvrComponent(connector.back, "Input3 AVR") if receiver else None
+                player = PlaybackComponent(avr, "Input2 player", port=2) if avr else PlaybackComponent(connector.back, "Direct player")
+                assign_addresses((player, tv, avr) if avr else (player, tv))
+                self.assertEqual(player.address.physical, 0x3200 if receiver else 0x3000)
+                self.assertEqual(player.gpio, connector.back.gpio)
+                self.assertNotEqual(player.gpio, tv.gpio)
+                self.assertIs(player.parent, avr)
+                if avr:
+                    self.assertEqual(avr.address.physical, 0x3000)
+                    self.assertEqual(player.port, 2)
+                else:
+                    self.assertIsNone(player.port)
+
     def test_paired_root_explicit_address_must_match_the_tv_input(self):
         tv, avr, player = self.tree(tv_input=3)
         avr.address = CecAddress(5, "2.0.0.0")

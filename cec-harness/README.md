@@ -1062,6 +1062,17 @@ The routing cases include zero-duration taps and a 100 ms Volume Up hold.
 Key reports retain the requested duration, actual press/release wire timestamps,
 recipient and owner boots. No separate release request is needed.
 
+The activity cases also cover a source connected directly through Amity to TV
+input 3, with no saved audio receiver: navigation reaches the source while
+volume and mute reach the TV, both locally and on an added Amity controlled
+through the main. A separate input-3 case adds an AVR and puts the
+source on its input 2. It requires front-side Active Source at `3.0.0.0` and
+back-side Set Stream Path at `3.2.0.0`, with volume and mute sent to the AVR.
+Both cases select the adapter address through its ordinary settings UI and
+verify fresh power, display input, key effects, repair and Standby commands.
+Teardown disconnects the back-side responders and explicitly scans before
+restoring the previous adapter setting, so the next fixture can use input 1.
+
 Two additional `activity` cases run a bounded Volume Up hold locally and on the
 member, prove its first physical press, and close that authenticated HTTP
 connection while the hold is still pending. They require repetition after the
@@ -1086,7 +1097,8 @@ python3 cec-harness/run.py \
 ```
 
 The default remains `hdmi_scan`. Select `--test activity` for the activity
-power-cycle/repair, passive standby discovery, explicit switch-input, two manual-component,
+power-cycle/repair, receiver-free TV audio, nondefault HDMI inputs, passive standby
+discovery, explicit switch-input, two manual-component,
 same-name devices across owners and adapters,
 two remote-key and two disconnected
 hold sub-tests,

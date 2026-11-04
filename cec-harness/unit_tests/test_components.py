@@ -155,6 +155,31 @@ class FrameworkComponentTests(unittest.TestCase):
             self.assertFalse(playback.active)
             self.assertEqual(playback.power, PowerState.STANDBY)
 
+    def test_tv_volume_mute_and_release_follow_directed_cec_keys_without_an_avr(self):
+        dut = DUT("amity-dut")
+        tv = TvComponent(dut.tentacle(0, tv_input=3).front, "TV audio")
+        player = PlaybackComponent(dut.tentacle(0, tv_input=3).back, "Direct player")
+        with CecSession((tv, player), backend_factory=FakeBackend):
+            self.assertEqual((tv.volume, tv.muted), (25, False))
+            tv.receive(Frame(4, tv.address.logical, 0x44, b"\x41"))
+            self.assertEqual((tv.volume, tv.pressed_key), (26, 0x41))
+            tv.receive(Frame(4, tv.address.logical, 0x45))
+            self.assertIsNone(tv.pressed_key)
+            self.assertEqual(tv.volume, 26)
+            tv.receive(Frame(4, tv.address.logical, 0x44, b"\x42"))
+            self.assertEqual(tv.volume, 25)
+            for muted in (True, False):
+                tv.receive(Frame(4, tv.address.logical, 0x44, b"\x43"))
+                tv.receive(Frame(4, tv.address.logical, 0x45))
+                self.assertEqual(tv.muted, muted)
+            for value, key in ((100, b"\x41"), (0, b"\x42")):
+                tv.volume = value
+                tv.receive(Frame(4, tv.address.logical, 0x44, key))
+                self.assertEqual(tv.volume, value)
+            tv.receive(Frame(4, 5, 0x44, b"\x41"))
+            tv.receive(Frame(4, 15, 0x44, b"\x41"))
+            self.assertEqual(tv.volume, 0)
+
     def test_trace_is_bounded_and_snapshots_cannot_mutate_internal_records(self):
         tv, avr, playback = topology()
         with CecSession([tv, avr, playback], backend_factory=FakeBackend, max_records=3) as session:

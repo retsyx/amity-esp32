@@ -1,6 +1,6 @@
 """Activity power, switch input and remote key routing on local/remote owners."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager, nullcontext
 
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent,
                            Key, PowerState)
@@ -119,6 +119,116 @@ def test_activity_no_display():
                 for component in (avr, player):
                     component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
                 tv.assert_power(PowerState.STANDBY)
+
+
+@contextmanager
+def _clear_backside_on_exit(dut, tv, back):
+    """Disconnect the fixture before restoring the adapter's previous default."""
+    primary = None
+    try:
+        yield
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            for component in back:
+                component.power_off()
+            cleared = dut.scan_hdmi()
+            cleared.assert_contains_only(tv)
+            cleared.assert_on(tv, tv.endpoint)
+        except Exception as cleanup_error:
+            if primary is None:
+                raise
+            note = getattr(primary, "add_note", None)
+            if callable(note):
+                note("Back-side fixture cleanup failed: " + type(cleanup_error).__name__)
+
+
+def _exercise_nondefault_activity(*, receiver, remote=False):
+    dut = DUT("amity-dut")
+    owner = DUT("amity-dut-2") if remote else dut
+    connector = owner.tentacle(0, tv_input=3)
+    tv = TvComponent(connector.front, "Input TV")
+    avr = AvrComponent(connector.back, "Input AVR") if receiver else None
+    player = (PlaybackComponent(avr, "Input Player", port=2) if receiver
+              else PlaybackComponent(connector.back, "Input Player"))
+    components = (tv, avr, player) if receiver else (tv, player)
+    duts = (dut, owner) if remote else (dut,)
+    with TestBed(*duts, *components, members=(owner,) if remote else ()):
+        assert tv.address.physical == 0
+        assert player.address.physical == (0x3200 if receiver else 0x3000)
+        if receiver:
+            assert avr.address.physical == 0x3000
+        with (dut.add_amity(owner) if remote else nullcontext(dut)) as control:
+            if remote:
+                control.assert_connected()
+            scan = dut.scan_hdmi()
+            scan.assert_contains_only(*components)
+            for component in components:
+                scan.assert_on(component, component.endpoint)
+
+            # The explicit UI save selects the scanned TV input on the running
+            # adapter; enumeration alone does not change its selected identity.
+            with control.front_physical_address(0, "3.0.0.0") as address, _clear_backside_on_exit(dut, tv, components[1:]):
+                address.assert_address(detected="3.0.0.0", selected="3.0.0.0")
+                with dut.create_activity("Functional nondefault inputs" if receiver else "Functional TV audio",
+                                         display=tv, source=player, audio=avr) as activity:
+                    saved = next(row for row in dut.get_configuration()["activities"]
+                                 if row["activity_id"] == activity.activity_id)
+                    if not receiver:
+                        assert saved["audio"] == ""
+
+                    for repair in (False, True):
+                        if repair:
+                            player.standby()
+                            tv.active_input = 0x1000
+                            if receiver:
+                                avr.active_input = 0x3100
+                        started = activity.start()
+                        for component in components:
+                            component.wait_for_power(PowerState.ON, since=started)
+                        tv.wait_for_amity_input(since=started)
+                        if receiver:
+                            avr.wait_for_input(player, since=started)
+                        assert player.active
+                        activity.assert_active()
+                        for key in (Key.RIGHT, Key.SELECT):
+                            dut.press_key(key).assert_received_by(player)
+
+                        target = avr if receiver else tv
+                        tv_audio = (tv.volume, tv.muted)
+                        for key in (Key.VOLUME_UP, Key.VOLUME_DOWN):
+                            volume = target.volume
+                            dut.press_key(key).assert_received_by(target)
+                            if key == Key.VOLUME_UP:
+                                assert target.volume > volume
+                            else:
+                                assert target.volume < volume
+                        muted = target.muted
+                        dut.press_key(Key.MUTE).assert_received_by(target)
+                        assert target.muted != muted
+                        if receiver:
+                            assert (tv.volume, tv.muted) == tv_audio
+                        activity.assert_active()
+
+                    stopped = activity.standby()
+                    for component in components:
+                        component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+            if remote:
+                control.assert_connected()
+
+
+def test_activity_without_receiver():
+    _exercise_nondefault_activity(receiver=False)
+
+
+def test_activity_without_receiver_secondary():
+    _exercise_nondefault_activity(receiver=False, remote=True)
+
+
+def test_activity_nondefault_inputs():
+    _exercise_nondefault_activity(receiver=True)
 
 
 def test_activity_unselected_equipment_announcement():

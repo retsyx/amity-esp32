@@ -411,7 +411,7 @@ struct HubService::Impl : Transport {
     std::optional<KeyRecipient> resolve_key_role(bool audio,Command& command){
         command.discovery_sides=0;const uint8_t raw=audio?0x41:0;
         std::optional<system::QualifiedDeviceName> target;
-        if(!local_coordinator.load()&&owner_context){if(!owner_context->selected)return {};target=audio?owner_context->audio:owner_context->source;}
+        if(!local_coordinator.load()&&owner_context){if(!owner_context->selected)return {};target=audio?Hub::audio_recipient(owner_context->audio,owner_context->display):owner_context->source;}
         else if(scoped_mode)target=activity_hub.key_target(raw);
         if(target){
             if(target->port.octopus_id!=octopus||target->port.consortium_id!=consortium)return {};
@@ -449,7 +449,7 @@ struct HubService::Impl : Transport {
     void refresh_audio_hold(){
         bool down=false;for(size_t raw=0;raw<keys.size();++raw)if(keys[raw].phase==KeyPhase::down&&Hub::audio_key(static_cast<uint8_t>(raw))){down=true;break;}
         std::optional<system::QualifiedDeviceName> target;
-        if(!local_coordinator.load()&&owner_context)target=owner_context->audio;
+        if(!local_coordinator.load()&&owner_context)target=Hub::audio_recipient(owner_context->audio,owner_context->display);
         else if(scoped_mode)target=activity_hub.key_target(0x41);
         for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->hub.owner_audio_held(down&&(target?(target->port.octopus_id==octopus&&target->port.tentacle_id==id):(!scoped_mode&&id==0)));
     }
@@ -1371,7 +1371,8 @@ struct HubService::Impl : Transport {
             state.ready=std::any_of(owned_reports.begin(),owned_reports.end(),[](const auto& report){return report.ready;});
             state.devices.clear();for(const auto& selector:active_selectors)if(auto device=lookup_owned_locked(selector.target)){device->name=selector.value;state.devices.push_back(*device);}
             if(state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size()){
-                const auto& audio=state.activities[state.current_activity].audio;
+                const auto& activity=state.activities[state.current_activity];
+                const auto& audio=Hub::audio_recipient(activity.audio,activity.display);
                 for(const auto& selector:active_selectors)if(selector.value==audio)for(const auto& report:owned_reports)if(report.owner==selector.target.port.octopus_id&&report.adapter==selector.target.port.tentacle_id){
                     activity_hub.scoped_audio_status(report.audio_status_known,report.muted,report.volume);state.audio_status_known=report.audio_status_known;state.muted=report.muted;state.volume=report.volume;
                 }

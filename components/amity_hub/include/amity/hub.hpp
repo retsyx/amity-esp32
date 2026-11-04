@@ -101,6 +101,10 @@ public:
     bool select_activity(int index, ActionReady ready = {});
     bool press_key(uint8_t key, bool repeat = false);
     static bool audio_key(uint8_t key);
+    // An omitted audio selection uses the display; a missing selected device does not.
+    template<class T> static const T& audio_recipient(const T& audio,const T& display){
+        return audio!=T{}?audio:display;
+    }
     std::optional<system::QualifiedDeviceName> key_target(uint8_t key) const;
     std::string key_name(uint8_t key) const;
     uint8_t translated_key(uint8_t key) const;

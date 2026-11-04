@@ -180,6 +180,130 @@ static void owner_keys(){
     authority=false;auto denied_auth=auth;denied_auth.authority=m::OwnedAuthority::input;assert(!hub.submit_owned(bad,denied_auth));authority=true;
     fixture_async_autocomplete=true;fixture_complete_all();run_idle(2);
 }
+static void audio_keys_use_audio_or_display(bool remote_owner){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    fixture_peer_address=[](int gpio)->uint8_t{return gpio==1||gpio==5?0:4;};
+    fixture_peer_name=[](int gpio){return std::string(gpio==1||gpio==5?"TV":gpio==6?"Receiver":"Source");};
+    const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
+        {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
+         {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
+    const auto owner=remote_owner?member:controller;
+    const auto display=named(owner,m::Side::front,"TV"),source=named(owner,m::Side::back,"Source"),
+        receiver=named(owner,m::Side::back,"Receiver",1);
+    HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);
+    if(remote_owner)hub.set_coordinator_authority(false,1);
+    assert(hub.start(profile)==ESP_OK);
+    m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+    if(remote_owner){
+        assert(hub.bind_owned_controller(controller,1)==ESP_OK);
+        hub.set_owned_authorizer([&](const auto& current){return current.controller_id==auth.controller_id&&
+            current.controller_boot==auth.controller_boot&&current.owner_boot==auth.owner_boot&&
+            current.link_id==auth.link_id&&current.config_revision==auth.config_revision;});
+    }else{
+        assert(hub.configure_scoped({{"TV audio","display","source","","",0},
+            {"Receiver audio","display","source","receiver","",0},{"Source only","","source","","",0}},
+            {{"display",display},{"source",source},{"receiver",receiver}},{},controller,1)==ESP_OK);
+        run_one_command();
+    }
+    fixture_finish_discovery(hub);
+    for(unsigned phase=0;phase<(remote_owner?5u:3u);++phase){
+        const uint64_t generation=phase+1;
+        fixture_tick=1000;
+        if(remote_owner){
+            m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port=display.port;
+            context.generation=generation;context.selected=true;context.source=source;
+            if(phase!=2)context.display=display;
+            if(phase==1)context.audio=receiver;
+            if(phase==3)context.audio=named(owner,m::Side::back,"MissingReceiver");
+            if(phase==4)context.audio=named(controller,m::Side::back,"Receiver",1);
+            assert(hub.submit_owned(context,auth));
+        }else{
+            assert(hub.select_activity(static_cast<int>(phase)));run_one_command();finish_local(hub);
+            assert(hub.snapshot().current_activity==static_cast<int>(phase));
+        }
+        auto edge=[&](uint8_t raw,bool down){
+            if(!remote_owner){const bool admitted=down?hub.press_key(raw,true):hub.release_key(raw);run_one_command();return admitted;}
+            m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port=display.port;
+            input.generation=generation;input.edges[0]={raw,down};input.edge_count=1;
+            auto permitted=auth;permitted.authority=down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup;
+            return bool(hub.submit_owned(input,permitted));
+        };
+        const int audio_gpio=phase==0?1:6;
+        const uint8_t audio_address=phase==0?0:4;
+        const auto count=[](int gpio,uint8_t address,uint8_t opcode,uint8_t key=0){
+            return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){return tx.gpio==gpio&&
+                tx.frame.destination()==address&&tx.frame.size>1&&tx.frame.data[1]==opcode&&
+                (opcode!=0x44||(tx.frame.size==3&&tx.frame.data[2]==key));});
+        };
+        const auto keys=[](){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){
+            return tx.frame.size>1&&(tx.frame.data[1]==0x44||tx.frame.data[1]==0x45);});};
+        fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();
+        assert(edge(4,true)&&edge(0x41,true));
+        assert(count(2,4,0x44,4)==1);
+        if(phase>=2){
+            // No display/audio, an unresolved explicit audio target, and an
+            // explicit audio target on another owner never redirect volume.
+            assert(keys()==1);assert(edge(0x41,false)&&keys()==1);
+            assert(edge(4,false)&&count(2,4,0x45)==1&&keys()==2);
+        }else{
+            assert(count(audio_gpio,audio_address,0x44,0x41)==1&&keys()==2);
+            fixture_time+=600000;run_idle(2);
+            assert(count(audio_gpio,audio_address,0x71)==0);
+            // A TV/receiver ACK repeats its volume hold while the independent
+            // source navigation frame remains outstanding on the back wire.
+            assert(fixture_complete_next(cec::TxResult::Success,audio_gpio));run_idle(1);
+            assert(count(audio_gpio,audio_address,0x44,0x41)==2&&count(2,4,0x44,4)==1);
+            assert(edge(4,false)&&count(2,4,0x45)==1&&count(audio_gpio,audio_address,0x45)==0);
+            assert(fixture_complete_next(cec::TxResult::Success,2));run_idle(1);
+            assert(count(2,4,0x44,4)==1);
+            assert(fixture_complete_next(cec::TxResult::Success,audio_gpio));run_idle(1);
+            assert(count(audio_gpio,audio_address,0x44,0x41)==3);
+            assert(edge(0x41,false)&&count(audio_gpio,audio_address,0x45)==1);
+            assert(keys()==6);
+        }
+        fixture_complete_all();run_idle(4);
+        const auto ended=keys();fixture_time+=600000;run_idle(2);assert(keys()==ended);
+        // Every audio key follows the same recipient rule, including mute.
+        for(uint8_t raw:{0x42,0x43,0x65,0x66}){
+            const auto before=keys();assert(edge(raw,true)&&edge(raw,false));
+            assert(keys()==before+(phase>=2?0:2));
+            if(phase<2)assert(count(audio_gpio,audio_address,0x44,raw)==1);
+            fixture_complete_all();run_idle(2);
+        }
+        if(phase>=2)assert(count(1,0,0x71)==0);
+        for(const auto& tx:fixture_sent)if(tx.frame.size==3&&tx.frame.data[1]==0x44)assert(tx.attempts==1);
+        fixture_complete_all();fixture_async_autocomplete=true;run_idle(2);
+    }
+    fixture_peer_address={};fixture_peer_name={};fixture_tick=100000;
+}
+static void scoped_audio_fallback_chooses_display_owner(){
+    struct NoWire:Transport{
+        bool send(BusSide,uint8_t,const uint8_t*,size_t)override{assert(false&&"Scoped keys must dispatch to their owner");return false;}
+        void request_scan()override{assert(false&&"Owner dispatch must not preflight discovery");}
+    } wire;
+    Hub hub(wire);
+    const auto display=named(member,m::Side::front,"TV"),source=named(controller,m::Side::back,"Source"),
+        receiver=named(controller,m::Side::back,"Receiver",1);
+    std::vector<m::OwnedIntent> edges;
+    hub.scoped_transport({{"display",display},{"source",source},{"receiver",receiver}},
+        [&](auto& intent){if(intent.kind==m::OwnedIntentKind::key_edges)edges.push_back(intent);return m::OwnedDispatchResult{true,true};},
+        [](const auto& target)->std::optional<Device>{return Device{target.osd_name,
+            target.port.side==m::Side::front?BusSide::Front:BusSide::Back,
+            static_cast<uint8_t>(target.port.side==m::Side::front?0:4),0x1000,4,0,true};});
+    assert(hub.configure({{"TV audio","display","source","","",0},
+        {"Receiver audio","display","source","receiver","",0},{"Source only","","source","","",0}}));
+    for(int phase=0;phase<3;++phase){
+        assert(hub.select_activity(phase));edges.clear();
+        assert(hub.press_key(4,true)&&hub.release_key(4));
+        assert(edges.size()==2&&edges[0].target.port==source.port&&edges[1].target.port==source.port);
+        edges.clear();
+        if(phase==2){assert(!hub.press_key(0x41,true)&&edges.empty());continue;}
+        const auto expected=phase==0?display:receiver;
+        assert(hub.press_key(0x41,true)&&hub.release_key(0x41));
+        assert(edges.size()==2&&edges[0].target.port==expected.port&&edges[1].target.port==expected.port);
+        assert(edges[0].edges[0].down&&!edges[1].edges[0].down);
+    }
+}
 static void cec_ack_controls_hold(){
     fixture_present=true;
     cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
@@ -738,4 +862,4 @@ static void distinct_activity_ids_with_identical_equipment(unsigned mode){
     if(other)assert(delivered_generations.back()==second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}

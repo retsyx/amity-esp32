@@ -68,8 +68,10 @@ static void core_selection() {
         wire.sent.clear(); hub.receive(BusSide::Front, physical_query(4));
         assert(wire.sent.size() == 1 && carries_physical(wire.sent[0].frame, 0x84, 0x2000));
         wire.sent.clear(); assert(hub.select_activity(0));
-        assert(wire.sent.size() == 2 && wire.sent[0].frame.size == 2 && wire.sent[0].frame.data[1] == 0x04
-               && carries_physical(wire.sent[1].frame, 0x82, 0x2000));
+        assert(wire.sent.size() == 3 && wire.sent[0].frame.size == 2 && wire.sent[0].frame.data[1] == 0x04
+               && carries_physical(wire.sent[1].frame, 0x82, 0x2000)
+               && wire.sent[2].side == BusSide::Front && wire.sent[2].frame.destination() == 0
+               && wire.sent[2].frame.size == 2 && wire.sent[2].frame.data[1] == 0x71);
 
         // Late broadcasts and ordinary rescans preserve selection, including
         // a changed fallback passed to the scan. Explicit settings apply below.

@@ -993,6 +993,8 @@ class TvComponent(Component):
             direction = "front"
         super().__init__(attachment, name, direction=direction, **kwargs)
         self.active_input = None
+        self.volume = 25
+        self.muted = False
 
     def wait_for_amity_input(self, *, since, timeout=None):
         """Prove Amity selected this display's inline HDMI input on its front wire.
@@ -1015,6 +1017,15 @@ class TvComponent(Component):
             self.send(15, 0x32, b"eng")
         else:
             super().handle(frame)
+
+    def on_key(self, key):
+        super().on_key(key)
+        if key == 0x41:
+            self.volume = min(100, self.volume + 1)
+        elif key == 0x42:
+            self.volume = max(0, self.volume - 1)
+        elif key == 0x43:
+            self.muted = not self.muted
 
 
 class AvrComponent(Component):

@@ -3,6 +3,8 @@
 
 from amity_harness.runner import main, prepare_main, reset_main
 from functional_tests.activity import (test_activity, test_activity_no_display, test_activity_switch_input,
+                                       test_activity_without_receiver, test_activity_without_receiver_secondary,
+                                       test_activity_nondefault_inputs,
                                        test_activity_manual_component,
                                        test_activity_manual_component_secondary,
                                        test_activity_same_osd_locations,
@@ -30,7 +32,10 @@ from functional_tests.consortium import (
 
 if __name__ == "__main__":
     raise SystemExit(main({"hdmi_scan": test_hdmi_scan,
-                           "activity": (test_activity, test_activity_no_display, test_activity_switch_input,
+                           "activity": (test_activity, test_activity_no_display,
+                                        test_activity_without_receiver, test_activity_without_receiver_secondary,
+                                        test_activity_nondefault_inputs,
+                                        test_activity_switch_input,
                                         test_activity_manual_component,
                                         test_activity_manual_component_secondary,
                                         test_activity_same_osd_locations,

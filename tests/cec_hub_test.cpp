@@ -494,7 +494,46 @@ static void volume_sequence_tests() {
     hub.configure(activities); assert(hub.activity_generation() != restarted);
     assert(hub.snapshot().activity_generation == hub.activity_generation());
 }
+static void display_audio_fallback_tests(){
+    const auto front=amity::BusSide::Front,back=amity::BusSide::Back;
+    Transport wire;amity::Hub hub(wire);hub.set_addresses(4,0);
+    hub.configure({{"TV sound","Screen","Player","","",0},
+                   {"Receiver sound","Screen","Player","Receiver","",0},
+                   {"Missing receiver","Screen","Player","Absent","",0},
+                   {"No audio recipient","","Player","","",0}});
+    device(hub,front,0,0,0,"Screen");device(hub,back,4,0x3200,4,"Player");
+    device(hub,back,5,0x3000,5,"Receiver");
+    assert(hub.select_activity(0));hub.tick(1000);wire.sent.clear();
+    for(uint8_t key:{0x41,0x42,0x43,0x65,0x66}){
+        assert(hub.press_key(key));
+        assert(wire.count(front,0,{0x44,key})==1);
+        assert(!wire.contains(back,4,{0x44,key})&&!wire.contains(back,5,{0x44,key}));
+    }
+    assert(wire.count(front,0,{0x45})==5);
+    wire.sent.clear();
+    assert(hub.press_key(0x41,true)&&hub.press_key(0x04,true));
+    assert(wire.count(front,0,{0x44,0x41})==1&&wire.count(back,4,{0x44,0x04})==1);
+    assert(hub.release_key(0x04));
+    assert(wire.count(back,4,{0x45})==1&&!wire.contains(front,0,{0x45}));
+    assert(hub.press_key(0x41,true));hub.tick(600000);
+    assert(wire.count(front,0,{0x44,0x41})==2&&!wire.contains(front,0,{0x71}));
+    assert(hub.release_key(0x41)&&wire.count(front,0,{0x45})==1);
+    hub.tick(1100000);assert(wire.count(front,0,{0x71})==1);
+    hub.receive(front,frame({0x04,0x7a,23}));
+    assert(hub.snapshot().audio_status_known&&hub.snapshot().volume==23);
+    hub.receive(back,frame({0x50,0x7a,99}));assert(hub.snapshot().volume==23);
+
+    assert(hub.select_activity(1));wire.sent.clear();
+    assert(hub.press_key(0x42)&&hub.press_key(0));
+    assert(wire.count(back,5,{0x44,0x42})==1&&wire.count(back,5,{0x45})==1);
+    assert(wire.count(back,4,{0x44,0})==1&&!wire.contains(front,0,{0x44,0x42}));
+    assert(hub.select_activity(2));wire.sent.clear();
+    assert(!hub.press_key(0x41)&&wire.sent.empty());
+    assert(hub.select_activity(3));wire.sent.clear();
+    assert(!hub.press_key(0x41)&&wire.sent.empty());
+    assert(hub.press_key(0)&&wire.count(back,4,{0x44,0})==1);
+}
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); independent_key_tests(); volume_sequence_tests();
+    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); independent_key_tests(); volume_sequence_tests();display_audio_fallback_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

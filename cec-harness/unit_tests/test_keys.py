@@ -68,6 +68,31 @@ class KeyTests(unittest.TestCase):
                 self.assertEqual(action.trace["release_frame"], "05:45")
                 self.assertFalse(f.callbacks)  # Firmware owns the bounded release.
 
+    def test_tv_front_wire_volume_and_mute_proof_works_for_main_and_member(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote):
+                f = self.fixture(remote=remote)
+                tv = f.member_tv if remote else f.tv
+                initial_volume = tv.volume
+                for key in (Key.VOLUME_UP, Key.MUTE):
+                    action = f.dut.press_key(key)
+                    self.receive(f, tv, key)
+                    self.assertIs(action.assert_received_by(tv, timeout=.01), action)
+                    self.assertEqual(action.trace["press_frame"], f"40:44:{key:02x}")
+                    self.assertEqual(action.trace["release_frame"], "40:45")
+                    self.assertEqual(action.trace["owner_id"], tv.dut.identity.device_id)
+                self.assertEqual(tv.volume, initial_volume + 1)
+                self.assertTrue(tv.muted)
+                self.assertEqual(f.avr.volume, 25)
+
+    def test_tv_volume_model_changed_by_virtual_key_is_not_physical_key_proof(self):
+        f = self.fixture()
+        action = f.dut.press_key(Key.VOLUME_UP)
+        self.receive(f, f.tv, Key.VOLUME_UP, transport="virtual")
+        self.assertEqual(f.tv.volume, 26)
+        with self.assertRaises(TimeoutError):
+            action.assert_received_by(f.tv, timeout=.005)
+
     def test_held_repetition_needs_a_release_after_the_final_press(self):
         f = self.fixture()
         action = f.dut.press_key(Key.RIGHT)
