@@ -468,9 +468,16 @@ class TestBedLifetimeTests(unittest.TestCase):
                 "phase": "start", "activity_id": "a" * 32, "password": "PRIVATE_PASSWORD",
                 "operation": {"stage": "complete", "token": "PRIVATE_TOKEN"},
                 "state": {"current_activity": 0, "Authorization": "PRIVATE_TOKEN"}})
+            dut.activity_operations.append({
+                "phase": "add_component", "component_id": "b" * 32, "owner": "c" * 32,
+                "tentacle": 0, "side": "back", "osd_name": "Manual Player", "role": "source",
+                "password": "PRIVATE_PASSWORD", "Authorization": "PRIVATE_TOKEN"})
         report = bed.report
-        self.assertEqual(len(report["activities"]), 1)
+        self.assertEqual(len(report["activities"]), 2)
         self.assertEqual(report["activities"][0]["state"], {"current_activity": 0})
+        self.assertEqual(report["activities"][1], {
+            "dut": dut.name, "phase": "add_component", "component_id": "b" * 32, "owner": "c" * 32,
+            "tentacle": 0, "side": "back", "osd_name": "Manual Player", "role": "source"})
         self.assertNotIn("PRIVATE_", repr(report))
         report["activities"][0]["operation"]["stage"] = "tampered"
         self.assertEqual(bed.report["activities"][0]["operation"]["stage"], "complete")

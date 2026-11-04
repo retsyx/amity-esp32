@@ -10,7 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.activity import Activity, ActivityCleanupError, ActivityConflict
-from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, TvComponent, assign_addresses
+from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, PowerState, TvComponent, assign_addresses
 from amity_harness.dut import AmityHTTPError
 import test_scan_assertions as scan_fixture
 
@@ -246,6 +246,111 @@ class Fixture:
 
 
 class ActivityTests(unittest.TestCase):
+    def manual_fixture(self, *, member=False):
+        fixture = Fixture()
+        if member:
+            fixture.add_member()
+        missing = fixture.member_player if member else fixture.player
+        scan = fixture.dut.last_scan
+        fixture.session.components = fixture.source.components
+        scan.owner_duts[fixture.dut.identity.device_id] = fixture.dut
+        scan.owner_boots[fixture.dut.identity.device_id] = fixture.source.boot
+        scan.expected = tuple(component for component in scan.expected if component is not missing)
+        scan.records = tuple(record for record in scan.records if record.get("component") != missing.name)
+        fixture.source.system["observations"] = [row for row in fixture.source.system["observations"]
+                                                  if row["qualified_name"]["osd_name"] != missing.name]
+        missing._power = PowerState.OFF
+        original_editor, original_state, original_request = fixture.editor, fixture.state, fixture.request
+        fixture.lose_add_reply = fixture.reject_activity = False
+
+        def editor():
+            document = original_editor()
+            if fixture.selectors[missing.name].startswith("native:"):
+                document["device_choices"] = [choice for choice in document["device_choices"]
+                                               if choice["value"] != fixture.selectors[missing.name]]
+            return document
+
+        def state():
+            document = original_state()
+            document["devices"] = [row for row in document["devices"] if row.get("title") != missing.name]
+            return document
+
+        def request(path, data=None, **kwargs):
+            if path == "/api/activity-editor/components":
+                fixture.calls.append((path, deepcopy(data)))
+                self.assertEqual(data["expected_config_revision"], fixture.full["config_revision"])
+                self.assertEqual(data["expected_presentation_revision"], fixture.full["presentation_revision"])
+                self.assertEqual(set(data), {"request_id", "expected_config_revision", "expected_presentation_revision",
+                                            "octopus_id", "tentacle_id", "side", "osd_name", "role"})
+                identity = "b" * 32
+                fixture.full["components"].append({"component_id": identity, "label": missing.name,
+                                                   "kind": "source", "qualified_names": [{
+                                                       "consortium_id": fixture.source.group,
+                                                       **{key: data[key] for key in ("octopus_id", "tentacle_id", "side", "osd_name")}}]})
+                fixture.selectors[missing.name] = "component:" + identity
+                fixture.bump()
+                result = {"operation_id": data["request_id"], "stage": "applied", "component_id": identity}
+                fixture.operations[data["request_id"]] = result
+                if fixture.lose_add_reply:
+                    fixture.lose_add_reply = False
+                    raise OSError("Add component reply lost after persistence")
+                return result
+            if (path == "/api/activity-editor" and data is not None and fixture.reject_activity
+                    and any("activity_id" not in row for row in data["activities"])):
+                fixture.calls.append((path, deepcopy(data)))
+                raise AmityHTTPError(409, "Activity creation rejected")
+            return original_request(path, data, **kwargs)
+
+        fixture.dut.get_configuration, fixture.dut.get_state = editor, state
+        fixture.dut.request = request
+        return fixture, missing
+
+    def test_add_unobserved_component_uses_shipping_dialog_route_and_owned_cleanup(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote):
+                fixture, missing = self.manual_fixture(member=remote)
+                scan = fixture.dut.last_scan
+                original_expected = scan.expected
+                with fixture.activity(source=missing, add_components=(missing,)) as activity:
+                    payload = next(data for path, data in fixture.calls if path == "/api/activity-editor/components")
+                    self.assertEqual({key: payload[key] for key in ("octopus_id", "tentacle_id", "side", "osd_name", "role")},
+                                     {"octopus_id": missing.dut.identity.device_id, "tentacle_id": missing.tentacle,
+                                      "side": missing.direction, "osd_name": missing.name, "role": "source"})
+                    self.assertEqual(scan.expected, original_expected)
+                    self.assertNotIn(missing, scan.expected)
+                    self.assertNotIn(missing.name, [row.get("title") for row in fixture.dut.get_state()["devices"]])
+                    self.assertTrue(activity._saved_selections_match(fixture.dut.get_configuration()))
+                self.assertEqual([record["component_id"] for record in fixture.full["components"]], ["f" * 32])
+                self.assertEqual([row["name"] for row in fixture.rows], ["Existing activity"])
+
+    def test_added_component_is_pruned_when_activity_creation_is_rejected(self):
+        fixture, missing = self.manual_fixture()
+        fixture.reject_activity = True
+        with self.assertRaises(AmityHTTPError):
+            fixture.activity(add_components=(missing,))
+        fixture.callbacks[-1]()
+        self.assertEqual([record["component_id"] for record in fixture.full["components"]], ["f" * 32])
+        self.assertEqual([row["name"] for row in fixture.rows], ["Existing activity"])
+
+    def test_lost_add_reply_recovers_exact_operation_before_pruning_component(self):
+        fixture, missing = self.manual_fixture()
+        fixture.lose_add_reply = True
+        with self.assertRaises(OSError):
+            fixture.activity(add_components=(missing,))
+        fixture.callbacks[-1]()
+        self.assertTrue(any(path.startswith("/api/operations/") and data is None for path, data in fixture.calls))
+        self.assertEqual([record["component_id"] for record in fixture.full["components"]], ["f" * 32])
+
+    def test_manual_component_requires_the_same_physical_owner_and_wire_witness(self):
+        fixture, missing = self.manual_fixture()
+        with self.assertRaises(ValueError):
+            fixture.activity()
+        missing._endpoint = fixture.dut.tentacle(0).front
+        fixture.dut.last_scan.expected = (fixture.avr,)
+        with self.assertRaises(AssertionError):
+            fixture.activity(display=None, add_components=(missing,))
+        self.assertFalse(fixture.calls)
+
     def test_cleanup_does_not_standby_a_user_activity_to_remove_an_unused_fixture(self):
         fixture = Fixture()
         owned = fixture.activity("Unused fixture").create()

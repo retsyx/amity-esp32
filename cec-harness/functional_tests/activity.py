@@ -1,5 +1,7 @@
 """Activity power, switch input and remote key routing on local/remote owners."""
 
+from contextlib import ExitStack
+
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent,
                            Key, PowerState)
 from functional_tests.hdmi_scan import scanned_devices
@@ -97,6 +99,75 @@ def test_activity_switch_input():
             avr.wait_for_switch_input(4, since=started)
             player.assert_power(PowerState.STANDBY)
             activity.assert_active()
+
+
+def _exercise_manual_component(owner_name):
+    main = DUT("amity-dut")
+    owner = main if owner_name == main.name else DUT(owner_name)
+    tentacle = owner.tentacle(0)
+    tv = TvComponent(tentacle.front, "Manual TV")
+    avr = AvrComponent(tentacle.back, "Manual AVR")
+    player = PlaybackComponent(avr, "Manual Player", port=1, power=PowerState.OFF)
+    members = () if owner is main else (owner,)
+    duts = (main,) if owner is main else (main, owner)
+
+    with TestBed(*duts, tv, avr, player, members=members), ExitStack() as stack:
+        member = stack.enter_context(main.add_amity(owner)) if members else None
+        if member is not None:
+            member.assert_connected()
+        scan = main.scan_hdmi()
+        scan.assert_contains_only(tv, avr)
+        scan.assert_on(tv, tentacle.front)
+        scan.assert_on(avr, tentacle.back)
+        player.assert_power(PowerState.OFF)
+
+        with LookupScans(scan, tv, avr) as discovery:
+            # Save the source through Add component while it cannot answer CEC.
+            # Neither operation may enumerate this adapter's physical wires.
+            with main.create_activity("Functional manual component", display=tv,
+                                      source=player, audio=avr,
+                                      add_components=(player,)) as activity:
+                rows = main.get_configuration()["activities"]
+                saved = next(row for row in rows if row["activity_id"] == activity.activity_id)
+                selector = saved["source"]
+                assert selector.startswith("component:")
+                assert all(row["name"] != selector for row in main.get_state()["devices"])
+                player.assert_power(PowerState.OFF)
+                discovery.assert_no_scan_on_witnesses()
+
+                # Restore CEC power in standby. Require its actual OSD exchange
+                # before accepting fresh activity commands as physical proof.
+                returned = player.checkpoint()
+                player.standby()
+                discovery.assert_passive_return(player, since=returned)
+                discovery.assert_no_scan_on_witnesses()
+                assert any(row["name"] == selector for row in main.get_state()["devices"])
+                current = next(row for row in main.get_configuration()["activities"]
+                               if row["activity_id"] == activity.activity_id)
+                assert current["source"] == selector
+
+                started = activity.start()
+                for component in (tv, avr, player):
+                    component.wait_for_power(PowerState.ON, since=started)
+                avr.wait_for_input(player, since=started)
+                activity.assert_active()
+                main.press_key(Key.SELECT).assert_received_by(player)
+                main.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                discovery.assert_no_scan_on_witnesses()
+
+                stopped = activity.standby()
+                for component in (tv, avr, player):
+                    component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+        if member is not None:
+            member.assert_connected()
+
+
+def test_activity_manual_component():
+    _exercise_manual_component("amity-dut")
+
+
+def test_activity_manual_component_secondary():
+    _exercise_manual_component("amity-dut-2")
 
 
 def _exercise_keys(dut, tv, avr, player):

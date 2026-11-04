@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import sys
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import Frame, TestBed
+from amity_harness import DUT, Frame, TestBed
 from amity_harness.recovery import LookupScans, _fresh_return, assert_returned, assert_switch_commands
 from test_activity import Fixture
 import test_keys as key_fixture
@@ -114,6 +114,84 @@ class EquipmentRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "unsolicited"):
                 observer.assert_no_scan()
         self.assertFalse(fixture.tv._wire_observers or fixture.avr._wire_observers)
+
+    def test_scoped_witness_assertion_retains_unrelated_aggregate_discovery(self):
+        fixture, scan = self.fixture()
+        with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+            original = fixture.dut.get_state
+            fixture.generation += 1
+            fixture.dut.get_state = lambda: {**original(), "discovering": True}
+            observer.assert_no_scan_on_witnesses()
+            check = observer._report["checks"][-1]
+            self.assertEqual(check["kind"], "no_scan_on_witnesses")
+            self.assertTrue(check["passed"])
+            self.assertTrue(check["discovering"])
+            self.assertNotEqual(check["expected_generation"], check["observed_generation"])
+            self.assertEqual(check["frames"], [])
+            self.assertEqual(observer._report["wires"], [
+                {"owner": component.dut.identity.device_id, "tentacle": component.tentacle,
+                 "side": component.direction, "gpio": component.gpio}
+                for component in (fixture.tv, fixture.avr)])
+            with self.assertRaises(AssertionError):
+                observer.assert_no_scan()
+        self.assertFalse(fixture.calls)
+
+    def test_scoped_witness_assertion_still_rejects_real_queries_and_invalid_clock(self):
+        for opcode, timestamp in ((0x83, None), (0x46, None), (0x83, 0)):
+            with self.subTest(opcode=opcode, timestamp=timestamp):
+                fixture, scan = self.fixture()
+                with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+                    original = fixture.dut.get_state
+                    fixture.dut.get_state = lambda: {**original(), "discovering": True}
+                    self.query(fixture, observer, fixture.avr, opcode, timestamp=timestamp)
+                    with self.assertRaisesRegex(AssertionError, "unsolicited"):
+                        observer.assert_no_scan_on_witnesses()
+                    check = observer._report["checks"][-1]
+                    self.assertFalse(check["passed"])
+                    self.assertEqual(check["invalid_clock"], timestamp == 0)
+                    if timestamp != 0:
+                        self.assertEqual(check["unexpected_queries"][0]["query_frame"], f"05:{opcode:02x}")
+
+    def test_scoped_witness_assertion_requires_original_boot_and_current_owner_proof(self):
+        for changed in ("status_boot", "owner_boot"):
+            with self.subTest(changed=changed):
+                fixture, scan = self.fixture()
+                with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+                    if changed == "status_boot":
+                        original = fixture.dut.get_state
+                        fixture.dut.get_state = lambda: {**original(), "expected_boot_id": "e" * 32}
+                    else:
+                        fixture.source.system["boot_id"] = "e" * 32
+                    with self.assertRaises(AssertionError):
+                        observer.assert_no_scan_on_witnesses()
+
+    def test_scoped_assertions_require_unbroken_registered_observer_lifetime(self):
+        for inactive in ("unentered", "closed", "unregistered"):
+            for assertion in ("no_scan", "passive_return"):
+                with self.subTest(inactive=inactive, assertion=assertion):
+                    fixture, scan = self.fixture()
+                    scan.expected = (fixture.tv, fixture.avr)
+                    observer = LookupScans(scan, fixture.tv, fixture.avr)
+                    if inactive != "unentered":
+                        observer.__enter__()
+                    since = time.monotonic_ns()
+                    self.return_records(fixture, fixture.player, since)
+                    original = fixture.dut.get_state
+                    fixture.state = fixture.dut.get_state = lambda: {**original(), "discovering": True}
+                    if inactive == "closed":
+                        observer.__exit__(None, None, None)
+                    elif inactive == "unregistered":
+                        fixture.avr._wire_observers.remove(observer._observe)
+                    try:
+                        with self.assertRaisesRegex(AssertionError, "active registered wire observation"):
+                            if assertion == "no_scan":
+                                observer.assert_no_scan_on_witnesses()
+                            else:
+                                observer.assert_passive_return(fixture.player, since=since)
+                        self.assertNotIn(fixture.player, scan.expected)
+                    finally:
+                        if inactive == "unregistered":
+                            observer.__exit__(None, None, None)
 
     def test_existing_avr_reannouncement_permits_only_its_fresh_targeted_metadata(self):
         fixture, scan = self.fixture()
@@ -279,6 +357,104 @@ class EquipmentRecoveryTests(unittest.TestCase):
         self.assertLess(proof["announcement_wire_timestamp_ns"], proof["query_wire_timestamp_ns"])
         self.assertLess(proof["query_wire_timestamp_ns"], proof["reply_wire_timestamp_ns"])
         self.assertFalse(fixture.calls)
+
+    def test_timely_return_frames_survive_later_owner_and_ui_confirmation(self):
+        for scoped in (False, True):
+            with self.subTest(scoped=scoped):
+                fixture, scan = self.fixture()
+                scan.expected = (fixture.tv, fixture.avr)
+                with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+                    since = time.monotonic_ns()
+                    self.return_records(fixture, fixture.player, since)
+                    clock = {"now": since}
+                    deadline = since + int(fixture.dut._runtime.cec_timeout * 1e9)
+                    validate = scan.validate_owners
+
+                    def slow_owner(*args, **kwargs):
+                        result = validate(*args, **kwargs)
+                        clock["now"] = max(clock["now"], deadline + 1_000_000_000)
+                        return result
+
+                    state = fixture.dut.get_state
+
+                    def late_ui():
+                        clock["now"] = deadline + 3_000_000_000
+                        return {**state(), "discovering": scoped}
+
+                    scan.validate_owners = slow_owner
+                    fixture.dut.get_state = late_ui
+                    fixture.dut.wait_for = Mock(wraps=DUT.wait_for.__get__(fixture.dut))
+                    with patch("amity_harness.recovery.time.monotonic_ns", side_effect=lambda: clock["now"]):
+                        if scoped:
+                            observer.assert_passive_return(fixture.player, since=since)
+                        else:
+                            assert_returned(scan, fixture.player, since=since)
+                    self.assertIn(fixture.player, scan.expected)
+                    self.assertEqual(fixture.dut.wait_for.call_args.kwargs["timeout"], fixture.dut._runtime.timeout)
+                    proof = fixture.bed.control_observations[-1]
+                    self.assertEqual(proof["deadline_monotonic_ns"], deadline)
+                    self.assertLessEqual(proof["reply_wire_timestamp_ns"], deadline)
+
+    def test_expired_window_without_timely_return_fails_before_waiting_for_ui(self):
+        for physical in ("late", "missing"):
+            with self.subTest(physical=physical):
+                fixture, scan = self.fixture()
+                scan.expected = (fixture.tv, fixture.avr)
+                since = time.monotonic_ns()
+                deadline = since + int(fixture.dut._runtime.cec_timeout * 1e9)
+                if physical == "late":
+                    self.return_records(fixture, fixture.player, deadline + 1)
+                fixture.dut.wait_for = Mock(side_effect=AssertionError("An expired wire window must not poll UI"))
+                with patch("amity_harness.recovery.time.monotonic_ns", return_value=deadline + 1_000_000_000):
+                    with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
+                        assert_returned(scan, fixture.player, since=since)
+                fixture.dut.wait_for.assert_not_called()
+                self.assertNotIn(fixture.player, scan.expected)
+
+    def test_scoped_passive_return_requires_genuine_identity_despite_other_adapter_discovery(self):
+        fixture, scan = self.fixture()
+        scan.expected = (fixture.tv, fixture.avr)
+        with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+            original = fixture.dut.get_state
+            fixture.state = fixture.dut.get_state = lambda: {**original(), "discovering": True}
+            since = time.monotonic_ns()
+            self.return_records(fixture, fixture.player, since)
+            with self.assertRaisesRegex(AssertionError, "full scan"):
+                assert_returned(scan, fixture.player, since=since)
+            self.assertNotIn(fixture.player, scan.expected)
+            observer.assert_passive_return(fixture.player, since=since)
+            self.assertIn(fixture.player, scan.expected)
+            check = observer._report["checks"][-1]
+            self.assertTrue(check["discovering"])
+            self.assertTrue(check["passed"])
+            self.assertEqual(check["kind"], "no_scan_on_witnesses")
+            proof = fixture.bed.control_observations[-1]
+            self.assertEqual(proof["component"], fixture.player.name)
+            self.assertLess(proof["query_wire_timestamp_ns"], proof["reply_wire_timestamp_ns"])
+
+    def test_scoped_passive_return_rejects_unannounced_query_before_admitting_peer(self):
+        fixture, scan = self.fixture()
+        scan.expected = (fixture.tv, fixture.avr)
+        with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+            original = fixture.dut.get_state
+            fixture.state = fixture.dut.get_state = lambda: {**original(), "discovering": True}
+            since = time.monotonic_ns()
+            self.return_records(fixture, fixture.player, since)
+            self.query(fixture, observer, fixture.avr)
+            with self.assertRaisesRegex(AssertionError, "unsolicited"):
+                observer.assert_passive_return(fixture.player, since=since)
+            self.assertNotIn(fixture.player, scan.expected)
+            self.assertFalse(observer._report["checks"][-1]["passed"])
+
+    def test_scoped_passive_return_requires_a_witness_on_its_exact_wire(self):
+        fixture, scan = self.fixture()
+        scan.expected = (fixture.tv, fixture.avr)
+        with LookupScans(scan, fixture.tv) as observer:
+            since = time.monotonic_ns()
+            self.return_records(fixture, fixture.player, since)
+            with self.assertRaisesRegex(AssertionError, "same owner and CEC side"):
+                observer.assert_passive_return(fixture.player, since=since)
+            self.assertNotIn(fixture.player, scan.expected)
 
     def test_virtual_stale_wrong_recipient_and_modified_return_frames_cannot_pass(self):
         for wrong in ("virtual", "stale", "recipient", "rewritten", "failed", "order"):

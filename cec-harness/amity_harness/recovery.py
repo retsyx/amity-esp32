@@ -55,6 +55,13 @@ class LookupScans:
             raise AssertionError("Lookup observation lost its active CEC scan")
         self.scan.validate_owners(self.witnesses)
 
+    def _validate_coverage(self):
+        self._validate()
+        with self.session._lock:
+            if (not hasattr(self, "_started") or self._closed
+                    or any(self._observe not in component._wire_observers for component in self.witnesses)):
+                raise AssertionError("Lookup evidence needs an active registered wire observation")
+
     def __enter__(self):
         self._validate()
         self._started = time.monotonic_ns()
@@ -67,7 +74,10 @@ class LookupScans:
             for component in self.witnesses:
                 component._wire_observers.add(self._observe)
         self._report = {"kind": "lookup_scans", "started_monotonic_ns": self._started,
-                        "owner_boots": dict(self.scan.owner_boots), "checks": []}
+                        "owner_boots": dict(self.scan.owner_boots),
+                        "wires": [{"owner": component.dut.identity.device_id, "tentacle": component.tentacle,
+                                   "side": component.direction, "gpio": component.gpio}
+                                  for component in self.witnesses], "checks": []}
         bed = self.scan._testbed
         if not hasattr(bed, "control_observations"):
             bed.control_observations = []
@@ -147,20 +157,48 @@ class LookupScans:
             with self._condition:
                 self._condition.wait(.02)
 
-    def assert_no_scan(self):
-        self._validate()
+    def _no_scan_evidence(self, kind):
+        self._validate_coverage()
         through = time.monotonic_ns()
         self._drain(through)
         state = self.scan.dut.get_state()
-        _, check = self._check_evidence("no_scan", through, state=state)
-        if (state.get("expected_boot_id") != self._boot or state.get("discovering", False)
-                or state.get("discovery_generation") != self._generation):
+        self._validate_coverage()
+        _, check = self._check_evidence(kind, through, state=state)
+        if state.get("expected_boot_id") != self._boot:
             raise AssertionError("DUT restarted or began unsolicited discovery")
         if check["invalid_clock"] or check["unexpected_queries"]:
             raise AssertionError("An unannounced witness received unsolicited lookup identity queries")
+        return through, state, check
+
+    def assert_no_scan(self):
+        through, state, check = self._no_scan_evidence("no_scan")
+        if (state.get("discovering", False)
+                or state.get("discovery_generation") != self._generation):
+            raise AssertionError("DUT restarted or began unsolicited discovery")
         check["passed"] = True
         event("lookup.no_scan", dut=self.scan.dut.name, through_monotonic_ns=through)
         return self
+
+    def assert_no_scan_on_witnesses(self):
+        """Require no enumeration on these exact owner/adapter/side wires.
+
+        The UI busy flag and generation aggregate other adapters, whose already
+        requested scans may still finish independently. Retain those UI values
+        as context; only physical witness evidence establishes scanning here.
+        """
+        through, _, check = self._no_scan_evidence("no_scan_on_witnesses")
+        check["passed"] = True
+        event("lookup.no_scan_on_witnesses", dut=self.scan.dut.name, through_monotonic_ns=through)
+        return self
+
+    def assert_passive_return(self, component, *, since):
+        """Admit a returning peer using identity and scan proof on its own wire."""
+        self._validate_coverage()
+        if (type(since) is not int or since < self._started
+                or not any(witness.dut is component.dut and witness.endpoint == component.endpoint
+                           for witness in self.witnesses)):
+            raise AssertionError("Passive return needs an observed witness on the same owner and CEC side")
+        return _assert_returned(self.scan, component, since=since, observation=self)
 
     def wait_for_cooldown(self):
         """Require silence through expiry, including a window after expiry.
@@ -254,6 +292,10 @@ def assert_returned(scan, component, *, since):
     the UI and have a new physical announcement/targeted identity exchange.
     Existing scan members, exact owner boots and wire initiators stay fenced.
     """
+    return _assert_returned(scan, component, since=since)
+
+
+def _assert_returned(scan, component, *, since, observation=None):
     session, dut = scan._session, scan.dut
     if (type(since) is not int or since <= 0 or component not in session.components
             or component._session is not session or dut.last_scan is not scan
@@ -264,25 +306,34 @@ def assert_returned(scan, component, *, since):
     deadline = since + int(dut._runtime.cec_timeout * 1e9)
     evidence = None
 
+    def physical_evidence():
+        proof = _fresh_return(session.records, component, scan.initiators[component.gpio], since, deadline)
+        if proof is None and time.monotonic_ns() >= deadline:
+            raise TimeoutError("Passive equipment return exceeded the physical CEC deadline")
+        return proof
+
+    # Owner and UI confirmation use bounded HTTP requests. Those reads may
+    # finish after timely wire frames; they cannot extend the frames' window.
+    physical_evidence()
+
     def returned(state):
         nonlocal evidence
         session.assert_healthy()
         if session._stop.is_set() or dut.last_scan is not scan:
             raise AssertionError("Returned equipment lost its CEC session")
         scan._observe(state)
-        if state.get("discovering", False):
+        if observation is None and state.get("discovering", False):
             raise AssertionError("A passive equipment return launched a full scan")
+        evidence = physical_evidence()
         catalog = _ObservedEquipment(dut, state)
         matches = [item for row in state.get("devices", [])
                    if _observed_matches((item := catalog.resolve(row)), component, component.endpoint)]
-        evidence = _fresh_return(session.records, component, scan.initiators[component.gpio], since, deadline)
         return len(matches) == 1 and evidence is not None
 
-    remaining = (deadline - time.monotonic_ns()) / 1e9
-    if remaining <= 0:
-        raise TimeoutError("Passive equipment return exceeded the physical CEC deadline")
-    dut.wait_for(returned, timeout=remaining, poll_interval=.05)
+    dut.wait_for(returned, timeout=dut._runtime.timeout, poll_interval=.05)
     scan.validate_owners()
+    if observation is not None:
+        observation.assert_no_scan_on_witnesses()
     if component not in scan.expected:
         scan.expected = (*scan.expected, component)
     scan._retain()

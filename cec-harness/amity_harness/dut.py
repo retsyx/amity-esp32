@@ -51,6 +51,7 @@ def _http_trace_fields(path, data):
     elif path in {"/api/login", "/api/logout", "/api/system", "/api/config",
                   "/api/activity-editor", "/api/activity-editor/status",
                   "/api/activity-editor/activity", "/api/activity-editor/discover",
+                  "/api/activity-editor/components",
                   "/api/key",
                   "/api/membership/admission", "/api/membership/scan", "/api/membership/add",
                   "/api/membership/remove", "/api/membership/cancel"}:
@@ -285,11 +286,12 @@ class DUT:
                          timeout=self._runtime.timeout if timeout is None else timeout)
 
     def create_activity(self, name, *, display, source, audio=None,
-                        switch_device=None, switch_input=0, timeout=None):
-        """Create an owned temporary activity through the existing UI APIs."""
+                        switch_device=None, switch_input=0, add_components=(), timeout=None):
+        """Create an owned activity, optionally using the UI's Add component."""
         from .activity import Activity
         return Activity(self, name, display=display, source=source, audio=audio,
-                        switch_device=switch_device, switch_input=switch_input, timeout=timeout).create()
+                        switch_device=switch_device, switch_input=switch_input,
+                        add_components=add_components, timeout=timeout).create()
 
     def press_key(self, key, *, duration_ms=0):
         """Send a bounded remote press through the authenticated shipping API."""

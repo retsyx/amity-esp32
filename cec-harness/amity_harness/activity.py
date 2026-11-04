@@ -61,7 +61,7 @@ class Activity:
     _cleanup_retryable = True
 
     def __init__(self, dut, name, *, display, source, audio=None,
-                 switch_device=None, switch_input=0, timeout=None):
+                 switch_device=None, switch_input=0, add_components=(), timeout=None):
         bed = getattr(dut, "_testbed", None)
         if bed is None or bed.session is None or not bed._entered or bed._closed:
             raise RuntimeError("Create activities inside an active TestBed")
@@ -76,6 +76,11 @@ class Activity:
         self.timeout = dut._runtime.timeout if timeout is None else timeout
         _positive_seconds(self.timeout, "Activity timeout")
         self.components = {"display": display, "source": source, "audio": audio, "switch": switch_device}
+        self._manual_components = tuple(add_components)
+        if (len({id(component) for component in self._manual_components}) != len(self._manual_components)
+                or any(component is None or component not in self.components.values()
+                       for component in self._manual_components)):
+            raise ValueError("Added components must be distinct selections of this activity")
         self.switch_input = switch_input
         self.scan = dut.last_scan
         if self.scan is None or self.scan.dut is not dut or self.scan._session is not self.session:
@@ -86,19 +91,21 @@ class Activity:
         for component in self.components.values():
             if component is None:
                 continue
-            if (component._session is not self.session or component not in self.scan.expected
+            if (component._session is not self.session
                     or getattr(component.dut, "_testbed", None) is not bed):
                 raise ValueError("Activity equipment must belong to this TestBed's current scanned fixture")
             if component.dut is not dut and not any(component.dut is owner for owner in getattr(bed, "duts", ())):
                 raise ValueError("Activity equipment belongs to an unrelated owner")
-            initiator = self.scan.initiators.get(component.gpio)
-            if initiator is None or not _fresh_discovery(self.scan.records, component, initiator, self.scan.started):
+            witness = self._discovery_witness(component)
+            initiator = self.scan.initiators.get(witness.gpio)
+            if initiator is None or not _fresh_discovery(self.scan.records, witness, initiator, self.scan.started):
                 raise AssertionError("Activity equipment has no fresh physical discovery evidence")
         self._validate_owners()
         self._action_scan = self.scan
         self.activity_id = None
         self._before_ids, self._before_equipment = set(), set()
         self._new_equipment = {}
+        self._component_writes = []
         self._allocated_equipment = set()
         self._creation_request_id = None
         self._creation_operation = None
@@ -144,7 +151,22 @@ class Activity:
         validator = getattr(self.scan, "validate_owners", None)
         if not callable(validator):
             raise AssertionError("Activity equipment has no verified owner boot evidence")
-        validator(equipment)
+        validator(tuple(self._discovery_witness(component) for component in equipment))
+
+    def _discovery_witness(self, component):
+        if component in self.scan.expected:
+            return component
+        if component not in self._manual_components or component not in self.session.components:
+            raise ValueError("Activity equipment must belong to this TestBed's current scanned fixture")
+        owner = component.dut.identity.device_id
+        if (self.scan.owner_duts.get(owner) is not component.dut
+                or not _identifier(self.scan.owner_boots.get(owner))):
+            raise AssertionError("Added equipment has no proven physical owner")
+        witnesses = [item for item in self.scan.expected
+                     if item.dut is component.dut and item.gpio == component.gpio]
+        if not witnesses:
+            raise AssertionError("Added equipment needs a scanned witness on its own CEC wire")
+        return witnesses[0]
 
     def refresh_scan(self, scan=None):
         """Use fresh scan evidence for future actions of this saved activity.
@@ -215,6 +237,19 @@ class Activity:
             if component is None:
                 selections[role] = ""
                 continue
+            if component in self._manual_components:
+                full = self._full_configuration(document)
+                records = [record for record in full["components"]
+                           if record.get("qualified_names") == [self._qualified_name(component)]]
+                if len(records) != 1 or not _identifier(records[0].get("component_id")):
+                    raise AssertionError("Added equipment has no unique saved scoped identity")
+                selector = "component:" + records[0]["component_id"]
+                choices = [choice for choice in document.get("device_choices", [])
+                           if choice.get("value") == selector and role in choice.get("roles", [])]
+                if len(choices) != 1:
+                    raise AssertionError("The added selection is unavailable for this activity role")
+                selections[role] = selector
+                continue
             rows = [row for row, name, runtime in resolved
                     if _observed_matches((row, name, runtime), component, component.endpoint)]
             if len(rows) != 1:
@@ -226,6 +261,58 @@ class Activity:
                 raise AssertionError("The scanned selection is unavailable for this activity role")
             selections[role] = selector
         return selections
+
+    def _qualified_name(self, component):
+        return {"consortium_id": self._saved_group, "octopus_id": component.dut.identity.device_id,
+                "tentacle_id": component.tentacle, "side": component.direction, "osd_name": component.name}
+
+    def _recognize_component(self, write, result):
+        if (result.get("operation_id") != write["request_id"] or result.get("stage") != "applied"
+                or not _identifier(result.get("component_id"))):
+            raise AssertionError("The Add component operation did not persist a component identity")
+        document, _ = self._view(check_health=False)
+        full = self._full_configuration(document)
+        identity = result["component_id"]
+        records = [record for record in full["components"] if record.get("component_id") == identity]
+        if len(records) != 1 or records[0].get("qualified_names") != [self._qualified_name(write["component"])]:
+            raise AssertionError("The added component differs from its requested scoped OSD name")
+        if identity not in self._before_equipment:
+            self._allocated_equipment.add(identity)
+            self._new_equipment[identity] = deepcopy(records[0])
+        write["complete"] = True
+        write["trace"].update(component_id=identity, operation={key: result[key] for key in _OPERATION if key in result})
+
+    def _add_components(self, document, deadline):
+        for component in self._manual_components:
+            role = next(role for role, selected in self.components.items() if selected is component)
+            payload = {"request_id": uuid4().hex,
+                       "expected_config_revision": document["expected_config_revision"],
+                       "expected_presentation_revision": document["expected_presentation_revision"],
+                       **{key: value for key, value in self._qualified_name(component).items() if key != "consortium_id"},
+                       "role": role}
+            trace = self._record("add_component", request_id=payload["request_id"],
+                                 owner=component.dut.identity.device_id, tentacle=component.tentacle,
+                                 side=component.direction, osd_name=component.name, role=role)
+            write = {"request_id": payload["request_id"], "component": component,
+                     "trace": trace, "complete": False, "rejected": False}
+            self._component_writes.append(write)
+            try:
+                result = self._write("/api/activity-editor/components", payload, deadline, trace, stage="applied")
+            except AmityHTTPError:
+                write["rejected"] = trace.get("rejected", False)
+                raise
+            self._recognize_component(write, result)
+            document, state = self._view()
+            self._require_standby(state)
+        return document
+
+    def _recover_components(self, deadline):
+        for write in self._component_writes:
+            if not write["complete"] and not write["rejected"]:
+                operation = self.dut.request("/api/operations/" + write["request_id"],
+                                             timeout=min(15, self._remaining(deadline)))
+                result = self.dut.wait_operation(operation, timeout=self._remaining(deadline))
+                self._recognize_component(write, result)
 
     def _editor_payload(self, document, rows):
         return {"version": 1, "request_id": uuid4().hex,
@@ -258,7 +345,7 @@ class Activity:
     def _saved_selections_match(self, document):
         """Validate saved intent without requiring a current CEC observation.
 
-        Creation proves the complete scoped selection against physical discovery.
+        Creation proves discovered selections or explicit Add component records.
         Later starts must also work while that equipment is absent. Keep both
         the activity row and its saved qualified equipment records fenced.
         """
@@ -291,6 +378,8 @@ class Activity:
                 self._creation_rejected = True
             elif trace["phase"] == "start":
                 self._last_start_terminal = True  # Explicit rejection admitted no own work.
+            elif trace["phase"] == "add_component":
+                trace["rejected"] = True
             raise
         if trace["phase"] == "create":
             self._creation_operation = deepcopy(response)
@@ -350,6 +439,8 @@ class Activity:
                 raise AssertionError("Saved activity configuration belongs to another system")
             self._before_ids = {row["activity_id"] for row in document["activities"]}
             self._before_equipment = {record["component_id"] for record in full["components"]}
+            document = self._add_components(document, deadline)
+            document, state = self._view()
             rows = [*document["activities"], {"name": self.name, **self._selection_fields(document, state)}]
             payload = self._editor_payload(document, rows)
             trace.update(request_id=payload["request_id"], expected_config_revision=payload["expected_config_revision"],
@@ -613,9 +704,13 @@ class Activity:
             try:
                 self._recover_creation(deadline)
                 self._remove_row(deadline)
-                self.retained_equipment = self._prune_equipment(deadline)
             except BaseException as error:
                 errors.append(error)
+        try:
+            self._recover_components(deadline)
+            self.retained_equipment = self._prune_equipment(deadline)
+        except BaseException as error:
+            errors.append(error)
         trace = self._record("cleanup", removed_activity=self._row_removed or not self._write_attempted or self._creation_rejected,
                              retained_equipment=list(self.retained_equipment))
         self._cleanup_trace = trace

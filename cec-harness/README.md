@@ -368,6 +368,15 @@ def test_activity():
 
 `DUT.create_activity()` uses the exact scanned selections and the shipping UI's
 authenticated activity editor. It retains existing activities.
+Use `add_components=(player,)` to save an unscanned fixture through the UI's
+Add component operation before selecting it. A scanned device on the same
+owner and wire proves ownership; it does not prove the new component exists.
+The activity tests keep that player electrically off through scanning and
+creation, then require a fresh physical OSD exchange when its responder returns.
+Both the main and an added secondary must subsequently deliver fresh power,
+routing, key and standby commands to the manually selected equipment.
+Enumeration checks observe that adapter's physical wires; the UI's combined
+busy indicator may include other adapters finishing an earlier explicit scan.
 The fixture power/input setters above create a disturbance only. Repair must
 deliver fresh physical power-on and routing commands; final model state alone
 cannot pass. An original-frame observation rejects any Standby, power-off or
@@ -1025,7 +1034,8 @@ python3 cec-harness/run.py \
 ```
 
 The default remains `hdmi_scan`. Select `--test activity` for the activity
-power-cycle/repair, passive standby discovery, explicit switch-input, two remote-key and two disconnected
+power-cycle/repair, passive standby discovery, explicit switch-input, two manual-component,
+two remote-key and two disconnected
 hold sub-tests,
 `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
@@ -1041,7 +1051,7 @@ saved identities, then adding a different board and proving both owners' physica
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all sixteen registered scenarios (twenty-seven
+or `--test all` for all sixteen registered scenarios (twenty-nine
 test cases). The same credentials, TLS, SSH and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful

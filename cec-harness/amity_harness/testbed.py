@@ -73,7 +73,8 @@ _SETTINGS_FIELDS = frozenset(("phase", "dut", "device_id", "tentacle_id", "reque
                               "configured", "owner_boot", "detected_address", "selected_address"))
 _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "started_monotonic_ns",
                               "boot", "expected_config_revision", "expected_presentation_revision", "error_type",
-                              "removed_activity", "removed_equipment", "retained_equipment"))
+                              "removed_activity", "removed_equipment", "retained_equipment",
+                              "component_id", "owner", "tentacle", "side", "osd_name", "role"))
 _KEY_FIELDS = frozenset(("key", "emitted_key", "duration_ms", "started_monotonic_ns", "boot", "owner_boots", "released", "standby",
                         "deadline_monotonic_ns",
                         "component", "owner_id", "gpio", "press_frame", "release_frame", "presses",
