@@ -21,6 +21,7 @@ def test_activity():
             started = activity.start()
             for component in components:
                 component.wait_for_power(PowerState.ON, since=started)
+            tv.wait_for_amity_input(since=started)
             avr.wait_for_input(player, since=started)
             activity.assert_active()
 
@@ -37,10 +38,12 @@ def test_activity():
             # Only fresh DUT commands can prove that the repair worked.
             player.standby()
             avr.active_input = 0x1200
+            tv.active_input = 0x2000 if tv.tv_input == 1 else 0x1000
             with observe_no_standby(*components) as preserved:
                 repaired = activity.start()
                 for component in components:
                     component.wait_for_power(PowerState.ON, since=repaired)
+                tv.wait_for_amity_input(since=repaired)
                 avr.wait_for_input(player, since=repaired)
                 activity.assert_active()
                 preserved.assert_preserved(since=repaired)
@@ -119,6 +122,7 @@ def test_activity_switch_input():
                         component.wait_for_power(PowerState.ON, since=started)
                     for component in local:
                         component.assert_power(PowerState.STANDBY)
+                    remote[0].wait_for_amity_input(since=started)
                     remote[1].wait_for_input(remote[2], since=started)
                     activity.assert_active()
                     dut.press_key(Key.RIGHT).assert_received_by(remote[2])
@@ -152,6 +156,7 @@ def test_activity_switch_input():
                     started = other.start()
                     for component in local[:2]:
                         component.wait_for_power(PowerState.ON, since=started)
+                    local[0].wait_for_amity_input(since=started)
                     local[1].wait_for_switch_input(3, since=started)
                     local[2].assert_power(PowerState.STANDBY)
                     for component in remote:
@@ -212,6 +217,7 @@ def _exercise_manual_component(owner_name):
                 started = activity.start()
                 for component in (tv, avr, player):
                     component.wait_for_power(PowerState.ON, since=started)
+                tv.wait_for_amity_input(since=started)
                 avr.wait_for_input(player, since=started)
                 activity.assert_active()
                 main.press_key(Key.SELECT).assert_received_by(player)
@@ -255,6 +261,7 @@ def _exercise_keys(dut, tv, avr, player):
         started = activity.start()
         for component in (tv, avr, player):
             component.wait_for_power(PowerState.ON, since=started)
+        tv.wait_for_amity_input(since=started)
         avr.wait_for_input(player, since=started)
         activity.assert_active()
 
@@ -284,6 +291,7 @@ def _exercise_disconnected_key(dut, tv, avr, player):
         started = activity.start()
         for component in (tv, avr, player):
             component.wait_for_power(PowerState.ON, since=started)
+        tv.wait_for_amity_input(since=started)
         avr.wait_for_input(player, since=started)
         activity.assert_active()
 

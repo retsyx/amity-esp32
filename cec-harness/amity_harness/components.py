@@ -994,6 +994,18 @@ class TvComponent(Component):
         super().__init__(attachment, name, direction=direction, **kwargs)
         self.active_input = None
 
+    def wait_for_amity_input(self, *, since, timeout=None):
+        """Prove Amity selected this display's inline HDMI input on its front wire.
+
+        The downstream source can have a deeper physical address on another
+        isolated wire. The display must receive Amity's own Active Source,
+        apply its upstream input address, and still have that input selected.
+        """
+        if self.direction != "front":
+            raise ValueError("Display input assertions need the adapter's front connection")
+        return self._wait_for_routing(self.tv_input << 12, since=since, timeout=timeout,
+                                     command="active_source")
+
     def handle(self, frame):
         if frame.opcode in (0x04, 0x0d) and frame.destination == self.address.logical and not frame.operands:
             self.power_on()

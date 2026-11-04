@@ -21,7 +21,9 @@ class ActivityScenario(Scenario):
                  repair_standby=False, disconnect_failure=False, missing_followup=False,
                  selected_standby=False, changed_active_selection=False,
                  directed_standby=False, changed_standby_selection=False,
-                 standby_settling=False):
+                 standby_settling=False, missing_display_input=False,
+                 missing_repair_display_input=False, wrong_display_input=False,
+                 wrong_repair_display_input=False):
         super().__init__()
         self.missing_repair_power = missing_repair_power
         self.missing_repair_route = missing_repair_route
@@ -33,6 +35,10 @@ class ActivityScenario(Scenario):
         self.directed_standby = directed_standby
         self.changed_standby_selection = changed_standby_selection
         self.standby_settling = standby_settling
+        self.missing_display_input = missing_display_input
+        self.missing_repair_display_input = missing_repair_display_input
+        self.wrong_display_input = wrong_display_input
+        self.wrong_repair_display_input = wrong_repair_display_input
         self.actions = []
         self.announcements = []
         self.observation = None
@@ -64,7 +70,8 @@ class ActivityScenario(Scenario):
                 if fixture.current is not None and not repair:
                     raise AssertionError("Repair must reselect the exact saved activity")
                 if repair:
-                    if source.power != PowerState.STANDBY or audio.active_input != 0x1200:
+                    if (source.power != PowerState.STANDBY or audio.active_input != 0x1200
+                            or display.active_input == display.tv_input << 12):
                         raise AssertionError("Repair must begin with disturbed fixture power and routing")
                     if fixture.observation is None:
                         raise AssertionError("Repair needs continuous no-Standby observation")
@@ -75,13 +82,22 @@ class ActivityScenario(Scenario):
                     component._power = PowerState.ON
                 source.active = True
                 audio._active_input = source.address.physical
+                # Even when the original announcement is missing/wrong, final
+                # model state is correct: it cannot replace fresh wire proof.
+                display._active_input = display.tv_input << 12
+                display_input = display.tv_input << 12
+                if fixture.missing_display_input or repair and fixture.missing_repair_display_input:
+                    display_input = None
+                elif fixture.wrong_display_input or repair and fixture.wrong_repair_display_input:
+                    display_input = 0x2000 if display.tv_input == 1 else 0x1000
                 power_commands = set(components)
                 if repair and fixture.missing_repair_power is not None:
                     power_commands.discard(components[fixture.missing_repair_power])
                 action = SimpleNamespace(kind="repair" if repair else "start", activity=self,
                                          owner=source.dut.name, power_commands=power_commands,
                                          route=not (repair and fixture.missing_repair_route),
-                                         source=source, audio=audio)
+                                         source=source, audio=audio, display=display,
+                                         display_input=display_input)
                 fixture.current = self
                 fixture.actions.append(action)
                 fixture.events.append(("activity.start", self, action.kind))
@@ -167,6 +183,15 @@ class ActivityScenario(Scenario):
         self.events.append(("route.wait", since.kind, avr, player))
         return avr
 
+    def display_route(self, display, *, since):
+        if (since not in self.actions or since.display is not display
+                or since.display_input != display.tv_input << 12):
+            raise AssertionError("Missing fresh physical display input announcement")
+        if display.active_input != display.tv_input << 12:
+            raise AssertionError("The display did not select Amity's input")
+        self.events.append(("display.wait", since.kind, display))
+        return display
+
     def disturb(self, component):
         component._power = PowerState.STANDBY
         self.events.append(("fixture.standby", component))
@@ -241,6 +266,7 @@ class ActivityScenario(Scenario):
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kw: self.route(avr, player, **kw)))
+            patches.enter_context(patch.object(TvComponent, "wait_for_amity_input", lambda tv, **kw: self.display_route(tv, **kw)))
             patches.enter_context(patch.object(Component, "standby", lambda component: self.disturb(component)))
             patches.enter_context(patch.object(PlaybackComponent, "activate", lambda component: self.activate(component)))
             test()
@@ -274,6 +300,7 @@ class ActivityScenarioTests(unittest.TestCase):
             self.assertEqual({row[2] for row in fixture.events if row[:2] == ("power.wait", kind)},
                              set(fixture.components))
         self.assertEqual([row[1] for row in fixture.events if row[0] == "route.wait"], ["start", "repair"])
+        self.assertEqual([row[1] for row in fixture.events if row[0] == "display.wait"], ["start", "repair"])
         self.assert_cleanup(fixture)
 
     def test_selected_and_standby_announcements_are_checked_without_reselecting_activity(self):
@@ -335,6 +362,17 @@ class ActivityScenarioTests(unittest.TestCase):
         self.assertEqual(avr.active_input, player.address.physical)
         self.assert_cleanup(fixture)
 
+    def test_missing_or_wrong_display_announcement_fails_even_when_final_input_matches(self):
+        for option in ("missing_display_input", "wrong_display_input",
+                       "missing_repair_display_input", "wrong_repair_display_input"):
+            with self.subTest(option=option):
+                fixture = ActivityScenario(**{option: True})
+                with self.assertRaisesRegex(AssertionError, "Missing fresh physical display input"):
+                    fixture.run()
+                display, = (component for component in fixture.components if isinstance(component, TvComponent))
+                self.assertEqual(display.active_input, display.tv_input << 12)
+                self.assert_cleanup(fixture)
+
     def test_transient_repair_standby_fails_even_when_final_model_power_is_on(self):
         fixture = ActivityScenario(repair_standby=True)
         with self.assertRaisesRegex(AssertionError, "unexpected physical Standby"):
@@ -357,6 +395,9 @@ class ActivityScenarioTests(unittest.TestCase):
                 self.assertIsInstance(followup[3], PlaybackComponent)
                 self.assertLess(fixture.events.index(disconnected), fixture.events.index(followup))
                 self.assertEqual(len([row for row in fixture.events if row[:2] == ("power.wait", "standby")]), 3)
+                display_proofs = [row for row in fixture.events if row[0] == "display.wait"]
+                self.assertEqual(len(display_proofs), 1)
+                self.assertEqual(display_proofs[0][2].dut.name, owner)
                 if owner != "amity-dut":
                     self.assertEqual([row for row in fixture.events if row[0] == "member.connected"],
                                      [("member.connected", owner)] * 2)

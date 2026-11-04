@@ -50,7 +50,7 @@ static void core_selection() {
         hub.set_addresses(4, 0, 0xffff);
         hub.announce(BusSide::Front);
         hub.receive(BusSide::Front, physical_query(4));
-        hub.configure({{"Watch", "", "", "", "", 0}});
+        hub.configure({{"Watch", "TV", "", "", "", 0}});
         assert(hub.select_activity(0));
         assert(wire.sent.empty()); // No physical announcement, reply, or Active Source yet.
 
@@ -68,7 +68,8 @@ static void core_selection() {
         wire.sent.clear(); hub.receive(BusSide::Front, physical_query(4));
         assert(wire.sent.size() == 1 && carries_physical(wire.sent[0].frame, 0x84, 0x2000));
         wire.sent.clear(); assert(hub.select_activity(0));
-        assert(wire.sent.size() == 1 && carries_physical(wire.sent[0].frame, 0x82, 0x2000));
+        assert(wire.sent.size() == 2 && wire.sent[0].frame.size == 2 && wire.sent[0].frame.data[1] == 0x04
+               && carries_physical(wire.sent[1].frame, 0x82, 0x2000));
 
         // Late broadcasts and ordinary rescans preserve selection, including
         // a changed fallback passed to the scan. Explicit settings apply below.
@@ -213,7 +214,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     // A pending allocation probe must leave the owner free to apply incoming
     // commands. Discovery continues only after its own completion arrives.
     fixture_async_autocomplete = false;
-    assert(service.configure({{"Watch", "", "", "", "", 0}})); run_one_command();
+    assert(service.configure({{"Watch", "TV", "", "", "", 0}})); run_one_command();
     assert(service.snapshot().activities.size() == 1 && !fixture_pending.empty());
     assert(service.snapshot().front_physical_address == 0xffff);
     fixture_async_autocomplete = true;

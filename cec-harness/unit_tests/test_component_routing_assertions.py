@@ -56,9 +56,9 @@ class QueuedWire(IdleWire):
 
 class ComponentRoutingAssertionTests(unittest.TestCase):
     @contextmanager
-    def fixture(self, *, backend_factory=IdleWire):
+    def fixture(self, *, backend_factory=IdleWire, tv_input=1):
         dut = DUT("amity-dut")
-        tentacle = dut.tentacle(0)
+        tentacle = dut.tentacle(0, tv_input=tv_input)
         tv = TvComponent(tentacle.front, "Routing TV")
         avr = AvrComponent(tentacle.back, "Routing AVR")
         player = PlaybackComponent(avr, "Routing Player", port=1)
@@ -81,6 +81,115 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
     def missing(self, component, physical, boundary):
         with self.assertRaises(TimeoutError):
             component.wait_for_input(physical, since=boundary, timeout=0.005)
+
+    def missing_amity_input(self, tv, boundary):
+        with self.assertRaises(TimeoutError):
+            tv.wait_for_amity_input(since=boundary, timeout=0.005)
+
+    def test_amity_display_input_requires_its_own_front_active_source_for_default_and_other_tv_ports(self):
+        for tv_input in (1, 3):
+            with self.subTest(tv_input=tv_input), self.fixture(tv_input=tv_input) as (dut, tv, avr, player, session):
+                expected = tv_input << 12
+                self.assertNotEqual(expected, player.address.physical)
+                tv.active_input = expected
+                start = self.boundary(dut, session)
+                self.missing_amity_input(tv, start)
+                self.receive(tv, 4, expected, opcode=0x82)
+                self.assertIs(tv.wait_for_amity_input(since=start), tv)
+                self.assertEqual(tv.active_input, expected)
+                proof = tv.routing_assertions[-1]
+                self.assertEqual(proof["command"], "active_source")
+                self.assertEqual(proof["physical_address"], expected)
+                self.assertEqual(proof["frame"], Frame(4, 15, 0x82, expected.to_bytes(2, "big")).raw.hex(":"))
+                self.assertTrue(tv.routing_events[-1]["applied"])
+
+    def test_amity_display_input_uses_authenticated_member_front_wire_not_its_back_route(self):
+        f = distributed_activity_fixture()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        tv = f.member_tv
+        expected = tv.tv_input << 12
+        self.receive(f.member_avr, 0, expected, opcode=0x82)
+        tv.active_input = expected
+        self.missing_amity_input(tv, action)
+        self.receive(tv, 0, expected, opcode=0x82)
+        self.missing_amity_input(tv, action)
+        self.receive(tv, 4, expected, opcode=0x82)
+        self.assertIs(tv.wait_for_amity_input(since=action), tv)
+        for changed in (dict(dut=f.member), dict(session=object()),
+                        dict(owner_boots={**action.owner_boots, f.member.identity.device_id: "e" * 32})):
+            with self.subTest(changed=tuple(changed)), self.assertRaises(AssertionError):
+                tv.wait_for_amity_input(since=replace(action, **changed), timeout=0.01)
+        f.bed._member_proofs.clear()
+        with self.assertRaises(AssertionError):
+            tv.wait_for_amity_input(since=action, timeout=0.01)
+
+    def test_amity_display_input_rejects_wrong_port_sender_destination_opcode_and_malformed_announcements(self):
+        cases = (dict(physical=0x1000), dict(physical=0x3100), dict(source=0), dict(source=8), dict(source=15),
+                 dict(destination=0), dict(destination=4), dict(opcode=0x86),
+                 dict(opcode=0x45, operands=b""), dict(operands=b""),
+                 dict(operands=b"\x30"), dict(operands=b"\x30\x00\x00"))
+        for changed in cases:
+            with self.subTest(changed=changed), self.fixture(tv_input=3) as (dut, tv, avr, player, session):
+                start = self.boundary(dut, session)
+                self.receive(tv, **{**dict(source=4, physical=0x3000, opcode=0x82), **changed})
+                self.missing_amity_input(tv, start)
+
+    def test_amity_display_input_rejects_local_virtual_stale_and_timestamp_rewritten_evidence(self):
+        for fault in ("local", "virtual", "stale", "timestamp"):
+            with self.subTest(fault=fault), self.fixture() as (dut, tv, avr, player, session):
+                old = time.monotonic_ns()
+                start = self.boundary(dut, session)
+                if fault == "local":
+                    tv.active_input = 0x1000
+                else:
+                    if fault == "timestamp":
+                        tv.hooks.before_rx = lambda component, frame: replace(frame, timestamp_ns=time.monotonic_ns())
+                    self.receive(tv, 4, 0x1000, opcode=0x82,
+                                 timestamp=old if fault in ("stale", "timestamp") else None,
+                                 transport="virtual" if fault == "virtual" else "wire")
+                self.assertEqual(tv.active_input, 0x1000)
+                self.missing_amity_input(tv, start)
+
+    def test_amity_display_input_requires_unmodified_applied_handler_evidence(self):
+        for fault in ("drop", "rewrite_to_match", "rewrite_to_stream_path", "ignore", "after_hook"):
+            with self.subTest(fault=fault), self.fixture() as (dut, tv, avr, player, session):
+                start = self.boundary(dut, session)
+                source, physical, opcode = 4, 0x1000, 0x82
+                if fault == "drop":
+                    tv.hooks.before_rx = lambda component, frame: None
+                elif fault == "rewrite_to_match":
+                    source, physical, opcode = 8, 0x2000, 0x86
+                    tv.hooks.before_rx = lambda component, frame: Frame(4, 15, 0x82, b"\x10\x00", timestamp_ns=frame.timestamp_ns)
+                elif fault == "rewrite_to_stream_path":
+                    tv.hooks.before_rx = lambda component, frame: replace(frame, opcode=0x86)
+                elif fault == "ignore":
+                    tv.active_input = 0x1000
+                    tv.handle = lambda frame: None
+                else:
+                    def overwrite(component, frame):
+                        component.active_input = 0x2000
+                        component.active_input = 0x1000
+                    tv.hooks.after_rx = overwrite
+                self.receive(tv, source, physical, opcode=opcode)
+                self.missing_amity_input(tv, start)
+
+    def test_amity_display_input_needs_current_state_and_a_powered_front_receiver(self):
+        with self.fixture() as (dut, tv, avr, player, session):
+            start = self.boundary(dut, session)
+            self.receive(tv, 4, 0x1000, opcode=0x82)
+            tv.wait_for_amity_input(since=start)
+            tv.active_input = 0x2000
+            self.missing_amity_input(tv, start)
+            tv.active_input = 0x1000
+            self.missing_amity_input(tv, start)
+            self.receive(tv, 4, 0x1000, opcode=0x82)
+            tv.wait_for_amity_input(since=start)
+            tv.power_off()
+            self.receive(tv, 4, 0x1000, opcode=0x82)
+            self.missing_amity_input(tv, start)
+            back_tv = TvComponent(dut.tentacle(0).back, "Back display")
+            with self.assertRaises(ValueError):
+                back_tv.wait_for_amity_input(since=start, timeout=0.005)
 
     def test_member_routing_and_numeric_input_accept_proven_main_action(self):
         f = distributed_activity_fixture()

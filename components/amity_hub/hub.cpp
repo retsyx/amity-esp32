@@ -334,7 +334,7 @@ bool Hub::select_activity(int index, ActionReady ready) {
             ++execution.cursor;
             if(pause_after_step())return false;
         }
-        execution.cursor=0;execution.step=on?Step::Source:Step::On;break;
+        execution.cursor=0;execution.step=on?Step::Announce:Step::On;break;
     }
     case Step::Source:
         if(owned_sender_){
@@ -369,17 +369,25 @@ bool Hub::select_activity(int index, ActionReady ready) {
                 if(!transport_.activity_step_pending())execution.switch_done=true;
             }
             if(!execution.switch_done||transport_.activity_step_pending())return false;
-            execution.step=execution.switch_result==system::AdmissionCode::unresolved?Step::Commit:Step::Announce;break;
+            execution.step=Step::Commit;break;
         }
-        if(execution.after.switch_device.empty()){execution.step=Step::Announce;break;}
+        if(execution.after.switch_device.empty()){execution.step=Step::Commit;break;}
         if(auto* device=find_device(execution.after.switch_device)){
             const uint8_t data[]={0x44,0x69,execution.after.switch_input};finite_press(*device,data,sizeof(data));
             if(pending_resolution_)return false;
-            execution.step=Step::Announce;if(pause_after_step())return false;
+            execution.step=Step::Commit;if(pause_after_step())return false;
         }else{if(pending_resolution_)return false;execution.step=Step::Commit;}
         break;
     case Step::Announce:
-        active_source(execution.after.display);execution.step=Step::Commit;if(pause_after_step())return false;break;
+        if(!execution.after.display.empty()){
+            const auto display=target(execution.after.display);
+            // Each display owner selects its own front input independently.
+            // Do this before requesting the source, so its immediate reply
+            // follows the final routing step and sees the committed activity.
+            // The source owner must not claim an unselected display adapter.
+            if(!scoped_owner_||(display&&display->port.octopus_id==scoped_owner_))active_source(execution.after.display);
+        }
+        execution.step=Step::Source;if(pause_after_step())return false;break;
     case Step::Commit:
         if(!execution.repair){
             selected_=index;++activity_generation_;audio_status_known_=false;volume_=127;

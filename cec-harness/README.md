@@ -37,6 +37,9 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   during global standby receives broadcast Standby without changing selection.
   Its separate cases cover passive discovery of never-selected equipment during
   standby, switch input, local/member key routing, and client disconnect during a hold.
+  Starts and repairs also require a fresh front-wire Active Source from Amity
+  and the selected display's resulting input; downstream AVR routing is checked
+  separately against the player's physical address.
   The switch-input case rejects active activity edits/deletion, edits and reorders
   an inactive activity during member playback without CEC disruption or discovery,
   then proves the saved input change through fresh physical commands.

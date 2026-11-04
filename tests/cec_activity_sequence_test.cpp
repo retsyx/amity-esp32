@@ -55,13 +55,15 @@ static void lookup_is_just_in_time(bool found){
     if(found){
         assert(wire.count(BusSide::Back,5,{0x44,0x6d})==1&&wire.count(BusSide::Back,15,{0x86,0x11,0})==0);
         wire.complete();assert(!hub.select_activity(0,begin));
+        assert(wire.count(BusSide::Front,15,{0x82,0x10,0})==1&&wire.count(BusSide::Back,15,{0x86,0x11,0})==0);
+        wire.complete();assert(!hub.select_activity(0,begin));
         assert(wire.count(BusSide::Back,15,{0x86,0x11,0})==1&&hub.snapshot().current_activity==-1);
         wire.complete();assert(!hub.select_activity(0,begin));
         assert(hub.snapshot().current_activity==0&&wire.count(BusSide::Back,4,{0x71})==1);
     }else{
-        assert(wire.count(BusSide::Back,5,{0x44,0x69,3})==1&&wire.count(BusSide::Front,15,{0x82,0x10,0})==0);
+        assert(wire.count(BusSide::Back,5,{0x44,0x69,3})==0&&wire.count(BusSide::Front,15,{0x82,0x10,0})==1);
         wire.complete();assert(!hub.select_activity(0,begin));
-        assert(wire.count(BusSide::Front,15,{0x82,0x10,0})==1&&hub.snapshot().current_activity==-1);
+        assert(wire.count(BusSide::Back,5,{0x44,0x69,3})==1&&wire.count(BusSide::Front,15,{0x82,0x10,0})==1&&hub.snapshot().current_activity==-1);
     }
     wire.complete();assert(hub.select_activity(0,begin));
     assert(!hub.activity_pending()&&hub.snapshot().current_activity==0&&ready==1);
@@ -76,8 +78,8 @@ static void configuration_and_global_standby_wait(){
     assert(!edit());assert(wire.count(BusSide::Front,0,{0x36})==1&&wire.count(BusSide::Back,4,{0x36})==0);
     assert(hub.snapshot().activities[0].name=="Original");
     wire.complete();assert(!edit());assert(wire.count(BusSide::Back,4,{0x36})==1);
-    wire.complete();assert(!edit());assert(wire.count(BusSide::Front,15,{0x82,0x10,0})==1);
     wire.complete();assert(edit()&&ready==1&&hub.snapshot().activities[0].name=="Replacement");
+    assert(wire.count(BusSide::Front,15,{0x82,0x10,0})==0);
     wire.sent.clear();ready=0;
     assert(!hub.standby([&]{++ready;}));assert(wire.count(BusSide::Front,15,{0x36})==1&&wire.count(BusSide::Back,15,{0x36})==0);
     wire.complete();assert(!hub.standby([&]{++ready;}));assert(wire.count(BusSide::Back,15,{0x36})==1);

@@ -19,10 +19,39 @@ from unit_tests.test_consortium_scenarios import Scenario
 
 
 class QualifiedNamesScenario(Scenario):
-    def __init__(self, *, wrong_key=False, forbidden_control=False):
+    def __init__(self, *, wrong_key=False, forbidden_control=False,
+                 missing_display_input=False, wrong_display_input=False):
         super().__init__()
         self.wrong_key, self.forbidden_control = wrong_key, forbidden_control
+        self.missing_display_input, self.wrong_display_input = missing_display_input, wrong_display_input
         self.observations = []
+
+    def activity(self, main, name, *, display, audio, source):
+        result = super().activity(main, name, display=display, audio=audio, source=source)
+        result.components = (display, audio, source)
+        original = result.start
+
+        def start():
+            action = original()
+            # Correct final state cannot substitute for the fresh command.
+            display._active_input = display.tv_input << 12
+            action.display, action.display_input = display, display.tv_input << 12
+            if self.missing_display_input:
+                action.display_input = None
+            elif self.wrong_display_input:
+                action.display_input = 0x2000 if display.tv_input == 1 else 0x1000
+            return action
+
+        result.start = start
+        return result
+
+    def display_route(self, display, *, since):
+        if since.display is not display or since.display_input != display.tv_input << 12:
+            raise AssertionError("Missing fresh physical display input announcement")
+        if display.active_input != display.tv_input << 12:
+            raise AssertionError("The selected display did not select Amity's input")
+        self.events.append(("display.wait", display.dut.name, display.tentacle, display))
+        return display
 
     def observe(self, scan, *components):
         fixture = self
@@ -71,6 +100,7 @@ class QualifiedNamesScenario(Scenario):
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kw: self.route(avr, player, **kw)))
+            patches.enter_context(patch.object(TvComponent, "wait_for_amity_input", lambda tv, **kw: self.display_route(tv, **kw)))
             test()
 
 
@@ -80,7 +110,7 @@ class AdapterQualifiedNamesScenario(QualifiedNamesScenario):
     def __init__(self, *, wrong_command=None, wrong_scope=None, forbidden_control=False):
         super().__init__(forbidden_control=forbidden_control)
         self.wrong_command, self.wrong_scope = wrong_command, wrong_scope
-        self.selected, self.key_targets, self.route_targets, self.created = [], [], [], []
+        self.selected, self.key_targets, self.route_targets, self.display_targets, self.created = [], [], [], [], []
 
     @staticmethod
     def scope(component):
@@ -125,6 +155,13 @@ class AdapterQualifiedNamesScenario(QualifiedNamesScenario):
             raise AssertionError("Wrong physical route recipient")
         self.route_targets.append((avr, player))
         return super().route(avr, player, since=since)
+
+    def display_route(self, display, *, since):
+        targets = self.actual_targets(since.components, "display")
+        if display is not targets[0]:
+            raise AssertionError("Wrong physical display recipient")
+        self.display_targets.append(display)
+        return super().display_route(display, since=since)
 
     def key(self, main, key):
         fixture = self
@@ -171,7 +208,20 @@ class QualifiedNamesScenarioTests(unittest.TestCase):
                                      for row in fixture.events for name in ("Same TV", "Same AVR", "Same Player")), 3)
         self.assertEqual([row[1] for row in fixture.events if row[0] == "observe.clear"],
                          [member.name, main.name])
+        self.assertEqual([row[1:] for row in fixture.events if row[0] == "display.wait"],
+                         [(main.name, 0, first[0]), (member.name, 0, second[0])])
         self.assertEqual(fixture.events[-1], ("bed.close",))
+
+    def test_missing_or_wrong_front_input_fails_despite_correct_final_display_state(self):
+        for fault in ("missing_display_input", "wrong_display_input"):
+            with self.subTest(fault=fault):
+                fixture = QualifiedNamesScenario(**{fault: True})
+                with self.assertRaisesRegex(AssertionError, "Missing fresh physical display input"):
+                    fixture.run()
+                tv = fixture.components[0]
+                self.assertEqual(tv.active_input, tv.tv_input << 12)
+                self.assertFalse(fixture.members or fixture.activities)
+                self.assertEqual(fixture.events[-1], ("bed.close",))
 
     def test_wrong_owner_key_and_control_fail_and_cleanup(self):
         for kwargs, message in (({"wrong_key": True}, "wrong physical recipient"),
@@ -210,6 +260,7 @@ class AdapterQualifiedNamesScenarioTests(unittest.TestCase):
                          [(key, system[index]) for system in systems
                           for key, index in ((Key.VOLUME_UP, 1), (Key.RIGHT, 2))])
         self.assertEqual(fixture.route_targets, [(system[1], system[2]) for system in systems])
+        self.assertEqual(fixture.display_targets, [system[0] for system in systems])
         for kind in ("scan.contains", "scan.only"):
             self.assertEqual([event[1] for event in fixture.events if event[0] == kind], [fixture.components])
         self.assertEqual(len([event for event in fixture.events if event[0] == "scan.on"]), 9)
@@ -218,7 +269,7 @@ class AdapterQualifiedNamesScenarioTests(unittest.TestCase):
                          ["activity.remove"] * 3 + ["member.remove", "bed.close"])
 
     def test_wrong_owner_or_same_owner_wrong_adapter_commands_fail_and_cleanup(self):
-        for command in ("power", "route", "key"):
+        for command in ("power", "display", "route", "key"):
             for scope in ("owner", "adapter"):
                 with self.subTest(command=command, scope=scope):
                     fixture = AdapterQualifiedNamesScenario(wrong_command=command, wrong_scope=scope)

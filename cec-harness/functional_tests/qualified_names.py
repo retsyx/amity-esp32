@@ -36,6 +36,7 @@ def exercise_qualified_activities(main, systems, names):
                 started = activity.start()
                 for component in active:
                     component.wait_for_power(PowerState.ON, since=started)
+                active[0].wait_for_amity_input(since=started)
                 active[1].wait_for_input(active[2], since=started)
                 main.press_key(Key.VOLUME_UP).assert_received_by(active[1])
                 main.press_key(Key.RIGHT).assert_received_by(active[2])

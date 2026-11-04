@@ -367,7 +367,53 @@ static void isolated_source_input(bool nested,bool same_adapter,bool front_sourc
     assert(count(5,{0x82,0x12,0})==size_t(announces)); // Once only; no retry backlog.
 }
 
+static void selected_display_announces_its_own_input(bool projector,bool source_present,bool display_present=true){
+    reset_fixture();fixture_present=false;
+    HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
+        {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
+         {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
+    std::array<uint16_t,amity::max_tentacles> physical;physical.fill(0x1000);physical[0]=0x3000;physical[1]=0x2000;
+    assert(hub.start(profile,physical)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    // Peers announce after boot so their downstream source PA cannot change
+    // either adapter's already determined upstream display input.
+    fixture_tick=0;
+    const auto announce=[](int gpio,uint8_t address,uint16_t pa,uint8_t type,const char* name){
+        fixture_incoming.push_back({gpio,{{static_cast<uint8_t>((address<<4)|15),0x84,static_cast<uint8_t>(pa>>8),static_cast<uint8_t>(pa),type},5}});
+        cec::Frame identity;identity.data[0]=static_cast<uint8_t>((address<<4)|(type==0?4:0));identity.data[1]=0x47;identity.size=2;
+        while(*name)identity.data[identity.size++]=static_cast<uint8_t>(*name++);
+        fixture_incoming.push_back({gpio,identity});
+    };
+    announce(1,0,0,0,"TV");announce(5,0,0,0,"Projector");announce(2,4,0x3100,4,"Source");run_idle(3);
+    m::OwnedIntent activity;activity.kind=m::OwnedIntentKind::activity;activity.target.port={group,owner,0,m::Side::front};activity.selected=true;
+    if(display_present)activity.display=named(owner,m::Side::front,projector?"Projector":"TV",projector?1:0);
+    if(source_present)activity.source=named(owner,m::Side::back,"Source");
+    else{activity.switch_device=named(owner,m::Side::back,"Source");activity.input=3;}
+    activity.audio=named(owner,m::Side::back,"Source");
+    const int selected_front=projector?5:1,inactive_front=projector?1:5;
+    const uint16_t selected_pa=physical[projector?1:0];
+    for(bool repair:{false,true}){
+        fixture_sent.clear();fixture_completed.clear();activity.repair=repair;enqueue(hub,activity);drain(hub);
+        assert(hub.snapshot().current_activity>=0&&!hub.activity_setup_in_progress());
+        const auto selected=count(selected_front,{0x82,static_cast<uint8_t>(selected_pa>>8),static_cast<uint8_t>(selected_pa)});
+        if(selected!=size_t(display_present))std::fprintf(stderr,"Display input: projector=%d source=%d display=%d repair=%d expectedPA=%04x announcements=%zu\n",projector,source_present,display_present,repair,selected_pa,selected);
+        assert(selected==size_t(display_present));
+        assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return sent.gpio==inactive_front&&sent.frame.size>=2&&sent.frame.data[1]==0x82;}));
+        assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return sent.gpio==selected_front&&sent.frame.size>=2&&sent.frame.data[1]==0x82;})==static_cast<int>(display_present));
+        assert(count(1,{0x82,0x31,0})==0&&count(5,{0x82,0x31,0})==0);
+        if(source_present){
+            assert(count(2,{0x86,0x31,0})==1);
+            if(display_present)assert(first(selected_front,{0x82,static_cast<uint8_t>(selected_pa>>8),static_cast<uint8_t>(selected_pa)})<first(2,{0x86,0x31,0}));
+        }else{
+            assert(count(2,{0x44,0x69,3})==1);
+            assert(first(selected_front,{0x82,static_cast<uint8_t>(selected_pa>>8),static_cast<uint8_t>(selected_pa)})<first(2,{0x44,0x69,3}));
+        }
+    }
+}
+
 int main(){
+    for(bool projector:{false,true})for(bool source_present:{false,true})selected_display_announces_its_own_input(projector,source_present);
+    selected_display_announces_its_own_input(false,true,false);
     owner_lane_and_independent_keys();
     for(const int next:{1,-1,0})cold_lookup_precedes_later_recipe(next);
     different_owners_progress_independently();
