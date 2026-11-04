@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrComponent, CecSession, DUT, Frame, Hooks, PlaybackComponent,
                           PowerState, TestBed, TvComponent, TxResult)
 from amity_harness.ble_input import BLEInputEvidence
+from amity_harness.diagnostics import LogCapture
+from amity_harness.cec_pin import PinFrame
 
 
 class KeyWire:
@@ -57,6 +59,7 @@ class Keyboard:
         self.nack_headers = 4
         self.nack_defer_terminal = False
         self.nack_eom, self.nack_ack = (False,), (True,)
+        self.nack_visible, self.nack_inflight, self.nack_poll = None, False, False
         self.nack_resume = self.nack_up_press = self.nack_up_release = self.nack_no_fresh = False
         self.report_error = None
         self.mutate = None
@@ -86,20 +89,38 @@ class Keyboard:
         frame = Frame(source, target.address.logical, opcode, b"" if key is None else bytes([key]), stamp)
         monitor = getattr(self.f, "monitor", None)
         if monitor is not None and target.gpio == monitor.component.gpio and self.transport == "wire":
-            monitor.observed.append(frame)
+            monitor.observed.append(PinFrame.observed(frame.raw, timestamp_ns=stamp,
+                eom=tuple(index == len(frame.raw) - 1 for index in range(len(frame.raw))),
+                ack=(False,) * len(frame.raw), synchronized_ns=monitor.started_ns))
         for component in self.f.components:
             if component.gpio == target.gpio:
                 component.receive(frame, transport=self.transport)
 
     def fail(self, target):
         self.failed = self.had_nack = True
+        gpio = target.dut.wiring.dut_cec_gpio(target.dut.name, target.tentacle, target.direction)
+        header = (self.f.scan.initiators[target.gpio] << 4) | target.address.logical
+        for raw, attempts in ((bytes([header, 0x44, 4]), 1),
+                              (bytes([header, 0x45]), self.nack_headers - 1)):
+            if attempts > 0:
+                self.f.log_data += (f"W (17) cec: TX failed (GPIO {gpio}, {len(raw)} bytes: "
+                    f"{raw.hex(' ')}, result Nack, attempts {attempts}, started true)\n").encode()
         for index in range(self.nack_headers):
-            frame = Frame(self.f.scan.initiators[target.gpio], target.address.logical,
-                          timestamp_ns=time.monotonic_ns())
+            stamp = (self.f.monitor.withdrawn_ns - 1
+                     if not index and self.nack_inflight else time.monotonic_ns())
+            raw = bytes([header])
+            eom, ack = self.nack_eom, self.nack_ack
+            if self.nack_poll:
+                eom, ack = (True,), (False,)
+            if not index and self.nack_visible is not None:
+                raw += self.nack_visible
+                eom = tuple(False for _ in raw[:-1]) + (len(raw) == 3 or raw[1] == 0x45,)
+                ack = tuple(False for _ in raw[:-1]) + (True,)
+            frame = PinFrame.observed(raw, timestamp_ns=stamp, eom=eom, ack=ack,
+                                      synchronized_ns=self.f.monitor.started_ns)
             observations = (self.f.monitor.pending if self.nack_defer_terminal and index == self.nack_headers - 1
                             else self.f.monitor.observed)
-            observations.append(SimpleNamespace(**vars(frame), raw=frame.raw,
-                                                eom=self.nack_eom, ack=self.nack_ack))
+            observations.append(frame)
 
     def report(self, *, keyboard=(), consumer=0):
         self.commands.append((tuple(keyboard), consumer))
@@ -210,25 +231,39 @@ class BLEInputEvidenceTests(unittest.TestCase):
             fixture = SimpleNamespace(main=main, tv=tv, avr=avr, player=player, components=components,
                                       session=session, bed=bed, scan=scan, state=state)
             fixture.keyboard = Keyboard(fixture)
+            fixture.log_data = b"retained\n"
+            def capture_logs(*, expected_boot):
+                started = time.monotonic_ns()
+                return LogCapture(fixture.log_data, main.identity.device_id, boot, boot, expected_boot,
+                                  started, time.monotonic_ns())
+            main.capture_logs = capture_logs
             scan.fixture = fixture
             yield fixture
 
     @contextmanager
     def failed_recipient(self, fixture):
         class MissingRecipient:
-            def __init__(self, component, *, scan):
+            def __init__(self, component, *, scan, withdraw_on_enter=True):
                 if component is not fixture.player or scan is not fixture.scan:
                     raise AssertionError("The fault must target the selected physical recipient")
                 self.component, self.previous = component, component.power
                 self.observed, self.pending, self.restored = [], [], False
                 fixture.failed_drains = self.drains = []
+                self.withdraw_on_enter = withdraw_on_enter
 
             def __enter__(self):
                 fixture.monitor = self
+                self.started_ns = time.monotonic_ns()
+                if self.withdraw_on_enter:
+                    self.withdraw()
+                return self
+
+            def withdraw(self):
+                self.withdrawn_ns = time.monotonic_ns()
                 self.component.power_off()
                 if fixture.keyboard.right:
                     fixture.keyboard.fail(self.component)
-                return self
+                return self.withdrawn_ns
 
             @property
             def frames(self):
@@ -256,7 +291,7 @@ class BLEInputEvidenceTests(unittest.TestCase):
                 self.restore()
                 fixture.monitor = None
 
-        with patch.dict(sys.modules, {"amity_harness.nack": SimpleNamespace(MissingCECRecipient=MissingRecipient)}):
+        with patch("amity_harness.nack.MissingCECRecipient", MissingRecipient):
             yield
 
     def test_tap_overlap_and_disconnect_have_fresh_physical_proof_and_release_state(self):
@@ -338,7 +373,9 @@ class BLEInputEvidenceTests(unittest.TestCase):
                 self.assertEqual(len(check["failed_attempt_headers"]), 4)
                 self.assertTrue(all(row["eom"] == [False] and row["ack"] == [True]
                                     for row in check["failed_attempt_headers"]))
-                self.assertTrue(check["passed"] and check["failed_attempts_include_release_cleanup"])
+                self.assertTrue(check["passed"] and check["exact_press_attempts_verified"])
+                self.assertEqual(check["failed_transmissions"], [
+                    {"frame": "04:44:04", "attempts": 1}, {"frame": "04:45", "attempts": 3}])
                 self.assertGreater(check["fresh_press_wire_timestamp_ns"], check["failed_up_observed_through_monotonic_ns"])
                 if after_repetition:
                     self.assertGreater(check["repeat_wire_timestamp_ns"], check["first_press_wire_timestamp_ns"])
@@ -350,8 +387,8 @@ class BLEInputEvidenceTests(unittest.TestCase):
 
     def test_failure_needs_an_actual_attempt_and_no_continuation_or_matching_up_effect(self):
         faults = (("nack_headers", 0, "physical failed key transmission"),
-                  ("nack_eom", (True,), "non-poll destination NACK"),
-                  ("nack_ack", (False,), "non-poll destination NACK"),
+                  ("nack_eom", (True,), "frame or EOM shape"),
+                  ("nack_poll", True, "physical failed key transmission"),
                   ("nack_headers", 5, "cleanup budget"),
                   ("nack_resume", True, "restarted"),
                   ("nack_up_press", True, "restarted"),
@@ -368,6 +405,57 @@ class BLEInputEvidenceTests(unittest.TestCase):
                 self.assertEqual(f.player.power, original_power)
                 self.assertIsNone(f.monitor)
                 self.assertEqual(f.keyboard.commands[-1], ((), 0))
+
+    def test_inflight_repeat_at_each_nacked_byte_is_captured_and_counted(self):
+        for visible in (None, b"\x44", b"\x44\x04"):
+            with self.subTest(visible=visible), self.fixture() as f, self.failed_recipient(f):
+                f.keyboard.nack_visible, f.keyboard.nack_inflight = visible, True
+                with BLEInputEvidence(f.main, f.scan) as evidence:
+                    evidence.assert_failed_press(f.keyboard, f.player, after_repetition=True)
+                check, = f.bed.control_observations[-1]["checks"]
+                self.assertTrue(check["passed"] and check["exact_press_attempts_verified"])
+                self.assertEqual(check["physical_nack_attempts"], 4)
+                self.assertEqual(len(check["failed_attempt_headers"]), 4 if visible is None else 3)
+                first = check["failed_wire_attempts"][0]
+                self.assertEqual(first["frame"], (b"\x04" + (visible or b"")).hex(":"))
+                self.assertLess(first["wire_timestamp_ns"], check["withdrawn_monotonic_ns"])
+                self.assertEqual(first["ack"], [False] * len(visible or b"") + [True])
+                self.assertTrue(any(not any(row["ack"]) for row in check["observed_failure_frames"]))
+
+    def test_visible_failed_repeat_operand_must_match_the_held_key(self):
+        with self.fixture() as f, self.failed_recipient(f):
+            f.keyboard.nack_visible, f.keyboard.nack_inflight = b"\x44\x03", True
+            with self.assertRaisesRegex(AssertionError, "wrong key operand"):
+                with BLEInputEvidence(f.main, f.scan) as evidence:
+                    evidence.assert_failed_press(f.keyboard, f.player, after_repetition=True)
+            check, = f.bed.control_observations[-1]["checks"]
+            self.assertFalse(check["passed"])
+            self.assertEqual(check["physical_nack_attempts"], 4)
+
+    def test_failed_hold_cannot_replay_during_logs_or_final_owner_reads(self):
+        for stage, opcode in (("logs", 0x44), ("logs", 0x45), ("owner", 0x45)):
+            with self.subTest(stage=stage, opcode=opcode), self.fixture() as f, self.failed_recipient(f):
+                capture, state = f.main.capture_logs, f.main.get_state
+                captures, injected = [], []
+                def emit():
+                    if not injected:
+                        injected.append(True)
+                        f.keyboard.emit(f.player, opcode, 4 if opcode == 0x44 else None)
+                def logs(**kwargs):
+                    captures.append(True)
+                    if stage == "logs" and len(captures) == 2:
+                        emit()
+                    return capture(**kwargs)
+                def owner():
+                    if stage == "owner" and f.keyboard.commands.count(((), 0)) >= 2:
+                        emit()
+                    return state()
+                f.main.capture_logs, f.main.get_state = logs, owner
+                with self.assertRaisesRegex(AssertionError, "restarted|not a no-op"):
+                    with BLEInputEvidence(f.main, f.scan) as evidence:
+                        evidence.assert_failed_press(f.keyboard, f.player)
+                self.assertTrue(injected)
+                self.assertFalse(f.bed.control_observations[-1]["checks"][-1]["passed"])
 
     def test_single_nack_without_release_is_completed_by_initial_physical_drain(self):
         for after_repetition in (False, True):

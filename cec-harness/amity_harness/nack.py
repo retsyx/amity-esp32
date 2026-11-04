@@ -10,6 +10,43 @@ from .components import PowerState
 from .trace import event
 
 
+def nack_attempts(frames, header):
+    """Keep original failed directed-key attempts, including partial messages.
+
+    A withdrawal can occur after the header was ACKed. Preserve the opcode or
+    operand when it reached the wire; a missing byte has no inferred value.
+    Fully ACKed messages are successful traffic, not failed attempts.
+    """
+    if (type(header) is not int or not 0 <= header <= 255
+            or header >> 4 == 15 or header & 15 == 15):
+        raise ValueError("NACK classification needs one directed DUT/recipient header")
+    attempts = []
+    for frame in frames:
+        if not isinstance(frame, PinFrame):
+            raise AssertionError("NACK attempts require original physical pin frames")
+        if frame.raw[0] != header:
+            continue
+        count = len(frame.raw)
+        if (len(frame.ack) != count or len(frame.eom) != count
+                or any(type(value) is not bool for value in (*frame.ack, *frame.eom))):
+            raise AssertionError("A physical NACK needs each original ACK and EOM slot")
+        if not any(frame.ack):
+            continue
+        if frame.ack != (False,) * (count - 1) + (True,):
+            raise AssertionError("A directed NACK must follow its ACKed byte prefix")
+        expected_eom = None
+        if count == 1:
+            expected_eom = (False,)
+        elif frame.opcode == 0x44 and count in (2, 3):
+            expected_eom = (False,) * (count - 1) + (count == 3,)
+        elif frame.opcode == 0x45 and count == 2:
+            expected_eom = (False, True)
+        if expected_eom is None or frame.eom != expected_eom:
+            raise AssertionError("Unrecognized physical failed key frame or EOM shape")
+        attempts.append(frame)
+    return tuple(attempts)
+
+
 class MissingCECRecipient:
     """Withdraw one fixture address without hiding its original wire traffic.
 
@@ -20,8 +57,11 @@ class MissingCECRecipient:
     rather than inventing a key opcode or operand that never reached the wire.
     """
 
-    def __init__(self, component, *, scan):
+    def __init__(self, component, *, scan, withdraw_on_enter=True):
+        if type(withdraw_on_enter) is not bool:
+            raise ValueError("Recipient withdrawal choice must be boolean")
         self.component, self.scan = component, scan
+        self._withdraw_on_enter = withdraw_on_enter
         self.session = scan._session
         self._condition = threading.Condition()
         self._frames = []
@@ -29,6 +69,8 @@ class MissingCECRecipient:
         self._thread = self._backend = None
         self._error = None
         self._entered = self._closed = self._restored = False
+        self._withdraw_attempted = self._thread_started = False
+        self.withdrawn_ns = None
         self.coverage_started_ns = 0
         self._pin_diagnostic = None
         self._drain_witnesses = []
@@ -76,10 +118,11 @@ class MissingCECRecipient:
         self._entered = True
         self._thread = threading.Thread(target=copy_context().run, args=(self._receive,),
                                         name="cec-nack@" + str(component.gpio), daemon=True)
-        self._thread.start()
         try:
-            component.power_off()
-            self.withdrawn_ns = time.monotonic_ns()
+            self._thread.start()
+            self._thread_started = True
+            if self._withdraw_on_enter:
+                self.withdraw()
             self.assert_healthy()
         except BaseException as error:
             self._note_pin_diagnostic(error, "withdraw")
@@ -90,10 +133,24 @@ class MissingCECRecipient:
                 if hasattr(error, "add_note"):
                     error.add_note("CEC recipient cleanup failed: " + type(cleanup_error).__name__)
             raise
-        event("cec.recipient.withdrawn", component=component.name, gpio=component.gpio,
-              owner=component.dut.identity.device_id, logical_address=component.address.logical,
-              since_monotonic_ns=self.withdrawn_ns)
         return self
+
+    def withdraw(self):
+        """Withdraw once, after any desired successful hold is fully observed."""
+        self.assert_healthy()
+        if self.withdrawn_ns is not None:
+            return self.withdrawn_ns
+        if self._withdraw_attempted:
+            raise RuntimeError("A failed recipient withdrawal cannot be repeated")
+        self._validate()
+        self._withdraw_attempted = True
+        self.component.power_off()
+        self.withdrawn_ns = time.monotonic_ns()
+        self.assert_healthy()
+        event("cec.recipient.withdrawn", component=self.component.name, gpio=self.component.gpio,
+              owner=self.component.dut.identity.device_id, logical_address=self.component.address.logical,
+              since_monotonic_ns=self.withdrawn_ns)
+        return self.withdrawn_ns
 
     def _receive(self):
         try:
@@ -160,6 +217,8 @@ class MissingCECRecipient:
             return tuple(self._frames)
 
     def drain(self, through):
+        if self.withdrawn_ns is None:
+            raise RuntimeError("Withdraw the recipient before draining failed-key evidence")
         if type(through) is not int or through < self.started_ns:
             raise ValueError("Drain an active failed-key observation boundary")
         deadline = max(time.monotonic(), through / 1e9) + self.scan.dut._runtime.cec_timeout
@@ -222,6 +281,8 @@ class MissingCECRecipient:
 
     def restore(self):
         self.assert_healthy()
+        if not self._withdraw_attempted:
+            return None
         if not self._restored:
             self.component.set_power(self._power)
             self._restored = True
@@ -232,7 +293,7 @@ class MissingCECRecipient:
         if self._closed:
             return
         errors = []
-        if self._entered and not self._restored:
+        if self._withdraw_attempted and not self._restored:
             try:
                 self.component.set_power(self._power)
                 self._restored = True
@@ -240,7 +301,7 @@ class MissingCECRecipient:
                 self._note_pin_diagnostic(error, "restore_cleanup")
                 errors.append(error)
         self._stop.set()
-        if self._thread is not None:
+        if self._thread_started:
             self._thread.join(timeout=2)
             if self._thread.is_alive():
                 errors.append(TimeoutError("Failed-key wire monitor did not stop"))

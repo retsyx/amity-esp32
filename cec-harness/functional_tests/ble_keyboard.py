@@ -4,6 +4,7 @@ from contextlib import ExitStack, nullcontext
 
 from amity_harness import DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent, PowerState, CecAddress
 from amity_harness.ble_input import BLEInputEvidence
+from amity_harness.ble_fifo import BLEFIFOEvidence
 from amity_harness.ble_activity_input import BLEActivityEvidence
 from amity_harness.ble_keyboard import PairedKeyboard
 
@@ -140,6 +141,9 @@ def _ble_keyboard(*, remote):
                         next_player.assert_power(PowerState.STANDBY)
                         avr.wait_for_input(player, since=started)
                         activity.assert_active()
+                        if not remote:
+                            with BLEFIFOEvidence(main, scan, *components) as evidence:
+                                evidence.assert_saturated(keyboard, source=player, volume=avr)
                         with BLEInputEvidence(main, scan, *components) as evidence:
                             evidence.assert_tap(keyboard, player)
                             evidence.assert_overlapping_buttons(keyboard, volume=avr, navigation=player)

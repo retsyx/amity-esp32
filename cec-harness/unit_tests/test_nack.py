@@ -11,7 +11,7 @@ from amity_harness import AvrComponent, CecSession, DUT, PlaybackComponent, Powe
 from amity_harness.cec import CecError, Frame, TxResult
 from amity_harness.cec_pin import PinFrame
 from amity_harness.cec_pin import PinDecoder
-from amity_harness.nack import MissingCECRecipient
+from amity_harness.nack import MissingCECRecipient, nack_attempts
 from amity_harness.topology import CecAddress
 
 
@@ -22,12 +22,14 @@ class MonitorBackend:
         self.cec_version, self.clock_uncertainty_ns = 6, 0
         self.witness_mode, self.witness_frames, self.witness_transmits = "normal", [], []
         self.empty_reads = 0
+        self.configurations = []
 
     def open(self):
         pass
 
     def configure(self, components):
         self.active = tuple(components)
+        self.configurations.append(self.active)
 
     def transmit(self, frame):
         now = time.monotonic_ns()
@@ -138,6 +140,65 @@ class MissingRecipientTests(unittest.TestCase):
             self.assertFalse(backend.closed)
             with self.assertRaisesRegex(AssertionError, "not active"):
                 _ = missing.frames
+
+    def test_monitor_precedes_hold_and_retains_later_byte_nack_started_before_withdrawal(self):
+        with self.fixture() as (_, avr, player, scan, backend):
+            with MissingCECRecipient(player, scan=scan, withdraw_on_enter=False) as missing:
+                self.assertEqual(player.power, PowerState.ON)
+                self.assertEqual(backend.active, (avr, player))
+                header = player.address.logical
+                success = PinFrame.observed(bytes([header, 0x44, 4]), timestamp_ns=time.monotonic_ns(),
+                    eom=(False, False, True), ack=(False, False, False),
+                    synchronized_ns=backend.synchronized_ns)
+                backend.queue.put(success)
+                self.wait(lambda: success in missing.frames)
+                withdrawn = missing.withdraw()
+                self.assertEqual(player.power, PowerState.OFF)
+                count = len(backend.configurations)
+                self.assertEqual(missing.withdraw(), withdrawn)
+                self.assertEqual(len(backend.configurations), count)
+                # Its header started while still claimed. The original opcode
+                # then arrived and NACKed after address withdrawal.
+                failure = PinFrame.observed(bytes([header, 0x44]), timestamp_ns=withdrawn - 1,
+                    eom=(False, False), ack=(False, True), synchronized_ns=backend.synchronized_ns)
+                backend.queue.put(failure)
+                self.wait(lambda: failure in missing.frames)
+                self.assertGreater(failure.timestamp_ns, success.timestamp_ns)
+                self.assertLess(failure.timestamp_ns, missing.withdrawn_ns)
+                self.assertEqual(nack_attempts(missing.frames, header), (failure,))
+                missing.drain(time.monotonic_ns())
+            self.assertEqual(player.power, PowerState.ON)
+            self.assertFalse(backend.monitor)
+
+    def test_unused_monitor_context_and_restore_do_not_reconfigure_power(self):
+        for primary in (False, True):
+            with self.subTest(primary=primary), self.fixture() as (_, _, player, scan, backend):
+                count = len(backend.configurations)
+                try:
+                    with MissingCECRecipient(player, scan=scan, withdraw_on_enter=False) as missing:
+                        self.assertTrue(backend.monitor)
+                        self.assertIsNone(missing.restore())
+                        with self.assertRaisesRegex(RuntimeError, "Withdraw the recipient"):
+                            missing.drain(time.monotonic_ns())
+                        if primary:
+                            raise ValueError("primary")
+                except ValueError as error:
+                    self.assertTrue(primary)
+                    self.assertEqual(str(error), "primary")
+                self.assertEqual(player.power, PowerState.ON)
+                self.assertEqual(len(backend.configurations), count)
+                self.assertFalse(backend.monitor)
+
+    def test_monitor_thread_start_failure_closes_without_withdrawing(self):
+        from unittest.mock import patch
+        with self.fixture() as (_, _, player, scan, backend), \
+             patch("amity_harness.nack.threading.Thread.start", side_effect=RuntimeError("thread start")):
+            count = len(backend.configurations)
+            with self.assertRaisesRegex(RuntimeError, "thread start"):
+                MissingCECRecipient(player, scan=scan, withdraw_on_enter=False).__enter__()
+            self.assertEqual(player.power, PowerState.ON)
+            self.assertEqual(len(backend.configurations), count)
+            self.assertFalse(backend.monitor)
 
     def test_second_actual_request_finalizes_first_witness_without_a_dut_reply(self):
         with self.fixture() as (_, _, player, scan, backend):
@@ -309,6 +370,57 @@ class MissingRecipientTests(unittest.TestCase):
             self.assertIs(failure.exception, primary)
             self.assertFalse(backend.monitor)
             self.assertTrue(any("OSError" in note for note in getattr(primary, "__notes__", ())))
+
+
+class NackAttemptTests(unittest.TestCase):
+    def observed(self, raw, eom, ack):
+        return PinFrame.observed(raw, timestamp_ns=100, synchronized_ns=1, eom=eom, ack=ack)
+
+    def test_every_original_partial_key_shape_is_retained_without_inventing_bytes(self):
+        shapes = ((b"\x04", (False,), (True,)),
+                  (b"\x04\x44", (False, False), (False, True)),
+                  (b"\x04\x44\x04", (False, False, True), (False, False, True)),
+                  (b"\x04\x45", (False, True), (False, True)))
+        frames = tuple(self.observed(*shape) for shape in shapes)
+        self.assertEqual(nack_attempts(frames, 4), frames)
+        self.assertIsNone(frames[0].opcode)
+        self.assertEqual(frames[1].operands, b"")
+        self.assertEqual(frames[2].operands, b"\x04")
+        self.assertEqual(frames[3].operands, b"")
+
+    def test_successes_polls_and_other_recipients_are_not_failed_key_attempts(self):
+        frames = (self.observed(b"\x04\x44\x04", (False, False, True), (False, False, False)),
+                  self.observed(b"\x04\x45", (False, True), (False, False)),
+                  self.observed(b"\x04\x8f", (False, True), (False, False)),
+                  self.observed(b"\x04", (True,), (False,)),
+                  self.observed(b"\x05", (False,), (True,)))
+        self.assertEqual(nack_attempts(frames, 4), ())
+
+    def test_wrong_eom_extra_operands_polls_and_unknown_nack_opcodes_fail_closed(self):
+        shapes = ((b"\x04", (True,), (True,)),
+                  (b"\x04\x44", (False, True), (False, True)),
+                  (b"\x04\x44\x04", (False, False, False), (False, False, True)),
+                  (b"\x04\x45", (False, False), (False, True)),
+                  (b"\x04\x45\x04", (False, False, True), (False, False, True)),
+                  (b"\x04\x44\x04\x01", (False, False, False, True), (False, False, False, True)),
+                  (b"\x04\x83", (False, True), (False, True)))
+        for shape in shapes:
+            with self.subTest(raw=shape[0]), self.assertRaises(AssertionError):
+                nack_attempts((self.observed(*shape),), 4)
+
+    def test_nonphysical_or_corrupted_ack_slots_and_broadcast_header_fail_closed(self):
+        frame = self.observed(b"\x04\x44", (False, False), (False, True))
+        for ack in ((True, False), (False,), (0, True)):
+            with self.subTest(ack=ack):
+                changed = self.observed(b"\x04\x44", (False, False), (False, True))
+                object.__setattr__(changed, "ack", ack)
+                with self.assertRaises(AssertionError):
+                    nack_attempts((changed,), 4)
+        with self.assertRaises(AssertionError):
+            nack_attempts((Frame(0, 4),), 4)
+        for header in (True, -1, 256, 15, 0xf4):
+            with self.subTest(header=header), self.assertRaises(ValueError):
+                nack_attempts((frame,), header)
 
 
 if __name__ == "__main__":

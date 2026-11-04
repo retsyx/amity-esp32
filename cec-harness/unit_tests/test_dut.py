@@ -74,6 +74,8 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(wiring.cec_gpio("amity-dut", 0, "front"), cec_gpio(direction="front"))
         self.assertEqual(wiring.cec_gpio("amity-dut", 0, "back"), cec_gpio())
         self.assertEqual(wiring.reset_gpio("amity-dut"), reset_gpio())
+        self.assertEqual(wiring.dut_cec_gpio("amity-dut", 0, "front"), 1)
+        self.assertEqual(wiring.dut_cec_gpio("amity-dut", 0, "back"), 2)
         self.assertEqual(wiring.identities["amity-dut"].mac, "68:EE:8F:50:2B:44")
         with self.assertRaises(ValueError):
             wiring.cec_gpio("amity-dut", 1, "front")

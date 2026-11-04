@@ -979,7 +979,13 @@ have no saved remote. The fixture refuses to replace an existing bond and
 removes only its own new bond during cleanup.
 
 The two input cases scan a TV, AVR and two sources, then save both activities before
-sending input. It checks a fresh Select press/release, independent volume and
+sending input. The local case first saturates the CEC FIFO with six navigation
+holds and changing volume input. It requires eight physical frames in admission
+order and fresh main-owner logs for the two dropped presses. A new source press
+proves progress while dropped Mute stays held; neither capacity becoming free
+nor matching button-up may replay dropped work. Already admitted presses may
+finish before the final release. Fresh Select and Mute must then work.
+Both cases check a fresh Select press/release, independent volume and
 navigation holds, and two navigation buttons sharing one recipient. Real CEC
 NACKs on the first press and on a later repeat must stop the affected stream;
 restoring the recipient while the physical button is still held must not replay
@@ -991,7 +997,7 @@ change cancels both the old source's navigation hold and the old AVR's volume
 hold through fallback; reselection tests all-buttons-up without an audio role.
 The source-only activity keeps the all-buttons-up check short enough to prove
 acceptance with a fresh physical CEC press before the fallback deadline.
-Assertions use UI state and physical CEC traffic without inspecting Amity logs.
+Activity-transition assertions use UI state and physical CEC traffic.
 The fixture stops that activity and restarts the original TV/AVR/source activity
 with fresh power and routing evidence. Disconnecting BLE during a held Volume
 Up must then end the remaining AVR stream. No `/api/key` request supplies these inputs. Generic
@@ -1000,7 +1006,17 @@ remain separate.
 
 Failed-press and all-buttons-up checks require `CEC_CAP_MONITOR_PIN`. The
 independent monitor decodes the actual header, end-of-message and acknowledgement bits, including
-NACKed headers omitted by ordinary CEC receive. All-buttons-up uses the observed
+NACKed headers omitted by ordinary CEC receive. The monitor starts before a hold;
+a repeat already in flight at withdrawal can
+NACK its opcode or operand, and those partial frames count as attempts too.
+For main-owned equipment, fresh authenticated firmware logs must report exactly
+one failed key-press attempt,
+with release attempts counted separately; their sum must equal the physical
+NACK count. This corroborates transmission policy without labeling partial
+headers as opcodes. Member logs are unavailable through the shipping UI, so
+member cases retain the physical combined-attempt bound. Deterministic
+opcode-specific fault injection is unavailable with the current bench kernel.
+All-buttons-up uses the observed
 start edge; ordinary CEC receive timestamps describe the last byte. Each
 failed-press observation window ends with an observed Get CEC Version request from another fixture
 address to the DUT, confirming capture through that window. If monitor mode needs

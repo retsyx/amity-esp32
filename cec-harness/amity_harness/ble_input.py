@@ -188,7 +188,7 @@ class BLEInputEvidence:
             "started_monotonic_ns": marker, "deadline_monotonic_ns": deadline})
         return marker, deadline
 
-    def _finish(self, record, *, routes, released, release_once=False):
+    def _finish(self, record, *, routes, released, release_once=False, validate_frames=None):
         through = time.monotonic_ns()
         record["idle_receive_since_ns"] = self._drain(through)
         self._validate()
@@ -198,6 +198,8 @@ class BLEInputEvidence:
         record["idle_receive_since_ns"] = self._drain(through)
         frames = [(gpio, frame) for gpio, frame in self._snapshot()
                   if record["started_monotonic_ns"] < frame.timestamp_ns <= through]
+        if validate_frames is not None:
+            validate_frames(frames)
         for gpio, frame in frames:
             if frame.opcode != 0x44:
                 continue
@@ -360,23 +362,33 @@ class BLEInputEvidence:
 
     def assert_failed_press(self, keyboard, component, *, after_repetition=False):
         """A physical destination NACK ends its BLE hold without replaying it."""
-        from .nack import MissingCECRecipient
+        from .nack import MissingCECRecipient, nack_attempts
 
         if component not in self.components:
             raise ValueError("The BLE key recipient is outside this scan")
         record = self._begin(keyboard, "failed_repeat" if after_repetition else "failed_press")
         primary = None
         try:
-            if after_repetition:
-                started, deadline = self._change(
-                    lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "right_down")
-                first = self._press(component, Key.RIGHT, after=started, deadline_ns=deadline)
-                repeated = self._press(component, Key.RIGHT, after=first.timestamp_ns,
-                                       deadline_ns=first.timestamp_ns + self._budget())
-                record.update(first_press_wire_timestamp_ns=first.timestamp_ns,
-                              repeat_wire_timestamp_ns=repeated.timestamp_ns)
-            failed_after = time.monotonic_ns()
-            with MissingCECRecipient(component, scan=self.scan) as failure:
+            # Member logs are not exposed by the shipping UI. On the main,
+            # corroborate the partial physical frames with fresh per-frame
+            # attempt diagnostics rather than attributing header-only NACKs
+            # to opcodes that never reached the wire.
+            logs_before = (self.dut.capture_logs(expected_boot=self.scan._boot)
+                           if component.dut is self.dut else None)
+            # Start capture before any hold. Withdrawal can NACK an in-flight
+            # repeat after its header was ACKed; its start can precede the
+            # withdrawal boundary without preceding this observation.
+            with MissingCECRecipient(component, scan=self.scan, withdraw_on_enter=False) as failure:
+                if after_repetition:
+                    started, deadline = self._change(
+                        lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "right_down")
+                    first = self._press(component, Key.RIGHT, after=started, deadline_ns=deadline)
+                    repeated = self._press(component, Key.RIGHT, after=first.timestamp_ns,
+                                           deadline_ns=first.timestamp_ns + self._budget())
+                    record.update(first_press_wire_timestamp_ns=first.timestamp_ns,
+                                  repeat_wire_timestamp_ns=repeated.timestamp_ns)
+                failed_after = failure.withdraw()
+                record["withdrawn_monotonic_ns"] = failed_after
                 if not after_repetition:
                     failed_after, _ = self._change(
                         lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "failed_right_down")
@@ -385,35 +397,41 @@ class BLEInputEvidence:
                 def target_frames():
                     failure.assert_healthy()
                     return tuple(frame for frame in failure.frames
-                                 if frame.source == initiator and frame.destination == component.address.logical
-                                 and frame.timestamp_ns > failed_after)
+                                 if frame.source == initiator and frame.destination == component.address.logical)
 
-                def failed_headers(frames):
-                    headers = [frame for frame in frames if frame.opcode is None]
-                    if any(getattr(frame, "eom", None) != (False,)
-                           or getattr(frame, "ack", None) != (True,) for frame in headers):
-                        raise AssertionError("The physical header does not prove a non-poll destination NACK")
-                    return headers
+                def failed_attempts(frames):
+                    record["observed_failure_frames"] = [{"frame": frame.raw.hex(":"),
+                        "wire_timestamp_ns": frame.timestamp_ns,
+                        "eom": list(frame.eom), "ack": list(frame.ack)} for frame in frames]
+                    attempts = nack_attempts(frames, (initiator << 4) | component.address.logical)
+                    record.update(physical_nack_attempts=len(attempts),
+                                  failed_wire_attempts=[{"frame": frame.raw.hex(":"),
+                                      "wire_timestamp_ns": frame.timestamp_ns,
+                                      "eom": list(frame.eom), "ack": list(frame.ack)} for frame in attempts])
+                    if any(frame.opcode == 0x44 and frame.operands not in (b"", bytes([Key.RIGHT]))
+                           for frame in attempts):
+                        raise AssertionError("The physical failed press has the wrong key operand")
+                    return attempts
 
-                def first_header(_):
-                    headers = failed_headers(target_frames())
-                    return min(headers, key=lambda frame: frame.timestamp_ns) if headers else None
+                def first_failure(_):
+                    attempts = failed_attempts(target_frames())
+                    return min(attempts, key=lambda frame: frame.timestamp_ns) if attempts else None
 
                 # A lone NACKed header is completed by the next real falling
                 # edge. Drain with the physical witness before inspecting it.
                 failure.drain(failed_after + self._budget())
-                header = self._wait(first_header, deadline_ns=time.monotonic_ns() + self._budget(),
-                                    message="No physical failed key transmission header")
-                failed_through = header.timestamp_ns + self._budget()
+                failed = self._wait(first_failure, deadline_ns=time.monotonic_ns() + self._budget(),
+                                    message="No physical failed key transmission")
+                failed_through = max(failed_after, failed.timestamp_ns) + self._budget()
                 failure.drain(failed_through)
                 frames = target_frames()
-                headers = failed_headers(frames)
+                attempts = failed_attempts(frames)
                 # The failed press can be followed by a final release, whose
-                # existing budget is three attempts. Aborted headers contain no
-                # opcode, so retain that ambiguity rather than label each one.
-                if not 1 <= len(headers) <= 4:
+                # existing budget is three attempts. Some aborted frames have
+                # no opcode; retain that ambiguity rather than invent one.
+                if not 1 <= len(attempts) <= 4:
                     raise AssertionError("A failed BLE hold kept transmitting after its cleanup budget")
-                if any(frame.opcode == 0x44 and frame.timestamp_ns > header.timestamp_ns for frame in frames):
+                if any(frame.opcode == 0x44 and frame.timestamp_ns > failed.timestamp_ns for frame in frames):
                     raise AssertionError("A failed BLE press continued repeating")
 
                 failure.restore()
@@ -426,27 +444,42 @@ class BLEInputEvidence:
                 failure.drain(up_through)
                 self._drain(up_through)
                 frames = target_frames()
-                headers = failed_headers(frames)
-                if len(headers) > 4:
+                attempts = failed_attempts(frames)
+                headers = [frame for frame in attempts if frame.opcode is None]
+                if len(attempts) > 4:
                     raise AssertionError("A failed BLE hold kept transmitting after its cleanup budget")
-                if any(frame.timestamp_ns > header.timestamp_ns and frame.opcode == 0x44 for frame in frames):
+                if any(frame.timestamp_ns > failed.timestamp_ns and frame.opcode == 0x44 for frame in frames):
                     raise AssertionError("A failed BLE hold restarted when its recipient returned")
-                if any(frame.timestamp_ns > restored and frame.opcode is None for frame in frames):
+                if any(frame.timestamp_ns > restored for frame in attempts):
                     raise AssertionError("A failed BLE hold submitted another destination attempt")
                 if any(frame.timestamp_ns > up and frame.opcode == 0x45 for frame in frames):
                     raise AssertionError("The failed key's matching up was not a no-op")
+
+                record.update(exact_press_attempts_verified=False,
+                              attempt_evidence="physical_nacks_only")
+                if logs_before is not None:
+                    from .tx_policy import failed_key_attempts
+                    logs_after = self.dut.capture_logs(expected_boot=self.scan._boot)
+                    policy = failed_key_attempts(logs_before, logs_after,
+                        gpio=component.dut.wiring.dut_cec_gpio(
+                            component.dut.name, component.tentacle, component.direction),
+                        header=(initiator << 4) | component.address.logical,
+                        physical_attempts=len(attempts), evidence=record)
+                    record.update(exact_press_attempts_verified=True,
+                                  attempt_evidence="firmware_logs_and_physical_nacks",
+                                  failed_transmissions=policy)
 
                 fresh, deadline = self._change(
                     lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "fresh_right_down")
                 press = self._press(component, Key.RIGHT, after=fresh, deadline_ns=deadline)
                 final_up, deadline = self._change(keyboard.all_up, record, "fresh_right_up")
                 release = self._release(component, after=final_up, deadline_ns=deadline)
-                record.update(component=component.name, failed_attempt_header=header.raw.hex(":"),
-                              failed_attempt_wire_timestamp_ns=header.timestamp_ns,
+                record.update(component=component.name, failed_attempt_header=failed.raw[:1].hex(":"),
+                              failed_attempt_frame=failed.raw.hex(":"),
+                              failed_attempt_wire_timestamp_ns=failed.timestamp_ns,
                               failed_attempt_headers=[{"frame": frame.raw.hex(":"),
                                   "wire_timestamp_ns": frame.timestamp_ns,
                                   "eom": list(frame.eom), "ack": list(frame.ack)} for frame in headers],
-                              failed_attempts_include_release_cleanup=True,
                               failure_observed_through_monotonic_ns=failed_through,
                               restored_monotonic_ns=restored,
                               held_after_restore_through_monotonic_ns=restored_through,
@@ -454,7 +487,21 @@ class BLEInputEvidence:
                               failed_up_observed_through_monotonic_ns=up_through,
                               fresh_press_wire_timestamp_ns=press.timestamp_ns,
                               release_wire_timestamp_ns=release.timestamp_ns)
-            return self._finish(record, routes={Key.RIGHT: component}, released=((component, release),))
+            def final_policy(frames):
+                # Normal RX uses the last-byte timestamp, while pin frames
+                # use the start edge. Inspect this late interval only after
+                # restoration; the pin checks already cover the fault itself.
+                target = [frame for gpio, frame in frames
+                          if gpio == component.gpio and frame.destination == component.address.logical
+                          and frame.timestamp_ns > restored]
+                if any(frame.opcode == 0x44 and frame.timestamp_ns < fresh
+                       for frame in target):
+                    raise AssertionError("A failed BLE hold restarted before its fresh physical down")
+                releases = [frame for frame in target if frame.opcode == 0x45]
+                if [(frame.raw, frame.timestamp_ns) for frame in releases] != [(release.raw, release.timestamp_ns)]:
+                    raise AssertionError("The failed key's matching up was not a no-op")
+            return self._finish(record, routes={Key.RIGHT: component}, released=((component, release),),
+                                validate_frames=final_policy)
         except BaseException as error:
             primary = error
             raise

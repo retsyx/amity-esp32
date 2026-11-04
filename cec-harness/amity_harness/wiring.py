@@ -75,10 +75,11 @@ class Wiring:
     stored here. Those are runtime details, independent of the bench wiring.
     """
 
-    def __init__(self, identities, cec, reset, source=None):
+    def __init__(self, identities, cec, reset, source=None, *, dut_cec=None):
         self.identities = MappingProxyType(dict(identities))
         self.cec = MappingProxyType(dict(cec))
         self.reset = MappingProxyType(dict(reset))
+        self.dut_cec = MappingProxyType(dict(dut_cec or {}))
         self.source = source
 
     @classmethod
@@ -104,7 +105,7 @@ class Wiring:
                    for item in identities.values()):
                 raise ValueError(f"Duplicate DUT identity for {name}")
             identities[name] = DeviceIdentity(name, mac, device_id, hostname)
-        cec, reset, used_gpio = {}, {}, {}
+        cec, dut_cec, reset, used_gpio = {}, {}, {}, {}
         for row in _table(document, "HDMI-CEC harness GPIO mapping",
                           ("Device", "Device Tentacle #", "Tentacle Front/Back", "DUT GPIO", "Harness GPIO")):
             name = row["Device"]
@@ -114,7 +115,7 @@ class Wiring:
             if side not in ("front", "back"):
                 raise ValueError(f"Invalid CEC direction {side!r} for {name}")
             tentacle = _integer(row["Device Tentacle #"], "tentacle")
-            _integer(row["DUT GPIO"], "DUT GPIO")
+            dut_gpio = _integer(row["DUT GPIO"], "DUT GPIO")
             gpio = _integer(row["Harness GPIO"], "harness GPIO")
             key = name, tentacle, side
             if key in cec:
@@ -122,6 +123,7 @@ class Wiring:
             if gpio in used_gpio:
                 raise ValueError(f"Harness GPIO {gpio} is assigned more than once")
             cec[key] = gpio
+            dut_cec[key] = dut_gpio
             used_gpio[gpio] = key
         for row in _table(document, "Setup/reset GPIO wiring", ("Bench label", "Harness GPIO (BCM/RP1)")):
             name = row["Bench label"]
@@ -137,7 +139,7 @@ class Wiring:
         for name, tentacle, side in cec:
             if (name, tentacle, "back" if side == "front" else "front") not in cec:
                 raise ValueError(f"Missing paired CEC side for {name} tentacle {tentacle}")
-        return cls(identities, cec, reset, path)
+        return cls(identities, cec, reset, path, dut_cec=dut_cec)
 
     def cec_gpio(self, name, tentacle=0, direction="front"):
         if isinstance(tentacle, bool) or not isinstance(tentacle, int) or tentacle < 0:
@@ -154,3 +156,11 @@ class Wiring:
             return self.reset[name]
         except KeyError:
             raise ValueError(f"No setup/reset wiring for {name!r}") from None
+
+    def dut_cec_gpio(self, name, tentacle=0, direction="front"):
+        """Locate firmware CEC diagnostics on the same documented physical wire."""
+        self.cec_gpio(name, tentacle, direction)
+        try:
+            return self.dut_cec[name, tentacle, direction]
+        except KeyError:
+            raise ValueError(f"No DUT CEC GPIO for {name!r}, tentacle {tentacle}, {direction}") from None

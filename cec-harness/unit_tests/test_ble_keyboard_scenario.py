@@ -144,6 +144,27 @@ class KeyboardScenario(Scenario):
             self.events.append(("input.close",))
 
     @contextmanager
+    def fifo_evidence(self, main, scan, *components):
+        if (main is not self.duts[0] or scan is not self.scan_proof or components != self.components
+                or any(component.dut is not main for component in components)):
+            raise AssertionError("Logged FIFO proof needs the original main's local CEC recipients")
+        self.events.append(("fifo.observe",))
+        fixture = self
+
+        class Evidence:
+            def assert_saturated(self, keyboard, *, source, volume):
+                if keyboard is not fixture.keyboard or source is not fixture.components[2] or volume is not fixture.components[1]:
+                    raise AssertionError("Saturate the saved source/AVR wire with the paired keyboard")
+                fixture.events.append(("fifo.proof",))
+                if fixture.failed_proof == "fifo":
+                    raise TimeoutError("Missing fresh fifo physical evidence")
+
+        try:
+            yield Evidence()
+        finally:
+            self.events.append(("fifo.close",))
+
+    @contextmanager
     def transition_evidence(self, main, scan, *components):
         if main is not self.duts[0] or scan is not self.scan_proof or components != self.components:
             raise AssertionError("Transitions need all four exact scanned components")
@@ -187,6 +208,7 @@ class KeyboardScenario(Scenario):
             replacements = (
                 (ble_keyboard, "TestBed", self.bed),
                 (ble_keyboard, "BLEInputEvidence", self.evidence),
+                (ble_keyboard, "BLEFIFOEvidence", self.fifo_evidence),
                 (ble_keyboard, "BLEActivityEvidence", self.transition_evidence),
                 (DUT, "pair_ble_keyboard", lambda main: self.pair(main)),
                 (DUT, "add_amity", lambda main, candidate: self.add(main, candidate)),
@@ -235,6 +257,11 @@ class BLEKeyboardScenarioTests(unittest.TestCase):
                                   "input.observe", "input.disconnect", "input.close"])
                 self.assertEqual([row[0] for row in scenario.events if row[0].startswith("transition.")],
                                  ["transition.observe", "transition.fallback", "transition.all_up", "transition.close"])
+                self.assertEqual([row[0] for row in scenario.events if row[0].startswith("fifo.")],
+                                 [] if remote else ["fifo.observe", "fifo.proof", "fifo.close"])
+                if not remote:
+                    kinds = [row[0] for row in scenario.events]
+                    self.assertLess(kinds.index("fifo.proof"), kinds.index("input.tap"))
                 creates = [index for index, row in enumerate(scenario.events) if row[0] == "activity.create"]
                 first_start = next(index for index, row in enumerate(scenario.events) if row[0] == "activity.start")
                 self.assertTrue(all(index < first_start for index in creates))
@@ -261,8 +288,8 @@ class BLEKeyboardScenarioTests(unittest.TestCase):
 
     def test_each_missing_physical_proof_fails_and_unwinds_owned_resources(self):
         for test, remote in self.cases:
-            for kind in ("tap", "overlap", "shared", "failed_press", "failed_repeat",
-                         "transition_all_up", "transition_fallback", "disconnect"):
+            for kind in (("tap", "overlap", "shared", "failed_press", "failed_repeat",
+                          "transition_all_up", "transition_fallback", "disconnect") + (() if remote else ("fifo",))):
                 with self.subTest(test=test.__name__, kind=kind):
                     scenario = KeyboardScenario(failed_proof=kind)
                     with self.assertRaisesRegex(TimeoutError, "Missing fresh " + kind):
