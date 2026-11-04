@@ -139,9 +139,10 @@ five-minute boot window expired, then commissions over BLE and verifies the
 main's identity through authenticated HTTPS. This runs before firmware upgrades and scenarios.
 Secondary boards continue to use **Amity devices → Add**.
 
-The bench label `amity-dut` maps to the factory administration address
-`https://amity.local` through `TEST-HARNESS.md`. Its optional Administration
-hostname column supplies the default URL; explicit URL options still override it.
+The bench label `amity-dut` supplies the default administration address
+`https://amity-dut.local` through `TEST-HARNESS.md`. An optional Administration
+hostname column can override that default. Use `--url` when commissioning
+hardware with another factory hostname.
 
 A successful run requests the main's reset through the authenticated UI API,
 then verifies over Matter BLE that no fabrics or Wi-Fi networks remain. A reset
@@ -610,7 +611,7 @@ The runner supplies a scoped `RunConfig` for credential files, DUT URLs, TLS,
 wiring, timeouts and CEC transport. The credential JSON contains `admin_password`
 and must be private (mode `0600`). The default HTTP origin uses the inventory's
 Administration hostname, falling back to the bench label when that field is
-blank. Thus `DUT("amity-dut")` uses `https://amity.local`. Use `--url` or per-DUT
+absent or blank. Thus `DUT("amity-dut")` uses `https://amity-dut.local`. Use `--url` or per-DUT
 `--dut-url DUT=URL` to override it. TLS verification is enabled by default:
 supply `--cafile` for a trusted bench CA or explicitly choose `--insecure` for
 its self-signed certificate.
@@ -920,6 +921,16 @@ Dependent activity contexts close only after the cascade has been verified,
 so ordinary fixture cleanup cannot conceal a missing firmware cascade. Select
 `--test removal_cascade` for this case.
 
+## Replacing an Amity
+
+`--test amity_replacement` exercises the shipping replacement preview and apply
+operations after adding a replacement member. It confirms cable and equipment
+mappings to a different adapter, retaining the existing activity records,
+equipment identities, activity order and home-selector assignments. The saved
+activities must operate before and after replacement, with fresh physical CEC
+power, routing, key and standby evidence from the selected equipment. No
+activity is recreated to make the replacement work.
+
 ## Default physical address changes
 
 `--test default_physical_address` runs four cases on adapter 1 of `amity-dut`
@@ -1081,6 +1092,8 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 `--test removal_cascade` for stale removal confirmation and exact activity/member cleanup,
 `--test removal_replacement` for removing an earlier member, retaining a later member's
 saved identities, then adding a different board and proving both owners' physical control,
+`--test amity_replacement` for confirmed hardware replacement with retained activity
+configuration and physical control through the replacement adapter,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),

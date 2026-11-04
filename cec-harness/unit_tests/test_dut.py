@@ -35,6 +35,20 @@ def single_dut_document():
 DOCUMENT = single_dut_document()
 
 
+def administration_document(hostname):
+    """Add the optional inventory column without duplicating bench wiring."""
+    before, after = DOCUMENT.split("## Setup/reset GPIO wiring", 1)
+    lines = []
+    for line in before.splitlines():
+        if line.startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            value = ("Administration hostname" if cells[0] == "Bench label"
+                     else "---" if cells[0] == "---" else hostname)
+            line = "| " + " | ".join((*cells, value)) + " |"
+        lines.append(line)
+    return "\n".join(lines) + "\n## Setup/reset GPIO wiring" + after
+
+
 class Opener:
     def __init__(self, *responses):
         self.responses = list(responses)
@@ -72,29 +86,24 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(self.parse(changed).cec_gpio("amity-dut", 0, "front"), replacement)
 
     def test_optional_administration_hostname(self):
-        self.assertEqual(self.parse().identities["amity-dut"].hostname, "amity")
+        configured = self.parse(administration_document("bench-main"))
+        self.assertEqual(configured.identities["amity-dut"].hostname, "bench-main")
+        self.assertEqual(DUT("amity-dut", wiring=configured).url, "https://bench-main.local")
         self.assertIsNone(wiring().identities["amity-dut-2"].hostname)
-        before, after = DOCUMENT.split("## Setup/reset GPIO wiring", 1)
-        lines = []
-        for line in before.splitlines():
-            if line.startswith("|"):
-                cells = line.strip().strip("|").split("|")
-                line = "|" + "|".join(cells[:-1]) + "|"
-            lines.append(line)
-        without_column = "\n".join(lines) + "\n## Setup/reset GPIO wiring" + after
-        parsed = self.parse(without_column)
-        self.assertIsNone(parsed.identities["amity-dut"].hostname)
-        self.assertEqual(DUT("amity-dut", wiring=parsed).url, "https://amity-dut.local")
+        for document in (DOCUMENT, administration_document("")):
+            parsed = self.parse(document)
+            self.assertIsNone(parsed.identities["amity-dut"].hostname)
+            self.assertEqual(DUT("amity-dut", wiring=parsed).url, "https://amity-dut.local")
 
     def test_hostname_validation_matches_factory_names(self):
         for hostname in ("a", "bench-tv", "A" * 32):
             with self.subTest(hostname=hostname):
-                parsed = self.parse(DOCUMENT.replace("| amity |", "| " + hostname + " |", 1))
+                parsed = self.parse(administration_document(hostname))
                 self.assertEqual(parsed.identities["amity-dut"].hostname, hostname.lower())
         for hostname in ("-amity", "amity-", "amity.local", "https://amity", "amity host", "amity_host",
                          "amity*host", "a" * 33, "amité"):
             with self.subTest(hostname=hostname), self.assertRaises(ValueError):
-                self.parse(DOCUMENT.replace("| amity |", "| " + hostname + " |", 1))
+                self.parse(administration_document(hostname))
 
     def test_bad_wiring_is_rejected_before_hardware_access(self):
         corruptions = [
@@ -172,20 +181,25 @@ class DUTTests(unittest.TestCase):
         self.assertEqual(opener.closed, 2)
 
     def test_documented_hostname_supplies_origin_without_network_until_login(self):
-        opener = Opener({"token": "session"}, {"octopus_id": self.wiring.identities["amity-dut"].device_id})
-        dut = DUT("amity-dut", wiring=self.wiring, opener=opener)
-        self.assertEqual(dut.url, "https://amity.local")
-        self.assertFalse(opener.requests)
-        dut.login("secret")
-        self.assertEqual(dut.get_system()["octopus_id"], dut.identity.device_id)
-        self.assertEqual(opener.requests[-1].full_url, "https://amity.local/api/system")
+        for document, origin in ((DOCUMENT, "https://amity-dut.local"),
+                                 (administration_document("bench-main"), "https://bench-main.local")):
+            with self.subTest(origin=origin):
+                parsed = WiringTests().parse(document)
+                opener = Opener({"token": "session"}, {"octopus_id": parsed.identities["amity-dut"].device_id})
+                dut = DUT("amity-dut", wiring=parsed, opener=opener)
+                self.assertEqual(dut.url, origin)
+                self.assertFalse(opener.requests)
+                dut.login("secret")
+                self.assertEqual(dut.get_system()["octopus_id"], dut.identity.device_id)
+                self.assertEqual(opener.requests[-1].full_url, origin + "/api/system")
 
     def test_url_overrides_take_precedence_over_documented_hostname(self):
+        documented = WiringTests().parse(administration_document("bench-main"))
         config = RunConfig(default_url="https://default.example", urls={"amity-dut": "https://main.example"})
         with use_config(config):
-            self.assertEqual(DUT("amity-dut", wiring=self.wiring).url, "https://main.example")
+            self.assertEqual(DUT("amity-dut", wiring=documented).url, "https://main.example")
             self.assertEqual(DUT("amity-dut-2").url, "https://default.example")
-            self.assertEqual(DUT("amity-dut", wiring=self.wiring, url="https://explicit.example").url,
+            self.assertEqual(DUT("amity-dut", wiring=documented, url="https://explicit.example").url,
                              "https://explicit.example")
         self.assertEqual(DUT("amity-dut-2").url, "https://amity-dut-2.local")
 

@@ -218,7 +218,7 @@ class HostnameTests(unittest.TestCase):
         self.assertEqual(len(fixture.posts()), 1)
         path, body, origin = fixture.posts()[0]
         self.assertEqual(path, "/api/devices/" + fixture.main.identity.device_id + "/settings")
-        self.assertEqual(origin, "https://amity.local")
+        self.assertEqual(origin, "https://amity-dut.local")
         self.assertEqual(body["expected_hostname_revision"], "7")
         names.close()
         self.assertEqual(fixture.names, {dut.identity.device_id: dut.name for dut in fixture.owners})

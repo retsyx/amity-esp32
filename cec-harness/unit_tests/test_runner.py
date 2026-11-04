@@ -302,7 +302,8 @@ class RunnerTests(unittest.TestCase):
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
                     "test_hostname_local", "test_hostname_consortium",
                     "test_dual_display", "test_source_theft_isolated", "test_qualified_names", "test_missing_equipment",
-                    "test_removal_cascade", "test_removal_replacement", "test_default_physical_address_local",
+                    "test_removal_cascade", "test_removal_replacement", "test_amity_replacement",
+                    "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
                     "test_default_physical_address_remote_scanned",
                     "test_ble_keyboard_lifecycle", "test_ble_keyboard_local", "test_ble_keyboard_remote", "reset_main"]
@@ -339,6 +340,20 @@ class RunnerTests(unittest.TestCase):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
         self.assertEqual(called, ["prepare_main", "test_removal_cascade", "reset_main"])
+
+    def test_amity_replacement_can_be_selected_without_other_scenarios(self):
+        called = []
+
+        def capture(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": True, "testbeds": []}
+
+        arguments = ["run.py", "--test", "amity_replacement", "--credentials", "/private/main.json"]
+        with patch("sys.argv", arguments), patch("amity_harness.runner.run_test", side_effect=capture), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exited:
+            runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
+        self.assertEqual(exited.exception.code, 0)
+        self.assertEqual(called, ["prepare_main", "test_amity_replacement", "reset_main"])
 
     def test_three_dut_consortium_can_be_selected_without_other_scenarios(self):
         called = []

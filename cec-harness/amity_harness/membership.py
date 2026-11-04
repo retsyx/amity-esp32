@@ -159,8 +159,9 @@ class AddedAmity:
                       (*bed.control_only, *getattr(bed, "members", ()))}
         start = getattr(bed, "_initial_membership_counts", {}).get(id(self.main), 0)
         return {row.get("device_id") for row in self.main.membership_operations[start:]
-                if row.get("phase") == "cleanup" and row.get("device_id") in candidates
-                and row.get("operation_stage") == "complete"
+                if (row.get("phase"), row.get("operation_stage")) in
+                   {("cleanup", "complete"), ("replacement", "applied")}
+                and row.get("device_id") in candidates
                 and (row.get("inventory_removed") is True or row.get("reset") == "scheduled"
                      and row.get("retained_member") is False and not row.get("error_type"))}
 
