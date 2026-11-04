@@ -20,23 +20,6 @@ Amity uses HDMI-CEC to control the equipment selected in each activity. Display,
 
 Amity can only control devices that support HDMI-CEC! However, devices that don't support HDMI-CEC (old game consoles, for example) can still be facilitated.
 
-
-
-
-### Development Status
-
-The development implementation follows the [multi-device control design](amity-octopus-consortium/README.md): current-format activity configuration, scoped equipment lookup, original local activity handling, authenticated enrollment and owner delivery, explicit device recovery, and manifest-bound updates. The existing board defaults to **one HDMI adapter (two isolated CEC ports)**. A separate development profile supports **up to four optional HDMI adapters per device**, with a software limit of **one main and three secondary Amities per system**. Each device uses one shared CEC timer. Bench validation covers all four Amities with one adapter per owner and simulated CEC equipment; four-adapter electrical timing, real AV equipment, production security provisioning and observed novice usability need their own qualification evidence. See [implementation status](IMPLEMENTATION_STATUS.json) for exact checks and remaining qualification gates.
-
-The original first-setup Amity remains the controller, hosts the only browser UI and Matter/Apple Home integration, and pairs with the sole remote. Other Amity devices are subordinate actuators with no UI. The one remote and browser can select activities for multiple screens. Amity device names equal their actual hostnames. Add requires a valid Name and applies it to the added device. Change any Amity's hostname in **Amity devices → Settings**; the name and service advertisements update without rebooting or interrupting network connections. Renaming the main opens its new administration address. Equipment selectors, activity IDs, home-app slots and pairings remain stable. No saved current-activity/resume journal or missed input is replayed after restart.
-
-Configuration, discovery, received frames and explicit activity selection retain the original local Amity handling. Additional devices provide ownership and delivery; they do not introduce an activity-enable switch, receiver-profile approval or a new HDMI-path setup workflow.
-
-HDMI-CEC implementations vary between manufacturers, and this version of Amity has been tested with a limited range of equipment. It may work well with your system, or particular devices may need workarounds. See the [implementation and validation status](IMPLEMENTATION_STATUS.json) for the recorded checks and remaining qualification gates.
-
-Amity is not a certified Matter accessory. Some home apps may reject it or expose only some of its controls.
-
-Before version 1.0, compatibility with earlier Amity releases is not maintained. Read the release notes before updating. A release may require a fresh installation and pairing again.
-
 ## Setup
 
 ### HDMI Hardware
@@ -329,4 +312,3 @@ for Pi setup, private credentials, commands and reset recovery.
 
 Amity source code is licensed under the [GPLv3](https://github.com/retsyx/amity-esp32/blob/main/LICENSE). See the [third-party notices](https://github.com/retsyx/amity-esp32/blob/main/THIRD_PARTY.md) for dependency licenses.
 
-The 20 October 2026 UI amendment preserves the original Activities, Remote, Matter, HomeKit and Advanced workflows. Device listings add canonical Amity-hostname/HDMI-adapter context, and one Amity tab manages added devices. No guided activity wizard, new remote owner mapping, primary-zone picker or member-hosted UI is part of this scope.
