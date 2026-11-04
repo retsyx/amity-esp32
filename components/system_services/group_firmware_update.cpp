@@ -73,9 +73,20 @@ std::string report_job(const Cohort& value){
 }
 bool exchange(m::OctopusId owner,c::Kind kind,std::string payload,m::MessageId request,const ReleaseManifest& release,c::Json& response,uint32_t timeout=65000){
     {std::lock_guard<std::mutex> lock(ack_gate);pending=Pending{owner,request,release.release_id,release.image_sha256,{}};}
-    if(c::runtime_send_update(owner,kind,std::move(payload),5000)!=ESP_OK){std::lock_guard<std::mutex> lock(ack_gate);pending.reset();return false;}
-    std::unique_lock<std::mutex> lock(ack_gate);
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout);
+    bool admitted=false;
+    while(std::chrono::steady_clock::now()<deadline){
+        const auto sent=c::runtime_send_update(owner,kind,payload,5000);
+        if(sent==ESP_OK){admitted=true;break;}
+        if(sent!=ESP_ERR_NO_MEM)break;
+        const auto current=peer(owner);if(!current||!available(*current))break;
+        // This waits only for local FIFO capacity. No application message has
+        // been admitted yet, so retrying cannot duplicate a stream frame.
+        std::unique_lock<std::mutex> lock(ack_gate);
+        changed.wait_until(lock,std::min(deadline,std::chrono::steady_clock::now()+std::chrono::milliseconds(20)));
+    }
+    std::unique_lock<std::mutex> lock(ack_gate);
+    if(!admitted){pending.reset();return false;}
     bool received=false;
     while(std::chrono::steady_clock::now()<deadline){
         const auto tick=std::min(deadline,std::chrono::steady_clock::now()+std::chrono::milliseconds(250));
@@ -108,6 +119,12 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
     if(envelope.kind!=c::Kind::update_begin&&envelope.kind!=c::Kind::update_status&&!matching){c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,"rejected","CONFLICT"),5000);return c::Error::transaction_conflict;}
     if(envelope.kind==c::Kind::update_begin){ReleaseManifest manifest;
         if(parse_release_manifest(string(request,"canonical_manifest"),manifest,error)&&manifest.release_id==release_id&&manifest.image_sha256==image_hash){
+            {
+                std::lock_guard<std::mutex> lock(incoming_gate);
+                if(incoming_begin&&incoming_owner==owner&&incoming_begin!=*m::MessageId::parse(string(request,"request_id"))){
+                    peer_abort("A new firmware transfer replaced the incomplete upload");incoming_begin={};
+                }
+            }
             applied=peer_begin(manifest.canonical,string(request,"signature_hex"),error);code=applied==ESP_ERR_INVALID_ARG?"INVALID_MANIFEST":"NOT_READY";
             if(applied==ESP_OK){stage="ready";std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=*m::MessageId::parse(string(request,"request_id"));incoming_release=release_id;incoming_hash=image_hash;}
         }
@@ -115,10 +132,14 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
     else if(envelope.kind==c::Kind::update_install){
         const bool staging=string(request,"phase")=="stage";
         applied=staging?peer_stage(release_id,error):peer_install(release_id,error,uint32_t(decimal(request,"reboot_delay_ms")));
+        if(staging&&applied!=ESP_OK)peer_abort("Firmware staging failed; current firmware retained");
         code="HASH_MISMATCH";if(applied==ESP_OK)stage=staging?"staged":"installing";
     }else if(envelope.kind==c::Kind::update_abort){peer_abort("Main Amity cancelled the update");applied=ESP_OK;stage="aborted";}
     else if(envelope.kind==c::Kind::update_status){applied=ESP_OK;stage="status";}
     else return c::Error::unsupported_kind;
+    // Ordered stream chunks need no successful application acknowledgement.
+    // The final stage response confirms the complete image and its validation.
+    if(envelope.kind==c::Kind::update_chunk&&applied==ESP_OK)return c::Error::none;
     if(c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,stage,applied==ESP_OK?"":code),5000)!=ESP_OK)return c::Error::queue_full;
     return applied==ESP_OK?c::Error::none:applied==ESP_ERR_INVALID_ARG?c::Error::invalid_message:applied==ESP_ERR_INVALID_STATE?c::Error::not_ready:c::Error::storage_failure;
 }
@@ -169,7 +190,7 @@ void distribute(){
     if(!target.last_progress)target.last_progress=now();
     const auto current=peer(target.owner);
     std::string error;
-    bool success=false;
+    bool success=false,backpressured=false,stream_failed=false,staging=false,rejected_image=false;
     c::Json response;const auto id=fresh();
     if(!current||!available(*current))error="Waiting for this Amity to connect.";
     else if(target.phase=="queued"){
@@ -177,26 +198,40 @@ void distribute(){
         success=exchange(target.owner,c::Kind::update_begin,"{"+base(id,snapshot.release)+",\"canonical_manifest\":"+quote(snapshot.release.canonical)+",\"signature_hex\":"+quote(snapshot.signature)+"}",id,snapshot.release,response)&&string(response,"stage")=="ready";
         if(success){target.phase="uploading";target.offset=0;}else {error="This Amity has not accepted the firmware.";if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);}
     }else if(target.offset<snapshot.release.image_bytes){
-        std::string bytes;const auto count=size_t(std::min<uint64_t>(2048,snapshot.release.image_bytes-target.offset));
-        const auto read=snapshot.automatic?read_running_image(target.offset,count,bytes,error):read_staged_image(target.offset,count,bytes,error);
-        if(read!=ESP_OK){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,"{"+base(abort,snapshot.release)+",\"reason\":\"failed\"}",abort,snapshot.release,ignored,1000);fail_job(error);return;}
-        success=exchange(target.owner,c::Kind::update_chunk,"{"+base(id,snapshot.release)+",\"offset\":\""+std::to_string(target.offset)+"\",\"data_hex\":"+quote(hex(bytes))+",\"chunk_sha256\":"+quote(config_store::sha256_hex(bytes))+"}",id,snapshot.release,response)&&string(response,"stage")=="progress"&&decimal(response,"offset")==target.offset+bytes.size();
-        if(success)target.offset+=bytes.size();else error="Waiting for firmware transfer confirmation.";
+        // Feed the existing bounded link FIFO, never another transfer queue.
+        // Offset means locally admitted bytes; only staging confirms receipt.
+        for(unsigned turn=0;turn<16&&target.offset<snapshot.release.image_bytes;++turn){
+            std::string bytes;const auto count=size_t(std::min<uint64_t>(2048,snapshot.release.image_bytes-target.offset));
+            const auto read=snapshot.automatic?read_running_image(target.offset,count,bytes,error):read_staged_image(target.offset,count,bytes,error);
+            if(read!=ESP_OK){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,"{"+base(abort,snapshot.release)+",\"reason\":\"failed\"}",abort,snapshot.release,ignored,1000);fail_job(error);return;}
+            const auto chunk=fresh();
+            const auto sent=c::runtime_send_update(target.owner,c::Kind::update_chunk,"{"+base(chunk,snapshot.release)+",\"offset\":\""+std::to_string(target.offset)+"\",\"data_hex\":"+quote(hex(bytes))+",\"chunk_sha256\":"+quote(config_store::sha256_hex(bytes))+"}",5000);
+            if(sent==ESP_ERR_NO_MEM){backpressured=true;break;}
+            if(sent!=ESP_OK){stream_failed=true;error="Waiting for the firmware connection.";break;}
+            target.offset+=bytes.size();success=true;
+        }
     }else{
-        success=exchange(target.owner,c::Kind::update_install,"{"+base(id,snapshot.release)+",\"phase\":\"stage\"}",id,snapshot.release,response)&&string(response,"stage")=="staged";
+        staging=true;
+        success=exchange(target.owner,c::Kind::update_install,"{"+base(id,snapshot.release)+",\"phase\":\"stage\"}",id,snapshot.release,response)&&string(response,"stage")=="staged"&&decimal(response,"offset")==snapshot.release.image_bytes;
+        rejected_image=string(response,"stage")=="rejected";
         if(success){target.phase="staged";if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);}else error="This Amity has not confirmed firmware validation.";
     }
-    if(success){if(target.offset>snapshot.targets[snapshot.current].offset)target.last_progress=now();target.error.clear();target.next_attempt=0;}
+    if(success&&!stream_failed){if(target.offset>snapshot.targets[snapshot.current].offset)target.last_progress=now();target.error.clear();target.next_attempt=0;}
     else{
-        target.error=std::move(error);target.next_attempt=now()+1000;
+        target.error=backpressured?"":std::move(error);target.next_attempt=backpressured?0:now()+1000;
+        if(rejected_image){
+            retry_later(target,snapshot.release);
+            fail_job("Firmware image validation failed. All devices retained their current firmware.");
+            return;
+        }
         // If a peer restarted or rejected its transfer, begin again rather than
         // repeatedly submitting an obsolete offset to a fresh receiver.
         const auto after=peer(target.owner);
-        if(!after||!available(*after)||(string(response,"stage")=="rejected"&&target.phase=="uploading"&&target.offset<snapshot.release.image_bytes)){
+        if(target.phase!="skipped"&&(!after||!available(*after)||stream_failed||staging)){
             if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);
             target.phase="queued";target.offset=0;
         }
-        if(now()-target.last_progress>=peer_timeout_ms){
+        if(target.phase!="skipped"&&now()-target.last_progress>=peer_timeout_ms){
             if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);
             target.phase="skipped";target.error="Firmware update timed out. It will be retried when this Amity reconnects.";retry_later(target,snapshot.release);
             if(current&&available(*current)){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,"{"+base(abort,snapshot.release)+",\"reason\":\"timeout\"}",abort,snapshot.release,ignored,1000);}

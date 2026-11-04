@@ -264,6 +264,7 @@ The qualified-lookup release uses a new saved configuration format. Existing **0
 3. Keep all Amities powered. The main uploads the firmware to each added device in turn and shows progress. After staging completes, available devices restart together. Unavailable devices are skipped after a timeout and update automatically when they reconnect. A device running different firmware accepts only updates until it matches the main.
 
 Each image is validated in its inactive partition before boot selection. An interrupted upload keeps the current firmware; reselect the update file to retry.
+An image validation failure stops the update before any device restarts.
 
 The full `amity-provisioned.bin` image is for a fresh USB installation. Local builds also produce `amity-partition.bin`, which contains the application and its release metadata for existing-device USB flashing. The installed main serves its own running image to newly added or returning devices; no browser upload is needed for those updates.
 

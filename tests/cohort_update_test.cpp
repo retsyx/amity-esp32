@@ -28,10 +28,11 @@ struct Event {m::OctopusId owner;std::string action;uint64_t time;};
 std::map<m::OctopusId,Node> nodes;
 std::vector<c::RuntimePeerStatus> peers;std::vector<Event> events;c::RuntimeUpdateHooks transport;c::RuntimeStatus runtime_role;
 std::vector<std::pair<m::OctopusId,bool>> maintenance_fences;
-bool interrupt_next_chunk=false,drop_result=false,missing_running_release=false,release_allows_sync=false;
+bool interrupt_next_chunk=false,missing_running_release=false,release_allows_sync=false;
 m::OctopusId destination=local;u::ReleaseManifest uploaded_release,running_release;
 std::string manifest,staged_bytes(4096,'s'),running_bytes(4096,'r');std::set<m::OctopusId> reject_stage;
-unsigned disk_writes=0,staged_reads=0,running_reads=0;
+unsigned disk_writes=0,staged_reads=0,running_reads=0,chunk_admissions=0,chunk_results=0,stage_attempts=0,full_chunk_attempts=0,full_stage_attempts=0;
+bool corrupt_next_chunk=false,drop_next_chunk=false;
 c::Json parse(std::string_view body){c::Json value;c::JsonError error;assert(c::parse_json(body,value,error));return value;}
 std::string field(const c::Json& value,const char* key){const auto* v=value.get(key);return v&&v->type==c::Json::Type::string?v->string:"";}
 std::string sha(std::string_view data){unsigned char bytes[32];SHA256(reinterpret_cast<const unsigned char*>(data.data()),data.size(),bytes);char text[65]{};for(unsigned n=0;n<32;++n)std::snprintf(text+2*n,3,"%02x",bytes[n]);return text;}
@@ -61,10 +62,10 @@ esp_err_t peer_begin(std::string_view body,std::string_view,std::string& error){
 }
 esp_err_t peer_chunk(std::string_view release,uint64_t offset,std::string_view bytes,std::string&){
     auto& n=nodes[destination];if(!n.received||n.received->release_id!=release||offset!=n.bytes.size())return ESP_ERR_INVALID_ARG;
-    event("chunk");n.bytes.append(bytes);return ESP_OK;
+    event("chunk");n.bytes.append(bytes);if(corrupt_next_chunk){corrupt_next_chunk=false;n.bytes.back()^=1;}return ESP_OK;
 }
 esp_err_t peer_stage(std::string_view release,std::string&){
-    auto& n=nodes[destination];if(reject_stage.count(destination)||!n.received||n.received->release_id!=release||n.bytes.size()!=n.received->image_bytes)return ESP_ERR_INVALID_STATE;
+    auto& n=nodes[destination];if(reject_stage.count(destination)||!n.received||n.received->release_id!=release||n.bytes.size()!=n.received->image_bytes||sha(n.bytes)!=n.received->image_sha256)return ESP_ERR_INVALID_STATE;
     event("stage");n.staged=n.received;n.received.reset();n.phase="staged_image";n.maintenance=false;return ESP_OK;
 }
 esp_err_t peer_install(std::string_view release,std::string&,uint32_t delay){
@@ -79,14 +80,24 @@ std::vector<RuntimePeerStatus> runtime_peers(){return peers;}
 void runtime_update_hooks(RuntimeUpdateHooks hooks){transport=std::move(hooks);}
 esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_t){
     auto value=parse(body);assert(valid_update(kind,value));
-    if(kind==Kind::update_result){if(drop_result){drop_result=false;return ESP_OK;}transport.result(destination,value);return ESP_OK;} // Wire admission is independent of accepting a late completion.
+    if(kind==Kind::update_result){if(field(value,"stage")=="progress")++chunk_results;transport.result(destination,value);return ESP_OK;} // Wire admission is independent of accepting a late completion.
     assert(to!=local); // The primary stages one browser upload locally.
+    const auto linked=std::find_if(peers.begin(),peers.end(),[&](const auto& peer){return peer.id==to;});
+    if(linked==peers.end()||(!linked->ready&&!linked->management_ready))return ESP_ERR_INVALID_STATE;
+    if(kind==Kind::update_chunk){
+        if(full_chunk_attempts){--full_chunk_attempts;return ESP_ERR_NO_MEM;}
+        ++chunk_admissions;
+        if(drop_next_chunk){drop_next_chunk=false;return ESP_OK;}
+    }
+    if(kind==Kind::update_install&&field(value,"phase")=="stage"){
+        ++stage_attempts;if(full_stage_attempts){--full_stage_attempts;return ESP_ERR_NO_MEM;}
+    }
     assert(kind==Kind::update_begin||kind==Kind::update_chunk||kind==Kind::update_install||kind==Kind::update_status||kind==Kind::update_abort);
     const auto old=destination;destination=to;
     Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;
     envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;envelope.coordinator_epoch=1;
     const bool interrupted=kind==Kind::update_chunk&&interrupt_next_chunk;
-    if(interrupted){interrupt_next_chunk=false;drop_result=true;}
+    if(interrupted)interrupt_next_chunk=false;
     const auto handled=transport.handle(local,envelope);
     if(handled==Error::none&&kind==Kind::update_begin)nodes[to].accepted_begin=*m::MessageId::parse(field(value,"request_id"));
     if(interrupted){transport.disconnected(local,nodes[to].accepted_begin);for(auto& peer:peers)if(peer.id==to)peer.ready=peer.management_ready=false;}
@@ -100,10 +111,14 @@ c::RuntimePeerStatus& add_peer(m::OctopusId owner,bool online=true,bool manageme
     c::RuntimePeerStatus peer;peer.id=owner;peer.boot_id=n.boot;peer.enrolled=true;peer.ready=online&&!management;peer.management_ready=online&&management;peer.negotiated_capabilities=c::known_capabilities;peer.firmware_identity=n.elf;peers.push_back(peer);return peers.back();
 }
 void setup(){
-    std::string error;assert(u::parse_release_manifest(manifest,uploaded_release,error));running_release=uploaded_release;
+    std::string error;assert(u::parse_release_manifest(manifest,uploaded_release,error));
+    const auto replace=[](std::string& text,const std::string& from,const std::string& to){const auto at=text.find(from);assert(at!=std::string::npos);text.replace(at,from.size(),to);};
+    replace(uploaded_release.canonical,uploaded_release.image_sha256,sha(staged_bytes));uploaded_release.image_sha256=sha(staged_bytes);
+    running_release=uploaded_release;
     running_release.release_id="running-release";running_release.image_elf_sha256=std::string(64,'d');
-    running_release.canonical=manifest;auto at=running_release.canonical.find(uploaded_release.release_id);assert(at!=std::string::npos);running_release.canonical.replace(at,uploaded_release.release_id.size(),running_release.release_id);
+    running_release.canonical=uploaded_release.canonical;auto at=running_release.canonical.find(uploaded_release.release_id);assert(at!=std::string::npos);running_release.canonical.replace(at,uploaded_release.release_id.size(),running_release.release_id);
     at=running_release.canonical.find(uploaded_release.image_elf_sha256);assert(at!=std::string::npos);running_release.canonical.replace(at,64,running_release.image_elf_sha256);
+    replace(running_release.canonical,running_release.image_sha256,sha(running_bytes));running_release.image_sha256=sha(running_bytes);
     nodes[local].boot=identity<m::BootId>(10);nodes[local].elf=running_release.image_elf_sha256;
     runtime_role.initialized=runtime_role.coordinator=runtime_role.authority_ready=true;
     u::start_group_updates(local,{[](m::OctopusId owner,bool active){maintenance_fences.emplace_back(owner,active);
@@ -117,7 +132,7 @@ void upload_once(){
     u::system_upload_progress(staged_bytes.size());assert(u::finish_system_upload(error)==ESP_OK&&phase()=="distributing");
 }
 void poll(){u::poll_group_update();clock_ms+=1000;}
-template<class Predicate>void until(Predicate condition,unsigned limit=400){for(unsigned n=0;n<limit&&!condition();++n)poll();assert(condition());}
+template<class Predicate>void until(Predicate condition,unsigned limit=400){for(unsigned n=0;n<limit&&!condition();++n)poll();if(!condition())std::cerr<<u::cohort_status_json()<<"\n";assert(condition());}
 size_t find(m::OctopusId owner,std::string_view action){for(size_t i=0;i<events.size();++i)if(events[i].owner==owner&&events[i].action==action)return i;assert(false);return 0;}
 void distribution(){
     setup();add_peer(one);add_peer(two);upload_once();until([]{return nodes[local].selected;});
@@ -128,13 +143,13 @@ void distribution(){
     assert(phase()=="activating");const auto count=events.size();for(unsigned n=0;n<10;++n)poll();assert(events.size()==count&&disk_writes==0);
     std::cout<<"PASS one primary upload, ordered peer staging before any activation, common delayed restart and no persisted desired release\n";
 }
-void skipped(bool offline){
-    setup();add_peer(one,!offline);add_peer(two);if(!offline)reject_stage.insert(one);upload_once();const auto started=clock_ms;until([]{return nodes[local].selected;});
+void skipped_offline(){
+    setup();add_peer(one,false);add_peer(two);upload_once();const auto started=clock_ms;until([]{return nodes[local].selected;});
     const auto targets=cohort().get("targets")->array;assert(field(targets[1],"phase")=="skipped");
     assert(find(two,"begin")<find(two,"stage")&&find(two,"stage")<find(two,"activate")&&find(two,"activate")<find(local,"activate"));
     assert(events[find(two,"begin")].time-started>=120000&&!nodes[one].selected&&nodes[two].selected);
     assert(nodes[two].bytes==staged_bytes&&clock_ms-started<150000&&disk_writes==0);
-    std::cout<<"PASS "<<(offline?"offline":"rejected")<<" peer times out at 120 seconds; later peers stage and activate with primary\n";
+    std::cout<<"PASS unavailable peer times out at120seconds; later peers stage and activate with primary\n";
 }
 void catchup(){
     setup();add_peer(one,true,true);peers.front().negotiated_capabilities=c::peer_firmware_update;
@@ -246,7 +261,7 @@ void multiple_failure_reporting(){
 }
 void logical_restart_during_chunk(){
     setup();auto& peer=add_peer(one);nodes[one].elf=nodes[local].elf;peer.firmware_identity=nodes[one].elf;
-    const auto original_boot=nodes[one].boot;upload_once();until([]{return nodes[one].bytes.size()==2048;});
+    const auto original_boot=nodes[one].boot;upload_once();until([]{return nodes[one].received.has_value();});
     assert(nodes[one].maintenance&&maintenance_fences.back()==std::make_pair(one,true));
     interrupt_next_chunk=true;const auto began=std::chrono::steady_clock::now();poll();
     assert(std::chrono::steady_clock::now()-began<std::chrono::seconds(3));
@@ -258,8 +273,52 @@ void logical_restart_during_chunk(){
     assert(last_member_fence!=maintenance_fences.rend()&&!last_member_fence->second);
     until([]{return nodes[local].selected;});assert(nodes[one].selected&&nodes[one].bytes==staged_bytes&&nodes[one].boot==original_boot);
     size_t begins=0;for(const auto& item:events)if(item.owner==one&&item.action=="begin")++begins;assert(begins==2);
-    std::cout<<"PASS lost chunk result plus same-TLS logical recovery releases maintenance within250ms polling and restarts exact image at offsetzero\n";
+    std::cout<<"PASS streamed connection interruption releases maintenance and later completes over recovered TLS\n";
 }
+void streaming_without_chunk_results(){
+    alarm(5);setup();add_peer(one,true,true);until([]{return nodes[one].staged.has_value();});
+    assert(chunk_admissions==2&&chunk_results==0&&stage_attempts==1&&nodes[one].bytes==running_bytes&&!nodes[one].selected);
+    alarm(0);std::cout<<"PASS ordered chunks stream without progress replies; one final stage confirms the complete image\n";
+}
+void fifo_backpressure_is_local(){
+    alarm(5);setup();add_peer(one,true,true);until([]{return nodes[one].received.has_value();});
+    full_chunk_attempts=1;u::poll_group_update();
+    auto target=cohort().get("targets")->array.front();assert(field(target,"offset")=="0"&&field(target,"error").empty()&&chunk_admissions==0);
+    // Capacity alone changed: another turn at the same clock must make progress.
+    u::poll_group_update();target=cohort().get("targets")->array.front();
+    assert(field(target,"offset")=="4096"&&chunk_admissions==2);
+    full_stage_attempts=2;u::poll_group_update();
+    assert(nodes[one].staged&&stage_attempts==3&&chunk_results==0);
+    alarm(0);std::cout<<"PASS full existing FIFO preserves offset without retry backoff; final stage waits only for local capacity\n";
+}
+void rejected_stream_can_later_complete(bool missing){
+    setup();add_peer(one,true,true);const auto original_boot=nodes[one].boot;
+    if(missing)drop_next_chunk=true;else corrupt_next_chunk=true;
+    until([]{return phase()=="failed";});
+    const auto failed=cohort().get("targets")->array.front();
+    assert(field(failed,"phase")=="failed"&&!field(failed,"error").empty()&&!nodes[one].staged&&!nodes[one].selected&&!nodes[local].selected&&stage_attempts==1);
+    until([]{return nodes[one].selected;});
+    assert(nodes[one].boot==original_boot&&nodes[one].bytes==running_bytes&&chunk_results==0);
+    size_t begins=0;for(const auto& item:events)if(item.owner==one&&item.action=="begin")++begins;
+    assert(begins==2&&stage_attempts==2);
+    std::cout<<"PASS "<<(missing?"missing/expired chunk":"complete-image SHA mismatch")<<" fails final validation without activation; a later transfer succeeds on the healthy connection\n";
+}
+void missing_stream(){rejected_stream_can_later_complete(true);}void bad_stream_hash(){rejected_stream_can_later_complete(false);}
 void run(void(*scenario)()){const auto child=fork();assert(child>=0);if(child==0){scenario();std::cout.flush();_exit(0);}int status=0;assert(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);}
-void offline(){skipped(true);}void rejected(){skipped(false);}
-int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}
+void offline(){skipped_offline();}
+void rejected(){
+    setup();add_peer(one);add_peer(two);
+    nodes[one].elf=nodes[two].elf=nodes[local].elf;for(auto& peer:peers)peer.firmware_identity=nodes[local].elf;
+    upload_once();until([]{return nodes[one].staged.has_value();});
+    assert(!nodes[one].selected&&!nodes[local].selected);corrupt_next_chunk=true;
+    until([]{return phase()=="failed";});
+    const auto report=cohort();const auto targets=report.get("targets")->array;
+    assert(field(targets[1],"phase")=="staged"&&field(targets[2],"phase")=="failed"&&!field(targets[2],"error").empty());
+    assert(!nodes[local].selected&&!nodes[one].selected&&!nodes[two].selected&&!nodes[two].staged);
+    assert(field(*report.get("last_failed_upload"),"phase")=="failed");
+    for(const auto& item:events)assert(item.action!="activate");
+    assert(!nodes[one].maintenance&&!nodes[two].maintenance);
+    const auto count=events.size();for(unsigned turn=0;turn<8;++turn)poll();assert(phase()=="failed"&&events.size()==count);
+    std::cout<<"PASS browser cohort with one staged member and a second full-image SHA rejection fails before any activation\n";
+}
+int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(streaming_without_chunk_results);run(fifo_backpressure_is_local);run(missing_stream);run(bad_stream_hash);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}

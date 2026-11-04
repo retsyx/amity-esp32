@@ -13,7 +13,6 @@ std::optional<ReleaseManifest> staged_release();
 bool installation_active();
 esp_err_t begin_install(std::string& error);
 void install_progress(uint64_t bytes);
-esp_err_t install_checkpoint(uint64_t bytes);
 esp_err_t install_selected();
 esp_err_t install_staged();
 void install_failed(const std::string& error);

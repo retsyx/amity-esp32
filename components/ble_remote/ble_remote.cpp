@@ -33,6 +33,11 @@ extern "C" {
 #include "host/ble_hs_adv.h"
 #include "host/ble_sm.h"
 #include "host/ble_store.h"
+#if MYNEWT_VAL(BLE_HS_PVCY)
+// The pinned SDK's public ble_gap_unpair() masks controller and store errors.
+// Use its checked privacy primitive so an unsuccessful Unpair remains retryable.
+int ble_hs_pvcy_remove_entry(uint8_t addr_type, const uint8_t *addr);
+#endif
 }
 
 #if !CONFIG_BT_NIMBLE_ENABLED || !CONFIG_BT_NIMBLE_ROLE_CENTRAL
@@ -99,6 +104,8 @@ ble_addr_t selected{};
 ble_addr_t saved{};
 bool have_selected, have_saved, descriptors_ready, encrypted, forgetting;
 bool unpair_cleanup_pending;
+bool unpair_cleanup_started, unpair_delete_bond;
+ble_addr_t unpair_target{};
 bool bond_cleanup_failed;
 
 std::atomic<uint16_t> connection_handle{BLE_HS_CONN_HANDLE_NONE};
@@ -161,6 +168,19 @@ esp_err_t persist_peer(const ble_addr_t *address) {
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
     return err;
+}
+
+int remove_peer(ble_addr_t address) {
+    // A failed connection can still have its scan report's identity type.
+    // Security records and controller commands use public/random (0/1).
+    address.type &= 1;
+#if MYNEWT_VAL(BLE_HS_PVCY)
+    // Revocation must precede deleting the security record which owns the IRK.
+    const int privacy = ble_hs_pvcy_remove_entry(address.type, address.val);
+    if (privacy && privacy != BLE_HS_HCI_ERR(BLE_ERR_UNK_CONN_ID)) return privacy;
+#endif
+    const int stored = ble_store_util_delete_peer(&address);
+    return stored == BLE_HS_ENOENT ? 0 : stored;
 }
 
 void on_key(uint16_t page, uint16_t usage, bool pressed, void *) {
@@ -612,7 +632,8 @@ void launch_scan(uint32_t seconds, bool clear_error) {
     if (!err) {
         ble_gap_disc_params params{};
         params.itvl = 0x80;
-        params.window = 0x30;
+        // Wi-Fi can interrupt listening; keep the full interval available to BLE.
+        params.window = params.itvl;
         params.filter_duplicates = 0; // Preserve separate advertisement + scan-response data.
         err = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, seconds * 1000, &params, on_scan_event, nullptr);
     }
@@ -685,7 +706,11 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
             ble_gap_conn_desc desc{};
             if (!have_saved) {
                 if (!ble_gap_conn_find(handle, &desc)) selected = desc.peer_id_addr;
-                ble_store_util_delete_peer(&selected);
+                const int cleanup = remove_peer(selected);
+                if (cleanup) {
+                    bond_cleanup_failed = true;
+                    ESP_LOGW(kTag, "Removing failed remote bond: %d", cleanup);
+                }
             }
         }
         if (handle != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -736,12 +761,12 @@ void start_reconnect() {
     have_selected = true;
     state.waiting = true;
     state.last_error = 0;
-    // Listen for 30 ms every 80 ms instead of the default full-duty scan.
+    // Wi-Fi coexistence can interrupt listening, so use a full scan window.
     // The controller initiates the connection when the saved peer advertises;
     // an absent or sleeping remote never expires this procedure.
     ble_gap_conn_params params{};
     params.scan_itvl = 0x80;
-    params.scan_window = 0x30;
+    params.scan_window = params.scan_itvl;
     params.itvl_min = BLE_GAP_INITIAL_CONN_ITVL_MIN;
     params.itvl_max = BLE_GAP_INITIAL_CONN_ITVL_MAX;
     params.latency = BLE_GAP_INITIAL_CONN_LATENCY;
@@ -757,10 +782,27 @@ void start_reconnect() {
     if (err) finish_procedure(err);
 }
 
+void finish_forget_peer() {
+    Guard lock;
+    if (!controller_enabled.load() || !unpair_cleanup_pending ||
+        !unpair_cleanup_started || ble_gap_conn_active()) return;
+    // Initiating cancellation is asynchronous. Resolver changes are illegal
+    // until its completion, even though the UI has already accepted Unpair.
+    const int bond_error = unpair_delete_bond ? remove_peer(unpair_target) : 0;
+    if (bond_error) ESP_LOGW(kTag, "Removing remote bond: %d", bond_error);
+    const esp_err_t err = persist_peer(nullptr);
+    state.last_error = bond_error ? bond_error : err;
+    bond_cleanup_failed = bond_error != 0 || err != ESP_OK;
+    // Keep the exact failed target available for an explicit retry.
+    if (bond_cleanup_failed && unpair_delete_bond) { selected = unpair_target; have_selected = true; }
+    state.peer = {};
+    unpair_cleanup_started = unpair_cleanup_pending = false;
+    if (connection_handle == BLE_HS_CONN_HANDLE_NONE) state.unpairing = false;
+}
+
 void forget_peer() {
     uint16_t handle;
     ble_addr_t old{};
-    bool delete_bond;
     bool cancelling_background;
     {
         Guard lock;
@@ -772,7 +814,9 @@ void forget_peer() {
         old = have_saved ? saved : selected;
         ble_gap_conn_desc desc{};
         if (handle != BLE_HS_CONN_HANDLE_NONE && !ble_gap_conn_find(handle, &desc)) old = desc.peer_id_addr;
-        delete_bond = have_saved || have_selected;
+        unpair_target = old;
+        unpair_delete_bond = have_saved || have_selected;
+        unpair_cleanup_started = true;
         have_saved = have_selected = false;
         state.bonded = false;
         state.battery_percent = state.charging = -1;
@@ -786,24 +830,7 @@ void forget_peer() {
     ble_gap_disc_cancel();
     if (!cancelling_background) ble_gap_conn_cancel();
     if (handle != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
-    int bond_error = 0;
-    if (delete_bond) {
-        bond_error = ble_store_util_delete_peer(&old);
-        if (bond_error == BLE_HS_ENOENT) bond_error = 0;
-        if (bond_error) ESP_LOGW(kTag, "Removing remote bond: %d", bond_error);
-    }
-    const esp_err_t err = persist_peer(nullptr);
-    Guard lock;
-    state.last_error = bond_error ? bond_error : err;
-    bond_cleanup_failed = bond_error != 0 || err != ESP_OK;
-    // Keep the exact failed cleanup target available for an explicit retry.
-    // Do not admit a new pairing over an unresolved bond-removal failure.
-    if (bond_cleanup_failed && delete_bond) { selected = old; have_selected = true; }
-    state.peer = {};
-    // The disconnect callback can arrive before or after storage cleanup.
-    // Keep the operation busy until both have completed.
-    unpair_cleanup_pending = false;
-    if (connection_handle == BLE_HS_CONN_HANDLE_NONE && !ble_gap_conn_active()) state.unpairing = false;
+    finish_forget_peer();
 }
 
 void worker(void *) {
@@ -850,6 +877,7 @@ void worker(void *) {
                 launch_scan(seconds, pending_scan_clear_error);
             }
         }
+        finish_forget_peer();
         // Run connection/security/discovery on this worker, never on the host's
         // scan callback. Selection is first eligible advertisement, not RSSI rank.
         ble_addr_t automatic_peer{};
@@ -1060,6 +1088,7 @@ extern "C" esp_err_t ble_remote_unpair(void) {
     Command command{CommandType::Unpair, 0, {}};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     state.unpairing = unpair_cleanup_pending = true;
+    unpair_cleanup_started = false;
     state.last_error = 0;
     forgetting = true;
     return ESP_OK;
@@ -1138,7 +1167,7 @@ extern "C" esp_err_t ble_remote_set_controller_enabled(bool enabled) {
         // Drop queued setup/bond commands, preserving saved identity and bonds.
         Command discarded{};
         for(unsigned n=0;n<4;++n)if(xQueueReceive(commands,&discarded,0)!=pdTRUE)break;
-        if(state.unpairing&&unpair_cleanup_pending){state.unpairing=unpair_cleanup_pending=false;forgetting=false;}
+        if(state.unpairing&&unpair_cleanup_pending){state.unpairing=unpair_cleanup_pending=unpair_cleanup_started=false;forgetting=false;}
         if(scanning)ble_gap_disc_cancel();
         cancel_reconnect();
         if(procedure_pending){finish_procedure(BLE_HS_EAPP);++generation;}

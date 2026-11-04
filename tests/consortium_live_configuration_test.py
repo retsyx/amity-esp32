@@ -315,7 +315,7 @@ def main():
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',
-        'void runtime_configuration_changed(', 'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal('))
+        'void runtime_configuration_changed(', 'static bool queued_firmware_stream(', 'static bool queued_expired(', 'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal('))
     actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')

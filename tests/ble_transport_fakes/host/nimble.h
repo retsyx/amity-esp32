@@ -7,6 +7,11 @@
  */
 
 #pragma once
+
+#ifndef MYNEWT_VAL_BLE_HS_PVCY
+#define MYNEWT_VAL_BLE_HS_PVCY 1
+#endif
+#define MYNEWT_VAL(name) MYNEWT_VAL_ ## name
 #include <stdint.h>
 #include <stddef.h>
 

@@ -95,7 +95,6 @@ esp_err_t begin_install(std::string& error){
     return stored;
 }
 void install_progress(uint64_t bytes){std::lock_guard<std::mutex> lock(mutex);received=bytes;}
-esp_err_t install_checkpoint(uint64_t bytes){std::lock_guard<std::mutex> lock(mutex);received=bytes;return persist();}
 esp_err_t install_selected(){std::lock_guard<std::mutex> lock(mutex);phase="boot_checking";return persist();}
 esp_err_t install_staged(){std::function<void()> end;esp_err_t result;{std::lock_guard<std::mutex> lock(mutex);phase="staged_image";installing=false;received=staged?staged->image_bytes:0;result=persist();end=end_maintenance;}if(end)end();return result;}
 void install_failed(const std::string& error){std::function<void()> end;{std::lock_guard<std::mutex> lock(mutex);phase="failed";reason=error;installing=false;persist();end=end_maintenance;}if(end)end();}

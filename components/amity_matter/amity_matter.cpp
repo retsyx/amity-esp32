@@ -11,7 +11,6 @@
 #include "diagnostics.h"
 #include "apple_fabrics.h"
 #include "device_settings.hpp"
-#include "radio_control.hpp"
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_wifi_default.h"
@@ -309,17 +308,8 @@ void event_callback(const chip::DeviceLayer::ChipDeviceEvent *event, intptr_t)
         ESP_LOGI(tag, "Commissioning window opened");
         break;
     case DeviceEventType::kCommissioningWindowClosed:
-        amity::radio::matter_closed();
         ESP_LOGI(tag, "Commissioning window closed");
         break;
-    case DeviceEventType::kCHIPoBLEConnectionEstablished:
-        amity::radio::matter_connection(true);break;
-    case DeviceEventType::kCHIPoBLEConnectionClosed:
-        amity::radio::matter_connection(false);break;
-    case DeviceEventType::kCommissioningSessionStarted:
-        amity::radio::matter_connection(true);break;
-    case DeviceEventType::kCommissioningSessionStopped:
-        amity::radio::matter_connection(false);break;
     case DeviceEventType::kFabricRemoved:
         ESP_LOGI(tag, "Matter fabric removed; Amity configuration retained");
         break;

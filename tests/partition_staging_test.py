@@ -77,7 +77,7 @@ bool parse_release_manifest(std::string_view manifest,ReleaseManifest&out,std::s
 int stage_release(std::string_view manifest,std::string_view signature,std::string&error){ReleaseManifest value;const int result=validate_release(manifest,signature,value,error);if(result==ESP_OK)admission=value;return result;}
 std::optional<ReleaseManifest> staged_release(){return admission;}
 int begin_install(std::string&){++maintenance;return ESP_OK;}
-int install_checkpoint(uint64_t){return ESP_OK;}
+void install_progress(uint64_t){}
 void install_failed(const std::string&){++failures;if(maintenance)--maintenance;}
 int install_staged(){++report_staged;--maintenance;return ESP_OK;}
 int install_selected(){return ESP_OK;}

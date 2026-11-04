@@ -55,7 +55,8 @@ esp_err_t peer_chunk(std::string_view release_id,uint64_t requested,std::string_
     }
     if(flash([&]{return esp_ota_write(handle,bytes.data(),bytes.size());})!=ESP_OK||psa_hash_update(&digest,reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size())!=PSA_SUCCESS){error="Image chunk could not be stored";abort_locked(error);return ESP_FAIL;}
     const auto next=offset+bytes.size();
-    if(install_checkpoint(next)!=ESP_OK){error="Image checkpoint could not be committed";abort_locked(error);return ESP_FAIL;}
+    // Interrupted streams restart at zero; only phase changes need persistence.
+    install_progress(next);
     last_offset=offset;last_hash=config_store::sha256_hex(bytes);offset=next;last_progress_us=esp_timer_get_time();return ESP_OK;
 }
 esp_err_t peer_stage(std::string_view release_id,std::string& error){

@@ -22,17 +22,17 @@ public:
     RadioResult expire(uint64_t now_ms);
     // Must be called synchronously before Matter starts advertising. The SDK's
     // post-open callback is too late, so no production adapter is supplied.
-    RadioResult external_matter_will_open(uint64_t now_ms,uint32_t duration_ms,bool pase_active);
-    void matter_pase_active(bool active){pase_active_=active;}
+    RadioResult external_matter_will_open(uint64_t now_ms,uint32_t duration_ms,bool matter_ble_active);
+    void matter_ble_active(bool active){matter_ble_active_=active;}
     RadioReservation reservation()const{return {owner_,generation_,deadline_};}
     bool accepts_callback(uint64_t generation)const{return generation==generation_&&owner_!=RadioMode::transition&&owner_!=RadioMode::operational;}
     bool cancellation_pending()const{return owner_==RadioMode::transition;}
-    bool remote_may_reconnect()const{return owner_==RadioMode::operational&&!pase_active_;}
+    bool remote_may_reconnect()const{return owner_==RadioMode::operational&&!matter_ble_active_;}
 private:
     RadioResult transition(RadioMode,uint64_t,uint32_t);
     RadioMode owner_=RadioMode::operational,next_=RadioMode::operational;
     uint64_t generation_=0,deadline_=0,cancel_deadline_=0;
-    bool remote_reconnect_=false,remote_connected_=false,pase_active_=false;
+    bool remote_reconnect_=false,remote_connected_=false,matter_ble_active_=false;
     std::optional<uint16_t> setup_handle_;
 };
 struct SetupEligibility {

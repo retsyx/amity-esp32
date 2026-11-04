@@ -9,7 +9,7 @@ RadioResult RadioArbiter::request(RadioMode requested,uint64_t now,uint32_t dura
     const uint32_t maximum=requested==RadioMode::matter_induction?900000:enrollment_ms;
     if(requested==RadioMode::operational||requested==RadioMode::transition||!duration||duration>maximum||now>UINT64_MAX-duration)return RadioResult::unavailable;
     if(gates&&(requested==RadioMode::consortium_candidate||requested==RadioMode::consortium_inviter)&&!consortium_radio_available)return RadioResult::unavailable;
-    if(owner_!=RadioMode::operational||pase_active_)return RadioResult::busy;
+    if(owner_!=RadioMode::operational||matter_ble_active_)return RadioResult::busy;
     if(remote_reconnect_)return transition(requested,now,duration);
     if(generation_==UINT64_MAX)return RadioResult::unavailable;
     owner_=requested;++generation_;deadline_=now+duration;return RadioResult::granted;
@@ -26,7 +26,7 @@ RadioResult RadioArbiter::cleanup_complete(uint64_t generation,uint64_t now){
 }
 RadioResult RadioArbiter::release(uint64_t generation,uint64_t now){
     if(generation!=generation_||owner_==RadioMode::operational)return RadioResult::stale;
-    if(owner_==RadioMode::matter_induction&&pase_active_)return RadioResult::busy;
+    if(owner_==RadioMode::matter_induction&&matter_ble_active_)return RadioResult::busy;
     return transition(RadioMode::operational,now,cancel_ms+1);
 }
 RadioResult RadioArbiter::admit_setup_connection(uint64_t generation,uint16_t handle){
@@ -40,11 +40,11 @@ RadioResult RadioArbiter::expire(uint64_t now){
     if(owner_==RadioMode::operational)return RadioResult::granted;
     if(owner_==RadioMode::transition)return now>=cancel_deadline_?RadioResult::timed_out:RadioResult::cancelling;
     if(now<deadline_)return RadioResult::granted;
-    if(owner_==RadioMode::matter_induction&&pase_active_)return RadioResult::busy;
+    if(owner_==RadioMode::matter_induction&&matter_ble_active_)return RadioResult::busy;
     return release(generation_,now);
 }
 RadioResult RadioArbiter::external_matter_will_open(uint64_t now,uint32_t duration,bool active){
-    pase_active_=active;
+    matter_ble_active_=active;
     if(owner_==RadioMode::matter_induction)return RadioResult::granted;
     if(owner_==RadioMode::transition)return RadioResult::busy;
     if(!duration||duration>900000)return RadioResult::unavailable;

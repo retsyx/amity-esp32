@@ -58,6 +58,17 @@ struct LinkTrace {
     bool fail(const char* why,Error result=Error::none){reason=why;error=result;unexpected=true;return false;}
     void queued(const Queued& value){kind=value.kind;has_kind=has_queue=true;created=value.created;ttl=value.ttl;queued_revision=value.revision;action_code=value.owned?static_cast<int>(value.owned->kind):-1;}
 };
+// Admitted image bytes and their nonactivating validation barrier stay in
+// ordered TCP output under backpressure. Ordinary controls still age out.
+static bool queued_firmware_stream(const Queued& queued){
+    if(queued.kind==Kind::update_chunk)return true;
+    if(queued.kind!=Kind::update_install)return false;
+    Json value;JsonError error;
+    return parse_json(queued.payload,value,error)&&valid_update(queued.kind,value)&&value.get("phase")->string=="stage";
+}
+static bool queued_expired(const Queued& queued,uint64_t now){
+    return now<queued.created||(!queued_firmware_stream(queued)&&now-queued.created>=queued.ttl);
+}
 static bool pure_key_release(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::key_edges&&intent.edge_count==1&&!intent.edges[0].down;}
 static bool queued_cleanup(const Queued& queued){
     if(queued.owned)return pure_key_release(*queued.owned);
@@ -926,16 +937,17 @@ void active_loop_work(void *arg){
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
             if(!active->queue.empty()){
                 const auto prepared=prepare_queued(*active,active->queue.front(),payload);
-                const auto& front=active->queue.front();const bool expired=now<front.created||now-front.created>=front.ttl;
+                const auto& front=active->queue.front();const bool expired=queued_expired(front,now);
                 if(prepared==QueuedState::invalid)invalid=true;
                 if(prepared==QueuedState::ready||expired){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}
             }}
         if(invalid){trace.fail("queued_invalid");break;}
-        if(have&&queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl)){trace.queued(queued);trace.fail("causal_expired");break;}
-        if(have&&!queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl))
+        if(have&&queued_causal(queued)&&queued_expired(queued,now)){trace.queued(queued);trace.fail("causal_expired");break;}
+        if(have&&!queued_causal(queued)&&queued_expired(queued,now))
             if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
-        if(have&&now>=queued.created&&now-queued.created<queued.ttl){
-            if(!send(*active,queued.kind,payload,queued.ttl-static_cast<uint32_t>(now-queued.created))){trace.queued(queued);trace.fail("queued_send");break;}
+        if(have&&!queued_expired(queued,now)){
+            const auto ttl=queued_firmware_stream(queued)?queued.ttl:queued.ttl-static_cast<uint32_t>(now-queued.created);
+            if(!send(*active,queued.kind,payload,ttl)){trace.queued(queued);trace.fail("queued_send");break;}
         }
         fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}
         // An idle connection has no receive deadline. Input fixes the start;
@@ -1728,13 +1740,13 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
         std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();
-        const auto expired_cleanup=std::find_if(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&(now<queued.created||now-queued.created>=queued.ttl);});
+        const auto expired_cleanup=std::find_if(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&queued_expired(queued,now);});
         if(expired_cleanup!=active->queue.end()){
             LinkTrace trace;trace.phase="queue_admission";trace.queued(*expired_cleanup);trace.fail("causal_expired");trace.retained=true;diagnostics.capture(*active,trace,now);
             request_session_restart(*active);return ESP_ERR_INVALID_STATE;
         }
         active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[&](const auto& queued){
-            const bool expired=now<queued.created||now-queued.created>=queued.ttl;
+            const bool expired=queued_expired(queued,now);
             if(expired)retries.dropped(*active,queued);
             return expired;
         }),active->queue.end());

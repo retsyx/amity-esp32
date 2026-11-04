@@ -8,7 +8,7 @@ idf_component_register(SRCS "amity_matter.cpp" "commissioning_credentials.cpp" "
                        INCLUDE_DIRS "include"
                        PRIV_INCLUDE_DIRS "."
                        REQUIRES esp_matter
-                       PRIV_REQUIRES nvs_flash device_settings esp_netif esp_event esp_wifi system_services radio_control consortium config_store)
+                       PRIV_REQUIRES nvs_flash device_settings esp_netif esp_event esp_wifi system_services consortium config_store)
 
 # Preserve one shared CHIP host while permanently suppressing member home-service publication.
 target_link_libraries(${COMPONENT_LIB} INTERFACE

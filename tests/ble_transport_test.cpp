@@ -32,8 +32,12 @@ struct Connect {
 int64_t now;
 unsigned steps, blocking_waits, cancellations, scans, security_calls, discovery_calls,
     persisted, removed_bonds;
-bool synced = true, storage_peer = true, connecting, scanning, immediate_connect;
+bool synced = true, storage_peer = true, connecting, scanning, immediate_connect,
+    disconnect_during_discovery;
 int connect_error, cancel_error, discovery_error, bond_delete_error, peer_erase_error;
+int privacy_remove_error;
+bool host_bond, controller_irk;
+std::vector<ble_addr_t> privacy_removals, bond_removals;
 unsigned recursive_depth, positive_keys, key_releases;
 uint16_t live_handle = BLE_HS_CONN_HANDLE_NONE;
 ble_gap_conn_desc descriptor{};
@@ -44,7 +48,7 @@ std::vector<uint16_t> terminations;
 std::vector<std::string> warnings;
 std::vector<std::unique_ptr<TestSemaphore>> semaphores;
 std::unique_ptr<TestQueue> queue;
-const ble_addr_t peer{BLE_ADDR_PUBLIC, {1, 2, 3, 4, 5, 6}};
+ble_addr_t peer{BLE_ADDR_PUBLIC, {1, 2, 3, 4, 5, 6}};
 constexpr uint8_t report_map[] = {
     0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x05, 0x07,
     0x19, 0x04, 0x29, 0x0b, 0x15, 0x00, 0x25, 0x01,
@@ -203,7 +207,8 @@ int os_mbuf_copydata(const os_mbuf *mbuf, int offset, int length, void *out) {
 int ble_hs_adv_parse_fields(ble_hs_adv_fields *, const uint8_t *, uint8_t) { return BLE_HS_EBADDATA; }
 int ble_gap_connect(uint8_t own, const ble_addr_t *peer, int32_t duration,
                     const ble_gap_conn_params *params, ble_gap_event_fn *callback, void *token) {
-    assert(own == BLE_OWN_ADDR_PUBLIC && !memcmp(peer, &fake::peer, sizeof(*peer)));
+    assert(own == BLE_OWN_ADDR_PUBLIC && (peer->type & 1)==fake::peer.type &&
+           !memcmp(peer->val, fake::peer.val, sizeof(peer->val)));
     assert(!fake::connecting && !fake::scanning);
     fake::connects.push_back({duration, params != nullptr, params ? *params : ble_gap_conn_params{}, callback, token});
     if (fake::connect_error) return fake::connect_error;
@@ -227,8 +232,9 @@ int ble_gap_terminate(uint16_t handle, uint8_t) {
     assert(handle != BLE_HS_CONN_HANDLE_NONE);
     fake::terminations.push_back(handle); return 0;
 }
-int ble_gap_disc(uint8_t own, int32_t duration, const ble_gap_disc_params *, ble_gap_event_fn *callback, void *token) {
+int ble_gap_disc(uint8_t own, int32_t duration, const ble_gap_disc_params *params, ble_gap_event_fn *callback, void *token) {
     assert(own == BLE_OWN_ADDR_PUBLIC && duration > 0);
+    assert(params && params->itvl==0x80 && params->window==params->itvl && !params->filter_duplicates);
     assert(!fake::connecting); // Cancellation must finish before a diagnostic scan.
     ++fake::scans; fake::scanning = true; fake::scan_callback = callback; fake::scan_token = token; return 0;
 }
@@ -236,6 +242,8 @@ int ble_gap_disc_cancel() { fake::scanning = false; return 0; }
 int ble_gap_security_initiate(uint16_t handle) {
     assert(handle != BLE_HS_CONN_HANDLE_NONE && handle == fake::live_handle);
     ++fake::security_calls;
+    fake::host_bond = true;
+    fake::controller_irk = MYNEWT_VAL(BLE_HS_PVCY);
     fake::descriptor.sec_state.encrypted = true;
     ble_gap_event event{};
     event.type = BLE_GAP_EVENT_ENC_CHANGE;
@@ -243,10 +251,28 @@ int ble_gap_security_initiate(uint16_t handle) {
     fake::connects.back().callback(&event, fake::connects.back().token);
     return 0;
 }
-int ble_store_util_delete_peer(const ble_addr_t *) { ++fake::removed_bonds; return fake::bond_delete_error; }
+int ble_hs_pvcy_remove_entry(uint8_t type, const uint8_t *address) {
+    // The pinned controller API cannot change its resolver while initiating
+    // or discovering. Its state is independent of persisted security records.
+    assert(!fake::connecting && !fake::scanning);
+    ble_addr_t peer{}; peer.type = type & 1; memcpy(peer.val, address, sizeof(peer.val));
+    fake::privacy_removals.push_back(peer);
+    assert(!memcmp(&peer, &fake::peer, sizeof(peer)));
+    if (fake::privacy_remove_error) return fake::privacy_remove_error;
+    if (!fake::controller_irk) return BLE_HS_HCI_ERR(BLE_ERR_UNK_CONN_ID);
+    fake::controller_irk = false;
+    return 0;
+}
+int ble_store_util_delete_peer(const ble_addr_t *peer) {
+    ++fake::removed_bonds; fake::bond_removals.push_back(*peer);
+    assert(!memcmp(peer, &fake::peer, sizeof(*peer)));
+    if (!fake::bond_delete_error) fake::host_bond = false;
+    return fake::bond_delete_error;
+}
 int ble_att_set_preferred_mtu(uint16_t) { return 0; }
 int ble_gattc_disc_all_svcs(uint16_t handle, ble_gatt_disc_svc_fn *callback, void *token) {
     ++fake::discovery_calls;
+    if (fake::disconnect_during_discovery) { fake::disconnect(); return 0; }
     if (fake::discovery_error) return fake::discovery_error;
     const ble_gatt_error success{}, done{BLE_HS_EDONE, 0};
     const ble_gatt_svc service{1, 10, fake::uuid(0x1812)};
@@ -295,11 +321,95 @@ int ble_gattc_exchange_mtu(uint16_t handle, ble_gatt_mtu_fn *callback, void *tok
 int main(int argc, char **argv) {
     assert(argc == 2);
     const std::string scenario = argv[1];
-    if (scenario == "pairing") fake::storage_peer = false;
+    if (scenario == "pairing" || scenario == "pairing-cleanup-privacy" ||
+        scenario == "pairing-cleanup-privacy-error" || scenario == "pairing-disconnected-privacy" ||
+        scenario == "pairing-resolved-identity-error" ||
+        scenario == "pairing-resolved-random-error") fake::storage_peer = false;
+    if (scenario == "pairing-resolved-random-error") fake::peer.type=1;
+    fake::host_bond = fake::storage_peer;
+    fake::controller_irk = fake::storage_peer && MYNEWT_VAL(BLE_HS_PVCY);
     if(scenario=="actuator-startup")assert(ble_remote_set_controller_enabled(false)==ESP_OK);
     assert(ble_remote_start(nullptr, nullptr) == ESP_OK);
 
-    if(scenario=="actuator-startup"){
+    if(scenario=="pairing-disconnected-privacy") {
+        fake::immediate_connect=true;fake::disconnect_during_discovery=true;
+        open_peer(fake::peer);
+        assert(fake::security_calls==1 && fake::discovery_calls==1);
+        assert(fake::status().last_error==BLE_HS_ENOTCONN && !fake::status().connected);
+        assert(fake::privacy_removals.size()==1 && fake::removed_bonds==1);
+        assert(!fake::controller_irk && !fake::host_bond && !fake::storage_peer);
+        assert(fake::terminations.empty()); // The peer has already disconnected.
+    }else if(scenario=="pairing-resolved-identity-error" || scenario=="pairing-resolved-random-error") {
+        // Scan reports can use identity types before a connection descriptor exists.
+        auto resolved=fake::peer;resolved.type+=2;
+        fake::connect_error=BLE_HS_EBUSY;
+        open_peer(resolved);
+        assert(fake::status().last_error==BLE_HS_EBUSY);
+        assert(fake::privacy_removals.size()==1 && fake::privacy_removals[0].type==fake::peer.type);
+        assert(fake::removed_bonds==1 && fake::bond_removals[0].type==fake::peer.type);
+    }else if(scenario=="unpair-privacy") {
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(!fake::controller_irk && !fake::host_bond && !fake::storage_peer);
+        assert(fake::privacy_removals.size()==1 && fake::removed_bonds==1);
+        assert(!fake::status().unpairing && !fake::status().last_error);
+        // Repeating a completed UI Unpair has no owned peer left to revoke.
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::privacy_removals.size()==1 && fake::removed_bonds==1);
+        assert(!fake::status().last_error);
+    }else if(scenario=="unpair-privacy-cancel") {
+        fake::run_steps(1);assert(fake::connecting);
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::privacy_removals.empty() && !fake::removed_bonds && fake::storage_peer);
+        assert(fake::status().unpairing);
+        fake::complete_connect(BLE_HS_EPREEMPTED);fake::run_steps(1);
+        assert(fake::privacy_removals.size()==1 && fake::removed_bonds==1);
+        assert(!fake::controller_irk && !fake::host_bond && !fake::storage_peer);
+        assert(!fake::status().unpairing && !fake::status().last_error);
+    }else if(scenario=="unpair-privacy-error") {
+        fake::privacy_remove_error=77;
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::controller_irk && fake::host_bond && !fake::removed_bonds);
+        assert(fake::status().last_error==77 && !fake::status().unpairing);
+        assert(ble_remote_start_pairing(20)==ESP_ERR_INVALID_STATE);
+        fake::privacy_remove_error=0;
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::privacy_removals.size()==2 && fake::removed_bonds==1);
+        assert(!fake::controller_irk && !fake::host_bond && !fake::status().last_error);
+    }else if(scenario=="unpair-privacy-connected") {
+        fake::run_steps(1);fake::complete_connect();fake::run_steps(1);
+        assert(fake::status().connected);
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::terminations.size()==1 && fake::privacy_removals.size()==1);
+        assert(!fake::controller_irk && !fake::host_bond && fake::status().unpairing);
+        fake::disconnect();fake::run_steps(1);
+        assert(!fake::status().unpairing && !fake::status().connected);
+    }else if(scenario=="actuator-pending-unpair") {
+        fake::run_steps(1);assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::status().unpairing && fake::privacy_removals.empty());
+        const auto result=ble_remote_set_controller_enabled(false);
+        assert(result==ESP_OK||result==ESP_ERR_TIMEOUT);
+        fake::complete_connect(BLE_HS_EPREEMPTED);fake::run_steps(4);
+        assert(fake::privacy_removals.empty() && !fake::removed_bonds && fake::storage_peer);
+    }else if(scenario=="unpair-no-privacy") {
+        assert(!MYNEWT_VAL(BLE_HS_PVCY));
+        assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+        assert(fake::privacy_removals.empty() && fake::removed_bonds==1 && !fake::host_bond);
+        assert(!fake::status().last_error && !fake::status().unpairing);
+    }else if(scenario=="pairing-cleanup-privacy" || scenario=="pairing-cleanup-privacy-error") {
+        fake::immediate_connect=true;fake::discovery_error=BLE_HS_ENOTSUP;
+        if(scenario=="pairing-cleanup-privacy-error")fake::privacy_remove_error=77;
+        open_peer(fake::peer);
+        assert(fake::status().last_error==BLE_HS_ENOTSUP);
+        assert(fake::privacy_removals.size()==1 && fake::terminations.size()==1);
+        if(fake::privacy_remove_error) {
+            assert(fake::controller_irk && fake::host_bond && !fake::removed_bonds);
+            fake::disconnect();fake::run_steps(1);
+            assert(ble_remote_start_pairing(20)==ESP_ERR_INVALID_STATE);
+            fake::privacy_remove_error=0;
+            assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
+            assert(!fake::controller_irk && !fake::host_bond && !fake::status().last_error);
+        } else assert(!fake::controller_irk && !fake::host_bond && fake::removed_bonds==1);
+    }else if(scenario=="actuator-startup"){
         fake::run_steps(20);assert(fake::connects.empty()&&!fake::scans&&fake::storage_peer&&fake::status().bonded);
         assert(ble_remote_scan(5)==ESP_ERR_INVALID_STATE&&ble_remote_start_pairing(5)==ESP_ERR_INVALID_STATE&&ble_remote_unpair()==ESP_ERR_INVALID_STATE);
         const uint8_t address[6]={6,5,4,3,2,1};assert(ble_remote_pair(address,0)==ESP_ERR_INVALID_STATE);
@@ -332,8 +442,8 @@ int main(int argc, char **argv) {
         assert(status.waiting && status.bonded && !status.connecting && !status.connected && !status.last_error);
         assert(fake::connects.size() == 1 && fake::connects[0].duration == BLE_HS_FOREVER);
         const auto &attempt = fake::connects[0];
-        assert(attempt.custom_params && attempt.params.scan_window > 0);
-        assert(attempt.params.scan_window < attempt.params.scan_itvl);
+        assert(attempt.custom_params && attempt.params.scan_itvl == 0x80);
+        assert(attempt.params.scan_window == attempt.params.scan_itvl);
         assert(attempt.params.itvl_min && attempt.params.itvl_max >= attempt.params.itvl_min);
         assert(attempt.params.supervision_timeout);
         fake::run_steps(1200); // Ten minutes of absence must remain one initiator.
@@ -358,12 +468,14 @@ int main(int argc, char **argv) {
     } else if (scenario == "unpair-delete-error") {
         fake::run_steps(1);fake::bond_delete_error=77;
         assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
-        assert(fake::status().last_error==77);
+        assert(!fake::status().last_error && !fake::removed_bonds && fake::controller_irk);
         fake::complete_connect(BLE_HS_EPREEMPTED);fake::run_steps(1);
         assert(!fake::status().unpairing&&!fake::status().bonded&&!fake::storage_peer&&fake::status().last_error==77);
+        assert(!fake::controller_irk && fake::host_bond);
         assert(fake::removed_bonds==1&&ble_remote_start_pairing(20)==ESP_ERR_INVALID_STATE);
         fake::bond_delete_error=0;assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
         assert(fake::removed_bonds==2&&!fake::status().last_error&&!fake::status().unpairing&&!fake::status().bonded);
+        assert(!fake::host_bond && fake::privacy_removals.size()==2);
     } else if (scenario == "unpair-storage-error") {
         fake::peer_erase_error=ESP_ERR_TIMEOUT;
         assert(ble_remote_unpair()==ESP_OK);fake::run_steps(1);
@@ -378,11 +490,12 @@ int main(int argc, char **argv) {
         assert(ble_remote_unpair() == ESP_OK);
         fake::run_steps(1);
         assert(fake::cancellations >= 1 && !fake::status().bonded && !fake::status().waiting);
-        assert(!fake::storage_peer && fake::removed_bonds == 1);
+        assert(fake::storage_peer && !fake::removed_bonds && fake::privacy_removals.empty());
         fake::complete_connect(0, stale, 77);
         assert(fake::terminations.size() == 1 && fake::terminations.back() == 77);
         fake::run_steps(60);
         assert(fake::connects.size() == 1 && !fake::security_calls && !fake::persisted);
+        assert(!fake::storage_peer && fake::removed_bonds == 1 && !fake::controller_irk);
     } else if (scenario == "scan-unpair") {
         fake::run_steps(1);
         assert(ble_remote_scan(5) == ESP_OK);
@@ -435,7 +548,7 @@ int main(int argc, char **argv) {
         fake::cancel_error = BLE_HS_EBUSY;
         assert(ble_remote_unpair() == ESP_OK);
         fake::run_steps(1);
-        assert(fake::status().unpairing && !fake::status().bonded && !fake::storage_peer);
+        assert(fake::status().unpairing && !fake::status().bonded && fake::storage_peer);
         assert(fake::cancellations == 1);
         fake::cancel_error = 0;
         fake::run_steps(10);
@@ -443,6 +556,7 @@ int main(int argc, char **argv) {
         fake::complete_connect(BLE_HS_EPREEMPTED);
         fake::run_steps(1);
         assert(!fake::status().unpairing && !fake::status().waiting && fake::connects.size() == 1);
+        assert(!fake::storage_peer && !fake::controller_irk && fake::removed_bonds==1);
     } else if (scenario == "unpair-before-completion") {
         fake::run_steps(1);
         assert(ble_remote_unpair() == ESP_OK);
