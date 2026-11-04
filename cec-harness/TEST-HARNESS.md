@@ -1,5 +1,7 @@
 # Test Harness description
 
+Don't edit this file without permission.
+
 ## Harness testbed
 
 username: pi
@@ -9,12 +11,12 @@ The harness testbed is a Raspberry Pi 5 without a USB console.
 
 ## DUTs
 
-| Bench label | ESP32-S3 MAC / USB serial | Amity device ID | Administration hostname |
-|---|---|---|---|
-| amity-dut | 68:EE:8F:50:2B:44 | dfcddb1bb98d70eca83cd015db66a2ad | amity |
-| amity-dut-2 | 44:B1:76:AE:C5:E0 | 7468ba8afeb9ffad49eb57b3ba0a3288 | |
-| amity-dut-3 | 44:B1:76:AE:C2:AC | fad293fe0f3b513a10e027a20cb3b7c8 | |
-| amity-dut-4 | 44:B1:76:AE:CF:64 | e453c2c503e55e5f6fe6ab7976c6f1d0 | |
+| Bench label | ESP32-S3 MAC / USB serial | Amity device ID |
+|---|---|---|
+| amity-dut | 68:EE:8F:50:2B:44 | dfcddb1bb98d70eca83cd015db66a2ad |
+| amity-dut-2 | 44:B1:76:AE:C5:E0 | 7468ba8afeb9ffad49eb57b3ba0a3288 |
+| amity-dut-3 | 44:B1:76:AE:C2:AC | fad293fe0f3b513a10e027a20cb3b7c8 |
+| amity-dut-4 | 44:B1:76:AE:CF:64 | e453c2c503e55e5f6fe6ab7976c6f1d0 |
 
 The administration hostname is the factory hostname used after reset; the bench
 label identifies physical wiring. Secondary boards are headless members and do
