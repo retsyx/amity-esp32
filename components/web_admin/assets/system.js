@@ -2,13 +2,33 @@
 // Preserve the original interface. This adapter carries scoped identities and
 // revisions privately; only friendly attachment locations enter the controls.
 window.amityInterface=(()=>{
- let enabled=false,choices=[],configuration=null,system=null,openDialog=null,originalSelections=new Map();
+ let enabled=false,choices=[],componentOwners=[],componentDialogUpdate=null,componentPending=false,configuration=null,system=null,openDialog=null,originalSelections=new Map();
  const roles=['display','source','audio','switch'];
  const identifier=()=>crypto.randomUUID().replaceAll('-','');
- const attachment=c=>[c.title,c.location].filter(Boolean).join(' · ');
+ const baseAttachment=c=>[c.title,c.location].filter(Boolean).join(' · ');
+ const attachment=(c,available=choices)=>{
+  const base=baseAttachment(c),side=c.qualified_name?.side;
+  return side&&available.some(other=>other.value!==c.value&&baseAttachment(other)===base&&other.qualified_name?.side&&other.qualified_name.side!==side)?base+' · '+(side==='back'?'Back':'Front'):base;
+ };
  function choiceFor(role,value){return choices.find(c=>(c.roles||[]).includes(role)&&c.value===value);}
  function visible(role,value){if(!value)return '';const c=choiceFor(role,value);return c?attachment(c):value;}
  function selections(document){return new Map((document.activities||[]).filter(a=>a.activity_id).map(a=>[a.activity_id,Object.fromEntries(roles.map(role=>{const value=role==='switch'?a.switch?.device:a[role];return [role,{value,visible:visible(role,value)}];}))]));}
+ function updateChoices(document){
+  if(Array.isArray(document.device_choices)){
+   const previous=choices;choices=document.device_choices;
+   if(typeof relabelActivityEquipment==='function'&&previous.some(old=>choices.some(next=>next.value===old.value&&attachment(next)!==attachment(old,previous)))){
+    relabelActivityEquipment((role,value,id)=>{
+     const saved=originalSelections.get(id)?.[role];let selector;
+     if(saved&&value===saved.visible)selector=saved.value;
+     else {const matches=previous.filter(c=>c.roles.includes(role)&&(attachment(c,previous)===value||c.value===value));if(matches.length===1)selector=matches[0].value;}
+     return selector&&choiceFor(role,selector)?visible(role,selector):value;
+    });
+    for(const current of originalSelections.values())for(const role of roles)if(choiceFor(role,current[role].value))current[role].visible=visible(role,current[role].value);
+   }
+  }
+  if(Array.isArray(document.component_owners))componentOwners=document.component_owners;
+  componentDialogUpdate?.();
+ }
  function reference(role,value,previous){
   if(!value)return '';
   // Equal display text can represent different CEC sides. An unchanged field
@@ -21,7 +41,7 @@ window.amityInterface=(()=>{
   throw Error('Choose '+role+' from the device list, including its location.');
  }
  function project(document){
-  choices=document.device_choices||choices;
+  updateChoices(document);
   const next=selections(document);
   for(const [id,current] of next){const previous=originalSelections.get(id);if(previous&&roles.some(role=>previous[role].visible===current[role].visible&&previous[role].value!==current[role].value))throw Error('Activities changed in another session. Reload the page before continuing.');}
   originalSelections=next;
@@ -57,9 +77,9 @@ window.amityInterface=(()=>{
   if(path==='config'){const submitted=submit(typeof data==='string'?JSON.parse(data):data);return {path:'activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
   if(path==='status')return {path:'activity-editor/status',decode:async original=>{
    const value=await original.json();
-   if(Array.isArray(value.device_choices))choices=value.device_choices;
+   updateChoices(value);
    value.state_revision=value.expected_state_revision;value.boot_id=value.expected_boot_id;
-   value.devices=(value.devices||[]).map(d=>{const c=choices.find(c=>c.value===d.name),title=d.title||c?.title||d.name,location=d.location||c?.location||'';return {...d,title,location,name:[title,location].filter(Boolean).join(' · ')};});
+   value.devices=(value.devices||[]).map(d=>{const c=choices.find(c=>c.value===d.name),title=d.title||c?.title||d.name,location=d.location||c?.location||'';return {...d,title,location,name:c?attachment(c):[title,location].filter(Boolean).join(' · ')};});
    return response(value,original);
   }};
   if(path==='discover')return {path:'activity-editor/discover',data:{request_id:identifier()},decode:wait};
@@ -71,12 +91,58 @@ window.amityInterface=(()=>{
   }
   return {path,data};
  }
- function close(){enabled=false;configuration=null;system=null;choices=[];originalSelections.clear();openDialog?.close();openDialog?.remove();openDialog=null;}
+ function close(){enabled=false;configuration=null;system=null;choices=[];componentOwners=[];originalSelections.clear();openDialog?.close();openDialog?.remove();openDialog=null;componentDialogUpdate=null;componentPending=false;}
  function dialog(title){
   openDialog?.close();openDialog?.remove();const d=document.createElement('dialog');openDialog=d;const heading=document.createElement('h3');heading.textContent=title;d.append(heading);document.body.append(d);d.showModal();d.addEventListener('close',()=>{if(openDialog===d)openDialog=null;d.remove();});return d;
  }
  function text(value){const p=document.createElement('p');p.textContent=value;return p;}
  function field(title,value=''){const l=document.createElement('label');l.textContent=title;const input=document.createElement('input');input.value=value;l.append(input);return {label:l,input};}
+ async function addComponent(role,osdName,selected,origin){
+  if(!enabled||!roles.includes(role)||componentPending)return;
+  const matching=choices.filter(c=>(c.roles||[]).includes(role)&&(attachment(c)===osdName||c.value===osdName));
+  if(matching.length===1)osdName=matching[0].qualified_name?.osd_name||matching[0].title;
+  await currentSavedConfiguration();
+  if(!origin?.isConnected||!origin.closest('dialog')?.open)return;
+  const d=dialog('Add component');d.id='componentEditor';d.setAttribute('aria-labelledby','componentEditorTitle');d.querySelector('h3').id='componentEditorTitle';
+  cancelOnBackdrop(d,()=>{if(!componentPending)d.close();});
+  const form=document.createElement('form'),fields=document.createElement('div'),error=document.createElement('p'),actions=document.createElement('div');fields.className='fields';error.id='componentEditorError';error.setAttribute('role','alert');actions.className='actions';
+  const selectField=(title,id)=>{const label=document.createElement('label'),input=document.createElement('select');label.textContent=title;input.id=id;label.append(input);fields.append(label);return {label,input};};
+  const owner=selectField('Amity','componentOwner'),adapter=selectField('Adapter','componentAdapter'),side=selectField('Side','componentSide'),name=field('OSD name',osdName);
+  name.input.id='componentOsdName';name.input.required=true;name.input.maxLength=14;name.input.autocomplete='off';fields.append(name.label);
+  for(const [value,title] of [['back','Back'],['front','Front']]){const option=document.createElement('option');option.value=value;option.textContent=title;side.input.append(option);}side.input.value=role==='source'?'back':'front';
+  const fill=(select,values,value)=>{if(values.length!==select.options.length||values.some(([id,title],n)=>select.options[n].value!==id||select.options[n].textContent!==title)){select.replaceChildren();for(const [id,title] of values){const option=document.createElement('option');option.value=id;option.textContent=title;select.append(option);}}if(values.some(([id])=>id===value))select.value=value;};
+  const update=()=>{
+   if(componentPending||!d.open)return;
+   const before=owner.input.value;fill(owner.input,componentOwners.map(o=>[o.octopus_id,o.name]),before);owner.label.hidden=componentOwners.length===1;
+   const current=componentOwners.find(o=>o.octopus_id===owner.input.value),capacity=current?.supported_tentacles||0;
+   fill(adapter.input,Array.from({length:capacity},(_,n)=>[String(n),String(n+1)]),adapter.input.value);adapter.label.hidden=capacity===1;
+   add.disabled=!current||!capacity;
+  };
+  const cancel=button('Cancel',()=>d.close());cancel.type='button';cancel.className='quiet';
+  const add=document.createElement('button');add.type='submit';add.textContent='Add';add.className='primary';actions.append(cancel,add);
+  form.append(fields,error,actions);d.append(form);componentDialogUpdate=update;
+  owner.input.addEventListener('change',update);
+  name.input.addEventListener('input',()=>{error.textContent='';name.input.setCustomValidity('');});
+  d.addEventListener('cancel',e=>{if(componentPending)e.preventDefault();});
+  d.addEventListener('close',()=>{if(componentDialogUpdate===update)componentDialogUpdate=null;});
+  form.addEventListener('submit',async e=>{
+   e.preventDefault();if(componentPending)return;error.textContent='';
+   if(!name.input.value.trim()||new TextEncoder().encode(name.input.value).length>14||/[\x00-\x1f\x7f]/.test(name.input.value)){error.textContent='Enter an OSD name of 1–14 bytes with no control characters.';return;}
+   const chosen={octopus_id:owner.input.value,tentacle_id:Number(adapter.input.value),osd_name:name.input.value,side:side.input.value,role};
+   componentPending=true;updateActivityButtons();form.querySelectorAll('input,select,button').forEach(c=>c.disabled=true);
+   try{
+    const latest=await currentSavedConfiguration();
+    const result=await completed('activity-editor/components',{expected_config_revision:latest.expected_config_revision,expected_presentation_revision:latest.expected_presentation_revision,...chosen});
+    const document=await request('config');
+    config.expected_config_revision=document.expected_config_revision;config.expected_presentation_revision=document.expected_presentation_revision;
+    const choice=choices.find(c=>c.value==='component:'+result.component_id)||choices.find(c=>(c.roles||[]).includes(role)&&c.qualified_name&&c.qualified_name.octopus_id===chosen.octopus_id&&c.qualified_name.tentacle_id===chosen.tentacle_id&&c.qualified_name.side===chosen.side&&c.qualified_name.osd_name===chosen.osd_name);
+    if(!choice)throw Error('The component was saved. Reload the equipment list before selecting it.');
+    selected(attachment(choice));renderDeviceNames();d.close();message('Component saved.');
+   }catch(e){if(!e.silent&&d.open)error.textContent=e.message;}
+   finally{componentPending=false;updateActivityButtons();if(d.open){form.querySelectorAll('input,select,button').forEach(c=>c.disabled=false);update();}}
+  });
+  update();name.input.focus();
+ }
  async function mutation(path,data){return request(''+path,{request_id:identifier(),...data});}
  async function completed(path,data){
   const result=await mutation(path,data);
@@ -207,7 +273,7 @@ window.amityInterface=(()=>{
     status.textContent=fresh?'':result.status==='unsupported'?'Update this Amity to edit its settings.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
     if(snapshot?.adapters?.length){
      const table=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody'),headRow=document.createElement('tr');
-     table.setAttribute('aria-label','HDMI adapter addresses');
+     table.setAttribute('aria-label','Adapter addresses');
      for(const title of ['Adapter','Default','Detected Address','Selected Address']){const cell=document.createElement('th');cell.scope='col';cell.textContent=title;headRow.append(cell);}
      head.append(headRow);table.append(head,body);rows.append(table);
      for(const row of snapshot.adapters){
@@ -355,10 +421,10 @@ window.amityInterface=(()=>{
   const apply=button('Apply confirmed replacement',async()=>{if(!approved)throw Error('Preview the mappings first.');await completed('replacements/apply',approved);d.close();await refresh();if(await refreshActivityConfiguration())message('Replacement saved. Choose an activity when its equipment is ready.');});apply.disabled=true;
   select.onchange=()=>{mapping.replaceChildren();preview.replaceChildren();approved=null;apply.disabled=true;portFields=[];equipmentFields=[];if(!select.value)return;
    const peer=current.membership.peers.find(p=>p.octopus_id===select.value),connectors=[];
-   for(let i=0;i<(peer?.supported_tentacles||1);i++)if((peer?.configured_tentacles_mask??1)&(1<<i))for(const side of ['front','back'])connectors.push([i+':'+side,`HDMI adapter ${i+1} · ${side==='back'?'From the source':'To the screen or receiver'}`]);
-   for(const old of ports.values()){const control=addSelect(`Previous HDMI adapter ${old.tentacle_id+1} · ${old.side==='back'?'From the source':'To the screen or receiver'}`,connectors);portFields.push({old,control});}
+   for(let i=0;i<(peer?.supported_tentacles||1);i++)if((peer?.configured_tentacles_mask??1)&(1<<i))for(const side of ['front','back'])connectors.push([i+':'+side,`Adapter ${i+1} · ${side==='back'?'Back':'Front'}`]);
+   for(const old of ports.values()){const control=addSelect(`Previous adapter ${old.tentacle_id+1} · ${old.side==='back'?'Back':'Front'}`,connectors);portFields.push({old,control});}
    const observed=(current.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===select.value);
-   for(const component of snapshot.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · HDMI adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'From the source':'To the screen or receiver'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
+   for(const component of snapshot.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · Adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'Back':'Front'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
   };
   d.append(button('Preview replacement',async()=>{
    if(!isolated.input.checked||!select.value||portFields.some(f=>!f.control.value)||equipmentFields.some(f=>!f.control.value||!f.confirmed.checked))throw Error('Confirm old-device isolation and every cable and equipment mapping.');
@@ -368,5 +434,5 @@ window.amityInterface=(()=>{
   }),apply,button('Cancel',()=>d.close()));
  }
  $('addAmity').addEventListener('click',run(add));
- return {get enabled(){return enabled;},route,close,refresh,open:refresh,isDeviceChoice:value=>choices.some(c=>attachment(c)===value)};
+ return {get enabled(){return enabled;},get componentPending(){return componentPending;},route,close,refresh,open:refresh,addComponent,deviceNames:role=>choices.filter(c=>(c.roles||[]).includes(role)).map(c=>attachment(c)),isDeviceChoice:value=>choices.some(c=>attachment(c)===value)};
 })();

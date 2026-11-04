@@ -99,6 +99,17 @@ input {
   color: #243937;
 }
 input:disabled { background: #f3f5f1; color: var(--muted); }
+.device-field { position: relative; min-width: 0; }
+.device-options { position: absolute; top: 100%; left: 0; right: 0; z-index: 2; max-height: 220px; overflow-y: auto; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: #fff; box-shadow: 0 8px 24px #142b2429; }
+.device-options button { display: block; width: 100%; border: 0; text-align: left; overflow-wrap: anywhere; }
+.device-options button[aria-selected=true] { background: var(--sage); }
+.device-options button:last-child { border-top: 1px solid var(--border); border-radius: 0 0 6px 6px; }
+#componentEditor { width: 380px; max-height: calc(100dvh - 32px); overflow: auto; }
+#componentEditor select { display: block; width: 100%; margin-top: 6px; padding: 10px 12px; min-height: 44px; border: 1px solid #bac8bd; border-radius: 8px; font: inherit; color: inherit; background: #fff; }
+#componentEditor select:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+#componentEditorError { color: var(--danger); }
+#componentEditorError:empty { display: none; }
+#componentEditor .actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); justify-content: flex-end; }
 input[type=file] { font-size: .85rem; padding: 6px; }
 input::file-selector-button {
   font: inherit;
@@ -174,7 +185,6 @@ dialog h3 { margin-bottom: 20px; font-size: 1.25rem; }
 #activityEditor .actions button, #recommendationEditor .actions button { padding: 10px 12px; }
 #activityEditor .actions button[type=submit], #cancelActivity { min-width: 5rem; }
 #editorStart { margin-right: auto; }
-#editorSaveHint { margin-bottom: 0; color: var(--muted); font-size: .8125rem; }
 #activityEditor input[data-switch-input], #recommendationEditor input[data-switch-input] { width: calc(6ch + 26px); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 

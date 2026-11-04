@@ -16,8 +16,9 @@ def main():
     # Exact approved main presentation at aa9395aaecdc861e1d4cce040079a5ac6121e67d,
     # with HDMI-CEC and hostname controls moved to per-device settings. Firmware
     # upload/progress now covers the whole system and has its own browser tests.
+    # The activity editor's save-before-start hint was explicitly removed.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = '6e6df80d9133909eaeb38bb80672f3567569bd0974db51da6627efc9a5b2080f'
+    baseline_sha256 = '429791583d8daf53a2e369d2f7a65a7b648faaf7d8c1cacc45e066e9c71e4c07'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
@@ -617,7 +618,7 @@ def main():
                 replacement_dialog.get_by_label('Replacement Amity', exact=True).select_option(replacement)
                 expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True)).to_have_count(1)
                 expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True).locator('option')).to_have_count(2)
-                expect(replacement_dialog.get_by_label('Previous HDMI adapter 1 · To the screen or receiver', exact=True)).to_have_count(1)
+                expect(replacement_dialog.get_by_label('Previous adapter 1 · Front', exact=True)).to_have_count(1)
                 replacement_dialog.get_by_role('button', name='Cancel', exact=True).click()
                 passed('management loads canonical saved owners and components while the activity editor keeps its projection')
             finally:

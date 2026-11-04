@@ -54,6 +54,57 @@ bool dto_string(const cJSON* value,const char* key,std::string& out,size_t maxim
 }
 }
 std::string component_value(std::optional<m::ComponentId> id) { return id?"component:"+id->str():std::string{}; }
+std::vector<ComponentOwner> component_owners(const cs::Configuration& config,const OwnerHostnames& names,
+    const std::vector<m::OctopusId>& enrolled,const OwnerCapacities& capacities) {
+    std::vector<ComponentOwner> out;
+    for(const auto& owner:config.octopuses){
+        if(config.controller_octopus_id!=owner.octopus_id&&!contains(enrolled,owner.octopus_id))continue;
+        const auto current=capacities.find(owner.octopus_id);const auto capacity=current==capacities.end()?owner.supported_tentacles:current->second;
+        if(!capacity||capacity>amity::max_tentacles)continue;
+        const auto hostname=names.find(owner.octopus_id);
+        out.push_back({owner.octopus_id,hostname==names.end()||hostname->second.empty()?"Name unavailable":hostname->second,capacity});
+    }
+    return out;
+}
+bool parse_component_submission(const cJSON* root,const cs::Configuration& config,ComponentSubmission& out,std::string& error) {
+    const auto fail=[&](const char* message){error=message;return false;};
+    if(!dto_keys(root,{"request_id","expected_config_revision","expected_presentation_revision","octopus_id","tentacle_id","osd_name","side","role"}))return fail("Unknown or invalid equipment field");
+    ComponentSubmission value;const auto request=m::MessageId::parse(dto_text(root,"request_id"));const auto semantic=m::parse_uint64(dto_text(root,"expected_config_revision"));const auto presentation=m::parse_uint64(dto_text(root,"expected_presentation_revision"));
+    if(!request||!semantic||!presentation)return fail("Equipment requests require current saved revisions");
+    value.request_id=*request;value.expected={*semantic,*presentation};if(value.expected!=config.revisions())return fail("Equipment changed. Reload before adding a component");
+    const auto owner=m::OctopusId::parse(dto_text(root,"octopus_id"));const auto side=m::parse_side(dto_text(root,"side"));const auto* adapter=cJSON_GetObjectItemCaseSensitive(root,"tentacle_id");
+    if(!owner||!side||!cJSON_IsNumber(adapter)||adapter->valuedouble!=adapter->valueint||adapter->valueint<0||adapter->valueint>static_cast<int>(amity::last_tentacle_id))return fail("Choose an Amity, adapter and connection side");
+    value.role=dto_text(root,"role");if(value.role!="display"&&value.role!="source"&&value.role!="audio"&&value.role!="switch")return fail("Choose a component type");
+    value.name.port={config.consortium_id,*owner,static_cast<uint8_t>(adapter->valueint),*side};
+    if(!dto_string(root,"osd_name",value.name.osd_name,14)||!value.name.valid())return fail("Use an OSD name of 1 to 14 printable bytes");
+    out=std::move(value);error.clear();return true;
+}
+bool add_component(const cs::Configuration& previous,const ComponentSubmission& submission,const std::vector<ComponentOwner>& owners,
+    const std::function<bool(uint8_t*,size_t)>& random,cs::Configuration& out,m::ComponentId& id,std::string& error) {
+    const auto fail=[&](const char* message){error=message;return false;};
+    if(submission.expected!=previous.revisions()||!cs::validate_configuration(previous,error))return fail("The saved equipment changed. Reload before adding a component");
+    const auto& name=submission.name;
+    if(!name.valid()||name.port.consortium_id!=previous.consortium_id)return fail("Use a valid OSD name and connection");
+    const auto owner=std::find_if(owners.begin(),owners.end(),[&](const auto& item){return item.id==name.port.octopus_id;});
+    if(owner==owners.end()||!owner->supported_tentacles||owner->supported_tentacles>amity::max_tentacles||name.port.tentacle_id>=owner->supported_tentacles)return fail("Choose an added Amity and one of its supported adapters");
+    const std::string kind=submission.role=="display"?"display":submission.role=="source"?"source":submission.role=="audio"?"receiver":submission.role=="switch"?"switch":"";
+    if(kind.empty())return fail("Choose a component type");
+    auto candidate=previous;
+    for(const auto& component:candidate.components)if(contains(component.record.qualified_names,name)){
+        if(!contains(roles(component.kind),submission.role))return fail("This OSD name and connection are already saved as another component type");
+        id=component.record.component_id;out=std::move(candidate);error.clear();return true;
+    }
+    // A newer owner's reported capacity may exceed its retained configuration.
+    // Preserve existing selectors while admitting the owner's current adapters.
+    const auto configured=std::find_if(candidate.octopuses.begin(),candidate.octopuses.end(),[&](const auto& item){return item.octopus_id==owner->id;});
+    if(configured==candidate.octopuses.end())return fail("Choose an added Amity");
+    configured->supported_tentacles=std::max(configured->supported_tentacles,owner->supported_tentacles);
+    cs::ConfiguredComponent component;const auto allocated=m::ComponentId::generate(random);
+    if(!allocated||std::any_of(candidate.components.begin(),candidate.components.end(),[&](const auto& item){return item.record.component_id==*allocated;}))return fail("Component identity allocation failed");
+    component.record.component_id=*allocated;component.record.qualified_names={name};component.record.label=component.generated_label=name.osd_name;component.kind=kind;candidate.components.push_back(std::move(component));
+    if(!cs::validate_configuration(candidate,error))return false;
+    id=*allocated;out=std::move(candidate);error.clear();return true;
+}
 bool parse_submission(const std::string& body,const cs::Configuration& config,Submission& out,std::string& error) {
     const auto fail=[&](const char* message){error=message;return false;};
     if(body.size()>cs::configuration_payload_limit)return fail("The activity document is too large");

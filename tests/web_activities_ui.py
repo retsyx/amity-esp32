@@ -36,14 +36,17 @@ def main():
     group, controller, zone, boot = (f'{value:032x}' for value in (1, 2, 3, 4))
     fixture.update(config_revision=1, presentation_revision=1, state_revision=1, next_activity_id=100)
     equipment = {}
+    saved_equipment = set()
 
     def component(name, role=None):
         if not name:
             return ''
+        if role:
+            saved_equipment.add(name)
         if name not in equipment:
             observed = next((d for d in fixture['status']['devices'] if d['name'] == name), {})
-            kind = observed.get('type', 6 if role == 'switch' else 4)
-            roles = ['display', 'audio'] if kind == 0 else ['audio', 'switch'] if kind == 5 else ['switch'] if kind in (6, 7) else ['source']
+            kind = observed.get('type', {'display': 0, 'audio': 5, 'switch': 6}.get(role, 4))
+            roles = ['display', 'audio'] if kind == 0 else ['audio', 'switch'] if kind == 5 else ['switch'] if kind in (6, 7) else ['source'] if kind in (1, 3, 4) else []
             equipment[name] = dict(value='component:' + f'{len(equipment) + 20:032x}', title=name, location='', roles=roles)
         if role and role not in equipment[name]['roles']:
             equipment[name]['roles'].append(role)
@@ -64,7 +67,8 @@ def main():
         normalize_rows()
         for device in fixture['status']['devices']:
             component(device['name'])
-        return deepcopy(list(equipment.values()))
+        observed = {d['name'] for d in fixture['status']['devices']}
+        return deepcopy([choice for name, choice in equipment.items() if choice['roles'] and (name in saved_equipment or name in observed)])
 
     def editor():
         available = choices()
@@ -302,6 +306,7 @@ def main():
                 def edit(index=0):
                     page.locator('#activityList article').nth(index).get_by_role('button',name='Edit',exact=True).click()
                     expect(page.locator('#activityEditor')).to_be_visible()
+                    expect(page.locator('#activityForm button[type=submit]')).to_have_text('OK')
                 def rename(value,index=0):
                     edit(index);page.locator('#activityFields input').first.fill(value)
                     page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click()
@@ -320,7 +325,7 @@ def main():
                 passed('main list contains only names, reorder handles, and Edit/Delete/Start controls')
                 saved_before=deepcopy(fixture['config']);writes_before=fixture['config_calls'];activity_before=fixture['status']['current_activity']
                 rename('Unwanted edit');page.locator('#activityList article').nth(1).get_by_role('button',name='Delete',exact=True).click()
-                page.locator('#addActivity').click();page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click();drag(0,1)
+                page.locator('#addActivity').click();page.locator('#activityForm').get_by_role('button',name='Add',exact=True).click();drag(0,1)
                 expect(discard).to_be_visible();discard.click()
                 expect(page.locator('#activityList .activity-name')).to_have_text(['TV','Music']);expect(save).to_be_hidden();expect(discard).to_be_hidden()
                 assert fixture['config']==saved_before and fixture['config_calls']==writes_before and fixture['status']['current_activity']==activity_before
@@ -343,6 +348,14 @@ def main():
                 edit();page.locator('#activityFields input').first.fill('Escape edit');page.keyboard.press('Escape')
                 expect(page.locator('#activityEditor')).to_be_hidden();expect(save).to_be_hidden()
                 passed('Escape dismisses modal without applying edits')
+                edit();page.locator('#activityFields input').first.fill('Backdrop edit')
+                dialog=page.locator('#activityEditor');box=dialog.bounding_box();writes_before=fixture['config_calls']
+                page.mouse.click(box['x']+5,box['y']+5);expect(dialog).to_be_visible()
+                page.mouse.move(box['x']+5,box['y']+5);page.mouse.down();page.mouse.move(5,5,steps=5);page.mouse.up();expect(dialog).to_be_visible()
+                page.mouse.click(5,5);expect(dialog).to_be_hidden();expect(save).to_be_hidden()
+                assert fixture['config_calls']==writes_before and fixture['config']['activities'][0]['name']=='TV'
+                expect(page.locator('#activityList .activity-name').first).to_have_text('TV')
+                passed('activity backdrop discards edits without saving; inside padding and a press dragged outside do not cancel')
                 rename('Changed');expect(save).to_be_visible();expect(starts.first).to_be_disabled();expect(starts.nth(1)).to_be_enabled()
                 edit();page.locator('#activityFields input').first.fill('TV');before_calls=len(fixture['activity_calls'])
                 expect(page.locator('#editorStart')).to_have_text('Repair');page.locator('#editorStart').click();page.wait_for_function('() => !activityActionPending')
@@ -356,8 +369,11 @@ def main():
                 edit();page.locator('#activityFields input').nth(3).fill('');page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click();expect(save).to_be_hidden()
                 passed('missing and empty optional fields compare equally')
                 page.locator('#addActivity').click();expect(page.locator('#activityEditorTitle')).to_have_text('Add activity');expect(page.locator('#activityList article')).to_have_count(2)
-                page.locator('#cancelActivity').click();expect(save).to_be_hidden()
-                page.locator('#addActivity').click();page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click();expect(save).to_be_visible()
+                expect(page.locator('#activityForm button[type=submit]')).to_have_text('Add')
+                page.locator('#activityFields input').first.fill('Discarded new activity');page.mouse.click(5,5)
+                expect(page.locator('#activityEditor')).to_be_hidden();expect(page.locator('#activityList article')).to_have_count(2);expect(save).to_be_hidden()
+                assert fixture['config_calls']==writes_before
+                page.locator('#addActivity').click();page.locator('#activityForm').get_by_role('button',name='Add',exact=True).click();expect(save).to_be_visible()
                 page.locator('#activityList article').last.get_by_role('button',name='Delete',exact=True).click();expect(save).to_be_hidden()
                 passed('Add opens draft modal; cancel adds nothing; adding then deleting restores baseline')
                 drag(0,1);expect(save).to_be_visible();expect(page.locator('#activityList .activity-name')).to_have_text(['Music','TV'])
@@ -493,7 +509,7 @@ def main():
                 before = page.locator('#activityList article').count()
                 page.locator('[data-recommendation]:visible').first.get_by_role('button', name='Edit', exact=True).click()
                 expect(page.locator('#recommendationEditor')).to_be_visible()
-                assert page.locator('#recommendationFields input[list]').evaluate_all('(inputs) => inputs.map(input => input.getAttribute("list"))') == ['displayDeviceNames', 'sourceDeviceNames', 'audioDeviceNames', 'switchDeviceNames']
+                assert page.locator('#recommendationFields input[data-device-list]').evaluate_all('(inputs) => inputs.map(input => input.getAttribute("data-device-list"))') == ['displayDeviceNames', 'sourceDeviceNames', 'audioDeviceNames', 'switchDeviceNames']
                 passed('recommendation editor uses the same category-specific device lists')
                 page.locator('#recommendationFields input').first.fill('My player')
                 page.locator('#recommendationForm').get_by_role('button', name='OK', exact=True).click()
@@ -867,6 +883,11 @@ def main():
                      'switch': {'device': 'HDMI Switch', 'input': 3}},
                     {'name': 'Games', 'display': 'Offline TV', 'source': 'Offline Console', 'audio': ''},
                     {'name': 'Quiet', 'display': 'Player', 'source': 'Player', 'audio': '   '}]}
+                # Start this scenario with its own retained components. Saved
+                # equipment outlives activities; observations alone do not.
+                equipment.clear()
+                saved_equipment.clear()
+                component('New Console', 'source')
                 fixture['status']['devices'] = [device for device in fixture['status']['devices']
                                                  if device['name'] in ['Player', 'Receiver', 'TV']]
                 page.reload()
@@ -875,25 +896,25 @@ def main():
                 options = page.locator('#activities datalist option')
                 def device_names():
                     return options.evaluate_all('(options) => [...new Set(options.map(option => option.value))].sort((a,b) => a.localeCompare(b))')
-                expected_names = ['HDMI Switch', 'Offline Console', 'Offline Receiver', 'Offline TV', 'Player', 'Receiver', 'TV']
+                expected_names = ['HDMI Switch', 'New Console', 'Offline Console', 'Offline Receiver', 'Offline TV', 'Player', 'Receiver', 'TV']
                 assert device_names() == expected_names, device_names()
-                passed('device suggestions merge all saved activity roles with scan results, deduplicated without blank names')
+                passed('device suggestions merge all saved components with scan results, deduplicated without blank names')
                 page.locator('#addActivity').click()
-                expect(page.locator('#activityFields input[list$=DeviceNames]')).to_have_count(4)
+                expect(page.locator('#activityFields input[data-device-list$=DeviceNames]')).to_have_count(4)
                 assert device_names() == expected_names
                 page.locator('#cancelActivity').click()
                 edit(1)
-                expect(page.locator('#activityFields input[list$=DeviceNames]')).to_have_count(4)
+                expect(page.locator('#activityFields input[data-device-list$=DeviceNames]')).to_have_count(4)
                 assert 'HDMI Switch' in device_names() and 'Offline Receiver' in device_names()
                 page.locator('#cancelActivity').click()
                 passed('create and edit dialogs offer device names saved in other activities, including optional switches')
                 def role_names(role):
                     return page.locator('#'+role+'DeviceNames option').evaluate_all('(options) => options.map(option => option.value)')
-                assert role_names('display') == ['Offline TV', 'TV']
-                assert role_names('source') == ['Offline Console', 'Player']
-                assert role_names('audio') == ['Offline Receiver', 'Receiver', 'TV']
-                assert role_names('switch') == ['HDMI Switch', 'Receiver']
-                passed('CEC device types restrict each dropdown; known playback devices are excluded from Display even if previously configured there')
+                assert role_names('display') == ['Offline TV', 'Player', 'TV']
+                assert role_names('source') == ['New Console', 'Offline Console', 'Player']
+                assert role_names('audio') == ['Offline Receiver', 'Offline TV', 'Receiver', 'TV']
+                assert role_names('switch') == ['HDMI Switch', 'Offline Receiver', 'Receiver']
+                passed('equipment roles filter each dropdown and retain roles already used by saved activities')
                 fixture['status']['devices'] += [
                     {'name': 'Recorder', 'type': 1, 'address': 1},
                     {'name': 'Tuner', 'type': 3, 'address': 3},
@@ -902,21 +923,21 @@ def main():
                     {'name': 'Unknown', 'type': 255, 'address': 12},
                     {'name': 'Offline Receiver', 'type': 255, 'address': 13}]
                 page.evaluate('() => refresh()')
-                assert role_names('display') == ['Offline TV', 'TV']
-                assert role_names('source') == ['Offline Console', 'Player', 'Recorder', 'Tuner']
-                assert role_names('audio') == ['Offline Receiver', 'Receiver', 'TV']
-                assert role_names('switch') == ['CEC Switch', 'HDMI Switch', 'Receiver', 'Video Processor']
+                assert role_names('display') == ['Offline TV', 'Player', 'TV']
+                assert role_names('source') == ['New Console', 'Offline Console', 'Player', 'Recorder', 'Tuner']
+                assert role_names('audio') == ['Offline Receiver', 'Offline TV', 'Receiver', 'TV']
+                assert role_names('switch') == ['CEC Switch', 'HDMI Switch', 'Offline Receiver', 'Receiver', 'Video Processor']
                 assert 'Unknown' not in device_names()
                 passed('recorder/tuner types are sources; switches/processors and receivers support switching; unknown devices use only saved roles')
                 for open_dialog in [lambda: page.locator('#addActivity').click(), lambda: edit(1)]:
                     open_dialog()
-                    lists = page.locator('#activityFields input[list]').evaluate_all('(inputs) => inputs.map(input => input.getAttribute("list"))')
+                    lists = page.locator('#activityFields input[data-device-list]').evaluate_all('(inputs) => inputs.map(input => input.getAttribute("data-device-list"))')
                     assert lists == ['displayDeviceNames', 'sourceDeviceNames', 'audioDeviceNames', 'switchDeviceNames']
                     page.locator('#cancelActivity').click()
                 passed('create and edit dialogs bind each field to its own filtered device list')
                 fixture['status']['devices'] = []
                 page.evaluate('() => refresh()')
-                offline_names = ['HDMI Switch', 'Offline Console', 'Offline Receiver', 'Offline TV', 'Player']
+                offline_names = ['HDMI Switch', 'New Console', 'Offline Console', 'Offline Receiver', 'Offline TV', 'Player']
                 assert device_names() == offline_names
                 page.evaluate('() => refresh()')
                 assert device_names() == offline_names
@@ -930,25 +951,25 @@ def main():
                 fixture['fail_save'] = False
                 save.click()
                 expect(save).to_be_hidden()
-                assert device_names() == ['Offline Console', 'Offline TV', 'Player']
-                passed('device suggestions retain the saved baseline through staged deletion and failed save, then reflect successful deletion')
+                assert device_names() == offline_names
+                passed('deleting an activity and saving does not delete its saved equipment suggestions')
                 edit()
                 page.locator('#activityFields input').nth(2).fill('New Console')
                 page.locator('#activityForm').get_by_role('button', name='OK', exact=True).click()
-                assert device_names() == ['Offline Console', 'Offline TV', 'Player']
+                assert device_names() == offline_names
                 discard.click()
-                assert device_names() == ['Offline Console', 'Offline TV', 'Player']
+                assert device_names() == offline_names
                 edit()
                 page.locator('#activityFields input').nth(2).fill('New Console')
                 page.locator('#activityForm').get_by_role('button', name='OK', exact=True).click()
                 save.click()
                 expect(save).to_be_hidden()
-                assert device_names() == ['New Console', 'Offline TV', 'Player']
+                assert device_names() == offline_names
                 page.reload()
                 expect(page.locator('#admin')).to_be_visible()
                 page.wait_for_function('() => !polling')
-                assert device_names() == ['New Console', 'Offline TV', 'Player']
-                passed('new saved device names replace old suggestions and persist after reload; discarded drafts do not change suggestions')
+                assert device_names() == offline_names
+                passed('changing activity equipment keeps both old and new saved components available after reload; discarded drafts do not change suggestions')
                 route_calls = []
 
                 def current_missing(route):

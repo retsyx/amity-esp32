@@ -60,9 +60,39 @@ int main(){
     for(auto owner:{*empty.controller_octopus_id,member}){model::QualifiedDeviceName name{{empty.consortium_id,owner,0,model::Side::back},"Source"};exact.push_back({"native:"+sha256_hex(model::name_json(name)),"Source","",{"source"},{},name,{}});}
     model::QualifiedDeviceName screen{{empty.consortium_id,*empty.controller_octopus_id,0,model::Side::front},"TV"};exact.push_back({"screen","TV","",{"display","audio"},{},screen,{}});
     ae::Row fresh;fresh.name="Remote source";fresh.source=exact[1].value;fresh.display=exact[2].value;fresh.audio=exact[2].value;assert(ae::edit(empty,{fresh},exact,random_source(),edited,unresolved,error)&&unresolved.empty());const auto& selection=edited.activities[0];const auto source=std::find_if(edited.components.begin(),edited.components.end(),[&](const auto& v){return v.record.component_id==selection.source;});assert(source!=edited.components.end()&&source->record.qualified_names[0].port.octopus_id==member);
+    // Manual components use only saved ownership, connection capacity and OSD
+    // identity. No observations or scan are needed, including for offline peers.
+    auto manual=empty_configuration();manual.octopuses.push_back({member,"Old label","Old label",true,4});
+    const auto removed=id<model::OctopusId>(71);manual.octopuses.push_back({removed,"Removed","Removed",false,4});
+    const ae::OwnerHostnames manual_names{{*manual.controller_octopus_id,"amity-main"},{member,"amity-den"}};
+    const auto owners=ae::component_owners(manual,manual_names,{member});
+    assert(owners.size()==2&&owners[0].name=="amity-main"&&owners[1].id==member&&owners[1].name=="amity-den"&&owners[1].supported_tentacles==4);
+    const auto current_owners=ae::component_owners(manual,manual_names,{member},{{member,1},{*manual.controller_octopus_id,4}});
+    assert(current_owners[0].supported_tentacles==4&&current_owners[1].supported_tentacles==1);
+    const auto unnamed=ae::component_owners(manual,{}, {member});assert(unnamed[1].name=="Name unavailable");
+    const std::string component_body="{\"request_id\":\""+id<model::MessageId>(91).str()+"\",\"expected_config_revision\":\"1\",\"expected_presentation_revision\":\"1\",\"octopus_id\":\""+member.str()+"\",\"tentacle_id\":3,\"side\":\"back\",\"role\":\"audio\",\"osd_name\":\"Receiver\"}";
+    const auto parse_component=[&](const std::string& body,ae::ComponentSubmission& value){auto* json=web_admin::parse_json_input(body);const bool ok=ae::parse_component_submission(json,manual,value,error);cJSON_Delete(json);return ok;};
+    ae::ComponentSubmission component;assert(parse_component(component_body,component));model::ComponentId component_id;
+    assert(ae::add_component(manual,component,owners,random_source(),edited,component_id,error));
+    assert(edited.components.size()==1&&edited.components[0].kind=="receiver"&&edited.components[0].record.qualified_names[0]==component.name&&edited.activities.empty());
+    Configuration roundtrip;assert(parse_configuration(serialize_configuration(edited),roundtrip,error));
+    const auto offline_added=ae::choices(roundtrip,{},manual_names,true);assert(offline_added.size()==1&&offline_added[0].value==ae::component_value(component_id)&&offline_added[0].location=="amity-den · Adapter 4"&&!offline_added[0].observation);
+    auto selected_component=component;selected_component.role="switch";Configuration reused;model::ComponentId same_id;
+    assert(ae::add_component(edited,selected_component,owners,random_source(),reused,same_id,error)&&same_id==component_id&&reused.components.size()==1);
+    selected_component.role="source";assert(!ae::add_component(edited,selected_component,owners,random_source(),reused,same_id,error));
+    selected_component=component;selected_component.name.port.side=model::Side::front;assert(ae::add_component(edited,selected_component,owners,random_source(),reused,same_id,error)&&reused.components.size()==2&&same_id!=component_id);
+    selected_component=component;selected_component.name.port.octopus_id=*manual.controller_octopus_id;selected_component.name.port.tentacle_id=3;
+    assert(ae::add_component(manual,selected_component,current_owners,random_source(),reused,same_id,error)&&reused.octopuses[0].supported_tentacles==4);
+    assert(!ae::add_component(manual,component,current_owners,random_source(),reused,same_id,error));
+    for(auto invalid_owner:{removed,id<model::OctopusId>(999)}){selected_component=component;selected_component.name.port.octopus_id=invalid_owner;assert(!ae::add_component(manual,selected_component,owners,random_source(),reused,same_id,error));}
+    for(const auto& name:std::vector<std::string>{"",std::string(15,'x'),"Bad\nName"}){selected_component=component;selected_component.name.osd_name=name;assert(!ae::add_component(manual,selected_component,owners,random_source(),reused,same_id,error));}
+    selected_component=component;selected_component.name.port.side=static_cast<model::Side>(99);assert(!ae::add_component(manual,selected_component,owners,random_source(),reused,same_id,error));
+    selected_component=component;selected_component.role="unknown";assert(!ae::add_component(manual,selected_component,owners,random_source(),reused,same_id,error));
+    const auto invalid_component=[&](const std::string& from,const std::string& to){auto bad=component_body;const auto offset=bad.find(from);assert(offset!=std::string::npos);bad.replace(offset,from.size(),to);ae::ComponentSubmission invalid;assert(!parse_component(bad,invalid));};
+    invalid_component("\"side\":\"back\"","\"side\":\"left\"");invalid_component("\"role\":\"audio\"","\"role\":\"unknown\"");invalid_component("\"tentacle_id\":3","\"tentacle_id\":1.5");invalid_component("\"tentacle_id\":3","\"tentacle_id\":-1");invalid_component("\"tentacle_id\":3","\"tentacle_id\":4");invalid_component("\"osd_name\":\"Receiver\"","\"osd_name\":\"\"");invalid_component("\"expected_config_revision\":\"1\"","\"expected_config_revision\":\"2\"");invalid_component("\"osd_name\":\"Receiver\"","\"osd_name\":\"Receiver\",\"scan\":true");
     // API revision/identity/type checks remain strict even though availability
     // and topology approvals were removed.
     const std::string body="{\"version\":1,\"request_id\":\""+id<model::MessageId>(90).str()+"\",\"expected_config_revision\":\"1\",\"expected_presentation_revision\":\"1\",\"activities\":[{\"activity_id\":\""+first.str()+"\",\"name\":\"Watch\",\"display\":\""+rows[0].display+"\",\"source\":\""+rows[0].source+"\",\"audio\":\""+rows[0].audio+"\"}]}";
     ae::Submission submission;assert(ae::parse_submission(body,avr,submission,error));auto bad=body;bad.insert(bad.size()-1,",\"enabled\":true");assert(!ae::parse_submission(bad,avr,submission,error));bad=body;auto at=bad.find("\"expected_config_revision\":\"1\"");bad.replace(at,30,"\"expected_config_revision\":1");assert(!ae::parse_submission(bad,avr,submission,error));
-    std::cout<<"PASS activity editor: AVR/switch paths, offline scoped selections, cross-owner targets, stable IDs/order/slots, no persistent discovery approval\n";
+    std::cout<<"PASS activity editor: AVR/switch paths, manual unobserved components, offline scoped selections, cross-owner targets, stable IDs/order/slots\n";
 }

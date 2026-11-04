@@ -43,6 +43,7 @@ struct Operation {
     m::MessageId id;std::string digest,kind,stage="admitted",error;
     cs::RevisionPair revisions;m::BootId boot;
     std::vector<std::string> unresolved;
+    std::optional<m::ComponentId> component_id;
 };
 std::vector<Operation> operations;
 uint32_t scan_generation=0;
@@ -60,10 +61,13 @@ void update(amity::SystemControl& control,Operation& op){
     }
 }
 esp_err_t operation_json(httpd_req_t* req,const Operation& op){
-    Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddStringToObject(root.get(),"operation_id",op.id.str().c_str());cJSON_AddStringToObject(root.get(),"stage",op.stage.c_str());cJSON_AddStringToObject(root.get(),"status",op.stage.c_str());cJSON_AddStringToObject(root.get(),"message",op.error.c_str());if(op.stage=="complete"&&!op.error.empty()){cJSON_AddStringToObject(root.get(),"warning",op.error.c_str());cJSON_AddBoolToObject(root.get(),"partial",true);}cJSON_AddBoolToObject(root.get(),"saved",op.stage=="applied");auto* reasons=cJSON_AddArrayToObject(root.get(),"unresolved");for(const auto& reason:op.unresolved)cJSON_AddItemToArray(reasons,cJSON_CreateString(reason.c_str()));return respond(req,root.get());
+    Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddStringToObject(root.get(),"operation_id",op.id.str().c_str());cJSON_AddStringToObject(root.get(),"stage",op.stage.c_str());cJSON_AddStringToObject(root.get(),"status",op.stage.c_str());cJSON_AddStringToObject(root.get(),"message",op.error.c_str());if(op.component_id)cJSON_AddStringToObject(root.get(),"component_id",op.component_id->str().c_str());if(op.stage=="complete"&&!op.error.empty()){cJSON_AddStringToObject(root.get(),"warning",op.error.c_str());cJSON_AddBoolToObject(root.get(),"partial",true);}cJSON_AddBoolToObject(root.get(),"saved",op.stage=="applied");auto* reasons=cJSON_AddArrayToObject(root.get(),"unresolved");for(const auto& reason:op.unresolved)cJSON_AddItemToArray(reasons,cJSON_CreateString(reason.c_str()));return respond(req,root.get());
 }
 cJSON* encode_choices(const std::vector<ae::Choice>& choices){
-    auto* array=cJSON_CreateArray();for(const auto& c:choices){auto* value=cJSON_CreateObject();cJSON_AddItemToArray(array,value);cJSON_AddStringToObject(value,"value",c.value.c_str());cJSON_AddStringToObject(value,"title",c.title.c_str());cJSON_AddStringToObject(value,"location",c.location.c_str());auto* roles=cJSON_AddArrayToObject(value,"roles");for(const auto& role:c.roles)cJSON_AddItemToArray(roles,cJSON_CreateString(role.c_str()));}return array;
+    auto* array=cJSON_CreateArray();for(const auto& c:choices){auto* value=cJSON_CreateObject();cJSON_AddItemToArray(array,value);cJSON_AddStringToObject(value,"value",c.value.c_str());cJSON_AddStringToObject(value,"title",c.title.c_str());cJSON_AddStringToObject(value,"location",c.location.c_str());if(c.native_name)cJSON_AddItemToObject(value,"qualified_name",cJSON_Parse(m::name_json(*c.native_name).c_str()));auto* roles=cJSON_AddArrayToObject(value,"roles");for(const auto& role:c.roles)cJSON_AddItemToArray(roles,cJSON_CreateString(role.c_str()));}return array;
+}
+cJSON* encode_component_owners(const std::vector<ae::ComponentOwner>& owners){
+    auto* array=cJSON_CreateArray();for(const auto& owner:owners){auto* value=cJSON_CreateObject();cJSON_AddItemToArray(array,value);cJSON_AddStringToObject(value,"octopus_id",owner.id.str().c_str());cJSON_AddStringToObject(value,"name",owner.name.c_str());cJSON_AddNumberToObject(value,"supported_tentacles",owner.supported_tentacles);}return array;
 }
 
 }
@@ -82,14 +86,18 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
     ae::OwnerCapacities capacities{{control.octopus_id(),control.supported_tentacles()}};
     for(const auto& peer:peers)if(peer.boot_id)capacities[peer.id]=peer.supported_tentacles;
     const bool has_added_amities=std::any_of(peers.begin(),peers.end(),[&](const auto& peer){return peer.id!=control.octopus_id()&&peer.enrolled;});
+    std::vector<m::OctopusId> enrolled;for(const auto& peer:peers)if(peer.enrolled)enrolled.push_back(peer.id);
+    const auto component_owners=ae::component_owners(*config,hostnames,enrolled,capacities);
     const auto state=control.execution_snapshot();const auto native=observations(control);const auto choices=ae::choices(*config,native,hostnames,has_added_amities,capacities);
     if(req->method==HTTP_GET&&path==prefix){
         Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddNumberToObject(root.get(),"version",1);decimal(root.get(),"expected_config_revision",config->config_revision);decimal(root.get(),"expected_presentation_revision",config->presentation_revision);cJSON_AddItemToObject(root.get(),"device_choices",encode_choices(choices));auto* rows=cJSON_AddArrayToObject(root.get(),"activities");
+        cJSON_AddItemToObject(root.get(),"component_owners",encode_component_owners(component_owners));
         for(const auto& id:ae::projected_activities(*config))for(const auto& a:config->activities)if(a.activity_id==id){auto* row=cJSON_CreateObject();cJSON_AddItemToArray(rows,row);cJSON_AddStringToObject(row,"activity_id",a.activity_id.str().c_str());cJSON_AddStringToObject(row,"name",a.label.c_str());for(const auto& ref:std::vector<std::pair<const char*,std::optional<m::ComponentId>>>{{"display",a.display},{"source",a.source},{"audio",a.audio}})cJSON_AddStringToObject(row,ref.first,ae::component_value(ref.second).c_str());if(a.switch_device){auto* sw=cJSON_AddObjectToObject(row,"switch");cJSON_AddStringToObject(sw,"device",ae::component_value(a.switch_device).c_str());cJSON_AddNumberToObject(sw,"input",a.switch_input);}}
         result=respond(req,root.get());return true;
     }
     if(req->method==HTTP_GET&&path==std::string(prefix)+"/status"){
         const auto snapshot=control.snapshot();Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddStringToObject(root.get(),"version",esp_app_get_description()->version);cJSON_AddBoolToObject(root.get(),"ready",snapshot.ready);cJSON_AddBoolToObject(root.get(),"activity_settling",state.activity_settling);cJSON_AddStringToObject(root.get(),"activity_error",state.error.c_str());decimal(root.get(),"expected_config_revision",config->config_revision);decimal(root.get(),"expected_presentation_revision",config->presentation_revision);decimal(root.get(),"expected_state_revision",state.state_revision);cJSON_AddStringToObject(root.get(),"expected_boot_id",current_boot().str().c_str());
+        cJSON_AddItemToObject(root.get(),"component_owners",encode_component_owners(component_owners));
         cJSON_AddStringToObject(root.get(),"hostname",device_settings::hostname());cJSON_AddStringToObject(root.get(),"front_physical_address",device_settings::format_physical_address(device_settings::front_physical_address()).c_str());
         if(snapshot.front_physical_address==0xffff)cJSON_AddNullToObject(root.get(),"determined_front_physical_address");else cJSON_AddStringToObject(root.get(),"determined_front_physical_address",device_settings::format_physical_address(snapshot.front_physical_address).c_str());
         cJSON_AddNumberToObject(root.get(),"free_heap",esp_get_free_heap_size());cJSON_AddNumberToObject(root.get(),"free_internal_heap",heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));cJSON_AddNumberToObject(root.get(),"largest_internal_block",heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
@@ -98,7 +106,7 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         bool scanning=snapshot.discovering;for(const auto& owner:control.owned_snapshots())scanning=scanning||owner.discovering;cJSON_AddBoolToObject(root.get(),"discovering",scanning);cJSON_AddNumberToObject(root.get(),"discovery_generation",scan_generation+snapshot.discovery_generation);cJSON_AddNumberToObject(root.get(),"activity_generation",snapshot.activity_generation);cJSON_AddNumberToObject(root.get(),"front_address",snapshot.front_address);cJSON_AddNumberToObject(root.get(),"back_address",snapshot.back_address);cJSON_AddNumberToObject(root.get(),"tx_errors",snapshot.tx_errors);cJSON_AddNumberToObject(root.get(),"rx_dropped",snapshot.rx_dropped);
         auto* devices=cJSON_AddArrayToObject(root.get(),"devices");for(const auto& c:choices)if(c.observation){const auto& o=*c.observation;auto* item=cJSON_CreateObject();cJSON_AddItemToArray(devices,item);cJSON_AddStringToObject(item,"name",c.value.c_str());cJSON_AddStringToObject(item,"title",c.title.c_str());cJSON_AddStringToObject(item,"location",c.location.c_str());cJSON_AddStringToObject(item,"bus",o.endpoint.port.side==m::Side::front?"front":"back");cJSON_AddNumberToObject(item,"address",o.endpoint.logical_address);cJSON_AddNumberToObject(item,"physical_address",o.physical_address);cJSON_AddNumberToObject(item,"type",o.device_type);cJSON_AddNumberToObject(item,"vendor_id",o.vendor_id);}cJSON_AddItemToObject(root.get(),"device_choices",encode_choices(choices));result=respond(req,root.get());return true;
     }
-    if(req->method!=HTTP_POST||(path!=prefix&&path!=std::string(prefix)+"/discover"&&path!=std::string(prefix)+"/activity"&&path!=std::string(prefix)+"/restore")){result=reject(req,"Unknown activity editor operation","404 Not Found");return true;}
+    if(req->method!=HTTP_POST||(path!=prefix&&path!=std::string(prefix)+"/discover"&&path!=std::string(prefix)+"/activity"&&path!=std::string(prefix)+"/restore"&&path!=std::string(prefix)+"/components")){result=reject(req,"Unknown activity editor operation","404 Not Found");return true;}
     std::string body;if(!web::body(req,body)){result=ESP_FAIL;return true;}Json root(parse_json_input(body),cJSON_Delete);
     if(!root||body.find('\0')!=std::string::npos){result=reject(req,"Invalid activity editor JSON","400 Bad Request");return true;}
     const auto request=m::MessageId::parse(text(root.get(),"request_id"));const auto digest=cs::sha256_hex(path+body);if(!request){result=reject(req,"An activity request identity is required","400 Bad Request");return true;}
@@ -115,6 +123,12 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         if(amity::request_equipment_scan()!=ESP_OK){result=reject(req,"The equipment scan could not be submitted","503 Service Unavailable");return true;}
         if(scan_generation<UINT32_MAX)++scan_generation;
         op.kind="scan";op.stage="complete";
+    }else if(path==std::string(prefix)+"/components"){
+        ae::ComponentSubmission submission;cs::Configuration candidate;m::ComponentId component;std::string error;
+        if(!ae::parse_component_submission(root.get(),*config,submission,error)||!ae::add_component(*config,submission,component_owners,[](uint8_t* data,size_t size){esp_fill_random(data,size);return true;},candidate,component,error)){result=reject(req,error,"400 Bad Request");return true;}
+        op.component_id=component;op.kind="config";
+        if(candidate.components.size()==config->components.size()){op.stage="applied";}
+        else {if(amity::activate_distributed_configuration(std::move(candidate),config->revisions(),op.id)!=ESP_OK){result=reject(req,"The component could not be saved");return true;}op.stage="configuring";}
     }else if(path==prefix){
         ae::Submission submission;std::string parse_error;if(!ae::parse_submission(body,*config,submission,parse_error)){result=reject(req,parse_error);return true;}
         const auto& edits=submission.rows;

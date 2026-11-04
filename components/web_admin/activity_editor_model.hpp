@@ -22,6 +22,18 @@ struct Submission { m::MessageId request_id; config_store::RevisionPair expected
 // retained peer names, never from a configured friendly label or DNS discovery.
 using OwnerHostnames=std::map<m::OctopusId,std::string>;
 using OwnerCapacities=std::map<m::OctopusId,uint8_t>;
+struct ComponentOwner { m::OctopusId id; std::string name; uint8_t supported_tentacles = 0; };
+struct ComponentSubmission {
+    m::MessageId request_id;
+    config_store::RevisionPair expected;
+    m::QualifiedDeviceName name;
+    std::string role;
+};
+std::vector<ComponentOwner> component_owners(const config_store::Configuration&,const OwnerHostnames&,
+    const std::vector<m::OctopusId>& enrolled,const OwnerCapacities& = {});
+bool parse_component_submission(const cJSON*,const config_store::Configuration&,ComponentSubmission&,std::string& error);
+bool add_component(const config_store::Configuration&,const ComponentSubmission&,const std::vector<ComponentOwner>&,
+    const std::function<bool(uint8_t*,size_t)>&,config_store::Configuration&,m::ComponentId&,std::string& error);
 bool parse_submission(const std::string&,const config_store::Configuration&,Submission&,std::string& error);
 bool parse_restore_request(const cJSON*,const config_store::Configuration&,m::BootId current_boot,
     config_store::Configuration& backup,std::string& error);

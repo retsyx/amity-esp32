@@ -171,7 +171,7 @@ An activity describes a use of your home theater, such as 'Watch Apple TV' or 'P
 
 Ensure that HDMI-CEC is enabled on all equipment, select the 'Activities' tab, and press 'Scan HDMI'. On a new installation, Amity creates a suggested list of activities from the devices it finds. Review the names and device selections, then press 'Save activities'.
 
-Devices are identified by their HDMI On Screen Display (OSD) names. Each device must have a distinct name. If two devices report the same name, change one in that device's settings before configuring activities.
+Devices are identified by their HDMI On Screen Display (OSD) names, owning Amity, adapter and side. Devices on the same side of an adapter must have distinct OSD names.
 
 If a device is missing, check its HDMI-CEC setting and connections, then scan again. Some devices only appear while powered on. A source that does not reliably appear can sometimes be used through [receiver input selection](#non-cec-sources).
 
@@ -192,7 +192,9 @@ The activity fields appear in one column:
 * `Switch Device` — an optional receiver or switch used for explicit input selection.
 * `Input` — the input number, shown only when a switch device is specified. See [Non-CEC Sources](#non-cec-sources).
 
-Press 'OK' to accept the edit, then 'Save activities' to save it. 'OK' alone does not save the configuration.
+Equipment dropdowns include discovered and saved components. To specify equipment before discovery, type its OSD name and choose 'Add component…'; select its Amity, adapter and side, then add it. Amity and adapter selectors appear only when there is more than one choice. Adding saves the component immediately, independently of activity edits.
+
+Press 'Add' for a new activity or 'OK' for an edit, then 'Save activities' to save the activity changes.
 
 ## Usage
 
