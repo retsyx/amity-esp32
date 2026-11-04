@@ -320,7 +320,7 @@ class NegativeControlEvidenceTests(unittest.TestCase):
                                transport=transport)
 
     def test_control_on_inactive_wire_fails_even_when_responder_hook_drops_it(self):
-        for opcode in (0x04, 0x0d, 0x36, 0x44, 0x45, 0x80, 0x81, 0x82, 0x86):
+        for opcode in (0x04, 0x0d, 0x36, 0x44, 0x45, 0x80, 0x81, 0x82, 0x86, 0x9d):
             with self.subTest(opcode=opcode):
                 with self.assertRaisesRegex(AssertionError, "inactive owner's wire"):
                     with observe_no_control(self.scan, self.component, duration=0.000001) as observation:

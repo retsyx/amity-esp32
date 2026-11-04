@@ -40,6 +40,9 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   Starts and repairs also require a fresh front-wire Active Source from Amity
   and the selected display's resulting input; downstream AVR routing is checked
   separately against the player's physical address.
+  The no-display case switches directly from TV playback to the same source and
+  AVR without a display, requires the TV's directed Standby, and rejects TV use
+  through playback, source announcements, remote keys and activity repair.
   The switch-input case rejects active activity edits/deletion, edits and reorders
   an inactive activity during member playback without CEC disruption or discovery,
   then proves the saved input change through fresh physical commands.

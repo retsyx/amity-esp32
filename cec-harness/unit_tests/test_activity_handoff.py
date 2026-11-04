@@ -12,7 +12,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, CecSession, DUT, Frame, Hooks, PlaybackComponent, TestBed, TvComponent, TxResult
-from amity_harness.transitions import ActivityHandoff, observe_no_standby
+from amity_harness.transitions import ActivityDisplayStandby, ActivityHandoff, observe_no_standby
 
 
 class IdleWire:
@@ -288,6 +288,113 @@ class ActivityHandoffTests(unittest.TestCase):
                             announcement = TxResult(Frame(player.address.logical, 15, 0x84), 1,
                                                     announcement.timestamp_ns)
                         observation.assert_preserved_after(announcement, within=0.001)
+
+
+class ActivityDisplayStandbyTests(unittest.TestCase):
+    @contextmanager
+    def fixture(self):
+        dut = DUT("amity-dut")
+        tv = TvComponent(dut.tentacle(0).front, "Previous TV")
+        avr = AvrComponent(dut.tentacle(0).back, "Receiver")
+        with CecSession((tv, avr), backend_factory=IdleWire) as session:
+            initiators = {tv.gpio: 4, avr.gpio: 0}
+            dut.last_scan = SimpleNamespace(initiators=initiators, _session=session)
+            with ActivityDisplayStandby(tv) as observation:
+                action = SimpleNamespace(dut=dut, session=session, started_ns=time.monotonic_ns(),
+                                         initiators=initiators)
+                yield observation, action, tv, avr, session
+
+    def receive(self, tv, opcode=0x36, operands=b"", *, destination=None, source=4,
+                timestamp=None, transport="wire"):
+        tv.receive(Frame(source, tv.address.logical if destination is None else destination, opcode, operands,
+                         timestamp_ns=time.monotonic_ns() if timestamp is None else timestamp), transport=transport)
+
+    def drained(self, tv, session):
+        session._wire_idle_since_ns[tv.gpio] = time.monotonic_ns() + 10**12
+
+    def test_directed_standby_retries_and_metadata_retain_private_safe_drain_proof(self):
+        with self.fixture() as (observation, action, tv, avr, session):
+            self.receive(tv)
+            self.receive(tv)
+            self.receive(tv, 0x8f)
+            self.receive(tv, 0x83)
+            self.receive(tv, 0x90, b"\x01")
+            self.drained(tv, session)
+            self.assertIs(observation.assert_standby_only(since=action), observation)
+            tv._power_checks[-1]["private_token"] = "PRIVATE_DISPLAY_TOKEN"
+            report = TestBed(action.dut, tv, avr).report
+            proof = next(row for row in report["components"] if row["name"] == tv.name)["power_assertions"][-1]
+            self.assertEqual(proof["kind"], "wire_display_standby_only")
+            self.assertEqual(proof["frame"], "40:36")
+            self.assertEqual(proof["observed_wires"], [tv.gpio])
+            self.assertEqual(proof["since_monotonic_ns"], action.started_ns)
+            self.assertGreaterEqual(proof["idle_receive_since_ns"][str(tv.gpio)], proof["observation_end_monotonic_ns"])
+            self.assertNotIn("PRIVATE_DISPLAY_TOKEN", json.dumps(report))
+        self.assertFalse(tv._wire_observers)
+
+    def test_missing_stale_virtual_wrong_sender_and_broadcast_cannot_prove_standby(self):
+        for fault in ("missing", "stale", "virtual", "sender", "broadcast"):
+            with self.subTest(fault=fault), self.assertRaises(AssertionError):
+                with self.fixture() as (observation, action, tv, avr, session):
+                    if fault != "missing":
+                        self.receive(tv, timestamp=action.started_ns - 1 if fault == "stale" else None,
+                                     transport="virtual" if fault == "virtual" else "wire",
+                                     source=8 if fault == "sender" else 4,
+                                     destination=15 if fault == "broadcast" else None)
+                    self.drained(tv, session)
+                    observation.assert_standby_only(since=action)
+
+    def test_wake_key_and_routing_controls_cannot_hide_behind_hooks_or_final_standby(self):
+        controls = ((0x04, b""), (0x0d, b""), (0x36, b"\x00"), (0x44, b"\x41"), (0x45, b""),
+                    (0x80, b"\x10\x00\x20\x00"), (0x81, b"\x10\x00"), (0x82, b"\x10\x00"),
+                    (0x86, b"\x10\x00"), (0x9d, b"\x10\x00"))
+        for opcode, operands in controls:
+            for hook in (None, "drop", "rewrite"):
+                with self.subTest(opcode=opcode, hook=hook), self.assertRaisesRegex(AssertionError, "beyond directed Standby"):
+                    with self.fixture() as (observation, action, tv, avr, session):
+                        self.receive(tv)
+                        if hook:
+                            tv.hooks = Hooks(before_rx=lambda component, frame: None if hook == "drop" else
+                                             Frame(frame.source, frame.destination, 0x8f, timestamp_ns=frame.timestamp_ns))
+                        self.receive(tv, opcode, operands, destination=15 if opcode in (0x80, 0x81, 0x82, 0x86, 0x9d) else None)
+                        tv.standby()
+                        self.drained(tv, session)
+                        observation.assert_standby_only(since=action)
+                self.assertFalse(tv._wire_observers)
+
+    def test_rewritten_standby_cannot_turn_other_wire_control_into_allowed_standby(self):
+        with self.assertRaisesRegex(AssertionError, "beyond directed Standby"):
+            with self.fixture() as (observation, action, tv, avr, session):
+                tv.hooks = Hooks(before_rx=lambda component, frame: Frame(4, tv.address.logical, 0x36,
+                                                                         timestamp_ns=frame.timestamp_ns))
+                self.receive(tv, 0x82, b"\x10\x00", destination=15)
+                self.drained(tv, session)
+                observation.assert_standby_only(since=action)
+
+    def test_undrained_or_changed_session_and_predating_action_fail_closed(self):
+        for fault in ("coverage", "session", "stopped", "action"):
+            expected = TimeoutError if fault == "coverage" else AssertionError
+            with self.subTest(fault=fault), self.assertRaises(expected):
+                with self.fixture() as (observation, action, tv, avr, session):
+                    self.receive(tv)
+                    self.drained(tv, session)
+                    if fault == "coverage":
+                        tv._power_timeout = 0.005
+                        session._wire_idle_since_ns = {}
+                    elif fault == "session":
+                        action.session = object()
+                    elif fault == "stopped":
+                        session._stop.set()
+                    else:
+                        action.started_ns = observation._started - 1
+                    observation.assert_standby_only(since=action)
+
+    def test_only_one_front_tv_is_accepted(self):
+        dut = DUT("amity-dut")
+        for component in (AvrComponent(dut.tentacle(0).back, "Receiver"),
+                          TvComponent(dut.tentacle(0).back, "Back TV"), None, ()):
+            with self.subTest(component=component), self.assertRaises(ValueError):
+                ActivityDisplayStandby(component)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@ from functional_tests.hdmi_scan import scanned_devices
 from functional_tests.qualified_names import same_name_equipment, exercise_qualified_activities
 from amity_harness.recovery import LookupScans, assert_returned
 from amity_harness.activity_edits import ActiveActivityEdits, ActivityEditObservation
-from amity_harness.transitions import observe_no_standby
+from amity_harness.transitions import ActivityDisplayStandby, observe_no_standby
+from amity_harness.qualified_names import observe_no_control
 
 
 def test_activity():
@@ -63,6 +64,61 @@ def test_activity():
             state = dut.get_state()
             assert state["current_activity"] == -1
             assert state["activity_settling"] is False
+
+
+def test_activity_no_display():
+    with scanned_devices() as (dut, tv, avr, player):
+        with dut.create_activity("Functional TV playback", display=tv, source=player, audio=avr) as watch:
+            with dut.create_activity("Functional audio playback", display=None, source=player, audio=avr) as listen:
+                started = watch.start()
+                for component in (tv, avr, player):
+                    component.wait_for_power(PowerState.ON, since=started)
+                tv.wait_for_amity_input(since=started)
+                avr.wait_for_input(player, since=started)
+                watch.assert_active()
+
+                # Observe before the direct handoff: a later Standby state
+                # must not hide a transient TV wake, route or key command.
+                with ActivityDisplayStandby(tv) as handoff, observe_no_standby(avr, player) as shared:
+                    started = listen.start()
+                    tv.wait_for_power(PowerState.STANDBY, since=started, command="standby", directed=True)
+                    avr.wait_for_input(player, since=started)
+                    for component in (avr, player):
+                        component.assert_power(PowerState.ON)
+                    listen.assert_active()
+                    shared.assert_preserved(since=started)
+
+                    # Overlap the observations so there is no gap between
+                    # allowing the handoff's Standby and requiring no TV use.
+                    with observe_no_control(dut.last_scan, tv) as unused:
+                        handoff.assert_standby_only(since=started)
+                        dut.press_key(Key.SELECT).assert_received_by(player)
+                        dut.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                        with observe_no_standby(avr, player) as preserved:
+                            announcement = player.activate()
+                            assert announcement.ok
+                            preserved.assert_preserved_after(announcement, within=0.250)
+                        listen.assert_active()
+
+                        player.standby()
+                        avr.active_input = 0x1200
+                        with observe_no_standby(avr, player) as preserved:
+                            repaired = listen.start()
+                            for component in (avr, player):
+                                component.wait_for_power(PowerState.ON, since=repaired)
+                            avr.wait_for_input(player, since=repaired)
+                            listen.assert_active()
+                            preserved.assert_preserved(since=repaired)
+                        dut.press_key(Key.SELECT).assert_received_by(player)
+                        dut.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                        listen.assert_active()
+                        unused.assert_clear()
+                    tv.assert_power(PowerState.STANDBY)
+
+                stopped = listen.standby()
+                for component in (avr, player):
+                    component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+                tv.assert_power(PowerState.STANDBY)
 
 
 def test_activity_unselected_equipment_announcement():

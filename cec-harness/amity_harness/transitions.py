@@ -9,6 +9,8 @@ import math
 import threading
 import time
 
+from .components import TvComponent
+
 
 class _WireObservation:
     def __init__(self, components):
@@ -175,6 +177,40 @@ class ActivityHandoff(_WireObservation):
             self.receiver._routing_checks.append(proof)
             self.receiver._trace("component.handoff.assert_passed", **proof)
             self._checked = True
+        return self
+
+
+class ActivityDisplayStandby(_WireObservation):
+    """Allow only the previous display's directed Standby during a handoff."""
+
+    def __init__(self, display):
+        if not isinstance(display, TvComponent) or display.direction != "front":
+            raise ValueError("Display Standby observation needs one front TV")
+        self.display = display
+        super().__init__((display,))
+
+    def assert_standby_only(self, *, since):
+        session, started, ended, wires, frames = self._complete(since)
+        controls = frozenset((0x04, 0x0d, 0x36, 0x44, 0x45, 0x80, 0x81, 0x82, 0x86, 0x9d))
+        standby = []
+        for component, frame in frames:
+            if frame.opcode == 0x36 and frame.destination == component.address.logical and not frame.operands:
+                standby.append(frame)
+            elif frame.opcode in controls:
+                raise AssertionError("The previous display received control beyond directed Standby")
+        if not standby:
+            raise AssertionError("Display handoff lacks fresh physical directed Standby")
+        last = max(standby, key=lambda frame: frame.timestamp_ns)
+        proof = {"kind": "wire_display_standby_only", "power": "standby", "command": "standby",
+                 "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": started,
+                 "observation_end_monotonic_ns": ended, "observed_wires": sorted(wires),
+                 "idle_receive_since_ns": {str(gpio): session._wire_idle_since_ns[gpio] for gpio in wires},
+                 "frame": last.raw.hex(":"), "source": last.source, "destination": last.destination,
+                 "wire_timestamp_ns": last.timestamp_ns}
+        with self.display._power_condition:
+            self.display._power_checks.append(proof)
+        self.display._trace("component.display_standby.assert_passed", **proof)
+        self._checked = True
         return self
 
 
