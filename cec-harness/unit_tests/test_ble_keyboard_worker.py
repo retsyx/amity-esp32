@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness.ble_keyboard_worker import BlueZKeyboard, KeyboardWorker, encode_reports, serve
+from amity_harness.ble_keyboard_worker import BlueZKeyboard, KeyboardWorker, _interfaces, encode_reports, serve
 
 
 class FakeBackend:
@@ -38,6 +38,11 @@ class FakeBackend:
     async def disconnect(self):
         self.events.append(("disconnect",))
         self.ready = False
+
+    async def forget_peer(self):
+        if self.ready:
+            raise RuntimeError("Peer remains connected")
+        self.events.append(("forget_peer",))
 
     async def close(self):
         self.events.append(("close",))
@@ -129,6 +134,24 @@ class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(worker.reports, encode_reports([], 0))
         await worker.close()
         self.assertEqual(backend.events[-2:], [("disconnect",), ("close",)])
+
+    async def test_forget_peer_resets_report_state_only_after_disconnected_backend_cleanup(self):
+        worker, backend = await self.opened()
+        await worker.dispatch("report", {"keyboard": [0x4f], "consumer": 0xe9})
+        held = worker.reports.copy()
+        with self.assertRaisesRegex(RuntimeError, "remains connected"):
+            await worker.dispatch("forget_peer", {})
+        self.assertEqual(worker.reports, held)
+        backend.ready = False
+        self.assertEqual(await worker.dispatch("forget_peer", {}), {"cleared": True})
+        self.assertEqual(worker.reports, encode_reports([], 0))
+        self.assertEqual(backend.events[-1], ("forget_peer",))
+        self.assertNotIn(("close",), backend.events)
+        self.assertNotIn(("disconnect",), backend.events)
+        backend.ready = True
+        fresh = await worker.dispatch("report", {"keyboard": [0x4f], "consumer": 0})
+        self.assertEqual(fresh["changed"], [1])
+        await worker.close()
 
     async def test_cleanup_releases_a_remaining_subscription_after_partial_unsubscribe(self):
         worker, backend = await self.opened()
@@ -229,6 +252,87 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("UnregisterAgent", names)
                 self.assertEqual(names[-1], "bus_disconnect")
 
+    async def test_forget_disconnected_owned_peer_keeps_advertisement_and_gatt_registered(self):
+        owner, events = self.fixture()
+        peer = owner.peer
+        async def objects():
+            return {peer: {"org.bluez.Device1": {"Connected": False, "Adapter": owner.adapter,
+                                                 "Bonded": True}}}
+        owner._objects = objects
+        owner.characteristics = {number: SimpleNamespace(notifying=True, value=b"held") for number in (1, 2)}
+        await owner.forget_peer()
+        self.assertIsNone(owner.peer)
+        self.assertEqual(events, [("RemoveDevice", owner.adapter, [peer])])
+        self.assertTrue(owner._advertising and owner._application and owner._agent)
+        for number, characteristic in owner.characteristics.items():
+            self.assertTrue(characteristic.notifying)
+            self.assertEqual(characteristic.value, encode_reports([], 0)[number])
+
+    async def test_peer_reuse_preserves_only_actual_bluez_notify_callbacks(self):
+        class Interface:
+            def __init__(self, name): self.name = name
+            def emit_properties_changed(self, values): pass
+
+        dbus, service = ModuleType("dbus_next"), ModuleType("dbus_next.service")
+        dbus.DBusError = RuntimeError
+        dbus.PropertyAccess = SimpleNamespace(READ=1)
+        dbus.Variant = lambda signature, value: SimpleNamespace(value=value)
+        service.ServiceInterface = Interface
+        service.dbus_property = lambda **kwargs: property
+        service.method = lambda **kwargs: lambda function: function
+
+        for retained in (False, True):
+            with self.subTest(retained=retained):
+                owner, events = self.fixture()
+                peer = owner.peer
+                objects = {peer: {"org.bluez.Device1": {"Connected": False,
+                           "Bonded": True, "Adapter": owner.adapter}}}
+                async def current(): return objects
+                owner._objects = current
+                with patch.dict(sys.modules, {"dbus_next": dbus, "dbus_next.service": service}):
+                    _interfaces(owner)
+                if retained:
+                    for characteristic in owner.characteristics.values(): characteristic.StartNotify()
+                await owner.forget_peer()
+                self.assertTrue(all(characteristic.notifying is retained
+                                    for characteristic in owner.characteristics.values()))
+                self.assertFalse((await owner.status())["ready"])
+                objects[peer]["org.bluez.Device1"]["Connected"] = True
+                self.assertIs((await owner.status())["ready"], retained)
+                # A retained subscription needs no repeated StartNotify. A real
+                # StopNotify still blocks readiness until new callbacks arrive.
+                for characteristic in owner.characteristics.values(): characteristic.StopNotify()
+                self.assertFalse((await owner.status())["ready"])
+                for characteristic in owner.characteristics.values(): characteristic.StartNotify()
+                self.assertTrue((await owner.status())["ready"])
+                self.assertEqual([event[0] for event in events], ["RemoveDevice"])
+
+    async def test_forget_rejects_live_foreign_preexisting_or_unadvertised_peer(self):
+        for changed in ("connected", "adapter", "bonded", "before_connected", "advertisement"):
+            with self.subTest(changed=changed):
+                owner, events = self.fixture(previous_bond=changed == "bonded")
+                peer = owner.peer
+                if changed == "before_connected": owner._before_connected.add(peer)
+                if changed == "advertisement": owner._advertising = False
+                async def objects():
+                    return {peer: {"org.bluez.Device1": {"Connected": changed == "connected",
+                        "Adapter": "/org/bluez/hci1" if changed == "adapter" else owner.adapter}}}
+                owner._objects = objects
+                with self.assertRaises(RuntimeError): await owner.forget_peer()
+                self.assertEqual(owner.peer, peer)
+                self.assertEqual(events, [])
+
+    async def test_forget_failure_retains_exact_peer_for_final_cleanup(self):
+        owner, events = self.fixture()
+        peer = owner.peer
+        async def objects():
+            return {peer: {"org.bluez.Device1": {"Connected": False, "Adapter": owner.adapter}}}
+        async def call(*args): raise RuntimeError("Remove failed")
+        owner._objects, owner._call = objects, call
+        with self.assertRaisesRegex(RuntimeError, "Remove failed"): await owner.forget_peer()
+        self.assertEqual(owner.peer, peer)
+        self.assertTrue(owner._advertising and owner._application)
+
     async def test_agent_claim_rejects_foreign_or_already_active_connections(self):
         owner, _ = self.fixture()
         with self.assertRaises(RuntimeError):
@@ -241,6 +345,17 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
         owner._before_connected.clear()
         await owner.claim_peer(owner.peer)
         await owner.close()
+
+    async def test_agent_and_gatt_claims_reject_preexisting_bonds(self):
+        for field in ("Bonded", "Paired"):
+            with self.subTest(field=field):
+                owner, events = self.fixture()
+                owner._before_devices[owner.peer] = {field: True}
+                with self.assertRaisesRegex(RuntimeError, "existing Bluetooth bond"):
+                    await owner.claim_peer(owner.peer)
+                with self.assertRaisesRegex(RuntimeError, "existing Bluetooth bond"):
+                    await owner.observe_device({"device": owner.peer})
+                self.assertEqual(events, [])
 
     async def test_cleanup_attempts_remaining_restoration_after_one_failure(self):
         owner, events = self.fixture()

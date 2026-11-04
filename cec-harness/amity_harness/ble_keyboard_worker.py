@@ -92,6 +92,11 @@ class KeyboardWorker:
             _keys(arguments, ())
             await self.backend.disconnect()
             return await self.backend.status()
+        if operation == "forget_peer":
+            _keys(arguments, ())
+            await self.backend.forget_peer()
+            self.reports = encode_reports([], 0)
+            return {"cleared": True}
         if operation != "report":
             raise ValueError("Unsupported BLE keyboard RPC operation")
         _keys(arguments, ("keyboard", "consumer"))
@@ -183,6 +188,9 @@ class BlueZKeyboard:
             raise RuntimeError("The keyboard already has a different peer")
         if device in self._before_connected:
             raise RuntimeError("An existing active Bluetooth connection is not fixture-owned")
+        previous = self._before_devices.get(device, {})
+        if previous.get("Bonded") is True or previous.get("Paired") is True:
+            raise RuntimeError("An existing Bluetooth bond is not fixture-owned")
         objects = await self._objects()
         peer = objects.get(device, {}).get("org.bluez.Device1", {})
         if peer.get("Adapter") != self.adapter or peer.get("Connected") is not True:
@@ -266,11 +274,17 @@ class BlueZKeyboard:
         peer = objects.get(self.peer, {}).get("org.bluez.Device1", {}) if self.peer else {}
         connected = peer.get("Connected") is True
         bonded = peer.get("Bonded", peer.get("Paired", False)) is True
+        previous = self._before_devices.get(self.peer, {})
+        owned = (self.peer is not None and peer.get("Adapter") == self.adapter
+                 and self.peer not in self._before_connected
+                 and previous.get("Bonded") is not True and previous.get("Paired") is not True)
         notifying = {name: self.characteristics.get(number) is not None
                      and self.characteristics[number].notifying
                      for name, number in (("keyboard", 1), ("consumer", 2))}
         return {"connected": connected, "bonded": bonded,
-                "ready": connected and bonded and all(notifying.values()),
+                "peer_owned": owned,
+                "ready": owned and connected and bonded and all(notifying.values()),
+                "advertisement_registered": self._advertising and self._application,
                 "notifying": notifying, "peer_address": peer.get("Address")}
 
     async def publish(self, number, value):
@@ -290,6 +304,27 @@ class BlueZKeyboard:
             objects = await self._objects()
             if objects.get(self.peer, {}).get("org.bluez.Device1", {}).get("Connected") is True:
                 await self._call(self.peer, "org.bluez.Device1", "Disconnect")
+
+    async def forget_peer(self):
+        """Forget only this fixture's disconnected peer, retaining all registrations."""
+        if not self._advertising or not self._application or self.peer is None:
+            raise RuntimeError("An advertised keyboard with an owned peer is required")
+        previous = self._before_devices.get(self.peer, {})
+        if (self.peer in self._before_connected or previous.get("Bonded") is True
+                or previous.get("Paired") is True):
+            raise RuntimeError("A preexisting Bluetooth peer cannot be removed")
+        objects = await self._objects()
+        peer = objects.get(self.peer, {}).get("org.bluez.Device1")
+        if peer is not None:
+            if peer.get("Adapter") != self.adapter or peer.get("Connected") is not False:
+                raise RuntimeError("The owned keyboard peer must be disconnected before removal")
+            await self._call(self.adapter, "org.bluez.Adapter1", "RemoveDevice", "o", [self.peer])
+        self.peer = None
+        released = encode_reports([], 0)
+        for number, characteristic in self.characteristics.items():
+            # BlueZ owns subscription lifetime, including retained CCC state.
+            # Only its StartNotify/StopNotify callbacks change Notifying.
+            characteristic.value = released[number]
 
     async def close(self):
         if self._closed:

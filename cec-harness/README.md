@@ -937,13 +937,16 @@ default before removing the added member.
 
 ## BLE keyboard input
 
-`--test ble_keyboard` runs two cases with equipment on the main and on an
-added `amity-dut-2`. The Pi advertises a real BLE HID keyboard; pairing and
+`--test ble_keyboard` first scans one continuously advertised keyboard six times
+on the same main boot. Scans 1–3 only discover it; scan 4 pairs it and verifies a
+physical CEC key action. After unpairing, scan 5 only discovers it and scan 6
+pairs it and verifies another key action. The group then tests input on the main
+and `amity-dut-2`. The Pi advertises a BLE HID keyboard; pairing and
 unpairing use the shipping authenticated remote settings API. The main must
 have no saved remote. The fixture refuses to replace an existing bond and
 removes only its own new bond during cleanup.
 
-Each case scans a TV, AVR and two sources, then saves both activities before
+The two input cases scan a TV, AVR and two sources, then save both activities before
 sending input. It checks a fresh Select press/release, independent volume and
 navigation holds, and two navigation buttons sharing one recipient. Real CEC
 NACKs on the first press and on a later repeat must stop the affected stream;
@@ -1080,9 +1083,8 @@ three-owner scenario, `--test consortium_four_duts` for the four-owner scenario,
 saved identities, then adding a different board and proving both owners' physical control,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
-`--test ble_keyboard` for two real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all sixteen registered scenarios (thirty
-test cases). The same credentials, TLS, SSH and output
+`--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),
+or `--test all` for all registered scenarios. The same credentials, TLS, SSH and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful
 single-scenario CLI run includes `prepare_main`, its scenario entries and

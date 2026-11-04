@@ -140,6 +140,9 @@ class LocalKeyboard:
     def disconnect(self):
         return self._rpc("disconnect")
 
+    def forget_peer(self):
+        return self._rpc("forget_peer")
+
     def _shutdown(self):
         process, self._process = self._process, None
         if process is not None:
@@ -209,6 +212,7 @@ class PairedKeyboard:
         self._created = self._closed = self._started = self._disconnected = False
         self._pair_pending = self._unpair_pending = None
         self._pair_generation = None
+        self._scan_state = None
         self._record = {"kind": "ble_keyboard", "device_id": dut.identity.device_id, "checks": []}
         if not hasattr(bed, "control_observations"):
             bed.control_observations = []
@@ -287,15 +291,21 @@ class PairedKeyboard:
         pending["admitted"] = True
         return pending
 
-    def _ready(self, status):
+    def _paired_link(self, status, *, require_ready=True):
         if self.worker is None:
             raise KeyboardConflict("The keyboard worker ended before ownership could be verified")
         worker = self.worker.status()
-        if any(type(worker.get(name)) is not bool for name in ("ready", "connected", "bonded")):
+        if any(type(worker.get(name)) is not bool for name in ("ready", "connected", "bonded", "peer_owned")):
             raise KeyboardConflict("The keyboard worker returned invalid connection proof")
-        return status["bonded"] and status["connected"] and worker["ready"] and worker["connected"] and worker["bonded"]
+        connected = status["bonded"] and status["connected"] and worker["connected"] and worker["bonded"]
+        if connected and not worker["peer_owned"]:
+            raise KeyboardConflict("The Pi Bluetooth bond is not fixture-owned")
+        return connected and (worker["ready"] or not require_ready)
 
-    def _finish_pair(self, deadline, *, check_health=True):
+    def _ready(self, status):
+        return self._paired_link(status)
+
+    def _finish_pair(self, deadline, *, check_health=True, for_cleanup=False):
         pending = self._pair_pending
         while True:
             state = self._status(deadline, check_health=check_health)
@@ -308,20 +318,22 @@ class PairedKeyboard:
                 self._note("pair_failed", main_boot=self.boot, remote_generation=pending["generation"],
                            last_error=error, bonded=False, connected=False)
                 raise KeyboardConflict("The DUT rejected keyboard connection or discovery (error " + str(error) + ")")
-            if self._ready(state):
+            if self._paired_link(state, require_ready=not for_cleanup):
                 self._created = True
                 self._pair_generation = pending["generation"]
                 self._pair_pending = None
-                self._note("paired", main_boot=self.boot, remote_generation=self._pair_generation,
+                self._note("pair_owned_for_cleanup" if for_cleanup else "paired",
+                           main_boot=self.boot, remote_generation=self._pair_generation,
                            address=self.identity["address"], connected=True, bonded=True)
                 return
             self._pause(deadline)
 
-    def create(self):
-        if self._started:
+    def open(self, *, _deadline=None):
+        """Register one owned keyboard advertisement without scanning or pairing."""
+        if self._started or self._closed:
             raise RuntimeError("The BLE keyboard context cannot be reused")
         self._started = True
-        deadline = time.monotonic() + self.timeout
+        deadline = time.monotonic() + self.timeout if _deadline is None else _deadline
         system = self._system()
         self.boot, self.group = system["boot_id"], system["consortium_id"]
         self._record["main_boot"] = self.boot
@@ -333,6 +345,28 @@ class PairedKeyboard:
         factory = self.dut._runtime.keyboard_factory or LocalKeyboard
         self.worker = factory()
         self.identity = self.worker.open()
+        return self
+
+    def _advertised(self):
+        if not self._started or self._closed or self.worker is None:
+            raise RuntimeError("Open the BLE keyboard before scanning or pairing")
+        status = self.worker.status()
+        if status.get("advertisement_registered") is not True:
+            raise KeyboardConflict("The owned keyboard advertisement is no longer registered")
+        return status
+
+    def scan(self, *, _deadline=None):
+        """Run one fresh UI scan and require this exact advertised keyboard."""
+        worker = self._advertised()
+        if worker.get("connected") is not False or worker.get("bonded") is not False:
+            raise KeyboardConflict("The advertised keyboard already has a Bluetooth peer")
+        deadline = time.monotonic() + self.timeout if _deadline is None else _deadline
+        state = self._status(deadline)
+        if (self._created or self._pair_pending is not None or self._unpair_pending is not None
+                or not state["ready"] or any(state[name] for name in
+                    ("bonded", "connected", "pairing", "unpairing", "connecting", "scanning"))):
+            raise KeyboardConflict("Remote administration must be idle and unbonded before scanning")
+        self._scan_state = None
         self._request("/api/remotes/scan", {}, deadline=deadline)
         while True:
             state = self._status(deadline)
@@ -347,8 +381,37 @@ class PairedKeyboard:
                     raise KeyboardConflict("The completed remote scan did not find this exact test keyboard")
                 break
             self._pause(deadline)
+        self._advertised()
+        self._scan_state = deepcopy(state)
+        self._note("scanned", main_boot=self.boot, remote_generation=state["remote_generation"],
+                   address=self.identity["address"], address_type=self.identity["type"],
+                   matched_devices=len(matches))
+        return self
+
+    def pair(self, *, _deadline=None):
+        """Pair after a completed scan, without issuing another scan."""
+        worker = self._advertised()
+        if worker.get("connected") is not False or worker.get("bonded") is not False:
+            raise KeyboardConflict("The advertised keyboard already has a Bluetooth peer")
+        if self._scan_state is None or self._created or self._pair_pending is not None:
+            raise RuntimeError("Complete a fresh keyboard scan before pairing")
+        deadline = time.monotonic() + self.timeout if _deadline is None else _deadline
+        state = self._status(deadline)
+        if (state["remote_generation"] != self._scan_state["remote_generation"]
+                or not state["ready"] or any(state[name] for name in
+                    ("bonded", "connected", "pairing", "unpairing", "connecting", "scanning"))):
+            raise KeyboardConflict("Remote administration changed after keyboard discovery")
         self._post("pair", state, deadline)
         self._finish_pair(deadline)
+        self._scan_state = None
+        self._disconnected = False
+        return self
+
+    def create(self):
+        deadline = time.monotonic() + self.timeout
+        self.open(_deadline=deadline)
+        self.scan(_deadline=deadline)
+        self.pair(_deadline=deadline)
         return self
 
     def assert_paired(self):
@@ -428,36 +491,83 @@ class PairedKeyboard:
         self._note("disconnect", started_monotonic_ns=action.started_ns, **action.operation)
         return action
 
+    def _unpair(self, deadline, *, check_health):
+        if self._pair_pending is not None:
+            # A lost POST reply is never resent. Only a fresh bonded link
+            # to this worker can establish ownership for subsequent cleanup.
+            self._finish_pair(deadline, check_health=check_health, for_cleanup=True)
+        if self._created:
+            state = self._status(deadline, check_health=check_health)
+            expected = (self._unpair_pending or {}).get("generation", self._pair_generation)
+            if state["remote_generation"] != expected:
+                raise KeyboardConflict("Remote administration changed before keyboard cleanup")
+            if state["bonded"] or state["connected"] or state["pairing"] or state["unpairing"]:
+                if self._unpair_pending is None:
+                    worker = self.worker.status()
+                    if not self._disconnected and worker.get("connected") is True and worker.get("ready") is True:
+                        self.worker.report(keyboard=(), consumer=0)
+                    self._post("unpair", state, deadline)
+                while True:
+                    state = self._status(deadline, check_health=check_health)
+                    if state["remote_generation"] != self._unpair_pending["generation"]:
+                        raise KeyboardConflict("Remote administration changed during keyboard cleanup")
+                    if not any(state[name] for name in ("bonded", "connected", "pairing", "unpairing", "connecting")):
+                        break
+                    self._pause(deadline)
+            error = state.get("last_error")
+            if type(error) is int and error != 0:
+                raise KeyboardConflict("The DUT failed keyboard unpairing (error " + str(error) + ")")
+            self._unpair_pending = None
+            self._created = False
+            self._note("unpaired", main_boot=self.boot, remote_generation=state["remote_generation"],
+                       bonded=False, connected=False)
+            return state
+
+    def unpair(self):
+        """Remove this owned pair while retaining its advertisement for more scans."""
+        self._advertised()
+        if not self._created or self._disconnected:
+            raise RuntimeError("Unpair a connected owned keyboard before reusing its advertisement")
+        deadline = time.monotonic() + self.timeout
+        completed = self._unpair(deadline, check_health=True)
+
+        def review():
+            state = self._status(deadline)
+            error = state.get("last_error")
+            if (state["remote_generation"] != completed["remote_generation"]
+                    or not state["ready"] or any(state[name] for name in
+                        ("bonded", "connected", "connecting", "pairing", "unpairing", "scanning"))
+                    or type(error) is int and error != 0):
+                raise KeyboardConflict("Remote administration changed while the Pi finished disconnecting")
+
+        # DUT completion and BlueZ's property update are independent observers.
+        # Wait for the owned link's actual disconnect, without resending Unpair.
+        while True:
+            review()
+            self._remaining(deadline)
+            worker = self._advertised()
+            self._remaining(deadline)
+            if type(worker.get("connected")) is not bool:
+                raise KeyboardConflict("The Pi returned invalid keyboard disconnect state")
+            if not worker["connected"]:
+                review()
+                break
+            self._pause(deadline)
+        self._remaining(deadline)
+        result = self.worker.forget_peer()
+        if not isinstance(result, dict) or result.get("cleared") is not True:
+            raise KeyboardConflict("The Pi did not confirm removal of its owned disconnected peer")
+        self._scan_state = None
+        self._advertised()
+        return self
+
     def close(self):
         if self._closed:
             return
         deadline = time.monotonic() + self.timeout
         error = None
         try:
-            if self._pair_pending is not None:
-                # A lost POST reply is never resent. Only a fresh bonded link
-                # to this worker can establish ownership for subsequent cleanup.
-                self._finish_pair(deadline, check_health=False)
-            if self._created:
-                state = self._status(deadline, check_health=False)
-                if state["bonded"] or state["connected"] or state["pairing"] or state["unpairing"]:
-                    expected = (self._unpair_pending or {}).get("generation", self._pair_generation)
-                    if state["remote_generation"] != expected:
-                        raise KeyboardConflict("Remote administration changed before keyboard cleanup")
-                    if self._unpair_pending is None:
-                        if not self._disconnected and self.worker.status().get("connected") is True:
-                            self.worker.report(keyboard=(), consumer=0)
-                        self._post("unpair", state, deadline)
-                    while True:
-                        state = self._status(deadline, check_health=False)
-                        if state["remote_generation"] != self._unpair_pending["generation"]:
-                            raise KeyboardConflict("Remote administration changed during keyboard cleanup")
-                        if not any(state[name] for name in ("bonded", "connected", "pairing", "unpairing", "connecting")):
-                            self._unpair_pending = None
-                            break
-                        self._pause(deadline)
-                self._created = False
-                self._note("unpaired", main_boot=self.boot, bonded=False, connected=False)
+            self._unpair(deadline, check_health=False)
         except BaseException as failure:
             error = failure
         finally:

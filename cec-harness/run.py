@@ -16,7 +16,8 @@ from functional_tests.removal_cascade import test_removal_cascade, test_removal_
 from functional_tests.default_physical_address import (
     test_default_physical_address_local, test_default_physical_address_local_scanned,
     test_default_physical_address_remote, test_default_physical_address_remote_scanned)
-from functional_tests.ble_keyboard import test_ble_keyboard_local, test_ble_keyboard_remote
+from functional_tests.ble_keyboard import (test_ble_keyboard_lifecycle, test_ble_keyboard_local,
+                                         test_ble_keyboard_remote)
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
 from functional_tests.hostname import test_hostname_local, test_hostname_consortium
@@ -49,5 +50,5 @@ if __name__ == "__main__":
                            "default_physical_address": (
                                test_default_physical_address_local, test_default_physical_address_local_scanned,
                                test_default_physical_address_remote, test_default_physical_address_remote_scanned),
-                           "ble_keyboard": (test_ble_keyboard_local, test_ble_keyboard_remote)},
+                           "ble_keyboard": (test_ble_keyboard_lifecycle, test_ble_keyboard_local, test_ble_keyboard_remote)},
                           firmware_upgrade=test_firmware_upgrade, prepare=prepare_main, finish=reset_main))

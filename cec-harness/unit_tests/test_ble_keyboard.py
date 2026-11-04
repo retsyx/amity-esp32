@@ -83,7 +83,9 @@ class Fixture:
         self.state["remote_generation"] = str(int(self.state["remote_generation"]) + 1)
         paired = path.endswith("/pair")
         self.state.update(bonded=paired, connected=paired, scanning=False)
-        self.worker.connected = self.worker.bonded = self.worker.ready = paired
+        self.worker.connected = self.worker.ready = paired
+        if paired:
+            self.worker.bonded = True
         if paired and self.terminal_pair_error is not None:
             self.state.update(bonded=False, connected=False, connecting=False, pairing=False,
                               unpairing=False, last_error=self.terminal_pair_error)
@@ -111,13 +113,23 @@ class Worker:
     def __init__(self, fixture):
         self.fixture = fixture
         self.connected = self.bonded = self.ready = False
+        self.advertisement_registered = True
+        self.peer_owned = True
 
     def open(self):
         self.fixture.worker_calls.append(("open",))
         return {"address": "12:34:56:78:9a:bc", "type": 0, "name": "Amity Test Keyboard", "protocol_version": 1}
 
     def status(self):
-        return {"ready": self.ready, "connected": self.connected, "bonded": self.bonded}
+        return {"ready": self.ready, "connected": self.connected, "bonded": self.bonded,
+                "peer_owned": self.peer_owned,
+                "advertisement_registered": self.advertisement_registered}
+
+    def forget_peer(self):
+        assert not self.connected
+        self.fixture.worker_calls.append(("forget_peer",))
+        self.bonded = self.ready = False
+        return {"cleared": True}
 
     def report(self, *, keyboard=(), consumer=0):
         self.fixture.worker_calls.append(("report", tuple(keyboard), consumer))
@@ -158,7 +170,191 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertFalse(fixture.state["bonded"])
         self.assertEqual(fixture.state["remote_generation"], "2")
         phases = [row["phase"] for row in fixture.bed.control_observations[0]["checks"]]
-        self.assertEqual(phases, ["pair_submit", "paired", "report", "unpair_submit", "unpaired"])
+        self.assertEqual(phases, ["scanned", "pair_submit", "paired", "report", "unpair_submit", "unpaired"])
+
+    def test_six_explicit_scans_keep_one_advertisement_through_owned_unpair_and_repair(self):
+        fixture = Fixture()
+        with PairedKeyboard(fixture.main) as keyboard:
+            keyboard.open()
+            for number in range(1, 7):
+                self.assertIs(keyboard.scan(), keyboard)
+                self.assertEqual(fixture.worker_calls.count(("open",)), 1)
+                self.assertEqual(fixture.worker_calls.count(("close",)), 0)
+                if number in (4, 6):
+                    keyboard.pair().assert_paired()
+                    if number == 4:
+                        keyboard.unpair()
+                        self.assertEqual(fixture.worker_calls.count(("forget_peer",)), 1)
+        mutations = [path for path, data in fixture.calls if data is not None]
+        self.assertEqual(mutations, ["/api/remotes/scan"] * 4 +
+                         ["/api/remotes/pair", "/api/remotes/unpair"] +
+                         ["/api/remotes/scan"] * 2 + ["/api/remotes/pair", "/api/remotes/unpair"])
+        self.assertEqual(fixture.worker_calls.count(("close",)), 1)
+        self.assertEqual(fixture.state["remote_generation"], "4")
+
+    def test_explicit_scans_require_live_advertisement_and_never_pair_on_a_miss(self):
+        for changed in ("advertisement", "candidate", "peer"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                with PairedKeyboard(fixture.main) as keyboard:
+                    keyboard.open()
+                    if changed == "advertisement": fixture.worker.advertisement_registered = False
+                    if changed == "candidate": fixture.omit_candidate = True
+                    if changed == "peer": fixture.worker.connected = True
+                    with self.assertRaises(KeyboardConflict): keyboard.scan()
+                paths = [path for path, data in fixture.calls if data is not None]
+                self.assertNotIn("/api/remotes/pair", paths)
+                self.assertEqual(paths.count("/api/remotes/scan"), int(changed == "candidate"))
+
+    def test_explicit_pair_requires_a_completed_current_generation_scan(self):
+        fixture = Fixture()
+        with PairedKeyboard(fixture.main) as keyboard:
+            keyboard.open()
+            with self.assertRaisesRegex(RuntimeError, "fresh keyboard scan"): keyboard.pair()
+            keyboard.scan()
+            fixture.state["remote_generation"] = "99"
+            with self.assertRaisesRegex(KeyboardConflict, "changed after keyboard discovery"): keyboard.pair()
+        self.assertNotIn("/api/remotes/pair", [path for path, _ in fixture.calls])
+
+    def test_unpair_error_or_foreign_generation_does_not_clear_pi_peer_or_start_new_scan(self):
+        for changed in ("error", "generation"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                keyboard = fixture.main.pair_ble_keyboard()
+                if changed == "error":
+                    original = fixture.main.request
+                    def request(path, data=None, **kwargs):
+                        result = original(path, data, **kwargs)
+                        if path == "/api/remotes/unpair": fixture.state["last_error"] = 77
+                        return result
+                    fixture.main.request = request
+                else:
+                    fixture.state.update(remote_generation="99", bonded=False, connected=False)
+                with self.assertRaises(KeyboardConflict): keyboard.unpair()
+                self.assertNotIn(("forget_peer",), fixture.worker_calls)
+                with self.assertRaises(KeyboardConflict): keyboard.close()
+                self.assertEqual(fixture.worker_calls[-1], ("close",))
+
+    def test_pi_peer_clear_failure_is_explicit_and_final_cleanup_still_closes_worker(self):
+        fixture = Fixture()
+        keyboard = fixture.main.pair_ble_keyboard()
+        fixture.worker.forget_peer = Mock(side_effect=RuntimeError("Pi removal failed"))
+        with self.assertRaisesRegex(RuntimeError, "Pi removal failed"): keyboard.unpair()
+        keyboard.close()
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+        self.assertEqual(fixture.worker_calls[-1], ("close",))
+
+    def test_final_worker_cleanup_failure_is_not_reported_as_a_successful_close(self):
+        fixture = Fixture()
+        keyboard = fixture.main.pair_ble_keyboard()
+        fixture.worker.close = Mock(side_effect=RuntimeError("Worker close failed"))
+        with self.assertRaisesRegex(RuntimeError, "Worker close failed"): keyboard.close()
+        self.assertFalse(keyboard._closed)
+        self.assertIsNone(keyboard.worker)
+        self.assertFalse(fixture.state["bonded"])
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+
+    def test_closed_unopened_context_cannot_start_an_advertisement(self):
+        fixture = Fixture()
+        keyboard = PairedKeyboard(fixture.main)
+        keyboard.close()
+        for action in (keyboard.open, keyboard.create):
+            with self.assertRaisesRegex(RuntimeError, "cannot be reused"): action()
+        self.assertEqual(fixture.worker_calls, [])
+
+    def test_unpair_waits_for_late_pi_disconnect_without_repeating_ui_operation(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            original_request, original_status = fixture.main.request, fixture.worker.status
+            pending = [True, True, False]
+            observed = []
+
+            def request(path, data=None, **kwargs):
+                result = original_request(path, data, **kwargs)
+                if path == "/api/remotes/unpair": fixture.worker.connected = True
+                return result
+
+            def status():
+                if fixture.state["remote_generation"] == "2" and pending:
+                    fixture.worker.connected = pending.pop(0)
+                    observed.append(fixture.worker.connected)
+                return original_status()
+
+            fixture.main.request, fixture.worker.status = request, status
+            keyboard.unpair()
+            self.assertEqual(observed, [True, True, False])
+            self.assertIn(("forget_peer",), fixture.worker_calls)
+            keyboard.scan()  # The same advertisement is reusable after both completions.
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+
+    def test_late_pi_disconnect_wait_retains_boot_generation_and_deadline_fences(self):
+        for changed in ("boot", "generation", "deadline"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                keyboard = fixture.main.pair_ble_keyboard()
+                original_request, original_status = fixture.main.request, fixture.worker.status
+
+                def request(path, data=None, **kwargs):
+                    result = original_request(path, data, **kwargs)
+                    if path == "/api/remotes/unpair": fixture.worker.connected = True
+                    return result
+
+                def status():
+                    if fixture.state["remote_generation"] == "2":
+                        if changed == "boot": fixture.system["boot_id"] = "c" * 32
+                        if changed == "generation": fixture.state["remote_generation"] = "99"
+                    return original_status()
+
+                fixture.main.request, fixture.worker.status = request, status
+                if changed == "deadline":
+                    keyboard._pause = Mock(side_effect=TimeoutError("Pi disconnect deadline"))
+                with self.assertRaises((KeyboardConflict, TimeoutError)): keyboard.unpair()
+                self.assertNotIn(("forget_peer",), fixture.worker_calls)
+                keyboard.close()
+                self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+                self.assertEqual(fixture.worker_calls[-1], ("close",))
+
+    def pending_unready_pair(self, fixture):
+        keyboard = PairedKeyboard(fixture.main)
+        original = fixture.main.request
+
+        def request(path, data=None, **kwargs):
+            result = original(path, data, **kwargs)
+            if path == "/api/remotes/pair": fixture.worker.ready = False
+            return result
+
+        fixture.main.request = request
+        keyboard._pause = Mock(side_effect=TimeoutError("HID readiness deadline"))
+        with self.assertRaisesRegex(TimeoutError, "HID readiness deadline"): keyboard.create()
+        self.assertIsNotNone(keyboard._pair_pending)
+        return keyboard
+
+    def test_failed_hid_readiness_cleans_its_proven_owned_bond_without_sending_unready_reports(self):
+        fixture = Fixture()
+        keyboard = self.pending_unready_pair(fixture)
+        fixture.worker.report = Mock(side_effect=AssertionError("No unsubscribed HID report"))
+        keyboard.close()
+        fixture.worker.report.assert_not_called()
+        self.assertFalse(fixture.state["bonded"] or fixture.worker.bonded)
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+        phases = [row["phase"] for row in keyboard._record["checks"]]
+        self.assertIn("pair_owned_for_cleanup", phases)
+        self.assertNotIn("paired", phases)
+        self.assertEqual(fixture.worker_calls[-1], ("close",))
+
+    def test_cleanup_ownership_never_uses_changed_boot_generation_or_unowned_ambiguous_pi_peer(self):
+        for changed in ("boot", "generation", "unowned", "ambiguous"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                keyboard = self.pending_unready_pair(fixture)
+                if changed == "boot": fixture.system["boot_id"] = "c" * 32
+                if changed == "generation": fixture.state["remote_generation"] = "99"
+                if changed == "unowned": fixture.worker.peer_owned = False
+                if changed == "ambiguous": fixture.worker.status = Mock(side_effect=RuntimeError("Ambiguous peer"))
+                with self.assertRaises((KeyboardConflict, RuntimeError)): keyboard.close()
+                self.assertNotIn("/api/remotes/unpair", [path for path, _ in fixture.calls])
+                self.assertNotIn("pair_owned_for_cleanup", [row["phase"] for row in keyboard._record["checks"]])
+                self.assertEqual(fixture.worker_calls[-1], ("close",))
 
     def test_existing_bond_or_busy_remote_is_never_replaced_or_advertised_over(self):
         for key in ("bonded", "connected", "pairing", "unpairing", "connecting", "scanning"):
