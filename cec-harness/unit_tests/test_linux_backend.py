@@ -3,7 +3,7 @@
 import errno
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from amity_harness.cec import CecError, CecSession, LinuxCecBackend
 from unit_tests.harness_pins import cec_gpio
@@ -68,6 +68,74 @@ class LinuxBackendTests(unittest.TestCase):
     def configure(self, components):
         with patch("amity_harness.cec._ioctl", side_effect=self.kernel.ioctl):
             self.backend.configure(components)
+
+    def test_monitor_uses_a_separate_read_only_descriptor_and_no_responder_configuration(self):
+        self.backend.path = "/dev/cec12"
+        self.backend.caps.capabilities = 0x2bf
+        with patch("amity_harness.cec.os.open", return_value=456) as opened, \
+             patch("amity_harness.cec._ioctl", side_effect=lambda fd, direction, number, value: value) as ioctl, \
+             patch("amity_harness.cec.os.close") as closed, \
+             patch("amity_harness.cec_pin.PinMonitor") as monitor:
+            self.backend.open_monitor()
+            self.assertEqual(self.backend.fd, 123)
+            self.assertEqual(self.backend._monitor_fd, 456)
+            import os
+            opened.assert_called_once_with("/dev/cec12", os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK)
+            self.assertEqual(ioctl.call_args.args[:3], (456, 1, 9))
+            self.assertEqual(ioctl.call_args.args[3].value, 0xd0)
+            self.backend.close_monitor()
+            monitor.assert_called_once_with(456)
+            monitor.return_value.close.assert_called_once_with()
+            closed.assert_called_once_with(456)
+            self.assertEqual(self.backend.fd, 123)
+
+    def test_monitor_privilege_fallback_closes_only_its_failed_descriptor(self):
+        self.backend.path = "/dev/cec12"
+        self.backend.caps.capabilities = 0x2bf
+        with patch("amity_harness.cec.os.open", return_value=456), \
+             patch("amity_harness.cec._ioctl", side_effect=PermissionError), \
+             patch("amity_harness.cec.os.close") as closed, \
+             patch("amity_harness.cec_monitor.privileged_monitor_fd", return_value=789) as privileged, \
+             patch("amity_harness.cec_pin.PinMonitor") as monitor:
+            self.backend.open_monitor()
+            privileged.assert_called_once_with("/dev/cec12", self.backend.gpio)
+            closed.assert_called_once_with(456)
+            self.assertEqual(self.backend._monitor_fd, 789)
+            self.assertEqual(self.backend.fd, 123)
+            self.backend.close_monitor()
+            monitor.return_value.close.assert_called_once_with()
+
+    def test_monitor_delegates_to_continuous_reader_without_reading_responder(self):
+        self.backend._monitor_fd = 456
+        self.backend._pin_monitor = monitor = Mock()
+        expected = monitor.receive.return_value
+        self.assertIs(self.backend.receive_monitor(.02), expected)
+        monitor.receive.assert_called_once_with(.02)
+        self.assertEqual(self.backend.fd, 123)
+
+    def test_monitor_requires_pin_capability_before_open_or_address_changes(self):
+        self.backend.caps.capabilities = 0x3f
+        with patch("amity_harness.cec.os.open") as opened, \
+             patch("amity_harness.cec._ioctl") as ioctl, \
+             self.assertRaisesRegex(CecError, "physical pin"):
+            self.backend.open_monitor()
+        opened.assert_not_called()
+        ioctl.assert_not_called()
+
+    def test_monitor_close_error_does_not_prevent_responder_address_cleanup(self):
+        self.backend._monitor_fd = 456
+        calls = []
+        def close(fd):
+            calls.append(fd)
+            if fd == 456:
+                raise OSError("Monitor close failed")
+        with patch("amity_harness.cec.os.close", side_effect=close), \
+             patch("amity_harness.cec._ioctl", side_effect=self.kernel.ioctl), \
+             self.assertRaisesRegex(OSError, "Monitor close failed"):
+            self.backend.close()
+        self.assertEqual(calls, [456, 123])
+        self.assertIsNone(self.backend.fd)
+        self.assertIsNone(self.backend._monitor_fd)
 
     def test_existing_one_address_and_audio_playback_pair_keep_cec_20(self):
         for components in ([device(4, 3)], [device(5, 4, 5), device(4, 3)],

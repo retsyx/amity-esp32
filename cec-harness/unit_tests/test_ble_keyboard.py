@@ -7,14 +7,15 @@ import json
 import io
 import sys
 import tempfile
+import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from contextlib import redirect_stdout, redirect_stderr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import DUT
+from amity_harness import CecError, CecSession, DUT
 from amity_harness.ble_keyboard import KeyboardConflict, LocalKeyboard, PairedKeyboard, SSHKeyboard
 from amity_harness.config import RunConfig
 from amity_harness.dut import AmityHTTPError
@@ -238,6 +239,52 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
         self.assertFalse(fixture.state["bonded"])
 
+    def test_failed_cec_session_still_cleans_only_its_owned_keyboard_bond(self):
+        for lost_reply in (False, True):
+            with self.subTest(lost_reply=lost_reply):
+                fixture = Fixture()
+                keyboard = PairedKeyboard(fixture.main)
+                fixture.lose_pair_reply = lost_reply
+                if lost_reply:
+                    with self.assertRaises(OSError):
+                        keyboard.create()
+                else:
+                    keyboard.create()
+
+                def failed_cec():
+                    raise ArithmeticError("Synthetic CEC worker failure")
+
+                fixture.session.assert_healthy = failed_cec
+                if not lost_reply:
+                    with self.assertRaises(ArithmeticError):
+                        keyboard.report(keyboard=(0x28,))
+                keyboard.close()
+                self.assertFalse(fixture.state["bonded"] or fixture.state["connected"])
+                self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/pair"), 1)
+                self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+                self.assertEqual(fixture.worker_calls[-1], ("close",))
+                self.assertIsNone(keyboard.worker)
+
+    def test_unhealthy_cec_never_bypasses_boot_authority_generation_or_bed_cleanup_fences(self):
+        for changed in ("boot", "authority", "generation", "bed"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                keyboard = fixture.main.pair_ble_keyboard()
+                fixture.session.assert_healthy = Mock(side_effect=ArithmeticError("CEC failure"))
+                if changed == "boot":
+                    fixture.system["boot_id"] = "c" * 32
+                elif changed == "authority":
+                    fixture.system["membership"]["authority_ready"] = False
+                elif changed == "generation":
+                    fixture.state["remote_generation"] = "99"
+                else:
+                    fixture.bed._closed = True
+                with self.assertRaises(KeyboardConflict):
+                    keyboard.close()
+                self.assertFalse(any(path == "/api/remotes/unpair" for path, _ in fixture.calls))
+                self.assertTrue(fixture.state["bonded"])
+                self.assertEqual(fixture.worker_calls[-1], ("close",))
+
     def test_terminal_pair_failure_stops_polling_and_only_cleans_the_new_pi_bond(self):
         for error in (13, 1292):
             with self.subTest(error=error):
@@ -307,6 +354,188 @@ class PairedKeyboardTests(unittest.TestCase):
             for usage in (0, 1, 2, 3, 0xe8, 255):
                 with self.subTest(usage=usage), self.assertRaises(ValueError):
                     keyboard.report(keyboard=(usage,))
+
+    def test_report_context_sends_fresh_hid_states_without_repeating_http_preflight(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            fixture.main.get_system = Mock(wraps=fixture.main.get_system)
+            fixture.main.get_state = Mock(wraps=fixture.main.get_state)
+            fixture.main.last_scan.validate_owners = Mock()
+            with keyboard.reports() as reports:
+                counts = (fixture.main.get_system.call_count, fixture.main.get_state.call_count,
+                          fixture.main.last_scan.validate_owners.call_count, len(fixture.calls))
+                first = reports.report(keyboard=(0x28,))
+                fixture.activity.update(current_activity=1, activity_settling=True)
+                second = reports.report(consumer=0xe9)
+                released = reports.all_up()
+                self.assertEqual((fixture.main.get_system.call_count, fixture.main.get_state.call_count,
+                                  fixture.main.last_scan.validate_owners.call_count, len(fixture.calls)), counts)
+                self.assertLess(first.started_ns, second.started_ns)
+                self.assertLess(second.started_ns, released.started_ns)
+                self.assertEqual(len({first.request_id, second.request_id, released.request_id}), 3)
+                self.assertEqual(first.state["current_activity"], second.state["current_activity"])
+                self.assertEqual(second.state["current_activity"], 0)
+                self.assertFalse(second.state["activity_settling"])
+                self.assertIs(second.scan, fixture.main.last_scan)
+                self.assertEqual(second.owner_boots, fixture.main.last_scan.owner_boots)
+                first.state["expected_config_revision"] = "caller mutation"
+                self.assertEqual(second.state["expected_config_revision"], "4")
+            self.assertGreater(fixture.main.get_state.call_count, counts[1])
+            self.assertEqual([call for call in fixture.worker_calls if call[0] == "report"],
+                             [("report", (0x28,), 0), ("report", (), 0xe9),
+                              ("report", (), 0), ("report", (), 0)])
+            self.assertNotIn("/api/key", [path for path, _ in fixture.calls])
+
+    def test_report_context_releases_held_input_and_preserves_original_body_failure(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            with self.assertRaisesRegex(ValueError, "original failure"):
+                with keyboard.reports() as reports:
+                    reports.report(consumer=0xe9)
+                    raise ValueError("original failure")
+            self.assertEqual(fixture.worker_calls[-1], ("report", (), 0))
+            self.assertTrue(fixture.state["bonded"])
+            with self.assertRaises(KeyboardConflict):
+                reports.report(keyboard=(0x28,))
+
+    def test_fast_report_does_not_wait_for_the_cec_responder_lock(self):
+        fixture = Fixture()
+        session = CecSession(())
+        fixture.session = fixture.bed.session = fixture.main.last_scan._session = session
+        session.assert_healthy = Mock(wraps=session.assert_healthy)
+        locked, release, reported = threading.Event(), threading.Event(), threading.Event()
+        actions, failures = [], []
+
+        def responder():
+            with session._lock:
+                locked.set()
+                release.wait(2)
+
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            with keyboard.reports() as reports:
+                checked = session.assert_healthy.call_count
+
+                def notify():
+                    try:
+                        actions.append(reports.report(keyboard=(0x28,)))
+                    except BaseException as error:
+                        failures.append(error)
+                    finally:
+                        reported.set()
+
+                holder = threading.Thread(target=responder)
+                sender = threading.Thread(target=notify)
+                holder.start()
+                try:
+                    self.assertTrue(locked.wait(1))
+                    sender.start()
+                    self.assertTrue(reported.wait(1), "BLE notification waited for the CEC responder")
+                    self.assertEqual(session.assert_healthy.call_count, checked)
+                    self.assertEqual(failures, [])
+                    self.assertEqual(len(actions), 1)
+                    self.assertEqual(fixture.worker_calls[-1], ("report", (0x28,), 0))
+                finally:
+                    release.set()
+                    holder.join(timeout=1)
+                    if sender.ident is not None:
+                        sender.join(timeout=1)
+            self.assertGreater(session.assert_healthy.call_count, checked)
+
+    def test_stopped_fast_reports_reject_notification_but_still_release_owned_hid_state(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                fixture = Fixture()
+                session = CecSession(())
+                fixture.session = fixture.bed.session = fixture.main.last_scan._session = session
+                with fixture.main.pair_ble_keyboard() as keyboard:
+                    expected_error = CecError if failed else KeyboardConflict
+                    with self.assertRaises(expected_error):
+                        with keyboard.reports() as reports:
+                            reports.report(consumer=0xe9)
+                            before = len(fixture.worker_calls)
+                            with session._lock:
+                                if failed:
+                                    session._error = ArithmeticError("CEC responder failure")
+                                session._stop.set()
+                            with self.assertRaises(KeyboardConflict):
+                                reports.report(keyboard=(0x28,))
+                            self.assertEqual(len(fixture.worker_calls), before)
+                    self.assertEqual(fixture.worker_calls[before:], [("report", (), 0)])
+                self.assertFalse(fixture.state["bonded"])
+                self.assertEqual(fixture.worker_calls[-1], ("close",))
+
+    def test_report_context_fences_configuration_boot_and_owner_changes_on_exit(self):
+        for changed in ("expected_config_revision", "expected_presentation_revision", "main_boot", "owner_boot"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                with fixture.main.pair_ble_keyboard() as keyboard:
+                    original_system = deepcopy(fixture.system)
+                    original_owners = dict(fixture.main.last_scan.owner_boots)
+                    try:
+                        with self.assertRaises(KeyboardConflict):
+                            with keyboard.reports() as reports:
+                                reports.report(consumer=0xe9)
+                                if changed == "main_boot":
+                                    fixture.system["boot_id"] = "c" * 32
+                                elif changed == "owner_boot":
+                                    fixture.main.last_scan.owner_boots[fixture.main.identity.device_id] = "c" * 32
+                                else:
+                                    fixture.activity[changed] = "99"
+                        self.assertEqual(fixture.worker_calls[-1], ("report", (), 0))
+                    finally:
+                        fixture.system = original_system
+                        fixture.main.last_scan.owner_boots = original_owners
+
+    def test_each_fast_report_requires_the_same_live_scan_bed_worker_and_connection(self):
+        for changed in ("scan", "bed", "worker", "disconnected"):
+            with self.subTest(changed=changed):
+                fixture = Fixture()
+                with fixture.main.pair_ble_keyboard() as keyboard:
+                    with keyboard.reports() as reports:
+                        original_scan = fixture.main.last_scan
+                        original_worker = keyboard.worker
+                        before = len(fixture.worker_calls)
+                        try:
+                            if changed == "scan":
+                                fixture.main.last_scan = object()
+                            elif changed == "bed":
+                                fixture.bed._closed = True
+                            elif changed == "worker":
+                                keyboard.worker = object()
+                            else:
+                                keyboard._disconnected = True
+                            with self.assertRaises(KeyboardConflict):
+                                reports.report(keyboard=(0x28,))
+                            self.assertEqual(len(fixture.worker_calls), before)
+                        finally:
+                            fixture.main.last_scan, keyboard.worker = original_scan, original_worker
+                            fixture.bed._closed = keyboard._disconnected = False
+
+    def test_report_context_uses_physical_worker_receipt_validation(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            with keyboard.reports() as reports:
+                with patch.object(fixture.worker, "report", return_value={
+                        "timestamp_monotonic_ns": True, "keyboard_report": "0000000000000000",
+                        "consumer_report": "0000"}):
+                    with self.assertRaisesRegex(KeyboardConflict, "physical notification receipt"):
+                        reports.report(keyboard=(0x28,))
+            self.assertEqual(fixture.worker_calls[-1], ("report", (), 0))
+
+    def test_report_context_rejects_missing_revision_and_cannot_be_reentered(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            fixture.activity.pop("expected_config_revision")
+            with self.assertRaisesRegex(KeyboardConflict, "configuration revisions"):
+                with keyboard.reports():
+                    self.fail("An unfenced report context must not open")
+            fixture.activity["expected_config_revision"] = "4"
+            reports = keyboard.reports()
+            with reports:
+                with self.assertRaises(RuntimeError):
+                    reports.__enter__()
+            with self.assertRaises(RuntimeError):
+                reports.__enter__()
 
 
 class KeyboardTransportTests(unittest.TestCase):

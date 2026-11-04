@@ -943,12 +943,35 @@ unpairing use the shipping authenticated remote settings API. The main must
 have no saved remote. The fixture refuses to replace an existing bond and
 removes only its own new bond during cleanup.
 
-Each case requires a fresh Select press/release, holds Volume Up while pressing
-and releasing Right, then disconnects BLE during another held Volume Up.
-Original physical CEC frames must prove that Right releases independently,
-Volume Up continues, and disconnect ends the remaining stream. No `/api/key`
-request supplies these inputs. Generic HID exercises the keyboard input path;
-Siri touch gestures and Power macros remain separate.
+Each case scans a TV, AVR and two sources, then saves both activities before
+sending input. It checks a fresh Select press/release, independent volume and
+navigation holds, and two navigation buttons sharing one recipient. Real CEC
+NACKs on the first press and on a later repeat must stop the affected stream;
+restoring the recipient while the physical button is still held must not replay
+it. BLE activity shortcuts then select a source-only activity and reselect it
+while buttons are held. Its final setup action is routing;
+fresh wire commands and resulting activity state prove cancellation and input
+gating through both all-buttons-up and the one-second fallback. The source
+change cancels both the old source's navigation hold and the old AVR's volume
+hold through fallback; reselection tests all-buttons-up without an audio role.
+The source-only activity keeps the all-buttons-up check short enough to prove
+acceptance with a fresh physical CEC press before the fallback deadline.
+Assertions use UI state and physical CEC traffic without inspecting Amity logs.
+The fixture stops that activity and restarts the original TV/AVR/source activity
+with fresh power and routing evidence. Disconnecting BLE during a held Volume
+Up must then end the remaining AVR stream. No `/api/key` request supplies these inputs. Generic
+HID exercises the keyboard input path; Siri touch gestures and Power macros
+remain separate.
+
+Failed-press and all-buttons-up checks require `CEC_CAP_MONITOR_PIN`. The
+independent monitor decodes the actual header, end-of-message and acknowledgement bits, including
+NACKed headers omitted by ordinary CEC receive. All-buttons-up uses the observed
+start edge; ordinary CEC receive timestamps describe the last byte. Each
+failed-press observation window ends with an observed Get CEC Version request from another fixture
+address to the DUT, confirming capture through that window. If monitor mode needs
+`CAP_NET_ADMIN`, a short `sudo -n` helper opens only the selected CEC monitor
+descriptor, drops privileges, passes it to the worker and exits. The ordinary
+CEC responder remains unprivileged.
 
 Pi software setup installs BlueZ and the distribution's `python3-dbus-next`;
 the normal `python3` works without `--ble-python`. A custom isolated environment

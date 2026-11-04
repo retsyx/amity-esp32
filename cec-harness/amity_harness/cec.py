@@ -97,6 +97,11 @@ class _Message(ctypes.Structure):
                 ("tx_low_drive_cnt", ctypes.c_uint8), ("tx_error_cnt", ctypes.c_uint8)]
 
 
+class _Event(ctypes.Structure):
+    _fields_ = [("timestamp_ns", ctypes.c_uint64), ("event", ctypes.c_uint32),
+                ("flags", ctypes.c_uint32), ("raw", ctypes.c_uint32 * 16)]
+
+
 def _request(direction, number, structure):
     # asm-generic/ioctl.h, used by the Raspberry Pi's aarch64 Linux ABI.
     return (direction << 30) | (ctypes.sizeof(structure) << 16) | (ord("a") << 8) | number
@@ -126,6 +131,74 @@ class LinuxCecBackend:
         self.fd = None
         self.path = None
         self.cec_version = None
+        self._monitor_fd = None
+        self._pin_monitor = None
+        self._last_pin_diagnostic = None
+
+    def open_monitor(self):
+        """Observe original pin edges without changing the responder descriptor."""
+        if self.fd is None or self._monitor_fd is not None:
+            raise CecError("Open one monitor on an active CEC backend")
+        if not self.caps.capabilities & (1 << 7):
+            raise CecError("This CEC adapter cannot monitor physical pin edges")
+        self._last_pin_diagnostic = None
+        fd = os.open(self.path, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK)
+        try:
+            _ioctl(fd, 1, 9, ctypes.c_uint32(0xd0))  # CEC_MODE_MONITOR_PIN
+        except PermissionError:
+            os.close(fd)
+            from .cec_monitor import privileged_monitor_fd
+            fd = privileged_monitor_fd(self.path, self.gpio)
+        except BaseException:
+            os.close(fd)
+            raise
+        try:
+            from .cec_pin import PinMonitor
+            self._pin_monitor = PinMonitor(fd)
+            self._monitor_fd = fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def receive_monitor(self, timeout=0.05):
+        """Return decoded physical edges, including aborted NACKed headers.
+
+        Pin monitoring includes both this adapter and external transmitters.
+        Callers must match the independently observed DUT initiator address.
+        """
+        if self._pin_monitor is None:
+            raise CecError("The CEC monitor is not open")
+        try:
+            return self._pin_monitor.receive(timeout)
+        except BaseException as error:
+            self._remember_pin_diagnostic(error)
+            raise
+
+    def _remember_pin_diagnostic(self, error):
+        from .cec_pin import pin_diagnostic
+        diagnostic = pin_diagnostic(error)
+        if diagnostic is not None:
+            self._last_pin_diagnostic = diagnostic
+
+    @property
+    def last_pin_diagnostic(self):
+        if self._last_pin_diagnostic is None:
+            return None
+        from .cec_pin import validate_pin_diagnostic
+        return validate_pin_diagnostic(self._last_pin_diagnostic)
+
+    def close_monitor(self):
+        fd, self._monitor_fd = self._monitor_fd, None
+        monitor, self._pin_monitor = self._pin_monitor, None
+        try:
+            if monitor is not None:
+                monitor.close()
+        except BaseException as error:
+            self._remember_pin_diagnostic(error)
+            raise
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     def open(self):
         if sys.platform != "linux":
@@ -234,9 +307,13 @@ class LinuxCecBackend:
 
     def close(self):
         self.cec_version = None
+        errors = []
+        try:
+            self.close_monitor()
+        except BaseException as exc:
+            errors.append(exc)
         if self.fd is not None:
             fd, self.fd = self.fd, None
-            errors = []
             for direction, number, value in ((3, 4, _LogAddrs()),
                                               (1, 2, ctypes.c_uint16(0xffff))):
                 try:
@@ -247,8 +324,8 @@ class LinuxCecBackend:
                 os.close(fd)
             except BaseException as exc:
                 errors.append(exc)
-            if errors:
-                raise errors[0]
+        if errors:
+            raise errors[0]
 
 
 class CecSession:

@@ -27,7 +27,7 @@ class BLEInputEvidence:
         self._invalid_clock = self._entered = self._closed = False
         self._checks = []
 
-    def _validate(self):
+    def _validate(self, *, allow_activity_change=False):
         if (self.bed is None or not self.bed._entered or self.bed._closed
                 or self.dut._testbed is not self.bed or self.bed.session is not self.session
                 or self.dut.last_scan is not self.scan or self.scan._session is not self.session
@@ -41,10 +41,12 @@ class BLEInputEvidence:
                 or type(state.get("current_activity")) is not int or state["current_activity"] < 0
                 or state.get("activity_settling") is not False):
             raise AssertionError("BLE input needs the same ready, active owner boot")
+        stable = ("expected_config_revision", "expected_presentation_revision")
+        if not allow_activity_change:
+            stable += ("current_activity",)
         if self._entered and (self.scan.owner_boots != self._owner_boots
                 or self.scan.initiators != self._initiators
-                or any(state.get(name) != self._state.get(name) for name in
-                       ("current_activity", "expected_config_revision", "expected_presentation_revision"))):
+                or any(state.get(name) != self._state.get(name) for name in stable)):
             raise AssertionError("The activity, configuration or input owner changed")
         for component in self.components:
             context = component._wire_context(time.monotonic_ns())
@@ -186,7 +188,7 @@ class BLEInputEvidence:
             "started_monotonic_ns": marker, "deadline_monotonic_ns": deadline})
         return marker, deadline
 
-    def _finish(self, record, *, routes, released):
+    def _finish(self, record, *, routes, released, release_once=False):
         through = time.monotonic_ns()
         record["idle_receive_since_ns"] = self._drain(through)
         self._validate()
@@ -205,6 +207,9 @@ class BLEInputEvidence:
             if (gpio, frame.destination) != (recipient.gpio, recipient.address.logical):
                 raise AssertionError("BLE key reached the wrong physical recipient")
         for component, release in released:
+            if release_once and sum(gpio == component.gpio and frame.destination == component.address.logical
+                                    and frame.opcode == 0x45 for gpio, frame in frames) != 1:
+                raise AssertionError("Shared keys must produce one final CEC release")
             if any(gpio == component.gpio and frame.destination == component.address.logical
                    and frame.opcode == 0x44 and frame.timestamp_ns > release.timestamp_ns
                    for gpio, frame in frames):
@@ -291,6 +296,165 @@ class BLEInputEvidence:
                           volume_release_wire_timestamp_ns=final_release.timestamp_ns)
             return self._finish(record, routes={Key.VOLUME_UP: volume, Key.RIGHT: navigation},
                                 released=((volume, final_release), (navigation, released_right)))
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            self._all_up(keyboard, primary)
+
+    def assert_shared_recipient(self, keyboard, component):
+        """Two navigation holds share one CEC stream and one final release."""
+        if component not in self.components:
+            raise ValueError("The BLE key recipient is outside this scan")
+        record = self._begin(keyboard, "shared_recipient")
+        primary = None
+        try:
+            started, deadline = self._change(
+                lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "right_down")
+            right = self._press(component, Key.RIGHT, after=started, deadline_ns=deadline)
+            both, deadline = self._change(
+                lambda: keyboard.report(keyboard=(0x4F, 0x52), consumer=0), record, "up_down")
+            up = self._press(component, Key.UP, after=both, deadline_ns=deadline)
+            right_up, _ = self._change(
+                lambda: keyboard.report(keyboard=(0x52,), consumer=0), record, "right_up")
+            selected, deadline = self._change(
+                lambda: keyboard.report(keyboard=(0x28, 0x52), consumer=0), record, "select_barrier_down")
+            barrier = self._press(component, Key.SELECT, after=selected, deadline_ns=deadline)
+            select_up, deadline = self._change(
+                lambda: keyboard.report(keyboard=(0x52,), consumer=0), record, "select_barrier_up")
+            continued = self._press(component, Key.UP, after=select_up, deadline_ns=deadline)
+            final_up, deadline = self._change(keyboard.all_up, record, "all_up")
+            release = self._release(component, after=final_up, deadline_ns=deadline)
+            self._drain(time.monotonic_ns())
+            frames = [frame for gpio, frame in self._snapshot()
+                      if gpio == component.gpio and frame.destination == component.address.logical
+                      and started < frame.timestamp_ns]
+            releases = [frame for frame in frames if frame.opcode == 0x45]
+            if any(frame.timestamp_ns < final_up for frame in releases):
+                raise AssertionError("A shared recipient was released before its last key ended")
+            if len(releases) != 1:
+                raise AssertionError("Shared keys must produce one final CEC release")
+            # Select's new down follows Right-up through the ordered BLE and
+            # owner delivery paths. Its physical frame is behind every Right
+            # frame admitted before that up, in this recipient's CEC FIFO.
+            if any(frame.opcode == 0x44 and frame.operands == bytes([Key.RIGHT])
+                   and frame.timestamp_ns > barrier.timestamp_ns for frame in frames):
+                raise AssertionError("Right restarted while only Up remained held")
+            record.update(component=component.name,
+                          right_press_wire_timestamp_ns=right.timestamp_ns,
+                          up_press_wire_timestamp_ns=up.timestamp_ns,
+                          right_up_monotonic_ns=right_up,
+                          select_barrier_wire_timestamp_ns=barrier.timestamp_ns,
+                          select_up_monotonic_ns=select_up,
+                          continuing_up_wire_timestamp_ns=continued.timestamp_ns,
+                          final_all_up_monotonic_ns=final_up,
+                          release_frame=release.raw.hex(":"),
+                          release_wire_timestamp_ns=release.timestamp_ns)
+            return self._finish(record, routes={Key.RIGHT: component, Key.UP: component, Key.SELECT: component},
+                                released=((component, release),), release_once=True)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            self._all_up(keyboard, primary)
+
+    def assert_failed_press(self, keyboard, component, *, after_repetition=False):
+        """A physical destination NACK ends its BLE hold without replaying it."""
+        from .nack import MissingCECRecipient
+
+        if component not in self.components:
+            raise ValueError("The BLE key recipient is outside this scan")
+        record = self._begin(keyboard, "failed_repeat" if after_repetition else "failed_press")
+        primary = None
+        try:
+            if after_repetition:
+                started, deadline = self._change(
+                    lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "right_down")
+                first = self._press(component, Key.RIGHT, after=started, deadline_ns=deadline)
+                repeated = self._press(component, Key.RIGHT, after=first.timestamp_ns,
+                                       deadline_ns=first.timestamp_ns + self._budget())
+                record.update(first_press_wire_timestamp_ns=first.timestamp_ns,
+                              repeat_wire_timestamp_ns=repeated.timestamp_ns)
+            failed_after = time.monotonic_ns()
+            with MissingCECRecipient(component, scan=self.scan) as failure:
+                if not after_repetition:
+                    failed_after, _ = self._change(
+                        lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "failed_right_down")
+                initiator = self._initiators[component.gpio]
+
+                def target_frames():
+                    failure.assert_healthy()
+                    return tuple(frame for frame in failure.frames
+                                 if frame.source == initiator and frame.destination == component.address.logical
+                                 and frame.timestamp_ns > failed_after)
+
+                def failed_headers(frames):
+                    headers = [frame for frame in frames if frame.opcode is None]
+                    if any(getattr(frame, "eom", None) != (False,)
+                           or getattr(frame, "ack", None) != (True,) for frame in headers):
+                        raise AssertionError("The physical header does not prove a non-poll destination NACK")
+                    return headers
+
+                def first_header(_):
+                    headers = failed_headers(target_frames())
+                    return min(headers, key=lambda frame: frame.timestamp_ns) if headers else None
+
+                # A lone NACKed header is completed by the next real falling
+                # edge. Drain with the physical witness before inspecting it.
+                failure.drain(failed_after + self._budget())
+                header = self._wait(first_header, deadline_ns=time.monotonic_ns() + self._budget(),
+                                    message="No physical failed key transmission header")
+                failed_through = header.timestamp_ns + self._budget()
+                failure.drain(failed_through)
+                frames = target_frames()
+                headers = failed_headers(frames)
+                # The failed press can be followed by a final release, whose
+                # existing budget is three attempts. Aborted headers contain no
+                # opcode, so retain that ambiguity rather than label each one.
+                if not 1 <= len(headers) <= 4:
+                    raise AssertionError("A failed BLE hold kept transmitting after its cleanup budget")
+                if any(frame.opcode == 0x44 and frame.timestamp_ns > header.timestamp_ns for frame in frames):
+                    raise AssertionError("A failed BLE press continued repeating")
+
+                failure.restore()
+                restored = time.monotonic_ns()
+                restored_through = restored + self._budget()
+                failure.drain(restored_through)
+                self._drain(restored_through)
+                up, _ = self._change(keyboard.all_up, record, "failed_right_up")
+                up_through = up + self._budget()
+                failure.drain(up_through)
+                self._drain(up_through)
+                frames = target_frames()
+                headers = failed_headers(frames)
+                if len(headers) > 4:
+                    raise AssertionError("A failed BLE hold kept transmitting after its cleanup budget")
+                if any(frame.timestamp_ns > header.timestamp_ns and frame.opcode == 0x44 for frame in frames):
+                    raise AssertionError("A failed BLE hold restarted when its recipient returned")
+                if any(frame.timestamp_ns > restored and frame.opcode is None for frame in frames):
+                    raise AssertionError("A failed BLE hold submitted another destination attempt")
+                if any(frame.timestamp_ns > up and frame.opcode == 0x45 for frame in frames):
+                    raise AssertionError("The failed key's matching up was not a no-op")
+
+                fresh, deadline = self._change(
+                    lambda: keyboard.report(keyboard=(0x4F,), consumer=0), record, "fresh_right_down")
+                press = self._press(component, Key.RIGHT, after=fresh, deadline_ns=deadline)
+                final_up, deadline = self._change(keyboard.all_up, record, "fresh_right_up")
+                release = self._release(component, after=final_up, deadline_ns=deadline)
+                record.update(component=component.name, failed_attempt_header=header.raw.hex(":"),
+                              failed_attempt_wire_timestamp_ns=header.timestamp_ns,
+                              failed_attempt_headers=[{"frame": frame.raw.hex(":"),
+                                  "wire_timestamp_ns": frame.timestamp_ns,
+                                  "eom": list(frame.eom), "ack": list(frame.ack)} for frame in headers],
+                              failed_attempts_include_release_cleanup=True,
+                              failure_observed_through_monotonic_ns=failed_through,
+                              restored_monotonic_ns=restored,
+                              held_after_restore_through_monotonic_ns=restored_through,
+                              failed_up_monotonic_ns=up,
+                              failed_up_observed_through_monotonic_ns=up_through,
+                              fresh_press_wire_timestamp_ns=press.timestamp_ns,
+                              release_wire_timestamp_ns=release.timestamp_ns)
+            return self._finish(record, routes={Key.RIGHT: component}, released=((component, release),))
         except BaseException as error:
             primary = error
             raise

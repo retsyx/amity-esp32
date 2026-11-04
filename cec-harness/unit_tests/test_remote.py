@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import patch
 
 from amity_harness.cec import CecError, Frame, TxResult
+from amity_harness.cec_pin import PinFrame
+from amity_harness.cec_pin import PinDecoder
 from amity_harness.remote import SSHCecBackend, _RPC_VERSION, _component_descriptor, _serve
 from amity_harness.topology import CecAddress
 from unit_tests.harness_pins import cec_gpio
@@ -37,6 +39,17 @@ class WorkerBackend:
     def receive(self, timeout):
         return Frame.from_bytes(bytes.fromhex("0546"), timestamp_ns=12346)
 
+    def open_monitor(self):
+        self.monitor = True
+
+    def receive_monitor(self, timeout):
+        if not self.monitor:
+            raise RuntimeError("Monitor closed")
+        return PinFrame.observed(b"\x04", timestamp_ns=12347, eom=(False,), ack=(True,), synchronized_ns=12300)
+
+    def close_monitor(self):
+        self.monitor = False
+
     def close(self):
         self.close_count += 1
         self.cec_version = None
@@ -52,6 +65,7 @@ _PIPE_WORKER = r'''
 import sys
 import time
 from amity_harness.cec import Frame, TxResult
+from amity_harness.cec_pin import PinFrame
 from amity_harness.remote import _serve
 from unit_tests.harness_pins import cec_gpio
 def clock():
@@ -70,6 +84,13 @@ class Backend:
         return TxResult(frame, 1, clock())
     def receive(self, timeout):
         return Frame(0, 5, 0x46, timestamp_ns=clock())
+    def open_monitor(self):
+        self.monitor = True
+    def receive_monitor(self, timeout):
+        assert self.monitor
+        return PinFrame.observed(b"\x04", timestamp_ns=clock(), eom=(False,), ack=(True,), synchronized_ns=clock()-100000000)
+    def close_monitor(self):
+        self.monitor = False
     def close(self):
         pass
 _serve(cec_gpio(), sys.stdin, sys.stdout, backend_factory=Backend, clock=clock)
@@ -77,6 +98,105 @@ _serve(cec_gpio(), sys.stdin, sys.stdout, backend_factory=Backend, clock=clock)
 
 
 class RemoteProtocolTests(unittest.TestCase):
+    def test_pin_failure_details_survive_wire_error_shutdown_and_next_operation(self):
+        source = _PIPE_WORKER.replace(
+            "return PinFrame.observed(b\"\\x04\", timestamp_ns=clock(), eom=(False,), ack=(True,), synchronized_ns=clock()-100000000)",
+            "from amity_harness.cec_pin import PinDecoder\n        PinDecoder().feed(3, clock(), flags=2)")
+        backend, launcher = self._local_transport(source)
+        with launcher:
+            backend.open()
+            backend.open_monitor()
+            with self.assertRaises(CecError) as failure:
+                backend.receive_monitor()
+            diagnostic = failure.exception.pin_diagnostic
+            self.assertEqual(diagnostic["reason"], "dropped pin events")
+            self.assertEqual(diagnostic["recent_events"][-1][::2], [3, 2])
+            self.assertIsNone(backend._process)
+            self.assertEqual(backend.last_pin_diagnostic, diagnostic)
+            with self.assertRaises(CecError) as later:
+                backend.transmit(Frame(5, 0, 0x90, b"\x01"))
+            self.assertEqual(later.exception.pin_diagnostic, diagnostic)
+            copied = backend.last_pin_diagnostic
+            copied["recent_events"].clear()
+            self.assertTrue(backend.last_pin_diagnostic["recent_events"])
+
+    def test_worker_emits_only_validated_pin_diagnostics(self):
+        class Broken(WorkerBackend):
+            def receive_monitor(self, timeout):
+                PinDecoder().feed(3, 100, flags=2)
+        output = io.StringIO()
+        _serve(cec_gpio(), io.StringIO(request(1, "open") + request(2, "monitor_open")
+                                     + request(3, "monitor_receive", timeout=.02)),
+               output, backend_factory=Broken)
+        response = json.loads(output.getvalue().splitlines()[-1])
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["pin_diagnostic"]["reason"], "dropped pin events")
+        class Forged(WorkerBackend):
+            def receive_monitor(self, timeout):
+                error = CecError("unrelated failure")
+                error.pin_diagnostic = {"secret": "never forward arbitrary fields"}
+                raise error
+        output = io.StringIO()
+        _serve(cec_gpio(), io.StringIO(request(1, "open") + request(2, "monitor_open")
+                                     + request(3, "monitor_receive", timeout=.02)),
+               output, backend_factory=Forged)
+        self.assertNotIn("pin_diagnostic", json.loads(output.getvalue().splitlines()[-1]))
+
+    def test_monitor_rejects_missing_or_fabricated_byte_metadata(self):
+        valid = {"frame": "04", "timestamp_ns": 200, "eom": [False],
+                 "ack": [True], "synchronized_ns": 100}
+        invalid = [{"frame": "04", "timestamp_ns": 200},
+                   dict(valid, ack=[1]), dict(valid, eom=[False, True]),
+                   dict(valid, eom=None), dict(valid, timestamp_ns=0),
+                   dict(valid, synchronized_ns=201),
+                   dict(valid, ack=[False]), dict(valid, frame="not hex")]
+        for result in invalid:
+            with self.subTest(result=result):
+                backend = SSHCecBackend(cec_gpio())
+                backend.clock_offset_ns = backend.clock_uncertainty_ns = 0
+                backend._monitor_opened = True
+                with patch.object(backend, "_rpc", return_value=result), \
+                     self.assertRaisesRegex(CecError, "Malformed Pi CEC monitor_receive"):
+                    backend.receive_monitor()
+                self.assertFalse(backend._monitor_opened)
+
+    def test_worker_monitor_round_trip_and_strict_cec_only_arguments(self):
+        backend = WorkerBackend(cec_gpio())
+        commands = (request(1, "open") + request(2, "monitor_open")
+                    + request(3, "monitor_receive", timeout=.02) + request(4, "monitor_close")
+                    + request(5, "close"))
+        output = io.StringIO()
+        _serve(cec_gpio(), io.StringIO(commands), output, backend_factory=lambda gpio: backend)
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertTrue(all(row["ok"] for row in rows))
+        self.assertEqual(rows[2]["result"], {"frame": "04", "timestamp_ns": 12347, "eom": [False], "ack": [True], "synchronized_ns": 12300})
+        self.assertFalse(backend.monitor)
+        for invalid in (request(3, "monitor_receive", timeout=2),
+                        request(3, "monitor_open", password="not accepted")):
+            output = io.StringIO()
+            _serve(cec_gpio(), io.StringIO(request(1, "open") + request(2, "monitor_open") + invalid),
+                   output, backend_factory=WorkerBackend)
+            self.assertFalse(json.loads(output.getvalue().splitlines()[-1])["ok"])
+
+    def test_monitor_transport_maps_original_remote_clock_and_closes_without_responder_shutdown(self):
+        backend, launcher = self._local_transport()
+        with launcher:
+            backend.open()
+            try:
+                backend.open_monitor()
+                frame = backend.receive_monitor()
+                self.assertEqual(frame.raw, b"\x04")
+                self.assertEqual((frame.eom, frame.ack), ((False,), (True,)))
+                self.assertLess(frame.synchronized_ns, frame.timestamp_ns)
+                self.assertAlmostEqual(frame.timestamp_ns - frame.synchronized_ns, 100000000, delta=1000000)
+                self.assertLessEqual(frame.timestamp_ns, time.monotonic_ns())
+                backend.close_monitor()
+                self.assertFalse(backend._monitor_opened)
+                self.assertIsNone(backend._process.poll())
+                self.assertEqual(backend.receive().raw, bytes.fromhex("0546"))
+            finally:
+                backend.close()
+
     def test_worker_round_trip_and_only_cec_configuration_fields(self):
         backend = WorkerBackend(cec_gpio())
         descriptor = {"logical": 5, "physical": 4096, "device_type": 5,

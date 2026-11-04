@@ -232,11 +232,12 @@ class PairedKeyboard:
     def _request(self, path, data=None, *, deadline):
         return self.dut.request(path, data, timeout=min(15, self._remaining(deadline)))
 
-    def _system(self):
+    def _system(self, *, check_health=True):
         if (self.dut._testbed is not self.bed or self.bed._closed or not self.bed._entered
                 or self.bed.session is not self.session):
             raise KeyboardConflict("The keyboard TestBed or CEC session changed")
-        self.session.assert_healthy()
+        if check_health:
+            self.session.assert_healthy()
         system = self.dut.get_system()
         membership = system.get("membership", {})
         if (system.get("octopus_id") != self.dut.identity.device_id
@@ -248,8 +249,8 @@ class PairedKeyboard:
             raise KeyboardConflict("The original main restarted or changed identity")
         return system
 
-    def _status(self, deadline):
-        self._system()
+    def _status(self, deadline, *, check_health=True):
+        self._system(check_health=check_health)
         state = self._request("/api/remotes", deadline=deadline)
         flags = ("ready", "bonded", "connected", "connecting", "pairing", "unpairing", "scanning")
         if (not isinstance(state, dict) or state.get("boot_id") != self.boot
@@ -294,10 +295,10 @@ class PairedKeyboard:
             raise KeyboardConflict("The keyboard worker returned invalid connection proof")
         return status["bonded"] and status["connected"] and worker["ready"] and worker["connected"] and worker["bonded"]
 
-    def _finish_pair(self, deadline):
+    def _finish_pair(self, deadline, *, check_health=True):
         pending = self._pair_pending
         while True:
-            state = self._status(deadline)
+            state = self._status(deadline, check_health=check_health)
             if state["remote_generation"] != pending["generation"]:
                 raise KeyboardConflict("Remote administration changed while pairing the keyboard")
             error = state.get("last_error")
@@ -395,9 +396,13 @@ class PairedKeyboard:
         if self._disconnected:
             raise RuntimeError("The disconnected keyboard cannot send input")
         action = self.checkpoint()
+        return self._send_report(action, keyboard, consumer)
+
+    def _send_report(self, action, keyboard, consumer):
         action.operation = self.worker.report(keyboard=keyboard, consumer=consumer)
         receipt = action.operation
-        if (type(receipt.get("timestamp_monotonic_ns")) is not int or receipt["timestamp_monotonic_ns"] <= 0
+        if (not isinstance(receipt, dict)
+                or type(receipt.get("timestamp_monotonic_ns")) is not int or receipt["timestamp_monotonic_ns"] <= 0
                 or not isinstance(receipt.get("keyboard_report"), str)
                 or re.fullmatch(r"[0-9a-f]{16}", receipt["keyboard_report"]) is None
                 or not isinstance(receipt.get("consumer_report"), str)
@@ -409,6 +414,10 @@ class PairedKeyboard:
 
     def all_up(self):
         return self.report()
+
+    def reports(self):
+        """Fence a group of real HID reports with one UI preflight and review."""
+        return _KeyboardReports(self)
 
     def disconnect(self):
         if self._disconnected:
@@ -428,9 +437,9 @@ class PairedKeyboard:
             if self._pair_pending is not None:
                 # A lost POST reply is never resent. Only a fresh bonded link
                 # to this worker can establish ownership for subsequent cleanup.
-                self._finish_pair(deadline)
+                self._finish_pair(deadline, check_health=False)
             if self._created:
-                state = self._status(deadline)
+                state = self._status(deadline, check_health=False)
                 if state["bonded"] or state["connected"] or state["pairing"] or state["unpairing"]:
                     expected = (self._unpair_pending or {}).get("generation", self._pair_generation)
                     if state["remote_generation"] != expected:
@@ -440,7 +449,7 @@ class PairedKeyboard:
                             self.worker.report(keyboard=(), consumer=0)
                         self._post("unpair", state, deadline)
                     while True:
-                        state = self._status(deadline)
+                        state = self._status(deadline, check_health=False)
                         if state["remote_generation"] != self._unpair_pending["generation"]:
                             raise KeyboardConflict("Remote administration changed during keyboard cleanup")
                         if not any(state[name] for name in ("bonded", "connected", "pairing", "unpairing", "connecting")):
@@ -477,4 +486,113 @@ class PairedKeyboard:
                   error_type=type(cleanup_error).__name__, primary_error_type=type(exc).__name__)
             if hasattr(exc, "add_note"):
                 exc.add_note("Keyboard cleanup failed; the registered TestBed cleanup will retry it")
+        return False
+
+
+class _KeyboardReports:
+    """Send immediate HID changes while activities may legitimately transition.
+
+    Reports carry fresh host boundaries and the preflight UI snapshot. The
+    worker checks its physical bonded connection for every report; existing UI
+    reads fence configuration and physical owners before and after the group.
+    """
+
+    def __init__(self, keyboard):
+        self.keyboard = keyboard
+        self._entered = self._closed = False
+
+    def __enter__(self):
+        if self._entered or self._closed:
+            raise RuntimeError("A keyboard report context cannot be reused")
+        keyboard = self.keyboard
+        keyboard.assert_paired()
+        self.preflight = keyboard.checkpoint()
+        self.worker, self.identity = keyboard.worker, deepcopy(keyboard.identity)
+        self.generation, self.boot, self.group = keyboard._pair_generation, keyboard.boot, keyboard.group
+        self.scan, self.bed, self.session = self.preflight.scan, keyboard.bed, keyboard.session
+        self._state = deepcopy(self.preflight.state)
+        if any(not _generation(self._state.get(field)) for field in
+               ("expected_config_revision", "expected_presentation_revision")):
+            raise KeyboardConflict("Keyboard reports need current saved configuration revisions")
+        self._components = tuple(self.scan.expected)
+        self._owner_boots, self._owner_duts = dict(self.preflight.owner_boots), dict(self.preflight.owner_duts)
+        self._initiators = dict(self.preflight.initiators)
+        self._entered = True
+        self._validate()
+        return self
+
+    def _owned_worker(self):
+        keyboard = self.keyboard
+        if (not self._entered or self._closed or not keyboard._created or keyboard._closed
+                or keyboard._disconnected or keyboard.worker is not self.worker
+                or keyboard.identity != self.identity or keyboard._pair_generation != self.generation
+                or keyboard.boot != self.boot or keyboard.group != self.group):
+            raise KeyboardConflict("The paired keyboard changed during its report context")
+
+    def _validate(self):
+        self._owned_worker()
+        keyboard = self.keyboard
+        stopped = getattr(self.session, "_stop", None)
+        if (keyboard.dut._testbed is not self.bed or keyboard.bed is not self.bed
+                or not self.bed._entered or self.bed._closed or self.bed.session is not self.session
+                or keyboard.session is not self.session or stopped is not None and stopped.is_set()
+                or keyboard.dut.last_scan is not self.scan or self.scan._session is not self.session
+                or tuple(self.scan.expected) != self._components
+                or self.scan.initiators != self._initiators or self.scan.owner_boots != self._owner_boots
+                or self.scan.owner_duts != self._owner_duts
+                or any(component._session is not self.session or component.dut._testbed is not self.bed
+                       for component in self._components)):
+            raise KeyboardConflict("Keyboard reports lost their proven TestBed, scan or owners")
+        # CEC workers publish failure before setting _stop. Do not acquire
+        # their responder lock between physical HID reports; a CEC response
+        # can still be transmitting while independent BLE input is due.
+
+    def _boundary(self):
+        keyboard = self.keyboard
+        return ActivityAction(keyboard.dut, self.session, time.monotonic_ns(), self.boot,
+                              dict(self._initiators), "ble_report", uuid4().hex, None,
+                              state=deepcopy(self._state), scan=self.scan, testbed=self.bed,
+                              owner_boots=dict(self._owner_boots), owner_duts=dict(self._owner_duts))
+
+    def report(self, *, keyboard=(), consumer=0):
+        keyboard, consumer = _reports(keyboard, consumer)
+        self._validate()
+        return self.keyboard._send_report(self._boundary(), keyboard, consumer)
+
+    def all_up(self):
+        return self.report()
+
+    def _confirm(self):
+        self.session.assert_healthy()
+        self._validate()
+        self.keyboard.assert_paired()
+        after = self.keyboard.checkpoint()
+        if (after.scan is not self.scan or after.boot != self.boot
+                or after.owner_boots != self._owner_boots or after.owner_duts != self._owner_duts
+                or after.initiators != self._initiators
+                or any(after.state.get(field) != self._state.get(field) for field in
+                       ("expected_boot_id", "expected_config_revision", "expected_presentation_revision"))):
+            raise KeyboardConflict("Keyboard reports changed configuration, boot or physical owners")
+        self._validate()
+
+    def __exit__(self, exc_type, exc, traceback):
+        failures = []
+        try:
+            # Release our actual HID state before slower HTTP confirmation,
+            # including when the test body or its scan proof failed.
+            self._owned_worker()
+            self.keyboard._send_report(self._boundary(), [], 0)
+        except BaseException as error:
+            failures.append(error)
+        try:
+            self._confirm()
+        except BaseException as error:
+            failures.append(error)
+        self._closed = True
+        if failures:
+            if exc is None:
+                raise failures[0]
+            if hasattr(exc, "add_note"):
+                exc.add_note("Keyboard report cleanup or identity review failed: "
+                             + ", ".join(type(error).__name__ for error in failures))
         return False

@@ -92,6 +92,8 @@ class SSHCecBackend:
         self.clock_offset_ns = None
         self.clock_uncertainty_ns = None
         self.cec_version = None
+        self._monitor_opened = False
+        self._last_pin_diagnostic = None
         self._process = None
         self._stderr = None
         self._buffer = bytearray()
@@ -113,6 +115,7 @@ class SSHCecBackend:
             self.cec_version = None
             self._buffer.clear()
             self._stderr = tempfile.TemporaryFile()
+            self._last_pin_diagnostic = None
             try:
                 self._process = subprocess.Popen(self._command(), stdin=subprocess.PIPE,
                                                  stdout=subprocess.PIPE, stderr=self._stderr,
@@ -193,7 +196,10 @@ class SSHCecBackend:
     def _rpc(self, operation, arguments, *, timeout=None):
         with self._lock:
             if self._process is None:
-                raise CecError("Remote CEC adapter is not open")
+                error = CecError("Remote CEC adapter is not open")
+                if self._last_pin_diagnostic is not None:
+                    error.pin_diagnostic = self.last_pin_diagnostic
+                raise error
             self._sequence += 1
             request_id = self._sequence
             packet = (json.dumps({"id": request_id, "operation": operation,
@@ -207,7 +213,12 @@ class SSHCecBackend:
                 if not isinstance(response, dict) or response.get("id") != request_id:
                     raise ValueError("Pi CEC worker returned an unexpected request ID")
                 if response.get("ok") is not True:
-                    raise CecError(str(response.get("error", "Pi CEC worker failed")))
+                    error = CecError(str(response.get("error", "Pi CEC worker failed")))
+                    if "pin_diagnostic" in response:
+                        from .cec_pin import validate_pin_diagnostic
+                        self._last_pin_diagnostic = validate_pin_diagnostic(response["pin_diagnostic"])
+                        error.pin_diagnostic = self.last_pin_diagnostic
+                    raise error
                 if "result" not in response:
                     raise ValueError("Pi CEC worker omitted its result")
                 return response["result"]
@@ -216,8 +227,18 @@ class SSHCecBackend:
                 self._shutdown()
                 if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                     raise
-                raise CecError(f"CEC RPC {operation} failed: {exc}"
-                               + (f"; SSH: {diagnostic}" if diagnostic else "")) from exc
+                error = CecError(f"CEC RPC {operation} failed: {exc}"
+                                 + (f"; SSH: {diagnostic}" if diagnostic else ""))
+                if self._last_pin_diagnostic is not None:
+                    error.pin_diagnostic = self.last_pin_diagnostic
+                raise error from exc
+
+    @property
+    def last_pin_diagnostic(self):
+        if self._last_pin_diagnostic is None:
+            return None
+        from .cec_pin import validate_pin_diagnostic
+        return validate_pin_diagnostic(self._last_pin_diagnostic)
 
     def _local_timestamp(self, remote_ns):
         remote_ns = _integer(remote_ns, "wire timestamp", 0, 2**64 - 1)
@@ -266,8 +287,41 @@ class SSHCecBackend:
         except (TypeError, ValueError) as exc:
             self._bad_result("receive", exc)
 
+    def open_monitor(self):
+        if self._monitor_opened:
+            raise CecError("The remote CEC monitor is already open")
+        result = self._rpc("monitor_open", {})
+        if result is not None:
+            self._bad_result("monitor_open", ValueError("Unexpected monitor metadata"))
+        self._monitor_opened = True
+
+    def receive_monitor(self, timeout=0.05):
+        if not self._monitor_opened:
+            raise CecError("The remote CEC monitor is not open")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 1:
+            raise ValueError("Remote CEC monitor timeout must be between 0 and 1 second")
+        result = self._rpc("monitor_receive", {"timeout": timeout}, timeout=min(self.rpc_timeout, timeout + 1.0))
+        if result is None:
+            return None
+        try:
+            from .cec_pin import PinFrame
+            _keys(result, ("frame", "timestamp_ns", "eom", "ack", "synchronized_ns"))
+            return PinFrame.observed(bytes.fromhex(result["frame"]),
+                                     timestamp_ns=self._local_timestamp(result["timestamp_ns"]),
+                                     eom=result["eom"], ack=result["ack"],
+                                     synchronized_ns=self._local_timestamp(result["synchronized_ns"]))
+        except (TypeError, ValueError) as exc:
+            self._bad_result("monitor_receive", exc)
+
+    def close_monitor(self):
+        if self._monitor_opened:
+            self._monitor_opened = False
+            if self._process is not None and self._rpc("monitor_close", {}) is not None:
+                self._bad_result("monitor_close", ValueError("Unexpected monitor metadata"))
+
     def _shutdown(self):
         self.cec_version = None
+        self._monitor_opened = False
         process, self._process = self._process, None
         if process is not None:
             try:
@@ -357,11 +411,32 @@ def _serve(gpio, reader, writer, *, backend_factory=LinuxCecBackend,
                         raise ValueError("Invalid CEC receive timeout")
                     frame = backend.receive(timeout)
                     result = None if frame is None else {"frame": frame.raw.hex(), "timestamp_ns": frame.timestamp_ns}
+                elif operation == "monitor_open":
+                    _keys(arguments, ())
+                    backend.open_monitor()
+                    result = None
+                elif operation == "monitor_close":
+                    _keys(arguments, ())
+                    backend.close_monitor()
+                    result = None
+                elif operation == "monitor_receive":
+                    _keys(arguments, ("timeout",))
+                    timeout = arguments["timeout"]
+                    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 1:
+                        raise ValueError("Invalid CEC monitor timeout")
+                    frame = backend.receive_monitor(timeout)
+                    result = None if frame is None else {"frame": frame.raw.hex(), "timestamp_ns": frame.timestamp_ns,
+                                                         "eom": frame.eom, "ack": frame.ack,
+                                                         "synchronized_ns": frame.synchronized_ns}
                 else:
                     raise ValueError("Unsupported CEC RPC operation")
                 response = {"id": request_id, "ok": True, "result": result}
             except Exception as exc:
                 response = {"id": request_id, "ok": False, "error": str(exc)}
+                from .cec_pin import pin_diagnostic
+                diagnostic = pin_diagnostic(exc)
+                if diagnostic is not None:
+                    response["pin_diagnostic"] = diagnostic
                 writer.write(json.dumps(response, separators=(",", ":")) + "\n")
                 writer.flush()
                 break
