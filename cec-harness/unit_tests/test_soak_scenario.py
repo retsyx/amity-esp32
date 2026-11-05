@@ -32,14 +32,27 @@ class VirtualClock:
 
 class SoakFixture:
     def __init__(self, *, setup_delay=0, failed_key=None, failed_ble=None,
-                 failed_pair=False, failed_ui=False, stuck_key=False):
+                 failed_pair=False, failed_ui=False, stuck_key=False,
+                 failed_matter=None, failed_matter_select=False,
+                 failed_matter_open=False, failed_matter_slots=False,
+                 failed_matter_rejected=False, failed_matter_standby=False,
+                 failed_matter_status=None, matter_delay=0):
         self.clock = VirtualClock()
         self.setup_delay = setup_delay
         self.failed_key, self.failed_ui, self.stuck_key = failed_key, failed_ui, stuck_key
         self.failed_ble, self.failed_pair = failed_ble, failed_pair
+        self.failed_matter = failed_matter
+        self.failed_matter_select = failed_matter_select
+        self.failed_matter_open = failed_matter_open
+        self.failed_matter_slots = failed_matter_slots
+        self.failed_matter_rejected = failed_matter_rejected
+        self.failed_matter_standby = failed_matter_standby
+        self.failed_matter_status = failed_matter_status
+        self.matter_delay = matter_delay
         self.events, self.activities, self.key_calls = [], [], []
-        self.api_key_calls, self.ble_key_calls = [], []
+        self.api_key_calls, self.ble_key_calls, self.matter_key_calls = [], [], []
         self.keyboard = self.gate_cleared_for = None
+        self.accessory = None
         self.current = None
         self.session = SimpleNamespace(assert_healthy=self.health)
         self.setup_finished = None
@@ -127,6 +140,9 @@ class SoakFixture:
 
         activity = Activity()
         activity.name = name
+        activity.dut = main
+        activity.activity_id = f"{len(self.activities) + 1:032x}"
+        activity.slot = 15 - len(self.activities)
         self.activities.append(activity)
         self.events.append(("activity.create", name, source.dut.name))
         return activity
@@ -137,6 +153,8 @@ class SoakFixture:
         self.events.append(("select", activity.name, route, self.clock.now))
         if route == "ui" and self.failed_ui:
             raise TimeoutError("UI selection failed")
+        if route == "matter" and self.failed_matter_select:
+            raise TimeoutError("Matter selection failed")
         previous = () if self.current is None else self.current.selected
         self.current = activity
         self.gate_cleared_for = None
@@ -190,12 +208,15 @@ class SoakFixture:
             raise AssertionError("Accepted activity selections need a fresh physical all-up before keys")
         call = (self.current.name, key, duration_ms, self.clock.now, transport)
         self.key_calls.append(call)
-        calls = self.ble_key_calls if transport == "ble" else self.api_key_calls
+        calls = {"ble": self.ble_key_calls, "api": self.api_key_calls,
+                 "matter": self.matter_key_calls}[transport]
         calls.append(call)
         if transport == "api" and len(calls) == self.failed_key:
             raise TimeoutError("Key request failed")
         if transport == "ble" and len(calls) == self.failed_ble:
             raise TimeoutError("BLE input failed")
+        if transport == "matter" and len(calls) == self.failed_matter:
+            raise TimeoutError("Matter key failed")
         if duration_ms:
             self.clock.sleep(duration_ms / 1000)
 
@@ -213,6 +234,118 @@ class SoakFixture:
                     component.pressed_key = key
 
         return KeyAction()
+
+    def matter(self, main):
+        if main is not self.duts[0]:
+            raise AssertionError("Matter must use this phase's main controller")
+        fixture = self
+
+        class Accessory:
+            def __enter__(self):
+                fixture.events.append(("matter.open", main.name))
+                if fixture.failed_matter_open:
+                    raise RuntimeError("Matter open failed")
+                fixture.clock.now += fixture.setup_delay
+                self.open = True
+                return self
+
+            def __exit__(self, *args):
+                self.open = False
+                fixture.events.append(("matter.close",))
+
+            def command(self, name, value):
+                if not self.open:
+                    raise AssertionError("Matter commands need an open owned controller")
+                fixture.events.append(("matter.command", name, value))
+                fixture.clock.now += fixture.matter_delay
+                return 1 if fixture.failed_matter_status == name else 0
+
+            def select_input(self, index):
+                return self.command("select_input", index)
+
+            def send_key(self, key):
+                return self.command("send_key", key)
+
+            def step_volume(self, steps):
+                return self.command("step_volume", steps)
+
+            def playback(self, command):
+                return self.command("playback", command)
+
+            def set_mute(self, muted):
+                return self.command("set_mute", muted)
+
+            def set_power(self, on):
+                return self.command("set_power", on)
+
+        self.accessory = Accessory()
+        return self.accessory
+
+    def input_slots(self, matter, main, activities):
+        if matter is not self.accessory or main is not self.duts[0] or list(activities) != self.activities:
+            raise AssertionError("The Matter input list must cover all saved activities on the current main")
+        self.events.append(("matter.inputs", main.name))
+        self.clock.now += self.setup_delay
+        if self.failed_matter_slots:
+            raise AssertionError("Matter input list mismatch")
+        self.setup_finished = self.clock.now
+        return {activity.activity_id: activity.slot for activity in activities}
+
+    def matter_select(self, matter, activity, slot):
+        if matter is not self.accessory or slot != activity.slot:
+            raise AssertionError("Matter selection must use the activity's saved external slot")
+        if matter.select_input(slot) != 0:
+            raise AssertionError("Matter rejected selection")
+        return self.select(activity, "matter")
+
+    def matter_key(self, matter, main, component, key, command):
+        if matter is not self.accessory or main is not self.duts[0]:
+            raise AssertionError("Matter keys must use this phase's owned controller")
+        expected = self.current.selected[1 if key in (Key.VOLUME_UP, Key.VOLUME_DOWN, 0x65, 0x66) else 2]
+        if component is not expected:
+            raise AssertionError("Matter keys must reach the selected source or audio owner")
+        before = len(self.events)
+        if command() != 0:
+            raise AssertionError("Matter rejected key")
+        operations = [row[1:] for row in self.events[before:] if row[0] == "matter.command"]
+        wanted = ({Key.VOLUME_UP: ("step_volume", 1), Key.VOLUME_DOWN: ("step_volume", -1),
+                   Key.PLAY: ("playback", "play"), Key.PAUSE: ("playback", "pause"),
+                   Key.STOP: ("playback", "stop"), 0x4C: ("playback", "previous"),
+                   0x4B: ("playback", "next"), 0x65: ("set_mute", True),
+                   0x66: ("set_mute", False)}.get(key, ("send_key", key)))
+        if operations != [wanted]:
+            raise AssertionError("Matter must use the accessory command corresponding to its CEC key")
+        self.record_key("matter", key, 0)
+        self.events.append(("key.received", component.dut.name, component.name, key, 0))
+        if self.stuck_key:
+            component.pressed_key = key
+
+    def matter_rejected(self, matter, main, scan, activity, player):
+        if activity is not self.current or player is not self.current.selected[2] or scan.expected != self.components:
+            raise AssertionError("Rejected Matter commands must retain the current activity and scanned player")
+        self.events.append(("matter.rejected", activity.name))
+        if self.failed_matter_rejected:
+            raise AssertionError("Matter rejected-command evidence failed")
+        self.matter_key(matter, main, player, Key.SELECT, lambda: matter.send_key(Key.SELECT))
+
+    def standby(self, route):
+        if self.keyboard.held:
+            raise AssertionError("Physical BLE input must be all up before standby")
+        self.events.append(("standby", self.clock.now, route))
+        if route == "matter" and self.failed_matter_standby:
+            raise TimeoutError("Matter standby failed")
+        previous = self.current.selected
+        self.current = None
+        for component in self.components:
+            component._power = PowerState.STANDBY
+        return SimpleNamespace(kind="standby", previous=previous)
+
+    def matter_standby(self, matter, main, scan):
+        if matter is not self.accessory or main is not self.duts[0] or scan.expected != self.components:
+            raise AssertionError("Matter standby must use the current main and scan")
+        if matter.set_power(False) != 0:
+            raise AssertionError("Matter rejected standby")
+        return self.standby("matter")
 
     def pair(self, main):
         added = [row[1] for row in self.events if row[0] == "member.add"]
@@ -316,15 +449,13 @@ class SoakFixture:
                 fixture.events.append(("browser.active", activity.name))
 
             def standby(self):
-                if fixture.keyboard.held:
-                    raise AssertionError("Physical BLE input must be all up before standby")
                 self.report["standbys"] += 1
-                previous = fixture.current.selected
-                fixture.current = None
-                for component in fixture.components:
-                    component._power = PowerState.STANDBY
-                fixture.events.append(("standby", fixture.clock.now))
-                return SimpleNamespace(kind="standby", previous=previous)
+                return fixture.standby("ui")
+
+            def assert_standby(self):
+                if fixture.current is not None:
+                    raise AssertionError("The rendered browser must show settled standby")
+                fixture.events.append(("browser.standby",))
 
         return Browser()
 
@@ -339,6 +470,9 @@ class SoakFixture:
         with ExitStack() as patches:
             for name, value in (("TestBed", self.bed), ("SoakBrowser", self.browser),
                                 ("BLEInputEvidence", self.ble_evidence),
+                                ("MatterAccessory", self.matter), ("_input_slots", self.input_slots),
+                                ("matter_select", self.matter_select), ("matter_key", self.matter_key),
+                                ("matter_rejected", self.matter_rejected), ("matter_standby", self.matter_standby),
                                 ("observe_no_standby", self.preserve_shared), ("event", lambda *args, **kwargs: None)):
                 patches.enter_context(patch.object(soak, name, value))
             patches.enter_context(patch.object(soak, "time", self.clock))
@@ -394,14 +528,22 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertTrue(fixture.proof["completed"])
         self.assertEqual(fixture.proof["sweeps"], 45)
         self.assertEqual(fixture.proof["activity_changes"], 45 * 8)
-        self.assertEqual(fixture.proof["key_presses"], 45 * 8 * 4)
-        self.assertEqual(fixture.proof["api_key_presses"], 45 * 8 * 2)
-        self.assertEqual(fixture.proof["ble_key_presses"], 45 * 8 * 2)
+        self.assertEqual(fixture.proof["key_presses"], 45 * (8 * 5 + 1))
+        self.assertEqual(fixture.proof["api_key_presses"], 45 * 8 * 4 // 3)
+        self.assertEqual(fixture.proof["ble_key_presses"], 45 * 8 * 4 // 3)
+        self.assertEqual(fixture.proof["matter_key_presses"], 45 * 8 * 4 // 3 + 45 * 9)
+        self.assertEqual(fixture.proof["matter_activity_changes"], 45 * 8 // 3)
+        self.assertEqual(fixture.proof["api_activity_changes"], 45 * 8 // 3)
+        self.assertEqual(fixture.proof["ui_activity_changes"], 45 * 8 // 3)
+        self.assertEqual(fixture.proof["matter_rejection_checks"], 45)
+        self.assertEqual(fixture.proof["matter_standbys"], 22)
         self.assertAlmostEqual(sum(fixture.clock.sleeps), 7200, places=6)
         self.assertEqual(sum(row[0] == "standby" for row in fixture.events), 45)
         self.assertEqual(sum(row[0] == "owners.validated" for row in fixture.events), 45)
         self.assertTrue(fixture.preserve_dut_on_failure)
-        self.assertEqual(fixture.events[-3:], [("browser.close",), ("keyboard.close",), ("bed.close",)])
+        self.assertEqual(fixture.events[-1], ("bed.close",))
+        for resource in ("browser.close", "keyboard.close", "matter.close"):
+            self.assertEqual(sum(row[0] == resource for row in fixture.events), 1)
         self.assertEqual(sum(row[0] == "keyboard.pair" for row in fixture.events), 1)
         self.assertFalse(fixture.keyboard.paired)
         self.assertFalse(fixture.keyboard.held)
@@ -414,41 +556,58 @@ class SoakScenarioTests(unittest.TestCase):
         for test, names in cases:
             with self.subTest(test=test.__name__):
                 fixture = SoakFixture()
-                fixture.run(test, duration=161)
+                fixture.run(test, duration=321)
                 self.assertEqual(tuple(dut.name for dut in fixture.duts), names)
                 self.assertEqual(tuple(dut.name for dut in fixture.members), names[1:])
                 self.assertEqual(len(fixture.components), 16)
                 self.assertEqual(len(fixture.activities), 8)
-                self.assertEqual(fixture.proof["elapsed_seconds"], 320)
-                self.assertEqual(fixture.proof["sweeps"], 2)
+                self.assertEqual(fixture.proof["elapsed_seconds"], 480)
+                self.assertEqual(fixture.proof["sweeps"], 3)
                 selects = [row for row in fixture.events if row[0] == "select"]
                 for index, activity in enumerate(fixture.activities):
                     routes = [row[2] for row in selects if row[1] == activity.name]
-                    self.assertEqual(set(routes), {"api", "ui"})
-                    self.assertEqual(routes, ["ui", "api"] if index % 2 == 0 else ["api", "ui"])
+                    self.assertEqual(set(routes), {"api", "ui", "matter"})
+                    self.assertEqual(routes, [("ui", "api", "matter")[(sweep + index) % 3]
+                                              for sweep in range(3)])
                 self.assertEqual(fixture.proof["ui_activity_changes"], 8)
+                self.assertEqual(fixture.proof["api_activity_changes"], 8)
+                self.assertEqual(fixture.proof["matter_activity_changes"], 8)
                 self.assertEqual(fixture.proof["api_key_presses"], 32)
                 self.assertEqual(fixture.proof["ble_key_presses"], 32)
-                self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 16)
-                # Every saved activity uses both transports for every navigation/audio
-                # key across consecutive sweeps, including taps and held reports.
+                self.assertEqual(fixture.proof["matter_key_presses"], 32 + 3 * 9)
+                self.assertEqual(fixture.proof["matter_rejection_checks"], 3)
+                self.assertEqual(fixture.proof["matter_standbys"], 1)
+                self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 24)
+                self.assertEqual([row[1] for row in fixture.events if row[0] == "matter.open"], [names[0]])
+                self.assertEqual(sum(row[0] == "matter.inputs" for row in fixture.events), 1)
+                # Every activity uses all three transports for each periodic
+                # source/audio key; HTTP and BLE retain the configured holds.
                 for activity in fixture.activities:
                     calls = [row for row in fixture.key_calls if row[0] == activity.name]
                     for key in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN):
-                        self.assertEqual({row[4] for row in calls if row[1] == key}, {"api", "ble"})
+                        self.assertEqual({row[4] for row in calls if row[1] == key}, {"api", "ble", "matter"})
+                        self.assertTrue(all(row[2] == 0 for row in calls if row[1] == key and row[4] == "matter"))
                 self.assertEqual(sum(row[0] == "scan" for row in fixture.events), 1)
                 self.assertEqual(sum(row[0] == "scan.on" for row in fixture.events), 16)
-                self.assertEqual(sum(row[0] == "route.tv" for row in fixture.events), 16)
-                self.assertEqual(sum(row[0] == "route.avr" for row in fixture.events), 16)
+                self.assertEqual(sum(row[0] == "route.tv" for row in fixture.events), 24)
+                self.assertEqual(sum(row[0] == "route.avr" for row in fixture.events), 24)
                 shared = [row for row in fixture.events if row[0] == "shared.preserved"]
-                self.assertEqual(len(shared), 8)
+                self.assertEqual(len(shared), 12)
                 self.assertTrue(all(len(row[1]) == 2 for row in shared))
                 keys = [row for row in fixture.events if row[0] == "key.received"]
                 for owner in names:
-                    own = [row for row in keys if row[1] == owner]
-                    self.assertEqual(len(own), 16)
+                    own = [row for row in keys if row[1] == owner
+                           and row[3] in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN)]
+                    self.assertEqual(len(own), 24)
                     self.assertEqual({(row[3], row[4]) for row in own}, {
-                        (Key.RIGHT, 0), (Key.LEFT, 650), (Key.VOLUME_UP, 750), (Key.VOLUME_DOWN, 0)})
+                        (Key.RIGHT, 0), (Key.LEFT, 650), (Key.LEFT, 0),
+                        (Key.VOLUME_UP, 750), (Key.VOLUME_UP, 0), (Key.VOLUME_DOWN, 0)})
+                extras = [row for row in fixture.matter_key_calls
+                          if row[1] not in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN, Key.SELECT)]
+                self.assertEqual(len(extras), 24)
+                self.assertEqual({row[1] for row in extras}, {Key.PLAY, Key.PAUSE, Key.STOP, 0x4C, 0x4B, 0x65, 0x66})
+                self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"], ["ui", "matter", "ui"])
+                self.assertEqual(sum(row[0] == "browser.standby" for row in fixture.events), 3)
                 self.assertTrue(all(component.power == PowerState.STANDBY for component in fixture.components))
                 self.assertIsNone(fixture.current)
 
@@ -456,9 +615,31 @@ class SoakScenarioTests(unittest.TestCase):
         fixture = SoakFixture()
         fixture.run(duration=1)
         for activity in fixture.activities:
-            calls = [row for row in fixture.key_calls if row[0] == activity.name]
+            calls = [row for row in fixture.key_calls if row[0] == activity.name
+                     and row[1] in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN)]
             self.assertEqual(len(calls), 4)
             self.assertEqual([row[3] - calls[0][3] for row in calls], [0, 5, 10, 15])
+
+    def test_matter_media_controls_and_rejection_checks_eventually_reach_every_activity(self):
+        media_keys = {Key.PLAY, Key.PAUSE, Key.STOP, 0x4C, 0x4B, 0x65, 0x66}
+        for test in (soak.test_soak, soak.test_soak_main4):
+            with self.subTest(test=test.__name__):
+                fixture = SoakFixture()
+                fixture.run(test, duration=1121)
+                self.assertEqual(fixture.proof["sweeps"], 8)
+                self.assertEqual(fixture.proof["elapsed_seconds"], 1280)
+                self.assertEqual(fixture.proof["matter_rejection_checks"], 8)
+                rejected = [row[1] for row in fixture.events if row[0] == "matter.rejected"]
+                self.assertEqual(rejected, [activity.name for activity in fixture.activities])
+                for activity in fixture.activities:
+                    calls = [row for row in fixture.matter_key_calls
+                             if row[0] == activity.name and row[1] in media_keys]
+                    self.assertEqual(len(calls), 8)
+                    self.assertEqual({row[1] for row in calls}, media_keys)
+                    recoveries = [row for row in fixture.matter_key_calls
+                                  if row[0] == activity.name and row[1] == Key.SELECT]
+                    self.assertEqual(len(recoveries), 1)
+                self.assertTrue(fixture.proof["completed"])
 
     def test_failed_key_is_not_retried_or_hidden_and_retains_incomplete_proof(self):
         fixture = SoakFixture(failed_key=1)
@@ -474,8 +655,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
         self.assertEqual(fixture.proof["elapsed_seconds"], 5)
         self.assertFalse(any(row[0] == "standby" for row in fixture.events))
-        self.assertEqual(fixture.events[-4:], [
-            ("browser.close",), ("keyboard.close",), ("bed.failed",), ("bed.close",)])
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_ble_failure_never_falls_back_to_http_and_always_closes_owned_keyboard(self):
         fixture = SoakFixture(failed_ble=1)
@@ -489,8 +669,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
         self.assertFalse(fixture.keyboard.paired)
         self.assertFalse(fixture.keyboard.held)
-        self.assertEqual(fixture.events[-4:], [
-            ("browser.close",), ("keyboard.close",), ("bed.failed",), ("bed.close",)])
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_pairing_failure_prevents_workload_instead_of_using_api_only(self):
         fixture = SoakFixture(failed_pair=True)
@@ -516,6 +695,92 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(len(fixture.key_calls), 1)
         self.assertEqual(fixture.proof["activity_changes"], 1)
         self.assertFalse(fixture.proof["completed"])
+
+    def test_matter_selection_failure_never_falls_back_to_ui_or_api(self):
+        fixture = SoakFixture(failed_matter_select=True)
+        with self.assertRaisesRegex(TimeoutError, "Matter selection failed"):
+            fixture.run(duration=1)
+        self.assertEqual([row[2] for row in fixture.events if row[0] == "select"], ["ui", "api", "matter"])
+        self.assertEqual(fixture.proof["activity_changes"], 2)
+        self.assertEqual(fixture.proof["matter_activity_changes"], 0)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
+
+    def test_matter_key_failure_never_retries_or_uses_another_transport(self):
+        fixture = SoakFixture(failed_matter=1)
+        with self.assertRaisesRegex(TimeoutError, "Matter key failed"):
+            fixture.run(duration=1)
+        self.assertEqual([row[4] for row in fixture.key_calls], ["ble", "api", "matter"])
+        self.assertEqual(fixture.proof["key_presses"], 2)
+        self.assertEqual(fixture.proof["matter_key_presses"], 0)
+        self.assertEqual(fixture.proof["elapsed_seconds"], 10)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(fixture.accessory.open)
+        self.assertFalse(fixture.keyboard.paired)
+
+    def test_extra_matter_command_failure_does_not_advance_activity(self):
+        fixture = SoakFixture(failed_matter=2)
+        with self.assertRaisesRegex(TimeoutError, "Matter key failed"):
+            fixture.run(duration=1)
+        self.assertEqual(fixture.matter_key_calls[-1][1], Key.PLAY)
+        self.assertEqual(len(fixture.key_calls), 5)
+        self.assertEqual(fixture.proof["key_presses"], 4)
+        self.assertEqual(fixture.proof["matter_key_presses"], 1)
+        self.assertEqual(fixture.proof["activity_changes"], 1)
+        self.assertEqual(fixture.proof["elapsed_seconds"], 20)
+        self.assertFalse(any(row[0] == "matter.rejected" for row in fixture.events))
+        self.assertFalse(fixture.proof["completed"])
+
+    def test_rejected_matter_command_failure_retains_incomplete_evidence(self):
+        fixture = SoakFixture(failed_matter_rejected=True)
+        with self.assertRaisesRegex(AssertionError, "rejected-command evidence failed"):
+            fixture.run(duration=1)
+        self.assertEqual(fixture.proof["key_presses"], 5)
+        self.assertEqual(fixture.proof["matter_key_presses"], 2)
+        self.assertEqual(fixture.proof["matter_rejection_checks"], 0)
+        self.assertEqual(fixture.proof["activity_changes"], 1)
+        self.assertFalse(fixture.proof["completed"])
+
+    def test_matter_standby_failure_does_not_fall_back_to_browser(self):
+        fixture = SoakFixture(failed_matter_standby=True)
+        with self.assertRaisesRegex(TimeoutError, "Matter standby failed"):
+            fixture.run(duration=161)
+        self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"], ["ui", "matter"])
+        self.assertEqual(fixture.proof["sweeps"], 1)
+        self.assertEqual(fixture.proof["matter_standbys"], 0)
+        self.assertEqual(sum(row[0] == "browser.standby" for row in fixture.events), 1)
+        self.assertFalse(fixture.proof["completed"])
+
+    def test_nonzero_matter_status_is_never_counted_or_retried(self):
+        for operation in ("select_input", "send_key", "playback", "set_power"):
+            with self.subTest(operation=operation):
+                fixture = SoakFixture(failed_matter_status=operation)
+                with self.assertRaisesRegex(AssertionError, "Matter rejected"):
+                    fixture.run(duration=161)
+                self.assertEqual(sum(row[0:2] == ("matter.command", operation) for row in fixture.events), 1)
+                self.assertFalse(fixture.proof["completed"])
+                self.assertFalse(fixture.accessory.open)
+
+    def test_matter_open_or_input_list_failure_prevents_workload(self):
+        for options, error, message in (({"failed_matter_open": True}, RuntimeError, "Matter open failed"),
+                                        ({"failed_matter_slots": True}, AssertionError, "input list mismatch")):
+            with self.subTest(options=options):
+                fixture = SoakFixture(**options)
+                with self.assertRaisesRegex(error, message):
+                    fixture.run(duration=1)
+                self.assertEqual(fixture.key_calls, [])
+                self.assertFalse(any(row[0] == "select" for row in fixture.events))
+                self.assertFalse(fixture.proof["completed"])
+
+    def test_slow_matter_operations_count_toward_elapsed_time_and_complete_sweep(self):
+        fixture = SoakFixture(matter_delay=8)
+        fixture.run(duration=161)
+        self.assertGreater(fixture.proof["elapsed_seconds"], 160)
+        self.assertEqual(fixture.proof["elapsed_seconds"], fixture.clock.now - fixture.setup_finished)
+        self.assertEqual(fixture.proof["sweeps"], 1)
+        self.assertEqual(fixture.proof["activity_changes"], 8)
+        self.assertTrue(fixture.proof["completed"])
+        self.assertIsNone(fixture.current)
 
 
 if __name__ == "__main__":

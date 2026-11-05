@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import Key
-from functional_tests import matter as scenario
+from amity_harness import matter_input as scenario
 
 
 class MatterScenarioTests(unittest.TestCase):
@@ -81,6 +81,107 @@ class MatterScenarioTests(unittest.TestCase):
         matter.read_inputs.return_value = {"current_input": 1}
         with self.assertRaisesRegex(AssertionError, "CurrentInput"):
             scenario._select(matter, activity, 7)
+
+    def input_fixture(self):
+        main, activity, _, _, _, _ = self.fixture()
+        other = SimpleNamespace(activity_id="other", name="Other", dut=main)
+        activities = (other, activity)
+        # Keep both registries out of activity order. Saved slot numbers, not
+        # array positions or labels, define the accessory input identities.
+        document = {"external_slots": [
+            {"slot": 7, "activity_id": "selected", "hidden": False, "tombstone": False},
+            {"slot": 2, "activity_id": "other", "hidden": False, "tombstone": False},
+            {"slot": 0, "activity_id": "retired", "hidden": False, "tombstone": True}]}
+        published = [{"index": 7, "name": "Selected"}, {"index": 2, "name": "Other"}]
+        main.request.return_value = document
+        matter = Mock()
+        matter.read_inputs.return_value = {"inputs": published, "current_input": 7}
+        return main, matter, activities, document, published
+
+    def test_input_slots_use_stable_ids_and_preserve_published_evidence(self):
+        main, matter, activities, _, published = self.input_fixture()
+        main._testbed.control_observations.append({"kind": "soak", "checks": []})
+        self.assertEqual(scenario._input_slots(matter, main, activities), {"other": 2, "selected": 7})
+        main.request.assert_called_once_with("/api/config")
+        matter.read_inputs.assert_called_once_with()
+        self.assertEqual(main._testbed.control_observations, [
+            {"kind": "soak", "checks": []},
+            {"kind": "matter_inputs", "checks": [{"inputs": published, "passed": True}]}])
+
+    def test_input_slots_reject_missing_hidden_tombstoned_and_ambiguous_assignments(self):
+        for change in ("missing", "hidden", "tombstone", "ambiguous"):
+            with self.subTest(change=change):
+                main, matter, activities, document, _ = self.input_fixture()
+                slot = document["external_slots"][0]
+                if change == "missing":
+                    document["external_slots"].remove(slot)
+                elif change == "ambiguous":
+                    document["external_slots"].append({**slot, "slot": 9})
+                else:
+                    slot[change] = True
+                with self.assertRaisesRegex(AssertionError, "unique published accessory slot"):
+                    scenario._input_slots(matter, main, activities)
+                matter.read_inputs.assert_not_called()
+                self.assertEqual(main._testbed.control_observations, [])
+
+    def test_input_slots_reject_incomplete_or_mismatched_matter_publication(self):
+        changes = ([{"index": 7, "name": "Selected"}],
+                   [{"index": 0, "name": "Other"}, {"index": 1, "name": "Selected"}],
+                   [{"index": 2, "name": "Changed"}, {"index": 7, "name": "Selected"}],
+                   [{"index": 2, "name": "Other"}, {"index": 7, "name": "Selected"},
+                    {"index": 9, "name": "Unexpected"}])
+        for published in changes:
+            with self.subTest(published=published):
+                main, matter, activities, _, _ = self.input_fixture()
+                matter.read_inputs.return_value["inputs"] = published
+                with self.assertRaisesRegex(AssertionError, "InputList"):
+                    scenario._input_slots(matter, main, activities)
+                self.assertEqual(main._testbed.control_observations, [])
+
+    def test_standby_requires_accepted_power_off_and_settled_same_owner_state(self):
+        main, _, _, state, scan, _ = self.fixture()
+        state["current_activity"] = -1
+        matter = Mock()
+        matter.set_power.return_value = 0
+        action = scenario._standby(matter, main, scan)
+        matter.set_power.assert_called_once_with(False)
+        self.assertEqual(action.kind, "matter_power_off")
+        self.assertEqual(action.state, state)
+        self.assertEqual(action.boot, "boot")
+        self.assertIs(action.scan, scan)
+        self.assertEqual(scan.validate_owners.call_count, 2)
+        main.wait_for.assert_called_once()
+
+    def test_standby_rejection_does_not_wait_retry_or_fall_back(self):
+        main, _, _, _, scan, _ = self.fixture()
+        matter = Mock()
+        matter.set_power.return_value = 1
+        with self.assertRaisesRegex(AssertionError, "rejected accessory power off"):
+            scenario._standby(matter, main, scan)
+        matter.set_power.assert_called_once_with(False)
+        main.wait_for.assert_not_called()
+        main.request.assert_not_called()
+
+    def test_standby_rejects_changed_boot_or_configuration(self):
+        for field in ("expected_boot_id", "expected_config_revision", "expected_presentation_revision"):
+            with self.subTest(field=field):
+                main, _, _, state, scan, _ = self.fixture()
+                state.update(current_activity=-1, **{field: "changed"})
+                matter = Mock()
+                matter.set_power.return_value = 0
+                with self.assertRaisesRegex(AssertionError, "boot or saved configuration"):
+                    scenario._standby(matter, main, scan)
+                matter.set_power.assert_called_once_with(False)
+
+    def test_standby_rejects_an_active_or_in_flight_activity(self):
+        for change in ({"current_activity": 1}, {"current_activity": -1, "activity_settling": True}):
+            with self.subTest(change=change):
+                main, _, _, state, scan, _ = self.fixture()
+                state.update(change)
+                matter = Mock()
+                matter.set_power.return_value = 0
+                with self.assertRaises(TimeoutError):
+                    scenario._standby(matter, main, scan)
 
     @staticmethod
     def frame(opcode, *, stamp=150, gpio=24, destination=4, operands=(), **changes):

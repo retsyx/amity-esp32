@@ -15,6 +15,27 @@ class SoakBrowserTests(unittest.TestCase):
         activity = SimpleNamespace(dut=main, name="Soak activity")
         return SoakBrowser(main, (activity,))
 
+    def test_standby_observation_checks_rendered_state_without_submitting_another_action(self):
+        browser = self.fixture()
+        browser.page = Mock()
+        browser._expect = Mock()
+        browser.assert_ready = Mock()
+        browser.assert_standby()
+        self.assertEqual([call.args[0] for call in browser.page.locator.call_args_list],
+                         ["#standby", "#activityList article.active"])
+        browser._expect.return_value.to_be_hidden.assert_called_once_with()
+        browser._expect.return_value.to_have_count.assert_called_once_with(0)
+        browser.page.get_by_role.assert_not_called()
+        browser.assert_ready.assert_called_once_with()
+
+    def test_standby_observation_propagates_a_rendered_selection_failure(self):
+        browser = self.fixture()
+        browser.page = Mock()
+        browser._expect = Mock()
+        browser._expect.return_value.to_have_count.side_effect = AssertionError("Activity still selected")
+        with self.assertRaisesRegex(AssertionError, "still selected"):
+            browser.assert_standby()
+
     def test_failure_evidence_is_bounded_and_excludes_arbitrary_browser_text(self):
         browser = self.fixture()
         with patch("amity_harness.soak_browser.event") as trace:

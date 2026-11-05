@@ -6,6 +6,9 @@ import time
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent,
                            PlaybackComponent, PowerState, Key)
 from amity_harness.ble_input import BLEInputEvidence
+from amity_harness.matter import MatterAccessory
+from amity_harness.matter_input import (_input_slots, _select as matter_select, _key as matter_key,
+                                       _rejected as matter_rejected, _standby as matter_standby)
 from amity_harness.soak_browser import SoakBrowser
 from amity_harness.trace import event
 from amity_harness.transitions import observe_no_standby
@@ -35,10 +38,13 @@ def _wait_until(deadline, session):
         time.sleep(min(1, remaining))
 
 
-def _select(activity, selected, previous, components, browser, *, through_ui):
+def _select(activity, selected, previous, components, browser, matter, slots, *, route):
     shared = tuple(component for component in selected if component in previous)
     with (observe_no_standby(*shared) if shared else nullcontext()) as preserved:
-        started = browser.select(activity) if through_ui else activity.start()
+        if route == "matter":
+            started = matter_select(matter, activity, slots[activity.activity_id])
+        else:
+            started = browser.select(activity) if route == "ui" else activity.start()
         for component in previous:
             if component not in selected:
                 component.wait_for_power(PowerState.STANDBY, since=started, command="standby")
@@ -58,9 +64,15 @@ def _select(activity, selected, previous, components, browser, *, through_ui):
     browser.assert_active(activity)
 
 
-def _keys(main, activity, selected, components, browser, keyboard, scan, proof, activity_index):
+def _released(components):
+    for component in components:
+        if component.pressed_key is not None:
+            raise AssertionError("A component retained a pressed key after its final release")
+
+
+def _keys(main, activity, selected, components, browser, keyboard, scan, matter, proof, activity_index):
     # Each accepted selection arms the input gate. Deliver a real all-up HID
-    # state after setup, before either transport starts this activity's keys.
+    # state after setup, before any transport starts this activity's keys.
     with keyboard.reports() as reports:
         reports.all_up()
     _, avr, player = selected
@@ -69,20 +81,45 @@ def _keys(main, activity, selected, components, browser, keyboard, scan, proof, 
         for index, (key, target, duration, usage, consumer) in enumerate((
                 (Key.RIGHT, player, 0, 0x4F, None), (Key.VOLUME_UP, avr, 750, None, 0xE9),
                 (Key.LEFT, player, 650, 0x50, None), (Key.VOLUME_DOWN, avr, 0, None, 0xEA))):
-            through_ble = (proof["sweeps"] + activity_index + index) % 2 == 0
-            if through_ble:
+            route = ("ble", "api", "matter")[(proof["sweeps"] + activity_index + index) % 3]
+            if route == "ble":
                 evidence.assert_key(keyboard, target, key=key, keyboard_usage=usage,
                                     consumer_usage=consumer, duration_ms=duration)
                 proof["ble_key_presses"] += 1
-            else:
+            elif route == "api":
                 main.press_key(key, duration_ms=duration).assert_received_by(target)
                 proof["api_key_presses"] += 1
+            else:
+                if key in (Key.VOLUME_UP, Key.VOLUME_DOWN):
+                    command = lambda: matter.step_volume(1 if key == Key.VOLUME_UP else -1)
+                else:
+                    command = lambda: matter.send_key(key)
+                matter_key(matter, main, target, key, command)
+                proof["matter_key_presses"] += 1
             proof["key_presses"] += 1
-            for component in components:
-                if component.pressed_key is not None:
-                    raise AssertionError("A component retained a pressed key after its final release")
+            _released(components)
             _wait_until(deadline - ACTIVITY_SECONDS + (index + 1) * KEY_INTERVAL_SECONDS,
                         main._testbed.session)
+    # Repeat playback and explicit mute controls across every activity/owner.
+    extra = (proof["sweeps"] + activity_index) % 7
+    if extra < 5:
+        name, key = (("play", Key.PLAY), ("pause", Key.PAUSE), ("stop", Key.STOP),
+                     ("previous", 0x4C), ("next", 0x4B))[extra]
+        matter_key(matter, main, player, key, lambda: matter.playback(name))
+    else:
+        muted = extra == 5
+        matter_key(matter, main, avr, 0x65 if muted else 0x66, lambda: matter.set_mute(muted))
+    proof["key_presses"] += 1
+    proof["matter_key_presses"] += 1
+    _released(components)
+    # Rotate rejection/recovery checks through all eight activities, keeping
+    # one batch per sweep rather than dominating the workload with rejections.
+    if activity_index == proof["sweeps"] % 8:
+        matter_rejected(matter, main, scan, activity, player)
+        proof["matter_rejection_checks"] += 1
+        proof["key_presses"] += 1
+        proof["matter_key_presses"] += 1
+        _released(components)
     activity.assert_active()
     browser.assert_active(activity)
 
@@ -97,7 +134,9 @@ def _soak(main_name):
     with TestBed(*owners, *components, members=owners[1:], preserve_dut_on_failure=True) as bed:
         proof = {"duration_seconds": DURATION_SECONDS, "elapsed_seconds": 0,
                  "sweeps": 0, "activity_changes": 0, "ui_activity_changes": 0,
+                 "api_activity_changes": 0, "matter_activity_changes": 0,
                  "key_presses": 0, "api_key_presses": 0, "ble_key_presses": 0,
+                 "matter_key_presses": 0, "matter_rejection_checks": 0, "matter_standbys": 0,
                  "completed": False}
         bed.control_observations = [{"kind": "soak", "checks": [proof]}]
         # The bed owns cleanup, so failures preserve configuration for inspection.
@@ -117,21 +156,27 @@ def _soak(main_name):
         # Pair only after direct Add has finished on all members. The owned
         # keyboard context releases input and removes its bond on every exit.
         with main.pair_ble_keyboard() as keyboard, \
-                SoakBrowser(main, [activity for activity, _ in selections]) as browser:
+                SoakBrowser(main, [activity for activity, _ in selections]) as browser, \
+                MatterAccessory(main) as matter:
             proof["ui"] = browser.report
+            slots = _input_slots(matter, main, [activity for activity, _ in selections])
             browser.inspect_devices()
             started = time.monotonic()
             previous = ()
             try:
                 while time.monotonic() - started < DURATION_SECONDS:
                     for index, (activity, selected) in enumerate(selections):
-                        through_ui = (proof["sweeps"] + index) % 2 == 0
-                        _select(activity, selected, previous, components, browser, through_ui=through_ui)
+                        route = ("ui", "api", "matter")[(proof["sweeps"] + index) % 3]
+                        _select(activity, selected, previous, components, browser, matter, slots, route=route)
                         proof["activity_changes"] += 1
-                        proof["ui_activity_changes"] += int(through_ui)
-                        _keys(main, activity, selected, components, browser, keyboard, scan, proof, index)
+                        proof[route + "_activity_changes"] += 1
+                        _keys(main, activity, selected, components, browser, keyboard, scan, matter, proof, index)
                         previous = selected
-                    stopped = browser.standby()
+                    if proof["sweeps"] % 2:
+                        stopped = matter_standby(matter, main, scan)
+                        proof["matter_standbys"] += 1
+                    else:
+                        stopped = browser.standby()
                     for component in previous:
                         component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
                     for component in components:
@@ -140,6 +185,7 @@ def _soak(main_name):
                             raise AssertionError("A key remained pressed in standby")
                     main.wait_for(lambda state: state.get("current_activity") == -1
                                   and state.get("activity_settling") is False)
+                    browser.assert_standby()
                     scan.validate_owners(scan.expected)
                     browser.inspect_devices()
                     previous = ()

@@ -273,12 +273,16 @@ class SoakBrowser:
             self.page.locator("#standby").click()
         if not response.value.ok:
             raise AssertionError("The browser standby selection failed")
-        self._expect(self.page.locator("#standby")).to_be_hidden()
-        self._expect(self.page.locator("#activityList article.active")).to_have_count(0)
-        self.assert_ready()
+        self.assert_standby()
         self.report["standbys"] += 1
         event("soak.browser.standby", dut=self.main.name, started_monotonic_ns=started_ns)
         return started_ns
+
+    def assert_standby(self):
+        """Observe rendered standby after either UI or Matter selection."""
+        self._expect(self.page.locator("#standby")).to_be_hidden()
+        self._expect(self.page.locator("#activityList article.active")).to_have_count(0)
+        self.assert_ready()
 
     def inspect_devices(self):
         """Inspect all owners and member connectivity in the rendered device list."""
