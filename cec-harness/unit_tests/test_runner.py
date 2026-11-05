@@ -183,6 +183,50 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(called, ["prepare", "failing"])
 
+    def test_opt_in_scenarios_require_explicit_selection_and_keep_run_lifecycle(self):
+        called = []
+
+        def prepare():
+            called.append("prepare")
+
+        def scan():
+            called.append("scan")
+
+        def activity():
+            called.append("activity")
+
+        def soak():
+            called.append("soak")
+
+        def check_soak():
+            called.append("check_soak")
+
+        def finish():
+            called.append("finish")
+
+        for selection, expected in (([], ["prepare", "scan", "finish"]),
+                (["--test", "all"], ["prepare", "scan", "activity", "finish"]),
+                (["--test", "soak"], ["prepare", "soak", "check_soak", "finish"])):
+            with self.subTest(selection=selection), redirect_stdout(io.StringIO()), \
+                    redirect_stderr(io.StringIO()):
+                called.clear()
+                code = main({"scan": scan, "activity": activity},
+                            ["--credentials", "/private/main.json", "--no-status-led", *selection],
+                            opt_in_tests={"soak": (soak, check_soak)}, prepare=prepare, finish=finish)
+                self.assertEqual(code, 0)
+                self.assertEqual(called, expected)
+
+    def test_invalid_opt_in_registration_is_rejected_before_running_tests(self):
+        def scenario():
+            self.fail("Invalid registration must not run a test")
+
+        registrations = ({"scan": scenario}, {"soak": []}, {"soak": [scenario, None]},
+                         {"": scenario}, {1: scenario}, {"all": scenario},
+                         {"enrollment": scenario}, {"firmware_upgrade": scenario})
+        for registration in registrations:
+            with self.subTest(registration=registration), self.assertRaises(ValueError):
+                main({"scan": scenario}, [], opt_in_tests=registration)
+
     def test_harness_host_selects_remote_gpio_and_cec_without_performing_io(self):
         def scenario():
             pass

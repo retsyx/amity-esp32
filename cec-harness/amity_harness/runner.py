@@ -115,8 +115,8 @@ def reset_main():
         dut.close()
 
 
-def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
-    """Run required preparation, optional firmware upgrade, then scenarios."""
+def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, opt_in_tests=None):
+    """Run scenarios; opt-in groups require explicit --test selection, even with all."""
     if firmware_upgrade is not None and not callable(firmware_upgrade):
         raise ValueError("firmware_upgrade must be callable or None")
     if prepare is not None and not callable(prepare):
@@ -126,22 +126,31 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
     tests = {test.__name__: test} if callable(test) else dict(test)
     if not tests or any(not isinstance(name, str) for name in tests):
         raise ValueError("Provide named functional tests or nonempty groups of callable tests")
-    for name, group in tests.items():
+    opt_in_tests = {} if opt_in_tests is None else dict(opt_in_tests)
+    if tests.keys() & opt_in_tests.keys():
+        raise ValueError("Opt-in test names must be distinct from ordinary test names")
+    registered = {**tests, **opt_in_tests}
+    if any(not isinstance(name, str) or not name for name in registered):
+        raise ValueError("Provide named functional tests or nonempty groups of callable tests")
+    for name, group in registered.items():
         if callable(group):
-            tests[name] = (group,)
+            registered[name] = (group,)
         elif isinstance(group, (tuple, list)) and group and all(callable(scenario) for scenario in group):
-            tests[name] = tuple(group)
+            registered[name] = tuple(group)
         else:
             raise ValueError("Provide named functional tests or nonempty groups of callable tests")
+    tests = {name: registered[name] for name in tests}
     parser = argparse.ArgumentParser(description="Run Amity functional tests using the CEC harness")
-    if "firmware_upgrade" in tests:
+    if "firmware_upgrade" in registered:
         raise ValueError("Register firmware_upgrade using the dedicated callback parameter")
-    if "enrollment" in tests:
+    if "enrollment" in registered:
         raise ValueError("Register enrollment using the prepare callback parameter")
-    choices = [*tests, *(('firmware_upgrade',) if firmware_upgrade is not None else ()),
+    if "all" in registered:
+        raise ValueError("The all test name is reserved for the ordinary test suite")
+    choices = [*registered, *(('firmware_upgrade',) if firmware_upgrade is not None else ()),
                *(('enrollment',) if prepare is not None else ()), "all"]
     parser.add_argument("--test", choices=choices, default=next(iter(tests)),
-                        help="scenario to run; defaults to the first registered test")
+                        help="scenario to run; defaults to the first ordinary test; all excludes opt-in tests")
     parser.add_argument("--credentials", type=Path, help="private JSON with an existing DUT admin_password")
     parser.add_argument("--dut-credentials", action="append", default=[], metavar="DUT=PATH",
                         help="per-DUT private credentials; repeat for multiple DUTs")
@@ -226,7 +235,7 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None):
                        usb_reset=USBReset(python=args.usb_python),
                        enrollment_timeout=args.enrollment_timeout)
     selected = (tests if args.test == "all" else
-                {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: tests[args.test]})
+                {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: registered[args.test]})
     if args.firmware is not None:
         selected = {"firmware_upgrade": (firmware_upgrade,), **selected}
     selected_scenarios = [scenario for group in selected.values() for scenario in group]
