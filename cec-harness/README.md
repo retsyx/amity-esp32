@@ -13,7 +13,9 @@ shipping Amity UI. Never add firmware APIs, test-only commands, authentication
 bypasses, or test control surfaces for this framework.** The DUT helpers wrap
 `/api/login`, the current activity editor/status/discover/configuration routes,
 the existing membership scan/add/remove controls, and operation-status routes.
-Additional test helpers must wrap existing UI operations as well. The runner
+Additional configuration and observation helpers must wrap existing UI operations
+as well. Accessory scenarios send real commands through the shipping Matter
+interface and verify their physical CEC effects. The runner
 first provisions the factory-reset main through its shipping Matter BLE setup.
 Firmware CEC, activity, input, commissioning and membership behavior is unchanged.
 
@@ -82,6 +84,10 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   Each successful case restores the canonical bench names; failures retain DUT state.
 - `functional_tests/ble_keyboard.py`: pairs a Pi BLE HID keyboard and verifies
   taps, overlapping buttons and disconnect cleanup with local/member equipment.
+- `functional_tests/matter.py` (`--test matter`): selects published activity
+  inputs, checks keypad, playback, volume, mute and standby commands on local
+  and member CEC wires, and verifies unsupported keys and an invalid input
+  cause no control commands before a fresh supported key succeeds.
 - `functional_tests/soak.py` (`--soak`): two explicit two-hour endurance
   phases on all four DUTs, using each main and the rendered administration UI. Excluded
   from default runs and `--test all`.
@@ -272,6 +278,8 @@ Private controller state lives under
 `~/.local/state/amity-harness/matter/<device-id>/` on the Pi. Each enrollment uses
 fresh state. `current/commissioning.log` belongs to the latest successful
 enrollment; failed attempts retain their `generation-*/commissioning.log`.
+Matter accessory scenarios reuse that enrolled fabric; each bounded command
+keeps its native log in `current/accessory-*/controller.log`.
 Reset checks use `verification-*/commissioning.log`, with `last-verification`
 pointing to the latest successful check. Inspect these logs for BLE, credentials,
 attestation or network failures; they may contain secrets and must remain private.
@@ -1185,6 +1193,7 @@ configuration and physical control through the replacement adapter,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),
+`--test matter` for Matter accessory controls with local and member equipment,
 or `--test all` for all ordinary scenarios. The same credentials, TLS and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful

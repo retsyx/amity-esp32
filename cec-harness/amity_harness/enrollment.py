@@ -1,8 +1,9 @@
 """Provision the bench main through standard Matter BLE Wi-Fi commissioning.
 
-Only this bootstrap uses Matter. After enrollment, test control and observations
-continue through the shipping authenticated HTTPS UI. Secrets pass to the local
-worker on stdin; its private log and isolated storage remain on the Pi.
+After enrollment, configuration and observations use the shipping authenticated
+HTTPS UI; accessory scenarios reuse the enrolled fabric for Matter commands.
+Secrets pass to the local worker on stdin; its private log and isolated storage
+remain on the Pi.
 """
 
 import argparse
