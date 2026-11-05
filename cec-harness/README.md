@@ -34,6 +34,9 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
 - `functional_tests/usb_reboot.py`: verifies a USB chip reboot through `DUT.usb_reboot()`
   using a fresh authenticated boot identity and unchanged saved configuration.
+- `functional_tests/member_reboot.py` (`--test activity_member_reboot`): reboots
+  a member during playback, checks uninterrupted selection, equipment power and
+  routing, then verifies fresh member key commands without restarting the activity.
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
   repairs the same activity after a power/input disturbance, then verifies
   standby using physical component power commands. It checks that the selected
@@ -1134,7 +1137,8 @@ From the checkout root **on the Pi**:
 ```
 
 The default remains `hdmi_scan`. Select `--test usb_reboot` for a quick main-board
-USB reboot and persistence check, or `--test activity` for the activity
+USB reboot and persistence check, `--test activity_member_reboot` for playback
+continuity through a member reboot, or `--test activity` for the activity
 power-cycle/repair, receiver-free TV audio, nondefault HDMI inputs, passive standby
 discovery, explicit switch-input, two manual-component,
 same-name devices across owners and adapters,
