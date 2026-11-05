@@ -18,9 +18,20 @@
 namespace web {
 namespace {
 std::string certificate,private_key;
+bool valid_certificate_serial(const std::string &pem) {
+    mbedtls_x509_crt cert;
+    mbedtls_x509_crt_init(&cert);
+    const int r=mbedtls_x509_crt_parse(&cert,reinterpret_cast<const uint8_t *>(pem.c_str()),pem.size()+1);
+    // Mbed TLS accepts nonminimal serials that browser TLS implementations reject.
+    const auto &serial=cert.serial;
+    const bool valid=!r && serial.len && !(serial.p[0]&0x80) &&
+        (serial.p[0]!=0 || (serial.len>1 && (serial.p[1]&0x80)));
+    mbedtls_x509_crt_free(&cert);
+    return valid;
+}
 esp_err_t tls_identity(const std::string &hostname) {
     auto a=config_store::read("tls_cert",certificate),b=config_store::read("tls_key",private_key);
-    if(a==ESP_OK && b==ESP_OK) return ESP_OK;
+    if(a==ESP_OK && b==ESP_OK && valid_certificate_serial(certificate)) return ESP_OK;
     if((a!=ESP_OK && a!=ESP_ERR_NVS_NOT_FOUND)||(b!=ESP_OK && b!=ESP_ERR_NVS_NOT_FOUND)) return ESP_FAIL;
     psa_key_attributes_t attributes=PSA_KEY_ATTRIBUTES_INIT;
     psa_set_key_type(&attributes,PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
@@ -35,7 +46,9 @@ esp_err_t tls_identity(const std::string &hostname) {
     psa_destroy_key(id);
     mbedtls_x509write_cert cert;
     mbedtls_x509write_crt_init(&cert);
-    uint8_t serial[16];esp_fill_random(serial,sizeof(serial));serial[0]&=0x7f;
+    // The raw setter preserves leading zero bytes. Keep this positive and
+    // nonzero without a redundant DER sign byte, including an all-zero draw.
+    uint8_t serial[16];esp_fill_random(serial,sizeof(serial));serial[0]=(serial[0]&0x7f)|1;
     mbedtls_x509write_crt_set_version(&cert,MBEDTLS_X509_CRT_VERSION_3);
     mbedtls_x509write_crt_set_md_alg(&cert,MBEDTLS_MD_SHA256);
     mbedtls_x509write_crt_set_subject_key(&cert,&key);
