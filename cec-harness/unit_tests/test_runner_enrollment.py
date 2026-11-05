@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import runpy
+import sys
 import tempfile
 import unittest
 from unittest.mock import ANY, Mock, patch
@@ -75,19 +76,15 @@ class EnrollmentRunnerTests(unittest.TestCase):
         def prepare():
             config = current_config()
             commissioner = config.enrollment_factory()
-            self.assertEqual(commissioner.host, "pi@test2.local")
-            self.assertEqual(commissioner.root, "/bench/harness")
-            self.assertEqual(commissioner.port, 2222)
             self.assertEqual(commissioner.credentials, Path("/private/enrollment.json"))
-            self.assertEqual(commissioner.python, "/bench/python3")
+            self.assertEqual(commissioner.python, sys.executable)
             self.assertEqual(commissioner.timeout, 210)
             self.assertEqual(config.enrollment_timeout, 210)
 
         self.assertEqual(self.invoke({"scenario": lambda: None},
-                                     ["--test", "enrollment", "--harness-host", "pi@test2.local",
-                                      "--harness-root", "/bench/harness", "--ssh-port", "2222",
+                                     ["--test", "enrollment",
                                       "--enrollment-credentials", "/private/enrollment.json",
-                                      "--matter-python", "/bench/python3", "--enrollment-timeout", "210"],
+                                      "--enrollment-timeout", "210"],
                                      prepare=prepare), 0)
 
     def test_actual_entrypoint_always_registers_preparation(self):

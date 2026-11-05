@@ -1,4 +1,4 @@
-"""Bounded chip reboot through native USB Serial/JTAG control lines only.
+"""Read-only Pi USB inventory and bounded local chip reboot.
 
 The runner uses only the standard library. Its local worker imports the
 Espressif reset primitive; it sends no serial bytes or bootloader commands.
@@ -25,6 +25,43 @@ class USBWorkerError(RuntimeError):
     """A fixed worker error code, safe to retain without arbitrary output."""
 
 
+def _matching_device(serial_number, ports):
+    matches = [port for port in ports
+               if port.vid == 0x303A and port.pid == 0x1001
+               and isinstance(port.serial_number, str) and port.serial_number.upper() == serial_number]
+    if not matches:
+        raise USBWorkerError("USB_DEVICE_NOT_FOUND")
+    if len(matches) != 1:
+        raise USBWorkerError("USB_DEVICE_AMBIGUOUS")
+    device = matches[0].device
+    if not isinstance(device, str) or not device or "\x00" in device:
+        raise USBWorkerError("USB_DEVICE_INVALID")
+    return device
+
+
+def verify_usb(wiring, *, enumerate_ports=None, check_access=os.access):
+    """Verify every documented DUT is uniquely connected and usable on this Pi.
+
+    This checks USB identity and device permissions only. It never opens a
+    serial port, changes modem-control lines, or imports flashing dependencies.
+    """
+    if enumerate_ports is None:
+        from serial.tools.list_ports import comports
+        enumerate_ports = comports
+    ports = list(enumerate_ports())
+    result = []
+    for identity in wiring.identities.values():
+        serial_number = _usb_serial(identity.mac)
+        try:
+            device = _matching_device(serial_number, ports)
+            if not check_access(device, os.R_OK | os.W_OK):
+                raise USBWorkerError("USB_DEVICE_NOT_ACCESSIBLE")
+        except USBWorkerError as error:
+            raise RuntimeError(f"USB verification failed for {identity.name}: {error}") from None
+        result.append({"dut": identity.name, "usb_serial": serial_number, "port": device})
+    return result
+
+
 def reset_usb(serial_number, *, serial_factory=None, enumerate_ports=None, hard_reset=None):
     """Reset exactly one documented native USB device, without byte I/O."""
     serial_number = _usb_serial(serial_number)
@@ -37,16 +74,7 @@ def reset_usb(serial_number, *, serial_factory=None, enumerate_ports=None, hard_
     if hard_reset is None:
         from esp_pylib.serial_reset import hard_reset
 
-    matches = [port for port in enumerate_ports()
-               if port.vid == 0x303A and port.pid == 0x1001
-               and isinstance(port.serial_number, str) and port.serial_number.upper() == serial_number]
-    if not matches:
-        raise USBWorkerError("USB_DEVICE_NOT_FOUND")
-    if len(matches) != 1:
-        raise USBWorkerError("USB_DEVICE_AMBIGUOUS")
-    device = matches[0].device
-    if not isinstance(device, str) or not device or "\x00" in device:
-        raise USBWorkerError("USB_DEVICE_INVALID")
+    device = _matching_device(serial_number, enumerate_ports())
 
     port = serial_factory(port=None, baudrate=115200, timeout=1, write_timeout=1, exclusive=True)
     try:
@@ -121,14 +149,28 @@ class USBReset:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Reset one native USB device without serial byte I/O")
-    parser.add_argument("--usb-serial", required=True, type=_usb_serial)
+    parser = argparse.ArgumentParser(description="Verify documented USB DUTs or reset one without serial byte I/O")
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--usb-serial", type=_usb_serial)
+    operation.add_argument("--check", action="store_true", help="verify documented DUT USB identities and permissions without opening ports")
+    parser.add_argument("--wiring", type=Path, help="bench TEST-HARNESS.md for --check")
     args = parser.parse_args(argv)
+    if args.wiring is not None and not args.check:
+        parser.error("--wiring requires --check")
     try:
-        result = reset_usb(args.usb_serial)
+        if args.check:
+            if __package__:
+                from .wiring import Wiring
+            else:
+                from wiring import Wiring
+            wiring = Wiring.from_markdown(args.wiring) if args.wiring else Wiring.from_markdown()
+            result = {"devices": verify_usb(wiring), "verified": True}
+        else:
+            result = reset_usb(args.usb_serial)
     except Exception as error:
         code = (str(error) if isinstance(error, USBWorkerError) else
-                "DEPENDENCY_UNAVAILABLE" if isinstance(error, ImportError) else "USB_RESET_FAILED")
+                "DEPENDENCY_UNAVAILABLE" if isinstance(error, ImportError) else
+                "USB_VERIFICATION_FAILED" if args.check else "USB_RESET_FAILED")
         print(json.dumps({"error": code, "error_type": type(error).__name__}), flush=True)
         return 1
     print(json.dumps(result), flush=True)

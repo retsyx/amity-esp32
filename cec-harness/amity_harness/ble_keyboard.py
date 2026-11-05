@@ -1,7 +1,7 @@
 """A real BLE keyboard fixture paired through Amity's existing remote UI.
 
-Only keyboard reports and fixture control cross SSH. DUT authentication and
-reviewed pair/unpair operations stay in the functional-test process.
+The Pi owns keyboard reports, fixture control, authentication and pair/unpair
+operations through the shipping UI.
 """
 
 from copy import deepcopy
@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 import re
 import select
-import shlex
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -47,7 +47,7 @@ def _reports(keyboard, consumer):
 class LocalKeyboard:
     """Bounded JSON IPC to the Pi's short-lived D-Bus keyboard worker."""
 
-    def __init__(self, *, python="python3", timeout=20):
+    def __init__(self, *, python=sys.executable, timeout=20):
         if not isinstance(python, str) or not python or "\x00" in python:
             raise ValueError("Choose the keyboard worker's Python executable")
         _positive_seconds(timeout, "Keyboard IPC timeout")
@@ -170,26 +170,6 @@ class LocalKeyboard:
             self._rpc("close")
         finally:
             self._shutdown()
-
-
-class SSHKeyboard(LocalKeyboard):
-    def __init__(self, *, host, root, port=None, python="python3", timeout=20):
-        super().__init__(python=python, timeout=timeout)
-        if (not isinstance(host, str) or not host or host.startswith("-")
-                or any(character.isspace() for character in host) or "\x00" in host):
-            raise ValueError("Invalid keyboard SSH host")
-        if not isinstance(root, str) or not root.startswith("/") or "\x00" in root:
-            raise ValueError("The keyboard harness root must be absolute")
-        if port is not None and (type(port) is not int or not 1 <= port <= 65535):
-            raise ValueError("Invalid keyboard SSH port")
-        self.host, self.root, self.port = host, root, port
-
-    def _command(self):
-        remote = shlex.join(["env", "PYTHONPATH=" + self.root, self.python, "-u", "-m",
-                             "amity_harness.ble_keyboard_worker"])
-        return ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=yes", *(["-p", str(self.port)] if self.port else []),
-                self.host, remote]
 
 
 class PairedKeyboard:

@@ -95,8 +95,8 @@ class DUT:
     Authentication is explicit through ``login()`` (or automatic when a
     password/credential file is supplied). TLS verification is enabled unless
     ``insecure=True`` is explicitly chosen for a self-signed bench certificate.
-    GPIO operations run on the Pi. HTTP operations can run anywhere with access
-    to the DUT. The wiring inventory's optional hostname supplies the default
+    GPIO and HTTP operations run on the Pi. The wiring inventory's optional
+    hostname supplies the default
     HTTPS origin, falling back to the bench label. Override ``url`` as needed.
     Creating an instance without credentials performs no network
     operation and never presses a button or sends CEC.

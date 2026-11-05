@@ -452,8 +452,8 @@ class CecSession:
                 if frame is None:
                     with self._lock:
                         # Publish an idle poll's start only after it completes.
-                        # A delayed SSH reply cannot prove that the remote
-                        # receive FIFO was drained after a later boundary.
+                        # This proves the receive FIFO drained after that
+                        # boundary even when the worker is scheduled late.
                         self._wire_idle_since_ns[gpio] = polled_ns
                     continue
                 with self._lock:

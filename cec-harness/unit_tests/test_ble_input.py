@@ -21,7 +21,6 @@ from amity_harness.cec_pin import PinFrame
 
 
 class KeyWire:
-    clock_uncertainty_ns = 0
 
     def __init__(self, gpio):
         self.closed = threading.Event()

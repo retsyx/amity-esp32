@@ -19,7 +19,7 @@ class MonitorBackend:
     def __init__(self, gpio):
         self.gpio, self.queue = gpio, Queue()
         self.active, self.monitor, self.closed = (), False, False
-        self.cec_version, self.clock_uncertainty_ns = 6, 0
+        self.cec_version = 6
         self.witness_mode, self.witness_frames, self.witness_transmits = "normal", [], []
         self.empty_reads = 0
         self.configurations = []
@@ -295,13 +295,11 @@ class MissingRecipientTests(unittest.TestCase):
             self.assertEqual(player.power, PowerState.ON)
             self.assertFalse(backend.monitor)
 
-    def test_acquisition_must_precede_withdrawal_even_with_remote_clock_uncertainty(self):
+    def test_acquisition_must_precede_withdrawal(self):
         with self.fixture() as (_, _, player, scan, backend):
             with MissingCECRecipient(player, scan=scan) as missing:
                 self.wait(lambda: missing.coverage_started_ns > 0)
-                # Wire timestamps are transported as lower bounds; the upper
-                # bound must also precede completion of the withdrawal.
-                backend.clock_uncertainty_ns = missing.withdrawn_ns - backend.synchronized_ns + 1
+                missing.withdrawn_ns = missing.coverage_started_ns - 1
                 with self.assertRaisesRegex(AssertionError, "synchronize before"):
                     missing.drain(time.monotonic_ns())
             self.assertEqual(player.power, PowerState.ON)

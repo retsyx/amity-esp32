@@ -1,21 +1,22 @@
-"""Bootstrap behavior without Bluetooth, SSH, DUT networking or native SDK."""
+"""Bootstrap behavior without Bluetooth, DUT networking or native SDK."""
 
 import asyncio
 import io
 import json
 from pathlib import Path
-import shlex
 import ssl
 import stat
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from amity_harness.dut import AmityHTTPError
 from amity_harness.enrollment import (EnrollmentError, MatterEnrollment, _credentials,
                                       _commission_factory, _read_credentials, _request, _verify_factory,
+                                      _verify_factory_and_release,
                                       _worker, ensure_enrolled)
 
 
@@ -170,21 +171,16 @@ class EnrollmentTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout=json.dumps(response))
         return runner
 
-    def test_ssh_quotes_paths_and_sends_secrets_only_on_stdin_with_bounded_timeout(self):
+    def test_local_worker_sends_secrets_only_on_stdin_with_bounded_timeout(self):
         calls = []
-        root = "/bench/harness root/$(literal)"
-        client = MatterEnrollment(host="pi@bench", root=root, port=2222,
-                                  credentials=self.enrollment_credentials(), timeout=30,
+        client = MatterEnrollment(credentials=self.enrollment_credentials(), timeout=30,
                                   runner=self.run_response(calls))
         self.assertTrue(client.commission(self.dut())["commissioned"])
         self.assertEqual(len(calls), 1)
         command, options = calls[0]
-        self.assertEqual(command[0], "ssh")
-        self.assertIn("StrictHostKeyChecking=yes", command)
-        remote = shlex.split(command[-1])
-        self.assertEqual(remote[:2], ["env", "PYTHONPATH=" + root])
+        self.assertEqual(command[:4], [sys.executable, "-u", "-m", "amity_harness.enrollment"])
         self.assertEqual(json.loads(options["input"])["credentials"], CREDENTIALS)
-        self.assertEqual(remote[remote.index("--timeout") + 1], "30")
+        self.assertEqual(command[command.index("--timeout") + 1], "30")
         self.assertEqual(options["timeout"], 40)
         self.assertNotIn(CREDENTIALS["wifi_password"], str(command))
         self.assertNotIn(str(CREDENTIALS["matter_pin_code"]), str(command))
@@ -244,7 +240,11 @@ class EnrollmentTests(unittest.TestCase):
         class Network:
             Attributes = SimpleNamespace(Networks=object())
 
-        clusters = SimpleNamespace(OperationalCredentials=Operational, NetworkCommissioning=Network)
+        commissioning = SimpleNamespace(
+            Commands=SimpleNamespace(ArmFailSafe=lambda **fields: SimpleNamespace(**fields)),
+            Enums=SimpleNamespace(CommissioningErrorEnum=SimpleNamespace(kOk=0)))
+        clusters = SimpleNamespace(OperationalCredentials=Operational, NetworkCommissioning=Network,
+                                   GeneralCommissioning=commissioning)
         calls = []
 
         async def pase(*args):
@@ -259,8 +259,12 @@ class EnrollmentTests(unittest.TestCase):
             calls.append(("commission_wifi", args))
             return 1
 
+        async def send(*args):
+            calls.append(("send", args))
+            return SimpleNamespace(errorCode=0)
+
         return SimpleNamespace(EstablishPASESessionBLE=pase, ReadAttribute=read,
-                               CommissionWiFi=commission_wifi), clusters, calls
+                               CommissionWiFi=commission_wifi, SendCommand=send), clusters, calls
 
     def test_native_factory_precondition_precedes_any_wifi_or_fabric_provisioning(self):
         controller, clusters, calls = self.factory_controller()
@@ -285,6 +289,56 @@ class EnrollmentTests(unittest.TestCase):
     def test_native_verify_factory_stops_after_pase_and_standard_attribute_reads(self):
         controller, clusters, calls = self.factory_controller()
         asyncio.run(_verify_factory(controller, clusters, CREDENTIALS, timeout=30))
+        self.assertEqual([call[0] for call in calls], ["pase", "read"])
+
+    def test_factory_verification_releases_its_failsafe_once_after_proving_empty_state(self):
+        controller, clusters, calls = self.factory_controller()
+        asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
+        self.assertEqual([call[0] for call in calls], ["pase", "read", "send"])
+        node, endpoint, command = calls[-1][1]
+        self.assertEqual((node, endpoint), (1, 0))
+        self.assertEqual(vars(command), {"expiryLengthSeconds": 0, "breadcrumb": 0})
+
+    def test_failed_factory_verification_never_sends_failsafe_cleanup(self):
+        for fabrics, networks in ((1, []), (0, [{"networkID": b"old"}]), (False, []), (0, "")):
+            with self.subTest(fabrics=fabrics, networks=networks):
+                controller, clusters, calls = self.factory_controller(fabrics, networks)
+                with self.assertRaisesRegex(EnrollmentError, "must be factory reset"):
+                    asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
+                self.assertEqual([call[0] for call in calls], ["pase", "read"])
+
+    def test_factory_failsafe_cleanup_requires_an_explicit_success_response(self):
+        for response in (None, SimpleNamespace(), SimpleNamespace(errorCode=1),
+                         SimpleNamespace(errorCode=False), SimpleNamespace(errorCode=0.0)):
+            with self.subTest(response=response):
+                controller, clusters, calls = self.factory_controller()
+                controller.SendCommand = AsyncMock(return_value=response)
+                with self.assertRaisesRegex(EnrollmentError, "did not release"):
+                    asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
+                controller.SendCommand.assert_awaited_once()
+                self.assertEqual([call[0] for call in calls], ["pase", "read"])
+
+    def test_factory_failsafe_cleanup_failure_is_not_retried(self):
+        controller, clusters, calls = self.factory_controller()
+        controller.SendCommand = AsyncMock(side_effect=RuntimeError("command failed"))
+        with self.assertRaisesRegex(RuntimeError, "command failed"):
+            asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
+        controller.SendCommand.assert_awaited_once()
+
+    def test_factory_failsafe_cleanup_shares_the_verification_deadline(self):
+        controller, clusters, calls = self.factory_controller()
+        now = [0]
+        read = controller.ReadAttribute
+
+        async def slow_read(*args):
+            result = await read(*args)
+            now[0] = 31
+            return result
+
+        controller.ReadAttribute = slow_read
+        with patch("amity_harness.enrollment.time.monotonic", side_effect=lambda: now[0]):
+            with self.assertRaisesRegex(TimeoutError, "deadline expired"):
+                asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
         self.assertEqual([call[0] for call in calls], ["pase", "read"])
 
     def test_native_rejects_saved_fabric_or_network_before_provisioning(self):

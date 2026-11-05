@@ -169,19 +169,10 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                         help="upgrade the Amity system from this update file before running selected tests")
     parser.add_argument("--firmware-timeout", type=float, default=2700,
                         help="firmware upgrade timeout in seconds (default: 2700); independent of --timeout and --cec-timeout")
-    parser.add_argument("--harness-host", help="run CEC and reset GPIO I/O on this Pi over SSH")
-    parser.add_argument("--usb-python", default=sys.executable, metavar="PATH",
-                        help="local Python with pyserial and esp-pylib for USB chip reboots; defaults to the runner Python")
-    parser.add_argument("--harness-root", default="/home/pi/amity/esp32/cec-harness")
-    parser.add_argument("--ssh-port", type=int)
-    parser.add_argument("--ble-python", default="python3",
-                        help="Python executable with dbus-next for the BLE keyboard fixture")
     parser.add_argument("--enrollment-credentials", type=Path,
                         help="private Wi-Fi/Matter JSON; defaults to the Pi's saved enrollment settings")
     parser.add_argument("--enrollment-timeout", type=float, default=240,
                         help="main enrollment deadline in seconds (default: 240)")
-    parser.add_argument("--matter-python", default="python3",
-                        help="Pi Python executable for the Matter controller")
     parser.add_argument("--no-status-led", action="store_true",
                         help="leave the harness Pi's status LED unchanged")
     parser.add_argument("--output", type=Path, help="private JSON evidence under test-results/")
@@ -206,33 +197,20 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
     urls = _named_options(parser, args.dut_url, "URL")
     if args.credentials is None and not credentials:
         parser.error("Provide --credentials or --dut-credentials")
-    session_factory = CecSession
-    gpio_factory = None
-    from .ble_keyboard import LocalKeyboard, SSHKeyboard
-    keyboard_factory = partial(LocalKeyboard, python=args.ble_python)
-    if args.harness_host:
-        from .remote import SSHCecBackend
-        from .gpio import SSHPinctrlGPIO
-        backend = partial(SSHCecBackend, host=args.harness_host,
-                          root=args.harness_root, port=args.ssh_port)
-        session_factory = partial(CecSession, backend_factory=backend)
-        gpio_factory = partial(SSHPinctrlGPIO, host=args.harness_host,
-                               root=args.harness_root, port=args.ssh_port)
-        keyboard_factory = partial(SSHKeyboard, host=args.harness_host,
-                                   root=args.harness_root, port=args.ssh_port, python=args.ble_python)
+    from .ble_keyboard import LocalKeyboard
+    keyboard_factory = partial(LocalKeyboard, python=sys.executable)
     from .enrollment import MatterEnrollment
     from .usb import USBReset
     enrollment_factory = partial(MatterEnrollment, credentials=args.enrollment_credentials,
-                                 host=args.harness_host, root=args.harness_root, port=args.ssh_port,
-                                 timeout=args.enrollment_timeout, python=args.matter_python)
+                                 timeout=args.enrollment_timeout, python=sys.executable)
     config = RunConfig(credentials=credentials, default_credentials=args.credentials,
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, cec_timeout=args.cec_timeout,
                        firmware=args.firmware, firmware_timeout=args.firmware_timeout,
-                       session_factory=session_factory, gpio_factory=gpio_factory,
+                       session_factory=CecSession,
                        keyboard_factory=keyboard_factory, enrollment_factory=enrollment_factory,
-                       usb_reset=USBReset(python=args.usb_python),
+                       usb_reset=USBReset(),
                        enrollment_timeout=args.enrollment_timeout)
     selected = (tests if args.test == "all" else
                 {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: registered[args.test]})
@@ -253,7 +231,7 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
               cec_timeout_seconds=config.cec_timeout, firmware_timeout_seconds=config.firmware_timeout)
         try:
             with (nullcontext() if args.no_status_led else
-                  run_status_led(host=args.harness_host, root=args.harness_root, port=args.ssh_port)):
+                  run_status_led()):
                 reports = []
                 for index, scenario in enumerate(selected_scenarios):
                     result = run_test(scenario, config)

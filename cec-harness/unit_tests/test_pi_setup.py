@@ -30,6 +30,20 @@ class PiSetupTests(unittest.TestCase):
         self.wiring = Wiring.from_markdown()
         self.account = SimpleNamespace(pw_name="bench", pw_dir="/home/bench", pw_uid=1001, pw_gid=1001)
 
+    def test_install_retires_only_obsolete_split_host_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            obsolete = {"amity_harness/remote.py", "unit_tests/test_remote.py"}
+            retained = {"amity_harness/cec.py", "unit_tests/test_cec.py", "credentials/private.json"}
+            for relative in obsolete | retained:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("retain contents")
+            with patch.object(setup, "HARNESS", root):
+                setup.retire_split_host_sources()
+                setup.retire_split_host_sources()
+            self.assertEqual({str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}, retained)
+
     def test_platform_failure_precedes_wiring_account_and_provisioning(self):
         with patch.object(setup, "validate_platform", side_effect=ValueError("Unsupported Pi")), \
                 patch.object(setup.Wiring, "from_markdown") as wiring, \
@@ -152,8 +166,8 @@ class PiSetupTests(unittest.TestCase):
     def test_archive_contains_only_sources_never_private_or_cached_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "harness"
-            expected = {"setup.py", "setup_matter.py", "run.py", "fw-reset", "README.md",
-                        "TEST-HARNESS.md", "matter-requirements.txt", "amity_harness/__init__.py",
+            expected = {"setup.py", "setup_matter.py", "setup_runtime.py", "run", "run.py", "fw-reset", "README.md",
+                        "TEST-HARNESS.md", "matter-requirements.txt", "runtime-requirements.txt", "amity_harness/__init__.py",
                         "functional_tests/example.py", "unit_tests/test_example.py"}
             excluded = {"credentials/enrollment.txt", "captures/trace.md", ".cache/dependency.py",
                         "amity_harness/__pycache__/cached.py", "private.txt", "private.json"}
@@ -161,6 +175,7 @@ class PiSetupTests(unittest.TestCase):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("private" if name in excluded else "source")
+            (root / "run").chmod(0o755)
             external = Path(directory) / "private.py"
             external.write_text("never deploy")
             (root / "amity_harness/linked.py").symlink_to(external)
@@ -172,6 +187,135 @@ class PiSetupTests(unittest.TestCase):
                 self.assertTrue(all(item.isfile() for item in members))
                 self.assertEqual({item.name for item in members}, {"cec-harness/" + name for name in expected})
                 self.assertTrue(all(contents.extractfile(item).read() == b"source" for item in members))
+                self.assertEqual(contents.getmember("cec-harness/run").mode & 0o777, 0o755)
+
+    def test_access_grants_native_usb_serial_permissions_without_opening_ports(self):
+        open_file = setup.os.open
+
+        def guarded_open(path, *args, **kwargs):
+            if str(path).startswith("/dev/"):
+                raise AssertionError("Do not open serial devices")
+            return open_file(path, *args, **kwargs)
+
+        with patch.object(setup, "run") as run, patch.object(setup, "write_file") as write, \
+                patch.object(setup.os, "open", side_effect=guarded_open):
+            setup.configure_access(self.account)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(["groupadd", "--force", "dialout"], commands)
+        self.assertIn(["usermod", "-a", "-G", "video,gpio,bluetooth,dialout", self.account.pw_name], commands)
+        rules = next(call.args[1] for call in write.call_args_list
+                     if call.args[0] == "/etc/udev/rules.d/70-amity-harness.rules")
+        tty_rules = [line for line in rules.splitlines() if 'SUBSYSTEM=="tty"' in line]
+        self.assertEqual(tty_rules, [
+            'SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", GROUP="dialout", MODE="0660"'])
+        reload_index = commands.index(["udevadm", "control", "--reload-rules"])
+        trigger_index = commands.index(["udevadm", "trigger", "--subsystem-match=tty"])
+        self.assertLess(reload_index, trigger_index)
+        self.assertLess(trigger_index, commands.index(["udevadm", "settle"]))
+
+    def test_missing_legacy_services_do_not_fail_fresh_installation(self):
+        for loaded_status in (0, 1):
+            with self.subTest(loaded_status=loaded_status), patch.object(setup, "run", side_effect=[
+                    SimpleNamespace(returncode=1, stdout="", stderr=""),
+                    SimpleNamespace(returncode=loaded_status, stdout="", stderr="")]) as run:
+                setup.retire_followers()
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], ["list-unit-files", "list-units"])
+            self.assertTrue(all(call.kwargs == {"check": False, "capture_output": True}
+                                for call in run.call_args_list))
+
+    def test_legacy_service_enumeration_propagates_real_errors(self):
+        failures = [(1, "", "Failed to connect to bus"), (2, "", ""), (1, "unexpected output", "")]
+        for status, output, errors in failures:
+            for step in (0, 1):
+                with self.subTest(status=status, errors=errors, step=step):
+                    responses = [SimpleNamespace(returncode=0, stdout="", stderr="")] * step
+                    responses.append(SimpleNamespace(returncode=status, stdout=output, stderr=errors))
+                    with patch.object(setup, "run", side_effect=responses) as run:
+                        with self.assertRaises(subprocess.CalledProcessError) as failure:
+                            setup.retire_followers()
+                    self.assertEqual(failure.exception.returncode, status)
+                    self.assertEqual(failure.exception.stdout, output)
+                    self.assertEqual(failure.exception.stderr, errors)
+                    self.assertEqual(run.call_count, step + 1)
+
+    def test_legacy_service_cleanup_stops_loaded_instances_and_disables_saved_units(self):
+        with patch.object(setup, "run", side_effect=[
+                SimpleNamespace(returncode=0, stdout=("amity-cec@.service disabled\n"
+                                                     "amity-setup-gpios.service enabled\n"
+                                                     "amity-cec@23.service enabled\n"), stderr=""),
+                SimpleNamespace(returncode=0, stdout="amity-cec@24.service loaded active running\n", stderr=""),
+                SimpleNamespace(returncode=0), SimpleNamespace(returncode=0),
+                SimpleNamespace(returncode=0), SimpleNamespace(returncode=0),
+                SimpleNamespace(returncode=0)]) as run:
+            setup.retire_followers()
+        self.assertEqual([call.args[0] for call in run.call_args_list[2:]], [
+            ["systemctl", "stop", "amity-cec@23.service"],
+            ["systemctl", "disable", "amity-cec@23.service"],
+            ["systemctl", "stop", "amity-cec@24.service"],
+            ["systemctl", "stop", "amity-setup-gpios.service"],
+            ["systemctl", "disable", "amity-setup-gpios.service"]])
+
+    def test_fresh_install_provisions_runtime_as_harness_user_before_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            boot = Path(directory)
+            (boot / "config.txt").write_text("[all]\n")
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                if command[0] == "dtc":
+                    Path(command[command.index("-o") + 1]).write_bytes(b"compiled overlay")
+                return SimpleNamespace(returncode=0, stdout="")
+
+            with patch.object(setup, "BOOT", boot), patch.object(setup, "run", side_effect=run), \
+                    patch.object(setup, "write_file", return_value=False), \
+                    patch.object(setup, "retire_followers"), patch.object(setup, "configure_access"), \
+                    patch("amity_harness.pi_cec_driver.ensure_driver", return_value=False), \
+                    patch.object(setup, "awaiting_reboot", return_value=False), \
+                    patch.object(setup.Path, "unlink"), \
+                    patch.object(setup, "as_user", return_value=SimpleNamespace(returncode=0)) as as_user, \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(setup.install(self.account, self.wiring), 0)
+            packages = next(command for command in commands if command[:2] == ["apt-get", "install"])
+            self.assertIn("python3-venv", packages)
+            self.assertIn("chromium", packages)
+            invocations = [call.args for call in as_user.call_args_list]
+            runtime = (self.account, [sys.executable, "-B", str(setup.HARNESS / "setup_runtime.py")])
+            readiness = (self.account, [sys.executable, "-B", str(setup.HARNESS / "setup.py"), "--check"])
+            self.assertIn(runtime, invocations)
+            self.assertLess(invocations.index(runtime), invocations.index(readiness))
+
+    def test_readiness_checks_runtime_and_usb_inventory_before_button_controls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            boot, record = root / "boot", root / "overlay.json"
+            (boot / "overlays").mkdir(parents=True)
+            (boot / "config.txt").write_text(setup.boot_config("", self.wiring))
+            binary = boot / "overlays/amity-harness.dtbo"
+            binary.write_bytes(b"compiled overlay")
+            record.write_text(json.dumps({
+                "source": hashlib.sha256(setup.overlay_source(self.wiring).encode()).hexdigest(),
+                "binary": hashlib.sha256(binary.read_bytes()).hexdigest()}))
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                if "amity_harness.usb" in command:
+                    raise subprocess.CalledProcessError(1, command)
+                return SimpleNamespace(returncode=0, stdout="")
+
+            with patch.object(setup, "BOOT", boot), patch.object(setup, "OVERLAY_RECORD", record), \
+                    patch.object(setup, "awaiting_reboot", return_value=False), \
+                    patch.object(setup.os, "geteuid", return_value=self.account.pw_uid), \
+                    patch.object(setup, "check_cec"), patch.object(setup, "run", side_effect=run), \
+                    patch.object(setup.os, "open", side_effect=AssertionError("Do not open serial devices")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    setup.check_ready(self.wiring)
+            self.assertEqual(commands, [
+                [sys.executable, "-B", str(setup.HARNESS / "setup_runtime.py"), "--verify-installed"],
+                [str(setup.HARNESS.parent / ".harness-python/bin/python"), "-B", "-m", "amity_harness.usb",
+                 "--check", "--wiring", str(self.wiring.source)]])
 
     def test_as_user_refreshes_groups_and_sets_the_harness_environment(self):
         with patch.object(setup.os, "geteuid", return_value=0), patch.object(setup, "run") as run:

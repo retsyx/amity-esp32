@@ -29,7 +29,7 @@ from amity_harness.wiring import Wiring
 HARNESS = Path(__file__).resolve().parent
 BOOT = Path("/boot/firmware")
 PACKAGES = (
-    "ca-certificates", "device-tree-compiler", "raspi-utils", "python3-dbus-next",
+    "ca-certificates", "device-tree-compiler", "raspi-utils", "python3-dbus-next", "python3-venv", "chromium",
     "bluez", "rfkill", "avahi-daemon", "libnss-mdns", "openssh-server", "sudo",
     "util-linux", "procps", "kmod", "libglib2.0-0t64", "libnl-3-200", "libnl-route-3-200", "libatomic1",
 )
@@ -107,14 +107,21 @@ def awaiting_reboot():
 
 
 def retire_followers():
-    result = run(["systemctl", "list-unit-files", "--no-legend", "--no-pager",
-                  "amity-cec@*.service", "amity-setup-gpios.service"], capture_output=True)
-    units = [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
+    def listed(command):
+        result = run(command, check=False, capture_output=True)
+        # systemctl returns 1 when these legacy-unit patterns match nothing.
+        # Diagnostics or any other failure still indicate a broken setup.
+        if result.returncode and not (result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip()):
+            raise subprocess.CalledProcessError(result.returncode, command,
+                                                output=result.stdout, stderr=result.stderr)
+        return [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
+
+    units = listed(["systemctl", "list-unit-files", "--no-legend", "--no-pager",
+                    "amity-cec@*.service", "amity-setup-gpios.service"])
     instances = [unit for unit in units if unit != "amity-cec@.service"]
     # Also catch transient or deleted-but-still-running follower instances.
-    loaded = run(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
-                  "amity-cec@*.service"], capture_output=True)
-    instances += [line.split()[0] for line in loaded.stdout.splitlines() if line.strip()]
+    instances += listed(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
+                         "amity-cec@*.service"])
     for unit in sorted(set(instances)):
         if re.fullmatch(r"amity-cec@[A-Za-z0-9_.-]+\.service|amity-setup-gpios\.service", unit):
             run(["systemctl", "stop", unit])
@@ -123,13 +130,15 @@ def retire_followers():
 
 
 def configure_access(account):
-    for group in ("video", "gpio", "bluetooth"):
+    for group in ("video", "gpio", "bluetooth", "dialout"):
         run(["groupadd", "--force", group])
-    run(["usermod", "-a", "-G", "video,gpio,bluetooth", account.pw_name])
+    run(["usermod", "-a", "-G", "video,gpio,bluetooth,dialout", account.pw_name])
     write_file("/etc/udev/rules.d/70-amity-harness.rules",
                '# Harness access; scenarios own addresses only while running.\n'
                'SUBSYSTEM=="cec", KERNEL=="cec[0-9]*", GROUP="video", MODE="0660"\n'
-               'KERNEL=="gpiomem*", GROUP="gpio", MODE="0660"\n')
+               'KERNEL=="gpiomem*", GROUP="gpio", MODE="0660"\n'
+               'SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", '
+               'GROUP="dialout", MODE="0660"\n')
     # These are the existing enrollment worker and optional status LED operations.
     sudoers = (f"{account.pw_name} ALL=(root) NOPASSWD: /usr/bin/unshare, /usr/bin/kill, "
                "/usr/bin/tee /sys/class/leds/ACT/trigger, "
@@ -148,7 +157,14 @@ def configure_access(account):
     run(["udevadm", "control", "--reload-rules"])
     run(["udevadm", "trigger", "--subsystem-match=cec"])
     run(["udevadm", "trigger", "--subsystem-match=bcm2835-gpiomem"])
+    run(["udevadm", "trigger", "--subsystem-match=tty"])
     run(["udevadm", "settle"])
+
+
+def retire_split_host_sources():
+    """Remove obsolete managed sources left by an older overlay deployment."""
+    for relative in ("amity_harness/remote.py", "unit_tests/test_remote.py"):
+        (HARNESS / relative).unlink(missing_ok=True)
 
 
 def install(account, wiring):
@@ -165,6 +181,7 @@ def install(account, wiring):
         print("Kernel headers require a reboot; rerun setup afterward.", flush=True)
         return REBOOT_REQUIRED
     retire_followers()
+    retire_split_host_sources()
     configure_access(account)
     with tempfile.TemporaryDirectory(prefix="amity-overlay-") as directory:
         dts, dtbo = Path(directory) / "harness.dts", Path(directory) / "harness.dtbo"
@@ -187,6 +204,8 @@ def install(account, wiring):
     # Refresh supplementary groups through runuser instead of requiring a new login.
     for gpio in sorted(wiring.reset.values()):
         as_user(account, ["pinctrl", "set", str(gpio), "ip", "pn"])
+    print("Installing the standalone functional-test runtime", flush=True)
+    as_user(account, [sys.executable, "-B", str(HARNESS / "setup_runtime.py")])
     print("Installing and verifying the pinned Matter controller", flush=True)
     as_user(account, [sys.executable, "-B", str(HARNESS / "setup_matter.py")])
     if awaiting_reboot():
@@ -258,6 +277,10 @@ def check_ready(wiring):
     if json.loads(OVERLAY_RECORD.read_text()) != expected:
         raise ValueError("Installed CEC overlay differs from the wiring; rerun setup")
     check_cec(wiring)
+    run([sys.executable, "-B", str(HARNESS / "setup_runtime.py"), "--verify-installed"])
+    runtime_python = HARNESS.parent / ".harness-python/bin/python"
+    run([str(runtime_python), "-B", "-m", "amity_harness.usb", "--check", "--wiring", str(wiring.source)],
+        env={**os.environ, "PYTHONPATH": str(HARNESS)})
     for gpio in sorted(wiring.reset.values()):
         state = run(["pinctrl", "get", str(gpio)], capture_output=True).stdout
         if not re.search(r"\bip\b", state) or not re.search(r"\bpn\b", state):
@@ -273,7 +296,8 @@ def check_ready(wiring):
         run(["systemctl", "is-active", "--quiet", service])
     if not any(line.split()[-1] != "lo" for line in Path("/proc/net/if_inet6").read_text().splitlines() if line.strip()):
         raise ValueError("A network interface needs IPv6 for Matter commissioning")
-    print(f"Harness ready: {len(wiring.cec)} CEC wires, {len(wiring.reset)} reset inputs, BLE and Matter verified.")
+    print(f"Harness ready: {len(wiring.cec)} CEC wires, {len(wiring.reset)} reset inputs, "
+          f"{len(wiring.identities)} USB DUTs, BLE, Matter and browser verified.")
 
 
 def ssh_command(host, port=None, *, bootstrap=False):
@@ -289,7 +313,8 @@ def source_archive():
     """Deploy harness sources only; never ship the checkout's credentials or captures."""
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w:gz") as output:
-        top_level = {"setup.py", "setup_matter.py", "matter-requirements.txt", "run.py",
+        top_level = {"setup.py", "setup_matter.py", "matter-requirements.txt", "setup_runtime.py",
+                     "runtime-requirements.txt", "run", "run.py",
                      "fw-reset", "README.md", "TEST-HARNESS.md", "DIAGNOSTICS.md"}
         packages = {"amity_harness", "functional_tests", "unit_tests"}
         for path in sorted(HARNESS.rglob("*")):

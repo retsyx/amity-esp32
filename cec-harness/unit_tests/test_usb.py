@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,8 +13,9 @@ from unittest.mock import Mock, patch
 
 from amity_harness import DUT, RunConfig
 from amity_harness.runner import main
-from amity_harness.usb import USBReset, USBWorkerError, main as worker_main, reset_usb
+from amity_harness.usb import USBReset, USBWorkerError, main as worker_main, reset_usb, verify_usb
 from amity_harness import usb
+from amity_harness.wiring import Wiring
 
 
 class USBResetTests(unittest.TestCase):
@@ -73,7 +75,7 @@ class USBResetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RunConfig(usb_reset=False)
 
-    def test_cli_sets_local_usb_reset_independently_of_pi_transport(self):
+    def test_cli_uses_current_pi_runtime_for_usb_reset(self):
         observed = []
 
         def scenario():
@@ -84,12 +86,52 @@ class USBResetTests(unittest.TestCase):
             return {"test": test.__name__, "passed": True, "testbeds": []}
 
         with patch("amity_harness.runner.run_test", side_effect=capture), redirect_stdout(io.StringIO()):
-            self.assertEqual(main(scenario, ["--credentials", "/private/main.json", "--no-status-led",
-                                            "--harness-host", "pi@test2.local",
-                                            "--usb-python", "/tools/SDK Python/python"]), 0)
+            self.assertEqual(main(scenario, ["--credentials", "/private/main.json", "--no-status-led"]), 0)
         self.assertIsInstance(observed[0], USBReset)
-        self.assertEqual(observed[0].python, "/tools/SDK Python/python")
-        self.assertEqual(USBReset().python, sys.executable)
+        self.assertEqual(observed[0].python, sys.executable)
+
+
+class USBInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.wiring = Wiring.from_markdown()
+        self.ports = [SimpleNamespace(vid=0x303A, pid=0x1001,
+                                     serial_number=identity.mac.lower(), device=f"/dev/ttyACM{index}")
+                      for index, identity in enumerate(self.wiring.identities.values())]
+
+    def test_verification_matches_every_documented_identity_without_opening_ports(self):
+        unrelated = SimpleNamespace(vid=0x303A, pid=0x1001,
+                                    serial_number="00:00:00:00:00:01", device="/dev/ttyACM9")
+        access = Mock(return_value=True)
+        with patch("builtins.open", side_effect=AssertionError("Serial inventory must not open files or ports")), \
+                patch.object(usb, "reset_usb", side_effect=AssertionError("Serial inventory must not reset DUTs")):
+            inventory = verify_usb(self.wiring, enumerate_ports=lambda: [unrelated, *reversed(self.ports)],
+                                   check_access=access)
+        self.assertEqual(inventory, [{"dut": identity.name, "usb_serial": identity.mac.upper(), "port": port.device}
+                                    for identity, port in zip(self.wiring.identities.values(), self.ports)])
+        self.assertEqual(access.call_count, len(self.wiring.identities))
+        self.assertEqual(access.call_args.args[1], os.R_OK | os.W_OK)
+
+    def test_inventory_rejects_missing_ambiguous_non_native_and_inaccessible_duts(self):
+        first = next(iter(self.wiring.identities.values()))
+        wrong_adapter = SimpleNamespace(**{**vars(self.ports[0]), "vid": 0x10C4, "pid": 0xEA60})
+        for ports, accessible, code in (
+                (self.ports[1:], True, "USB_DEVICE_NOT_FOUND"),
+                ([*self.ports, self.ports[0]], True, "USB_DEVICE_AMBIGUOUS"),
+                ([wrong_adapter, *self.ports[1:]], True, "USB_DEVICE_NOT_FOUND"),
+                (self.ports, False, "USB_DEVICE_NOT_ACCESSIBLE")):
+            with self.subTest(code=code), self.assertRaisesRegex(RuntimeError, f"{first.name}: {code}"):
+                verify_usb(self.wiring, enumerate_ports=lambda: ports, check_access=lambda *args: accessible)
+
+    def test_check_cli_uses_selected_wiring_and_never_resets(self):
+        output = io.StringIO()
+        with patch.object(Wiring, "from_markdown", return_value=self.wiring) as load, \
+                patch.object(usb, "verify_usb", return_value=[{"dut": "selected"}]) as verify, \
+                patch.object(usb, "reset_usb") as reset, redirect_stdout(output):
+            self.assertEqual(worker_main(["--check", "--wiring", "/bench/wiring.md"]), 0)
+        load.assert_called_once_with(Path("/bench/wiring.md"))
+        verify.assert_called_once_with(self.wiring)
+        reset.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue()), {"devices": [{"dut": "selected"}], "verified": True})
 
 
 class USBWorkerTests(unittest.TestCase):

@@ -356,7 +356,7 @@ class Component:
         """Require directed Standby/state within 250 ms of this player's TX.
 
         Linux timestamps mark the last transmitted/received byte. Both events
-        use the same wire clock; SSH's common mapping offset cancels. Identity
+        use the Pi's monotonic wire clock. Identity
         proof may finish later, but cannot make a late CEC response acceptable.
         """
         started = self._activation_timestamp(announcement, exact_component=True)

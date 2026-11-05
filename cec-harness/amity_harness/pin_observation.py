@@ -40,9 +40,6 @@ class PinObservation:
         self._validate()
         self._owner_boots, self._initiators = dict(self.scan.owner_boots), dict(self.scan.initiators)
         self._backend = self.session._backends[self.component.gpio]
-        self.clock_uncertainty_ns = getattr(self._backend, "clock_uncertainty_ns", 0)
-        if type(self.clock_uncertainty_ns) is not int or self.clock_uncertainty_ns < 0:
-            raise AssertionError("Pin observation needs a bounded physical wire clock")
         self._backend.open_monitor()
         self.started_ns = time.monotonic_ns()
         self._entered = True
@@ -90,8 +87,7 @@ class PinObservation:
                 or self.scan.dut.last_scan is not self.scan or self.scan._session is not self.session
                 or self.scan._testbed is not self.bed
                 or self.scan.owner_boots != self._owner_boots or self.scan.initiators != self._initiators
-                or self.session._backends.get(self.component.gpio) is not self._backend
-                or getattr(self._backend, "clock_uncertainty_ns", 0) != self.clock_uncertainty_ns):
+                or self.session._backends.get(self.component.gpio) is not self._backend):
             raise AssertionError("The positive pin observation lost its active scan, owner or wire")
         with self._condition:
             if self._error is not None:

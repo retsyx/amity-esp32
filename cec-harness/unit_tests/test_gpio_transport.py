@@ -1,18 +1,13 @@
-"""Physical-hold transport tests without GPIO, SSH or DUT network access."""
+"""Physical-hold tests without GPIO or DUT network access."""
 
-from contextlib import redirect_stdout
-import io
-import json
-import shlex
 import signal
-import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from amity_harness.config import RunConfig, use_config
 from amity_harness.dut import DUT, PinctrlGPIO
-from amity_harness.gpio import SSHPinctrlGPIO, hold_low, main
+from amity_harness.gpio import hold_low
 from unit_tests.harness_pins import reset_gpio
 
 
@@ -91,7 +86,7 @@ class GPIOTransportTests(unittest.TestCase):
         self.assertEqual(gpio.calls, [("low", self.pin), ("release", self.pin)])
         self.assertEqual(signal.pthread_sigmask(signal.SIG_BLOCK, set()), original_mask)
 
-    def test_invalid_gpio_and_duration_reject_before_gpio_or_ssh(self):
+    def test_invalid_gpio_and_duration_reject_before_gpio(self):
         gpio = GPIO()
         for pin in (-1, 28, True, str(self.pin)):
             with self.subTest(pin=pin), self.assertRaises(ValueError):
@@ -119,69 +114,6 @@ class GPIOTransportTests(unittest.TestCase):
             explicit = DUT("amity-dut-2", gpio=object())
             self.assertIsNot(explicit.gpio, gpio)
         self.assertIsInstance(DUT("amity-dut-2").gpio, PinctrlGPIO)
-
-    def runner(self, change=None, failure=None):
-        calls = []
-
-        def run(command, **options):
-            calls.append((command, options))
-            if failure:
-                raise failure
-            remote = shlex.split(command[-1])
-            result = {"protocol_version": 1, "request_id": remote[remote.index("--request-id") + 1],
-                      "gpio": int(remote[remote.index("--gpio") + 1]),
-                      "seconds": float(remote[remote.index("--seconds") + 1]), "released": True}
-            if change:
-                change(result)
-            return SimpleNamespace(stdout=json.dumps(result))
-
-        return run, calls
-
-    def test_ssh_transmits_one_complete_hold_with_quoted_path_and_bounded_timeout(self):
-        runner, calls = self.runner()
-        root = "/bench/harness root/$(literal)"
-        gpio = SSHPinctrlGPIO(host="pi@bench.example", root=root, port=2222, runner=runner)
-        result = gpio.hold_low(self.pin, 3.5)
-        self.assertEqual(result, {"gpio": self.pin, "seconds": 3.5, "released": True})
-        self.assertEqual(len(calls), 1)
-        command, options = calls[0]
-        self.assertEqual(command[0], "ssh")
-        self.assertIn("StrictHostKeyChecking=yes", command)
-        self.assertIn("BatchMode=yes", command)
-        self.assertEqual(command[-2], "pi@bench.example")
-        remote = shlex.split(command[-1])
-        self.assertEqual(remote[:2], ["env", "PYTHONPATH=" + root])
-        self.assertEqual(remote[remote.index("--gpio") + 1], str(self.pin))
-        self.assertEqual(options["timeout"], 23.5)
-        self.assertTrue(options["check"])
-
-    def test_ssh_requires_exact_release_acknowledgment_and_never_retries(self):
-        for change in (lambda r: r.update(released=False), lambda r: r.update(request_id="f" * 32),
-                       lambda r: r.update(gpio=-1), lambda r: r.update(seconds=True),
-                       lambda r: r.update(protocol_version=True)):
-            with self.subTest(change=change):
-                runner, calls = self.runner(change)
-                with self.assertRaises((ValueError, RuntimeError)):
-                    SSHPinctrlGPIO(runner=runner).hold_low(self.pin, 3.5)
-                self.assertEqual(len(calls), 1)
-        for error in (subprocess.TimeoutExpired(["ssh"], 23.5), subprocess.CalledProcessError(1, ["ssh"])):
-            runner, calls = self.runner(failure=error)
-            with self.assertRaises(type(error)):
-                SSHPinctrlGPIO(runner=runner).hold_low(self.pin, 3.5)
-            self.assertEqual(len(calls), 1)
-
-    def test_worker_validates_input_before_gpio_and_reports_only_finished_release(self):
-        gpio, output = GPIO(), io.StringIO()
-        args = ["--gpio", str(self.pin), "--seconds", "3.5", "--request-id", "a" * 32]
-        with patch("amity_harness.gpio.time.sleep"), redirect_stdout(output):
-            self.assertEqual(main(args, backend=gpio), 0)
-        self.assertEqual(json.loads(output.getvalue()), {"protocol_version": 1, "request_id": "a" * 32,
-                                                       "gpio": self.pin, "seconds": 3.5, "released": True})
-        self.assertEqual(gpio.calls, [("low", self.pin), ("release", self.pin)])
-        gpio.calls.clear()
-        with self.assertRaises(ValueError):
-            main(["--gpio", str(self.pin), "--seconds", "9", "--request-id", "a" * 32], backend=gpio)
-        self.assertFalse(gpio.calls)
 
 
 if __name__ == "__main__":

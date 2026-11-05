@@ -132,7 +132,7 @@ class DisconnectedHoldTests(unittest.TestCase):
         f = helper.fixture(remote=remote)
         f.dut._runtime = replace(f.dut._runtime, cec_timeout=.05)
         f.target = f.member_avr if remote else f.avr
-        f.session._backends = {component.gpio: SimpleNamespace(clock_uncertainty_ns=0)
+        f.session._backends = {component.gpio: SimpleNamespace()
                                for component in f.source.components}
         f.session._wire_idle_since_ns = {}
         f.threads = []
@@ -220,22 +220,7 @@ class DisconnectedHoldTests(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "released before its requested duration"):
                     f.dut.press_key_disconnected(Key.VOLUME_UP, f.target, duration_ms=1000)
 
-    def test_release_interval_overlapping_hold_deadline_cannot_prove_duration(self):
-        f = self.fixture()
-        f.session._backends[f.target.gpio].clock_uncertainty_ns = 20_000_000
-        self.request(f, tail="uncertain_release")
-        with self.assertRaisesRegex(AssertionError, "unproven within wire clock uncertainty"):
-            f.dut.press_key_disconnected(Key.VOLUME_UP, f.target, duration_ms=1000)
-
-    def test_missing_or_invalid_wire_clock_fails_before_sending(self):
-        for uncertainty in (None, -1, True):
-            with self.subTest(uncertainty=uncertainty):
-                f = self.fixture()
-                f.session._backends[f.target.gpio].clock_uncertainty_ns = uncertainty
-                self.request(f)
-                with self.assertRaisesRegex(AssertionError, "clock uncertainty is unavailable"):
-                    f.dut.press_key_disconnected(Key.VOLUME_UP, f.target, duration_ms=1000)
-                self.assertFalse(f.calls)
+    def test_missing_physical_backend_fails_before_sending(self):
         f = self.fixture()
         f.session._backends.clear()
         self.request(f)
@@ -261,13 +246,12 @@ class DisconnectedHoldTests(unittest.TestCase):
                       "repeat_after_disconnect_wire_timestamp_ns", "observation_end_monotonic_ns",
                       "observed_wires", "idle_receive_since_ns", "cleanup_verified", "presses",
                       "press_wire_timestamp_ns", "release_wire_timestamp_ns", "deadline_monotonic_ns",
-                      "hold_deadline_monotonic_ns", "wire_clock_uncertainty_ns", "release_completion_upper_ns"):
+                      "hold_deadline_monotonic_ns"):
             self.assertEqual(report[field], trace[field], field)
         self.assertLess(report["first_press_wire_timestamp_ns"], report["disconnected_monotonic_ns"])
         self.assertLess(report["disconnected_monotonic_ns"], report["repeat_after_disconnect_wire_timestamp_ns"])
         self.assertLess(report["repeat_after_disconnect_wire_timestamp_ns"], report["release_wire_timestamp_ns"])
         self.assertGreaterEqual(report["release_wire_timestamp_ns"], report["hold_deadline_monotonic_ns"])
-        self.assertEqual(report["release_completion_upper_ns"], report["release_wire_timestamp_ns"])
         self.assertTrue(all(stamp >= report["observation_end_monotonic_ns"]
                             for stamp in report["idle_receive_since_ns"].values()))
         self.assertNotIn("PRIVATE_", repr(bed.report))

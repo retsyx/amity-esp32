@@ -6,7 +6,6 @@ import io
 import json
 import os
 from pathlib import Path
-import shlex
 import signal
 import subprocess
 import sys
@@ -221,25 +220,8 @@ class StatusLEDTests(unittest.TestCase):
         self.assertEqual((root / "PWR/trigger").read_text().strip(), "none")
         self.assertEqual((root / "ACT/trigger").read_text().strip(), "mmc0")
 
-    def test_ssh_command_quotes_root_and_uses_one_unprivileged_worker(self):
-        root = "/bench/harness root/$(literal)"
-        command = _command("pi@example.local", root, 2222)
-        self.assertEqual(command[0], "ssh")
-        self.assertIn("StrictHostKeyChecking=yes", command)
-        self.assertIn("BatchMode=yes", command)
-        self.assertIn("ServerAliveInterval=2", command)
-        self.assertEqual(command[-2], "pi@example.local")
-        self.assertEqual(shlex.split(command[-1]), ["env", "PYTHONPATH=" + root, "python3", "-u", "-m",
-                                                     "amity_harness.status_led", "--worker"])
-        self.assertNotIn("sudo", command[-1])
-        self.assertEqual(_command()[0], sys.executable)
-
-    def test_invalid_connection_arguments_reject_before_subprocess(self):
-        for values in (("-option",), ("pi@bad host",), ("pi@host\x00",), (False,),
-                       ("pi@host", "relative"), ("pi@host", "/root", 0),
-                       ("pi@host", "/root", True)):
-            with self.subTest(values=values), self.assertRaises(ValueError):
-                _command(*values)
+    def test_command_uses_current_python_and_one_unprivileged_local_worker(self):
+        self.assertEqual(_command(), [sys.executable, "-u", "-m", "amity_harness.status_led", "--worker"])
 
     def process(self):
         process = Mock()
@@ -266,7 +248,7 @@ class StatusLEDTests(unittest.TestCase):
             with patch("amity_harness.status_led.subprocess.Popen", return_value=process), \
                     patch("amity_harness.status_led._message", side_effect=failure), \
                     patch("amity_harness.status_led._event") as event:
-                with run_status_led("pi@example.local") as active:
+                with run_status_led() as active:
                     self.assertFalse(active)
                     process.communicate.assert_called_once()
                 self.assertNotIn("secret", str(event.call_args_list))

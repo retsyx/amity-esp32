@@ -67,7 +67,7 @@ _ROUTING_ASSERTION_FIELDS = frozenset(("kind", "physical_address", "input", "com
                                       "trigger_wire_timestamp_ns", "trigger_frame", "max_elapsed_ns", "response_latency_ns",
                                       "observation_end_monotonic_ns", "observed_wires", "observed_frame_count", "idle_receive_since_ns",
                                       "previous", "selected", "shared", "standby_wire_timestamp_ns", "power_on_wire_timestamp_ns",
-                                      "routing_wire_timestamp_ns", "standby_completion_upper_ns", "power_on_completion_upper_ns", "timestamp_kind", "count"))
+                                      "routing_wire_timestamp_ns", "timestamp_kind", "count"))
 _SETTINGS_FIELDS = frozenset(("phase", "dut", "device_id", "tentacle_id", "request_id", "old_boot", "address",
                               "previous_address", "stage", "member_boot", "settings_revision", "error_type",
                               "configured", "owner_boot", "detected_address", "selected_address"))
@@ -82,7 +82,7 @@ _KEY_FIELDS = frozenset(("key", "emitted_key", "duration_ms", "started_monotonic
                         "first_press_wire_timestamp_ns", "disconnected_monotonic_ns",
                         "repeat_after_disconnect_wire_timestamp_ns", "observation_end_monotonic_ns",
                         "observed_wires", "idle_receive_since_ns", "cleanup_verified",
-                        "hold_deadline_monotonic_ns", "wire_clock_uncertainty_ns", "release_completion_upper_ns"))
+                        "hold_deadline_monotonic_ns"))
 _MEMBERSHIP_FIELDS = frozenset(("phase", "candidate", "device_id", "name", "request_id", "scan_id",
                                "operation_stage", "candidate_id", "boot", "member_boot",
                                "membership_revision", "reset", "retained_member", "error_type",

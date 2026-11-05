@@ -16,7 +16,7 @@ from contextlib import redirect_stdout, redirect_stderr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import CecError, CecSession, DUT
-from amity_harness.ble_keyboard import KeyboardConflict, LocalKeyboard, PairedKeyboard, SSHKeyboard
+from amity_harness.ble_keyboard import KeyboardConflict, LocalKeyboard, PairedKeyboard
 from amity_harness.config import RunConfig
 from amity_harness.dut import AmityHTTPError
 from amity_harness.runner import main as run_main
@@ -735,7 +735,7 @@ class PairedKeyboardTests(unittest.TestCase):
 
 
 class KeyboardTransportTests(unittest.TestCase):
-    def test_cli_keyboard_python_selects_only_keyboard_worker(self):
+    def test_cli_uses_local_keyboard_in_the_runner_environment(self):
         captured = []
 
         def run(test, config):
@@ -743,28 +743,12 @@ class KeyboardTransportTests(unittest.TestCase):
             return {"test": "keyboard", "passed": True, "testbeds": []}
 
         with patch("amity_harness.runner.run_test", side_effect=run), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            result = run_main(lambda: None, ["--credentials", "/unused/private.json", "--harness-host", "pi@bench",
-                                            "--harness-root", "/home/pi/harness", "--ble-python", "/home/pi/ble/bin/python",
-                                            "--ssh-port", "2222", "--no-status-led"])
+            result = run_main(lambda: None, ["--credentials", "/unused/private.json", "--no-status-led"])
         self.assertEqual(result, 0)
         worker = captured[0].keyboard_factory()
-        self.assertIsInstance(worker, SSHKeyboard)
-        self.assertEqual(worker.python, "/home/pi/ble/bin/python")
-        self.assertEqual(worker.port, 2222)
-        cec_factory = captured[0].session_factory.keywords["backend_factory"]
-        self.assertNotIn("python", cec_factory.keywords)
-
-    def test_ssh_command_quotes_remote_paths_and_never_contains_dut_authentication(self):
-        keyboard = SSHKeyboard(host="pi@test2.local", root="/home/pi/my harness", port=2222,
-                               python="/home/pi/keyboard env/bin/python")
-        command = keyboard._command()
-        self.assertEqual(command[:2], ["ssh", "-T"])
-        self.assertIn("2222", command)
-        self.assertIn("'PYTHONPATH=/home/pi/my harness'", command[-1])
-        self.assertIn("'/home/pi/keyboard env/bin/python'", command[-1])
-        self.assertNotIn("password", " ".join(command).lower())
-        with self.assertRaises(ValueError):
-            SSHKeyboard(host="-ProxyCommand=bad", root="/tmp")
+        self.assertIsInstance(worker, LocalKeyboard)
+        self.assertEqual(worker.python, sys.executable)
+        self.assertEqual(captured[0].session_factory, CecSession)
         with self.assertRaises(ValueError):
             RunConfig(keyboard_factory=42)
 

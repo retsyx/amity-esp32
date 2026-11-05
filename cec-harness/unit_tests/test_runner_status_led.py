@@ -70,10 +70,9 @@ class RunnerStatusLedTests(unittest.TestCase):
                     self.run_cli(scenario, "--output", "/unused/result.json")
                 self.assertEqual(self.events, ["led.start", "scenario", "led.stop"])
 
-    def test_remote_options_reach_indicator(self):
-        self.assertEqual(self.run_cli(lambda: None, "--harness-host", "pi@bench.example",
-                                     "--harness-root", "/bench/harness root", "--ssh-port", "2222"), 0)
-        self.assertEqual(self.options, {"host": "pi@bench.example", "root": "/bench/harness root", "port": 2222})
+    def test_indicator_runs_locally(self):
+        self.assertEqual(self.run_cli(lambda: None), 0)
+        self.assertEqual(self.options, {})
 
     def test_opt_out_never_starts_indicator(self):
         self.assertEqual(self.run_cli(lambda: None, "--no-status-led"), 0)

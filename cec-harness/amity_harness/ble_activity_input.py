@@ -107,14 +107,6 @@ class BLEActivityEvidence(BLEInputEvidence):
         target = targets[0]
         record = self._begin(keyboard, "activity_all_up_gate" if all_up else "activity_gate_fallback")
         record.update(activity_id=activity.activity_id, target=target, owner=source.dut.identity.device_id)
-        clocks = [getattr(self.session._backends[component.gpio], "clock_uncertainty_ns", -1)
-                  for component in required]
-        if any(type(value) is not int or value < 0 for value in clocks):
-            raise AssertionError("BLE activity evidence needs a bounded wire clock")
-        uncertainty = max(clocks)
-        record["wire_clock_uncertainty_ns"] = {str(component.gpio):
-            self.session._backends[component.gpio].clock_uncertainty_ns
-            for component in required}
         consumer = 0 if volume is None else 0xE9
         volume_first = volume_repeated = None
         with (ThreadPoolExecutor(max_workers=1) as readiness,
@@ -148,7 +140,7 @@ class BLEActivityEvidence(BLEInputEvidence):
                                         operands=b"\x6d" if repairing else b"")
             # Cancellation and this initialization witness share the back
             # wire. Front-side display Standby is verified independently.
-            if max(ended.timestamp_ns, volume_ended.timestamp_ns) + 2 * uncertainty >= initialized.timestamp_ns:
+            if max(ended.timestamp_ns, volume_ended.timestamp_ns) >= initialized.timestamp_ns:
                 raise AssertionError("The accepted BLE transition did not stop both old holds before setup")
             # A same-target selection initially has the old ready snapshot.
             # Start its readiness reads only after physical acceptance proof.
@@ -178,7 +170,7 @@ class BLEActivityEvidence(BLEInputEvidence):
             # member's CEC sequence gives no such bound on the main's gate.
             fallback_lower = (route.timestamp_ns if source.dut is self.dut else selected) + 1_000_000_000
             fallback_observed = None
-            if blocked_sent + uncertainty >= fallback_lower:
+            if blocked_sent >= fallback_lower:
                 raise AssertionError("The BLE gate probes missed the one-second release window")
             if all_up:
                 self._report_change(reports, record, "all_up")
@@ -196,12 +188,9 @@ class BLEActivityEvidence(BLEInputEvidence):
             released = self._release(source, after=fresh_up, deadline_ns=fresh_up + self._budget())
             if all_up:
                 started = pins.first_frame(fresh.raw, after=fresh_down, timeout=self.dut._runtime.cec_timeout)
-                upper = started.timestamp_ns + 2 * pins.clock_uncertainty_ns
-                if upper >= fallback_lower:
+                if started.timestamp_ns >= fallback_lower:
                     raise AssertionError("All-up did not open the input gate before its fallback")
                 record.update(fresh_press_pin_start_ns=started.timestamp_ns,
-                              fresh_press_pin_start_upper_ns=upper,
-                              fresh_press_pin_clock_uncertainty_ns=pins.clock_uncertainty_ns,
                               fresh_press_pin_frame=started.raw.hex(":"),
                               fresh_press_pin_eom=list(started.eom), fresh_press_pin_ack=list(started.ack))
             if (fresh.timestamp_ns >= released.timestamp_ns

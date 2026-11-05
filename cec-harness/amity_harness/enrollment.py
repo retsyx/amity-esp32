@@ -1,8 +1,8 @@
 """Provision the bench main through standard Matter BLE Wi-Fi commissioning.
 
 Only this bootstrap uses Matter. After enrollment, test control and observations
-continue through the shipping authenticated HTTPS UI. Secrets cross SSH on stdin;
-the native controller's private log and isolated storage remain on the Pi.
+continue through the shipping authenticated HTTPS UI. Secrets pass to the local
+worker on stdin; its private log and isolated storage remain on the Pi.
 """
 
 import argparse
@@ -18,7 +18,6 @@ import os
 from pathlib import Path
 import pwd
 import re
-import shlex
 import shutil
 import signal
 import socket
@@ -88,30 +87,21 @@ def _text(value, description):
 
 
 class MatterEnrollment:
-    """One bounded enrollment on the Pi, locally or through a short SSH worker.
+    """One bounded enrollment through a short-lived worker on the harness Pi.
 
     ``credentials=None`` reads the Pi's private default enrollment file. An
-    explicit private file is read on the caller and transferred only on stdin.
+    explicit private file is passed to the local worker only on stdin.
     Each enrollment uses fresh controller/platform state, avoiding stale fabric
     records after a factory reset. The latest successful generation is retained.
     """
 
-    def __init__(self, *, credentials=None, host=None,
-                 root="/home/pi/amity/esp32/cec-harness", port=None,
+    def __init__(self, *, credentials=None,
                  sdk_path=None, paa_path=None, storage=DEFAULT_STORAGE,
-                 timeout=180, python="python3", ble_controller=0, runner=None):
+                 timeout=180, python=sys.executable, ble_controller=0, runner=None):
         _positive_seconds(timeout, "Matter enrollment timeout")
-        if (host is not None and (not isinstance(host, str) or not host or host.startswith("-")
-                                 or any(c.isspace() for c in host) or "\x00" in host)):
-            raise ValueError("Invalid enrollment SSH host")
-        if not isinstance(root, str) or not root.startswith("/") or "\x00" in root:
-            raise ValueError("The enrollment harness root must be absolute")
-        if port is not None and (type(port) is not int or not 1 <= port <= 65535):
-            raise ValueError("Invalid enrollment SSH port")
         if type(ble_controller) is not int or not 0 <= ble_controller <= 255:
             raise ValueError("Invalid enrollment Bluetooth adapter")
         self.credentials = None if credentials is None else Path(credentials)
-        self.host, self.root, self.port = host, root, port
         self.sdk_path = None if sdk_path is None else _text(str(sdk_path), "Matter SDK path")
         self.paa_path = None if paa_path is None else _text(str(paa_path), "Matter PAA path")
         self.storage = _text(str(storage), "Matter storage path")
@@ -128,18 +118,13 @@ class MatterEnrollment:
             arguments += ["--sdk-path", self.sdk_path]
         if self.paa_path is not None:
             arguments += ["--paa-path", self.paa_path]
-        if self.host is None:
-            return arguments
-        remote = shlex.join(["env", "PYTHONPATH=" + self.root, *arguments])
-        return ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=yes", *(["-p", str(self.port)] if self.port else []),
-                self.host, remote]
+        return arguments
 
     def commission(self, dut, *, timeout=None):
         return self._operation(dut, "enroll", timeout=timeout)
 
     def verify_factory(self, dut, *, timeout=None):
-        """Prove zero saved fabrics/networks over PASE without provisioning."""
+        """Prove zero saved fabrics/networks and release the verification PASE."""
         return self._operation(dut, "verify_factory", timeout=timeout)
 
     def _operation(self, dut, operation, *, timeout=None):
@@ -367,8 +352,7 @@ def _worker_signals():
         for signum in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
             previous[signum] = signal.signal(signum, interrupted)
         if sys.platform.startswith("linux"):
-            # A non-PTY SSH channel need not send HUP to its command. Arrange
-            # for sshd's exit on disconnect to unwind this worker instead.
+            # Stop the worker if the runner exits before normal cleanup.
             parent = os.getppid()
             libc = ctypes.CDLL(None, use_errno=True)
             if libc.prctl(1, int(signal.SIGHUP), 0, 0, 0) != 0:  # PR_SET_PDEATHSIG
@@ -462,6 +446,21 @@ async def _commission_factory(controller, clusters, credentials, *, timeout):
         raise EnrollmentError("Matter controller did not confirm the assigned node")
 
 
+async def _verify_factory_and_release(controller, clusters, credentials, *, timeout):
+    """Verify factory state and release this verification's commissioning fail-safe."""
+    deadline = time.monotonic() + timeout
+    await _verify_factory(controller, clusters, credentials, timeout=timeout)
+    # PASE arms the DUT's fail-safe even for reads. BLE disconnect alone does
+    # not release it, so cancel it through the standard commissioning command
+    # after proving that no saved fabrics or networks can be rolled back.
+    commissioning = clusters.GeneralCommissioning
+    response = await _bounded(controller.SendCommand(
+        1, 0, commissioning.Commands.ArmFailSafe(expiryLengthSeconds=0, breadcrumb=0)), deadline)
+    error = getattr(response, "errorCode", None)
+    if not isinstance(error, int) or isinstance(error, bool) or error != commissioning.Enums.CommissioningErrorEnum.kOk:
+        raise EnrollmentError("Matter did not release the factory verification fail-safe")
+
+
 def _native_worker(request, args):
     storage = Path(args.storage)
     # CHIP's Linux platform filenames live under /tmp in the pinned Pi SDK.
@@ -489,7 +488,7 @@ def _native_worker(request, args):
         controller = admin.NewController(nodeId=112233, paaTrustStorePath=str(args.paa_path))
         credentials = _credentials(request["credentials"])
 
-        operation = _commission_factory if request["operation"] == "enroll" else _verify_factory
+        operation = _commission_factory if request["operation"] == "enroll" else _verify_factory_and_release
         asyncio.run(operation(controller, Clusters, credentials, timeout=args.timeout))
     finally:
         if controller is not None:

@@ -30,7 +30,6 @@ class PinObservationTests(unittest.TestCase):
     def test_exact_positive_start_is_preserved_without_changing_addresses_or_power(self):
         with self.fixture() as (_, avr, source, scan, backend):
             power, active = source.power, backend.active
-            backend.clock_uncertainty_ns = 1_000
             with PinObservation(source, scan=scan) as pins:
                 self.assertTrue(backend.monitor)
                 after = time.monotonic_ns()
@@ -39,7 +38,6 @@ class PinObservationTests(unittest.TestCase):
                 found = pins.first_frame(frame.raw, after=after)
                 self.assertIs(found, frame)
                 self.assertEqual(found.timestamp_ns, frame.started_ns)
-                self.assertEqual(pins.clock_uncertainty_ns, 1_000)
                 self.assertEqual(source.power, power)
                 self.assertEqual(backend.active, active)
             self.assertFalse(backend.monitor)
@@ -81,7 +79,7 @@ class PinObservationTests(unittest.TestCase):
                 self.assertIs(scan.validate_owners, original)
 
     def test_changed_owner_scan_wire_or_session_invalidates_positive_evidence(self):
-        for fault in ("owner", "initiator", "scan", "bed", "session", "clock"):
+        for fault in ("owner", "initiator", "scan", "bed", "session", "wire"):
             with self.subTest(fault=fault), self.fixture() as (dut, _, source, scan, backend):
                 with self.assertRaises(AssertionError):
                     with PinObservation(source, scan=scan) as pins:
@@ -96,7 +94,11 @@ class PinObservationTests(unittest.TestCase):
                         elif fault == "session":
                             source._session = None
                         else:
-                            backend.clock_uncertainty_ns = 1
+                            scan._session._backends[source.gpio] = object()
+                            try:
+                                pins.assert_healthy()
+                            finally:
+                                scan._session._backends[source.gpio] = backend
                         pins.assert_healthy()
                 self.assertFalse(backend.monitor)
 

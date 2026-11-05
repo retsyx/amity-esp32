@@ -121,8 +121,7 @@ class LookupScans:
                              and earliest <= row.get("wire_timestamp_ns", 0) < frame.timestamp_ns]
             if announcements:
                 announcement = max(announcements, key=lambda row: row["wire_timestamp_ns"])
-                # Both completions use the same physical wire's clock mapping;
-                # its common offset/uncertainty cannot reverse their order.
+                # Both completions use the Pi's monotonic wire clock.
                 metadata.append({**proof, "announcement_frame": expected,
                                  "announcement_wire_timestamp_ns": announcement["wire_timestamp_ns"]})
             else:

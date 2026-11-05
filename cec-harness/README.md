@@ -4,9 +4,9 @@ Don't log test run results in this file. This file is only for describing the te
 
 A Python functional test declares its DUTs, component topology and assertions.
 The common framework configures the run, authenticates DUTs, owns the CEC
-adapters and collects evidence. CEC I/O and physical button holds run on the
-Raspberry Pi bench, locally or over SSH. There is no boot-time virtual theater,
-device profile file or permanently running follower service.
+adapters and collects evidence. The runner, browser, CEC I/O, physical button
+holds and DUT USB connections all run on the Raspberry Pi bench. There is no
+boot-time virtual theater, device profile file or permanently running follower service.
 
 **Functional tests MUST use the existing authenticated HTTP APIs used by the
 shipping Amity UI. Never add firmware APIs, test-only commands, authentication
@@ -27,6 +27,8 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
 - `amity_harness/enrollment.py`: Pi Matter controller, factory-state checks,
   Wi-Fi enrollment and verification after the main's final reset.
 - `setup.py`: Pi software installation, deployment, reboot and readiness checks.
+- `run`: launches functional tests with the installed `.harness-python` runtime.
+- `setup_runtime.py`, `runtime-requirements.txt`: pinned USB and browser dependencies.
 - `setup_matter.py`, `matter-requirements.txt`: installer and pinned dependencies
   for the Pi Matter controller.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
@@ -85,10 +87,9 @@ device identities. The temporary names are `amity-dut-t` and `amity-dut-2-t`;
 canonical names are `amity-dut` and `amity-dut-2`. After restart, the test verifies
 hostname persistence and reconnection before refreshing physical scan proof.
 All hostname and configuration changes use the main's authenticated web UI
-operations. USB is used only for secondary chip restarts on the runner computer.
-The reset worker needs `pyserial` and `esp-pylib`; use `--usb-python PATH` to
-select an ESP-IDF Python environment when the runner Python lacks them. USB
-serials come from `TEST-HARNESS.md`. Resets use DTR/RTS control lines and send
+operations. USB is used only for secondary chip restarts on the Pi.
+Setup installs `pyserial` and `esp-pylib` in the managed runtime. USB serials
+come from `TEST-HARNESS.md`. Resets use DTR/RTS control lines and send
 no serial bytes, bootloader commands or configuration writes.
 Failed hostname tests leave names, activities and membership unchanged for
 debugging and stop subsequent scenarios. CEC and HTTP resources are released;
@@ -107,15 +108,22 @@ python3 cec-harness/setup.py --host pi@new-harness.local
 
 Initial setup records a previously unseen SSH host key; changed keys are rejected.
 
-This deploys the harness, installs its system and Python dependencies, prepares
+This deploys the harness, installs system Chromium and the pinned USB and
+Playwright dependencies in `.harness-python/` at the repository root, prepares
 Bluetooth and Matter, builds the CEC kernel modules with DKMS if needed, and
 configures CEC adapters from `TEST-HARNESS.md`. Building a missing driver supports
 kernel series 6.12 and 6.18. Setup also grants the harness
-account access to CEC, GPIO and the required privileged helpers, and disables
-old `amity-cec@` followers. It reboots the Pi when needed, reconnects and checks
-readiness. Rerunning the command updates the installation without creating
+account access to CEC, GPIO, DUT USB and the required privileged helpers, and
+disables old `amity-cec@` followers. It reboots the Pi when needed, reconnects and checks
+readiness, including all documented USB identities and device permissions without
+opening serial ports, and the browser, Matter and BLE dependencies.
+Rerunning the command updates the installation without creating
 duplicate adapters. Test scenarios still own their simulated equipment; setup
 does not create permanent CEC responders or configure DUTs.
+
+Setup defaults to the SSH account's `~/amity/esp32` directory; `--root PATH` and
+`--ssh-port PORT` select another deployment directory or SSH port. Connect every
+DUT's USB data cable to the Pi before the readiness check.
 
 For a checkout already on the Pi:
 
@@ -135,16 +143,21 @@ python3 cec-harness/setup.py --host pi@new-harness.local --check
 
 Setup installs infrastructure only. Supply the private bench Wi-Fi, factory
 Matter and initial administration credentials described below when running
-tests. The bench LAN must support IPv6 and multicast DNS, and the runner must
-be able to reach the DUT's HTTPS administration address.
+tests. These files and any optional firmware update bundle must be present on
+the Pi. The bench LAN must support IPv6 and multicast DNS, and the Pi must be
+able to reach the DUT's HTTPS administration address. Functional execution
+needs no development computer once setup and file transfer are complete.
 
 ## Main enrollment
 
-Each invocation of `cec-harness/run.py` requires a **factory-reset
+Each invocation of `cec-harness/run` requires a **factory-reset
 `amity-dut`**. Preparation never resets it implicitly or reuses an enrolled
 main. Reachable HTTPS fails preparation. Standard Matter preflight must confirm
 zero fabrics and no configured Wi-Fi before the controller supplies the bench
 network credentials.
+
+Final factory-state verification releases its own Matter commissioning fail-safe
+after confirming zero fabrics and networks, leaving the board ready for the next run.
 
 The Pi briefly presses FW RESET to reopen initial Matter setup if its
 five-minute boot window expired, then commissions over BLE and verifies the
@@ -205,9 +218,9 @@ and main's factory values. The numeric PIN differs from the longer printed
 manual pairing code. The factory PIN and full discriminator can be read from
 the original `amity-factory.bin` provisioning data or decoded from the Matter QR
 payload in `amity-pairing.txt`; retain these private provisioning files.
-`--enrollment-credentials PATH` optionally supplies this file from the caller.
+`--enrollment-credentials PATH` optionally selects another private file on the Pi.
 
-The separate `--credentials` file lives on the runner host, has mode `0600`, and
+The separate `--credentials` file lives on the Pi, has mode `0600`, and
 contains the main's **provisioned initial** admin password:
 
 ```json
@@ -216,25 +229,19 @@ contains the main's **provisioned initial** admin password:
 
 The device must have an initial admin password; automatic preparation does not
 perform password onboarding. Factory reset regenerates the HTTPS certificate,
-so the bench examples explicitly use `--insecure`. Secrets travel over SSH stdin
-and are excluded from reports; the enrollment worker receives no HTTP password
+so the bench examples explicitly use `--insecure`. Secrets are excluded from
+reports; the local enrollment worker receives no HTTP password
 or session token.
 
 After this one-time setup, normal test commands enroll automatically. To check
 only enrollment and successful reset cleanup, run from the checkout root:
 
 ```sh
-python3 cec-harness/run.py --test enrollment \
-  --credentials test-results/credentials/amity-dut.json --insecure \
-  --harness-host pi@test2.local \
+./cec-harness/run --test enrollment \
+  --credentials test-results/credentials/amity-dut.json --insecure --url https://amity.local \
   --output test-results/functional/enrollment.json
 ```
 
-Omit `--harness-host` when running directly on the Pi. Remote setup installs the
-harness at `/home/pi/amity/esp32/cec-harness`; use `--harness-root` for another
-installation location.
-`--matter-python` selects the Pi's controller interpreter (default `python3`);
-it is independent of the BLE keyboard fixture's `--ble-python`.
 `--enrollment-timeout` defaults to 240 seconds for main preparation and,
 separately, final reset verification, with a bounded worker shutdown allowance.
 It is independent of `--timeout`, `--cec-timeout` and `--firmware-timeout`.
@@ -243,10 +250,10 @@ factory reset after success; it does not leave an enrolled interactive session.
 
 After inspecting a failed run, reset through **Advanced → Factory Reset**, hold
 the main's FW RESET button for at least ten seconds, or invoke its wired button
-from the development computer:
+from the checkout root on the Pi:
 
 ```sh
-ssh pi@test2.local 'cd /home/pi/amity/esp32 && ./cec-harness/fw-reset amity-dut 10.5'
+./cec-harness/fw-reset amity-dut 10.5
 ```
 
 The button command runs on the Pi and needs no DUT network connection or HTTP
@@ -475,9 +482,8 @@ it does not need its own HTTP credentials, Wi-Fi connection or reachable UI.
 The shared helper scans through the existing UI Add flow and holds the
 candidate's FW RESET for 3.5 seconds, then releases it. The GPIO assignment is
 resolved from the setup/reset table parsed from `TEST-HARNESS.md`, never a
-hardcoded bench pin in the framework or tests. With `--harness-host`,
-the resolved GPIO is sent to the Pi, which owns the bounded hold and releases
-the pin even if the requesting process disconnects. The normal admission
+hardcoded bench pin in the framework or tests. The Pi owns the bounded hold
+and releases the pin when it ends or the worker exits. The normal admission
 profile uses no setup code.
 
 `member.assert_connected()` verifies the candidate's full inventory device ID,
@@ -799,7 +805,7 @@ by the AVR's Set Stream Path completion. It drains every involved receiver
 through the assertion boundary so queued evidence or a transient Standby
 cannot hide behind a later On state. Original wire frames remain visible even
 if component hooks drop or rewrite their handling. Cross-wire comparisons use
-conservative SSH clock bounds. Linux timestamps describe complete frames;
+the Pi's monotonic clock. Linux timestamps describe complete frames;
 these checks establish completion order, not first-edge timing or proof that
 frames on isolated wires never overlap.
 Every selected activity and its route are verified. Here, an unused display
@@ -1027,18 +1033,8 @@ address to the DUT, confirming capture through that window. If monitor mode need
 descriptor, drops privileges, passes it to the worker and exits. The ordinary
 CEC responder remains unprivileged.
 
-Pi software setup installs BlueZ and the distribution's `python3-dbus-next`;
-the normal `python3` works without `--ble-python`. A custom isolated environment
-is optional:
-
-```sh
-python3 -m venv /home/pi/amity/ble-keyboard-venv
-/home/pi/amity/ble-keyboard-venv/bin/python -m pip install dbus-next==0.2.3
-```
-
-For that environment, use `--ble-python /home/pi/amity/ble-keyboard-venv/bin/python`
-together with the existing `--harness-host` and `--harness-root` options. Only BLE fixture
-control and HID reports cross SSH; DUT credentials remain on the runner host.
+Pi software setup installs BlueZ and the distribution's `python3-dbus-next`,
+which the managed runtime shares for the local BLE fixture.
 The worker releases buttons, unregisters its services and advertisement, restores
 the Pi's pairing setting and removes its new peer bond on exit. It does not
 restart Bluetooth or remove preexisting Pi bonds.
@@ -1046,12 +1042,12 @@ restart Bluetooth or remove preexisting Pi bonds.
 ## Firmware upgrade prelude
 
 Add `--firmware build/amity-update.bin` to a functional run to upgrade all boards
-listed in `TEST-HARNESS.md` before the selected tests. For example:
+listed in `TEST-HARNESS.md` before the selected tests. Copy a prebuilt update
+bundle to the Pi first; the harness needs no firmware SDK or local build. For example:
 
 ```sh
-python3 cec-harness/run.py --test all --firmware build/amity-update.bin \
-  --credentials test-results/credentials/amity-dut.json --insecure \
-  --harness-host pi@test2.local \
+./cec-harness/run --test all --firmware build/amity-update.bin \
+  --credentials test-results/credentials/amity-dut.json --insecure --url https://amity.local \
   --output test-results/functional/with-upgrade.json
 ```
 
@@ -1110,20 +1106,26 @@ connection while the hold is still pending. They require repetition after the
 disconnect, a final operand-free release by the original hold/CEC deadline,
 and no later presses throughout an additional CEC observation window. The
 release must not complete before the requested duration measured from request
-start; an overlapping wire-clock uncertainty interval cannot prove that bound.
+start.
 A fresh Select press must work afterward. The shared helper owns the cancellable
 request and receive-drain evidence; the scenario contains no socket handling.
 
-The runner requires Python 3.10 or newer on the development computer. Pi-side
-dependencies, CEC adapters and permissions are installed by
-[Pi software setup](#pi-software-setup). The runner and CEC helpers use the
-standard library; enrollment uses the Pi's pinned Python 3.13 Matter controller.
+Run functional tests on the Pi with `./cec-harness/run`. The launcher uses the
+managed Python 3.13 runtime installed by [Pi software setup](#pi-software-setup),
+including USB reboot and browser dependencies. Enrollment uses the Pi's separate
+pinned Matter controller. Test credentials, optional firmware and output paths
+are local to the Pi.
+
+Bench labels identify physical wiring and can differ from factory hostnames.
+The current main's factory hostname is `amity`; include `--url https://amity.local`
+when starting a run after factory reset. `--url` and `--dut-url DUT=URL` select
+the administration origin without changing DUT configuration.
 
 From the checkout root **on the Pi**:
 
 ```sh
-python3 cec-harness/run.py \
-  --credentials /private/path/amity-dut.json --insecure \
+./cec-harness/run \
+  --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
   --output test-results/functional/hdmi-scan-framework.json
 ```
 
@@ -1150,7 +1152,7 @@ configuration and physical control through the replacement adapter,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all ordinary scenarios. The same credentials, TLS, SSH and output
+or `--test all` for all ordinary scenarios. The same credentials, TLS and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful
 single-scenario CLI run includes `prepare_main`, its scenario entries and
@@ -1161,15 +1163,12 @@ verification entries.
 
 The two-hour endurance test requires explicit `--test soak`; neither the default
 nor `--test all` selects it. Run the entire process on the harness Pi, including
-Chromium, HTTP control, Matter enrollment and CEC I/O. After normal Pi setup,
-install its optional browser dependency there:
+Chromium, HTTP control, Matter enrollment and CEC I/O. Normal Pi setup installs
+and checks its browser dependencies:
 
 ```sh
-sudo apt-get install --yes --no-install-recommends chromium
-python3 -m venv --system-site-packages .cache/soak-python
-.cache/soak-python/bin/python -m pip install playwright==1.64.1
-.cache/soak-python/bin/python cec-harness/run.py --test soak \
-  --credentials /private/path/amity-dut.json --insecure \
+./cec-harness/run --test soak \
+  --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
   --output test-results/functional/soak.json
 ```
 
@@ -1195,7 +1194,7 @@ fixture serving the shipping UI from a full checkout on the Pi (including
 `components/web_admin/assets`):
 
 ```sh
-PYTHONPATH=cec-harness .cache/soak-python/bin/python cec-harness/browser_tests/soak_browser.py
+PYTHONPATH=cec-harness .harness-python/bin/python cec-harness/browser_tests/soak_browser.py
 ```
 
 This explicitly invoked regression covers login, Start/Repair, Standby,
@@ -1222,11 +1221,10 @@ writing; retain the redirected trace when debugging an interrupted run.
 
 The Pi's status LED blinks red while the functional runner is active, including
 test cleanup and report writing. Its previous LED triggers and brightness are
-restored when the run ends or its connection closes. Overlapping runs keep the
-indicator active until the last run finishes. This also works with
-`--harness-host`; LED writes use non-interactive `sudo` when needed. Unsupported
-hosts or unavailable LED permissions produce a diagnostic without changing test
-results. Use `--no-status-led` to leave the LEDs unchanged.
+restored when the run ends or its worker exits. Overlapping runs keep the
+indicator active until the last run finishes. LED writes use non-interactive
+`sudo` when needed. Unavailable LED permissions produce a diagnostic without
+changing test results. Use `--no-status-led` to leave the LEDs unchanged.
 
 Owner-proof failures retain the rejected check's bounded identity, boot,
 readiness and proof fields in stdio and `scans[].owner_failures` in the JSON
@@ -1241,8 +1239,8 @@ does not create a separate progress log; native Matter logs remain on the Pi as
 described above. Capture standard output and error to retain the runner trace:
 
 ```sh
-python3 cec-harness/run.py --test all \
-  --credentials /private/path/amity-dut.json --insecure \
+./cec-harness/run --test all \
+  --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
   --log-level DEBUG --output test-results/functional/all.json \
   > test-results/functional/all.log 2>&1
 ```
@@ -1250,13 +1248,26 @@ python3 cec-harness/run.py --test all \
 Create the redirect's parent directory before running that command. Log events
 are flushed as they are emitted, so a redirected trace retains completed steps
 even if the process is interrupted. Existing JSON evidence remains separate.
+
+For a run that continues after the development computer disconnects, launch it
+with `nohup` on the Pi:
+
+```sh
+mkdir -p test-results/functional
+nohup ./cec-harness/run --test all \
+  --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
+  --output test-results/functional/all.json \
+  > test-results/functional/all.log 2>&1 < /dev/null &
+```
+
+The trace and JSON report stay on the Pi.
+
 The Add Amity test uses only the main's credentials in the normal admission
 profile, for example:
 
 ```sh
-python3 cec-harness/run.py --test add_amity \
-  --credentials /private/path/amity-dut.json --insecure \
-  --harness-host pi@test2.local \
+./cec-harness/run --test add_amity \
+  --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
   --output test-results/functional/add-amity.json
 ```
 
@@ -1281,39 +1292,17 @@ described above. Each test bed contains its DUTs, components, scan evidence,
 CEC records and cleanup outcome. A failed run also includes an error. Test
 functions need no report-writing code.
 
-Alternatively, keep HTTP authentication and credentials on the development
-computer and run Matter enrollment, CEC I/O and physical button control over SSH
-on the Pi:
-
-```sh
-python3 cec-harness/run.py \
-  --credentials /private/local/path/amity-dut.json --insecure \
-  --harness-host pi@test2.local \
-  --output test-results/functional/hdmi-scan-framework.json
-```
-
-Run [Pi software setup](#pi-software-setup) first; its default deployment matches
-the runner's `/home/pi/amity/esp32/cec-harness` location. Set `--harness-root`
-for another installation. `--ssh-port` supports an existing SSH tunnel. SSH uses the
-normal known-host and authentication configuration. The harness transport
-carries CEC frames, component identities, bounded physical button requests and
-Matter enrollment settings when an explicit credential file is supplied;
-it receives no DUT HTTP password or session token. This is harness IPC, not an
-additional firmware API. Remote kernel timestamps are mapped conservatively to
-the local monotonic clock so
-queued pre-scan frames cannot count as fresh discovery evidence.
-
 ## Interactive use on test2
 
 This example inspects an enrolled main retained after a failed run. Direct
 `DUT` and `TestBed` calls do not perform the runner's enrollment or final reset.
-Use the Pi's ordinary Python 3 for these HTTP/CEC helpers; their imports do not
+Use the Pi's managed runtime for these HTTP/CEC helpers; their imports do not
 need the Matter SDK on `PYTHONPATH`. Start in the framework directory so its
 package is importable:
 
 ```sh
 cd /home/pi/amity/esp32/cec-harness
-python3
+../.harness-python/bin/python
 ```
 
 At the prompt, authenticate interactively and keep a test bed open while you
@@ -1345,10 +1334,10 @@ When debugging is complete, explicitly reset it before the next scripted run.
 Scripted scenarios use `with TestBed(...)` for fixture cleanup; the common
 runner separately owns initial enrollment and success-only final reset.
 
-Host-only checks from the checkout root:
+Hardware-free checks from the checkout root on the Pi:
 
 ```sh
-PYTHONPATH=cec-harness python3 -m unittest discover -s cec-harness/unit_tests -v
+PYTHONPATH=cec-harness .harness-python/bin/python -m unittest discover -s cec-harness/unit_tests -v
 ```
 
 These validate the framework, not DUT behavior.

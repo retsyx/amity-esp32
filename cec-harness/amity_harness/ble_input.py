@@ -333,10 +333,7 @@ class BLEInputEvidence:
             right = self._press(navigation, Key.RIGHT, after=both, deadline_ns=deadline)
             right_up, deadline = self._change(lambda: keyboard.report(keyboard=(), consumer=0xE9), record, "right_up")
             released_right = self._release(navigation, after=right_up, deadline_ns=deadline)
-            uncertainty = getattr(self.session._backends[navigation.gpio], "clock_uncertainty_ns", 0)
-            if type(uncertainty) is not int or uncertainty < 0:
-                raise AssertionError("BLE key wire clock uncertainty is unavailable")
-            continuation = released_right.timestamp_ns + 2 * uncertainty
+            continuation = released_right.timestamp_ns
             continued = self._press(volume, Key.VOLUME_UP, after=continuation,
                                     deadline_ns=continuation + self._budget())
             final_up, deadline = self._change(keyboard.all_up, record, "all_up")

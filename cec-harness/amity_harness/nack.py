@@ -222,16 +222,12 @@ class MissingCECRecipient:
         if type(through) is not int or through < self.started_ns:
             raise ValueError("Drain an active failed-key observation boundary")
         deadline = max(time.monotonic(), through / 1e9) + self.scan.dut._runtime.cec_timeout
-        uncertainty = getattr(self._backend, "clock_uncertainty_ns", 0)
-        if type(uncertainty) is not int or uncertainty < 0:
-            raise AssertionError("The failed-key monitor needs a bounded physical wire clock")
-        submit_after = through + 2 * uncertainty
         while True:
             self.assert_healthy()
             now = time.monotonic_ns()
-            if now >= submit_after:
+            if now >= through:
                 break
-            remaining = min(deadline - time.monotonic(), (submit_after - now) / 1e9)
+            remaining = min(deadline - time.monotonic(), (through - now) / 1e9)
             if remaining <= 0:
                 raise TimeoutError("Failed-key physical drain witness deadline expired")
             with self._condition:
@@ -263,7 +259,7 @@ class MissingCECRecipient:
                 if matches:
                     frame = min(matches, key=lambda candidate: candidate.timestamp_ns)
                     if (not 0 < self.coverage_started_ns
-                            or self.coverage_started_ns + 2 * uncertainty > self.withdrawn_ns):
+                            or self.coverage_started_ns > self.withdrawn_ns):
                         raise AssertionError("Pin coverage must synchronize before recipient withdrawal finishes")
                     record = {"kind": "physical_drain_witness", "requested_boundary_monotonic_ns": through,
                         "witness_component": witness.name, "frame": frame.raw.hex(":"),

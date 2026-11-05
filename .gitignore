@@ -52,6 +52,7 @@ amity-admin-password.txt
 # Downloaded SDK/test dependencies, caches and local Python environments.
 .cache/
 .matter-python/
+.harness-python/
 .matter-wheels/
 paa-root-certs/
 *.whl

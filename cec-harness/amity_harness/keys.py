@@ -213,16 +213,12 @@ def press_key_disconnected(dut, key, component, *, duration_ms=3000):
     backend = getattr(action.session, "_backends", {}).get(component.gpio)
     if backend is None:
         raise AssertionError("The disconnected hold has no physical wire clock")
-    uncertainty = getattr(backend, "clock_uncertainty_ns", 0)
-    if type(uncertainty) is not int or uncertainty < 0:
-        raise AssertionError("The disconnected hold wire clock uncertainty is unavailable")
     # Identity reads above can be slow. The physical interval begins immediately
     # before sending the key, after all of those reads have finished.
     action.started_ns = time.monotonic_ns()
     action.trace.update(started_monotonic_ns=action.started_ns, disconnected=True)
     hold_deadline = action.started_ns + duration_ms * 1_000_000
-    action.trace.update(hold_deadline_monotonic_ns=hold_deadline,
-                        wire_clock_uncertainty_ns=uncertainty)
+    action.trace.update(hold_deadline_monotonic_ns=hold_deadline)
 
     def first_press():
         while True:
@@ -258,15 +254,9 @@ def press_key_disconnected(dut, key, component, *, duration_ms=3000):
     # The API starts its bounded wait after admitting the request, not after
     # the first press completes. Request start is therefore the conservative
     # duration boundary. Check release completion only: Linux RX timestamps
-    # cannot establish when that frame's first edge began. SSH maps them to
-    # the lower end of its clock interval; an overlapping interval cannot
-    # prove that the requested duration survived the disconnected caller.
-    release_upper = release_ns + 2 * uncertainty
-    action.trace["release_completion_upper_ns"] = release_upper
+    # cannot establish when that frame's first edge began.
     if release_ns < hold_deadline:
-        if release_upper < hold_deadline:
-            raise AssertionError("The disconnected hold released before its requested duration")
-        raise AssertionError("The disconnected hold duration is unproven within wire clock uncertainty")
+        raise AssertionError("The disconnected hold released before its requested duration")
     if any(row["wire_timestamp_ns"] <= disconnected_ns for row in releases):
         raise AssertionError("The key stream ended before the client disconnected")
     if any(row["wire_timestamp_ns"] > release_ns for row in presses):

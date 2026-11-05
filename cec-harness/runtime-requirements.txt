@@ -1,0 +1,4 @@
+# Functional-test runtime; Matter's native controller is installed separately.
+pyserial==3.5
+esp-pylib==1.1.5
+playwright==1.64.1

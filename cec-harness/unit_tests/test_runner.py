@@ -12,7 +12,7 @@ from unittest.mock import patch
 from amity_harness import DUT, RunConfig, TestBed, TvComponent
 from amity_harness.config import current_config, use_config
 from amity_harness.runner import main, run_test
-from amity_harness.gpio import SSHPinctrlGPIO
+from amity_harness.cec import CecSession
 from amity_harness.trace import owner_assertion
 
 
@@ -227,23 +227,18 @@ class RunnerTests(unittest.TestCase):
             with self.subTest(registration=registration), self.assertRaises(ValueError):
                 main({"scan": scenario}, [], opt_in_tests=registration)
 
-    def test_harness_host_selects_remote_gpio_and_cec_without_performing_io(self):
+    def test_cli_uses_pi_local_cec_and_gpio_without_performing_io(self):
         def scenario():
             pass
 
         def capture(test, config):
-            gpio = config.gpio_factory()
-            self.assertIsInstance(gpio, SSHPinctrlGPIO)
-            self.assertEqual((gpio.host, gpio.root, gpio.port),
-                             ("pi@bench.example", "/bench/harness root", 2222))
-            self.assertIn("backend_factory", config.session_factory.keywords)
+            self.assertIsNone(config.gpio_factory)
+            self.assertIs(config.session_factory, CecSession)
             return {"test": test.__name__, "passed": True, "testbeds": []}
 
         with patch("amity_harness.runner.run_test", side_effect=capture), \
                 patch("amity_harness.runner.run_status_led"), redirect_stdout(io.StringIO()):
-            self.assertEqual(main(scenario, ["--credentials", "/private/main.json",
-                                            "--harness-host", "pi@bench.example",
-                                            "--harness-root", "/bench/harness root", "--ssh-port", "2222"]), 0)
+            self.assertEqual(main(scenario, ["--credentials", "/private/main.json"]), 0)
 
     def test_cli_keeps_cec_assertions_independent_from_long_operation_timeouts(self):
         def scenario():

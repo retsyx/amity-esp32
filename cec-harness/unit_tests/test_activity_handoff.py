@@ -94,8 +94,7 @@ class ActivityHandoffTests(unittest.TestCase):
             row = next(component for component in report["components"] if component["name"] == avr.name)
             proof = row["routing_assertions"][-1]
             for field in ("timestamp_kind", "previous", "selected", "shared", "standby_wire_timestamp_ns",
-                          "power_on_wire_timestamp_ns", "routing_wire_timestamp_ns", "standby_completion_upper_ns",
-                          "power_on_completion_upper_ns", "observation_end_monotonic_ns", "observed_wires",
+                          "power_on_wire_timestamp_ns", "routing_wire_timestamp_ns", "observation_end_monotonic_ns", "observed_wires",
                           "idle_receive_since_ns"):
                 self.assertEqual(proof[field], avr.routing_assertions[-1][field])
             self.assertNotIn("PRIVATE_HANDOFF_TOKEN", json.dumps(report))
@@ -146,12 +145,6 @@ class ActivityHandoffTests(unittest.TestCase):
                 session._wire_idle_since_ns = {gpio: time.monotonic_ns() + 10**12 for gpio in action.initiators}
                 observation.assert_ordered(since=action)
 
-    def test_overlapping_ssh_clock_intervals_cannot_establish_order(self):
-        with self.assertRaisesRegex(AssertionError, "out of order"):
-            with self.fixture() as fixture:
-                self.commands(fixture)
-                fixture[6]._backends[fixture[2].gpio].clock_uncertainty_ns = 10**9
-                fixture[0].assert_ordered(since=fixture[1])
 
     def test_undrained_wire_cannot_prove_absence(self):
         with self.assertRaisesRegex(TimeoutError, "did not drain"):

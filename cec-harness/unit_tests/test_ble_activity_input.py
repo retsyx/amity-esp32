@@ -279,7 +279,6 @@ class BLEActivityEvidenceTests(unittest.TestCase):
             class PhysicalPins:
                 def __init__(self, component, *, scan):
                     self.assert_source = component is next_player and scan is fixture.scan
-                    self.clock_uncertainty_ns = session._backends[next_player.gpio].clock_uncertainty_ns
 
                 def __enter__(self):
                     if not self.assert_source or fixture.keyboard.commands:
@@ -345,7 +344,7 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                                  if change["phase"] == "shortcut_up_setup_left_down")
                 self.assertLess(coalesced["finished_monotonic_ns"], record["routing_wire_timestamp_ns"])
                 if all_up:
-                    self.assertLess(record["fresh_press_pin_start_upper_ns"], record["fallback_lower_bound_monotonic_ns"])
+                    self.assertLess(record["fresh_press_pin_start_ns"], record["fallback_lower_bound_monotonic_ns"])
                     self.assertEqual(record["fresh_press_pin_frame"], "03:44:00")
                     self.assertEqual(record["fresh_press_pin_eom"], [False, False, True])
                     self.assertEqual(record["fresh_press_pin_ack"], [False, False, False])
@@ -514,7 +513,7 @@ class BLEActivityEvidenceTests(unittest.TestCase):
             fixture.main._runtime.cec_timeout = 1.1
             self.transition(fixture)
             record, = fixture.bed.control_observations[-1]["checks"]
-            self.assertLess(record["fresh_press_pin_start_upper_ns"], record["fallback_lower_bound_monotonic_ns"])
+            self.assertLess(record["fresh_press_pin_start_ns"], record["fallback_lower_bound_monotonic_ns"])
             self.assertGreater(record["fresh_press_wire_timestamp_ns"], record["fallback_lower_bound_monotonic_ns"])
             self.assertTrue(record["passed"])
             self.assertTrue(fixture.pin_closed)

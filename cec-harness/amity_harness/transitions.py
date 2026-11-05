@@ -70,16 +70,6 @@ class _WireObservation:
             return {0x6d: "on", 0x6c: "off", 0x40: "toggle", 0x6b: "toggle"}.get(frame.operands[0])
         return None
 
-    def _completion_upper(self, component, frame):
-        # SSH maps remote kernel time to the lower end of its clock interval.
-        # Independent wire workers can have different uncertainty; compare the
-        # earlier upper bound with the later lower bound, never midpoint guesses.
-        backend = self._session._backends.get(component.gpio)
-        uncertainty = getattr(backend, "clock_uncertainty_ns", 0)
-        if type(uncertainty) is not int or uncertainty < 0:
-            raise AssertionError("Handoff wire clock uncertainty is unavailable")
-        return frame.timestamp_ns + 2 * uncertainty
-
     def _complete(self, since, *, through=None):
         if self._session is None or self._closed or self._checked:
             raise RuntimeError("Assert one active activity wire observation")
@@ -160,8 +150,8 @@ class ActivityHandoff(_WireObservation):
                      and frame.operands == self.source.address.physical.to_bytes(2, "big")]
             if not old or not new or not route:
                 raise AssertionError("Handoff lacks fresh physical Standby, power-on or source routing")
-            if (max(self._completion_upper(self.previous, frame) for frame in old) >= min(frame.timestamp_ns for frame in new)
-                    or max(self._completion_upper(self.selected, frame) for frame in new) >= min(frame.timestamp_ns for frame in route)):
+            if (max(frame.timestamp_ns for frame in old) >= min(frame.timestamp_ns for frame in new)
+                    or max(frame.timestamp_ns for frame in new) >= min(frame.timestamp_ns for frame in route)):
                 raise AssertionError("Handoff physical commands completed out of order")
             proof = {"kind": "wire_handoff", "timestamp_ns": time.monotonic_ns(),
                      "since_monotonic_ns": started, "observation_end_monotonic_ns": ended,
@@ -170,8 +160,6 @@ class ActivityHandoff(_WireObservation):
                      "standby_wire_timestamp_ns": max(frame.timestamp_ns for frame in old),
                      "power_on_wire_timestamp_ns": min(frame.timestamp_ns for frame in new),
                      "routing_wire_timestamp_ns": min(frame.timestamp_ns for frame in route),
-                     "standby_completion_upper_ns": max(self._completion_upper(self.previous, frame) for frame in old),
-                     "power_on_completion_upper_ns": max(self._completion_upper(self.selected, frame) for frame in new),
                      "idle_receive_since_ns": {str(gpio): session._wire_idle_since_ns[gpio] for gpio in wires},
                      "observed_wires": sorted(wires), "timestamp_kind": "frame_completion"}
             self.receiver._routing_checks.append(proof)

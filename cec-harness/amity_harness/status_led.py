@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import re
 import select
-import shlex
 import signal
 import stat
 import subprocess
@@ -25,7 +24,6 @@ from uuid import uuid4
 
 
 _VERSION = 1
-_ROOT = "/home/pi/amity/esp32/cec-harness"
 _LED_ROOT = Path("/sys/class/leds")
 _NAMES = ("ACT", "PWR")
 _FILES = {"trigger", "brightness", "delay_on", "delay_off"}
@@ -38,21 +36,8 @@ class _Stopped(BaseException):
     pass
 
 
-def _command(host=None, root=_ROOT, port=None):
-    if (host is not None and (not isinstance(host, str) or not host or host.startswith("-")
-                             or "\x00" in host or any(c.isspace() for c in host))):
-        raise ValueError("Invalid SSH host")
-    if not isinstance(root, str) or not root.startswith("/") or "\x00" in root:
-        raise ValueError("The remote harness root must be an absolute path")
-    if port is not None and (type(port) is not int or not 1 <= port <= 65535):
-        raise ValueError("Invalid SSH port")
-    worker = ["python3", "-u", "-m", "amity_harness.status_led", "--worker"]
-    if host is None:
-        return [sys.executable, *worker[1:]]
-    remote = shlex.join(["env", f"PYTHONPATH={root}", *worker])
-    return ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=yes", "-o", "ServerAliveInterval=2",
-            "-o", "ServerAliveCountMax=2", *(["-p", str(port)] if port else []), host, remote]
+def _command():
+    return [sys.executable, "-u", "-m", "amity_harness.status_led", "--worker"]
 
 
 def _message(stream, timeout):
@@ -97,23 +82,21 @@ def _event(name, **fields):
 
 
 @contextmanager
-def run_status_led(host=None, root=_ROOT, port=None):
+def run_status_led():
     """Blink the Pi's red LED during a run; unavailable LEDs never fail tests."""
-    command = _command(host, root, port)
+    command = _command()
     process, active = None, False
     try:
-        environment = None
-        if host is None:
-            environment = dict(os.environ)
-            package_root = str(Path(__file__).resolve().parents[1])
-            environment["PYTHONPATH"] = package_root + os.pathsep + environment.get("PYTHONPATH", "")
+        environment = dict(os.environ)
+        package_root = str(Path(__file__).resolve().parents[1])
+        environment["PYTHONPATH"] = package_root + os.pathsep + environment.get("PYTHONPATH", "")
         try:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL, bufsize=0, env=environment)
             active = _message(process.stdout, _START_TIMEOUT)
-            _event("status_led.start", active=active, remote=host is not None)
+            _event("status_led.start", active=active)
         except Exception as error:
-            _event("status_led.unavailable", error_type=type(error).__name__, remote=host is not None)
+            _event("status_led.unavailable", error_type=type(error).__name__)
         if not active and process is not None:
             # A timed-out startup may still be changing LEDs; stop it now.
             try:
