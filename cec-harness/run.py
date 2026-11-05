@@ -24,6 +24,7 @@ from functional_tests.ble_keyboard import (test_ble_keyboard_lifecycle, test_ble
                                          test_ble_keyboard_remote)
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
+from functional_tests.usb_reboot import test_usb_reboot
 from functional_tests.hostname import test_hostname_local, test_hostname_consortium
 from functional_tests.firmware_upgrade import test_firmware_upgrade
 from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
@@ -35,6 +36,7 @@ from functional_tests.consortium import (
 
 if __name__ == "__main__":
     raise SystemExit(main({"hdmi_scan": test_hdmi_scan,
+                           "usb_reboot": test_usb_reboot,
                            "activity": (test_activity, test_activity_without_status_replies, test_activity_no_display,
                                         test_activity_without_receiver, test_activity_without_receiver_secondary,
                                         test_activity_nondefault_inputs,

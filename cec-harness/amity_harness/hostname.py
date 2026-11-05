@@ -273,8 +273,6 @@ class HostnameChanges:
         owners = {self._owner(dut) for dut in duts}
         if not owners or len(owners) != len(duts):
             raise ValueError("Choose distinct reboot targets")
-        if any(dut is not self.main for dut in duts) and self.main._runtime.usb_reset is None:
-            raise RuntimeError("Secondary reboots require a configured USB reset worker")
         deadline = time.monotonic() + self.timeout
         self._ready(deadline)
         self._standby(deadline)
@@ -283,7 +281,7 @@ class HostnameChanges:
         for dut in duts:
             if dut is not self.main:
                 self._rebooting.add(dut.identity.device_id)
-                self.main._runtime.usb_reset(dut)
+                dut.usb_reboot()
         if self.main in duts:
             self._rebooting.add(self.main.identity.device_id)
             try:

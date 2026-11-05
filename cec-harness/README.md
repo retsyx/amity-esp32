@@ -32,6 +32,8 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
 - `setup_matter.py`, `matter-requirements.txt`: installer and pinned dependencies
   for the Pi Matter controller.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.
+- `functional_tests/usb_reboot.py`: verifies a USB chip reboot through `DUT.usb_reboot()`
+  using a fresh authenticated boot identity and unchanged saved configuration.
 - `functional_tests/activity.py`: creates an activity from that scan, starts it,
   repairs the same activity after a power/input disturbance, then verifies
   standby using physical component power commands. It checks that the selected
@@ -87,7 +89,9 @@ device identities. The temporary names are `amity-dut-t` and `amity-dut-2-t`;
 canonical names are `amity-dut` and `amity-dut-2`. After restart, the test verifies
 hostname persistence and reconnection before refreshing physical scan proof.
 All hostname and configuration changes use the main's authenticated web UI
-operations. USB is used only for secondary chip restarts on the Pi.
+operations. Hostname cases use USB for secondary chip restarts on the Pi.
+`dut.usb_reboot()` also permits an explicit USB restart of the main without an
+authenticated HTTP session; callers verify its new boot before continuing.
 Setup installs `pyserial` and `esp-pylib` in the managed runtime. USB serials
 come from `TEST-HARNESS.md`. Resets use DTR/RTS control lines and send
 no serial bytes, bootloader commands or configuration writes.
@@ -1129,7 +1133,8 @@ From the checkout root **on the Pi**:
   --output test-results/functional/hdmi-scan-framework.json
 ```
 
-The default remains `hdmi_scan`. Select `--test activity` for the activity
+The default remains `hdmi_scan`. Select `--test usb_reboot` for a quick main-board
+USB reboot and persistence check, or `--test activity` for the activity
 power-cycle/repair, receiver-free TV audio, nondefault HDMI inputs, passive standby
 discovery, explicit switch-input, two manual-component,
 same-name devices across owners and adapters,

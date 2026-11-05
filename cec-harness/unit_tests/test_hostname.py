@@ -29,7 +29,7 @@ class Clock:
 class HostnameFixture:
     def __init__(self, *, member=True):
         self.clock = Clock()
-        self.runtime = RunConfig(insecure=True, timeout=1, usb_reset=self.usb_reset)
+        self.runtime = RunConfig(insecure=True, timeout=1)
         with use_config(self.runtime):
             self.main = DUT("amity-dut")
             self.secondary = DUT("amity-dut-2")
@@ -57,6 +57,7 @@ class HostnameFixture:
         self.main.authenticate = self.authenticate
         self.main.probe_ready = self.probe_ready
         self.main.scan_hdmi = self.scan
+        self.secondary.usb_reboot = lambda: self.usb_reset(self.secondary)
         self.members = ()
         self.bed = SimpleNamespace(_entered=True, _closed=False, components=(object(),),
             _member_proofs={}, session=SimpleNamespace(assert_healthy=lambda: None),

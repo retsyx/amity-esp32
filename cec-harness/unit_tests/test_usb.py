@@ -11,20 +11,19 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from amity_harness import DUT, RunConfig
-from amity_harness.runner import main
-from amity_harness.usb import USBReset, USBWorkerError, main as worker_main, reset_usb, verify_usb
+from amity_harness import DUT
+from amity_harness.usb import _usb_reboot, USBWorkerError, main as worker_main, reset_usb, verify_usb
 from amity_harness import usb
 from amity_harness.wiring import Wiring
 
 
-class USBResetTests(unittest.TestCase):
+class USBRebootTests(unittest.TestCase):
     def test_reset_runs_one_bounded_worker_with_only_documented_serial(self):
         dut = DUT("amity-dut-2")
         reply = json.dumps({"usb_serial": dut.identity.mac, "port": "/dev/cu.native", "reset": True})
         runner = Mock(return_value=subprocess.CompletedProcess([], 0, reply, ""))
-        reset = USBReset(python=Path("/tools/SDK Python/python"), timeout=12, runner=runner)
-        self.assertEqual(reset(dut), "/dev/cu.native")
+        self.assertEqual(_usb_reboot(dut, python=Path("/tools/SDK Python/python"), timeout=12,
+                                     runner=runner), "/dev/cu.native")
         runner.assert_called_once_with(
             ["/tools/SDK Python/python", str(Path(usb.__file__).resolve()), "--usb-serial", dut.identity.mac],
             check=False, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -32,29 +31,29 @@ class USBResetTests(unittest.TestCase):
 
     def test_invalid_serial_cannot_select_an_arbitrary_adapter_or_command(self):
         runner = Mock()
-        reset = USBReset(runner=runner)
         for serial in ("", None, "44:B1:76:AE:C5:E0; reset halt", "44:B1:76:AE:C5"):
             with self.subTest(serial=serial), self.assertRaises(ValueError):
-                reset(SimpleNamespace(name="amity-dut-2", identity=SimpleNamespace(mac=serial)))
+                _usb_reboot(SimpleNamespace(name="amity-dut-2", identity=SimpleNamespace(mac=serial)),
+                            runner=runner)
         runner.assert_not_called()
 
     def test_worker_failure_and_timeout_preserve_private_diagnostics_without_retry(self):
         raw = json.dumps({"error": "USB_RESET_FAILED", "error_type": "SerialException"})
         runner = Mock(return_value=subprocess.CompletedProcess([], 1, raw, "PRIVATE_DIAGNOSTICS"))
         with self.assertRaisesRegex(RuntimeError, "USB_RESET_FAILED: SerialException") as raised:
-            USBReset(runner=runner)(DUT("amity-dut-2"))
+            _usb_reboot(DUT("amity-dut-2"), runner=runner)
         self.assertEqual(raised.exception.stdout, raw)
         self.assertEqual(raised.exception.stderr, "PRIVATE_DIAGNOSTICS")
         self.assertNotIn("PRIVATE_DIAGNOSTICS", str(raised.exception))
         runner.assert_called_once()
         runner = Mock(side_effect=subprocess.TimeoutExpired(["python"], 12, output="PRIVATE_PARTIAL", stderr="PRIVATE_ERROR"))
         with self.assertRaisesRegex(RuntimeError, "timed out") as raised:
-            USBReset(runner=runner)(DUT("amity-dut-2"))
+            _usb_reboot(DUT("amity-dut-2"), runner=runner)
         self.assertEqual(raised.exception.stdout, "PRIVATE_PARTIAL")
         self.assertEqual(raised.exception.stderr, "PRIVATE_ERROR")
         runner.assert_called_once()
         with self.assertRaisesRegex(RuntimeError, "could not start: FileNotFoundError"):
-            USBReset(runner=Mock(side_effect=FileNotFoundError("PRIVATE_PATH")))(DUT("amity-dut-2"))
+            _usb_reboot(DUT("amity-dut-2"), runner=Mock(side_effect=FileNotFoundError("PRIVATE_PATH")))
 
     def test_parent_requires_exact_worker_confirmation_and_sanitizes_failures(self):
         dut = DUT("amity-dut-2")
@@ -62,33 +61,65 @@ class USBResetTests(unittest.TestCase):
         for reply in ("not JSON", "[]", json.dumps({**valid, "reset": False}),
                       json.dumps({**valid, "usb_serial": "68:EE:8F:50:2B:44"})):
             with self.subTest(reply=reply), self.assertRaisesRegex(RuntimeError, "invalid confirmation"):
-                USBReset(runner=Mock(return_value=subprocess.CompletedProcess([], 0, reply, "")))(dut)
+                _usb_reboot(dut, runner=Mock(return_value=subprocess.CompletedProcess([], 0, reply, "")))
         raw = json.dumps({"error": "PRIVATE_ERROR", "error_type": "PRIVATE DATA"})
         with self.assertRaisesRegex(RuntimeError, "USB_WORKER_FAILED$") as raised:
-            USBReset(runner=Mock(return_value=subprocess.CompletedProcess([], 1, raw, "")))(dut)
+            _usb_reboot(dut, runner=Mock(return_value=subprocess.CompletedProcess([], 1, raw, "")))
         self.assertNotIn("PRIVATE", str(raised.exception))
 
-    def test_invalid_deadlines_and_run_config_callbacks_are_rejected(self):
+    def test_invalid_deadlines_are_rejected_before_worker_start(self):
+        runner = Mock()
         for timeout in (True, 0, -1, float("nan"), float("inf"), "30"):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
-                USBReset(timeout=timeout)
-        with self.assertRaises(ValueError):
-            RunConfig(usb_reset=False)
+                _usb_reboot(DUT("amity-dut-2"), timeout=timeout, runner=runner)
+        runner.assert_not_called()
 
-    def test_cli_uses_current_pi_runtime_for_usb_reset(self):
-        observed = []
+    def test_worker_defaults_to_current_pi_runtime(self):
+        dut = DUT("amity-dut-2")
+        reply = json.dumps({"usb_serial": dut.identity.mac, "port": "/dev/ttyACM1", "reset": True})
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0, reply, ""))
+        _usb_reboot(dut, runner=runner)
+        self.assertEqual(runner.call_args.args[0][0], sys.executable)
+        self.assertEqual(runner.call_args.kwargs["timeout"], 30)
 
-        def scenario():
-            pass
+    def test_dut_usb_reboot_targets_itself_without_http_and_clears_old_session(self):
+        for token in (None, "old-token"):
+            with self.subTest(token=token):
+                opener = Mock()
+                dut = DUT("amity-dut-2", opener=opener)
+                dut._token = token
+                previous_scan = dut.last_scan = object()
+                with patch.object(usb, "_usb_reboot", return_value="/dev/ttyACM1") as reboot, \
+                        patch.object(dut, "authenticate") as authenticate, \
+                        patch.object(dut, "request") as request:
+                    self.assertEqual(dut.usb_reboot(), "/dev/ttyACM1")
+                reboot.assert_called_once_with(dut)
+                authenticate.assert_not_called()
+                request.assert_not_called()
+                opener.open.assert_not_called()
+                opener.close.assert_called_once_with()
+                self.assertIsNone(dut._token)
+                self.assertIs(dut.last_scan, previous_scan)
 
-        def capture(test, config):
-            observed.append(config.usb_reset)
-            return {"test": test.__name__, "passed": True, "testbeds": []}
-
-        with patch("amity_harness.runner.run_test", side_effect=capture), redirect_stdout(io.StringIO()):
-            self.assertEqual(main(scenario, ["--credentials", "/private/main.json", "--no-status-led"]), 0)
-        self.assertIsInstance(observed[0], USBReset)
-        self.assertEqual(observed[0].python, sys.executable)
+    def test_dut_usb_reboot_failure_clears_old_session_without_retry(self):
+        opener = Mock()
+        dut = DUT("amity-dut-2", opener=opener)
+        dut._token = "old-token"
+        previous_scan = dut.last_scan = object()
+        error = RuntimeError("USB worker timed out after issuing reset")
+        with patch.object(usb, "_usb_reboot", side_effect=error) as reboot, \
+                patch.object(dut, "authenticate") as authenticate, \
+                patch.object(dut, "request") as request:
+            with self.assertRaises(RuntimeError) as raised:
+                dut.usb_reboot()
+        self.assertIs(raised.exception, error)
+        reboot.assert_called_once_with(dut)
+        authenticate.assert_not_called()
+        request.assert_not_called()
+        opener.open.assert_not_called()
+        opener.close.assert_called_once_with()
+        self.assertIsNone(dut._token)
+        self.assertIs(dut.last_scan, previous_scan)
 
 
 class USBInventoryTests(unittest.TestCase):

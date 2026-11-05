@@ -200,7 +200,6 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
     from .ble_keyboard import LocalKeyboard
     keyboard_factory = partial(LocalKeyboard, python=sys.executable)
     from .enrollment import MatterEnrollment
-    from .usb import USBReset
     enrollment_factory = partial(MatterEnrollment, credentials=args.enrollment_credentials,
                                  timeout=args.enrollment_timeout, python=sys.executable)
     config = RunConfig(credentials=credentials, default_credentials=args.credentials,
@@ -210,7 +209,6 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                        firmware=args.firmware, firmware_timeout=args.firmware_timeout,
                        session_factory=CecSession,
                        keyboard_factory=keyboard_factory, enrollment_factory=enrollment_factory,
-                       usb_reset=USBReset(),
                        enrollment_timeout=args.enrollment_timeout)
     selected = (tests if args.test == "all" else
                 {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: registered[args.test]})

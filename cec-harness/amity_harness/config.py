@@ -24,7 +24,6 @@ class RunConfig:
     gpio_factory: Callable | None = None
     keyboard_factory: Callable | None = None
     enrollment_factory: Callable | None = None
-    usb_reset: Callable | None = None
     admin_origins: dict[str, str] = field(default_factory=dict, init=False, repr=False, compare=False)
     enrollment_timeout: float = 240
     timeout: float = 180
@@ -46,8 +45,6 @@ class RunConfig:
             raise ValueError("keyboard_factory must be callable or None")
         if self.enrollment_factory is not None and not callable(self.enrollment_factory):
             raise ValueError("enrollment_factory must be callable or None")
-        if self.usb_reset is not None and not callable(self.usb_reset):
-            raise ValueError("usb_reset must be callable or None")
         if not isinstance(self.insecure, bool):
             raise ValueError("insecure must be a boolean")
         if self.cafile is not None and self.insecure:

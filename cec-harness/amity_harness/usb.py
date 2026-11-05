@@ -100,52 +100,50 @@ def _failure(message, *, stdout=None, stderr=None):
     return error
 
 
-class USBReset:
-    def __init__(self, *, python=sys.executable, timeout=30, runner=subprocess.run):
-        python = os.fspath(python)
-        if not isinstance(python, str) or not python or "\x00" in python:
-            raise ValueError("USB Python must name an executable")
-        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
-                or not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError("USB reset timeout must be positive and finite")
-        if not callable(runner):
-            raise ValueError("USB reset runner must be callable")
-        self.python, self.timeout, self.runner = python, timeout, runner
+def _usb_reboot(dut, *, python=sys.executable, timeout=30, runner=subprocess.run):
+    """Submit one bounded USB chip reset for DUT.usb_reboot()."""
+    python = os.fspath(python)
+    if not isinstance(python, str) or not python or "\x00" in python:
+        raise ValueError("USB Python must name an executable")
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError("USB reset timeout must be positive and finite")
+    if not callable(runner):
+        raise ValueError("USB reset runner must be callable")
 
-    def __call__(self, dut):
-        from .trace import event
+    from .trace import event
 
-        serial_number = _usb_serial(dut.identity.mac)
-        command = [self.python, str(Path(__file__).resolve()), "--usb-serial", serial_number]
-        event("usb.reset.request", dut=dut.name, usb_serial=serial_number)
-        try:
-            completed = self.runner(command, check=False, stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    timeout=self.timeout, text=True)
-        except subprocess.TimeoutExpired as error:
-            raise _failure("USB reset worker timed out", stdout=error.stdout, stderr=error.stderr) from None
-        except OSError as error:
-            raise _failure("USB reset worker could not start: " + type(error).__name__) from None
-        try:
-            result = json.loads(completed.stdout)
-        except (TypeError, ValueError):
-            result = {}
-        if completed.returncode != 0:
-            code = result.get("error") if isinstance(result, dict) else None
-            if code not in {"USB_DEVICE_NOT_FOUND", "USB_DEVICE_AMBIGUOUS", "USB_DEVICE_INVALID",
-                            "DEPENDENCY_UNAVAILABLE", "USB_RESET_FAILED"}:
-                code = "USB_WORKER_FAILED"
-            error_type = result.get("error_type") if isinstance(result, dict) else None
-            suffix = ": " + error_type if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,80}", error_type) else ""
-            raise _failure("USB reset failed: " + code + suffix,
-                           stdout=completed.stdout, stderr=completed.stderr)
-        if (not isinstance(result, dict) or result.get("reset") is not True
-                or result.get("usb_serial") != serial_number
-                or not isinstance(result.get("port"), str) or not result["port"] or "\x00" in result["port"]):
-            raise _failure("USB reset worker returned an invalid confirmation",
-                           stdout=completed.stdout, stderr=completed.stderr)
-        event("usb.reset.submitted", dut=dut.name, usb_serial=serial_number, port=result["port"])
-        return result["port"]
+    serial_number = _usb_serial(dut.identity.mac)
+    command = [python, str(Path(__file__).resolve()), "--usb-serial", serial_number]
+    event("usb.reset.request", dut=dut.name, usb_serial=serial_number)
+    try:
+        completed = runner(command, check=False, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           timeout=timeout, text=True)
+    except subprocess.TimeoutExpired as error:
+        raise _failure("USB reset worker timed out", stdout=error.stdout, stderr=error.stderr) from None
+    except OSError as error:
+        raise _failure("USB reset worker could not start: " + type(error).__name__) from None
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        result = {}
+    if completed.returncode != 0:
+        code = result.get("error") if isinstance(result, dict) else None
+        if code not in {"USB_DEVICE_NOT_FOUND", "USB_DEVICE_AMBIGUOUS", "USB_DEVICE_INVALID",
+                        "DEPENDENCY_UNAVAILABLE", "USB_RESET_FAILED"}:
+            code = "USB_WORKER_FAILED"
+        error_type = result.get("error_type") if isinstance(result, dict) else None
+        suffix = ": " + error_type if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,80}", error_type) else ""
+        raise _failure("USB reset failed: " + code + suffix,
+                       stdout=completed.stdout, stderr=completed.stderr)
+    if (not isinstance(result, dict) or result.get("reset") is not True
+            or result.get("usb_serial") != serial_number
+            or not isinstance(result.get("port"), str) or not result["port"] or "\x00" in result["port"]):
+        raise _failure("USB reset worker returned an invalid confirmation",
+                       stdout=completed.stdout, stderr=completed.stderr)
+    event("usb.reset.submitted", dut=dut.name, usb_serial=serial_number, port=result["port"])
+    return result["port"]
 
 
 def main(argv=None):

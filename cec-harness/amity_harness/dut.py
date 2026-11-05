@@ -186,6 +186,21 @@ class DUT:
                   error_type=type(error).__name__)
             raise
 
+    def usb_reboot(self):
+        """Reset this chip through its documented Pi USB connection.
+
+        Returns the selected serial port after submitting the reset. No HTTP
+        authentication is needed. The caller verifies the new boot and refreshes
+        its scenario's boot/discovery proof. Drop the HTTP session after any
+        attempt because a failed worker may already have reset the chip.
+        """
+        from .usb import _usb_reboot
+        try:
+            return _usb_reboot(self)
+        finally:
+            self._token = None
+            self.close()
+
     def request(self, path, data=None, *, timeout=15):
         """GET or POST JSON to an existing UI endpoint, with bearer authentication."""
         _positive_seconds(timeout, "HTTP timeout")
