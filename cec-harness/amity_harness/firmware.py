@@ -242,10 +242,9 @@ class FirmwareUpgrade:
             return True
         return False
 
-    def run(self):
+    def _prepare(self, deadline):
         if self.before_system is not None:
             raise RuntimeError("A firmware upload cannot be repeated")
-        deadline = time.monotonic() + self.timeout
         health, system = self._get("/api/setup", deadline), self._get("/api/system", deadline)
         self._authority(system)
         peers = _peers(system)
@@ -271,8 +270,146 @@ class FirmwareUpgrade:
         self.report["expected_config_sha256"] = hashlib.sha256(json.dumps(saved_configuration(self.before_config), sort_keys=True).encode()).hexdigest()
         self._note("before", main_boot=system["boot_id"], image_elf_sha256=health.get("image_elf_sha256"),
                    owner_boots={owner: row["boot_id"] for owner, row in peers.items()})
+        return health, settings
+
+    def _partial_target(self, job, owner=None, *, minimum=0):
+        if self._observe_job(job):
+            raise AssertionError("Firmware reached activation before the requested transfer interruption")
+        if job.get("job_id") != self._job or job.get("phase") != "distributing":
+            return None
+        for row in job["targets"]:
+            if (row["octopus_id"] in self.peer_ids and (owner is None or row["octopus_id"] == owner)
+                    and row.get("phase") == "uploading"
+                    and minimum < int(row.get("offset", -1)) < self.bundle.image_bytes):
+                return row
+        return None
+
+    @staticmethod
+    def _target_progress(row):
+        return {key: row[key] for key in ("octopus_id", "phase", "offset")}
+
+    def _original_boots(self, system, peers):
+        self._authority(system)
+        if (system["boot_id"] != self.before_system["boot_id"] or any(
+                peer.get("boot_id") != peers[owner]["boot_id"] for owner, peer in _peers(system).items())):
+            raise AssertionError("An Amity rebooted before the requested firmware interruption")
+
+    def _unchanged_saved_state(self, system, settings, deadline):
+        config = self._get("/api/config", deadline)
+        if saved_configuration(config) != saved_configuration(self.before_config):
+            raise AssertionError("Firmware interruption changed saved activities, equipment or settings")
+        if (system.get("applied_config_revision") != config.get("config_revision")
+                or system.get("applied_presentation_revision") != config.get("presentation_revision")):
+            return False
+        if self._settings(system, deadline) != settings:
+            raise AssertionError("Firmware interruption changed an Amity's saved adapter settings or hostname")
+        return True
+
+    def interrupt_main_transfer(self):
+        """Prove an abandoned distribution is safe before a separate upload.
+
+        The manual cohort lives in RAM. Rebooting its main must leave the
+        staged image inactive; it cannot count as a completed upgrade.
+        """
+        deadline = time.monotonic() + self.timeout
+        old, settings = self._prepare(deadline)
+        self._upload(old["version"], deadline)
+        while True:
+            self.bed.session.assert_healthy()
+            row = self._partial_target(self._get("/api/updates/cohort", deadline))
+            if row is not None:
+                self._original_boots(self._get("/api/system", deadline), _peers(self.before_system))
+                self._note("main_transfer_interrupt", main_boot=old["boot_id"],
+                           targets=[self._target_progress(row)])
+                self.main.usb_reboot()
+                break
+            time.sleep(min(self.poll_interval, self._remaining(deadline)))
+        peers = _peers(self.before_system)
+        while True:
+            self.bed.session.assert_healthy()
+            health, system = self._get("/api/setup", deadline), self._get("/api/system", deadline)
+            if health.get("boot_id") != system.get("boot_id") or system.get("boot_id") == old["boot_id"]:
+                time.sleep(min(self.poll_interval, self._remaining(deadline)))
+                continue
+            if health.get("image_elf_sha256") != old["image_elf_sha256"] or health.get("version") != old["version"]:
+                raise AssertionError("Main interruption activated an incompletely distributed image")
+            if system.get("membership", {}).get("authority_ready") is not True:
+                time.sleep(min(self.poll_interval, self._remaining(deadline)))
+                continue
+            self._authority(system)
+            current = _peers(system)
+            for owner, peer in current.items():
+                if (_identifier(peer.get("boot_id")) and peer["boot_id"] != peers[owner]["boot_id"]
+                        or peer.get("firmware_identity") and peer["firmware_identity"] != old["image_elf_sha256"]):
+                    raise AssertionError("A secondary activated during the interrupted main transfer")
+            job, local = self._get("/api/updates/cohort", deadline), self._get("/api/updates", deadline)
+            if job.get("phase") != "idle":
+                raise AssertionError("The rebooted main retained or replaced the abandoned firmware cohort")
+            if (local.get("phase") != "staged_image" or local.get("expected_elf_sha256") != self.bundle.image_elf_sha256
+                    or local.get("running_elf_sha256") != old["image_elf_sha256"]
+                    or local.get("current_boot_id") != system["boot_id"]):
+                raise AssertionError("The interrupted image was not retained as an inactive staged image")
+            state = self._get("/api/activity-editor/status", deadline)
+            if (health.get("ready") is True and system.get("ready") is True
+                    and system.get("configuration_pending") is False
+                    and all(peer.get("ready") is True and peer.get("boot_id") == peers[owner]["boot_id"]
+                            and peer.get("firmware_identity") == old["image_elf_sha256"]
+                            for owner, peer in current.items())
+                    and state.get("expected_boot_id") == system["boot_id"]
+                    and state.get("current_activity") == -1 and state.get("activity_settling") is False
+                    and self._unchanged_saved_state(system, settings, deadline)):
+                self.after_system = deepcopy(system)
+                self._note("main_transfer_aborted", main_boot=system["boot_id"],
+                           image_elf_sha256=health["image_elf_sha256"],
+                           owner_boots={owner: peer["boot_id"] for owner, peer in current.items()})
+                return self
+            time.sleep(min(self.poll_interval, self._remaining(deadline)))
+
+    def _interrupt_secondary(self, member, row, peers, deadline):
+        owner, offset = member.device_id, int(row["offset"])
+        self._note("secondary_transfer_interrupt", targets=[self._target_progress(row)])
+        member.candidate.usb_reboot()
+        restarted = False
+        while True:
+            self.bed.session.assert_healthy()
+            job = self._get("/api/updates/cohort", deadline)
+            if self._observe_job(job) or job.get("job_id") != self._job or job.get("phase") != "distributing":
+                raise AssertionError("Secondary interruption lost its original distributing firmware job")
+            target = next(target for target in job["targets"] if target["octopus_id"] == owner)
+            if target.get("phase") in {"queued", "uploading"} and 0 <= int(target.get("offset", -1)) < offset:
+                if not restarted:
+                    self._note("secondary_transfer_restarted", targets=[self._target_progress(target)])
+                restarted = True
+            health, system = self._get("/api/setup", deadline), self._get("/api/system", deadline)
+            if health.get("boot_id") != system.get("boot_id"):
+                raise AssertionError("The main rebooted during the secondary transfer interruption")
+            self._authority(system)
+            current = _peers(system)
+            if system["boot_id"] != self.before_system["boot_id"]:
+                raise AssertionError("The main rebooted during the secondary transfer interruption")
+            for peer_owner, peer in current.items():
+                if (peer_owner != owner and _identifier(peer.get("boot_id")) and peer["boot_id"] != peers[peer_owner]["boot_id"]
+                        or peer.get("firmware_identity") and peer["firmware_identity"] != health.get("image_elf_sha256")):
+                    raise AssertionError("An unrelated or premature firmware reboot occurred")
+            peer = current[owner]
+            if (_identifier(peer.get("boot_id")) and peer["boot_id"] != peers[owner]["boot_id"]
+                    and peer.get("firmware_identity") == health.get("image_elf_sha256")):
+                if not restarted:
+                    raise AssertionError("Secondary transfer did not restart after its USB reboot")
+                self._note("secondary_transfer_recovered", owner_boots={owner: peer["boot_id"]})
+                peers[owner] = deepcopy(peer)
+                return
+            time.sleep(min(self.poll_interval, self._remaining(deadline)))
+
+    def run(self, *, interrupt_secondary=None):
+        if interrupt_secondary is not None and not any(interrupt_secondary is member for member in self.members):
+            raise ValueError("Interrupt only a secondary in this firmware cohort")
+        deadline = time.monotonic() + self.timeout
+        health, settings = self._prepare(deadline)
+        peers = _peers(self.before_system)
         self._upload(health["version"], deadline)
         barrier = False
+        interrupted = False
         while True:
             self._remaining(deadline)
             self.bed.session.assert_healthy()
@@ -306,6 +443,14 @@ class FirmwareUpgrade:
                     _identifier(row.get("boot_id")) and row["boot_id"] != peers[owner]["boot_id"]
                         for owner, row in current.items()):
                     raise AssertionError("An Amity rebooted before the staging barrier")
+            if interrupt_secondary is not None and not interrupted:
+                target = self._partial_target(after, interrupt_secondary.device_id,
+                                              minimum=self.bundle.image_bytes // 4)
+                if target is not None:
+                    self._original_boots(system, peers)
+                    self._interrupt_secondary(interrupt_secondary, target, peers, deadline)
+                    interrupted = True
+                    continue  # Discard the pre-interruption snapshots.
             if system["boot_id"] != self.before_system["boot_id"]:
                 if not barrier:
                     raise AssertionError("Primary rebooted without an observed all-Amity staging barrier")
@@ -320,6 +465,8 @@ class FirmwareUpgrade:
                                  and _identifier(row.get("boot_id")) and row["boot_id"] != peers[owner]["boot_id"]
                                  and row.get("firmware_identity") == self.bundle.image_elf_sha256 for owner, row in current.items()))
                 if ready:
+                    if interrupt_secondary is not None and not interrupted:
+                        raise AssertionError("The requested secondary transfer interruption was missed")
                     config = self._get("/api/config", deadline)
                     if saved_configuration(config) != saved_configuration(self.before_config):
                         raise AssertionError("Firmware upgrade changed saved activities, equipment or settings")

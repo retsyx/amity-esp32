@@ -14,16 +14,17 @@ from functional_tests import firmware_upgrade as scenario
 
 
 class ScenarioFixture:
-    def __init__(self, *, missing=None, failure_phase=1, cleanup_member=False):
+    def __init__(self, *, missing=None, failure_phase=1, cleanup_member=False, interrupt_failure=False):
         self.events, self.members, self.activities, self.created = [], [], [], []
         self.components, self.duts = (), ()
         self.epoch, self.current = 0, None
         self.missing, self.failure_phase, self.cleanup_member = missing, failure_phase, cleanup_member
+        self.interrupt_failure = interrupt_failure
         self.member_rebound = False
         self.boot, self.group = '1' * 32, '3' * 32
         self.config = dict(version=3, config_revision='7', presentation_revision='4', activities=[], components=[], octopuses=[], external_slots=[])
         self.bundle = SimpleNamespace(image_elf_sha256='b2' * 32)
-        self.upgrade = None
+        self.upgrade, self.upgrades = None, []
 
     def system(self, main):
         return dict(octopus_id=main.identity.device_id, boot_id=self.boot, consortium_id=self.group,
@@ -180,9 +181,22 @@ class ScenarioFixture:
             def __init__(self):
                 self.members, self.activities = tuple(members), tuple(activities)
                 self.prior_subsets = [member.prior_ids for member in members]
+                self.interrupted = False
                 main._testbed.add_cleanup(self.close)
-            def run(self):
+            def interrupt_main_transfer(self):
+                fixture.events.append(('firmware.main_interrupt',))
+                if fixture.interrupt_failure:
+                    raise AssertionError('Interrupted main did not retain the old firmware')
+                self.interrupted = True
+                fixture.boot = '3' * 32
+                fixture.events.append(('firmware.main_abort_verified',))
+            def run(self, *, interrupt_secondary):
+                if len(fixture.upgrades) != 2 or not fixture.upgrades[0].interrupted or self is fixture.upgrades[0]:
+                    raise AssertionError('A verified abort must precede a separate explicit upload')
+                if interrupt_secondary is not self.members[0]:
+                    raise AssertionError('The retry must interrupt the designated secondary')
                 fixture.events.append(('firmware.run',))
+                fixture.events.append(('firmware.secondary_interrupt', interrupt_secondary.name))
                 fixture.epoch, fixture.boot = 1, '2' * 32
             def rebind_members(self):
                 fixture.events.append(('members.rebind',))
@@ -196,6 +210,7 @@ class ScenarioFixture:
             def close(self):
                 fixture.events.append(('firmware.cleanup',))
         self.upgrade = Upgrade()
+        self.upgrades.append(self.upgrade)
         return self.upgrade
 
     def run(self, *, invalid_bundle=False):
@@ -256,6 +271,21 @@ class FirmwareScenarioTests(unittest.TestCase):
             self.assertEqual(len([row for row in fixture.events if row[:2] == ('wire.route', epoch)]), len(names))
             self.assertEqual(len([row for row in fixture.events if row[:2] == ('wire.key', epoch)]), len(names) * 2)
         self.assertEqual(len([row for row in fixture.events if row[0] == 'member.connected']), len(names)-1)
+        self.assertEqual(len(fixture.upgrades), 2)
+        self.assertEqual(len([row for row in fixture.events if row[0] == 'firmware.main_interrupt']), 1)
+        self.assertEqual([row for row in fixture.events if row[0] == 'firmware.secondary_interrupt'],
+                         [('firmware.secondary_interrupt', fixture.upgrade.members[0].name)])
+        self.assertLess(fixture.events.index(('firmware.main_abort_verified',)),
+                        fixture.events.index(('firmware.run',)))
+        self.assert_cleanup(fixture)
+
+    def test_failed_main_interruption_proof_never_starts_another_upload(self):
+        fixture = ScenarioFixture(interrupt_failure=True)
+        with self.assertRaisesRegex(AssertionError, 'Interrupted main'):
+            fixture.run()
+        self.assertEqual(len(fixture.upgrades), 1)
+        self.assertNotIn(('firmware.run',), fixture.events)
+        self.assertFalse(any(row[0] == 'firmware.secondary_interrupt' for row in fixture.events))
         self.assert_cleanup(fixture)
 
     def test_missing_fresh_post_upgrade_commands_fail_even_when_component_state_is_correct(self):

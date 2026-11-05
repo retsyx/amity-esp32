@@ -1066,9 +1066,13 @@ and does not extend physical CEC assertion deadlines.
 Start with a factory-reset main and unclaimed secondary boards. The shared
 preparation enrolls the main before this scenario. The file must differ from
 the running image.
-The scenario adds every secondary, exercises an activity per owner, uploads once
-through the main, checks staging, new boots, exact image identities and retained
-configuration/settings, then exercises the same activities again. Cleanup
+The scenario adds every secondary and exercises an activity per owner. It
+reboots the main during a partial transfer to a secondary, then verifies that
+the abandoned job left every board on its original firmware with saved
+configuration/settings intact. A separate, explicit upload reboots one
+secondary during its transfer and requires recovery within the same job.
+Complete staging, new boots, exact image identities and retained
+configuration/settings must pass before the same activities run again. Cleanup
 deletes its activities/equipment, removes every secondary and requires each
 factory-reset acknowledgement, and verifies the main's original settings and
 empty membership. The reset acknowledgement proves durable scheduling; erased

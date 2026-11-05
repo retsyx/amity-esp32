@@ -145,8 +145,13 @@ def test_firmware_upgrade():
         for owner, (tv, avr, player) in zip(owners, systems):
             activities.append(main.create_activity(f"Upgrade {owner.name}", display=tv, audio=avr, source=player))
         _exercise(main, activities, systems, phase="before")
+        interrupted = FirmwareUpgrade(main, members, bundle, activities=activities, timeout=runtime.firmware_timeout)
+        interrupted.interrupt_main_transfer()
+        # The main's volatile cohort was positively proved abandoned, with
+        # every board still running the original image. This is an explicit
+        # new upload, never a replay after an uncertain HTTP response.
         upgrade = FirmwareUpgrade(main, members, bundle, activities=activities, timeout=runtime.firmware_timeout)
-        upgrade.run()
+        upgrade.run(interrupt_secondary=members[0])
         upgrade.rebind_members()
         # The upgrade verified the complete roster and every settings snapshot.
         # Each Add helper deliberately retains only its original prior roster;
