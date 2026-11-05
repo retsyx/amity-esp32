@@ -36,7 +36,12 @@ class SoakFixture:
                  failed_matter=None, failed_matter_select=False,
                  failed_matter_open=False, failed_matter_slots=False,
                  failed_matter_rejected=False, failed_matter_standby=False,
-                 failed_matter_status=None, matter_delay=0):
+                 failed_matter_status=None, matter_delay=0,
+                 failed_homekit=None, failed_homekit_select=False,
+                 failed_homekit_open=False, failed_homekit_slots=False,
+                 failed_homekit_rejected=False, failed_homekit_standby=False,
+                 failed_homekit_status=None, failed_homekit_readback=None,
+                 failed_homekit_close=False, homekit_delay=0):
         self.clock = VirtualClock()
         self.setup_delay = setup_delay
         self.failed_key, self.failed_ui, self.stuck_key = failed_key, failed_ui, stuck_key
@@ -49,10 +54,23 @@ class SoakFixture:
         self.failed_matter_standby = failed_matter_standby
         self.failed_matter_status = failed_matter_status
         self.matter_delay = matter_delay
+        self.failed_homekit = failed_homekit
+        self.failed_homekit_select = failed_homekit_select
+        self.failed_homekit_open = failed_homekit_open
+        self.failed_homekit_slots = failed_homekit_slots
+        self.failed_homekit_rejected = failed_homekit_rejected
+        self.failed_homekit_standby = failed_homekit_standby
+        self.failed_homekit_status = failed_homekit_status
+        self.failed_homekit_readback = failed_homekit_readback
+        self.failed_homekit_close = failed_homekit_close
+        self.homekit_delay = homekit_delay
         self.events, self.activities, self.key_calls = [], [], []
         self.api_key_calls, self.ble_key_calls, self.matter_key_calls = [], [], []
+        self.homekit_key_calls = []
         self.keyboard = self.gate_cleared_for = None
         self.accessory = None
+        self.homekit_accessory = None
+        self.homekit_rejected_activity = None
         self.current = None
         self.session = SimpleNamespace(assert_healthy=self.health)
         self.setup_finished = None
@@ -155,11 +173,15 @@ class SoakFixture:
             raise TimeoutError("UI selection failed")
         if route == "matter" and self.failed_matter_select:
             raise TimeoutError("Matter selection failed")
+        if route == "homekit" and self.failed_homekit_select:
+            raise TimeoutError("HomeKit selection failed")
         previous = () if self.current is None else self.current.selected
         self.current = activity
         self.gate_cleared_for = None
         for component in self.components:
             component._power = PowerState.ON if component in activity.selected else PowerState.STANDBY
+            if component not in activity.selected and hasattr(component, "playing"):
+                component.playing = False
         action = SimpleNamespace(kind="select", selected=activity.selected, previous=previous)
         return action
 
@@ -209,7 +231,7 @@ class SoakFixture:
         call = (self.current.name, key, duration_ms, self.clock.now, transport)
         self.key_calls.append(call)
         calls = {"ble": self.ble_key_calls, "api": self.api_key_calls,
-                 "matter": self.matter_key_calls}[transport]
+                 "matter": self.matter_key_calls, "homekit": self.homekit_key_calls}[transport]
         calls.append(call)
         if transport == "api" and len(calls) == self.failed_key:
             raise TimeoutError("Key request failed")
@@ -217,6 +239,8 @@ class SoakFixture:
             raise TimeoutError("BLE input failed")
         if transport == "matter" and len(calls) == self.failed_matter:
             raise TimeoutError("Matter key failed")
+        if transport == "homekit" and len(calls) == self.failed_homekit:
+            raise TimeoutError("HomeKit key failed")
         if duration_ms:
             self.clock.sleep(duration_ms / 1000)
 
@@ -316,9 +340,146 @@ class SoakFixture:
         if operations != [wanted]:
             raise AssertionError("Matter must use the accessory command corresponding to its CEC key")
         self.record_key("matter", key, 0)
+        self.playback_state(component, key)
         self.events.append(("key.received", component.dut.name, component.name, key, 0))
         if self.stuck_key:
             component.pressed_key = key
+
+    @staticmethod
+    def playback_state(component, key):
+        if key == Key.PLAY:
+            component.playing = True
+        elif key in (Key.PAUSE, Key.STOP):
+            component.playing = False
+
+    def homekit(self, main):
+        if main is not self.duts[0]:
+            raise AssertionError("HomeKit must use this phase's main controller")
+        fixture = self
+
+        class Accessory:
+            open = False
+
+            def __enter__(self):
+                fixture.events.append(("homekit.open", main.name))
+                if fixture.failed_homekit_open:
+                    raise RuntimeError("HomeKit pairing failed")
+                fixture.clock.now += fixture.setup_delay
+                self.open = True
+                return self
+
+            def __exit__(self, *args):
+                self.open = False
+                fixture.events.append(("homekit.close",))
+                if fixture.failed_homekit_close:
+                    fixture.events.append(("homekit.cleanup_failed",))
+                    if args[0] is None:
+                        raise RuntimeError("HomeKit pairing cleanup failed")
+
+            def command(self, name, value):
+                if not self.open:
+                    raise AssertionError("HomeKit commands need an open owned pairing")
+                fixture.events.append(("homekit.command", name, value))
+                fixture.clock.now += fixture.homekit_delay
+                return -70410 if fixture.failed_homekit_status == name else 0
+
+            def select_input(self, index):
+                return self.command("select_input", index)
+
+            def send_key(self, key):
+                return self.command("send_key", key)
+
+            def step_volume(self, steps):
+                return self.command("step_volume", steps)
+
+            def set_mute(self, muted):
+                return self.command("set_mute", muted)
+
+            def set_power(self, on):
+                return self.command("set_power", on)
+
+            def read_state(self):
+                if not self.open:
+                    raise AssertionError("HomeKit state needs an open owned pairing")
+                current = fixture.current
+                fixture.events.append(("homekit.state", None if current is None else current.name))
+                fixture.clock.now += fixture.homekit_delay
+                state = {"active": current is not None,
+                         "current_input": 0 if current is None else current.slot + 1,
+                         "speaker_active": current is not None}
+                failure = fixture.failed_homekit_readback
+                if failure is not None:
+                    phase, field = failure
+                    current_phase = ("standby" if current is None else
+                                     "rejected" if current is fixture.homekit_rejected_activity else "active")
+                    if phase == current_phase:
+                        state[field] = 99 if field == "current_input" else not state[field]
+                return state
+
+        self.homekit_accessory = Accessory()
+        return self.homekit_accessory
+
+    def homekit_input_slots(self, homekit, main, activities):
+        if (homekit is not self.homekit_accessory or main is not self.duts[0]
+                or list(activities) != self.activities):
+            raise AssertionError("HomeKit inputs must cover all saved activities on the current main")
+        self.events.append(("homekit.inputs", main.name))
+        self.clock.now += self.setup_delay
+        if self.failed_homekit_slots:
+            raise AssertionError("HomeKit input list mismatch")
+        self.setup_finished = self.clock.now
+        return {activity.activity_id: activity.slot + 1 for activity in activities}
+
+    def homekit_select(self, homekit, activity, slot):
+        if homekit is not self.homekit_accessory or slot != activity.slot + 1:
+            raise AssertionError("HomeKit selection must use the activity's one-based external identifier")
+        if homekit.select_input(slot) != 0:
+            raise AssertionError("HomeKit rejected selection")
+        return self.select(activity, "homekit")
+
+    def homekit_key(self, homekit, main, component, key, command):
+        if homekit is not self.homekit_accessory or main is not self.duts[0]:
+            raise AssertionError("HomeKit keys must use this phase's owned pairing")
+        expected = self.current.selected[1 if key in (Key.VOLUME_UP, Key.VOLUME_DOWN, 0x65, 0x66) else 2]
+        if component is not expected:
+            raise AssertionError("HomeKit keys must reach the selected source or audio owner")
+        before = len(self.events)
+        if command() != 0:
+            raise AssertionError("HomeKit rejected key")
+        operations = [row[1:] for row in self.events[before:] if row[0] == "homekit.command"]
+        wanted = {Key.RIGHT: ("send_key", 7), Key.LEFT: ("send_key", 6),
+                  Key.SELECT: ("send_key", 8), Key.VOLUME_UP: ("step_volume", 1),
+                  Key.VOLUME_DOWN: ("step_volume", -1), 0x48: ("send_key", 0),
+                  0x49: ("send_key", 1), 0x4B: ("send_key", 2),
+                  0x4C: ("send_key", 3), 0x35: ("send_key", 15),
+                  0x65: ("set_mute", True), 0x66: ("set_mute", False)}.get(key)
+        if key in (Key.PLAY, Key.PAUSE):
+            if key != (Key.PAUSE if component.playing else Key.PLAY):
+                raise AssertionError("HomeKit Play/Pause must follow the physical player's deck state")
+            wanted = ("send_key", 11)
+        if operations != [wanted]:
+            raise AssertionError("HomeKit must translate its remote code into the expected CEC key")
+        self.record_key("homekit", key, 0)
+        self.playback_state(component, key)
+        self.events.append(("key.received", component.dut.name, component.name, key, 0))
+        if self.stuck_key:
+            component.pressed_key = key
+
+    def homekit_rejected(self, homekit, main, scan, activity, player):
+        if activity is not self.current or player is not self.current.selected[2] or scan.expected != self.components:
+            raise AssertionError("Rejected HomeKit commands must retain the current activity and scanned player")
+        self.events.append(("homekit.rejected", activity.name))
+        if self.failed_homekit_rejected:
+            raise AssertionError("HomeKit rejected-command evidence failed")
+        self.homekit_key(homekit, main, player, Key.SELECT, lambda: homekit.send_key(8))
+        self.homekit_rejected_activity = activity
+
+    def homekit_standby(self, homekit, main, scan):
+        if homekit is not self.homekit_accessory or main is not self.duts[0] or scan.expected != self.components:
+            raise AssertionError("HomeKit standby must use the current main and scan")
+        if homekit.set_power(False) != 0:
+            raise AssertionError("HomeKit rejected standby")
+        return self.standby("homekit")
 
     def matter_rejected(self, matter, main, scan, activity, player):
         if activity is not self.current or player is not self.current.selected[2] or scan.expected != self.components:
@@ -334,10 +495,14 @@ class SoakFixture:
         self.events.append(("standby", self.clock.now, route))
         if route == "matter" and self.failed_matter_standby:
             raise TimeoutError("Matter standby failed")
+        if route == "homekit" and self.failed_homekit_standby:
+            raise TimeoutError("HomeKit standby failed")
         previous = self.current.selected
         self.current = None
         for component in self.components:
             component._power = PowerState.STANDBY
+            if hasattr(component, "playing"):
+                component.playing = False
         return SimpleNamespace(kind="standby", previous=previous)
 
     def matter_standby(self, matter, main, scan):
@@ -473,6 +638,11 @@ class SoakFixture:
                                 ("MatterAccessory", self.matter), ("_input_slots", self.input_slots),
                                 ("matter_select", self.matter_select), ("matter_key", self.matter_key),
                                 ("matter_rejected", self.matter_rejected), ("matter_standby", self.matter_standby),
+                                ("HomeKitAccessory", self.homekit),
+                                ("homekit_input_slots", self.homekit_input_slots),
+                                ("homekit_select", self.homekit_select), ("homekit_key", self.homekit_key),
+                                ("homekit_rejected", self.homekit_rejected),
+                                ("homekit_standby", self.homekit_standby),
                                 ("observe_no_standby", self.preserve_shared), ("event", lambda *args, **kwargs: None)):
                 patches.enter_context(patch.object(soak, name, value))
             patches.enter_context(patch.object(soak, "time", self.clock))
@@ -528,25 +698,32 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertTrue(fixture.proof["completed"])
         self.assertEqual(fixture.proof["sweeps"], 45)
         self.assertEqual(fixture.proof["activity_changes"], 45 * 8)
-        self.assertEqual(fixture.proof["key_presses"], 45 * (8 * 5 + 1))
-        self.assertEqual(fixture.proof["api_key_presses"], 45 * 8 * 4 // 3)
-        self.assertEqual(fixture.proof["ble_key_presses"], 45 * 8 * 4 // 3)
-        self.assertEqual(fixture.proof["matter_key_presses"], 45 * 8 * 4 // 3 + 45 * 9)
-        self.assertEqual(fixture.proof["matter_activity_changes"], 45 * 8 // 3)
-        self.assertEqual(fixture.proof["api_activity_changes"], 45 * 8 // 3)
-        self.assertEqual(fixture.proof["ui_activity_changes"], 45 * 8 // 3)
+        self.assertEqual(fixture.proof["key_presses"], 45 * (8 * 6 + 2))
+        self.assertEqual(fixture.proof["api_key_presses"], 45 * 8)
+        self.assertEqual(fixture.proof["ble_key_presses"], 45 * 8)
+        self.assertEqual(fixture.proof["matter_key_presses"], 45 * (8 + 9))
+        self.assertEqual(fixture.proof["homekit_key_presses"], 45 * (8 + 9))
+        self.assertEqual(fixture.proof["matter_activity_changes"], 45 * 2)
+        self.assertEqual(fixture.proof["homekit_activity_changes"], 45 * 2)
+        self.assertEqual(fixture.proof["api_activity_changes"], 45 * 2)
+        self.assertEqual(fixture.proof["ui_activity_changes"], 45 * 2)
         self.assertEqual(fixture.proof["matter_rejection_checks"], 45)
-        self.assertEqual(fixture.proof["matter_standbys"], 22)
+        self.assertEqual(fixture.proof["homekit_rejection_checks"], 45)
+        self.assertEqual(fixture.proof["matter_standbys"], 15)
+        self.assertEqual(fixture.proof["homekit_standbys"], 15)
+        self.assertEqual({row[1] for row in fixture.homekit_key_calls if row[1] in (Key.PLAY, Key.PAUSE)},
+                         {Key.PLAY, Key.PAUSE})
         self.assertAlmostEqual(sum(fixture.clock.sleeps), 7200, places=6)
         self.assertEqual(sum(row[0] == "standby" for row in fixture.events), 45)
         self.assertEqual(sum(row[0] == "owners.validated" for row in fixture.events), 45)
         self.assertTrue(fixture.preserve_dut_on_failure)
         self.assertEqual(fixture.events[-1], ("bed.close",))
-        for resource in ("browser.close", "keyboard.close", "matter.close"):
+        for resource in ("browser.close", "keyboard.close", "matter.close", "homekit.close"):
             self.assertEqual(sum(row[0] == resource for row in fixture.events), 1)
         self.assertEqual(sum(row[0] == "keyboard.pair" for row in fixture.events), 1)
         self.assertFalse(fixture.keyboard.paired)
         self.assertFalse(fixture.keyboard.held)
+        self.assertFalse(fixture.homekit_accessory.open)
 
     def test_partial_deadline_finishes_sweep_with_all_owners_activities_and_routes(self):
         cases = (
@@ -556,58 +733,75 @@ class SoakScenarioTests(unittest.TestCase):
         for test, names in cases:
             with self.subTest(test=test.__name__):
                 fixture = SoakFixture()
-                fixture.run(test, duration=321)
+                fixture.run(test, duration=481)
                 self.assertEqual(tuple(dut.name for dut in fixture.duts), names)
                 self.assertEqual(tuple(dut.name for dut in fixture.members), names[1:])
                 self.assertEqual(len(fixture.components), 16)
                 self.assertEqual(len(fixture.activities), 8)
-                self.assertEqual(fixture.proof["elapsed_seconds"], 480)
-                self.assertEqual(fixture.proof["sweeps"], 3)
+                self.assertEqual(fixture.proof["elapsed_seconds"], 640)
+                self.assertEqual(fixture.proof["sweeps"], 4)
                 selects = [row for row in fixture.events if row[0] == "select"]
                 for index, activity in enumerate(fixture.activities):
                     routes = [row[2] for row in selects if row[1] == activity.name]
-                    self.assertEqual(set(routes), {"api", "ui", "matter"})
-                    self.assertEqual(routes, [("ui", "api", "matter")[(sweep + index) % 3]
-                                              for sweep in range(3)])
+                    self.assertEqual(set(routes), {"api", "ui", "matter", "homekit"})
+                    self.assertEqual(routes, [("ui", "api", "matter", "homekit")[(sweep + index) % 4]
+                                              for sweep in range(4)])
                 self.assertEqual(fixture.proof["ui_activity_changes"], 8)
                 self.assertEqual(fixture.proof["api_activity_changes"], 8)
                 self.assertEqual(fixture.proof["matter_activity_changes"], 8)
+                self.assertEqual(fixture.proof["homekit_activity_changes"], 8)
                 self.assertEqual(fixture.proof["api_key_presses"], 32)
                 self.assertEqual(fixture.proof["ble_key_presses"], 32)
-                self.assertEqual(fixture.proof["matter_key_presses"], 32 + 3 * 9)
-                self.assertEqual(fixture.proof["matter_rejection_checks"], 3)
+                self.assertEqual(fixture.proof["matter_key_presses"], 32 + 4 * 9)
+                self.assertEqual(fixture.proof["homekit_key_presses"], 32 + 4 * 9)
+                self.assertEqual(fixture.proof["matter_rejection_checks"], 4)
+                self.assertEqual(fixture.proof["homekit_rejection_checks"], 4)
                 self.assertEqual(fixture.proof["matter_standbys"], 1)
-                self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 24)
+                self.assertEqual(fixture.proof["homekit_standbys"], 1)
+                self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 32)
                 self.assertEqual([row[1] for row in fixture.events if row[0] == "matter.open"], [names[0]])
                 self.assertEqual(sum(row[0] == "matter.inputs" for row in fixture.events), 1)
-                # Every activity uses all three transports for each periodic
+                self.assertEqual([row[1] for row in fixture.events if row[0] == "homekit.open"], [names[0]])
+                self.assertEqual(sum(row[0] == "homekit.inputs" for row in fixture.events), 1)
+                self.assertEqual(sum(row[0] == "homekit.state" for row in fixture.events), 4 * 17)
+                # Every activity uses all four transports for each periodic
                 # source/audio key; HTTP and BLE retain the configured holds.
                 for activity in fixture.activities:
                     calls = [row for row in fixture.key_calls if row[0] == activity.name]
                     for key in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN):
-                        self.assertEqual({row[4] for row in calls if row[1] == key}, {"api", "ble", "matter"})
-                        self.assertTrue(all(row[2] == 0 for row in calls if row[1] == key and row[4] == "matter"))
+                        periodic = [row for row in calls if row[1] == key]
+                        self.assertEqual({row[4] for row in periodic}, {"api", "ble", "matter", "homekit"})
+                        key_index = (Key.RIGHT, Key.VOLUME_UP, Key.LEFT, Key.VOLUME_DOWN).index(key)
+                        activity_index = fixture.activities.index(activity)
+                        self.assertEqual([row[4] for row in periodic], [
+                            ("ble", "api", "matter", "homekit")[(sweep + activity_index + key_index) % 4]
+                            for sweep in range(4)])
+                        self.assertTrue(all(row[2] == 0 for row in periodic
+                                            if row[4] in ("matter", "homekit")))
                 self.assertEqual(sum(row[0] == "scan" for row in fixture.events), 1)
                 self.assertEqual(sum(row[0] == "scan.on" for row in fixture.events), 16)
-                self.assertEqual(sum(row[0] == "route.tv" for row in fixture.events), 24)
-                self.assertEqual(sum(row[0] == "route.avr" for row in fixture.events), 24)
+                self.assertEqual(sum(row[0] == "route.tv" for row in fixture.events), 32)
+                self.assertEqual(sum(row[0] == "route.avr" for row in fixture.events), 32)
                 shared = [row for row in fixture.events if row[0] == "shared.preserved"]
-                self.assertEqual(len(shared), 12)
+                self.assertEqual(len(shared), 16)
                 self.assertTrue(all(len(row[1]) == 2 for row in shared))
                 keys = [row for row in fixture.events if row[0] == "key.received"]
                 for owner in names:
                     own = [row for row in keys if row[1] == owner
                            and row[3] in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN)]
-                    self.assertEqual(len(own), 24)
+                    self.assertEqual(len(own), 32)
                     self.assertEqual({(row[3], row[4]) for row in own}, {
                         (Key.RIGHT, 0), (Key.LEFT, 650), (Key.LEFT, 0),
                         (Key.VOLUME_UP, 750), (Key.VOLUME_UP, 0), (Key.VOLUME_DOWN, 0)})
                 extras = [row for row in fixture.matter_key_calls
                           if row[1] not in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN, Key.SELECT)]
-                self.assertEqual(len(extras), 24)
+                self.assertEqual(len(extras), 32)
                 self.assertEqual({row[1] for row in extras}, {Key.PLAY, Key.PAUSE, Key.STOP, 0x4C, 0x4B, 0x65, 0x66})
-                self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"], ["ui", "matter", "ui"])
-                self.assertEqual(sum(row[0] == "browser.standby" for row in fixture.events), 3)
+                self.assertEqual({row[1] for row in fixture.homekit_key_calls
+                                  if row[1] in (Key.PLAY, Key.PAUSE)}, {Key.PLAY, Key.PAUSE})
+                self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"],
+                                 ["ui", "matter", "homekit", "ui"])
+                self.assertEqual(sum(row[0] == "browser.standby" for row in fixture.events), 4)
                 self.assertTrue(all(component.power == PowerState.STANDBY for component in fixture.components))
                 self.assertIsNone(fixture.current)
 
@@ -620,8 +814,9 @@ class SoakScenarioTests(unittest.TestCase):
             self.assertEqual(len(calls), 4)
             self.assertEqual([row[3] - calls[0][3] for row in calls], [0, 5, 10, 15])
 
-    def test_matter_media_controls_and_rejection_checks_eventually_reach_every_activity(self):
+    def test_accessory_media_controls_and_rejection_checks_eventually_reach_every_activity(self):
         media_keys = {Key.PLAY, Key.PAUSE, Key.STOP, 0x4C, 0x4B, 0x65, 0x66}
+        homekit_keys = {0x48, 0x49, 0x4B, 0x4C, 0x35, 0x65, 0x66}
         for test in (soak.test_soak, soak.test_soak_main4):
             with self.subTest(test=test.__name__):
                 fixture = SoakFixture()
@@ -629,14 +824,33 @@ class SoakScenarioTests(unittest.TestCase):
                 self.assertEqual(fixture.proof["sweeps"], 8)
                 self.assertEqual(fixture.proof["elapsed_seconds"], 1280)
                 self.assertEqual(fixture.proof["matter_rejection_checks"], 8)
+                self.assertEqual(fixture.proof["homekit_rejection_checks"], 8)
                 rejected = [row[1] for row in fixture.events if row[0] == "matter.rejected"]
                 self.assertEqual(rejected, [activity.name for activity in fixture.activities])
-                for activity in fixture.activities:
+                homekit_rejected = [row[1] for row in fixture.events if row[0] == "homekit.rejected"]
+                self.assertEqual(homekit_rejected, [fixture.activities[(sweep + 4) % 8].name
+                                                    for sweep in range(8)])
+                for activity_index, activity in enumerate(fixture.activities):
                     calls = [row for row in fixture.matter_key_calls
                              if row[0] == activity.name and row[1] in media_keys]
                     self.assertEqual(len(calls), 8)
                     self.assertEqual({row[1] for row in calls}, media_keys)
                     recoveries = [row for row in fixture.matter_key_calls
+                                  if row[0] == activity.name and row[1] == Key.SELECT]
+                    self.assertEqual(len(recoveries), 1)
+                    homekit_calls = [row for row in fixture.homekit_key_calls
+                                     if row[0] == activity.name and row[1] in homekit_keys | {Key.PLAY, Key.PAUSE}]
+                    self.assertEqual(len(homekit_calls), 8)
+                    self.assertTrue(homekit_keys <= {row[1] for row in homekit_calls})
+                    self.assertEqual(sum(row[1] in (Key.PLAY, Key.PAUSE) for row in homekit_calls), 1)
+                    for sweep, call in enumerate(homekit_calls):
+                        extra = (3 * sweep + activity_index) % 8
+                        expected = (0x48, 0x49, 0x4B, 0x4C, 0x35, None, 0x65, 0x66)[extra]
+                        if extra == 5:
+                            self.assertIn(call[1], (Key.PLAY, Key.PAUSE))
+                        else:
+                            self.assertEqual(call[1], expected)
+                    recoveries = [row for row in fixture.homekit_key_calls
                                   if row[0] == activity.name and row[1] == Key.SELECT]
                     self.assertEqual(len(recoveries), 1)
                 self.assertTrue(fixture.proof["completed"])
@@ -735,7 +949,7 @@ class SoakScenarioTests(unittest.TestCase):
         fixture = SoakFixture(failed_matter_rejected=True)
         with self.assertRaisesRegex(AssertionError, "rejected-command evidence failed"):
             fixture.run(duration=1)
-        self.assertEqual(fixture.proof["key_presses"], 5)
+        self.assertEqual(fixture.proof["key_presses"], 6)
         self.assertEqual(fixture.proof["matter_key_presses"], 2)
         self.assertEqual(fixture.proof["matter_rejection_checks"], 0)
         self.assertEqual(fixture.proof["activity_changes"], 1)
@@ -781,6 +995,160 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.proof["activity_changes"], 8)
         self.assertTrue(fixture.proof["completed"])
         self.assertIsNone(fixture.current)
+
+    def test_homekit_selection_failure_never_falls_back_to_another_transport(self):
+        fixture = SoakFixture(failed_homekit_select=True)
+        with self.assertRaisesRegex(TimeoutError, "HomeKit selection failed"):
+            fixture.run(duration=1)
+        self.assertEqual([row[2] for row in fixture.events if row[0] == "select"],
+                         ["ui", "api", "matter", "homekit"])
+        self.assertEqual(fixture.proof["activity_changes"], 3)
+        self.assertEqual(fixture.proof["homekit_activity_changes"], 0)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(fixture.homekit_accessory.open)
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
+
+    def test_homekit_key_failure_never_retries_or_uses_another_transport(self):
+        fixture = SoakFixture(failed_homekit=1)
+        with self.assertRaisesRegex(TimeoutError, "HomeKit key failed"):
+            fixture.run(duration=1)
+        self.assertEqual([row[4] for row in fixture.key_calls], ["ble", "api", "matter", "homekit"])
+        self.assertEqual(fixture.proof["key_presses"], 3)
+        self.assertEqual(fixture.proof["homekit_key_presses"], 0)
+        self.assertEqual(fixture.proof["elapsed_seconds"], 15)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(fixture.homekit_accessory.open)
+        self.assertFalse(fixture.accessory.open)
+        self.assertFalse(fixture.keyboard.paired)
+
+    def test_extra_homekit_command_failure_does_not_advance_activity(self):
+        fixture = SoakFixture(failed_homekit=2)
+        with self.assertRaisesRegex(TimeoutError, "HomeKit key failed"):
+            fixture.run(duration=1)
+        self.assertEqual(fixture.homekit_key_calls[-1][1], 0x48)
+        self.assertEqual(len(fixture.key_calls), 6)
+        self.assertEqual(fixture.proof["key_presses"], 5)
+        self.assertEqual(fixture.proof["homekit_key_presses"], 1)
+        self.assertEqual(fixture.proof["activity_changes"], 1)
+        self.assertEqual(fixture.proof["elapsed_seconds"], 20)
+        self.assertFalse(any(row[0] in ("matter.rejected", "homekit.rejected") for row in fixture.events))
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(fixture.homekit_accessory.open)
+
+    def test_rejected_homekit_command_failure_retains_incomplete_evidence(self):
+        fixture = SoakFixture(failed_homekit_rejected=True)
+        with self.assertRaisesRegex(AssertionError, "HomeKit rejected-command evidence failed"):
+            fixture.run(duration=1)
+        self.assertEqual(fixture.proof["key_presses"], 31)
+        self.assertEqual(fixture.proof["homekit_key_presses"], 10)
+        self.assertEqual(fixture.proof["homekit_rejection_checks"], 0)
+        self.assertEqual(fixture.proof["activity_changes"], 5)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(fixture.homekit_accessory.open)
+
+    def test_homekit_standby_failure_does_not_fall_back_to_browser_or_matter(self):
+        fixture = SoakFixture(failed_homekit_standby=True)
+        with self.assertRaisesRegex(TimeoutError, "HomeKit standby failed"):
+            fixture.run(duration=321)
+        self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"],
+                         ["ui", "matter", "homekit"])
+        self.assertEqual(fixture.proof["sweeps"], 2)
+        self.assertEqual(fixture.proof["homekit_standbys"], 0)
+        self.assertEqual(sum(row[0] == "browser.standby" for row in fixture.events), 2)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(fixture.homekit_accessory.open)
+
+    def test_nonzero_homekit_status_is_never_counted_or_retried(self):
+        for operation in ("select_input", "send_key", "step_volume", "set_mute", "set_power"):
+            with self.subTest(operation=operation):
+                fixture = SoakFixture(failed_homekit_status=operation)
+                with self.assertRaisesRegex(AssertionError, "HomeKit rejected"):
+                    fixture.run(duration=321)
+                self.assertEqual(sum(row[0:2] == ("homekit.command", operation)
+                                     for row in fixture.events), 1)
+                self.assertFalse(fixture.proof["completed"])
+                self.assertFalse(fixture.homekit_accessory.open)
+                self.assertFalse(fixture.accessory.open)
+
+    def test_homekit_pairing_or_input_list_failure_prevents_workload_and_closes_owned_resources(self):
+        for test in (soak.test_soak, soak.test_soak_main4):
+            for options, error, message in (({"failed_homekit_open": True}, RuntimeError, "HomeKit pairing failed"),
+                                            ({"failed_homekit_slots": True}, AssertionError, "HomeKit input list mismatch")):
+                with self.subTest(test=test.__name__, options=options):
+                    fixture = SoakFixture(**options)
+                    with self.assertRaisesRegex(error, message):
+                        fixture.run(test, duration=1)
+                    self.assertEqual(fixture.key_calls, [])
+                    self.assertFalse(any(row[0] == "select" for row in fixture.events))
+                    self.assertFalse(fixture.proof["completed"])
+                    self.assertFalse(fixture.homekit_accessory.open)
+                    self.assertFalse(fixture.accessory.open)
+                    self.assertFalse(fixture.keyboard.paired)
+                    for event in ("matter.close", "browser.close", "keyboard.close"):
+                        self.assertEqual(sum(row[0] == event for row in fixture.events), 1)
+                    self.assertEqual(sum(row[0] == "homekit.close" for row in fixture.events),
+                                     0 if options.get("failed_homekit_open") else 1)
+
+    def test_homekit_readback_checks_each_state_field_after_selection_and_standby(self):
+        for phase in ("active", "standby"):
+            for field in ("active", "current_input", "speaker_active"):
+                with self.subTest(phase=phase, field=field):
+                    fixture = SoakFixture(failed_homekit_readback=(phase, field))
+                    with self.assertRaisesRegex(AssertionError, "HomeKit power and input"):
+                        fixture.run(duration=1)
+                    self.assertEqual(fixture.proof["activity_changes"], 0 if phase == "active" else 8)
+                    self.assertEqual(fixture.proof["sweeps"], 0)
+                    self.assertFalse(fixture.proof["completed"])
+                    self.assertFalse(fixture.homekit_accessory.open)
+                    self.assertEqual(sum(row[0] == "homekit.state" for row in fixture.events),
+                                     1 if phase == "active" else 17)
+
+    def test_homekit_readback_rejects_changed_input_before_next_activity_can_overwrite_it(self):
+        fixture = SoakFixture(failed_homekit_readback=("rejected", "current_input"))
+        with self.assertRaisesRegex(AssertionError, "HomeKit power and input"):
+            fixture.run(duration=1)
+        self.assertEqual([row[1] for row in fixture.events if row[0] == "select"],
+                         [activity.name for activity in fixture.activities[:5]])
+        self.assertEqual([row[1] for row in fixture.events if row[0] == "homekit.rejected"],
+                         [fixture.activities[4].name])
+        self.assertEqual(sum(row[0] == "homekit.state" for row in fixture.events), 10)
+        self.assertEqual(fixture.proof["activity_changes"], 5)
+        self.assertEqual(fixture.proof["homekit_rejection_checks"], 1)
+        self.assertEqual(fixture.proof["key_presses"], 32)
+        self.assertEqual(fixture.proof["sweeps"], 0)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertFalse(any(row[0] == "standby" for row in fixture.events))
+        self.assertFalse(fixture.homekit_accessory.open)
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
+
+    def test_slow_homekit_operations_count_toward_elapsed_time_and_complete_sweep(self):
+        fixture = SoakFixture(homekit_delay=8)
+        fixture.run(duration=161)
+        self.assertGreater(fixture.proof["elapsed_seconds"], 160)
+        self.assertEqual(fixture.proof["elapsed_seconds"], fixture.clock.now - fixture.setup_finished)
+        self.assertEqual(fixture.proof["sweeps"], 1)
+        self.assertEqual(fixture.proof["activity_changes"], 8)
+        self.assertTrue(fixture.proof["completed"])
+        self.assertIsNone(fixture.current)
+        self.assertFalse(fixture.homekit_accessory.open)
+
+    def test_homekit_cleanup_failure_fails_the_bed_after_completed_workload(self):
+        fixture = SoakFixture(failed_homekit_close=True)
+        with self.assertRaisesRegex(RuntimeError, "HomeKit pairing cleanup failed"):
+            fixture.run(duration=1)
+        self.assertTrue(fixture.proof["completed"])
+        self.assertEqual(fixture.proof["sweeps"], 1)
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
+        for event in ("homekit.close", "homekit.cleanup_failed", "matter.close", "browser.close", "keyboard.close"):
+            self.assertEqual(sum(row[0] == event for row in fixture.events), 1)
+
+    def test_homekit_cleanup_failure_preserves_original_input_failure(self):
+        fixture = SoakFixture(failed_homekit=1, failed_homekit_close=True)
+        with self.assertRaisesRegex(TimeoutError, "HomeKit key failed"):
+            fixture.run(duration=1)
+        self.assertFalse(fixture.proof["completed"])
+        self.assertEqual(sum(row[0] == "homekit.cleanup_failed" for row in fixture.events), 1)
+        self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
 
 if __name__ == "__main__":

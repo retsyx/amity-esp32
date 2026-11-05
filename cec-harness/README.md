@@ -1225,7 +1225,7 @@ this selector. Supply each main's admin and Matter credentials using
 `--dut-credentials DUT=PATH` and `--dut-enrollment-credentials DUT=PATH`; the
 existing default credential options remain fallbacks. Run the entire process
 on the harness Pi, including
-Chromium, HTTP control, Matter accessory control and CEC I/O. Normal Pi setup installs
+Chromium, HTTP control, Matter/HomeKit accessory control and CEC I/O. Normal Pi setup installs
 and checks its browser dependencies:
 
 ```sh
@@ -1240,23 +1240,28 @@ Start with a factory-reset `amity-dut` and three unclaimed members. Each phase
 adds the other three boards through the normal Add workflow.
 Each owns a TV, AVR and two sources. Eight saved activities cycle between
 shared-equipment handoffs and changes of owner, rotating actual UI clicks,
-authenticated API selections and Matter input selections across every activity.
-Matter inputs use the saved accessory slots, verified against its published list.
+authenticated API selections, Matter and HomeKit input selections across every
+activity. Both accessories' published inputs are checked against saved slots;
+HomeKit identifiers use slot plus one. The phase keeps one HomeKit controller
+paired until cleanup, which removes only that controller.
 The main pairs the Pi-emulated BLE remote
 through the normal Remote UI operations before the workload timer starts.
-Navigation and volume alternate between BLE reports, the key web API and Matter
-commands across every owner and source; BLE and HTTP also exercise holds.
-Every activity repeats a rotating Matter playback or mute command. Once per
-sweep, unsupported keys and an invalid input must leave control working and
-emit no CEC control frames, followed by a proven supported key. That check rotates
-through all eight activities. Standby alternates between the UI and Matter.
-Each input path and Matter rejection/standby checks have separate counters.
+Navigation and volume rotate among BLE reports, the key web API, Matter and
+HomeKit across every owner and source; BLE and HTTP also exercise holds.
+Every activity repeats rotating Matter and HomeKit playback/mute commands,
+including HomeKit Play/Pause against the source's observed playback state.
+Once per sweep for each accessory, unsupported keys and an invalid input must
+leave control working and emit no CEC control frames, followed by a proven
+supported key. Those checks rotate through all eight activities. Standby rotates
+among the UI, Matter and HomeKit; HomeKit power/input readback must agree after
+every selection, key sequence and standby. Each path and its rejection/standby
+checks have separate counters.
 Periodic inputs use fresh physical press/release, recipient, power and routing
 assertions. One Chromium page remains open throughout, checking activity state,
 Standby, device-list connectivity and browser/network errors. No heap metrics
 are collected: functional failures, boot changes, lost members and timeouts
 fail the run. Each phase lasts at least two hours after setup and completes
-its final eight-activity sweep before cleanup. Matter command time counts toward
+its final eight-activity sweep before cleanup. Accessory command time counts toward
 the workload; activity dwell and the five-second input schedule may run longer
 while waiting for physical command evidence. Evidence includes elapsed time,
 sweep/activity/key counts and browser checks. Failures retain DUT configuration
