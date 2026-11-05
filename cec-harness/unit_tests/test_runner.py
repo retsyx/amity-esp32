@@ -292,7 +292,7 @@ class RunnerTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
-        expected = ["prepare_main", "test_hdmi_scan", "test_activity", "test_activity_no_display",
+        expected = ["prepare_main", "test_hdmi_scan", "test_activity", "test_activity_without_status_replies", "test_activity_no_display",
                     "test_activity_without_receiver", "test_activity_without_receiver_secondary",
                     "test_activity_nondefault_inputs", "test_activity_switch_input",
                     "test_activity_manual_component", "test_activity_manual_component_secondary",

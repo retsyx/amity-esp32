@@ -1,15 +1,75 @@
 """Activity power, switch input and remote key routing on local/remote owners."""
 
 from contextlib import ExitStack, contextmanager, nullcontext
+import time
 
 from amity_harness import (DUT, TestBed, TvComponent, AvrComponent, PlaybackComponent,
-                           Key, PowerState)
+                           Frame, Hooks, Key, PowerState)
+from amity_harness.pin_observation import PinObservation
 from functional_tests.hdmi_scan import scanned_devices
 from functional_tests.qualified_names import same_name_equipment, exercise_qualified_activities
 from amity_harness.recovery import LookupScans, assert_returned
 from amity_harness.activity_edits import ActiveActivityEdits, ActivityEditObservation
 from amity_harness.transitions import ActivityDisplayStandby, observe_no_standby
 from amity_harness.qualified_names import observe_no_control
+
+
+def test_activity_without_status_replies():
+    """Successful CEC commands advance setup without power/audio/source reports."""
+    withheld = []
+    report_opcodes = (0x90, 0x7a, 0x82, 0x72, 0x7e)
+
+    def silence_reports(component, frame):
+        if frame.opcode in report_opcodes:
+            withheld.append({"component": component.name, "frame": frame.raw.hex(":"),
+                             "opcode": frame.opcode, "destination": frame.destination,
+                             "attempted_monotonic_ns": time.monotonic_ns()})
+            return None
+        return frame
+
+    dut = DUT("amity-dut")
+    connector = dut.tentacle(0)
+    tv = TvComponent(connector.front, "Quiet TV", hooks=Hooks(before_tx=silence_reports))
+    avr = AvrComponent(connector.back, "Quiet AVR", hooks=Hooks(before_tx=silence_reports))
+    player = PlaybackComponent(avr, "Quiet Player", port=1, hooks=Hooks(before_tx=silence_reports))
+    components = (tv, avr, player)
+    with TestBed(dut, *components) as bed:
+        proof = {"passed": False, "withheld_reports": withheld}
+        bed.control_observations = [{"kind": "activity_without_status_replies", "checks": [proof]}]
+        scan = dut.scan_hdmi()
+        scan.assert_contains_only(*components)
+        for component in components:
+            scan.assert_on(component, component.endpoint)
+            component.assert_power(PowerState.STANDBY)
+        with dut.create_activity("Functional silent status", display=tv, source=player, audio=avr) as activity:
+            with PinObservation(avr, scan=scan) as pins:
+                started = activity.start()
+                for component in components:
+                    component.wait_for_power(PowerState.ON, since=started)
+                tv.wait_for_amity_input(since=started)
+                avr.wait_for_input(player, since=started)
+                player.wait_for_source_request(since=started)
+                activity.assert_active()
+                # Replies remain suppressed through the next physical action.
+                # Standby also closes the final audio query's pin ACK slot.
+                stopped = activity.standby()
+                for component in components:
+                    component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+                initiator = scan.initiators[avr.gpio]
+                query = pins.first_frame(Frame(initiator, avr.address.logical, 0x71).raw,
+                                         after=started.started_ns)
+                proof.update(query_frame=query.raw.hex(":"), ack=list(query.ack), eom=list(query.eom),
+                             query_wire_timestamp_ns=query.timestamp_ns,
+                             standby_started_monotonic_ns=stopped.started_ns)
+                assert query.timestamp_ns < stopped.started_ns
+                assert any(row["component"] == avr.name and row["opcode"] == 0x7a
+                           and row["destination"] == initiator
+                           and query.timestamp_ns < row["attempted_monotonic_ns"]
+                           for row in withheld)
+                proof["transmitted_reports"] = [row["frame"] for row in bed.session.records
+                                                if row["direction"] == "tx" and row["opcode"] in report_opcodes]
+                assert not proof["transmitted_reports"]
+                proof.update(passed=True, ready_before_standby=True)
 
 
 def test_activity():
