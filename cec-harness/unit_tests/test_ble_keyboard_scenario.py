@@ -21,13 +21,13 @@ class KeyboardScenario(Scenario):
         self.keyboard = self.scan_proof = None
 
     @contextmanager
-    def pair(self, main):
+    def pair(self, main, *, keyboard_slots=6):
         if main is not self.duts[0] or main.name != "amity-dut" or not self.open:
             raise AssertionError("Only the original main owns the keyboard")
         self.events.append(("keyboard.review", main.name))
         if self.existing_bond:
             raise RuntimeError("Existing remote bond must be preserved")
-        self.keyboard = SimpleNamespace(main=main, connected=True)
+        self.keyboard = SimpleNamespace(main=main, connected=True, keyboard_slots=keyboard_slots)
         self.events.append(("keyboard.pair", main.name))
         try:
             yield self.keyboard
@@ -210,7 +210,7 @@ class KeyboardScenario(Scenario):
                 (ble_keyboard, "BLEInputEvidence", self.evidence),
                 (ble_keyboard, "BLEFIFOEvidence", self.fifo_evidence),
                 (ble_keyboard, "BLEActivityEvidence", self.transition_evidence),
-                (DUT, "pair_ble_keyboard", lambda main: self.pair(main)),
+                (DUT, "pair_ble_keyboard", lambda main, **kwargs: self.pair(main, **kwargs)),
                 (DUT, "add_amity", lambda main, candidate: self.add(main, candidate)),
                 (DUT, "scan_hdmi", lambda main: self.scan(main)),
                 (DUT, "create_activity", lambda main, name, **kwargs: self.activity(main, name, **kwargs)),

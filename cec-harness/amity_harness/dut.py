@@ -400,10 +400,10 @@ class DUT:
         from .settings import FrontPhysicalAddress
         return FrontPhysicalAddress.local(self, tentacle, address, timeout=timeout).apply()
 
-    def pair_ble_keyboard(self, *, timeout=None):
+    def pair_ble_keyboard(self, *, timeout=None, keyboard_slots=6):
         """Pair a test-owned BLE keyboard only when no remote is already bonded."""
         from .ble_keyboard import PairedKeyboard
-        return PairedKeyboard(self, timeout=timeout).create()
+        return PairedKeyboard(self, timeout=timeout, keyboard_slots=keyboard_slots).create()
 
     def capture_logs(self, *, expected_boot=None, timeout=15):
         """Read existing UI logs with before/after boot proof, without serial I/O."""

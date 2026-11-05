@@ -997,11 +997,13 @@ have no saved remote. The fixture refuses to replace an existing bond and
 removes only its own new bond during cleanup.
 
 The two input cases scan a TV, AVR and two sources, then save both activities before
-sending input. The local case first saturates the CEC FIFO with six navigation
-holds and changing volume input. It requires eight physical frames in admission
-order and fresh main-owner logs for the two dropped presses. A new source press
-proves progress while dropped Mute stays held; neither capacity becoming free
-nor matching button-up may replay dropped work. Already admitted presses may
+sending input. The local case first saturates the CEC FIFO with one ten-key HID
+report: seven navigation keys, Mute and both volume keys. It requires eight
+physical frames in admission order and fresh main-owner logs for the two dropped
+volume presses. Releasing two admitted navigation holds leaves capacity for
+fresh Play and the final recipient releases, while the rejected volume keys
+stay held. Neither capacity becoming free nor matching button-up may replay
+dropped work. Already admitted presses may
 finish before the final release. Fresh Select and Mute must then work.
 Both cases check a fresh Select press/release, independent volume and
 navigation holds, and two navigation buttons sharing one recipient. Real CEC

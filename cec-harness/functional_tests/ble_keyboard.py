@@ -125,7 +125,7 @@ def _ble_keyboard(*, remote):
     with TestBed(*duts, *components, members=(target,) if remote else ()):
         # Pair before creating any other resources. An existing remote bond
         # belongs to the user and is a failed precondition, never fixture cleanup.
-        with main.pair_ble_keyboard() as keyboard:
+        with main.pair_ble_keyboard(keyboard_slots=6 if remote else 10) as keyboard:
             with (main.add_amity(target) if remote else nullcontext(main)) as owner:
                 if remote:
                     owner.assert_connected()

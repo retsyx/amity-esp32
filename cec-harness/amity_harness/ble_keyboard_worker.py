@@ -20,29 +20,41 @@ import time
 
 PROTOCOL_VERSION = 1
 NAME = "Amity Test Keyboard"
-REPORT_MAP = bytes.fromhex(
-    "05 01 09 06 a1 01 85 01 "
-    "05 07 19 e0 29 e7 15 00 25 01 75 01 95 08 81 02 "
-    "95 01 75 08 81 01 "
-    "95 06 75 08 15 00 26 e7 00 19 00 29 e7 81 00 c0 "
-    "05 0c 09 01 a1 01 85 02 15 00 26 ff ff 19 00 2a ff ff "
-    "75 10 95 01 81 00 c0"
-)
+def _keyboard_slots(value):
+    if type(value) is not int or value not in (6, 10):
+        raise ValueError("Choose six or ten keyboard slots")
+    return value
 
 
-def encode_reports(keyboard, consumer):
+def report_map(keyboard_slots=6):
+    slots = _keyboard_slots(keyboard_slots)
+    return bytes.fromhex(
+        "05 01 09 06 a1 01 85 01 "
+        "05 07 19 e0 29 e7 15 00 25 01 75 01 95 08 81 02 "
+        "95 01 75 08 81 01 "
+        f"95 {slots:02x} 75 08 15 00 26 e7 00 19 00 29 e7 81 00 c0 "
+        "05 0c 09 01 a1 01 85 02 15 00 26 ff ff 19 00 2a ff ff "
+        "75 10 95 01 81 00 c0"
+    )
+
+
+REPORT_MAP = report_map()
+
+
+def encode_reports(keyboard, consumer, keyboard_slots=6):
     """Build independent keyboard and consumer reports, without report-ID bytes."""
-    if (not isinstance(keyboard, list) or len(keyboard) > 14
+    _keyboard_slots(keyboard_slots)
+    if (not isinstance(keyboard, list) or len(keyboard) > keyboard_slots + 8
             or any(type(key) is not int or not 4 <= key <= 0xe7 for key in keyboard)
             or len(set(keyboard)) != len(keyboard)):
         raise ValueError("Keyboard usages must be unique integers from 4 through 231")
     keys = sorted(key for key in keyboard if key < 0xe0)
-    if len(keys) > 6:
-        raise ValueError("A keyboard report supports at most six ordinary keys")
+    if len(keys) > keyboard_slots:
+        raise ValueError("A keyboard report exceeds its ordinary-key capacity")
     if type(consumer) is not int or not 0 <= consumer <= 0xffff:
         raise ValueError("Consumer usage must be an integer from zero through 65535")
     modifiers = sum(1 << (key - 0xe0) for key in keyboard if key >= 0xe0)
-    return {1: bytes((modifiers, 0, *keys, *([0] * (6 - len(keys))))),
+    return {1: bytes((modifiers, 0, *keys, *([0] * (keyboard_slots - len(keys))))),
             2: consumer.to_bytes(2, "little")}
 
 
@@ -66,8 +78,9 @@ class KeyboardWorker:
 
     def __init__(self, backend):
         self.backend = backend
+        self.keyboard_slots = _keyboard_slots(getattr(backend, "keyboard_slots", 6))
         self.opened = self.closed = False
-        self.reports = encode_reports([], 0)
+        self.reports = encode_reports([], 0, self.keyboard_slots)
 
     async def dispatch(self, operation, arguments):
         if operation == "open":
@@ -78,7 +91,7 @@ class KeyboardWorker:
                 raise RuntimeError("The BLE keyboard worker cannot be reopened")
             result = await self.backend.open()
             self.opened = True
-            return {"protocol_version": PROTOCOL_VERSION, **result}
+            return {"protocol_version": PROTOCOL_VERSION, "keyboard_slots": self.keyboard_slots, **result}
         if operation == "close":
             _keys(arguments, ())
             await self.close()
@@ -95,12 +108,12 @@ class KeyboardWorker:
         if operation == "forget_peer":
             _keys(arguments, ())
             await self.backend.forget_peer()
-            self.reports = encode_reports([], 0)
+            self.reports = encode_reports([], 0, self.keyboard_slots)
             return {"cleared": True}
         if operation != "report":
             raise ValueError("Unsupported BLE keyboard RPC operation")
         _keys(arguments, ("keyboard", "consumer"))
-        reports = encode_reports(arguments["keyboard"], arguments["consumer"])
+        reports = encode_reports(arguments["keyboard"], arguments["consumer"], self.keyboard_slots)
         status = await self.backend.status()
         if status.get("ready") is not True:
             raise RuntimeError("The bonded keyboard and consumer reports are not subscribed")
@@ -117,7 +130,7 @@ class KeyboardWorker:
             return
         errors = []
         try:
-            released = encode_reports([], 0)
+            released = encode_reports([], 0, self.keyboard_slots)
             if self.opened:
                 try:
                     status = await self.backend.status()
@@ -148,13 +161,14 @@ class KeyboardWorker:
 class BlueZKeyboard:
     """One temporary peripheral using BlueZ's existing system D-Bus service."""
 
-    def __init__(self, adapter="hci0", name=NAME):
+    def __init__(self, adapter="hci0", name=NAME, *, keyboard_slots=6):
         if not isinstance(adapter, str) or not re.fullmatch(r"hci[0-9]+", adapter):
             raise ValueError("Choose a BlueZ hci adapter")
         if not isinstance(name, str) or not 1 <= len(name.encode("utf-8")) <= 26 or any(ord(c) < 32 for c in name):
             raise ValueError("The BLE keyboard name must contain 1–26 printable UTF-8 bytes")
         self.adapter = "/org/bluez/" + adapter
         self.name = name
+        self.keyboard_slots = _keyboard_slots(keyboard_slots)
         self.path = "/org/amity/keyboard/worker" + str(os.getpid())
         self.bus = self._lock = None
         self._application = self._advertising = self._agent = self._pairable_changed = False
@@ -320,7 +334,7 @@ class BlueZKeyboard:
                 raise RuntimeError("The owned keyboard peer must be disconnected before removal")
             await self._call(self.adapter, "org.bluez.Adapter1", "RemoveDevice", "o", [self.peer])
         self.peer = None
-        released = encode_reports([], 0)
+        released = encode_reports([], 0, self.keyboard_slots)
         for number, characteristic in self.characteristics.items():
             # BlueZ owns subscription lifetime, including retained CCC state.
             # Only its StartNotify/StopNotify callbacks change Notifying.
@@ -545,10 +559,10 @@ def _interfaces(owner):
     managed[service_path] = {"org.bluez.GattService1": {
         "UUID": Variant("s", uuid("1812")), "Primary": Variant("b", True), "Includes": Variant("ao", [])}}
     definitions = (("2a4a", b"\x11\x01\x00\x02", ["read", "encrypt-read"], None),
-                   ("2a4b", REPORT_MAP, ["read", "encrypt-read"], None),
+                   ("2a4b", report_map(owner.keyboard_slots), ["read", "encrypt-read"], None),
                    ("2a4c", b"\x00", ["write-without-response", "encrypt-write"], None),
                    ("2a4e", b"\x01", ["read", "write-without-response", "encrypt-read", "encrypt-write"], None),
-                   ("2a4d", bytes(8), ["read", "notify", "encrypt-read"], 1),
+                   ("2a4d", bytes(2 + owner.keyboard_slots), ["read", "notify", "encrypt-read"], 1),
                    ("2a4d", bytes(2), ["read", "notify", "encrypt-read"], 2))
     for index, (code, value, flags, number) in enumerate(definitions):
         path = service_path + "/char" + str(index)
@@ -618,13 +632,14 @@ async def _main(args):
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         loop.add_signal_handler(signum, stop.set)
-    await serve(reader, sys.stdout, BlueZKeyboard(args.adapter, args.name), stop)
+    await serve(reader, sys.stdout, BlueZKeyboard(args.adapter, args.name, keyboard_slots=args.keyboard_slots), stop)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Temporary BlueZ BLE keyboard stdio worker")
     parser.add_argument("--adapter", default="hci0")
     parser.add_argument("--name", default=NAME)
+    parser.add_argument("--keyboard-slots", type=int, choices=(6, 10), default=6)
     args = parser.parse_args(argv)
     asyncio.run(_main(args))
     return 0

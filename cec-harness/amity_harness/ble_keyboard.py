@@ -34,31 +34,40 @@ def _generation(value):
     return isinstance(value, str) and value.isascii() and value.isdecimal()
 
 
-def _reports(keyboard, consumer):
+def _keyboard_slots(value):
+    if type(value) is not int or value not in (6, 10):
+        raise ValueError("Choose six or ten keyboard slots")
+    return value
+
+
+def _reports(keyboard, consumer, keyboard_slots=6):
+    _keyboard_slots(keyboard_slots)
     keyboard = tuple(keyboard)
     if (any(type(value) is not int or not 4 <= value <= 0xe7 for value in keyboard)
             or len(set(keyboard)) != len(keyboard)
-            or sum(value < 0xe0 for value in keyboard) > 6
+            or sum(value < 0xe0 for value in keyboard) > keyboard_slots
             or type(consumer) is not int or not 0 <= consumer <= 65535):
-        raise ValueError("Use at most six ordinary keyboard usages, eight modifiers and one 16-bit consumer usage")
+        raise ValueError("Use at most " + str(keyboard_slots) + " ordinary keyboard usages, eight modifiers and one 16-bit consumer usage")
     return sorted(keyboard), consumer
 
 
 class LocalKeyboard:
     """Bounded JSON IPC to the Pi's short-lived D-Bus keyboard worker."""
 
-    def __init__(self, *, python=sys.executable, timeout=20):
+    def __init__(self, *, python=sys.executable, timeout=20, keyboard_slots=6):
         if not isinstance(python, str) or not python or "\x00" in python:
             raise ValueError("Choose the keyboard worker's Python executable")
         _positive_seconds(timeout, "Keyboard IPC timeout")
         self.python, self.timeout = python, timeout
+        self.keyboard_slots = _keyboard_slots(keyboard_slots)
         self._process = self._stderr = None
         self._sequence = 0
         self._buffer = bytearray()
         self._lock = threading.Lock()
 
     def _command(self):
-        return [self.python, "-u", "-m", "amity_harness.ble_keyboard_worker"]
+        return [self.python, "-u", "-m", "amity_harness.ble_keyboard_worker",
+                "--keyboard-slots", str(self.keyboard_slots)]
 
     def _environment(self):
         return {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
@@ -123,7 +132,8 @@ class LocalKeyboard:
             if (result.get("protocol_version") != 1 or result.get("type") != 0
                     or not isinstance(result.get("name"), str) or not result["name"]
                     or not isinstance(result.get("address"), str)
-                    or re.fullmatch(r"[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}", result["address"]) is None):
+                    or re.fullmatch(r"[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}", result["address"]) is None
+                    or result.get("keyboard_slots", 6) != self.keyboard_slots):
                 raise RuntimeError("BLE keyboard worker has no valid advertised identity")
             return result
         except BaseException:
@@ -134,7 +144,7 @@ class LocalKeyboard:
         return self._rpc("status")
 
     def report(self, *, keyboard=(), consumer=0):
-        keyboard, consumer = _reports(keyboard, consumer)
+        keyboard, consumer = _reports(keyboard, consumer, self.keyboard_slots)
         return self._rpc("report", {"keyboard": keyboard, "consumer": consumer})
 
     def disconnect(self):
@@ -178,13 +188,14 @@ class PairedKeyboard:
     _cleanup_priority = 1
     _cleanup_retryable = True
 
-    def __init__(self, dut, *, timeout=None):
+    def __init__(self, dut, *, timeout=None, keyboard_slots=6):
         bed = getattr(dut, "_testbed", None)
         if (bed is None or not bed._entered or bed._closed or bed.session is None
                 or not any(owner is dut for owner in bed.duts)
                 or any(owner is dut for owner in (*bed.members, *bed.control_only))):
             raise RuntimeError("Pair the keyboard on an original main inside its active TestBed")
         self.dut, self.bed, self.session = dut, bed, bed.session
+        self.keyboard_slots = _keyboard_slots(keyboard_slots)
         self.timeout = dut._runtime.timeout if timeout is None else timeout
         _positive_seconds(self.timeout, "BLE keyboard pairing timeout")
         self.worker = None
@@ -323,8 +334,10 @@ class PairedKeyboard:
         if not state["ready"] or any(state[name] for name in ("pairing", "unpairing", "connecting", "scanning")):
             raise KeyboardConflict("Remote administration must be idle before pairing the test keyboard")
         factory = self.dut._runtime.keyboard_factory or LocalKeyboard
-        self.worker = factory()
+        self.worker = factory() if self.keyboard_slots == 6 else factory(keyboard_slots=self.keyboard_slots)
         self.identity = self.worker.open()
+        if self.identity.get("keyboard_slots", 6) != self.keyboard_slots:
+            raise KeyboardConflict("The keyboard worker did not confirm its report capacity")
         return self
 
     def _advertised(self):
@@ -435,7 +448,7 @@ class PairedKeyboard:
                               owner_boots=dict(scan.owner_boots), owner_duts=dict(scan.owner_duts))
 
     def report(self, *, keyboard=(), consumer=0):
-        keyboard, consumer = _reports(keyboard, consumer)
+        keyboard, consumer = _reports(keyboard, consumer, self.keyboard_slots)
         if self._disconnected:
             raise RuntimeError("The disconnected keyboard cannot send input")
         action = self.checkpoint()
@@ -447,7 +460,7 @@ class PairedKeyboard:
         if (not isinstance(receipt, dict)
                 or type(receipt.get("timestamp_monotonic_ns")) is not int or receipt["timestamp_monotonic_ns"] <= 0
                 or not isinstance(receipt.get("keyboard_report"), str)
-                or re.fullmatch(r"[0-9a-f]{16}", receipt["keyboard_report"]) is None
+                or re.fullmatch(r"[0-9a-f]{" + str((2 + self.keyboard_slots) * 2) + "}", receipt["keyboard_report"]) is None
                 or not isinstance(receipt.get("consumer_report"), str)
                 or re.fullmatch(r"[0-9a-f]{4}", receipt["consumer_report"]) is None):
             raise KeyboardConflict("The keyboard report has no valid physical notification receipt")
@@ -645,7 +658,7 @@ class _KeyboardReports:
                               owner_boots=dict(self._owner_boots), owner_duts=dict(self._owner_duts))
 
     def report(self, *, keyboard=(), consumer=0):
-        keyboard, consumer = _reports(keyboard, consumer)
+        keyboard, consumer = _reports(keyboard, consumer, self.keyboard.keyboard_slots)
         self._validate()
         return self.keyboard._send_report(self._boundary(), keyboard, consumer)
 

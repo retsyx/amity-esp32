@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness.ble_keyboard_worker import BlueZKeyboard, KeyboardWorker, _interfaces, encode_reports, serve
+from amity_harness.ble_keyboard_worker import BlueZKeyboard, KeyboardWorker, _interfaces, encode_reports, report_map, REPORT_MAP, serve
 
 
 class FakeBackend:
@@ -66,6 +66,18 @@ class KeyboardReportTests(unittest.TestCase):
         self.assertEqual(encode_reports([0x52, 0x4f], 0), encode_reports([0x4f, 0x52], 0))
         self.assertEqual(encode_reports([], 0), {1: bytes(8), 2: bytes(2)})
 
+    def test_optional_ten_slot_map_encodes_one_complete_keyboard_report(self):
+        keys = [0x28, 0x29, 0x4a, 0x4f, 0x50, 0x51, 0x52, 0x7f, 0x80, 0x81]
+        self.assertEqual(encode_reports(keys, 0, 10), {1: bytes([0, 0, *keys]), 2: bytes(2)})
+        self.assertEqual(encode_reports([], 0, 10), {1: bytes(12), 2: bytes(2)})
+        self.assertEqual(report_map(), REPORT_MAP)
+        self.assertIn(bytes.fromhex("95 0a 75 08 15 00"), report_map(10))
+        self.assertEqual(report_map(10).replace(bytes.fromhex("95 0a 75 08 15 00"),
+                                              bytes.fromhex("95 06 75 08 15 00")), REPORT_MAP)
+        with self.assertRaises(ValueError): encode_reports(keys, 0)
+        for slots in (True, 0, 7, 16):
+            with self.subTest(slots=slots), self.assertRaises(ValueError): report_map(slots)
+
     def test_invalid_rollover_duplicate_or_malformed_reports_are_rejected(self):
         for keyboard, consumer in (([1], 0), ([True], 0), ([0x4f, 0x4f], 0),
                                    (list(range(4, 11)), 0), ([0xe8], 0), ((), 0),
@@ -94,6 +106,19 @@ class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
         unchanged = await worker.dispatch("report", {"keyboard": [], "consumer": 0})
         self.assertEqual(unchanged["changed"], [])
         await worker.close()
+
+    async def test_ten_key_report_publishes_one_notification_then_releases_its_full_width(self):
+        backend = FakeBackend()
+        backend.keyboard_slots = 10
+        worker = KeyboardWorker(backend)
+        opened = await worker.dispatch("open", {"protocol_version": 1})
+        self.assertEqual(opened["keyboard_slots"], 10)
+        keys = [0x28, 0x29, 0x4a, 0x4f, 0x50, 0x51, 0x52, 0x7f, 0x80, 0x81]
+        result = await worker.dispatch("report", {"keyboard": keys, "consumer": 0})
+        self.assertEqual(result["changed"], [1])
+        self.assertEqual(backend.events, [("open",), ("publish", 1, bytes([0, 0, *keys]).hex())])
+        await worker.close()
+        self.assertEqual(backend.events[-2:], [("publish", 1, bytes(12).hex()), ("close",)])
 
     async def test_reports_require_bond_and_both_subscriptions(self):
         worker, backend = await self.opened()

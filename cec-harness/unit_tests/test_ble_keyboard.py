@@ -172,6 +172,30 @@ class PairedKeyboardTests(unittest.TestCase):
         phases = [row["phase"] for row in fixture.bed.control_observations[0]["checks"]]
         self.assertEqual(phases, ["scanned", "pair_submit", "paired", "report", "unpair_submit", "unpaired"])
 
+    def test_explicit_wide_keyboard_capacity_reaches_factory_and_report_context(self):
+        fixture = Fixture()
+        slots_seen = []
+        def factory(*, keyboard_slots):
+            slots_seen.append(keyboard_slots)
+            return fixture.worker
+        fixture.main._runtime = RunConfig(timeout=.1, keyboard_factory=factory)
+        original_open = fixture.worker.open
+        fixture.worker.open = lambda: {**original_open(), "keyboard_slots": 10}
+        original_report = fixture.worker.report
+        def report(**kwargs):
+            return {**original_report(**kwargs), "keyboard_report": "00" * 12}
+        fixture.worker.report = report
+        usages = (0x28, 0x29, 0x4a, 0x4f, 0x50, 0x51, 0x52, 0x7f, 0x80, 0x81)
+        with fixture.main.pair_ble_keyboard(keyboard_slots=10) as keyboard:
+            with keyboard.reports() as reports:
+                action = reports.report(keyboard=usages)
+                self.assertEqual(len(action.operation["keyboard_report"]), 24)
+        self.assertEqual(slots_seen, [10])
+        self.assertIn(("report", usages, 0), fixture.worker_calls)
+        self.assertIn("--keyboard-slots", LocalKeyboard(keyboard_slots=10)._command())
+        self.assertEqual(LocalKeyboard(keyboard_slots=10)._command()[-1], "10")
+        with self.assertRaises(ValueError): LocalKeyboard(keyboard_slots=7)
+
     def test_six_explicit_scans_keep_one_advertisement_through_owned_unpair_and_repair(self):
         fixture = Fixture()
         with PairedKeyboard(fixture.main) as keyboard:
