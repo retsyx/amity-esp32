@@ -75,6 +75,9 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   Each successful case restores the canonical bench names; failures retain DUT state.
 - `functional_tests/ble_keyboard.py`: pairs a Pi BLE HID keyboard and verifies
   taps, overlapping buttons and disconnect cleanup with local/member equipment.
+- `functional_tests/soak.py` (`--test soak`): an explicit two-hour endurance
+  run on all four DUTs, including the rendered administration UI. Excluded
+  from default runs and `--test all`.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
 The hostname tests also verify saved activities, adapter settings and stable
@@ -1147,7 +1150,7 @@ configuration and physical control through the replacement adapter,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),
-or `--test all` for all registered scenarios. The same credentials, TLS, SSH and output
+or `--test all` for all ordinary scenarios. The same credentials, TLS, SSH and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful
 single-scenario CLI run includes `prepare_main`, its scenario entries and
@@ -1155,6 +1158,49 @@ single-scenario CLI run includes `prepare_main`, its scenario entries and
 firmware upgrades and scenarios from running. Any scenario failure skips the
 final reset. Successful enrollment-only runs contain preparation and reset
 verification entries.
+
+The two-hour endurance test requires explicit `--test soak`; neither the default
+nor `--test all` selects it. Run the entire process on the harness Pi, including
+Chromium, HTTP control, Matter enrollment and CEC I/O. After normal Pi setup,
+install its optional browser dependency there:
+
+```sh
+sudo apt-get install --yes --no-install-recommends chromium
+python3 -m venv --system-site-packages .cache/soak-python
+.cache/soak-python/bin/python -m pip install playwright==1.64.1
+.cache/soak-python/bin/python cec-harness/run.py --test soak \
+  --credentials /private/path/amity-dut.json --insecure \
+  --output test-results/functional/soak.json
+```
+
+Start with the factory-reset main and three unclaimed members. The main is
+`amity-dut`; the test adds `amity-dut-2`, `amity-dut-3` and `amity-dut-4`.
+Each owns a TV, AVR and two sources. Eight saved activities cycle between
+shared-equipment handoffs and changes of owner, alternating actual UI clicks
+with authenticated API selections. The main pairs the Pi-emulated BLE remote
+through the normal Remote UI operations before the workload timer starts.
+Navigation and volume taps/holds alternate between BLE reports and the key web
+API across every owner and source, with separate counters for each input path.
+Periodic inputs use fresh physical press/release, recipient, power and routing
+assertions. One Chromium page remains open throughout, checking activity state,
+Standby, device-list connectivity and browser/network errors. No heap metrics
+are collected: functional failures, boot changes, lost members and timeouts
+fail the run. The workload lasts at least two hours after setup and completes
+its final eight-activity sweep before cleanup. Evidence includes elapsed time,
+sweep/activity/key counts and browser checks. Failures retain DUT configuration
+for inspection while releasing browser, HTTP and CEC resources.
+
+For a short browser-only check, run the actual helper against a local HTTP
+fixture serving the shipping UI from a full checkout on the Pi (including
+`components/web_admin/assets`):
+
+```sh
+PYTHONPATH=cec-harness .cache/soak-python/bin/python cec-harness/browser_tests/soak_browser.py
+```
+
+This explicitly invoked regression covers login, Start/Repair, Standby,
+four-device inspection and cleanup after opening/login failures. It uses no
+DUTs and stays separate from the ordinary hardware-free unit suite.
 
 `--timeout` defaults to 180 seconds for HDMI scans, membership and activity
 operations.

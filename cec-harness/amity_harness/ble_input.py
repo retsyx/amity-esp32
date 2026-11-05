@@ -117,7 +117,7 @@ class BLEInputEvidence:
                    and record.get("handled_frame", record.get("frame")) == frame.raw.hex(":")
                    for record in self.session.records)
 
-    def _press(self, component, key, *, after, deadline_ns):
+    def _press(self, component, key, *, after, deadline_ns, require_pressed=True):
         def find(frames):
             matches = []
             for gpio, frame in frames:
@@ -127,7 +127,7 @@ class BLEInputEvidence:
                     continue
                 if gpio != component.gpio or frame.destination != component.address.logical:
                     raise AssertionError("BLE key reached the wrong physical recipient")
-                if self._handled(component, frame) and component.pressed_key == key:
+                if self._handled(component, frame) and (not require_pressed or component.pressed_key == key):
                     matches.append(frame)
             return min(matches, key=lambda frame: frame.timestamp_ns) if matches else None
         return self._wait(find, deadline_ns=deadline_ns, message="No fresh physical BLE key press")
@@ -256,6 +256,68 @@ class BLEInputEvidence:
             raise
         finally:
             self._all_up(keyboard, primary)
+
+    def assert_key(self, keyboard, component, *, key, keyboard_usage=None,
+                   consumer_usage=None, duration_ms=0):
+        """Require one real HID tap/hold and its original physical CEC stream.
+
+        Exactly one keyboard or consumer usage is sent. A report group performs
+        its HTTP preflight before the first HID change; held input is released
+        at its requested down-relative boundary without waiting for a CEC frame.
+        A fresh all-up report clears the accepted activity's input gate before
+        the down report. The group's existing cleanup releases HID on failure.
+        """
+        if component not in self.components:
+            raise ValueError("The BLE key recipient is outside this scan")
+        if (isinstance(key, bool) or not isinstance(key, int) or not 0 <= key <= 255
+                or type(duration_ms) is not int or not 0 <= duration_ms <= 5000
+                or (keyboard_usage is None) == (consumer_usage is None)
+                or keyboard_usage is not None and (type(keyboard_usage) is not int or not 4 <= keyboard_usage <= 0xE7)
+                or consumer_usage is not None and (type(consumer_usage) is not int or not 1 <= consumer_usage <= 0xFFFF)):
+            raise ValueError("Use one valid HID usage, a CEC key and a 0-5000 ms duration")
+        key = int(key)
+        record = self._begin(keyboard, "key_hold" if duration_ms else "key_tap")
+        record.update(component=component.name, key=key, keyboard_usage=keyboard_usage,
+                      consumer_usage=consumer_usage, duration_ms=duration_ms)
+        with keyboard.reports() as reports:
+            gate_up, _ = self._change(reports.all_up, record, "gate_all_up")
+            started, press_deadline = self._change(lambda: reports.report(
+                keyboard=() if keyboard_usage is None else (keyboard_usage,),
+                consumer=0 if consumer_usage is None else consumer_usage), record, "key_down")
+            record.update(gate_all_up_monotonic_ns=gate_up, down_monotonic_ns=started)
+            if duration_ms:
+                hold_until = started + duration_ms * 1_000_000
+                while True:
+                    remaining = (hold_until - time.monotonic_ns()) / 1e9
+                    if remaining <= 0:
+                        break
+                    # CEC health/snapshot reads acquire the responder lock;
+                    # a reply still transmitting must not delay this HID up.
+                    time.sleep(remaining)
+            else:
+                self._press(component, key, after=started, deadline_ns=press_deadline)
+            up, release_deadline = self._change(reports.all_up, record, "key_up")
+            record["all_up_monotonic_ns"] = up
+            press = self._press(component, key, after=started, deadline_ns=press_deadline,
+                                require_pressed=False)
+            release = self._release(component, after=up, deadline_ns=release_deadline)
+            if release.timestamp_ns <= press.timestamp_ns:
+                raise AssertionError("BLE key release preceded its press")
+
+        def verify(frames):
+            presses = [frame for gpio, frame in frames
+                       if gpio == component.gpio and frame.destination == component.address.logical
+                       and frame.opcode == 0x44 and frame.operands == bytes([key])]
+            if any(gpio == component.gpio and frame.destination == component.address.logical
+                   and frame.opcode == 0x45 and started < frame.timestamp_ns <= up
+                   for gpio, frame in frames):
+                raise AssertionError("A BLE key released before its physical all-up report")
+            record["presses"] = len(presses)
+
+        record.update(press_frame=press.raw.hex(":"), press_wire_timestamp_ns=press.timestamp_ns,
+                      release_frame=release.raw.hex(":"), release_wire_timestamp_ns=release.timestamp_ns)
+        return self._finish(record, routes={key: component}, released=((component, release),),
+                            release_once=True, validate_frames=verify)
 
     def assert_overlapping_buttons(self, keyboard, *, volume, navigation):
         """Right's release must leave Volume Up's independent stream running."""
