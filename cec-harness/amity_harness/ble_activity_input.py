@@ -156,13 +156,15 @@ class BLEActivityEvidence(BLEInputEvidence):
                 raise AssertionError("The selected BLE source was not powered before routing")
             if setup_sent >= route.timestamp_ns:
                 raise AssertionError("The coalesced BLE selection and setup report missed initialization")
-            # Observe UI readiness concurrently with physical setup, so HTTP
-            # latency cannot consume the gate window after the wire proof.
-            # The last CEC frame can arrive just before the local job commits.
-            settled = settled_read.result()
-            activity._last_start_terminal = True
             if all_up:
+                # Routing bounds the earliest local fallback, not job commit.
+                # Keep this burst independent of HTTP latency; only the fresh
+                # physical pin start before fallback can prove early admission.
                 blocked_sent = self._gate_probes(reports, record, consumer)
+            else:
+                # The fallback case has no fast all-up stimulus. Confirm setup
+                # before observing the unchanged held inputs through expiry.
+                settled = settled_read.result()
             # The main's input gate is independent of a member's CEC setup.
             # Submission precedes acceptance, giving a safe lower bound even
             # when the main finishes before a member's physical sequence.
@@ -197,6 +199,9 @@ class BLEActivityEvidence(BLEInputEvidence):
                     or not self._handled(source, fresh) or not self._handled(source, released)):
                 raise AssertionError("The fresh BLE tap did not produce its physical press and final release")
             self._report_change(reports, record, "final_all_up")
+            if all_up:
+                settled = settled_read.result()
+            activity._last_start_terminal = True
 
         for component, frame in ((initializer, initialized),
                                  (source, powered), (routing, route)):

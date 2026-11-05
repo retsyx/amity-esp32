@@ -29,6 +29,9 @@ class TransitionKeyboard:
         self.initialized_time = self.selection_return_time = 0
         self.selection_return_state = None
         self.readiness_started = threading.Event()
+        self.commit_ready = threading.Event()
+        self.fast_complete_event = threading.Event()
+        self.fresh_probe_received = threading.Event()
         self.readiness_during_setup = False
         self.fallback_probes = threading.Event()
         self.expect_fallback = False
@@ -66,7 +69,7 @@ class TransitionKeyboard:
         f = self.f
         if self.expect_fallback:
             self.fallback_probes.wait(.04)
-        if self.fault == "late_local_commit":
+        if self.fault in ("late_local_commit", "slow_status_response"):
             # Give the independent status read a rendezvous while the wire
             # sequence is in flight; a serialized read misses this window.
             self.readiness_during_setup = self.readiness_started.wait(.025)
@@ -75,7 +78,11 @@ class TransitionKeyboard:
             self.emit(f.next_player, 0x45)
         self.route_time = self.emit(f.avr, 0x86, f.next_player.address.physical.to_bytes(2, "big"))
         if self.fault == "late_local_commit":
-            timer = threading.Timer(.03, self._commit)
+            def commit_after_probe():
+                if self.fresh_probe_received.wait(.5):
+                    self._commit()
+
+            timer = threading.Thread(target=commit_after_probe)
             self.timers.append(timer)
             timer.start()
         else:
@@ -97,6 +104,7 @@ class TransitionKeyboard:
         if self.fault == "boot":
             f.state["expected_boot_id"] = "c" * 32
         self.committed_time = time.monotonic_ns()
+        self.commit_ready.set()
 
     def _accept_selection(self):
         self.selection_inputs.append("activity_selected")
@@ -204,12 +212,15 @@ class TransitionKeyboard:
             self.emit(source, 0x45)
             self.select_down = False
             self.select_released = True
+        if self.fault == "late_local_commit" and 0x28 in keyboard:
+            self.fresh_probe_received.set()
         if not keyboard and consumer == 0:
             for component in self.f.components:
                 if component.pressed_key is not None:
                     self.emit(component, 0x45)
             if self.select_released:
                 self.fast_complete = True
+                self.fast_complete_event.set()
         return action
 
     def all_up(self):
@@ -424,20 +435,24 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                 self.assertFalse(fixture.bed.control_observations[-1]["checks"][-1]["passed"])
                 self.assertTrue(all(not item._wire_observers for item in fixture.components))
 
-    def test_readiness_overlaps_setup_then_fences_fast_gate_and_all_up_probes(self):
-        with self.fixture(fault="late_local_commit") as fixture:
+    def test_slow_ready_response_cannot_delay_the_physical_gate_and_all_up_burst(self):
+        with self.fixture(fault="slow_status_response") as fixture:
             observed = []
 
             def status():
                 if fixture.keyboard.selected:
                     started = time.monotonic_ns()
                     fixture.keyboard.readiness_started.set()
-                    probes_started = ((0x4f, 0x50, 0x52), 0xe9) in fixture.keyboard.commands
-                    self.assertTrue(not probes_started or fixture.keyboard.fast_complete,
-                                    "HTTP reads must not interrupt the fast gate-to-Select burst")
                     observed.append((started, fixture.keyboard.route_time, fixture.state["activity_settling"]))
-                    if fixture.state["activity_settling"]:
-                        time.sleep(.005)
+                    self.assertTrue(fixture.keyboard.commit_ready.wait(.2),
+                                    "The physical setup did not commit independently of its HTTP reply")
+                    ready = deepcopy(fixture.state)
+                    # A response can already contain ready state while its
+                    # network delivery outlasts the one-second gate window.
+                    # The host must deliver the complete physical burst first.
+                    self.assertTrue(fixture.keyboard.fast_complete_event.wait(1.2),
+                                    "The HTTP readiness response blocked the timed HID burst")
+                    return ready
                 return deepcopy(fixture.state)
 
             def narrow_status():
@@ -459,15 +474,37 @@ class BLEActivityEvidenceTests(unittest.TestCase):
             self.assertTrue(fixture.keyboard.readiness_during_setup)
             self.assertTrue(any(not route and settling for _, route, settling in observed))
             self.assertLess(observed[0][0], record["routing_wire_timestamp_ns"])
-            self.assertTrue(any(route and settling for _, route, settling in observed))
             self.assertLess(record["routing_wire_timestamp_ns"], fixture.keyboard.committed_time)
             first_probe = next(change["started_monotonic_ns"] for change in record["input_changes"]
                                if change["phase"] == "gated_up_down")
             self.assertLess(fixture.keyboard.committed_time, record["settled_monotonic_ns"])
-            self.assertLess(record["settled_monotonic_ns"], first_probe)
+            self.assertLess(record["final_release_wire_timestamp_ns"], record["settled_monotonic_ns"])
             self.assertLess(first_probe, record["fresh_press_wire_timestamp_ns"])
             self.assertLess(record["fresh_press_wire_timestamp_ns"], record["fallback_lower_bound_monotonic_ns"])
             self.assertTrue(fixture.activity._last_start_terminal)
+
+    def test_a_fresh_probe_delivered_before_local_commit_cannot_claim_gate_success(self):
+        with self.fixture(fault="late_local_commit") as fixture:
+            def status():
+                fixture.keyboard.readiness_started.set()
+                if fixture.state["activity_settling"]:
+                    time.sleep(.005)
+                return {name: deepcopy(fixture.state[name]) for name in
+                        ("current_activity", "activity_settling", "activity_error")}
+
+            fixture.read_status = status
+            with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key press"):
+                self.transition(fixture)
+            record, = fixture.bed.control_observations[-1]["checks"]
+            fresh = next(change for change in record["input_changes"]
+                         if change["phase"] == "fresh_select_down")
+            self.assertLess(fixture.keyboard.route_time, fresh["started_monotonic_ns"])
+            self.assertLess(fresh["started_monotonic_ns"], fixture.keyboard.committed_time)
+            self.assertFalse(record["passed"])
+            self.assertFalse(any(frame.raw == b"\x03\x44\x00" for frame in fixture.pin_frames))
+            self.assertEqual(fixture.keyboard.commands[-1], ((), 0))
+            self.assertTrue(fixture.pin_closed)
+            self.assertTrue(all(component.pressed_key is None for component in fixture.components))
 
     def test_narrow_readiness_requires_typed_current_settling_and_error_fields(self):
         for field, wrong in (("current_activity", True), ("current_activity", "1"),
