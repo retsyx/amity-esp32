@@ -14,7 +14,7 @@ bypasses, or test control surfaces for this framework.** The DUT helpers wrap
 `/api/login`, the current activity editor/status/discover/configuration routes,
 the existing membership scan/add/remove controls, and operation-status routes.
 Additional configuration and observation helpers must wrap existing UI operations
-as well. Accessory scenarios send real commands through the shipping Matter
+as well. Accessory scenarios send real commands through the shipping Matter or HomeKit
 interface and verify their physical CEC effects. The runner
 first provisions the factory-reset main through its shipping Matter BLE setup.
 Firmware CEC, activity, input, commissioning and membership behavior is unchanged.
@@ -88,6 +88,11 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   inputs, checks keypad, playback, volume, mute and standby commands on local
   and member CEC wires, and verifies unsupported keys and an invalid input
   cause no control commands before a fresh supported key succeeds.
+- `functional_tests/homekit.py` (`--test homekit`): pairs an aiohomekit IP
+  controller through the HomeKit UI, verifies the accessory serial number,
+  selects published inputs and checks remote keys, playback, volume, mute and
+  power with local/member equipment. Unsupported keys and an invalid input
+  must be dropped without CEC control frames. Cleanup removes the owned pairing.
 - `functional_tests/soak.py` (`--soak`): two explicit two-hour endurance
   phases on all four DUTs, using each main and the rendered administration UI. Excluded
   from default runs and `--test all`.
@@ -203,7 +208,7 @@ its pinned files later, run on the Pi from the repository root:
 python3 cec-harness/setup_matter.py --verify-installed
 ```
 
-The controller uses Linux aarch64, Python 3.13, a powered `hci0` Bluetooth
+The Matter controller uses Linux aarch64, Python 3.13, a powered `hci0` Bluetooth
 adapter, and GLib, libnl and libatomic runtime libraries supplied by setup.
 Supply credentials for a 2.4 GHz Wi-Fi network reachable from the Pi. The worker
 uses a private mount namespace and drops root privileges before loading Matter
@@ -283,6 +288,14 @@ keeps its native log in `current/accessory-*/controller.log`.
 Reset checks use `verification-*/commissioning.log`, with `last-verification`
 pointing to the latest successful check. Inspect these logs for BLE, credentials,
 attestation or network failures; they may contain secrets and must remain private.
+
+HomeKit scenarios use the pinned `aiohomekit` client in `.harness-python`.
+They require an unpaired main with no open HomeKit setup window, then open it
+through the authenticated HomeKit UI API and consume its fresh pairing code.
+No separate HomeKit credentials are required. Private controller diagnostics
+live in `~/.local/state/amity-harness/homekit/<device-id>-*/controller.log`;
+`pairing.json` in that directory is deleted after confirmed removal of the test
+controller. Failed cleanup retains its private pairing material for diagnosis.
 
 ## Writing a functional test
 
@@ -1194,6 +1207,7 @@ configuration and physical control through the replacement adapter,
 `--test hostname` for local and two-board hostname changes across reboots,
 `--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),
 `--test matter` for Matter accessory controls with local and member equipment,
+`--test homekit` for aiohomekit input, key, audio and power controls on local/member equipment,
 or `--test all` for all ordinary scenarios. The same credentials, TLS and output
 options apply. Reports with multiple entries have `passed` and `tests`; each
 entry keeps the ordinary single-test report format. Even a successful

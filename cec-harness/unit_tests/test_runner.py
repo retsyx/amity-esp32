@@ -333,6 +333,7 @@ class RunnerTests(unittest.TestCase):
             report = json.loads(evidence.read_text())
         expected = ["prepare_main", "test_hdmi_scan", "test_usb_reboot",
                     "test_matter_accessory_local", "test_matter_accessory_remote",
+                    "test_homekit_accessory_local", "test_homekit_accessory_remote",
                     "test_activity_member_reboot", "test_activity", "test_activity_without_status_replies", "test_activity_no_display",
                     "test_activity_without_receiver", "test_activity_without_receiver_secondary",
                     "test_activity_nondefault_inputs", "test_activity_switch_input",

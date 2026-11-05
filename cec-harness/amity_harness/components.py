@@ -1034,6 +1034,8 @@ class TvComponent(Component):
             self.volume = max(0, self.volume - 1)
         elif key == 0x43:
             self.muted = not self.muted
+        elif key in (0x65, 0x66):
+            self.muted = key == 0x65
 
 
 class AvrComponent(Component):
@@ -1075,6 +1077,8 @@ class AvrComponent(Component):
             self.volume = max(0, self.volume - 1)
         elif key == 0x43:
             self.muted = not self.muted
+        elif key in (0x65, 0x66):
+            self.muted = key == 0x65
 
 
 class PlaybackComponent(Component):

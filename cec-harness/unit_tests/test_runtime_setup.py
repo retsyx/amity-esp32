@@ -92,6 +92,9 @@ class RuntimeSetupTests(unittest.TestCase):
         modules = {"serial": serial, "serial.tools": SimpleNamespace(list_ports=ports),
                    "serial.tools.list_ports": ports, "esp_pylib": SimpleNamespace(serial_reset=reset),
                    "esp_pylib.serial_reset": reset, "dbus_next": SimpleNamespace(),
+                   "aiohomekit": SimpleNamespace(), "aiohomekit.controller": SimpleNamespace(),
+                   "aiohomekit.controller.ip": SimpleNamespace(),
+                   "aiohomekit.controller.ip.controller": SimpleNamespace(IpController=Mock()),
                    "playwright": SimpleNamespace(sync_api=playwright), "playwright.sync_api": playwright}
         versions = dict(setup.pinned_requirements(setup.REQUIREMENTS))
         with patch.dict(sys.modules, modules), patch.object(setup.metadata, "version", side_effect=versions.__getitem__), \

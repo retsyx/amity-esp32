@@ -48,6 +48,16 @@ class FakeBackend:
 
 
 class FrameworkComponentTests(unittest.TestCase):
+    def test_explicit_mute_commands_set_state_without_toggling_on_repetition(self):
+        tv, avr, player = topology()
+        with CecSession([tv, avr, player], backend_factory=FakeBackend):
+            for component, initiator in ((tv, 4), (avr, 0)):
+                with self.subTest(component=component.name):
+                    for key, muted in ((0x65, True), (0x65, True), (0x66, False), (0x66, False)):
+                        component.receive(Frame(initiator, component.address.logical, 0x44, bytes([key])))
+                        component.receive(Frame(initiator, component.address.logical, 0x45))
+                        self.assertEqual(component.muted, muted)
+
     def test_linux_abi_sizes_and_requests(self):
         self.assertEqual(ctypes.sizeof(_Caps), 76)
         self.assertEqual(ctypes.sizeof(_LogAddrs), 92)
