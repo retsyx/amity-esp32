@@ -124,6 +124,10 @@ struct HubService::Impl : Transport {
     struct StepResult {system::OwnedIntent request;system::AdmissionResult result;};
     std::optional<StepResult> pending_step;bool step_pending=false;uint64_t shared_generation=1;
     std::optional<system::OwnedIntent> shared_selection;
+    // Owner IDs only: their latest accepted selection never entered the
+    // transport. Successful admission removes them, even if that scope ends.
+    std::vector<system::OctopusId> unadmitted_selection_owners;
+    uint32_t shared_selection_receipt=0;
     uint32_t activity_instance=0;
     enum class DiscoveryPhase {Idle,ClaimBack,ScanBack,BackReplies,ClaimFront,ScanFront,FinalReplies};
     struct DiscoveryState {DiscoveryPhase phase=DiscoveryPhase::Idle;bool waiting=false,claim_only=false,claimed=false;uint8_t candidate=0,nacks=0,address=0,sides=0;int64_t deadline=0,quiet_since=0;}discovery;
@@ -1041,17 +1045,46 @@ struct HubService::Impl : Transport {
         system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::activity;intent.generation=shared_generation;intent.config_revision=owned_config_revision;
         intent.selected=selected;intent.repair=!command.activity_receipt&&selected;
         intent.source=selector(next.source);intent.audio=selector(next.audio);intent.display=selector(next.display);intent.switch_device=selector(next.switch_device);intent.input=next.switch_input;
-        shared_selection=intent;
+        shared_selection=intent;shared_selection->repair=false;
+        if(command.activity_receipt){shared_selection_receipt=command.activity_receipt;unadmitted_selection_owners.clear();}
         std::vector<system::OctopusId> sent;
         auto owners=activity_owners;for(const auto& item:active_selectors)if(std::find(owners.begin(),owners.end(),item.target.port.octopus_id)==owners.end())owners.push_back(item.target.port.octopus_id);
         for(const auto owner:owners){
             if(owner==octopus||std::find(sent.begin(),sent.end(),owner)!=sent.end())continue;
             sent.push_back(owner);intent.target.port={consortium,owner,0,system::Side::front};
-            if(owned_sender)owned_sender(intent);
+            const bool admitted=owned_sender&&owned_sender(intent);
+            if(admitted)unadmitted_selection_owners.erase(std::remove(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),owner),unadmitted_selection_owners.end());
+            else if(command.activity_receipt){
+                unadmitted_selection_owners.push_back(owner);
+                ESP_LOGW(TAG,"Activity delivery not admitted owner=%s generation=%llu",owner.str().c_str(),static_cast<unsigned long long>(intent.generation));
+            }
         }
+    }
+    bool admit_unadmitted_selection(system::OctopusId owner){
+        if(!shared_selection||shared_selection_receipt!=activity_selection.load())return false;
+        auto selection=*shared_selection;selection.config_revision=owned_config_revision;
+        selection.target.port={consortium,owner,0,system::Side::front};selection.target.osd_name.clear();
+        if(!owned_sender||!owned_sender(selection))return false;
+        unadmitted_selection_owners.erase(std::remove(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),owner),unadmitted_selection_owners.end());
+        return true;
+    }
+    void retry_unadmitted_selection(){
+        if(unadmitted_selection_owners.empty()||!scoped_mode||!local_coordinator.load()||authority_transition.load()||maintenance.load()||retiring.load())return;
+        // One nonblocking admission per owner turn; a full owner FIFO must not
+        // require a new link-ready callback or delay another owner's progress.
+        const auto owner=unadmitted_selection_owners.front();
+        if(!admit_unadmitted_selection(owner))std::rotate(unadmitted_selection_owners.begin(),unadmitted_selection_owners.begin()+1,unadmitted_selection_owners.end());
     }
     bool refresh_selection_context(system::OctopusId owner){
         if(!shared_selection)return activity_hub.refresh_owned_context(owner);
+        const auto pending=std::find(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),owner);
+        if(pending!=unadmitted_selection_owners.end()){
+            // A newer selection is already queued. Park the ready capture
+            // without publishing the superseded intent; its admission will
+            // establish context, including if its first attempt is rejected.
+            if(shared_selection_receipt!=activity_selection.load())return true;
+            return admit_unadmitted_selection(owner);
+        }
         auto context=*shared_selection;context.kind=system::OwnedIntentKind::context;context.repair=false;context.source_changed=false;context.config_revision=owned_config_revision;
         bool admitted=true;std::vector<system::CecPortRef> ports;
         for(const auto& item:active_selectors)if(item.target.port.octopus_id==owner){auto port=item.target.port;port.side=system::Side::front;
@@ -1432,6 +1465,10 @@ struct HubService::Impl : Transport {
             refresh_configuration_revision(command.controller,command.config_revision);
             owned_sender=std::move(command.sender);active_selectors=command.selectors;
             activity_owners=std::move(command.owners);
+            unadmitted_selection_owners.erase(std::remove_if(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),[&](const auto owner){
+                return std::find(activity_owners.begin(),activity_owners.end(),owner)==activity_owners.end()&&
+                    std::none_of(active_selectors.begin(),active_selectors.end(),[&](const auto& item){return item.target.port.octopus_id==owner;});
+            }),unadmitted_selection_owners.end());
             owned_presentation_revision=command.presentation_revision;
             shared_generation=std::max(shared_generation,activity_hub.scoped_generation());
             // Discovery belongs to the physical owner/adapter, independently
@@ -1466,10 +1503,12 @@ struct HubService::Impl : Transport {
             if(!command.controller||command.controller==owned_controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))if(!command.link||command.link==engine->received_link){engine->stop_holds();}
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::AuthorityTransition:
+            if(!command.repeat)unadmitted_selection_owners.clear();
             activity_hub.release_key();for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();
             local_coordinator.store(command.repeat);coordinator_epoch=command.config_revision;authority_transition.store(false);
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::Retire:
+            unadmitted_selection_owners.clear();
             activity_hub.release_key();legacy_enabled=false;for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();passive_ports();
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::MaintenanceBegin:
@@ -1526,6 +1565,7 @@ struct HubService::Impl : Transport {
             }
             p.schedule_key_cleanup();changed=p.update_settling()||changed;
             p.refresh_activity_setup();
+            p.retry_unadmitted_selection();
             if(changed)p.publish();
         }
     }

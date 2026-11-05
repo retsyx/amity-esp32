@@ -154,4 +154,146 @@ static void scoped_save_preserves_admitted_frames_and_timed_release(){
     assert(fixture_completed.size()==2&&fixture_completed[0].data[1]==0x44&&fixture_completed[1].data[1]==0x45);
     fixture_tick=100000;fixture_async_autocomplete=true;
 }
-int main(){saved_edits_preserve_current();owner_revision_preserves_admitted_press_and_hold();scoped_save_preserves_admitted_frames_and_timed_release();std::puts("PASS scoped saved edits preserve the stable current activity, generation, input and owner holds; current/in-flight edits reject before persistence; revision context is nonemitting");}
+
+static void never_admitted_selection_delivery(){
+    const auto group=id<m::ConsortiumId>('1');
+    const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3'),other_owner=id<m::OctopusId>('7');
+    const auto boot=id<m::BootId>('4');
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    const std::vector<m::ScopedSelector> selectors{
+        {"display",{{group,controller,0,m::Side::front},"TV"}},
+        {"source",{{group,member,0,m::Side::back},"Source"}},
+        {"next",{{group,member,0,m::Side::back},"Next"}},
+        {"audio",{{group,other_owner,0,m::Side::back},"AVR"}}};
+    const Activity watch{"Watch","display","source","audio","",0,id<m::ActivityId>('5')};
+    Activity other{"Other","display","next","audio","",0,id<m::ActivityId>('6')};
+    bool member_available=false;
+    std::vector<m::OwnedIntent> attempts,admitted;
+    const auto sender=[&](const m::OwnedIntent& intent){
+        assert(intent.config_revision==hub.executing_configuration_revision());
+        attempts.push_back(intent);
+        const bool available=intent.target.port.octopus_id!=member||member_available;
+        if(available)admitted.push_back(intent);
+        return available;
+    };
+    const auto activity_count=[&](m::OctopusId owner){return std::count_if(admitted.begin(),admitted.end(),[&](const auto& intent){return intent.kind==m::OwnedIntentKind::activity&&intent.target.port.octopus_id==owner;});};
+    const auto refresh=[&](m::OctopusId owner,uint64_t revision,m::OwnedContextResult expected){
+        std::vector<m::OwnedContextResult> completed;
+        assert(hub.refresh_owned_context(owner,revision,[&](auto result){completed.push_back(result);}));run_one_command();
+        assert(completed==std::vector<m::OwnedContextResult>{expected});
+    };
+    assert(hub.configure_scoped({watch,other},selectors,sender,controller,1,{},1,{member,other_owner})==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);attempts.clear();admitted.clear();fixture_sent.clear();
+    assert(hub.select_activity(0));run_one_command();settle(hub);
+    assert(hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
+    assert(activity_count(member)==0&&activity_count(other_owner)==1);
+    const auto initial=std::find_if(attempts.begin(),attempts.end(),[&](const auto& intent){return intent.kind==m::OwnedIntentKind::activity&&intent.target.port.octopus_id==member;});
+    assert(initial!=attempts.end()&&initial->selected&&!initial->repair);const auto generation=initial->generation;
+    refresh(member,1,m::OwnedContextResult::failed);
+    assert(activity_count(member)==0&&activity_count(other_owner)==1);
+    // An unrelated edit/reorder advances the saved revision but cannot change
+    // the current intent's qualified refs, generation or admission history.
+    other.name="Edited inactive";assert(hub.configure_scoped({other,watch},selectors,sender,controller,2,{},2,{member,other_owner})==ESP_OK);run_one_command();
+    assert(hub.snapshot().current_activity==1&&hub.snapshot().activities[1].activity_id==watch.activity_id);
+    const auto before_stale=attempts.size();refresh(member,1,m::OwnedContextResult::stale);
+    assert(std::all_of(attempts.begin()+before_stale,attempts.end(),[](const auto& intent){return intent.kind==m::OwnedIntentKind::activity&&intent.config_revision==2;}));
+    member_available=true;refresh(member,2,m::OwnedContextResult::published);
+    assert(activity_count(member)==1&&activity_count(other_owner)==1);
+    const auto delivered=admitted.back();assert(delivered.kind==m::OwnedIntentKind::activity&&delivered.selected&&!delivered.repair&&
+        delivered.generation==generation&&delivered.config_revision==2&&delivered.source==selectors[1].target);
+    // Once admitted, even a subsequent scope fence permits context only.
+    assert(hub.fence_owned(member,id<m::LinkId>('8')));
+    refresh(member,2,m::OwnedContextResult::published);assert(admitted.back().kind==m::OwnedIntentKind::context&&activity_count(member)==1);
+    refresh(other_owner,2,m::OwnedContextResult::published);assert(admitted.back().kind==m::OwnedIntentKind::context&&activity_count(other_owner)==1);
+    // Rejected same-target selection is superseded by a later accepted target.
+    member_available=false;assert(hub.select_activity(1));run_one_command();settle(hub);
+    assert(hub.select_activity(0));run_one_command();settle(hub);
+    const auto latest_generation=attempts.back().generation;
+    member_available=true;refresh(member,2,m::OwnedContextResult::published);
+    assert(activity_count(member)==2&&admitted.back().source==selectors[2].target&&admitted.back().generation==latest_generation&&!admitted.back().repair);
+    // Standby must still reach a never-admitted owner after all role selectors
+    // disappear. The saved owner roster supplies its one owner-level delivery.
+    member_available=false;assert(hub.standby());run_one_command();settle(hub);
+    const auto standby_generation=attempts.back().generation;
+    assert(hub.configure_scoped({}, {},sender,controller,3,{},3,{member,other_owner})==ESP_OK);run_one_command();
+    member_available=true;refresh(member,3,m::OwnedContextResult::published);
+    assert(activity_count(member)==3&&admitted.back().kind==m::OwnedIntentKind::activity&&!admitted.back().selected&&!admitted.back().repair&&
+        admitted.back().generation==standby_generation&&admitted.back().config_revision==3&&!admitted.back().source&&!admitted.back().display&&!admitted.back().audio);
+    const auto no_roles=attempts.size();refresh(member,3,m::OwnedContextResult::published);refresh(other_owner,3,m::OwnedContextResult::published);assert(attempts.size()==no_roles);
+    // A rejected long-Power repair is one-shot; readiness must not retry it.
+    assert(hub.configure_scoped({watch,other},selectors,sender,controller,4,{},4,{member,other_owner})==ESP_OK);run_one_command();
+    assert(hub.select_activity(0));run_one_command();settle(hub);const auto before_repair=activity_count(member);
+    member_available=false;assert(hub.repair_activity()==ESP_OK);run_one_command();for(unsigned n=0;n<16;++n)run_idle(1);
+    assert(std::any_of(attempts.begin(),attempts.end(),[&](const auto& intent){return intent.target.port.octopus_id==member&&intent.kind==m::OwnedIntentKind::activity&&intent.repair;}));
+    member_available=true;refresh(member,4,m::OwnedContextResult::published);
+    assert(activity_count(member)==before_repair&&admitted.back().kind==m::OwnedIntentKind::context&&!admitted.back().repair);
+}
+static void never_admitted_selection_is_not_current(){
+    const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(hub.start(1,2)==ESP_OK);
+    const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},{"source",{{group,member,0,m::Side::back},"Source"}}};
+    bool available=false;std::vector<m::OwnedIntent> admitted;
+    const auto sender=[&](const m::OwnedIntent& intent){if(!available)return false;admitted.push_back(intent);return true;};
+    assert(hub.configure_scoped({{"Watch","display","source","","",0,id<m::ActivityId>('5')}},selectors,sender,controller,1,{},1,{member})==ESP_OK);
+    run_one_command();fixture_finish_discovery(hub);
+    fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();
+    assert(hub.select_activity(0));run_one_command();
+    for(unsigned pass=0;pass<16&&fixture_pending.empty();++pass)run_idle(1);
+    assert(hub.snapshot().current_activity==-1&&hub.activity_setup_in_progress()&&!fixture_pending.empty());
+    available=true;std::vector<m::OwnedContextResult> completed;
+    assert(hub.refresh_owned_context(member,1,[&](auto result){completed.push_back(result);}));run_one_command();
+    assert(completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::published});
+    assert(admitted.size()==1&&admitted[0].kind==m::OwnedIntentKind::activity&&admitted[0].selected&&admitted[0].source==selectors[1].target);
+    assert(hub.snapshot().current_activity==-1&&hub.activity_setup_in_progress());
+    fixture_complete_all();fixture_async_autocomplete=true;fixture_tick=100000;settle(hub);
+    assert(hub.snapshot().current_activity==0);
+}
+static void never_admitted_selection_idle_progress(){
+    const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(hub.start(1,2)==ESP_OK);
+    const std::vector<m::ScopedSelector> selectors{{"source",{{group,member,0,m::Side::back},"Source"}}};
+    const Activity watch{"Watch","","source","","",0,id<m::ActivityId>('5')};
+    bool available=false;std::vector<m::OwnedIntent> attempts,admitted;
+    const auto sender=[&](const m::OwnedIntent& intent){attempts.push_back(intent);if(!available)return false;admitted.push_back(intent);return true;};
+    assert(hub.configure_scoped({watch},selectors,sender,controller,1,{},1,{member})==ESP_OK);run_one_command();fixture_finish_discovery(hub);
+    assert(hub.select_activity(0));run_one_command();settle(hub);
+    const auto receipt=hub.activity_selection();
+    assert(admitted.empty()&&hub.snapshot().current_activity==0);
+    // A full runtime FIFO can drain while its context remains ready. No new
+    // owner-ready callback is needed to admit this never-admitted selection.
+    available=true;run_idle(1);
+    assert(admitted.size()==1&&admitted[0].kind==m::OwnedIntentKind::activity&&admitted[0].selected);
+    const auto once=attempts.size();run_idle(4);assert(attempts.size()==once&&hub.activity_selection()==receipt);
+    // Submission of newer Standby suppresses old unsent work even while an
+    // unrelated command and an already-queued ready capture precede it.
+    available=false;assert(hub.select_activity(0));run_one_command();settle(hub);attempts.clear();admitted.clear();
+    assert(hub.release_key(0xff));
+    std::vector<m::OwnedContextResult> completed;
+    assert(hub.refresh_owned_context(member,1,[&](auto result){completed.push_back(result);}));
+    assert(hub.standby());available=true;
+    run_one_command();assert(attempts.empty());
+    run_one_command();assert(attempts.empty()&&completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::published});
+    run_one_command();settle(hub);
+    assert(admitted.size()==1&&admitted[0].kind==m::OwnedIntentKind::activity&&!admitted[0].selected);
+    // Repair while already off is still one-shot, although its wire intent is
+    // Standby rather than a selected-activity repair.
+    available=false;assert(hub.repair_activity()==ESP_OK);run_one_command();settle(hub);
+    const auto rejected_repair=attempts.size();available=true;run_idle(4);
+    assert(attempts.size()==rejected_repair&&admitted.size()==1);
+    // A successful one-shot repair may satisfy an earlier never-admitted
+    // desired Standby, and must not cause that work to be admitted again.
+    available=false;assert(hub.standby());run_one_command();settle(hub);
+    available=true;assert(hub.repair_activity()==ESP_OK);run_one_command();settle(hub);
+    const auto repaired=attempts.size();assert(admitted.size()==2&&!admitted.back().selected);
+    run_idle(4);assert(attempts.size()==repaired&&admitted.size()==2);
+    // Removing an owner prunes its never-admitted selection even when there
+    // are no selected refs left to carry its pending Standby.
+    available=false;assert(hub.standby());run_one_command();settle(hub);
+    assert(hub.configure_scoped({}, {},sender,controller,2,{},2,{})==ESP_OK);run_one_command();
+    const auto removed=attempts.size();available=true;run_idle(4);
+    assert(hub.refresh_owned_context(member,2));run_one_command();assert(attempts.size()==removed);
+}
+int main(){never_admitted_selection_delivery();never_admitted_selection_is_not_current();never_admitted_selection_idle_progress();saved_edits_preserve_current();owner_revision_preserves_admitted_press_and_hold();scoped_save_preserves_admitted_frames_and_timed_release();std::puts("PASS scoped saved edits preserve the stable current activity, generation, input and owner holds; never-admitted selections progress once without replay; current/in-flight edits reject before persistence; revision context is nonemitting");}
