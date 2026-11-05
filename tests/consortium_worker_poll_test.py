@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the actual operational IPC pump and incremental receive callsite."""
 from pathlib import Path
+import argparse
 import os
 import shlex
 import subprocess
@@ -30,9 +31,40 @@ int scripted_select(int,fd_set*,fd_set*,fd_set*,timeval*){
 }
 #define select scripted_select
 '''
+QUEUE_MUTEX = r'''
+// The conversion runs immediately before the real queue mutex is acquired.
+// This schedules another task's admission without depending on host threads.
+struct QueueMutex {
+ std::mutex mutex;std::function<void()> before_lock;
+ operator std::mutex&(){auto hook=std::move(before_lock);before_lock={};if(hook)hook();return mutex;}
+};
+'''
 SUITE=r'''
 namespace amity::consortium {
 model::OwnedIntent action(const Active& a){model::OwnedIntent i;i.kind=model::OwnedIntentKind::activity;i.target={{a.session.scope().consortium_id,a.peer,0,model::Side::back},"Player"};i.generation=1;i.config_revision=7;i.on=true;return i;}
+void admission_after_iteration_clock_does_not_expire_fresh_input(){
+ auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0,admitted=0;
+ const auto original=a->session.scope();const auto* tls=a->tls.get();
+ a->mutex.before_lock=[&]{
+  clock_ms+=10;admitted=clock_ms;
+  auto key=action(*a);key.kind=model::OwnedIntentKind::key_edges;key.edges[0]={0x41,true};key.edge_count=1;
+  assert(queue_control(a->peer,Kind::scoped_intent,{},500,original.link_id,7,
+      std::make_shared<const model::OwnedIntent>(key),admitted)==ESP_OK);
+  clock_ms+=20; // Queue-lock delay must still consume the original budget.
+ };
+ a->tls->poller=[&](std::string& text){text=device_status;return FakeTls::ReceiveResult::frame;};
+ assert(operational_receive(*a,budget)&&recoveries==0&&budget==0&&admitted==110);
+ assert(a->queue.empty()&&a->tls->sent.size()==1&&a->tls->sent.front().ttl_ms==480);
+ model::OwnedIntent delivered;assert(parse_owned_intent(a->tls->sent.front().payload,delivered)==Error::none);
+ assert(delivered.kind==model::OwnedIntentKind::key_edges&&delivered.edge_count==1&&delivered.edges[0].key==0x41&&delivered.edges[0].down);
+ assert(a->tls.get()==tls&&a->session.scope()==original&&a->tls->usable()&&restart_fences.empty()&&shutdowns==0&&diagnostic_logs.empty());
+}
+void original_queue_deadline_and_clock_reversal_remain_fenced(){
+ const Queued key{Kind::scoped_intent,{},500,100,7,{}};
+ assert(queued_expired(key,99));
+ assert(!queued_expired(key,100)&&!queued_expired(key,599));
+ assert(queued_expired(key,600)&&queued_expired(key,601));
+}
 void pending_receive_keeps_pumping(){
  auto a=start(true);a->tls->socket=3;status.authority_ready=true;reset_worker();on_send={};unsigned polls=0;uint64_t admitted=0,budget=0;
  auto admit=[&]{auto i=std::make_shared<const model::OwnedIntent>(action(*a));admitted=clock_ms;assert(queue_control(a->peer,Kind::scoped_intent,{},1000,a->session.scope().link_id,7,i,admitted)==ESP_OK);};
@@ -176,18 +208,21 @@ void aged_firmware_keeps_existing_fifo_capacity(){
  assert(a->queue.size()==16&&recoveries==0&&shutdowns==0);
 }
 }
-int main(){using namespace amity::consortium;pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_malformed_stage();aged_firmware_keeps_existing_fifo_capacity();std::cout<<"PASS actual operational worker: original plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order and valid wireTTL without renewing controls/activation\n";}
+int main(){using namespace amity::consortium;admission_after_iteration_clock_does_not_expire_fresh_input();original_queue_deadline_and_clock_reversal_remain_fenced();pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_malformed_stage();aged_firmware_keeps_existing_fifo_capacity();std::cout<<"PASS actual operational worker: queue-lock admission ordering and original TTL/future-clock fences; plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order and valid wireTTL without renewing controls/activation\n";}
 '''
 def main():
-    source=(ROOT/'components/consortium/runtime.cpp').read_text()
-    queue_start=source.index('        Queued queued;std::string payload;')
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
+    source=parser.parse_args().source.read_text()
+    # Include the actual queue-clock placement, before or after mutex ownership.
+    queue_start=source.index('\n',source.index('        if(!active->retiring&&!refresh_local_hostname(*active))'))+1
     receive_start=source.index('        fd_set reads;',queue_start)
     receive_end=source.index('Envelope envelope;',receive_start)
     recovery_start=source.index('      if(active->cancelled||active->retiring||!application_failure_recoverable(')
     recovery_end=source.index('\n    }',recovery_start)
     restart_start=source.index('        if(active->restart_requested){',source.index('void active_loop_work('))
     restart_end=source.index('\n',restart_start)
-    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){uint64_t receive_started=0;auto* active=&storage;const bool server=true;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+'const auto now=now_ms();'+source[queue_start:receive_start]+source[receive_start:receive_end]+'return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){uint64_t receive_started=0;auto* active=&storage;const bool server=true;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+source[queue_start:receive_start]+source[receive_start:receive_end]+'return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
     class_start=source.index('        if(active->tls->received_bulk()!=is_update_kind(envelope.kind))')
     class_end=source.index('\n',class_start)
     worker+='\nbool classify_received(Active& storage,Kind kind){auto* active=&storage;Envelope envelope;envelope.kind=kind;LinkTrace trace;while(true){'+source[class_start:class_end]+'return true;}return false;}\n'
@@ -200,6 +235,7 @@ def main():
     actual+=''.join(function(source,n) for n in ('bool synchronization_current(','bool synchronization_recoverable(','bool application_failure_recoverable('))
     trace=function(source,'struct LinkTrace {').rstrip()+';\n'
     prefix=PREFIX.replace('struct Active{',trace+'using TlsLink=FakeTls;\nstruct Active{').replace('int socket=-1;model::OctopusId authenticated;','enum class ReceiveResult{pending,frame,expired,failed};\n unsigned expirations=0;std::function<void()> before_expire;ReceiveResult expire_receive(){++expirations;if(before_expire)before_expire();return ReceiveResult::expired;}\n int ssl=0;std::function<ReceiveResult(std::string&)> poller;ReceiveResult poll_receive(std::string& out){return poller(out);}\n int socket=-1;model::OctopusId authenticated;')
+    prefix=prefix.replace('struct Active{',QUEUE_MUTEX+'struct Active{').replace('std::mutex mutex;bool cancelled','QueueMutex mutex;bool cancelled')
     with tempfile.TemporaryDirectory(prefix='amity-worker-poll-') as directory:
         temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
         cpp,binary=temp/'test.cpp',temp/'test';cpp.write_text(prefix+EXTRA+'namespace amity::consortium {\n'+actual+worker+'\n}\n'+SUPPORT+SUITE)

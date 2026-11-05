@@ -309,9 +309,9 @@ def main():
     source = parser.parse_args().source.read_text()
     # Run the same queue block as the link task, including break-on-expired-
     # causal-work and send-time TTL reduction; no copy of its decisions.
-    start = source.index('        Queued queued;std::string payload;')
+    start = source.index('\n', source.index('        if(!active->retiring&&!refresh_local_hostname(*active))')) + 1
     end = source.index('        fd_set reads;', start)
-    pump = '\nbool pump(Active& storage){Active* active=&storage;const auto now=now_ms();LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
+    pump = '\nbool pump(Active& storage){Active* active=&storage;LinkTrace trace;trace.phase="operational";while(true){' + source[start:end] + 'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',

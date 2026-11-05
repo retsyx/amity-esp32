@@ -932,15 +932,17 @@ void active_loop_work(void *arg){
         trace.phase="operational";trace.has_kind=trace.has_queue=false;
         if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context");break;}
         if(!active->retiring&&!refresh_local_hostname(*active)){trace.fail("hostname_send");break;}
-        const auto now=now_ms();
         Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
             if(!active->queue.empty()){
                 const auto prepared=prepare_queued(*active,active->queue.front(),payload);
-                const auto& front=active->queue.front();const bool expired=queued_expired(front,now);
+                const auto& front=active->queue.front();const bool expired=queued_expired(front,now_ms());
                 if(prepared==QueuedState::invalid)invalid=true;
                 if(prepared==QueuedState::ready||expired){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}
             }}
+        // Admission can add work while this task waits for the queue lock.
+        // Expire and budget the observed item against the current clock.
+        const auto now=now_ms();
         if(invalid){trace.fail("queued_invalid");break;}
         if(have&&queued_causal(queued)&&queued_expired(queued,now)){trace.queued(queued);trace.fail("causal_expired");break;}
         if(have&&!queued_causal(queued)&&queued_expired(queued,now))
