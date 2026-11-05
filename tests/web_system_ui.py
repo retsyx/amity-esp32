@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """Check the baseline interface and main/added-device management list."""
+import argparse
 import hashlib
 import json
+import os
 import re
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--readiness-only', action='store_true',
+                        help='check initial activity readiness and the first Start without later editing cases')
+    args = parser.parse_args(argv)
     # Exact approved main presentation at aa9395aaecdc861e1d4cce040079a5ac6121e67d,
     # with HDMI-CEC and hostname controls moved to per-device settings. Firmware
     # upload/progress now covers the whole system and has its own browser tests.
@@ -39,7 +45,7 @@ def main():
     status = dict(version='0.1.73', hostname='amity-living-room', front_physical_address='1.0.0.0', hardware='Amity', free_heap=200000,
                   wifi_connected=True, wifi_rssi=-40, wifi_channel=6, ready=True, discovering=False, discovery_generation=1,
                   current_activity=-1, front_address=4, back_address=0, tx_errors=0, rx_dropped=0,
-                  expected_state_revision='1', expected_boot_id='a'*32, devices=[], device_choices=choices)
+                  expected_state_revision='0', expected_boot_id='a'*32, devices=[], device_choices=choices)
     status['devices'] = [dict(name=c['value'], title=c['title'], location=c['location'], bus='front' if i == 0 else 'back', type=0 if i == 0 else 4, address=0 if i == 0 else 4, physical_address=0 if i == 0 else 4096) for i, c in enumerate(choices)]
     configuration = dict(version=3, controller_octopus_id=controller, config_revision='1', presentation_revision='1',
                          octopuses=[dict(octopus_id=member, label='Bedroom Amity', supported_tentacles=4), dict(octopus_id=controller, label='Living room Amity', supported_tentacles=1)],
@@ -51,6 +57,7 @@ def main():
     remote = dict(bonded=False, ready=True, devices=[], boot_id='b'*32, remote_generation='1')
     fixture = dict(posts=[], operations={}, next_id=100, scans=0, fail_save=False, fail_add=True, config=configuration, remove_mode='scheduled', remove_release=False, admission=dict(scan_id=None, phase='idle', error='', requires_setup_code=False, candidates=[], candidate_id=None))
     errors, checks = [], []
+    initial_status_requested, initial_status_ready = Event(), Event()
     def passed(value):
         checks.append(value)
         print('PASS', value, flush=True)
@@ -79,6 +86,10 @@ def main():
             self.end_headers()
             self.wfile.write(data)
         def do_GET(self):
+            if self.path == '/api/activity-editor/status' and not initial_status_ready.is_set():
+                initial_status_requested.set()
+                if not initial_status_ready.wait(timeout=30):
+                    return self.reply(dict(error='Initial status fixture was not released'), 503)
             values = {'/api/setup': dict(required=False), '/api/activity-editor': editor,
                       '/api/activity-editor/status': status, '/api/config': fixture['config'], '/api/system': system,
                       '/api/remotes': remote, '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False),
@@ -127,6 +138,7 @@ def main():
                 kind = 'config'
             elif self.path == '/api/activity-editor/activity':
                 assert 'index' not in body and body['expected_boot_id'] == status['expected_boot_id']
+                assert body['expected_state_revision'] == status['expected_state_revision']
                 assert body['expected_config_revision'] == editor['expected_config_revision']
                 kind = 'activity'
             elif self.path == '/api/activity-editor/discover':
@@ -198,13 +210,20 @@ def main():
     Thread(target=server.serve_forever, daemon=True).start()
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            browser = playwright.chromium.launch(
+                headless=True, executable_path=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'))
             page = browser.new_page(viewport=dict(width=430, height=900))
             page.on('pageerror', lambda e: errors.append(str(e)))
             page.goto(f'http://127.0.0.1:{server.server_port}/')
             page.locator('#password').fill('fixture')
             page.locator('#password').press('Enter')
             expect(page.locator('#admin')).to_be_visible()
+            assert initial_status_requested.wait(timeout=5), 'The UI did not request its initial playback status'
+            expect(page.locator('#activityList [data-start]').first).to_be_disabled()
+            assert not [p for p, _ in fixture['posts'] if p.endswith('/activity')]
+            initial_status_ready.set()
+            expect(page.locator('#activityList [data-start]').first).to_be_enabled()
+            passed('Start waits for its first playback snapshot and accepts revision zero')
             expect(page.locator('nav button')).to_have_text(['Activities', 'Remote', 'Matter', 'HomeKit', 'Amity devices', 'Advanced'])
             expect(page.locator('#systemActivities, #equipment, #settings')).to_have_count(0)
             passed('original navigation and activity list plus exactly one added-device tab')
@@ -215,6 +234,11 @@ def main():
             assert [b for p, b in fixture['posts'] if p.endswith('/activity')][-1]['activity_id'] == aid
             assert fixture['operations'][[b for p, b in fixture['posts'] if p.endswith('/activity')][-1]['request_id']]['polls'] >= 2
             passed('Start uses stable identity and waits through stopping before completion')
+            if args.readiness_only:
+                assert not errors, errors
+                passed('no browser script errors')
+                browser.close()
+                return
             page.locator('#discover').click()
             expect(page.locator('#deviceList .device')).to_have_count(3)
             expect(page.locator('#deviceList')).to_contain_text('amity-living-room')
@@ -630,6 +654,7 @@ def main():
             passed('no browser script errors')
             browser.close()
     finally:
+        initial_status_ready.set()
         server.shutdown()
     (ROOT/'test-results/controller-system-ui-0.1.73.json').write_text(json.dumps(dict(checks=checks, script_errors=errors), indent=2)+'\n')
 

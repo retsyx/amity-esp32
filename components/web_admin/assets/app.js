@@ -32,7 +32,7 @@ function updateActivityButtons(){
 }
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
 function reportError(error){if(!firmwareUpdating&&!hostnameReconnect&&!error.silent)message(error.message,true);}
-function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
+function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
 async function request(path,data,raw=false){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
  const mapped=window.amityInterface?.route(path,data)||{path,data};
@@ -148,7 +148,8 @@ function currentActivityUnchanged(activities,currentState=state){
  const selected=activities.find(a=>a.activity_id===current.activity_id);
  return !!selected&&activitySnapshot([selected])===activitySnapshot([current]);
 }
-function activityLocked(){return activitiesScanning()||saving||activityActionPending||!!window.amityInterface?.componentPending;}
+function activityStatusReady(){return typeof state.boot_id==='string'&&/^[0-9a-f]{32}$/.test(state.boot_id)&&typeof state.state_revision==='string'&&/^(0|[1-9][0-9]*)$/.test(state.state_revision);}
+function activityLocked(){return !activityStatusReady()||activitiesScanning()||saving||activityActionPending||!!window.amityInterface?.componentPending;}
 function activitiesScanning(){return !!(scanPending||state.discovering||(scanAfter!==null&&state.discovery_generation===scanAfter));}
 function updateActivityState(){
  document.querySelectorAll('#activityList article').forEach((row,index)=>{
@@ -441,7 +442,7 @@ async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect
  if(!$('homekit').hidden)await refreshHomekit();
  if(!$('amityDevices').hidden)await window.amityInterface?.refresh();
  }finally{polling=false;updateActivityButtons();}}
-async function enter(){const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
+async function enter(){state={};const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
  if(firmwareUpdating||hostnameReconnect)return;
  const setup=await request('setup');if(hostnameReconnect)return;renderHostname(setup.hostname);showLogin();
