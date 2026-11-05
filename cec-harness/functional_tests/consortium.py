@@ -123,10 +123,12 @@ def test_consortium_three_duts():
             second_member.assert_connected()
 
 
-def test_consortium_four_duts():
-    main, secondary, tertiary, fourth = (
-        DUT("amity-dut"), DUT("amity-dut-2"), DUT("amity-dut-3"), DUT("amity-dut-4"))
-    owners = (main, secondary, tertiary, fourth)
+def _consortium_four_duts(main_name):
+    main = DUT(main_name)
+    owners = (main, *(DUT(name, wiring=main.wiring) for name in main.wiring.identities if name != main.name))
+    if len(owners) != 4:
+        raise ValueError("The four-DUT consortium scenario requires four documented Amities")
+    _, secondary, tertiary, fourth = owners
     systems = (_equipment(main, "Main"), _equipment(secondary, "Member2"),
                _equipment(tertiary, "Member3"), _equipment(fourth, "Member4"))
     components = tuple(component for system in systems for component in system)
@@ -186,3 +188,11 @@ def test_consortium_four_duts():
                     fourth_member.assert_connected()
                 third_member.assert_connected()
             second_member.assert_connected()
+
+
+def test_consortium_four_duts():
+    _consortium_four_duts("amity-dut")
+
+
+def test_consortium_four_duts_main4():
+    _consortium_four_duts("amity-dut-4")

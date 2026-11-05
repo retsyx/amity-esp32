@@ -130,8 +130,8 @@ class MatterEnrollment:
     def _operation(self, dut, operation, *, timeout=None):
         timeout = self.timeout if timeout is None else min(timeout, self.timeout)
         _positive_seconds(timeout, "Matter enrollment timeout")
-        if dut.name != "amity-dut":
-            raise ValueError("Matter bootstrap enrolls only the bench main amity-dut")
+        if dut.name != dut._runtime.main_dut:
+            raise ValueError("Matter bootstrap enrolls only the selected bench main")
         request_id = uuid4().hex
         request = {"protocol_version": _PROTOCOL_VERSION, "request_id": request_id, "operation": operation,
                    "device_id": dut.identity.device_id,
@@ -230,8 +230,8 @@ def ensure_enrolled(dut, commissioner, *, timeout=180):
     """
     _positive_seconds(timeout, "Enrollment readiness timeout")
     deadline = time.monotonic() + timeout
-    if dut.name != "amity-dut":
-        raise ValueError("Matter bootstrap prepares only amity-dut")
+    if dut.name != dut._runtime.main_dut:
+        raise ValueError("Matter bootstrap prepares only the selected bench main")
     credential_path = dut._runtime.credentials_for(dut.name)
     if credential_path is None:
         raise ValueError("Provide the bench main's initial UI credentials")
@@ -250,7 +250,7 @@ def ensure_enrolled(dut, commissioner, *, timeout=180):
         system = None
     else:
         dut.close()
-        raise EnrollmentError("amity-dut must be factory reset before running functional tests")
+        raise EnrollmentError("The selected bench main must be factory reset before running functional tests")
     while True:
         if system is not None:
             membership = system.get("membership", {})
@@ -427,10 +427,10 @@ async def _verify_factory(controller, clusters, credentials, *, timeout):
         fabrics = attributes[0][operational][operational.Attributes.CommissionedFabrics]
         networks = attributes[0][network][network.Attributes.Networks]
     except (KeyError, TypeError):
-        raise EnrollmentError("Matter could not verify that amity-dut is factory reset") from None
+        raise EnrollmentError("Matter could not verify that the selected DUT is factory reset") from None
     if (not isinstance(fabrics, int) or isinstance(fabrics, bool) or fabrics != 0
             or not isinstance(networks, list) or networks):
-        raise EnrollmentError("amity-dut must be factory reset; saved Matter fabrics or networks remain")
+        raise EnrollmentError("The selected DUT must be factory reset; saved Matter fabrics or networks remain")
 
 
 async def _commission_factory(controller, clusters, credentials, *, timeout):

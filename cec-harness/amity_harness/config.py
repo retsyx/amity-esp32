@@ -13,6 +13,7 @@ from .cec import CecSession
 
 @dataclass(frozen=True)
 class RunConfig:
+    main_dut: str = "amity-dut"
     credentials: Mapping[str, Path] = field(default_factory=dict)
     default_credentials: Path | None = None
     urls: Mapping[str, str] = field(default_factory=dict)
@@ -32,6 +33,8 @@ class RunConfig:
     firmware_timeout: float = 2700
 
     def __post_init__(self):
+        if not isinstance(self.main_dut, str) or not self.main_dut:
+            raise ValueError("The main DUT must have a nonempty bench name")
         for description, value in (("Run timeout", self.timeout), ("CEC timeout", self.cec_timeout),
                                    ("Firmware timeout", self.firmware_timeout),
                                    ("Enrollment timeout", self.enrollment_timeout)):

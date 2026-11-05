@@ -26,10 +26,10 @@ DEVICE_ID = "a" * 32
 
 
 class DUT:
-    def __init__(self, credentials, *responses):
-        self.name, self.identity = "amity-dut", SimpleNamespace(device_id=DEVICE_ID)
-        self.url, self._opener = "https://amity-dut.local", self
-        self._runtime = SimpleNamespace(credentials_for=lambda name: credentials)
+    def __init__(self, credentials, *responses, name="amity-dut", main_dut="amity-dut", device_id=DEVICE_ID):
+        self.name, self.identity = name, SimpleNamespace(device_id=device_id)
+        self.url, self._opener = "https://" + name + ".local", self
+        self._runtime = SimpleNamespace(main_dut=main_dut, credentials_for=lambda name: credentials)
         self._token = None
         self.responses = list(responses)
         self.requests = []
@@ -39,7 +39,7 @@ class DUT:
     def open(self, request, timeout):
         if self.responses and isinstance(self.responses[0], (OSError, AmityHTTPError)):
             raise self.responses.pop(0)
-        return io.BytesIO(json.dumps({"device_id": DEVICE_ID, "ready": True}).encode())
+        return io.BytesIO(json.dumps({"device_id": self.identity.device_id, "ready": True}).encode())
 
     def request(self, path, data=None, **options):
         self.requests.append((path, data, options))
@@ -120,6 +120,40 @@ class EnrollmentTests(unittest.TestCase):
             ensure_enrolled(dut, commissioner)
         self.assertFalse(dut.requests or dut.presses)
 
+    def test_selected_fourth_main_is_commissioned_and_http_identity_verified(self):
+        identity = "b" * 32
+        system = {**self.system, "octopus_id": identity}
+        dut = DUT(self.credentials, ConnectionRefusedError(), {"token": "fresh"}, system,
+                  name="amity-dut-4", main_dut="amity-dut-4", device_id=identity)
+        looked_up = []
+        dut._runtime.credentials_for = lambda name: (looked_up.append(name), self.credentials)[1]
+        commissioner = Mock()
+        result = ensure_enrolled(dut, commissioner)
+        self.assertEqual(result["device_id"], identity)
+        self.assertEqual(looked_up, ["amity-dut-4"])
+        self.assertEqual(dut.presses, [0.5])
+        commissioner.commission.assert_called_once_with(dut, timeout=ANY)
+        self.assertEqual([r[0] for r in dut.requests], ["/api/login", "/api/system"])
+
+    def test_selected_fourth_main_does_not_accept_original_main_http_identity(self):
+        dut = DUT(self.credentials, ConnectionRefusedError(), {"token": "fresh"}, self.system,
+                  name="amity-dut-4", main_dut="amity-dut-4", device_id="b" * 32)
+        with self.assertRaisesRegex(AssertionError, "identity"):
+            ensure_enrolled(dut, Mock())
+        self.assertIsNone(dut._token)
+
+    def test_original_main_is_not_enrolled_when_fourth_main_is_selected(self):
+        dut = DUT(self.credentials, main_dut="amity-dut-4")
+        commissioner, calls = Mock(), []
+        with self.assertRaisesRegex(ValueError, "selected bench main"):
+            ensure_enrolled(dut, commissioner)
+        client = MatterEnrollment(runner=self.run_response(calls))
+        for operation in (client.commission, client.verify_factory):
+            with self.subTest(operation=operation.__name__), self.assertRaisesRegex(ValueError, "selected bench main"):
+                operation(dut)
+        self.assertFalse(dut.requests or dut.presses or calls)
+        commissioner.commission.assert_not_called()
+
     def test_commission_failure_propagates_without_automatic_factory_reset_or_retry(self):
         dut = self.dut(ConnectionRefusedError())
         commissioner = Mock()
@@ -198,6 +232,22 @@ class EnrollmentTests(unittest.TestCase):
         for change in (lambda r: r.update(factory_reset=False), lambda r: r.update(operation="enroll")):
             with self.subTest(change=change), self.assertRaises(EnrollmentError):
                 MatterEnrollment(runner=self.run_response([], change)).verify_factory(self.dut())
+
+    def test_fourth_main_worker_requests_and_acknowledgments_remain_bound_to_its_identity(self):
+        identity = "b" * 32
+        dut = DUT(self.credentials, name="amity-dut-4", main_dut="amity-dut-4", device_id=identity)
+        for operation in ("commission", "verify_factory"):
+            calls = []
+            client = MatterEnrollment(runner=self.run_response(calls))
+            with self.subTest(operation=operation):
+                result = getattr(client, operation)(dut)
+                self.assertEqual(result["device_id"], identity)
+                request = json.loads(calls[0][1]["input"])
+                self.assertEqual(request["device_id"], identity)
+                self.assertEqual(request["operation"], "enroll" if operation == "commission" else operation)
+                wrong = MatterEnrollment(runner=self.run_response([], lambda reply: reply.update(device_id=DEVICE_ID)))
+                with self.assertRaises(EnrollmentError):
+                    getattr(wrong, operation)(dut)
 
     def test_invalid_reply_and_timeout_fail_once_and_never_expose_captured_sdk_output(self):
         for mutate in (lambda r: r.update(device_id="b" * 32), lambda r: r.update(node_id=True),

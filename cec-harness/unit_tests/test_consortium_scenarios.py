@@ -39,7 +39,7 @@ class Scenario:
             self.open = False
 
     def add(self, main, candidate):
-        if not self.open or main.name != "amity-dut" or candidate not in self.member_duts:
+        if not self.open or main is not self.duts[0] or candidate not in self.member_duts:
             raise AssertionError("Add must use the main and an owned headless candidate")
         self.events.append(("member.add", candidate.name))
         if candidate.name == self.failed_add:
@@ -188,10 +188,11 @@ class Scenario:
 
 
 class ConsortiumScenarioTests(unittest.TestCase):
-    def assert_coverage(self, scenario, owners):
+    def assert_coverage(self, scenario, owners, *, main_name="amity-dut"):
         count = len(owners)
         self.assertEqual({dut.name for dut in scenario.duts}, owners)
-        self.assertEqual({dut.name for dut in scenario.member_duts}, owners - {"amity-dut"})
+        self.assertEqual(scenario.duts[0].name, main_name)
+        self.assertEqual({dut.name for dut in scenario.member_duts}, owners - {main_name})
         self.assertEqual(len(scenario.components), count * 3)
         self.assertEqual(len({component.gpio for component in scenario.components}), count * 2)
         for kind in ("scan.contains", "scan.only"):
@@ -225,6 +226,17 @@ class ConsortiumScenarioTests(unittest.TestCase):
         self.assertEqual([row[1] for row in scenario.events if row[0] == "member.connected"],
                          ["amity-dut-2", "amity-dut-3", "amity-dut-4",
                           "amity-dut-4", "amity-dut-3", "amity-dut-2"])
+
+    def test_fourth_board_as_main_preserves_all_scan_theft_and_cleanup_checks(self):
+        scenario = Scenario()
+        scenario.run(consortium.test_consortium_four_duts_main4)
+        self.assert_coverage(scenario, {"amity-dut", "amity-dut-2", "amity-dut-3", "amity-dut-4"},
+                             main_name="amity-dut-4")
+        self.assertEqual([dut.name for dut in scenario.duts],
+                         ["amity-dut-4", "amity-dut", "amity-dut-2", "amity-dut-3"])
+        self.assertEqual([row[1] for row in scenario.events if row[0] == "member.connected"],
+                         ["amity-dut", "amity-dut-2", "amity-dut-3",
+                          "amity-dut-3", "amity-dut-2", "amity-dut"])
 
     def test_failed_third_add_removes_both_members_with_bed_open(self):
         scenario = Scenario(failed_add="amity-dut-4")

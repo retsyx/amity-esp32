@@ -82,8 +82,8 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   Each successful case restores the canonical bench names; failures retain DUT state.
 - `functional_tests/ble_keyboard.py`: pairs a Pi BLE HID keyboard and verifies
   taps, overlapping buttons and disconnect cleanup with local/member equipment.
-- `functional_tests/soak.py` (`--test soak`): an explicit two-hour endurance
-  run on all four DUTs, including the rendered administration UI. Excluded
+- `functional_tests/soak.py` (`--soak`): two explicit two-hour endurance
+  phases on all four DUTs, using each main and the rendered administration UI. Excluded
   from default runs and `--test all`.
 - `unit_tests/`: hardware-free framework checks, separate from functional tests.
 
@@ -157,8 +157,10 @@ needs no development computer once setup and file transfer are complete.
 
 ## Main enrollment
 
-Each invocation of `cec-harness/run` requires a **factory-reset
-`amity-dut`**. Preparation never resets it implicitly or reuses an enrolled
+Each invocation of `cec-harness/run` requires a **factory-reset selected main**:
+`amity-dut` by default, or `amity-dut-4` for the explicit `_main4` variants.
+The combined soak run resets and enrolls its next main between phases.
+Preparation never resets it implicitly or reuses an enrolled
 main. Reachable HTTPS fails preparation. Standard Matter preflight must confirm
 zero fabrics and no configured Wi-Fi before the controller supplies the bench
 network credentials.
@@ -1132,6 +1134,22 @@ The current main's factory hostname is `amity`; include `--url https://amity.loc
 when starting a run after factory reset. `--url` and `--dut-url DUT=URL` select
 the administration origin without changing DUT configuration.
 
+The explicitly selected variants `consortium_four_duts_main4` and
+`firmware_upgrade_main4` commission `amity-dut-4` as the main
+and use the other three boards as members. They share the original scenario
+checks and stay outside `--test all`. Supply that board's admin credentials
+and Matter enrollment file; both mains use the factory origin
+`https://amity.local`. Enrollment, any `--firmware` prelude, and final factory
+reset all follow the selected main. The firmware variant requires `--firmware`.
+
+```sh
+./cec-harness/run --test consortium_four_duts_main4 \
+  --credentials test-results/credentials/amity-dut-4.json \
+  --enrollment-credentials test-results/credentials/amity-dut-4-enrollment.json \
+  --insecure --url https://amity.local \
+  --output test-results/functional/consortium-four-duts-main4.json
+```
+
 From the checkout root **on the Pi**:
 
 ```sh
@@ -1174,19 +1192,27 @@ firmware upgrades and scenarios from running. Any scenario failure skips the
 final reset. Successful enrollment-only runs contain preparation and reset
 verification entries.
 
-The two-hour endurance test requires explicit `--test soak`; neither the default
-nor `--test all` selects it. Run the entire process on the harness Pi, including
+The endurance run requires explicit `--soak` (also selected by `--test soak`);
+neither the default nor `--test all` selects either phase. It runs two hours
+with `amity-dut` as main, resets and enrolls `amity-dut-4`, then runs the same
+two-hour workload with the other three boards as members. Both phases share
+this selector. Supply each main's admin and Matter credentials using
+`--dut-credentials DUT=PATH` and `--dut-enrollment-credentials DUT=PATH`; the
+existing default credential options remain fallbacks. Run the entire process
+on the harness Pi, including
 Chromium, HTTP control, Matter enrollment and CEC I/O. Normal Pi setup installs
 and checks its browser dependencies:
 
 ```sh
-./cec-harness/run --test soak \
+./cec-harness/run --soak \
   --credentials /private/path/amity-dut.json --insecure --url https://amity.local \
+  --dut-credentials amity-dut-4=/private/path/amity-dut-4.json \
+  --dut-enrollment-credentials amity-dut-4=/private/path/amity-dut-4-enrollment.json \
   --output test-results/functional/soak.json
 ```
 
-Start with the factory-reset main and three unclaimed members. The main is
-`amity-dut`; the test adds `amity-dut-2`, `amity-dut-3` and `amity-dut-4`.
+Start with a factory-reset `amity-dut` and three unclaimed members. Each phase
+adds the other three boards through the normal Add workflow.
 Each owns a TV, AVR and two sources. Eight saved activities cycle between
 shared-equipment handoffs and changes of owner, alternating actual UI clicks
 with authenticated API selections. The main pairs the Pi-emulated BLE remote
@@ -1197,7 +1223,7 @@ Periodic inputs use fresh physical press/release, recipient, power and routing
 assertions. One Chromium page remains open throughout, checking activity state,
 Standby, device-list connectivity and browser/network errors. No heap metrics
 are collected: functional failures, boot changes, lost members and timeouts
-fail the run. The workload lasts at least two hours after setup and completes
+fail the run. Each phase lasts at least two hours after setup and completes
 its final eight-activity sweep before cleanup. Evidence includes elapsed time,
 sweep/activity/key counts and browser checks. Failures retain DUT configuration
 for inspection while releasing browser, HTTP and CEC resources.

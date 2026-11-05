@@ -213,7 +213,7 @@ class ScenarioFixture:
         self.upgrades.append(self.upgrade)
         return self.upgrade
 
-    def run(self, *, invalid_bundle=False):
+    def run(self, *, invalid_bundle=False, main4=False):
         with ExitStack() as patches:
             patches.enter_context(patch.object(scenario, 'current_config', return_value=SimpleNamespace(firmware=Path('fixture.bin'), timeout=1, firmware_timeout=2)))
             patches.enter_context(patch.object(scenario.FirmwareBundle, 'load', side_effect=ValueError('Invalid bundle') if invalid_bundle else lambda path: self.bundle))
@@ -233,7 +233,7 @@ class ScenarioFixture:
             patches.enter_context(patch.object(Component, 'assert_power', lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, 'wait_for_power', lambda component, power, **kwargs: self.wait_power(component, power, **kwargs)))
             patches.enter_context(patch.object(Component, 'wait_for_input', lambda component, player, **kwargs: self.route(component, player, **kwargs)))
-            scenario.test_firmware_upgrade()
+            (scenario.test_firmware_upgrade_main4 if main4 else scenario.test_firmware_upgrade)()
 
     def assert_power(self, component, power):
         if component.power != power:
@@ -286,6 +286,24 @@ class FirmwareScenarioTests(unittest.TestCase):
         self.assertEqual(len(fixture.upgrades), 1)
         self.assertNotIn(('firmware.run',), fixture.events)
         self.assertFalse(any(row[0] == 'firmware.secondary_interrupt' for row in fixture.events))
+        self.assert_cleanup(fixture)
+
+    def test_main4_runs_both_interruptions_and_activities_for_every_wired_owner(self):
+        fixture = ScenarioFixture()
+        fixture.run(main4=True)
+        self.assertEqual(fixture.duts[0].name, 'amity-dut-4')
+        self.assertEqual({dut.name for dut in fixture.duts}, set(Wiring.from_markdown().identities))
+        self.assertEqual([member.name for member in fixture.upgrade.members],
+                         ['amity-dut', 'amity-dut-2', 'amity-dut-3'])
+        self.assertEqual(len(fixture.upgrades), 2)
+        self.assertEqual([row for row in fixture.events if row[0] == 'firmware.secondary_interrupt'],
+                         [('firmware.secondary_interrupt', 'amity-dut')])
+        self.assertLess(fixture.events.index(('firmware.main_abort_verified',)),
+                        fixture.events.index(('firmware.run',)))
+        for epoch in (0, 1):
+            self.assertEqual(len([row for row in fixture.events if row[:2] == ('wire.power', epoch)]), 24)
+            self.assertEqual(len([row for row in fixture.events if row[:2] == ('wire.route', epoch)]), 4)
+            self.assertEqual(len([row for row in fixture.events if row[:2] == ('wire.key', epoch)]), 8)
         self.assert_cleanup(fixture)
 
     def test_missing_fresh_post_upgrade_commands_fail_even_when_component_state_is_correct(self):

@@ -114,14 +114,14 @@ class _CleanBench:
         event("firmware.cleanup_verified", dut=self.main.name, reset_scheduled=[member.device_id for member in self.members])
 
 
-def test_firmware_upgrade():
+def _firmware_upgrade(main_name):
     runtime = current_config()
     if runtime.firmware is None:
         raise ValueError("Select an Amity update bundle with --firmware")
     # Validate the local file before touching the bench. Publisher/native OTA
     # admission remains the firmware's responsibility, through the real UI.
     bundle = FirmwareBundle.load(runtime.firmware)
-    main = DUT("amity-dut")
+    main = DUT(main_name)
     secondaries = tuple(DUT(name, wiring=main.wiring) for name in main.wiring.identities if name != main.name)
     if not secondaries:
         raise ValueError("The firmware prelude requires secondary Amities in TEST-HARNESS.md")
@@ -162,3 +162,11 @@ def test_firmware_upgrade():
         # TestBed owns cleanup in dependency order even on assertion failures:
         # reconcile OTA boots, delete activities/equipment, remove/reset every
         # member, verify the clean main, release CEC addresses, then log out.
+
+
+def test_firmware_upgrade():
+    _firmware_upgrade("amity-dut")
+
+
+def test_firmware_upgrade_main4():
+    _firmware_upgrade("amity-dut-4")

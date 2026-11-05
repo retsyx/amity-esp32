@@ -87,11 +87,11 @@ def _keys(main, activity, selected, components, browser, keyboard, scan, proof, 
     browser.assert_active(activity)
 
 
-def test_soak():
-    """Run only with --test soak; finish a complete sweep after two hours."""
-    owners = tuple(DUT(name) for name in
-                   ("amity-dut", "amity-dut-2", "amity-dut-3", "amity-dut-4"))
-    main = owners[0]
+def _soak(main_name):
+    main = DUT(main_name)
+    owners = (main, *(DUT(name, wiring=main.wiring) for name in main.wiring.identities if name != main.name))
+    if len(owners) != 4:
+        raise ValueError("The soak scenario requires four documented Amities")
     systems = tuple(_system(dut, number) for number, dut in enumerate(owners, 1))
     components = tuple(component for tv, avr, players in systems for component in (tv, avr, *players))
     with TestBed(*owners, *components, members=owners[1:], preserve_dut_on_failure=True) as bed:
@@ -149,3 +149,13 @@ def test_soak():
                 proof["completed"] = True
             finally:
                 proof["elapsed_seconds"] = round(time.monotonic() - started, 3)
+
+
+def test_soak():
+    """First phase of the explicit soak run: two hours with the original main."""
+    _soak("amity-dut")
+
+
+def test_soak_main4():
+    """Second phase of the explicit soak run: two hours with the fourth board as main."""
+    _soak("amity-dut-4")

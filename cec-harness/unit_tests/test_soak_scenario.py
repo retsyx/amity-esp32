@@ -335,7 +335,7 @@ class SoakFixture:
         self.events.append(("standby.settled",))
         return state
 
-    def run(self, *, duration=None):
+    def run(self, test=soak.test_soak, *, duration=None):
         with ExitStack() as patches:
             for name, value in (("TestBed", self.bed), ("SoakBrowser", self.browser),
                                 ("BLEInputEvidence", self.ble_evidence),
@@ -355,7 +355,7 @@ class SoakFixture:
                 patches.enter_context(patch.object(cls, name,
                                                   lambda resource, *args, _call=implementation, **kwargs:
                                                   _call(resource, *args, **kwargs)))
-            soak.test_soak()
+            test()
 
 
 class SoakScenarioTests(unittest.TestCase):
@@ -407,45 +407,50 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.keyboard.held)
 
     def test_partial_deadline_finishes_sweep_with_all_owners_activities_and_routes(self):
-        fixture = SoakFixture()
-        fixture.run(duration=161)
-        names = ("amity-dut", "amity-dut-2", "amity-dut-3", "amity-dut-4")
-        self.assertEqual(tuple(dut.name for dut in fixture.duts), names)
-        self.assertEqual(tuple(dut.name for dut in fixture.members), names[1:])
-        self.assertEqual(len(fixture.components), 16)
-        self.assertEqual(len(fixture.activities), 8)
-        self.assertEqual(fixture.proof["elapsed_seconds"], 320)
-        self.assertEqual(fixture.proof["sweeps"], 2)
-        selects = [row for row in fixture.events if row[0] == "select"]
-        for index, activity in enumerate(fixture.activities):
-            routes = [row[2] for row in selects if row[1] == activity.name]
-            self.assertEqual(set(routes), {"api", "ui"})
-            self.assertEqual(routes, ["ui", "api"] if index % 2 == 0 else ["api", "ui"])
-        self.assertEqual(fixture.proof["ui_activity_changes"], 8)
-        self.assertEqual(fixture.proof["api_key_presses"], 32)
-        self.assertEqual(fixture.proof["ble_key_presses"], 32)
-        self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 16)
-        # Every saved activity uses both transports for every navigation/audio
-        # key across consecutive sweeps, including taps and held reports.
-        for activity in fixture.activities:
-            calls = [row for row in fixture.key_calls if row[0] == activity.name]
-            for key in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN):
-                self.assertEqual({row[4] for row in calls if row[1] == key}, {"api", "ble"})
-        self.assertEqual(sum(row[0] == "scan" for row in fixture.events), 1)
-        self.assertEqual(sum(row[0] == "scan.on" for row in fixture.events), 16)
-        self.assertEqual(sum(row[0] == "route.tv" for row in fixture.events), 16)
-        self.assertEqual(sum(row[0] == "route.avr" for row in fixture.events), 16)
-        shared = [row for row in fixture.events if row[0] == "shared.preserved"]
-        self.assertEqual(len(shared), 8)
-        self.assertTrue(all(len(row[1]) == 2 for row in shared))
-        keys = [row for row in fixture.events if row[0] == "key.received"]
-        for owner in names:
-            own = [row for row in keys if row[1] == owner]
-            self.assertEqual(len(own), 16)
-            self.assertEqual({(row[3], row[4]) for row in own}, {
-                (Key.RIGHT, 0), (Key.LEFT, 650), (Key.VOLUME_UP, 750), (Key.VOLUME_DOWN, 0)})
-        self.assertTrue(all(component.power == PowerState.STANDBY for component in fixture.components))
-        self.assertIsNone(fixture.current)
+        cases = (
+            (soak.test_soak, ("amity-dut", "amity-dut-2", "amity-dut-3", "amity-dut-4")),
+            (soak.test_soak_main4, ("amity-dut-4", "amity-dut", "amity-dut-2", "amity-dut-3")),
+        )
+        for test, names in cases:
+            with self.subTest(test=test.__name__):
+                fixture = SoakFixture()
+                fixture.run(test, duration=161)
+                self.assertEqual(tuple(dut.name for dut in fixture.duts), names)
+                self.assertEqual(tuple(dut.name for dut in fixture.members), names[1:])
+                self.assertEqual(len(fixture.components), 16)
+                self.assertEqual(len(fixture.activities), 8)
+                self.assertEqual(fixture.proof["elapsed_seconds"], 320)
+                self.assertEqual(fixture.proof["sweeps"], 2)
+                selects = [row for row in fixture.events if row[0] == "select"]
+                for index, activity in enumerate(fixture.activities):
+                    routes = [row[2] for row in selects if row[1] == activity.name]
+                    self.assertEqual(set(routes), {"api", "ui"})
+                    self.assertEqual(routes, ["ui", "api"] if index % 2 == 0 else ["api", "ui"])
+                self.assertEqual(fixture.proof["ui_activity_changes"], 8)
+                self.assertEqual(fixture.proof["api_key_presses"], 32)
+                self.assertEqual(fixture.proof["ble_key_presses"], 32)
+                self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 16)
+                # Every saved activity uses both transports for every navigation/audio
+                # key across consecutive sweeps, including taps and held reports.
+                for activity in fixture.activities:
+                    calls = [row for row in fixture.key_calls if row[0] == activity.name]
+                    for key in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN):
+                        self.assertEqual({row[4] for row in calls if row[1] == key}, {"api", "ble"})
+                self.assertEqual(sum(row[0] == "scan" for row in fixture.events), 1)
+                self.assertEqual(sum(row[0] == "scan.on" for row in fixture.events), 16)
+                self.assertEqual(sum(row[0] == "route.tv" for row in fixture.events), 16)
+                self.assertEqual(sum(row[0] == "route.avr" for row in fixture.events), 16)
+                shared = [row for row in fixture.events if row[0] == "shared.preserved"]
+                self.assertEqual(len(shared), 8)
+                self.assertTrue(all(len(row[1]) == 2 for row in shared))
+                keys = [row for row in fixture.events if row[0] == "key.received"]
+                for owner in names:
+                    own = [row for row in keys if row[1] == owner]
+                    self.assertEqual(len(own), 16)
+                    self.assertEqual({(row[3], row[4]) for row in own}, {
+                        (Key.RIGHT, 0), (Key.LEFT, 650), (Key.VOLUME_UP, 750), (Key.VOLUME_DOWN, 0)})
+                self.assertTrue(all(component.power == PowerState.STANDBY for component in fixture.components))
+                self.assertIsNone(fixture.current)
 
     def test_periodic_keys_keep_five_second_spacing_within_each_activity(self):
         fixture = SoakFixture()

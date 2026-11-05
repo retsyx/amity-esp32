@@ -27,13 +27,14 @@ from functional_tests.hdmi_scan import test_hdmi_scan
 from functional_tests.usb_reboot import test_usb_reboot
 from functional_tests.member_reboot import test_activity_member_reboot
 from functional_tests.hostname import test_hostname_local, test_hostname_consortium
-from functional_tests.firmware_upgrade import test_firmware_upgrade
+from functional_tests.firmware_upgrade import test_firmware_upgrade, test_firmware_upgrade_main4
 from functional_tests.source_theft import test_source_theft, test_source_theft_isolated
 from functional_tests.dual_display import test_dual_display
 from functional_tests.split_theater import test_split_theater_main_source, test_split_theater_member_source
-from functional_tests.soak import test_soak
+from functional_tests.soak import test_soak, test_soak_main4
 from functional_tests.consortium import (
-    test_consortium, test_consortium_three_duts, test_consortium_four_duts)
+    test_consortium, test_consortium_three_duts, test_consortium_four_duts,
+    test_consortium_four_duts_main4)
 
 if __name__ == "__main__":
     raise SystemExit(main({"hdmi_scan": test_hdmi_scan,
@@ -66,5 +67,10 @@ if __name__ == "__main__":
                                test_default_physical_address_local, test_default_physical_address_local_scanned,
                                test_default_physical_address_remote, test_default_physical_address_remote_scanned),
                            "ble_keyboard": (test_ble_keyboard_lifecycle, test_ble_keyboard_local, test_ble_keyboard_remote)},
-                          opt_in_tests={"soak": test_soak},
+                          opt_in_tests={"soak": (test_soak, test_soak_main4),
+                                        "consortium_four_duts_main4": test_consortium_four_duts_main4},
+                          main_duts={"consortium_four_duts_main4": "amity-dut-4",
+                                     "firmware_upgrade_main4": "amity-dut-4"},
+                          scenario_mains={test_soak_main4: "amity-dut-4"},
+                          firmware_variants={"firmware_upgrade_main4": test_firmware_upgrade_main4},
                           firmware_upgrade=test_firmware_upgrade, prepare=prepare_main, finish=reset_main))

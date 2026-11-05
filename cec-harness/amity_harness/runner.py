@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import nullcontext
+from dataclasses import replace
 from functools import partial
 import json
 import logging
@@ -69,7 +70,7 @@ def prepare_main():
     from .enrollment import MatterEnrollment, ensure_enrolled
 
     config = current_config()
-    dut = DUT("amity-dut")
+    dut = DUT(config.main_dut)
     try:
         commissioner = (config.enrollment_factory or MatterEnrollment)()
         ensure_enrolled(dut, commissioner, timeout=config.enrollment_timeout)
@@ -83,13 +84,13 @@ def reset_main():
     from .enrollment import MatterEnrollment, _probe_ready, _unreachable
 
     config = current_config()
-    dut = DUT("amity-dut")
+    dut = DUT(config.main_dut)
     deadline = time.monotonic() + config.enrollment_timeout
     try:
         dut.authenticate()
         system = dut.get_system()
         if system.get("octopus_id") != dut.identity.device_id:
-            raise AssertionError("DUT HTTP identity does not match amity-dut in TEST-HARNESS.md")
+            raise AssertionError(f"DUT HTTP identity does not match {dut.name} in TEST-HARNESS.md")
         response = dut.request("/api/factory-reset", {"confirm": True})
         if response.get("rebooting") is not True:
             raise RuntimeError("The main did not acknowledge its factory reset")
@@ -115,7 +116,8 @@ def reset_main():
         dut.close()
 
 
-def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, opt_in_tests=None):
+def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, opt_in_tests=None,
+         main_duts=None, firmware_variants=None, scenario_mains=None):
     """Run scenarios; opt-in groups require explicit --test selection, even with all."""
     if firmware_upgrade is not None and not callable(firmware_upgrade):
         raise ValueError("firmware_upgrade must be callable or None")
@@ -140,6 +142,35 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
         else:
             raise ValueError("Provide named functional tests or nonempty groups of callable tests")
     tests = {name: registered[name] for name in tests}
+    main_duts = {} if main_duts is None else dict(main_duts)
+    firmware_variants = {} if firmware_variants is None else dict(firmware_variants)
+    if any(not isinstance(name, str) or not name or not callable(scenario)
+           for name, scenario in firmware_variants.items()):
+        raise ValueError("Provide named callable firmware variants")
+    if firmware_variants.keys() & (registered.keys() | {"all", "enrollment", "firmware_upgrade"}):
+        raise ValueError("Firmware variant names must be distinct from other test names")
+    firmware_tests = ({"firmware_upgrade": firmware_upgrade} if firmware_upgrade is not None else {})
+    firmware_tests.update(firmware_variants)
+    scenario_mains = {} if scenario_mains is None else dict(scenario_mains)
+    known_scenarios = {scenario for group in registered.values() for scenario in group} | set(firmware_tests.values())
+    if (any(scenario not in known_scenarios for scenario in scenario_mains)
+            or any(not isinstance(owner, str) or not owner for owner in scenario_mains.values())):
+        raise ValueError("Scenario main mappings require registered scenarios and nonempty bench names")
+    if (any(name not in registered and name not in firmware_tests for name in main_duts)
+            or any(not isinstance(owner, str) or not owner for owner in main_duts.values())):
+        raise ValueError("Main DUT mappings require registered test names and nonempty bench names")
+    if any(main_duts.get(name, "amity-dut") != "amity-dut"
+           or any(scenario_mains.get(scenario, "amity-dut") != "amity-dut" for scenario in group)
+           for name, group in tests.items()):
+        raise ValueError("Alternate-main scenarios must be registered as opt-in tests")
+    firmware_by_main = {}
+    for name, scenario in firmware_tests.items():
+        owner = main_duts.get(name, "amity-dut")
+        if scenario_mains.get(scenario, owner) != owner:
+            raise ValueError("A firmware scenario must use its registered main DUT")
+        if owner in firmware_by_main:
+            raise ValueError("Register only one firmware upgrade scenario per main DUT")
+        firmware_by_main[owner] = (name, scenario)
     parser = argparse.ArgumentParser(description="Run Amity functional tests using the CEC harness")
     if "firmware_upgrade" in registered:
         raise ValueError("Register firmware_upgrade using the dedicated callback parameter")
@@ -147,10 +178,14 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
         raise ValueError("Register enrollment using the prepare callback parameter")
     if "all" in registered:
         raise ValueError("The all test name is reserved for the ordinary test suite")
-    choices = [*registered, *(('firmware_upgrade',) if firmware_upgrade is not None else ()),
+    choices = [*registered, *firmware_tests,
                *(('enrollment',) if prepare is not None else ()), "all"]
-    parser.add_argument("--test", choices=choices, default=next(iter(tests)),
-                        help="scenario to run; defaults to the first ordinary test; all excludes opt-in tests")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--test", choices=choices, default=next(iter(tests)),
+                           help="scenario to run; defaults to the first ordinary test; all excludes opt-in tests")
+    if "soak" in opt_in_tests:
+        selection.add_argument("--soak", dest="test", action="store_const", const="soak",
+                               help="run the explicitly selected soak scenarios")
     parser.add_argument("--credentials", type=Path, help="private JSON with an existing DUT admin_password")
     parser.add_argument("--dut-credentials", action="append", default=[], metavar="DUT=PATH",
                         help="per-DUT private credentials; repeat for multiple DUTs")
@@ -171,6 +206,8 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                         help="firmware upgrade timeout in seconds (default: 2700); independent of --timeout and --cec-timeout")
     parser.add_argument("--enrollment-credentials", type=Path,
                         help="private Wi-Fi/Matter JSON; defaults to the Pi's saved enrollment settings")
+    parser.add_argument("--dut-enrollment-credentials", action="append", default=[], metavar="DUT=PATH",
+                        help="per-DUT private Wi-Fi/Matter JSON; repeat for multiple main DUTs")
     parser.add_argument("--enrollment-timeout", type=float, default=240,
                         help="main enrollment deadline in seconds (default: 240)")
     parser.add_argument("--no-status-led", action="store_true",
@@ -184,55 +221,63 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                           ("--enrollment-timeout", args.enrollment_timeout)):
         if not math.isfinite(value) or value <= 0:
             parser.error(f"{option} must be positive and finite")
-    if args.test == "firmware_upgrade" and args.firmware is None:
-        parser.error("--test firmware_upgrade requires --firmware PATH")
+    group_main = main_duts.get(args.test, "amity-dut")
+    selected = (tests if args.test == "all" else
+                {} if args.test in firmware_tests or args.test == "enrollment" else {args.test: registered[args.test]})
+    ordinary_plan = [(scenario, scenario_mains.get(scenario, group_main), False)
+                     for group in selected.values() for scenario in group]
+    selected_main = ordinary_plan[0][1] if ordinary_plan else group_main
+    if any(owner != selected_main for _, owner, _ in ordinary_plan) and (prepare is None or finish is None):
+        parser.error("Changing the main DUT requires preparation and reset callbacks")
+    if args.test in firmware_tests and args.firmware is None:
+        parser.error(f"--test {args.test} requires --firmware PATH")
     if args.test == "enrollment" and args.firmware is not None:
         parser.error("--test enrollment cannot be combined with --firmware")
     if args.firmware is not None:
-        if firmware_upgrade is None:
-            parser.error("--firmware requires a registered firmware upgrade scenario")
+        if selected_main not in firmware_by_main:
+            parser.error("--firmware requires an upgrade scenario for the selected main DUT")
         if not args.firmware.is_file():
             parser.error("--firmware must name an existing firmware update file")
     credentials = _named_options(parser, args.dut_credentials, "PATH", Path)
+    enrollment_credentials = _named_options(parser, args.dut_enrollment_credentials, "PATH", Path)
     urls = _named_options(parser, args.dut_url, "URL")
     if args.credentials is None and not credentials:
         parser.error("Provide --credentials or --dut-credentials")
     from .ble_keyboard import LocalKeyboard
     keyboard_factory = partial(LocalKeyboard, python=sys.executable)
     from .enrollment import MatterEnrollment
-    enrollment_factory = partial(MatterEnrollment, credentials=args.enrollment_credentials,
-                                 timeout=args.enrollment_timeout, python=sys.executable)
-    config = RunConfig(credentials=credentials, default_credentials=args.credentials,
+    def enrollment_factory_for(owner):
+        return partial(MatterEnrollment, credentials=enrollment_credentials.get(owner, args.enrollment_credentials),
+                       timeout=args.enrollment_timeout, python=sys.executable)
+
+    config = RunConfig(main_dut=selected_main, credentials=credentials, default_credentials=args.credentials,
                        urls=urls, default_url=args.url, wiring_path=args.wiring,
                        cafile=args.cafile, insecure=args.insecure,
                        timeout=args.timeout, cec_timeout=args.cec_timeout,
                        firmware=args.firmware, firmware_timeout=args.firmware_timeout,
                        session_factory=CecSession,
-                       keyboard_factory=keyboard_factory, enrollment_factory=enrollment_factory,
+                       keyboard_factory=keyboard_factory, enrollment_factory=enrollment_factory_for(selected_main),
                        enrollment_timeout=args.enrollment_timeout)
-    selected = (tests if args.test == "all" else
-                {} if args.test in ("firmware_upgrade", "enrollment") else {args.test: registered[args.test]})
+    plan = ordinary_plan
     if args.firmware is not None:
-        selected = {"firmware_upgrade": (firmware_upgrade,), **selected}
-    selected_scenarios = [scenario for group in selected.values() for scenario in group]
-    required = set()
+        upgrade_name, upgrade = firmware_by_main[selected_main]
+        selected = {upgrade_name: (upgrade,), **selected}
+        plan.insert(0, (upgrade, selected_main, True))
     if prepare is not None:
-        selected_scenarios.insert(0, prepare)
-        required.add(0)
-    if args.firmware is not None:
-        required.add(1 if prepare is not None else 0)
+        plan.insert(0, (prepare, selected_main, True))
     with stdio_logging(args.log_level):
         started = time.monotonic()
         event("run.start", groups=list(selected),
-              tests=[scenario.__name__ for scenario in selected_scenarios],
+              tests=[scenario.__name__ for scenario, _, _ in plan],
               log_level=args.log_level, operation_timeout_seconds=config.timeout,
               cec_timeout_seconds=config.cec_timeout, firmware_timeout_seconds=config.firmware_timeout)
         try:
             with (nullcontext() if args.no_status_led else
                   run_status_led()):
                 reports = []
-                for index, scenario in enumerate(selected_scenarios):
-                    result = run_test(scenario, config)
+
+                def execute(scenario, active_config):
+                    result = run_test(scenario, active_config)
                     reports.append(result)
                     if result["passed"]:
                         print(f"PASS: {result['test']}", flush=True)
@@ -242,17 +287,27 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                         # JSON report; stdio carries the type and source stack.
                         print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
                               file=sys.stderr, flush=True)
-                        if index in required or any(bed.get("dut_state_retained") is True
-                                                    for bed in result.get("testbeds", [])):
+                    return result
+
+                for scenario, owner, required in plan:
+                    if owner != config.main_dut:
+                        # A failed scenario keeps its main available for
+                        # diagnosis; switching roles must never erase it.
+                        if not all(result["passed"] for result in reports):
                             break
+                        if not execute(finish, config)["passed"]:
+                            break
+                        previous = config
+                        config = replace(previous, main_dut=owner, enrollment_factory=enrollment_factory_for(owner))
+                        config.admin_origins.update(previous.admin_origins)
+                        if not execute(prepare, config)["passed"]:
+                            break
+                    result = execute(scenario, config)
+                    if not result["passed"] and (required or any(bed.get("dut_state_retained") is True
+                                                               for bed in result.get("testbeds", []))):
+                        break
                 if finish is not None and all(result["passed"] for result in reports):
-                    result = run_test(finish, config)
-                    reports.append(result)
-                    if result["passed"]:
-                        print(f"PASS: {result['test']}", flush=True)
-                    else:
-                        print(f"FAIL: {result.get('error_type', 'TestFailure')}: {result['test']}",
-                              file=sys.stderr, flush=True)
+                    execute(finish, config)
                 report = (reports[0] if len(reports) == 1 else
                           {"passed": all(result["passed"] for result in reports), "tests": reports})
                 if args.output:
