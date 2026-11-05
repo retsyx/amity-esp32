@@ -216,7 +216,8 @@ CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS=y
 CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN=0x100
 CONFIG_MBEDTLS_X509_CREATE_C=y
 
-CONFIG_LWIP_MAX_SOCKETS=16
+# Room for the browser HTTP pool, authenticated peer links and network services.
+CONFIG_LWIP_MAX_SOCKETS=24
 # Prefer the strongest AP when a network has multiple radios/access points.
 CONFIG_WIFI_SCAN_ALL_CHANNEL_MODE=y
 # Leave airtime for Bluetooth while an access point is unavailable.

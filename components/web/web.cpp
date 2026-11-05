@@ -64,7 +64,10 @@ esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::st
     httpd_ssl_config_t cfg=HTTPD_SSL_CONFIG_DEFAULT();
     cfg.httpd.max_uri_handlers=32;
     cfg.httpd.stack_size=12288;
-    cfg.httpd.max_open_sockets=4;
+    // A browser can pool six HTTP/1.1 connections. Also accommodate an
+    // authenticated API client and one connection being replaced, so normal
+    // UI traffic does not evict another request from the shared server.
+    cfg.httpd.max_open_sockets=8;
     cfg.httpd.lru_purge_enable=true;
     cfg.httpd.recv_wait_timeout=15;
     cfg.httpd.send_wait_timeout=15;
