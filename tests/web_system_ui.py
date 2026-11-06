@@ -239,6 +239,16 @@ def main(argv=None):
                 passed('no browser script errors')
                 browser.close()
                 return
+            first_activity = page.locator('#activityList article').first
+            for action in ('Edit', 'Delete'):
+                expect(first_activity.get_by_role('button', name=action, exact=True)).to_be_disabled()
+                expect(first_activity.get_by_role('button', name=action, exact=True)).to_have_attribute(
+                    'title', 'Stop this activity before editing or deleting it.')
+            page.locator('#standby').click()
+            expect(page.locator('#activityList .active')).to_have_count(0)
+            expect(first_activity.get_by_role('button', name='Edit', exact=True)).to_be_enabled()
+            assert [b for p, b in fixture['posts'] if p.endswith('/activity')][-1]['activity_id'] is None
+            passed('active activity blocks editing and deletion until Standby stops it')
             page.locator('#discover').click()
             expect(page.locator('#deviceList .device')).to_have_count(3)
             expect(page.locator('#deviceList')).to_contain_text('amity-living-room')
@@ -271,6 +281,8 @@ def main(argv=None):
             assert editor['activities'][0]['name'] == 'Renamed TV'
             assert [b for p, b in fixture['posts'] if p.endswith('/activity')][-1]['activity_id'] == aid
             passed('Save and start retains the original control and stable activity identity')
+            page.locator('#standby').click()
+            expect(page.locator('#activityList .active')).to_have_count(0)
             page.locator('#addActivity').click()
             for index, value in enumerate(['New source', 'Display · amity-living-room', 'Apple TV · amity-bedroom · Adapter 4', 'Display · amity-living-room']):
                 page.locator('#activityFields input').nth(index).fill(value)
