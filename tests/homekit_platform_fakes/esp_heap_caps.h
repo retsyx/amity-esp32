@@ -1,0 +1,4 @@
+#pragma once
+#define MALLOC_CAP_8BIT 4u
+#define MALLOC_CAP_SPIRAM 1024u
+#define MALLOC_CAP_INTERNAL 2048u

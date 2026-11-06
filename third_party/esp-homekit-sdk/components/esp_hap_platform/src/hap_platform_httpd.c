@@ -22,6 +22,7 @@
  *
  */
 #include <esp_http_server.h>
+#include <esp_heap_caps.h>
 
 httpd_handle_t *int_handle;
 int hap_platform_httpd_start(httpd_handle_t *handle)
@@ -29,6 +30,9 @@ int hap_platform_httpd_start(httpd_handle_t *handle)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.task_priority  = tskIDLE_PRIORITY+5;
     config.stack_size         = CONFIG_HAP_HTTP_STACK_SIZE;
+    /* Pairing shares RAM with BLE and authenticated member links. NVS work is
+     * dispatched onto Amity's internal flash stack by the keystore platform. */
+    config.task_caps          = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     config.server_port        = CONFIG_HAP_HTTP_SERVER_PORT;
     config.ctrl_port          = CONFIG_HAP_HTTP_CONTROL_PORT;
     config.max_open_sockets   = CONFIG_HAP_HTTP_MAX_OPEN_SOCKETS;

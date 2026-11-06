@@ -18,7 +18,8 @@ Local adaptations:
 - Request bodies are capped and read with an absolute deadline before taking
   the HAP mutex. Pairing restarts publish replacement session contexts; pairing
   TLVs and characteristic identifiers are validated before use.
-- HAP allocations use PSRAM; task stacks stay internal.
+- HAP allocations and the HTTP task stack use PSRAM. Keystore operations use
+  Amity's internal flash stack; the worker and event-loop stacks stay internal.
 - Removing HomeKit pairings targets only hap_ctrl; whole-partition erase disabled.
 
 The surrounding installed ESP-IDF and ESP-Matter trees are not modified.
