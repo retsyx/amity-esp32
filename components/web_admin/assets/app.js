@@ -18,8 +18,10 @@ let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
 let matterState={fabrics:[]};
+let messageRevision=0,networkMessageRevision=null;
+const transportErrors=new WeakSet();
 const firmwareUpdateKey='amityFirmwareUpdate',firmwareResultKey='amityFirmwareUpdateResult';
-function message(text,error=false){$('message').textContent=customerText(text);$('message').classList.toggle('error',error);}
+function message(text,error=false){++messageRevision;networkMessageRevision=null;$('message').textContent=customerText(text);$('message').classList.toggle('error',error);}
 function activitySnapshot(activities){return JSON.stringify(activities.map(a=>[a.name??'',a.display??'',a.source??'',a.audio??'',a.switch?.device??'',a.switch?.device?(a.switch.input??0):null,a.activity_id??'']));}
 function updateActivityButtons(){
  const locked=activityLocked();
@@ -36,7 +38,8 @@ function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();h
 async function request(path,data,raw=false){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
  const mapped=window.amityInterface?.route(path,data)||{path,data};
- let response=await fetch('/api/'+mapped.path,{method:mapped.data===undefined?'GET':'POST',headers,body:mapped.data===undefined?undefined:typeof mapped.data==='string'?mapped.data:JSON.stringify(mapped.data)});
+ const options={method:mapped.data===undefined?'GET':'POST',headers,body:mapped.data===undefined?undefined:typeof mapped.data==='string'?mapped.data:JSON.stringify(mapped.data)};
+ let response;try{response=await fetch('/api/'+mapped.path,options);}catch(error){if(error instanceof TypeError)transportErrors.add(error);throw error;}
  if(response.ok&&mapped.decode)response=await mapped.decode(response);
 
  if(response.status===401&&path!=='login'){if(!firmwareUpdating&&!hostnameReconnect){await showWelcome();if(!hostnameReconnect)message('');}throw Object.assign(Error(),{silent:true});}
@@ -441,7 +444,17 @@ async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect
  renderMatter(await request('matter'));
  if(!$('homekit').hidden)await refreshHomekit();
  if(!$('amityDevices').hidden)await window.amityInterface?.refresh();
+ return true;
  }finally{polling=false;updateActivityButtons();}}
+async function poll(){
+ const revision=messageRevision;
+ try{if(await refresh()&&networkMessageRevision===messageRevision)message('');}
+ catch(error){
+  if(!transportErrors.has(error))return reportError(error);
+  if(firmwareUpdating||hostnameReconnect||error.silent||messageRevision!==revision||($('message').classList.contains('error')&&networkMessageRevision!==messageRevision))return;
+  message('Connection interrupted. Reconnecting…',true);networkMessageRevision=messageRevision;
+ }
+}
 async function enter(){state={};const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
  if(firmwareUpdating||hostnameReconnect)return;
@@ -752,7 +765,7 @@ $('factoryReset').addEventListener('click',run(async()=>{
 }));
 $('changePassword').addEventListener('submit',run(async e=>{e.preventDefault();await request('password',{password:$('newPassword').value});$('newPassword').value='';showLogin();message('Password changed.');}));
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
-setInterval(()=>{if(token)refresh().catch(reportError);},4000);
+setInterval(()=>{if(token)poll();},4000);
 async function initialize(){
  let pending;try{pending=JSON.parse(sessionStorage.getItem(firmwareUpdateKey));}catch{sessionStorage.removeItem(firmwareUpdateKey);}
  if(pending&&typeof pending.version==='string'&&typeof pending.previousBootId==='string'&&pending.previousBootId.length>0&&Number.isFinite(pending.startedAt)){

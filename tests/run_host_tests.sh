@@ -20,6 +20,7 @@ python3 "$root/tests/admin_rejection_test.py"
 python3 "$root/tests/hostname_reconnect_api_test.py"
 python3 "$root/tests/hostname_services_test.py"
 node "$root/tests/hostname_reconnect_ui_test.js"
+node "$root/tests/poll_recovery_ui_test.js"
 node "$root/tests/activity_choice_identity_ui_test.js"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/tests/config_store_fakes" -I"$root/tests/reset_fakes" -I"$root/components/config_store/include" \
