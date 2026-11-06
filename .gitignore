@@ -87,6 +87,7 @@ Desktop.ini
 # KiCAD
 _autosave-hdmi.kicad_pcb
 hdmi-backups
+testbed-backups
 *_pcb.lck
 *_pro.lck
 *_sch.lck
