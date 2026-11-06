@@ -1258,7 +1258,14 @@ every selection, key sequence and standby. Each path and its rejection/standby
 checks have separate counters.
 Periodic inputs use fresh physical press/release, recipient, power and routing
 assertions. One Chromium page remains open throughout, checking activity state,
-Standby, device-list connectivity and browser/network errors. No heap metrics
+Standby, device-list connectivity and browser/network errors. A Chromium
+`ERR_NETWORK_CHANGED` on a background status read is counted as an interruption.
+Recovery requires a new, naturally completed status read from the original boot
+within 30 seconds; stale replies and repeated interruptions cannot extend that
+deadline. Browser event timestamps determine the interval even when Python is
+busy checking physical commands. Failed actions, HTTP/page errors, other network
+errors and failed recovery still fail the run; actions are never replayed.
+No heap metrics
 are collected: functional failures, boot changes, lost members and timeouts
 fail the run. Each phase lasts at least two hours after setup and completes
 its final eight-activity sweep before cleanup. Accessory command time counts toward
@@ -1276,8 +1283,9 @@ PYTHONPATH=cec-harness .harness-python/bin/python cec-harness/browser_tests/soak
 ```
 
 This explicitly invoked regression covers login, Start/Repair, Standby,
-four-device inspection and cleanup after opening/login failures. It uses no
-DUTs and stays separate from the ordinary hardware-free unit suite.
+four-device inspection, browser-clock/status observations, transport-error
+handling and cleanup after opening/login failures. It uses no DUTs and stays
+separate from the ordinary hardware-free unit suite.
 
 `--timeout` defaults to 180 seconds for HDMI scans, membership and activity
 operations.

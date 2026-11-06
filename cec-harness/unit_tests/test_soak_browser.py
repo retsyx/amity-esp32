@@ -183,7 +183,7 @@ class SoakBrowserTests(unittest.TestCase):
         member = SimpleNamespace(name="amity-dut-2", identity=SimpleNamespace(device_id="member-id"))
         browser._owners = (main, member)
         main._testbed._member_proofs = {"member-id": SimpleNamespace(name="living-room")}
-        system = {"hostname": "amity"}
+        system = {"hostname": "amity", "boot_id": "b" * 32}
         main.get_system = Mock(return_value=system)
         main.last_scan = SimpleNamespace(expected=(), validate_owners=Mock())
         browser._capture_owner_names()
@@ -223,6 +223,296 @@ class SoakBrowserTests(unittest.TestCase):
         self.assertIsNone(browser.page)
         browser._record_failure("request_failures")
         self.assertEqual(browser.report["request_failures"], 0)
+
+
+class SoakBrowserNetworkRecoveryTests(unittest.TestCase):
+    def fixture(self):
+        main = SimpleNamespace(name="amity-dut", url="https://amity.local", _testbed=SimpleNamespace(duts=()))
+        main._testbed.duts = (main,)
+        activity = SimpleNamespace(dut=main, name="Soak activity")
+        browser = SoakBrowser(main, (activity,))
+        browser._original_boot = "b" * 32
+        browser.page = Mock()
+        browser.page.is_closed.return_value = False
+        browser._cdp = Mock()
+        self.now = 102
+        self.status = {"ready": True, "expected_config_revision": "7", "expected_state_revision": "0",
+                       "expected_boot_id": "b" * 32, "current_activity": 2, "activity_settling": False}
+
+        def send(method, parameters=None):
+            if method == "Network.getResponseBody":
+                return {"body": json.dumps(self.status), "base64Encoded": False}
+            if method == "Performance.getMetrics":
+                return {"metrics": [{"name": "Timestamp", "value": self.now}]}
+            raise AssertionError("Recovery must only observe cached responses and the browser clock")
+
+        browser._cdp.send.side_effect = send
+        browser.page.wait_for_timeout.side_effect = lambda milliseconds: setattr(self, "now", self.now + milliseconds / 1000)
+        return browser
+
+    def start(self, browser, identifier, *, started=99, method="GET", route="/api/activity-editor/status",
+              resource_type="Fetch", origin="https://amity.local"):
+        browser._network_started({"requestId": identifier, "timestamp": started, "type": resource_type,
+                                  "request": {"method": method, "url": origin + route}})
+
+    def fail(self, browser, identifier="failed", *, ended=100, code="net::ERR_NETWORK_CHANGED", **request):
+        self.start(browser, identifier, **request)
+        browser._network_failed({"requestId": identifier, "timestamp": ended, "errorText": code})
+
+    def finish(self, browser, identifier="fresh", *, started=101, ended=102, status=200):
+        self.start(browser, identifier, started=started)
+        browser._network_response({"requestId": identifier, "response": {"status": status}})
+        browser._network_finished({"requestId": identifier, "timestamp": ended})
+
+    def test_fresh_same_boot_status_proves_recovery_without_extra_http_or_secret_retention(self):
+        browser = self.fixture()
+        self.status.update(password="private-secret", arbitrary="private-response")
+        with patch("amity_harness.soak_browser.event") as trace:
+            self.fail(browser)
+            self.finish(browser)
+            browser.assert_healthy()
+        self.assertEqual(browser.report["request_failures"], 1)
+        self.assertEqual(browser.report["network_interruptions"], 1)
+        self.assertEqual(browser.report["network_recoveries"], 1)
+        self.assertIsNone(browser._network_recovery)
+        self.assertEqual(browser._cdp.send.call_args_list[0].args,
+                         ("Network.getResponseBody", {"requestId": "fresh"}))
+        self.assertNotIn("private", json.dumps(browser.report))
+        self.assertNotIn("private", str(trace.call_args_list))
+        browser.page.reload.assert_not_called()
+        browser.page.goto.assert_not_called()
+        browser.page.evaluate.assert_not_called()
+
+    def test_delayed_callbacks_use_actual_completion_time_instead_of_delivery_time(self):
+        browser = self.fixture()
+        self.now = 500
+        self.fail(browser)
+        # Python was blocked long after a timely network recovery completed.
+        browser.page.wait_for_timeout.side_effect = lambda milliseconds: self.finish(browser)
+        browser.assert_healthy()
+        self.assertEqual(browser.report["network_recoveries"], 1)
+        self.assertNotIn("network_recovery_failure", browser.report)
+
+    def test_background_configuration_read_interruption_requires_fresh_status_recovery(self):
+        browser = self.fixture()
+        self.fail(browser, route="/api/config")
+        self.assertIsNotNone(browser._network_recovery)
+        self.finish(browser)
+        browser.assert_healthy()
+        self.assertEqual(browser.report["failed_requests"][0]["route"], "/api/config")
+        self.assertEqual(browser.report["network_interruptions"], 1)
+        self.assertEqual(browser.report["network_recoveries"], 1)
+
+    def test_actual_late_success_cannot_be_rescued_by_callback_delivery(self):
+        browser = self.fixture()
+        self.fail(browser)
+        self.finish(browser, ended=131)
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+        self.assertEqual(browser.report["network_recovery_failure"], "recovery_timeout")
+        browser._cdp.send.assert_not_called()
+
+    def test_reply_started_before_interruption_cannot_clear_it(self):
+        browser = self.fixture()
+        self.start(browser, "inflight", started=98)
+        self.fail(browser)
+        browser._network_response({"requestId": "inflight", "response": {"status": 200}})
+        browser._network_finished({"requestId": "inflight", "timestamp": 102})
+        self.assertIsNotNone(browser._network_recovery)
+        browser._cdp.send.assert_not_called()
+        self.finish(browser)
+        browser.assert_healthy()
+
+    def test_latest_interruption_requires_an_even_fresher_reply_without_extending_deadline(self):
+        browser = self.fixture()
+        self.fail(browser)
+        self.fail(browser, "second", started=104, ended=105)
+        self.assertEqual(browser._network_recovery, {"after": 105, "deadline": 130})
+        self.finish(browser, started=103, ended=106)
+        self.assertIsNotNone(browser._network_recovery)
+        self.finish(browser, "newer", started=106, ended=107)
+        browser.assert_healthy()
+        self.assertEqual(browser.report["network_interruptions"], 2)
+        self.assertEqual(browser.report["network_recoveries"], 1)
+
+    def test_changed_boot_and_malformed_status_remain_fatal(self):
+        for change, reason in (({"expected_boot_id": "c" * 32}, "changed_boot"),
+                               ({"expected_boot_id": "private-token"}, "invalid_status"),
+                               ({"ready": False}, "invalid_status"), ({"current_activity": True}, "invalid_status"),
+                               ({"activity_settling": "false"}, "invalid_status"),
+                               ({"expected_state_revision": "00"}, "invalid_status")):
+            with self.subTest(change=change):
+                browser = self.fixture()
+                self.status.update(change)
+                self.fail(browser)
+                self.finish(browser)
+                with self.assertRaises(AssertionError):
+                    browser.assert_healthy()
+                self.assertEqual(browser.report["network_recovery_failure"], reason)
+                self.assertEqual(browser.report["network_recoveries"], 0)
+
+    def test_missing_status_fields_or_unreadable_body_cannot_prove_recovery(self):
+        for name in ("ready", "expected_config_revision", "expected_state_revision", "expected_boot_id",
+                     "current_activity", "activity_settling"):
+            with self.subTest(name=name):
+                browser = self.fixture()
+                del self.status[name]
+                self.fail(browser)
+                self.finish(browser)
+                self.assertEqual(browser.report["network_recovery_failure"], "invalid_status")
+        browser = self.fixture()
+        self.fail(browser)
+        browser._cdp.send.side_effect = RuntimeError("private-body-error")
+        with patch("amity_harness.soak_browser.event") as trace:
+            self.finish(browser)
+        self.assertEqual(browser.report["network_recovery_failure"], "invalid_status")
+        self.assertNotIn("private", str(trace.call_args_list))
+
+    def test_pending_recovery_expires_on_original_browser_clock_and_exit_fails(self):
+        browser = self.fixture()
+        self.fail(browser)
+        self.now = 131
+        chromium, driver = Mock(), Mock()
+        browser._browser, browser._playwright = chromium, driver
+        with self.assertRaises(AssertionError):
+            browser.__exit__(None, None, None)
+        self.assertEqual(browser.report["network_recovery_failure"], "recovery_timeout")
+        chromium.close.assert_called_once_with()
+        driver.stop.assert_called_once_with()
+
+    def test_pending_recovery_waits_only_for_natural_poll_and_has_bounded_deadline(self):
+        browser = self.fixture()
+        self.fail(browser)
+        self.now = 129.9
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+        self.assertEqual(browser.report["network_recovery_failure"], "recovery_timeout")
+        self.assertLessEqual(browser.page.wait_for_timeout.call_count, 3)
+        browser.page.reload.assert_not_called()
+        browser.page.goto.assert_not_called()
+
+    def test_post_other_network_errors_unknown_routes_and_non_fetch_are_fatal(self):
+        for request in ({"method": "POST"}, {"route": "/api/key"}, {"resource_type": "Document"},
+                        {"resource_type": "XHR"}, {"origin": "https://other.example"},
+                        {"code": "net::ERR_CONNECTION_RESET"}, {"code": "private-error"}):
+            with self.subTest(request=request):
+                browser = self.fixture()
+                self.fail(browser, **request)
+                with self.assertRaises(AssertionError):
+                    browser.assert_healthy()
+                self.assertEqual(browser.report["network_interruptions"], 0)
+                self.assertEqual(browser.report["request_failures"], 1)
+
+    def test_missing_metadata_or_invalid_timing_fails_closed(self):
+        for started, ended in ((None, 100), (99, None), (False, 100), (101, 100), (99, float("nan"))):
+            with self.subTest(started=started, ended=ended):
+                browser = self.fixture()
+                self.fail(browser, started=started, ended=ended)
+                with self.assertRaises(AssertionError):
+                    browser.assert_healthy()
+                self.assertEqual(browser.report["network_recovery_failure"], "invalid_timing")
+        browser = self.fixture()
+        browser._network_failed({"requestId": "unknown", "timestamp": 100, "errorText": "net::ERR_NETWORK_CHANGED"})
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+
+    def test_missing_browser_clock_cannot_extend_pending_recovery(self):
+        browser = self.fixture()
+        self.fail(browser)
+        browser._cdp.send.return_value = {"metrics": []}
+        browser._cdp.send.side_effect = None
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+        self.assertEqual(browser.report["network_recovery_failure"], "invalid_clock")
+
+    def test_callbacks_pumped_during_clock_read_can_complete_timely_recovery(self):
+        browser = self.fixture()
+        self.fail(browser)
+        send = browser._cdp.send.side_effect
+
+        def clock_callback(method, parameters=None):
+            if method == "Performance.getMetrics":
+                self.finish(browser)
+                return {"metrics": [{"name": "Timestamp", "value": 500}]}
+            return send(method, parameters)
+
+        browser._cdp.send.side_effect = clock_callback
+        browser.assert_healthy()
+        self.assertEqual(browser.report["network_recoveries"], 1)
+
+    def test_interruption_during_cached_body_read_requires_a_new_status(self):
+        browser = self.fixture()
+        self.fail(browser)
+        send = browser._cdp.send.side_effect
+
+        def body_callback(method, parameters=None):
+            if method == "Network.getResponseBody" and parameters["requestId"] == "fresh":
+                self.fail(browser, "second", started=102, ended=103)
+            return send(method, parameters)
+
+        browser._cdp.send.side_effect = body_callback
+        self.finish(browser)
+        self.assertEqual(browser._network_recovery, {"after": 103, "deadline": 130})
+        self.assertEqual(browser.report["network_recoveries"], 0)
+        self.finish(browser, "newer", started=104, ended=105)
+        browser.assert_healthy()
+        self.assertEqual(browser.report["network_recoveries"], 1)
+
+    def test_health_check_pumps_a_queued_first_failure_before_waiting_on_dom(self):
+        browser = self.fixture()
+        self.now = 131
+        browser.page.wait_for_timeout.side_effect = lambda milliseconds: self.fail(browser)
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+        self.assertEqual(browser.report["network_recovery_failure"], "recovery_timeout")
+
+    def test_repeated_interruptions_past_first_deadline_are_fatal_and_records_stay_bounded(self):
+        browser = self.fixture()
+        self.fail(browser)
+        for number in range(1, 35):
+            self.fail(browser, str(number), started=99 + number, ended=100 + number)
+        self.assertEqual(browser.report["request_failures"], 35)
+        self.assertEqual(browser.report["network_interruptions"], 35)
+        self.assertEqual(len(browser.report["failed_requests"]), 16)
+        self.assertEqual(browser.report["network_recovery_failure"], "recovery_timeout")
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+
+    def test_completed_response_with_missing_timing_is_fatal(self):
+        browser = self.fixture()
+        self.fail(browser)
+        self.finish(browser, ended=None)
+        self.assertEqual(browser.report["network_recovery_failure"], "invalid_timing")
+
+    def test_rendered_ready_controls_are_still_required_after_network_recovery(self):
+        browser = self.fixture()
+        self.fail(browser)
+        self.finish(browser)
+        browser._expect = Mock()
+        browser._expect.return_value.not_to_have_class.side_effect = AssertionError("An action error remains visible")
+        with self.assertRaisesRegex(AssertionError, "action error remains"):
+            browser.assert_ready()
+        browser._expect.return_value.to_be_visible.assert_called()
+        browser._expect.return_value.to_be_enabled.assert_called_once_with()
+
+    def test_request_map_overflow_is_bounded_and_fatal(self):
+        browser = self.fixture()
+        for number in range(130):
+            self.start(browser, str(number))
+        self.assertEqual(len(browser._network_requests), 128)
+        self.assertEqual(browser.report["network_recovery_failure"], "request_overflow")
+        with self.assertRaises(AssertionError):
+            browser.assert_healthy()
+
+    def test_other_browser_errors_stay_fatal_after_successful_network_recovery(self):
+        for kind in ("page_errors", "http_errors"):
+            with self.subTest(kind=kind):
+                browser = self.fixture()
+                self.fail(browser)
+                browser._record_failure(kind)
+                self.finish(browser)
+                with self.assertRaises(AssertionError):
+                    browser.assert_healthy()
 
 
 if __name__ == "__main__":

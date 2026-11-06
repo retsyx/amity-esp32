@@ -8,9 +8,11 @@ hardware-free unit suite and requires Playwright plus Chromium.
 
 from contextlib import contextmanager, redirect_stderr
 from copy import deepcopy
+import base64
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
+import math
 from pathlib import Path
 import re
 import secrets
@@ -44,6 +46,7 @@ class LocalInterface:
         self.login_passwords = []
         self.opened_handles = None
         self.browser_fixture = None
+        self.observer_before_navigation = None
         self.watch_requests = False
         self.unexpected_request = Event()
         self.owner_checks = 0
@@ -127,6 +130,8 @@ class LocalInterface:
 
             def do_GET(self):
                 authenticated = self.record()
+                if self.path == "/" and fixture.observer_before_navigation is None:
+                    fixture.observer_before_navigation = fixture.browser_fixture._cdp is not None
                 if self.path == "/api/setup":
                     return self.reply(dict(required=False, hostname=fixture.names[0]))
                 if self.path.startswith("/api/"):
@@ -193,7 +198,7 @@ def local_interface(**options):
             main._testbed = SimpleNamespace(duts=owners, _member_proofs={
                 owner: SimpleNamespace(name=name)
                 for owner, name in zip(fixture.identities[1:], fixture.names[1:])})
-            main.last_scan = SimpleNamespace(expected=(), validate_owners=fixture.validate_owners)
+            main.last_scan = SimpleNamespace(expected=(), _boot=BOOT_ID, validate_owners=fixture.validate_owners)
 
             def get_system():
                 request = Request(main.url + "/api/system",
@@ -222,7 +227,7 @@ class SoakBrowserIntegrationTests(unittest.TestCase):
         self.assertFalse(chromium.is_connected())
         helper = fixture.browser_fixture
         self.assertTrue(all(getattr(helper, name) is None
-                            for name in ("page", "_context", "_browser", "_playwright")))
+                            for name in ("page", "_context", "_browser", "_playwright", "_cdp")))
         # Browser.close alone leaves Playwright usable. A stopped driver must
         # reject a new browser launch through its public API as well.
         surprise_browser = None
@@ -265,11 +270,100 @@ class SoakBrowserIntegrationTests(unittest.TestCase):
                 self.assertEqual(fixture.current_activity, -1)
                 helper.inspect_devices()
                 self.assertEqual(len(fixture.activity_posts), 4)
-                self.assertEqual(helper.report, dict(selections=3, standbys=1, device_inspections=2,
-                                                    page_errors=0, request_failures=0, http_errors=0))
+                for counter, expected in dict(selections=3, standbys=1, device_inspections=2,
+                                              page_errors=0, request_failures=0, http_errors=0,
+                                              network_interruptions=0, network_recoveries=0).items():
+                    self.assertEqual(helper.report[counter], expected, counter)
                 self.assertTrue(all(authenticated for _, path, authenticated in fixture.requests
                                     if path.startswith("/api/") and path not in ("/api/login", "/api/setup")))
                 self.assertFalse(any(path.endswith("/discover") for _, path, _ in fixture.requests))
+            self.assert_resources_closed(fixture)
+
+    def test_real_cdp_observes_natural_status_and_uses_browser_clock_without_action_replay(self):
+        class ObservedBrowser(SoakBrowser):
+            def __init__(self, *args):
+                super().__init__(*args)
+                self.completed_status_requests = []
+
+            def _network_finished(self, parameters):
+                record = self._network_requests.get(parameters.get("requestId"), {})
+                if (record.get("route") == "/api/activity-editor/status"
+                        and record.get("method") == "GET" and record.get("status") == 200):
+                    self.completed_status_requests.append(parameters["requestId"])
+                super()._network_finished(parameters)
+
+        with local_interface() as fixture:
+            helper = fixture.browser_fixture = ObservedBrowser(fixture.main, fixture.saved_activities)
+            with helper:
+                self.assertTrue(fixture.observer_before_navigation)
+                self.assertEqual(helper._original_boot, BOOT_ID)
+                metrics = helper._cdp.send("Performance.getMetrics")["metrics"]
+                browser_now = next(metric["value"] for metric in metrics if metric["name"] == "Timestamp")
+                self.assertTrue(math.isfinite(browser_now) and browser_now > 0)
+                helper.select(fixture.saved_activities[0])
+                posts = deepcopy(fixture.activity_posts)
+                completed = len(helper.completed_status_requests)
+                # Let the shipping page's own timer poll; do not request a proof
+                # from the test or replace any of the page's HTTP responses.
+                with helper.page.expect_response(
+                        lambda response: response.request.method == "GET"
+                        and response.url == fixture.main.url + "/api/activity-editor/status"
+                        and response.status == 200, timeout=10000) as observed:
+                    pass
+                observed.value.finished()
+                helper.page.wait_for_timeout(0)
+                self.assertGreater(len(helper.completed_status_requests), completed)
+                cached = helper._cdp.send("Network.getResponseBody", {
+                    "requestId": helper.completed_status_requests[-1]})
+                body = (base64.b64decode(cached["body"], validate=True).decode("utf-8")
+                        if cached.get("base64Encoded") else cached["body"])
+                document = json.loads(body)
+                self.assertTrue(document["ready"])
+                self.assertEqual(document["expected_boot_id"], BOOT_ID)
+                self.assertEqual(document["current_activity"], 0)
+                self.assertEqual(helper._last_status_fences["expected_boot_id"], BOOT_ID)
+                self.assertEqual(fixture.activity_posts, posts)
+                self.assertEqual(helper.report["network_interruptions"], 0)
+                self.assertEqual(helper.report["network_recoveries"], 0)
+                helper.assert_active(fixture.saved_activities[0])
+            self.assert_resources_closed(fixture)
+
+    def test_other_real_get_failure_stays_fatal_after_background_ui_recovers(self):
+        from playwright.sync_api import expect
+
+        with local_interface() as fixture:
+            helper = fixture.browser_fixture = SoakBrowser(fixture.main, fixture.saved_activities)
+            with self.assertRaisesRegex(AssertionError, "observed a page, HTTP or network error"):
+                with helper:
+                    helper.select(fixture.saved_activities[0])
+                    posts = deepcopy(fixture.activity_posts)
+                    remaining = [1]
+
+                    def fail_once(route):
+                        if route.request.method == "GET" and remaining[0]:
+                            remaining[0] -= 1
+                            return route.abort("connectionreset")
+                        return route.continue_()
+
+                    # This route belongs only to the loopback fixture. Physical
+                    # functional scenarios never intercept shipping DUT traffic.
+                    helper.page.route(fixture.main.url + "/api/activity-editor/status", fail_once)
+                    with helper.page.expect_event(
+                            "requestfailed", predicate=lambda request: request.method == "GET"
+                            and request.url == fixture.main.url + "/api/activity-editor/status",
+                            timeout=10000) as failed:
+                        pass
+                    self.assertEqual(failed.value.failure, "net::ERR_CONNECTION_RESET")
+                    expect(helper.page.locator("#message")).to_have_class(re.compile(r"\berror\b"))
+                    expect(helper.page.locator("#message")).not_to_have_class(
+                        re.compile(r"\berror\b"), timeout=10000)
+                    self.assertEqual(fixture.activity_posts, posts)
+                    self.assertEqual(helper.report["request_failures"], 1)
+                    self.assertEqual(helper.report["network_interruptions"], 0)
+                    self.assertEqual(helper.report["network_recoveries"], 0)
+                    self.assertEqual(helper.report["failed_requests"][-1]["net_error"],
+                                     "net::ERR_CONNECTION_RESET")
+                    helper.assert_healthy()
             self.assert_resources_closed(fixture)
 
     def test_failed_open_after_login_closes_page_browser_and_driver_and_stops_polling(self):
