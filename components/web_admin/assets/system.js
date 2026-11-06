@@ -8,7 +8,7 @@ window.amityInterface=(()=>{
  const baseAttachment=c=>[c.title,c.location].filter(Boolean).join(' · ');
  const attachment=(c,available=choices)=>{
   const base=baseAttachment(c),side=c.qualified_name?.side;
-  return side&&available.some(other=>other.value!==c.value&&baseAttachment(other)===base&&other.qualified_name?.side&&other.qualified_name.side!==side)?base+' · '+(side==='back'?'Back':'Front'):base;
+  return side&&available.some(other=>other.value!==c.value&&baseAttachment(other)===base&&other.qualified_name?.side&&other.qualified_name.side!==side)?base+' · '+(side==='back'?'Source':'Display'):base;
  };
  function choiceFor(role,value){return choices.find(c=>(c.roles||[]).includes(role)&&c.value===value);}
  function visible(role,value){if(!value)return '';const c=choiceFor(role,value);return c?attachment(c):value;}
@@ -109,7 +109,7 @@ window.amityInterface=(()=>{
   const selectField=(title,id)=>{const label=document.createElement('label'),input=document.createElement('select');label.textContent=title;input.id=id;label.append(input);fields.append(label);return {label,input};};
   const owner=selectField('Amity','componentOwner'),adapter=selectField('Adapter','componentAdapter'),side=selectField('Side','componentSide'),name=field('OSD name',osdName);
   name.input.id='componentOsdName';name.input.required=true;name.input.maxLength=14;name.input.autocomplete='off';fields.append(name.label);
-  for(const [value,title] of [['back','Back'],['front','Front']]){const option=document.createElement('option');option.value=value;option.textContent=title;side.input.append(option);}side.input.value=role==='source'?'back':'front';
+  for(const [value,title] of [['back','Source'],['front','Display']]){const option=document.createElement('option');option.value=value;option.textContent=title;side.input.append(option);}side.input.value=role==='source'?'back':'front';
   const fill=(select,values,value)=>{if(values.length!==select.options.length||values.some(([id,title],n)=>select.options[n].value!==id||select.options[n].textContent!==title)){select.replaceChildren();for(const [id,title] of values){const option=document.createElement('option');option.value=id;option.textContent=title;select.append(option);}}if(values.some(([id])=>id===value))select.value=value;};
   const update=()=>{
    if(componentPending||!d.open)return;
@@ -421,10 +421,10 @@ window.amityInterface=(()=>{
   const apply=button('Apply confirmed replacement',async()=>{if(!approved)throw Error('Preview the mappings first.');await completed('replacements/apply',approved);d.close();await refresh();if(await refreshActivityConfiguration())message('Replacement saved. Choose an activity when its equipment is ready.');});apply.disabled=true;
   select.onchange=()=>{mapping.replaceChildren();preview.replaceChildren();approved=null;apply.disabled=true;portFields=[];equipmentFields=[];if(!select.value)return;
    const peer=current.membership.peers.find(p=>p.octopus_id===select.value),connectors=[];
-   for(let i=0;i<(peer?.supported_tentacles||1);i++)if((peer?.configured_tentacles_mask??1)&(1<<i))for(const side of ['front','back'])connectors.push([i+':'+side,`Adapter ${i+1} · ${side==='back'?'Back':'Front'}`]);
-   for(const old of ports.values()){const control=addSelect(`Previous adapter ${old.tentacle_id+1} · ${old.side==='back'?'Back':'Front'}`,connectors);portFields.push({old,control});}
+   for(let i=0;i<(peer?.supported_tentacles||1);i++)if((peer?.configured_tentacles_mask??1)&(1<<i))for(const side of ['front','back'])connectors.push([i+':'+side,`Adapter ${i+1} · ${side==='back'?'Source':'Display'}`]);
+   for(const old of ports.values()){const control=addSelect(`Previous adapter ${old.tentacle_id+1} · ${old.side==='back'?'Source':'Display'}`,connectors);portFields.push({old,control});}
    const observed=(current.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===select.value);
-   for(const component of snapshot.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · Adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'Back':'Front'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
+   for(const component of snapshot.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · Adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'Source':'Display'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
   };
   d.append(button('Preview replacement',async()=>{
    if(!isolated.input.checked||!select.value||portFields.some(f=>!f.control.value)||equipmentFields.some(f=>!f.control.value||!f.confirmed.checked))throw Error('Confirm old-device isolation and every cable and equipment mapping.');

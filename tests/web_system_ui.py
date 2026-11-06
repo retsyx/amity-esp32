@@ -642,7 +642,7 @@ def main(argv=None):
                 replacement_dialog.get_by_label('Replacement Amity', exact=True).select_option(replacement)
                 expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True)).to_have_count(1)
                 expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True).locator('option')).to_have_count(2)
-                expect(replacement_dialog.get_by_label('Previous adapter 1 · Front', exact=True)).to_have_count(1)
+                expect(replacement_dialog.get_by_label('Previous adapter 1 · Display', exact=True)).to_have_count(1)
                 replacement_dialog.get_by_role('button', name='Cancel', exact=True).click()
                 passed('management loads canonical saved owners and components while the activity editor keeps its projection')
             finally:

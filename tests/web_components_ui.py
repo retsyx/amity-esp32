@@ -217,7 +217,7 @@ def main():
                 expect(d.locator('#componentOwner')).to_be_hidden()
                 expect(d.locator('#componentAdapter')).to_be_hidden()
                 expect(d.locator('#componentOsdName')).to_have_value('OfflineBox')
-                expect(d.locator('#componentSide option')).to_have_text(['Back', 'Front'])
+                expect(d.locator('#componentSide option')).to_have_text(['Source', 'Display'])
                 assert d.locator('#componentSide option').evaluate_all('(nodes) => nodes.map(n => n.value)') == ['back', 'front']
                 expect(d.locator('#componentSide')).to_have_value('back')
                 assert d.locator('#componentOwner').evaluate('(e) => e.tagName') == 'SELECT'
@@ -328,14 +328,14 @@ def main():
                 d.locator('#componentSide').select_option('front')
                 d.get_by_role('button', name='Add', exact=True).click()
                 expect(d).to_be_hidden()
-                expect(source()).to_have_value('RemoteBox · amity-bedroom · Adapter 3 · Front')
+                expect(source()).to_have_value('RemoteBox · amity-bedroom · Adapter 3 · Display')
                 opposite = fixture['components'][-1]
                 assert opposite['qualified_name']['side'] == 'front' and opposite['value'] != created['value']
                 page.locator('#activityForm').get_by_role('button', name='OK', exact=True).click()
                 page.locator('#saveActivities').click()
                 expect(page.locator('#saveActivities')).to_be_hidden()
                 assert fixture['activities'][-1]['source'] == opposite['value']
-                assert any(value.endswith(' · Back') for value in page.locator('#sourceDeviceNames option').evaluate_all('(nodes) => nodes.map(n => n.value)'))
+                assert any(value.endswith(' · Source') for value in page.locator('#sourceDeviceNames option').evaluate_all('(nodes) => nodes.map(n => n.value)'))
                 assert errors == [], errors
                 passed('equal OSD names on opposing HDMI connections display distinct friendly locations and save the intended component')
             finally:
