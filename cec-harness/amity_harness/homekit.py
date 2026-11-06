@@ -303,10 +303,17 @@ class HomeKitAccessory:
 
     def _status(self):
         state = self.dut.request("/api/homekit")
-        if (not isinstance(state, dict) or any(type(state.get(name)) is not bool for name in
-                ("available", "started", "pairing", "busy", "paired"))
-                or type(state.get("controllers")) is not int or state["controllers"] < 0 or state.get("error")):
+        flags = ("available", "started", "pairing", "busy", "paired")
+        if (not isinstance(state, dict) or any(type(state.get(name)) is not bool for name in flags)
+                or type(state.get("controllers")) is not int or state["controllers"] < 0):
             raise HomeKitError("The HomeKit UI returned no valid pairing state")
+        if "error" in state:
+            error = state["error"]
+            if not isinstance(error, str) or re.fullmatch(r"ESP_[A-Z0-9_]{1,80}", error) is None:
+                raise HomeKitError("The HomeKit UI returned no valid pairing state")
+            event("homekit.status.failed", level=logging.ERROR, dut=self.dut.name, error=error,
+                  **{name: state[name] for name in (*flags, "controllers")})
+            raise HomeKitError("The HomeKit UI reported a pairing error")
         return state
 
     def _wait(self, predicate):

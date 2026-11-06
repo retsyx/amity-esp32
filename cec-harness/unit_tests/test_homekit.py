@@ -1,7 +1,9 @@
 """HomeKit pairing ownership, dynamic characteristic lookup and raw HAP writes."""
 
 import asyncio
+from contextlib import redirect_stderr
 from copy import deepcopy
+from io import StringIO
 import json
 from pathlib import Path
 import sys
@@ -14,6 +16,7 @@ from unittest.mock import AsyncMock, Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.homekit import HomeKitAccessory, HomeKitError, _Layout, _Session, _Worker, _uuid
+from amity_harness.trace import stdio_logging
 
 
 def accessory_graph(serial="68EE8F502B44"):
@@ -126,6 +129,51 @@ class HomeKitAccessoryTests(unittest.TestCase):
                 dut.state.update(change)
                 with self.assertRaisesRegex(HomeKitError, "preserved"):
                     accessory.__enter__()
+                self.assertEqual(worker.calls, [])
+                self.assertEqual(dut.requests, [("/api/homekit", None)])
+
+    def test_setup_error_is_logged_without_secrets_and_survives_cleanup_failure(self):
+        dut, worker, accessory = self.fixture()
+        request = dut.request
+
+        def fail_open(path, body=None):
+            result = request(path, body)
+            if path == "/api/homekit/open":
+                dut.state.update(error="ESP_ERR_NO_MEM", started=False, pairing=False,
+                                 qr_payload="private-qr-payload", qr_modules=["private-qr-modules"],
+                                 unexpected="private-response-field")
+            return result
+
+        output = StringIO()
+        with patch.object(dut, "request", side_effect=fail_open), redirect_stderr(output), stdio_logging():
+            with self.assertRaisesRegex(HomeKitError, "reported a pairing error"):
+                accessory.__enter__()
+
+        self.assertEqual(worker.calls, [("stop", None)])
+        self.assertEqual([path for path, body in dut.requests if body is not None],
+                         ["/api/homekit/open", "/api/homekit/close"])
+        events = [json.loads(line.split("homekit.status.failed ", 1)[1])
+                  for line in output.getvalue().splitlines() if "homekit.status.failed " in line]
+        # The retained firmware error is observed during open and close; neither
+        # the pairing code nor arbitrary response fields belong in diagnostics.
+        self.assertEqual(events, [{"dut": dut.name, "error": "ESP_ERR_NO_MEM", "available": True,
+                                   "started": False, "pairing": False, "busy": False,
+                                   "paired": False, "controllers": 0}] * 2)
+        self.assertIn("homekit.cleanup.failed", output.getvalue())
+        for secret in ("123-45-679", "private-qr-payload", "private-qr-modules", "private-response-field"):
+            self.assertNotIn(secret, output.getvalue())
+
+    def test_malformed_status_is_rejected_without_logging_response_fields(self):
+        for change in ({"started": 1, "error": "ESP_ERR_NO_MEM"}, {"controllers": False},
+                       {"error": "private-error"}, {"error": "ESP_ERR_NO_MEM\n123-45-679"},
+                       {"error": None}, {"error": 0}):
+            with self.subTest(change=change):
+                dut, worker, accessory = self.fixture()
+                dut.state.update(change)
+                with patch("amity_harness.homekit.event") as trace:
+                    with self.assertRaisesRegex(HomeKitError, "no valid pairing state"):
+                        accessory.__enter__()
+                trace.assert_not_called()
                 self.assertEqual(worker.calls, [])
                 self.assertEqual(dut.requests, [("/api/homekit", None)])
 
