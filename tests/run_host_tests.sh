@@ -17,6 +17,7 @@ sh "$root/tests/homekit_platform_test.sh"
 sh "$root/tests/web_request_test.sh"
 python3 "$root/tests/https_response_write_test.py"
 python3 "$root/tests/web_session_tcp_test.py"
+python3 "$root/tests/web_key_timing_test.py"
 python3 "$root/tests/admin_rejection_test.py"
 python3 "$root/tests/hostname_reconnect_api_test.py"
 python3 "$root/tests/hostname_services_test.py"
@@ -29,6 +30,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 "$out/config_store_test"
 sh "$root/tests/cec_hub_test.sh"
 sh "$root/tests/owned_hub_test.sh"
+python3 "$root/tests/key_release_timing_test.py"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/tests/reset_fakes" -I"$root/components/amity_system/include" -I"$root/components/device_settings/include" \
   "$root/components/device_settings/reset_button.cpp" "$root/tests/reset_button_test.cpp" -o "$out/reset_button_test"

@@ -23,6 +23,12 @@ PREFIX = r'''
 #include <string>
 using esp_err_t=int;
 constexpr int ESP_OK=0,ESP_FAIL=-1,HTTP_GET=0,HTTP_POST=1,HTTP_OPTIONS=2;
+constexpr int ESP_LOG_WARN=2,ESP_LOG_INFO=3;
+struct KeyRequest {uint8_t key=0;uint16_t duration_ms=0;};
+unsigned timing_reads=0;
+int64_t esp_timer_get_time(){++timing_reads;return 0;}
+void key_log(int,const char*,const char*,...){assert(false&&"Readiness requests must not log key timing");}
+#define ESP_LOG_LEVEL(...) key_log(__VA_ARGS__)
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 struct httpd_req_t {int method=HTTP_GET;size_t content_len=0;const char* uri="/api/ready";std::string response,status,type;std::map<std::string,std::string> headers;bool authenticated=false;};
 std::atomic_bool ui_enabled{true};
@@ -69,7 +75,7 @@ int main(){
  for(const char* path:{"/api/config","/api/status","/api/ready?cache=1"}){httpd_req_t req;req.uri=path;assert(api(&req)==ESP_FAIL&&req.status=="401 Unauthorized");no_cors(req);}
  {httpd_req_t req;req.content_len=1;assert(api(&req)==ESP_FAIL&&req.status=="400 Bad Request");no_cors(req);}
  {httpd_req_t req;ui_enabled=false;assert(api(&req)==ESP_FAIL&&req.status=="403 Forbidden");no_cors(req);ui_enabled=true;}
- assert(downstream==0);
+ assert(downstream==0&&timing_reads==0);
  std::cout<<"PASS actual readiness router exposes only GET health with no credentials or mutation CORS\n";
  {httpd_req_t req;req.uri="/";assert(asset(&req)==ESP_OK);const auto& csp=req.headers.at("Content-Security-Policy");
   assert(csp.find("connect-src 'self' https://*.local;")!=std::string::npos&&csp.find("script-src 'self';")!=std::string::npos&&csp.find("frame-ancestors 'none'")!=std::string::npos);no_cors(req);
@@ -90,6 +96,7 @@ def main():
     request = (ROOT / 'components/web/request.cpp').read_text()
     actual = ('namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
               + function(source, 'esp_err_t send(httpd_req_t *req,cJSON *root)')
+              + function(source, 'struct KeyRequestTiming') + ';\n'
               + public + function(source, 'esp_err_t asset(httpd_req_t *req)'))
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     if not (cjson / 'cJSON.c').exists():

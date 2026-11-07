@@ -26,6 +26,8 @@
 #include "esp_wifi.h"
 #include "esp_heap_caps.h"
 #include "esp_https_server.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <atomic>
@@ -42,6 +44,36 @@ httpd_handle_t server;
 std::mutex server_mutex;
 std::atomic_bool ui_enabled{false};
 std::atomic_bool ui_revoked{false};
+// One line per valid HTTP key request. In particular, keep time spent
+// waiting for the requested hold separate from unexpected HTTP latency.
+struct KeyRequestTiming {
+    explicit KeyRequestTiming(bool enabled):started_us(enabled?esp_timer_get_time():0),enabled(enabled) {}
+    void guards_complete() {if(enabled)guarded_us=esp_timer_get_time();}
+    void body_complete() {if(enabled)body_us=esp_timer_get_time();}
+    void submitting(const KeyRequest& request) {
+        if(!enabled)return;
+        has_key=true;key=request.key;hold_ms=request.duration_ms;submit_started_us=esp_timer_get_time();
+    }
+    // Setup-gated or rejected presses never invoke the hold wait callback.
+    void holding(uint16_t duration_ms) {hold_wait_ms=duration_ms;}
+    void submitted(esp_err_t result) {if(enabled){submit_finished_us=esp_timer_get_time();outcome=result;}}
+    void responding() {if(enabled)response_started_us=esp_timer_get_time();}
+    esp_err_t finish_response(esp_err_t result) {response_result=result;return result;}
+    ~KeyRequestTiming() {
+        if(!has_key)return;
+        const auto finished_us=esp_timer_get_time(),total_us=finished_us-started_us;
+        ESP_LOG_LEVEL(total_us>static_cast<int64_t>(hold_wait_ms)*1000+100000?ESP_LOG_WARN:ESP_LOG_INFO,"web_admin",
+            "key=%u hold_ms=%u hold_wait_ms=%u guards_us=%lld body_us=%lld prepare_us=%lld submit_us=%lld response_us=%lld total_us=%lld submit_result=%d response_result=%d",
+            static_cast<unsigned>(key),static_cast<unsigned>(hold_ms),static_cast<unsigned>(hold_wait_ms),static_cast<long long>(guarded_us-started_us),static_cast<long long>(body_us-guarded_us),
+            static_cast<long long>(submit_started_us-body_us),static_cast<long long>(submit_finished_us-submit_started_us),
+            static_cast<long long>(finished_us-response_started_us),static_cast<long long>(total_us),static_cast<int>(outcome),static_cast<int>(response_result));
+    }
+    int64_t started_us=0,guarded_us=0,body_us=0,submit_started_us=0,submit_finished_us=0,response_started_us=0;
+    bool enabled=false,has_key=false;
+    uint8_t key=0;
+    uint16_t hold_ms=0,hold_wait_ms=0;
+    esp_err_t outcome=ESP_OK,response_result=ESP_OK;
+};
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 esp_err_t send(httpd_req_t *req,cJSON *root) {
     char *s=cJSON_PrintUnformatted(root);
@@ -147,6 +179,7 @@ esp_err_t homekit(httpd_req_t *req) {
 }
 esp_err_t api(httpd_req_t *req) {
     if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
+    KeyRequestTiming key_timing(req->method==HTTP_POST&&!strcmp(req->uri,"/api/key"));
     if(req->method==HTTP_GET&&req->content_len)return web::error(req,"GET requests cannot have a body");
     std::string path=req->uri;
     if(path=="/api/ready"&&req->method==HTTP_GET) {
@@ -211,6 +244,7 @@ esp_err_t api(httpd_req_t *req) {
         return web::error(req,"Configuration changes are unavailable while Amity is passive or updating.","403 Forbidden");
     esp_err_t administration_result=ESP_OK;if(activity_editor_request(*hub,req,path,administration_result))return administration_result;
     if(admin_request(req,path,administration_result))return administration_result;
+    key_timing.guards_complete();
     if(req->method==HTTP_GET) {
         if(path=="/api/status")return status(req);
         if(path=="/api/remotes")return remotes(req);
@@ -230,11 +264,17 @@ esp_err_t api(httpd_req_t *req) {
             "/api/homekit/remove","/api/factory-reset","/api/password","/api/logout","/api/reboot"})supported|=path==command;
         if(!supported)return web::error(req,"Unknown endpoint","404 Not Found");
         std::string data;if(!web::body(req,data))return ESP_FAIL;
+        key_timing.body_complete();
         Json root(parse_json_input(data.empty()?"{}":data),cJSON_Delete);
         if(!root)return web::error(req,"Invalid JSON");
         esp_err_t e=ESP_OK;
         auto int_arg=[&](const char *key,int low,int high,int &out){auto *v=cJSON_GetObjectItemCaseSensitive(root.get(),key);if(!cJSON_IsNumber(v)||v->valuedouble!=v->valueint||v->valueint<low||v->valueint>high)return false;out=v->valueint;return true;};
-        if(path=="/api/key") {KeyRequest key;if(!parse_key_request(root.get(),key))return web::error(req,"Expected a key from 0 to 255 and duration_ms from 0 to 5000");e=submit_key_request(*hub,key,[](uint16_t duration){vTaskDelay(pdMS_TO_TICKS(duration-1)+1);})?ESP_OK:ESP_ERR_NO_MEM;}
+        if(path=="/api/key") {
+            KeyRequest key;if(!parse_key_request(root.get(),key))return web::error(req,"Expected a key from 0 to 255 and duration_ms from 0 to 5000");
+            key_timing.submitting(key);
+            e=submit_key_request(*hub,key,[&key_timing](uint16_t duration){key_timing.holding(duration);vTaskDelay(pdMS_TO_TICKS(duration-1)+1);})?ESP_OK:ESP_ERR_NO_MEM;
+            key_timing.submitted(e);
+        }
         else if(path=="/api/remotes/scan")e=ble_remote_scan(20);
         else if(path=="/api/remotes/unpair"||path=="/api/remotes/pair") {
             LocalRemoteRequest approval;
@@ -266,7 +306,8 @@ esp_err_t api(httpd_req_t *req) {
         else if(path=="/api/logout")web::logout(req);
         else if(path=="/api/reboot")system_services::reboot_later();
         else return web::error(req,"Unknown endpoint","404 Not Found");
-        return e==ESP_OK?web::json(req,"{\"ok\":true}"):web::error(req,esp_err_to_name(e),"409 Conflict");
+        key_timing.responding();
+        return key_timing.finish_response(e==ESP_OK?web::json(req,"{\"ok\":true}"):web::error(req,esp_err_to_name(e),"409 Conflict"));
     }
     return web::error(req,"Unknown endpoint","404 Not Found");
 }

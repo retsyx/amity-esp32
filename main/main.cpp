@@ -281,13 +281,23 @@ void log_atomic_key(const Input &input) {
     ESP_LOGI("remote_input","Atomic: %s %s (page=0x%04x usage=0x%04x)",name,input.down?"pressed":"released",
              static_cast<unsigned>(input.page),static_cast<unsigned>(input.usage));
 }
+bool submit_remote_release(uint8_t key,uint32_t generation) {
+    const auto started=esp_timer_get_time();
+    const bool accepted=hub.release_remote_key(key);
+    const auto elapsed=static_cast<long long>(esp_timer_get_time()-started);
+    if(elapsed>100000)
+        ESP_LOGW("remote_input","Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);
+    else
+        ESP_LOGI("remote_input","Key release stage=submit key=%u generation=%u elapsed_us=%lld accepted=%d",static_cast<unsigned>(key),static_cast<unsigned>(generation),elapsed,accepted);
+    return accepted;
+}
 void input_task(void *) {
     amity::SwipeSequence swipes;
     ble::RemoteInputController controller([](ble::RemoteCommand command,void *context) {
         auto &pending_swipes=*static_cast<amity::SwipeSequence *>(context);
         if(command.type==ble::RemoteCommandType::Release) {
             pending_swipes.cancel();
-            return hub.release_remote_key(static_cast<uint8_t>(command.value));
+            return submit_remote_release(static_cast<uint8_t>(command.value),command.stamp.generation);
         }
         // Check the reservation as well as the published generation. The hub
         // checks generation again on dequeue for a transition racing this call.

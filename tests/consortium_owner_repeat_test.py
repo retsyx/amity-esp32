@@ -26,9 +26,9 @@ namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
 unsigned shutdowns=0;int capture_shutdown(int,int){++shutdowns;return 0;}
-std::vector<std::string> diagnostic_logs;
+std::vector<std::string> diagnostic_logs,key_release_logs;
 void assert_log_unlocked();
-template<class... Args>void capture_log(const char*,const char* format,Args... args){assert_log_unlocked();char text[1024];snprintf(text,sizeof(text),format,args...);assert(std::string(text).size()<384);if(std::string(format).find("Link scope")==0)return;diagnostic_logs.emplace_back(text);}
+template<class... Args>void capture_log(const char*,const char* format,Args... args){assert_log_unlocked();char text[1024];snprintf(text,sizeof(text),format,args...);assert(std::string(text).size()<384);if(std::string(format).find("Link scope")==0)return;if(std::string(format).find("Key release")==0){key_release_logs.emplace_back(text);return;}diagnostic_logs.emplace_back(text);}
 #define ESP_LOGW capture_log
 #define ESP_LOGI capture_log
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
@@ -55,6 +55,8 @@ void assert_log_unlocked(){
   lock.unlock();
  });contender.join();assert(available); // SDK logging must run after both guards.
 }
+std::function<void()> before_send;bool write_result=true;unsigned writes=0;uint32_t written_ttl=0;std::string written_payload;
+bool send(Active&,Kind kind,std::string_view payload,uint32_t ttl){assert(kind==Kind::scoped_intent);assert_log_unlocked();++writes;written_ttl=ttl;written_payload=payload;if(before_send)before_send();return write_result;}
 esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){return ESP_ERR_NOT_SUPPORTED;}
 }
 #define shutdown amity::consortium::capture_shutdown
@@ -66,7 +68,7 @@ std::shared_ptr<Active> connection(unsigned link=7,unsigned peer_boot=8){
  const LinkScope scope{ident<model::LinkId>(link),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),a->peer,ident<model::OctopusId>(2),ident<model::BootId>(4),a->status.boot_id,1,1};
  assert(a->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);return a;
 }
-void reset(){for(auto* argument:task_arguments)delete argument;task_arguments.clear();task_attempts=0;task_creation_fails=false;shutdowns=0;diagnostic_logs.clear();links.clear();controls={};status={};status.authority_ready=true;group={};group.consortium=ident<model::ConsortiumId>(1);group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);group.peers={{ident<model::OctopusId>(3),"leaf","pin",true}};clock_ms=100;}
+void reset(){for(auto* argument:task_arguments)delete argument;task_arguments.clear();task_attempts=0;task_creation_fails=false;shutdowns=0;diagnostic_logs.clear();key_release_logs.clear();before_send={};write_result=true;writes=0;written_ttl=0;written_payload.clear();links.clear();controls={};status={};status.authority_ready=true;group={};group.consortium=ident<model::ConsortiumId>(1);group.role=Group::coordinator;group.epoch=1;identity.id=group.authority=ident<model::OctopusId>(2);group.peers={{ident<model::OctopusId>(3),"leaf","pin",true}};clock_ms=100;}
 model::OwnedIntent down(){model::OwnedIntent i;i.kind=model::OwnedIntentKind::key_edges;i.target.port={ident<model::ConsortiumId>(1),ident<model::OctopusId>(3),0,model::Side::front};i.generation=2;i.config_revision=1;i.edges[0]={0x41,true};i.edge_count=1;return i;}
 void logical_restart_pending(const Active& active){
  assert(active.restart_requested&&active.execution_fenced&&!active.ready&&!active.status.ready&&!active.management_ready&&!active.status.management_ready);
@@ -294,6 +296,28 @@ void diagnostic_lines_fit_capture(){
   auto captured=snapshot_link_trace(*a,trace,UINT64_MAX);captured.scope.config_revision=UINT64_MAX;emit_link_trace(captured);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].size()<384&&diagnostic_logs[0].find("qrev=18446744073709551615")!=std::string::npos);
  }
 }
+void release_sender_timing(){
+ for(bool success:{false,true}){
+  reset();auto a=connection();links={a};auto up=down();up.edges[0].down=false;
+  controls.configuration_revision=[]{clock_ms+=125;return uint64_t{1};};
+  assert(runtime_send_owned(up)==ESP_OK&&a->queue.size()==1&&a->queue.front().created==225&&a->queue.front().ttl==2000);
+  assert(key_release_logs.size()==1&&key_release_logs[0].find("stage=admit owner="+a->peer.str()+" key=65 generation=2 elapsed_ms=125 result=0")!=std::string::npos);
+  clock_ms+=300;before_send=[]{clock_ms+=450;};write_result=success;
+  assert(pump(*a)==success&&a->queue.empty()&&writes==1&&written_ttl==1700);
+  Json payload;JsonError error;model::OwnedIntent delivered;
+  assert(parse_json(written_payload,payload,error)&&parse_owned_intent(payload,delivered)==Error::none&&delivered.edge_count==1&&!delivered.edges[0].down&&delivered.edges[0].key==65&&delivered.generation==2);
+  assert(key_release_logs.size()==2&&key_release_logs[1].find("stage=write owner="+a->peer.str()+" key=65 generation=2 age_ms=300 elapsed_ms=450 sent="+(success?"1":"0"))!=std::string::npos);
+  assert(!a->restart_requested&&!a->cancelled&&a->tls->usable()&&shutdowns==0);
+  if(success)assert(diagnostic_logs.empty());
+  else assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=queued_send")!=std::string::npos);
+ }
+ reset();auto a=connection();links={a};auto up=down();up.edges[0].down=false;status.authority_ready=false;
+ assert(runtime_send_owned(up)==ESP_ERR_INVALID_STATE&&a->queue.empty()&&key_release_logs.size()==1&&key_release_logs[0].find("elapsed_ms=0 result=2")!=std::string::npos&&writes==0);
+ reset();a=connection();links={a};assert(runtime_send_owned(down())==ESP_OK&&key_release_logs.empty());
+ auto tap=down();tap.edge_count=2;tap.edges[1]={tap.edges[0].key,false};assert(runtime_send_owned(tap)==ESP_OK&&key_release_logs.empty());
+ reset();a=connection();links={a};up=down();up.edges[0].down=false;up.generation=UINT64_MAX;clock_ms=UINT64_MAX-1;
+ assert(runtime_send_owned(up)==ESP_OK&&key_release_logs.size()==1&&key_release_logs[0].size()<384&&key_release_logs[0].find("generation=18446744073709551615")!=std::string::npos);
+}
 void restart_flags_gate_front_doors_before_scope_rotation(){
  for(bool pending:{false,true}){
   reset();auto a=connection();links={a};const auto original=a->session.scope();const auto transport=a->tls;
@@ -367,7 +391,7 @@ void codec_and_session(){
 }
 
 }
-int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
+int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();release_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, release sender timing outside locks, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()
@@ -377,6 +401,10 @@ def main():
  diagnostics=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
  launch_start=source.index('void launch(');launch_body=source.index('){',launch_start)+1
  actual=trace+function(source,'void request_session_restart(')+diagnostics+retries+''.join(function(source,name) for name in names)+source[launch_start:launch_body]+function(source[launch_body:],'{')
+ actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')
+ queue_start=source.index('\n',source.index('        if(!active->retiring&&!refresh_local_hostname(*active))'))+1
+ queue_end=source.index('        fd_set reads;',queue_start)
+ actual+='\nbool pump(Active& storage){auto* active=&storage;LinkTrace trace;trace.phase="operational";while(true){'+source[queue_start:queue_end]+'return true;}trace_link_closed(storage,trace,now_ms());return false;}\n'
  with tempfile.TemporaryDirectory(prefix='amity-qualified-transport-') as directory:
   temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+actual+'\n}\n'+SUITE)

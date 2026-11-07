@@ -949,7 +949,16 @@ void active_loop_work(void *arg){
             if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
         if(have&&!queued_expired(queued,now)){
             const auto ttl=queued_firmware_stream(queued)?queued.ttl:queued.ttl-static_cast<uint32_t>(now-queued.created);
-            if(!send(*active,queued.kind,payload,ttl)){trace.queued(queued);trace.fail("queued_send");break;}
+            const bool release=queued.owned&&pure_key_release(*queued.owned);
+            const auto write_started=release?now_ms():0;
+            const bool sent=send(*active,queued.kind,payload,ttl);
+            if(release){
+                const auto completed=now_ms();const auto& intent=*queued.owned;
+                ESP_LOGI("consortium","Key release stage=write owner=%s key=%u generation=%llu age_ms=%llu elapsed_ms=%llu sent=%d",
+                    intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),
+                    static_cast<unsigned long long>(write_started>=queued.created?write_started-queued.created:0),static_cast<unsigned long long>(completed>=write_started?completed-write_started:0),sent);
+            }
+            if(!sent){trace.queued(queued);trace.fail("queued_send");break;}
         }
         fd_set reads;FD_ZERO(&reads);FD_SET(active->tls->socket,&reads);timeval wait{0,20000};int ready=::select(active->tls->socket+1,&reads,nullptr,nullptr,&wait);if(ready<0){trace.socket_error=errno;trace.fail("socket_select");break;}
         // An idle connection has no receive deadline. Input fixes the start;
@@ -1782,6 +1791,10 @@ void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     }
 }
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
+    const bool release=pure_key_release(intent);const auto admission_started=release?now_ms():0;
+    // Return through this scope before logging, including every rejection, so
+    // neither the runtime nor link queue mutex is held by the diagnostic.
+    const auto admitted=[&]() -> esp_err_t {
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
     const auto admitted_revision=hooks.configuration_revision?hooks.configuration_revision():intent.config_revision;
     RuntimePeerStatus peer;model::LinkId link;bool pending=false;
@@ -1817,6 +1830,14 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
     const auto result=queue_control(intent.target.port.octopus_id,Kind::scoped_intent,{},ttl,link,intent.config_revision,std::make_shared<const model::OwnedIntent>(intent),now);
     if(result!=ESP_OK&&intent.kind==model::OwnedIntentKind::context)runtime_fence_owned_link(intent.target.port.octopus_id,link);
     return result;
+    }();
+    if(release){
+        const auto completed=now_ms();
+        ESP_LOGI("consortium","Key release stage=admit owner=%s key=%u generation=%llu elapsed_ms=%llu result=%d",
+            intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),
+            static_cast<unsigned long long>(completed>=admission_started?completed-admission_started:0),admitted);
+    }
+    return admitted;
 }
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
