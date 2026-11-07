@@ -158,7 +158,7 @@ class IsolatedSourceTheftScenarioTests(unittest.TestCase):
         self.assertEqual(len(scenario.announcements), 3)
         for announcement in scenario.announcements:
             self.assertIn(("remediation", announcement, 0.250), scenario.events)
-            self.assertIn(("suppression", announcement, 5), scenario.events)
+            self.assertIn(("suppression", announcement, 1), scenario.events)
         self.assertEqual(len([row for row in scenario.events if row[0] == "positive"]), 1)
         self.assert_cleanup(scenario)
 
