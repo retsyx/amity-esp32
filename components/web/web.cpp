@@ -9,15 +9,25 @@
 #include "web.hpp"
 #include "config_store.hpp"
 #include "esp_https_server.h"
+#include "esp_log.h"
 #include "esp_random.h"
+#include "esp_tls.h"
+#include "lwip/sockets.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
 #include "psa/crypto.h"
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 namespace web {
 namespace {
 std::string certificate,private_key;
+void configure_tcp_socket(int socket) {
+    // Configure the accepted socket before the SDK sends its first TLS record.
+    const int no_delay=1;
+    if(setsockopt(socket,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay))!=0)
+        ESP_LOGW("web","Could not enable TCP_NODELAY on HTTPS socket: errno %d",errno);
+}
 bool valid_certificate_serial(const std::string &pem) {
     mbedtls_x509_crt cert;
     mbedtls_x509_crt_init(&cert);
@@ -95,4 +105,10 @@ esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Han
     httpd_uri_t uri{};uri.uri=path;uri.method=method;uri.handler=handler;uri.user_ctx=context;
     return httpd_register_uri_handler(handle,&uri);
 }
+}
+
+extern "C" int __real_esp_tls_server_session_create(esp_tls_cfg_server_t*, int, esp_tls_t*);
+extern "C" int __wrap_esp_tls_server_session_create(esp_tls_cfg_server_t *cfg, int socket, esp_tls_t *tls) {
+    web::configure_tcp_socket(socket);
+    return __real_esp_tls_server_session_create(cfg,socket,tls);
 }

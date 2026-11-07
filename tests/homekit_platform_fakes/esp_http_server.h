@@ -32,6 +32,7 @@ typedef struct {
     int max_resp_headers, backlog_conn;
     bool lru_purge_enable;
     int recv_wait_timeout, send_wait_timeout;
+    esp_err_t (*open_fn)(httpd_handle_t, int);
 } httpd_config_t;
 #define HTTPD_DEFAULT_CONFIG() { .stack_size = 4096, .task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT }
 enum {HTTP_GET, HTTP_POST, HTTP_PUT, HTTP_DELETE};

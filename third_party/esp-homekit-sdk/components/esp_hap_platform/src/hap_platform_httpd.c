@@ -23,6 +23,21 @@
  */
 #include <esp_http_server.h>
 #include <esp_heap_caps.h>
+#include <esp_log.h>
+#include <errno.h>
+#include <lwip/sockets.h>
+
+static esp_err_t hap_platform_httpd_open(httpd_handle_t handle, int sockfd)
+{
+    (void)handle;
+    /* Apply before pairing as well as to the later encrypted session. HAP
+     * responses and notifications send headers and payloads separately. */
+    const int no_delay = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay)) < 0) {
+        ESP_LOGW("hap_httpd", "Could not enable TCP_NODELAY: errno=%d", errno);
+    }
+    return ESP_OK;
+}
 
 httpd_handle_t *int_handle;
 int hap_platform_httpd_start(httpd_handle_t *handle)
@@ -42,6 +57,7 @@ int hap_platform_httpd_start(httpd_handle_t *handle)
     config.lru_purge_enable   = true;
     config.recv_wait_timeout  = 5;
     config.send_wait_timeout  = 5;
+    config.open_fn            = hap_platform_httpd_open;
 
     esp_err_t err =  httpd_start(handle, &config);
     if (err == ESP_OK) {

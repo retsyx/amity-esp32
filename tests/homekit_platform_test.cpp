@@ -4,11 +4,18 @@
 #include "hap_platform_keystore.h"
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace {
 thread_local bool internal_stack = false;
@@ -16,6 +23,7 @@ bool dispatch_enabled = true;
 unsigned dispatches = 0;
 std::vector<std::string> calls;
 std::string failure;
+std::vector<std::string> warnings;
 constexpr int handle_id = 17;
 const esp_partition_t key_partition{1};
 httpd_config_t server_config{};
@@ -45,6 +53,16 @@ extern "C" {
 int hap_platform_httpd_start(httpd_handle_t *handle);
 int hap_platform_httpd_stop(httpd_handle_t *handle);
 httpd_handle_t *hap_platform_httpd_get_handle();
+
+void amity_fake_log_warning(const char *tag, const char *format, ...) {
+    assert(!std::strcmp(tag, "hap_httpd"));
+    char message[128];
+    va_list args; va_start(args, format);
+    const int size = std::vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    assert(size > 0 && size < static_cast<int>(sizeof(message)));
+    warnings.emplace_back(message);
+}
 
 esp_err_t nvs_flash_init_partition(const char *partition) {
     check_partition(partition); return operation("init");
@@ -144,7 +162,33 @@ int main() {
     assert(server_config.stack_size == 12288);
     assert(server_config.task_caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     assert(server_config.server_port == 51826 && server_config.ctrl_port == 32859 && server_config.max_open_sockets == 4);
+    assert(server_config.open_fn && server_config.recv_wait_timeout == 5 && server_config.send_wait_timeout == 5);
+    // The actual platform hook runs for every accepted connection, before
+    // pair setup/verify. Use native TCP options without a network connection.
+    auto option = [](int fd, int level, int name) {
+        int value = -1; socklen_t length = sizeof(value);
+        assert(!getsockopt(fd, level, name, &value, &length) && length == sizeof(value));
+        return value;
+    };
+    const int first = socket(AF_INET, SOCK_STREAM, 0), second = socket(AF_INET, SOCK_STREAM, 0);
+    assert(first >= 0 && second >= 0);
+    const int keep_alive = 1;
+    assert(!setsockopt(first, SOL_SOCKET, SO_KEEPALIVE, &keep_alive, sizeof(keep_alive)));
+    assert(option(first, IPPROTO_TCP, TCP_NODELAY) == 0 && option(second, IPPROTO_TCP, TCP_NODELAY) == 0);
+    assert(server_config.open_fn(server, first) == ESP_OK && warnings.empty());
+    assert(option(first, IPPROTO_TCP, TCP_NODELAY) != 0 && option(second, IPPROTO_TCP, TCP_NODELAY) == 0);
+    assert(option(first, SOL_SOCKET, SO_KEEPALIVE) != 0);
+    assert(server_config.open_fn(server, second) == ESP_OK && warnings.empty());
+    assert(option(second, IPPROTO_TCP, TCP_NODELAY) != 0 && option(second, SOL_SOCKET, SO_KEEPALIVE) == 0);
+    assert(server_config.open_fn(server, first) == ESP_OK && warnings.empty());
+    // A socket-option failure is visible without replacing the server or
+    // changing the other connections' socket options.
+    assert(server_config.open_fn(server, -1) == ESP_OK && warnings.size() == 1);
+    assert(warnings.front().find("TCP_NODELAY") != std::string::npos);
+    assert(warnings.front().find(std::to_string(EBADF)) != std::string::npos);
+    assert(option(first, IPPROTO_TCP, TCP_NODELAY) != 0 && option(second, IPPROTO_TCP, TCP_NODELAY) != 0);
+    assert(!close(first) && !close(second));
     assert(hap_platform_httpd_get_handle() == &server);
     assert(hap_platform_httpd_stop(&server) == ESP_OK && !hap_platform_httpd_get_handle());
-    std::cout << "HomeKit platform: PSRAM HTTP stack and internal-stack keystore passed\n";
+    std::cout << "HomeKit platform: native TCP_NODELAY per accepted socket, option failure warning and preserved keepalive; PSRAM HTTP stack and internal-stack keystore passed\n";
 }
