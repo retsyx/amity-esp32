@@ -47,7 +47,7 @@ class Fixture:
         self.main.last_scan = SimpleNamespace(dut=self.main, _session=self.session, initiators={23: 4},
                                              owner_boots={self.main.identity.device_id: self.boot},
                                              owner_duts={self.main.identity.device_id: self.main},
-                                             expected=(), validate_owners=lambda expected: None)
+                                             expected=(), validate_owners=lambda expected, **kwargs: None)
         self.lose_pair_reply = self.lose_unpair_reply = self.reject_pair = False
         self.scan_started = self.omit_candidate = False
         self.scan_reads_remaining = 0
@@ -581,9 +581,14 @@ class PairedKeyboardTests(unittest.TestCase):
             fixture.main.get_system = Mock(wraps=fixture.main.get_system)
             fixture.main.get_state = Mock(wraps=fixture.main.get_state)
             fixture.main.last_scan.validate_owners = Mock()
+            before = len(fixture.calls)
             with keyboard.reports() as reports:
                 counts = (fixture.main.get_system.call_count, fixture.main.get_state.call_count,
                           fixture.main.last_scan.validate_owners.call_count, len(fixture.calls))
+                self.assertEqual(counts[:3], (1, 1, 1))
+                self.assertEqual(fixture.calls[before:], [("/api/remotes", None)])
+                snapshot = fixture.main.last_scan.validate_owners.call_args.kwargs["_system"]
+                self.assertEqual(snapshot, fixture.system)
                 first = reports.report(keyboard=(0x28,))
                 fixture.activity.update(current_activity=1, activity_settling=True)
                 second = reports.report(consumer=0xe9)
@@ -600,7 +605,10 @@ class PairedKeyboardTests(unittest.TestCase):
                 self.assertEqual(second.owner_boots, fixture.main.last_scan.owner_boots)
                 first.state["expected_config_revision"] = "caller mutation"
                 self.assertEqual(second.state["expected_config_revision"], "4")
-            self.assertGreater(fixture.main.get_state.call_count, counts[1])
+            self.assertEqual((fixture.main.get_system.call_count, fixture.main.get_state.call_count,
+                              fixture.main.last_scan.validate_owners.call_count), (2, 2, 2))
+            self.assertEqual(fixture.calls[before:], [("/api/remotes", None), ("/api/remotes", None)])
+            self.assertIsNot(fixture.main.last_scan.validate_owners.call_args.kwargs["_system"], snapshot)
             self.assertEqual([call for call in fixture.worker_calls if call[0] == "report"],
                              [("report", (0x28,), 0), ("report", (), 0xe9),
                               ("report", (), 0), ("report", (), 0)])

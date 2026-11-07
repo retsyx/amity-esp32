@@ -528,7 +528,7 @@ class Component:
         else:
             validator((self,), _system=_system)
 
-    def _wire_context(self, since):
+    def _wire_context(self, since, *, _system=None):
         """Validate a boundary and the scan-proven initiator on this wire."""
         session = self._session
         if session is None:
@@ -553,7 +553,7 @@ class Component:
             raise AssertionError("A wire assertion needs the DUT initiator verified by its HDMI scan")
         remote = scan is not None and getattr(scan, "dut", self.dut) is not self.dut
         if remote:
-            self._validate_action_owners(since, scan, session)
+            self._validate_action_owners(since, scan, session, _system=_system)
         elif not isinstance(since, int) and getattr(since, "dut", None) is not self.dut:
             raise AssertionError("The action boundary belongs to a different DUT or CEC session")
         return session, started, source, scan if remote else None

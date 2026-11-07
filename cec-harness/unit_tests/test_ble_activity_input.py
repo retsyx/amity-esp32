@@ -259,11 +259,12 @@ class BLEActivityEvidenceTests(unittest.TestCase):
             owner_duts = {dut.identity.device_id: dut for dut in duts}
             scan = SimpleNamespace(dut=main, _session=session, _testbed=bed, expected=components,
                                    _boot=boot, owner_boots=owner_boots, owner_duts=owner_duts,
-                                   initiators={tv.gpio: 4, avr.gpio: 0}, validate_owners=lambda components: None)
+                                   initiators={tv.gpio: 4, avr.gpio: 0}, validate_owners=lambda components, **kwargs: None)
             main.last_scan = scan
             state = {"expected_boot_id": boot, "current_activity": 1 if repair else 0,
                      "activity_settling": False, "activity_error": "",
                      "expected_config_revision": "1", "expected_presentation_revision": "1"}
+            main.get_system = lambda: {}
             main.get_state = lambda: deepcopy(state)
             main.get_configuration = lambda: {"activities": [{"activity_id": "1" * 32}, {"activity_id": "2" * 32}]}
             fixture = SimpleNamespace(main=main, tv=tv, avr=avr, player=player, next_player=next_player,

@@ -219,10 +219,11 @@ class BLEInputEvidenceTests(unittest.TestCase):
             scan = SimpleNamespace(dut=main, _session=session, _testbed=bed, expected=components,
                                    _boot=boot, owner_boots={main.identity.device_id: boot},
                                    owner_duts={main.identity.device_id: main},
-                                   initiators={tv.gpio: 4, avr.gpio: 0}, validate_owners=lambda components: None)
+                                   initiators={tv.gpio: 4, avr.gpio: 0}, validate_owners=lambda components, **kwargs: None)
             main.last_scan = scan
             state = {"expected_boot_id": boot, "current_activity": 0, "activity_settling": False,
                      "expected_config_revision": "1", "expected_presentation_revision": "1"}
+            main.get_system = lambda: {}
             main.get_state = lambda: deepcopy(state)
             main.request = lambda *args, **kwargs: self.fail("BLE evidence must not issue HTTP key commands")
             for component in components:

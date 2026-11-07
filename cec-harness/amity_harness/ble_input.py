@@ -35,7 +35,10 @@ class BLEInputEvidence:
                 or any(component._session is not self.session for component in self.components)):
             raise AssertionError("BLE input evidence lost its active TestBed or scan")
         self.session.assert_healthy()
-        self.scan.validate_owners(self.components)
+        # One fresh coordinator snapshot fences every component in this pass.
+        # Later input and post-wire checks obtain their own new snapshots.
+        system = self.dut.get_system()
+        self.scan.validate_owners(self.components, _system=system)
         state = self.dut.get_state()
         if (state.get("expected_boot_id") != self.scan._boot
                 or type(state.get("current_activity")) is not int or state["current_activity"] < 0
@@ -49,7 +52,7 @@ class BLEInputEvidence:
                 or any(state.get(name) != self._state.get(name) for name in stable)):
             raise AssertionError("The activity, configuration or input owner changed")
         for component in self.components:
-            context = component._wire_context(time.monotonic_ns())
+            context = component._wire_context(time.monotonic_ns(), _system=system)
             if context[0] is not self.session or context[2] != self.scan.initiators.get(component.gpio):
                 raise AssertionError("BLE input has no matching physical CEC initiator")
         return state

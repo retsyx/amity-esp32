@@ -41,12 +41,12 @@ class KeyAction(ActivityAction):
     response_completed_ns: int | None = None
     trace: dict = field(default_factory=dict, repr=False)
 
-    def _validate(self, *, standby=False):
+    def _validate(self, *, standby=False, _system=None):
         if (self.dut._testbed is not self.testbed or self.testbed.session is not self.session
                 or self.testbed._closed or not self.testbed._entered or self.dut.last_scan is not self.scan):
             raise AssertionError("The key action belongs to a different active TestBed or scan")
         self.session.assert_healthy()
-        self.scan.validate_owners(self.scan.expected)
+        self.scan.validate_owners(self.scan.expected, _system=_system)
         current = self.dut.get_state()
         if current.get("expected_boot_id") != self.boot:
             raise AssertionError("DUT restarted during the key action")
@@ -69,8 +69,9 @@ class KeyAction(ActivityAction):
         timeout = self.dut._runtime.cec_timeout if timeout is None else timeout
         _positive_seconds(timeout, "Key assertion timeout")
         emitted_key = self.key if emitted_key is None else _key(emitted_key)
-        self._validate()
-        session, started, source, _ = component._wire_context(self)
+        system = self.dut.get_system()
+        self._validate(_system=system)
+        session, started, source, _ = component._wire_context(self, _system=system)
         if component not in self.scan.expected:
             raise AssertionError("The key recipient is outside the scanned fixture")
         # The HTTP handler admits the key before acknowledging it, and a
@@ -117,8 +118,9 @@ class KeyAction(ActivityAction):
                 raise AssertionError("The CEC session ended during the key assertion")
             proof = inspect()
             if proof is not None:
-                self._validate()
-                component._wire_context(self)
+                system = self.dut.get_system()
+                self._validate(_system=system)
+                component._wire_context(self, _system=system)
                 proof = inspect()
                 if proof is not None:
                     press, release, count = proof

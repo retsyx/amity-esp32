@@ -378,6 +378,8 @@ must independently provide fresh wire discovery on its own owner's GPIO.
 Matching names, logical addresses or coordinator observations cannot substitute
 for another owner's wire evidence. Activity boundaries retain these owner boots
 and initiators, and component command assertions recheck remote-owner proof.
+Each input validation pass shares one fresh main-system snapshot across its
+owner checks; later input and post-wire passes fetch a new snapshot.
 These checks qualify test evidence; they add no firmware availability policy.
 
 `activity.py` extends this same scan and its assertions:

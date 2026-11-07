@@ -227,13 +227,13 @@ class PairedKeyboard:
     def _request(self, path, data=None, *, deadline):
         return self.dut.request(path, data, timeout=min(15, self._remaining(deadline)))
 
-    def _system(self, *, check_health=True):
+    def _system(self, *, check_health=True, _system=None):
         if (self.dut._testbed is not self.bed or self.bed._closed or not self.bed._entered
                 or self.bed.session is not self.session):
             raise KeyboardConflict("The keyboard TestBed or CEC session changed")
         if check_health:
             self.session.assert_healthy()
-        system = self.dut.get_system()
+        system = self.dut.get_system() if _system is None else _system
         membership = system.get("membership", {})
         if (system.get("octopus_id") != self.dut.identity.device_id
                 or system.get("mode") != "coordinator" or membership.get("coordinator") is not True
@@ -244,8 +244,8 @@ class PairedKeyboard:
             raise KeyboardConflict("The original main restarted or changed identity")
         return system
 
-    def _status(self, deadline, *, check_health=True):
-        self._system(check_health=check_health)
+    def _status(self, deadline, *, check_health=True, _system=None):
+        self._system(check_health=check_health, _system=_system)
         state = self._request("/api/remotes", deadline=deadline)
         flags = ("ready", "bonded", "connected", "connecting", "pairing", "unpairing", "scanning")
         if (not isinstance(state, dict) or state.get("boot_id") != self.boot
@@ -407,10 +407,10 @@ class PairedKeyboard:
         self.pair(_deadline=deadline)
         return self
 
-    def assert_paired(self):
+    def assert_paired(self, *, _system=None):
         if not self._created or self._closed or self._disconnected:
             raise RuntimeError("This test has no connected keyboard to verify")
-        state = self._status(time.monotonic() + self.timeout)
+        state = self._status(time.monotonic() + self.timeout, _system=_system)
         if state["remote_generation"] != self._pair_generation or not self._ready(state):
             raise KeyboardConflict("The test keyboard is no longer the connected bonded remote")
         return self
@@ -431,14 +431,14 @@ class PairedKeyboard:
                 return self
             self._pause(deadline)
 
-    def checkpoint(self, *, kind="ble_report"):
+    def checkpoint(self, *, kind="ble_report", _system=None):
         if not self._created or self._closed:
             raise RuntimeError("Pair this keyboard before sending input")
-        self._system()
+        system = self._system(_system=_system)
         scan = self.dut.last_scan
         if scan is None or scan.dut is not self.dut or scan._session is not self.session:
             raise RuntimeError("BLE keyboard input requires the current TestBed's HDMI scan")
-        scan.validate_owners(scan.expected)
+        scan.validate_owners(scan.expected, _system=system)
         state = self.dut.get_state()
         if state.get("expected_boot_id") != self.boot:
             raise KeyboardConflict("The original main restarted before keyboard input")
@@ -608,8 +608,9 @@ class _KeyboardReports:
         if self._entered or self._closed:
             raise RuntimeError("A keyboard report context cannot be reused")
         keyboard = self.keyboard
-        keyboard.assert_paired()
-        self.preflight = keyboard.checkpoint()
+        system = keyboard._system()
+        keyboard.assert_paired(_system=system)
+        self.preflight = keyboard.checkpoint(_system=system)
         self.worker, self.identity = keyboard.worker, deepcopy(keyboard.identity)
         self.generation, self.boot, self.group = keyboard._pair_generation, keyboard.boot, keyboard.group
         self.scan, self.bed, self.session = self.preflight.scan, keyboard.bed, keyboard.session
@@ -668,8 +669,9 @@ class _KeyboardReports:
     def _confirm(self):
         self.session.assert_healthy()
         self._validate()
-        self.keyboard.assert_paired()
-        after = self.keyboard.checkpoint()
+        system = self.keyboard._system()
+        self.keyboard.assert_paired(_system=system)
+        after = self.keyboard.checkpoint(_system=system)
         if (after.scan is not self.scan or after.boot != self.boot
                 or after.owner_boots != self._owner_boots or after.owner_duts != self._owner_duts
                 or after.initiators != self._initiators

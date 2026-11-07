@@ -98,7 +98,7 @@ class LifecycleFixture(Fixture):
                                expected=(self.source,), initiators={self.source.gpio: 1},
                                owner_boots={self.main.identity.device_id: self.boot},
                                owner_duts={self.main.identity.device_id: self.main},
-                               validate_owners=lambda components: None)
+                               validate_owners=lambda components, **kwargs: None)
 
         def contains(*components):
             assert components == (self.source,)
