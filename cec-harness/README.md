@@ -1124,6 +1124,10 @@ milliseconds; firmware owns the final release even if the client disconnects.
 The routing cases include zero-duration taps and a 100 ms Volume Up hold.
 Key reports retain the requested duration, actual press/release wire timestamps,
 recipient and owner boots. No separate release request is needed.
+Wire freshness starts before the POST; the CEC completion budget starts when
+its authenticated response returns, after any requested hold. Reports keep
+both boundaries and HTTP duration. This bounds response-to-wire completion;
+the API does not expose an exact firmware decision timestamp.
 
 The activity cases also cover a source connected directly through Amity to TV
 input 3, with no saved audio receiver: navigation reaches the source while

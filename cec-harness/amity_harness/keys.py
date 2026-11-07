@@ -38,6 +38,7 @@ class KeyAction(ActivityAction):
 
     key: int = 0
     duration_ms: int = 0
+    response_completed_ns: int | None = None
     trace: dict = field(default_factory=dict, repr=False)
 
     def _validate(self, *, standby=False):
@@ -72,7 +73,16 @@ class KeyAction(ActivityAction):
         session, started, source, _ = component._wire_context(self)
         if component not in self.scan.expected:
             raise AssertionError("The key recipient is outside the scanned fixture")
-        deadline_ns = self.started_ns + int((self.duration_ms / 1000 + timeout) * 1_000_000_000)
+        # The HTTP handler admits the key before acknowledging it, and a
+        # nonzero-duration request returns only after its bounded hold. Keep
+        # the original request boundary for freshness, with one CEC budget
+        # after the response; adding the hold again would double-count it.
+        deadline_ns = (self.response_completed_ns + int(timeout * 1_000_000_000)
+                       if self.response_completed_ns is not None else
+                       self.started_ns + int((self.duration_ms / 1000 + timeout) * 1_000_000_000))
+        self.trace["deadline_monotonic_ns"] = deadline_ns
+        if self.response_completed_ns is not None:
+            self.trace["cec_budget_ms"] = timeout * 1000
 
         def inspect():
             presses, releases = [], []
@@ -118,6 +128,9 @@ class KeyAction(ActivityAction):
                                       deadline_monotonic_ns=deadline_ns,
                                       press_wire_timestamp_ns=press["wire_timestamp_ns"],
                                       release_wire_timestamp_ns=release["wire_timestamp_ns"], presses=count, released=True)
+                    if self.response_completed_ns is not None:
+                        self.trace.update(press_after_response_ms=round((press["wire_timestamp_ns"] - self.response_completed_ns) / 1e6, 3),
+                                          release_after_response_ms=round((release["wire_timestamp_ns"] - self.response_completed_ns) / 1e6, 3))
                     event("key.assert_passed", dut=self.dut.name, **self.trace)
                     return self
             remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
@@ -162,8 +175,12 @@ def _prepare_key(dut, key, duration_ms):
 def press_key(dut, key, *, duration_ms=0):
     action = _prepare_key(dut, key, duration_ms)
     result = dut.request("/api/key", {"key": key, "duration_ms": duration_ms})
+    completed = time.monotonic_ns()
     if result.get("ok") is not True:
         raise AssertionError("Amity did not accept the key press")
+    action.response_completed_ns = completed
+    action.trace.update(response_completed_monotonic_ns=completed,
+                        http_elapsed_ms=round((completed - action.started_ns) / 1e6, 3))
     event("key.pressed", dut=dut.name, key=key, duration_ms=duration_ms)
     return action
 

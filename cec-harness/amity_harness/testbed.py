@@ -76,7 +76,8 @@ _ACTIVITY_FIELDS = frozenset(("phase", "name", "activity_id", "request_id", "sta
                               "removed_activity", "removed_equipment", "retained_equipment",
                               "component_id", "owner", "tentacle", "side", "osd_name", "role"))
 _KEY_FIELDS = frozenset(("key", "emitted_key", "duration_ms", "started_monotonic_ns", "boot", "owner_boots", "released", "standby",
-                        "deadline_monotonic_ns",
+                        "deadline_monotonic_ns", "response_completed_monotonic_ns", "http_elapsed_ms", "cec_budget_ms",
+                        "press_after_response_ms", "release_after_response_ms",
                         "component", "owner_id", "gpio", "press_frame", "release_frame", "presses",
                         "press_wire_timestamp_ns", "release_wire_timestamp_ns", "disconnected",
                         "first_press_wire_timestamp_ns", "disconnected_monotonic_ns",
