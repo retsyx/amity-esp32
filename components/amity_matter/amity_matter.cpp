@@ -49,6 +49,9 @@ constexpr const char *tag = "amity_matter";
 
 amity_matter_callbacks_t callbacks{};
 amity_matter_state_t state{};
+std::mutex state_publication_mutex;
+amity_matter_state_t latest_state{};
+bool state_dirty=false,state_publication_pending=false;
 amity_matter_input_t inputs[AMITY_MATTER_MAX_INPUTS]{};
 size_t input_count = 0;
 std::atomic<bool> started{false}, stack_started{false}, controller_enabled{true};
@@ -69,6 +72,30 @@ esp_err_t result(CHIP_ERROR error)
 void report(uint16_t endpoint, uint32_t cluster, uint32_t attribute)
 {
     if (controller_enabled.load() && started.load()) MatterReportingAttributeChangeCallback(endpoint, cluster, attribute);
+}
+
+void publish_state(intptr_t)
+{
+    // ScheduleWork runs on the CHIP task with its stack lock already held.
+    // Copy the latest observation only now, after any unrelated CHIP work.
+    amity_matter_state_t next;
+    {
+        std::lock_guard<std::mutex> guard(state_publication_mutex);
+        state_publication_pending=false;
+        if (!controller_enabled.load() || !started.load()) { state_dirty=false;return; }
+        if (!state_dirty) return;
+        next=latest_state;state_dirty=false;
+    }
+    const auto old=state;
+    state=next;
+    if (old.power != state.power)
+        report(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
+    if (old.current_input != state.current_input)
+        report(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);
+    if (old.mute_known != state.mute_known || old.muted != state.muted)
+        report(speaker_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
+    if (old.volume_known != state.volume_known || old.volume != state.volume)
+        report(speaker_endpoint, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
 }
 
 esp_err_t dispatch_key(uint8_t key)
@@ -494,24 +521,31 @@ extern "C" bool amity_matter_controller_enrollment_complete(void)
 extern "C" esp_err_t amity_matter_update_state(const amity_matter_state_t *next)
 {
     if (!next || (next->volume_known && next->volume > 254)) return ESP_ERR_INVALID_ARG;
-    if (!started) {
-        state = *next;
-        return ESP_OK;
+    {
+        std::lock_guard<std::mutex> guard(state_publication_mutex);
+        if (!controller_enabled.load()) return ESP_OK;
+        latest_state=*next;
+        if (!started.load()) { state=*next;return ESP_OK; }
+        state_dirty=true;
     }
-    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-    if (!controller_enabled.load() || !started.load()) return ESP_OK;
-    const auto old = state;
-    state = *next;
-    if (old.power != state.power) {
-        report(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
+    return amity_matter_flush_state();
+}
+
+extern "C" esp_err_t amity_matter_flush_state(void)
+{
+    {
+        std::lock_guard<std::mutex> guard(state_publication_mutex);
+        if (!started.load() || !controller_enabled.load() || !state_dirty || state_publication_pending)
+            return ESP_OK;
+        state_publication_pending=true;
     }
-    if (old.current_input != state.current_input)
-        report(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);
-    if (old.mute_known != state.mute_known || old.muted != state.muted)
-        report(speaker_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
-    if (old.volume_known != state.volume_known || old.volume != state.volume)
-        report(speaker_endpoint, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id);
-    return ESP_OK;
+    // The pinned platform implementation waits at most one RTOS tick for
+    // queue admission; it never acquires the CHIP stack lock here.
+    const auto error=chip::DeviceLayer::PlatformMgr().ScheduleWork(publish_state,0);
+    if (error==CHIP_NO_ERROR) return ESP_OK;
+    std::lock_guard<std::mutex> guard(state_publication_mutex);
+    state_publication_pending=false; // Keep the dirty final observation for the background retry.
+    return ESP_FAIL;
 }
 
 extern "C" esp_err_t amity_matter_update_remote(bool paired, bool connected, int percent, int charging)

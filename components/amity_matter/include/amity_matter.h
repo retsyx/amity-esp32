@@ -75,8 +75,11 @@ esp_err_t amity_matter_start(const amity_matter_callbacks_t *callbacks);
 // This is evidence for the caller's durable role CAS, never authority by itself.
 bool amity_matter_controller_enrollment_complete(void);
 esp_err_t amity_matter_set_inputs(const amity_matter_input_t *inputs, size_t count);
-/* Safe from an application task. Do not call while holding a lock needed by callbacks. */
+/* Retain the latest state without waiting for CHIP; publication runs on its task. */
 esp_err_t amity_matter_update_state(const amity_matter_state_t *state);
+// Retry retained state after temporary CHIP queue saturation. Called by the
+// existing background poll, independently of new activity/input observations.
+esp_err_t amity_matter_flush_state(void);
 // Unknown readings use -1. Unpaired defaults to 100%/not charging;
 // paired but disconnected is unknown, regardless of supplied readings.
 esp_err_t amity_matter_update_remote(bool paired, bool connected, int battery_percent, int charging);

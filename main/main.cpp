@@ -235,6 +235,7 @@ void firmware_update_task(void *) {
 }
 void remote_battery_task(void *) {
     for (;;) {
+        amity_matter_flush_state();
         system_services::log_memory_if_due();
         system_services::updates::poll_peer_timeout();
         ble_remote_status_t remote{};
