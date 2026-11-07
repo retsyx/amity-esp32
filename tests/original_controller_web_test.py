@@ -2,6 +2,7 @@
 """Run actual administration start/stop and existing-handler admission guards."""
 from pathlib import Path
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -58,6 +59,12 @@ int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];ami
 '''
 
 def main():
+    # Heap inspection walks every allocation with interrupts masked. Even
+    # read-only diagnostics must not interrupt a CEC frame after startup.
+    for relative in ('components/web_admin/web_admin.cpp',
+                     'components/web_admin/activity_editor.cpp', 'main/main.cpp'):
+        diagnostic_source=(ROOT/relative).read_text()
+        assert not re.search(r'\bheap_caps_get_(?:info|largest_free_block)\s*\(', diagnostic_source), relative
     source=(ROOT/'components/web_admin/web_admin.cpp').read_text()
     # Execute each actual first-statement guard unchanged, replacing only the
     # large unrelated handler body with an observable fake downstream effect.

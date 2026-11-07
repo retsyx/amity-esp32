@@ -57,7 +57,6 @@ esp_err_t status(httpd_req_t *req) {
     else cJSON_AddStringToObject(root.get(),"determined_front_physical_address",device_settings::format_physical_address(s.front_physical_address).c_str());
     cJSON_AddNumberToObject(root.get(),"free_heap",esp_get_free_heap_size());
     cJSON_AddNumberToObject(root.get(),"free_internal_heap",heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
-    cJSON_AddNumberToObject(root.get(),"largest_internal_block",heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     wifi_ap_record_t access_point{};
     const bool wifi_connected=esp_wifi_sta_get_ap_info(&access_point)==ESP_OK;
     cJSON_AddBoolToObject(root.get(),"wifi_connected",wifi_connected);

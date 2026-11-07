@@ -36,18 +36,23 @@ int heap_caps_register_failed_alloc_callback(esp_alloc_failed_hook_t hook){regis
 uint64_t current_ms=777;
 int64_t esp_timer_get_time(){return static_cast<int64_t>(current_ms*1000);}
 bool in_isr=false,recurse=false,max_stats=false;
-unsigned heap_queries=0,task_queries=0;
+unsigned heap_queries=0,minimum_queries=0,task_queries=0;
 char task_name[64]="group_link";
 bool xPortInIsrContext(){return in_isr;}
 const char* pcTaskGetName(void*){++task_queries;return task_name;}
-void heap_caps_get_info(multi_heap_info_t* info,uint32_t caps){
+void heap_caps_get_info(multi_heap_info_t*,uint32_t){assert(false&&"Heap walks mask CEC timer interrupts");}
+size_t heap_caps_get_free_size(uint32_t caps){
  ++heap_queries;
  if(recurse){recurse=false;assert(registered_failure_hook);registered_failure_hook(99,MALLOC_CAP_DMA,"nested_failure");}
- if(max_stats){info->total_free_bytes=info->largest_free_block=UINT32_MAX;return;}
- if(caps==(MALLOC_CAP_DMA|MALLOC_CAP_8BIT))*info={111,1,77};
- else if(caps==MALLOC_CAP_DMA)*info={512,2,256};
- else if(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT))*info={12345,3,1024};
- else *info={987654,4,234567};
+ if(max_stats)return UINT32_MAX;
+ if(caps==(MALLOC_CAP_DMA|MALLOC_CAP_8BIT))return 111;
+ if(caps==MALLOC_CAP_DMA)return 512;
+ if(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT))return 12345;
+ return 987654;
+}
+size_t heap_caps_get_minimum_free_size(uint32_t caps){
+ ++minimum_queries;
+ return caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)?3:4;
 }
 std::vector<std::string> lines;
 template<class... Args>void record_log(const char* level,const char* tag,const char* format,Args... args){
@@ -83,7 +88,7 @@ int main(){using namespace system_services;
  allocations_forbidden=false;assert(lines.empty()&&heap_queries==3&&allocation_failure_count==1);
  current_ms=999;log_memory_if_due(); // Allocation observations are emitted even before boot readiness.
  assert(lines.size()==2&&lines[0].find("at_ms=777 bytes=512 caps=0x0000000c fn=heap_caps_aligned_alloc task=group_link")!=std::string::npos);
- assert(lines[0].find("matched_free=111 matched_largest=77 dma_free=512 dma_largest=256 internal_free=12345 internal_largest=1024")!=std::string::npos);
+ assert(lines[0].find("matched_free=111 dma_free=512 internal_free=12345")!=std::string::npos);
  assert(lines[1].find("suppressed=1 reason=concurrent_or_full")!=std::string::npos);
  lines.clear();log_memory_if_due();assert(lines.empty()); // No event, no extra periodic output.
  allocations_forbidden=true;for(unsigned n=0;n<9;++n)registered_failure_hook(100+n,MALLOC_CAP_DMA,"bounded");allocations_forbidden=false;
@@ -98,7 +103,12 @@ int main(){using namespace system_services;
  allocations_forbidden=true;registered_failure_hook(48,MALLOC_CAP_DMA,"interrupt_allocation");allocations_forbidden=false;
  log_memory_if_due();assert(task_queries==before&&lines.size()==1&&lines[0].find("task=ISR")!=std::string::npos);
  lines.clear();log_memory_if_due();assert(lines.empty());
- std::cout<<"PASS actual allocation-failure diagnostics: registered hook allocates/logs nothing, captures original size/caps/function/task/time and contemporaneous matching/DMA/internal heap, bounds recursion/capacity/names, emits only pending events outside allocator context\n";
+ in_isr=false;max_stats=false;ready=true;current_ms=1204000;const auto baseline_queries=heap_queries;
+ log_memory_if_due();assert(lines.size()==1&&heap_queries==baseline_queries+2&&minimum_queries==2);
+ assert(lines[0].find("uptime=1204s bytes: internal free=12345 min=3; psram free=987654 min=4")!=std::string::npos);
+ lines.clear();current_ms+=599999;log_memory_if_due();assert(lines.empty()&&heap_queries==baseline_queries+2&&minimum_queries==2);
+ ++current_ms;log_memory_if_due();assert(lines.size()==1&&heap_queries==baseline_queries+4&&minimum_queries==4);
+ std::cout<<"PASS actual memory diagnostics: no heap walks; allocation hook allocates/logs nothing, captures original size/caps/function/task/time and matching/DMA/internal free counters, bounds recursion/capacity/names, emits pending events outside allocator context; periodic free/min counters retain ten-minute cadence\n";
 }
 '''
 

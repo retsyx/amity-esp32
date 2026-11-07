@@ -64,9 +64,8 @@ bool admin_mdns_registered=false;
 std::string admin_mdns_hostname;
 QueueHandle_t input_queue;
 void startup_memory(const char* phase){
-    ESP_LOGI("startup_memory","%s: internal=%u largest=%u psram=%u",phase,
+    ESP_LOGI("startup_memory","%s: internal=%u psram=%u",phase,
         unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
-        unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
         unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)));
 }
 esp_err_t refresh_admin_mdns_for_host(const char* hostname) {

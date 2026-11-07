@@ -45,7 +45,7 @@ struct AllocationFailure {
     uint64_t at_ms=0;
     size_t bytes=0;
     uint32_t caps=0;
-    size_t matched_free=0,matched_largest=0,dma_free=0,dma_largest=0,internal_free=0,internal_largest=0;
+    size_t matched_free=0,dma_free=0,internal_free=0;
     char function[32]{},task[16]{};
 };
 // The allocator calls its failure hook after releasing the heap lock. Capture
@@ -72,11 +72,11 @@ void capture_allocation_failure(size_t bytes,uint32_t caps,const char* function)
     };
     copy(failure.function,sizeof(failure.function),function);
     copy(failure.task,sizeof(failure.task),xPortInIsrContext()?"ISR":pcTaskGetName(nullptr));
-    multi_heap_info_t matched{},dma{},internal{};
-    heap_caps_get_info(&matched,caps);heap_caps_get_info(&dma,MALLOC_CAP_DMA);heap_caps_get_info(&internal,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
-    failure.matched_free=matched.total_free_bytes;failure.matched_largest=matched.largest_free_block;
-    failure.dma_free=dma.total_free_bytes;failure.dma_largest=dma.largest_free_block;
-    failure.internal_free=internal.total_free_bytes;failure.internal_largest=internal.largest_free_block;
+    // Read maintained counters only. Full heap statistics walk every block
+    // with interrupts masked, which can interrupt an in-flight CEC frame.
+    failure.matched_free=heap_caps_get_free_size(caps);
+    failure.dma_free=heap_caps_get_free_size(MALLOC_CAP_DMA);
+    failure.internal_free=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
     ++allocation_failure_count;
     allocation_failure_guard.clear(std::memory_order_release);
 }
@@ -87,9 +87,9 @@ void log_allocation_failures(){
         const auto failure=allocation_failures[allocation_failure_read];
         allocation_failure_read=(allocation_failure_read+1)%allocation_failures.size();--allocation_failure_count;
         allocation_failure_guard.clear(std::memory_order_release);
-        ESP_LOGE("memory","allocation_failed at_ms=%" PRIu64 " bytes=%zu caps=0x%08" PRIx32 " fn=%s task=%s matched_free=%zu matched_largest=%zu dma_free=%zu dma_largest=%zu internal_free=%zu internal_largest=%zu",
-                 failure.at_ms,failure.bytes,failure.caps,failure.function,failure.task,failure.matched_free,failure.matched_largest,
-                 failure.dma_free,failure.dma_largest,failure.internal_free,failure.internal_largest);
+        ESP_LOGE("memory","allocation_failed at_ms=%" PRIu64 " bytes=%zu caps=0x%08" PRIx32 " fn=%s task=%s matched_free=%zu dma_free=%zu internal_free=%zu",
+                 failure.at_ms,failure.bytes,failure.caps,failure.function,failure.task,
+                 failure.matched_free,failure.dma_free,failure.internal_free);
     }
     const auto suppressed=allocation_failure_suppressed.exchange(0,std::memory_order_relaxed);
     if(suppressed)ESP_LOGE("memory","allocation_failed suppressed=%" PRIu32 " reason=concurrent_or_full",suppressed);
@@ -134,14 +134,13 @@ void log_memory_if_due() {
     constexpr int64_t interval_us = 10LL * 60 * 1000000;
     next_log_us = now + interval_us;
 
-    multi_heap_info_t internal{}, psram{};
-    heap_caps_get_info(&internal, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    heap_caps_get_info(&psram, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    ESP_LOGI("memory", "uptime=%" PRId64 "s bytes: internal free=%zu min=%zu largest=%zu; "
-             "psram free=%zu min=%zu largest=%zu",
-             now / 1000000, internal.total_free_bytes, internal.minimum_free_bytes,
-             internal.largest_free_block, psram.total_free_bytes, psram.minimum_free_bytes,
-             psram.largest_free_block);
+    // Keep diagnostics independent of heap fragmentation and the number of
+    // allocations: heap walks hold interrupt-masking locks across the pool.
+    constexpr uint32_t internal=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    constexpr uint32_t psram=MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT;
+    ESP_LOGI("memory", "uptime=%" PRId64 "s bytes: internal free=%zu min=%zu; psram free=%zu min=%zu",
+             now / 1000000, heap_caps_get_free_size(internal),heap_caps_get_minimum_free_size(internal),
+             heap_caps_get_free_size(psram),heap_caps_get_minimum_free_size(psram));
 }
 size_t log_size() {
     if (!lock) return 0;
