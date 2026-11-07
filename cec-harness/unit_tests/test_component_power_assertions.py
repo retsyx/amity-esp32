@@ -150,6 +150,40 @@ class ComponentPowerAssertionTests(unittest.TestCase):
                     f.member_tv.wait_for_power("on", since=action, timeout=0.05)
                 self.assertEqual(len(calls), 2)
 
+    def test_timely_member_power_survives_slow_owner_proof_only_while_state_is_unchanged(self):
+        for change in (None, "repeat", "standby", "restore"):
+            with self.subTest(change=change):
+                f = distributed_activity_fixture()
+                action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+                self.receive(f.member_tv, 4, 0x04)
+                wire_time = f.member_tv.power_events[-1]["wire_timestamp_ns"]
+                clock, calls = [time.monotonic()], []
+
+                def snapshot():
+                    self.assertFalse(f.session._lock._is_owned())
+                    self.assertFalse(f.member_tv._power_condition._is_owned())
+                    calls.append(None)
+                    if len(calls) == 2:
+                        clock[0] += 6
+                        if change == "repeat":
+                            self.receive(f.member_tv, 4, 0x04, timestamp=wire_time + 6_000_000_000)
+                        elif change is not None:
+                            self.receive(f.member_tv, 4, 0x36)
+                        if change == "restore":
+                            self.receive(f.member_tv, 4, 0x04)
+                    return deepcopy(f.source.system)
+
+                f.dut.get_system = snapshot
+                with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
+                    if change in (None, "repeat"):
+                        self.assertIs(f.member_tv.wait_for_power("on", since=action, timeout=5), f.member_tv)
+                        self.assertEqual(f.member_tv.power_assertions[-1]["wire_timestamp_ns"], wire_time)
+                    else:
+                        with self.assertRaises(TimeoutError):
+                            f.member_tv.wait_for_power("on", since=action, timeout=5)
+                        self.assertEqual(f.member_tv.power_assertions, ())
+                self.assertEqual(len(calls), 2)
+
     def test_initial_assertions_and_physical_activity_start_and_standby_commands(self):
         with self.fixture() as (dut, tv, avr, player, session):
             for component in (tv, avr, player):

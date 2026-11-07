@@ -263,6 +263,77 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
         self.switch_command(f.member_avr, number=7)
         self.assertIs(f.member_avr.wait_for_switch_input(7, since=marker), f.member_avr)
 
+    def test_timely_member_route_survives_slow_owner_proof_only_while_state_is_unchanged(self):
+        for change in (None, "repeat", "different", "restore"):
+            with self.subTest(change=change):
+                f = distributed_activity_fixture()
+                action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+                target = f.member_player.address.physical
+                self.receive(f.member_avr, 0, target)
+                wire_time = f.member_avr.routing_events[-1]["wire_timestamp_ns"]
+                clock, calls = [time.monotonic()], []
+
+                def snapshot():
+                    self.assertFalse(f.session._lock._is_owned())
+                    self.assertFalse(f.member_avr._power_condition._is_owned())
+                    calls.append(None)
+                    if len(calls) == 2:
+                        clock[0] += 6
+                        if change == "repeat":
+                            self.receive(f.member_avr, 0, target, timestamp=wire_time + 6_000_000_000)
+                        elif change is not None:
+                            self.receive(f.member_avr, 0, target + 0x100)
+                        if change == "restore":
+                            self.receive(f.member_avr, 0, target)
+                    return deepcopy(f.source.system)
+
+                f.dut.get_system = snapshot
+                with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
+                    if change in (None, "repeat"):
+                        self.assertIs(f.member_avr.wait_for_input(target, since=action, timeout=5), f.member_avr)
+                        self.assertEqual(f.member_avr.routing_assertions[-1]["wire_timestamp_ns"], wire_time)
+                    else:
+                        with self.assertRaises(TimeoutError):
+                            f.member_avr.wait_for_input(target, since=action, timeout=5)
+                        self.assertEqual(f.member_avr.routing_assertions, ())
+                self.assertEqual(len(calls), 2)
+
+    def test_slow_owner_proof_does_not_extend_wait_for_routing_delivery_lock(self):
+        f = distributed_activity_fixture()
+        action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
+        target = f.member_player.address.physical
+        self.receive(f.member_avr, 0, target)
+        clock, calls = [time.monotonic()], []
+        holding, release = threading.Event(), threading.Event()
+
+        def hold_delivery():
+            with f.session._lock:
+                holding.set()
+                release.wait(1)
+
+        worker = threading.Thread(target=hold_delivery)
+
+        def snapshot():
+            calls.append(None)
+            if len(calls) == 2:
+                clock[0] += 6
+                worker.start()
+                self.assertTrue(holding.wait(0.5))
+            return deepcopy(f.source.system)
+
+        f.dut.get_system = snapshot
+        try:
+            with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
+                with self.assertRaises(TimeoutError):
+                    f.member_avr.wait_for_input(target, since=action, timeout=5)
+            self.assertTrue(worker.is_alive())
+            self.assertEqual(f.member_avr.routing_assertions, ())
+        finally:
+            release.set()
+            worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(calls), 2)
+
     def test_member_routing_requires_fresh_actual_owner_wire_and_authorized_boundary(self):
         f = distributed_activity_fixture()
         old = time.monotonic_ns()

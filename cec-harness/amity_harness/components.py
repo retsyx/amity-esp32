@@ -412,6 +412,7 @@ class Component:
                     directed=directed, broadcast=broadcast, since_monotonic_ns=started, initiator=source,
                     timeout=timeout, **timing)
         owner_checked = owner_scan is None
+        owner_event = None
         while True:
             session.assert_healthy()
             stopped = getattr(session, "_stop", None)
@@ -431,7 +432,9 @@ class Component:
                                  and event["state_revision"] == self._power_revision
                                  and self._response_in_time(event, timing)), None)
                 ready = self.power == power and matching is not None
-                if ready and owner_checked:
+                if ready and owner_checked and (owner_scan is None or matching["state_revision"] == owner_event["state_revision"]):
+                    if owner_event is not None:
+                        matching = owner_event
                     self._power_checks.append({"kind": "wire_command", "power": power.value,
                                                "timestamp_ns": time.monotonic_ns(),
                                                "since_monotonic_ns": started,
@@ -467,10 +470,10 @@ class Component:
                     self._power_condition.wait(min(remaining, 0.05))
             if recheck_owner:
                 self._wire_context(since)
-                if not timing and time.monotonic() >= deadline:
-                    self._trace("component.power.owner_timeout", level=logging.ERROR,
-                                expected=power.value, since_monotonic_ns=started)
-                    raise TimeoutError(f"{self.name} owner verification exceeded the power assertion deadline")
+                # The physical effect was observed within its CEC wait. A
+                # slower HTTP owner proof may confirm that same state later,
+                # but cannot admit a changed/restored state after the deadline.
+                owner_event = matching
                 owner_checked = True
 
     def _checkpoint_scan(self, session):
@@ -665,28 +668,23 @@ class Component:
                      f"{'Active Source' if command == 'active_source' else 'Set Stream Path'} for {expected:04x}")
         missing = f"{self.name} did not handle a fresh DUT {requested}"
         owner_checked = owner_scan is None
+        owner_event = None
         while True:
             stopped = getattr(session, "_stop", None)
             if self._session is not session or stopped is not None and stopped.is_set():
                 raise AssertionError("The CEC session ended before the requested input was confirmed")
             # Complete delivery to every peer (including the selected player)
             # before exposing the restored route to the scenario.
-            # Timed assertions may inspect already timely wire evidence after
-            # synchronous responder delivery releases this lock. The ordinary
-            # timeout bounds blocking inspection. A slow authenticated owner
-            # proof may finish later; then inspect without waiting for the
-            # lock. Neither case extends the physical matching/wait window.
+            # Timed assertions and a completed owner proof may inspect already
+            # timely evidence after their wait budget. Inspection then cannot
+            # block on the session lock or admit a changed/restored state.
             remaining = (inspection_deadline if timing else deadline) - time.monotonic()
-            if (remaining <= 0 and not timing) or not session._lock.acquire(timeout=max(0, remaining)):
+            if (remaining <= 0 and not timing and owner_event is None) or not session._lock.acquire(timeout=max(0, remaining)):
                 self._trace("component.routing.timeout", level=logging.ERROR,
                             command=command, **{field: expected}, since_monotonic_ns=started)
                 raise TimeoutError(missing)
             try:
                 session.assert_healthy()
-                if not timing and time.monotonic() >= inspection_deadline:
-                    self._trace("component.routing.timeout", level=logging.ERROR,
-                                command=command, **{field: expected}, since_monotonic_ns=started)
-                    raise TimeoutError(missing)
                 with self._power_condition:
                     revision = self._switch_input_revision if switch else self._input_revision
                     actual = self.selected_input if switch else self.active_input
@@ -700,7 +698,14 @@ class Component:
                                      and self._response_in_time(event, timing)), None)
                     ready = (self.power != PowerState.OFF and actual == expected and matching is not None
                              and (not isinstance(self, PlaybackComponent) or self.active))
-                    if ready and owner_checked:
+                    verified = ready and owner_checked and (owner_scan is None or revision == owner_event["state_revision"])
+                    if not timing and time.monotonic() >= inspection_deadline and not (verified and owner_event is not None):
+                        self._trace("component.routing.timeout", level=logging.ERROR,
+                                    command=command, **{field: expected}, since_monotonic_ns=started)
+                        raise TimeoutError(missing)
+                    if verified:
+                        if owner_event is not None:
+                            matching = owner_event
                         self._routing_checks.append({"kind": "wire_command", field: expected, "command": command,
                                                      "timestamp_ns": time.monotonic_ns(), "since_monotonic_ns": started,
                                                      "frame": matching["frame"], "source": source,
@@ -726,6 +731,7 @@ class Component:
                 session._lock.release()
             if recheck_owner:
                 self._wire_context(since)
+                owner_event = matching
                 owner_checked = True
                 continue
             with self._power_condition:
