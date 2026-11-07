@@ -1,0 +1,21 @@
+### Footprint positions - created on 2026-10-07T08:27:24 ###
+### Printed by KiCad version 10.0.6
+## Unit = mm, Angle = deg.
+## Side : All
+# Ref     Val                Package                                          PosX       PosY       Rot  Side
+J1        HDMI_A             HDMI_A_Amphenol_10029449-x01xLF_Horizontal   156.2500  -102.5000  180.0000  bottom
+C1        1uF                C_0603_1608Metric                            145.7750   -88.6000    0.0000  top
+D1        4148               D_0603_1608Metric                            145.9000  -102.9125   90.0000  top
+D2        4148               D_0603_1608Metric                            145.8500   -79.1875  -90.0000  top
+D3        ESD3.3             D_SOD-923                                    145.4000   -87.0000  180.0000  top
+H1        ~                  MountingHole_2.5mm_Pad                       142.0000   -81.0000    0.0000  top
+H2        ~                  MountingHole_2.5mm_Pad                       172.0000   -81.0000    0.0000  top
+H3        ~                  MountingHole_2.5mm_Pad                       142.0000  -101.0000    0.0000  top
+H4        ~                  MountingHole_2.5mm_Pad                       172.0000  -101.0000    0.0000  top
+J2        HDMI_A             HDMI_A_Amphenol_10029449-x01xLF_Horizontal   156.2500   -79.5000  180.0000  top
+R1        27K                R_0603_1608Metric                            145.9000   -99.1250  -90.0000  top
+R2        27K                R_0603_1608Metric                            145.8500   -82.9750   90.0000  top
+R3        10K                R_0603_1608Metric                            145.7750   -90.4000  180.0000  top
+SW1       FW_RESET           SW_SPST_B3U-1000P                            141.7000   -90.4000    0.0000  top
+U1        XIAO-ESP32-S3-SMD  XIAO-ESP32-S3-SMD                            138.0370   -99.8900   90.0000  top
+## End

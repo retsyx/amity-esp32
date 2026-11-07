@@ -1,0 +1,5 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "Pulse_Electronics")(type "KiCad")(uri "${KIPRJMOD}/Pulse_Electronics.pretty")(options "")(descr "Pulse Electronics connectors"))
+  (lib (name "Seeed_Studio_XIAO_Series")(type "KiCad")(uri "${KIPRJMOD}/Seeed_Studio_XIAO_Series.pretty")(options "")(descr "Seeed Studio XIAO ESP32-S3"))
+)
