@@ -780,7 +780,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
             self.receive(avr, 0, player.address.physical)
             avr.wait_for_input(player, since=marker)
 
-    def test_long_operation_timeout_keeps_missing_cec_route_wait_at_five_seconds(self):
+    def test_long_operation_timeout_keeps_missing_cec_route_wait_at_one_second(self):
         with use_config(RunConfig(timeout=180)), self.fixture() as (dut, tv, avr, player, session):
             marker = avr.checkpoint()
             clock = [10.0]
@@ -793,8 +793,8 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
                 with self.assertRaises(TimeoutError):
                     avr.wait_for_input(player, since=marker)
             self.assertEqual(dut._runtime.timeout, 180)
-            self.assertGreaterEqual(clock[0] - 10, 5)
-            self.assertLess(clock[0] - 10, 5.1)
+            self.assertGreaterEqual(clock[0] - 10, 1)
+            self.assertLess(clock[0] - 10, 1.1)
 
     def test_background_delivery_and_bounded_immutable_evidence_snapshots(self):
         with self.fixture() as (dut, tv, avr, player, session):

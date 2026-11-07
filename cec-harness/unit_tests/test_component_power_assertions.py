@@ -419,7 +419,7 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             self.receive(tv, 4, 0x04)
             tv.wait_for_power("on", since=marker)
 
-    def test_long_operation_timeout_keeps_missing_cec_power_wait_at_five_seconds(self):
+    def test_long_operation_timeout_keeps_missing_cec_power_wait_at_one_second(self):
         with use_config(RunConfig(timeout=180)), self.fixture() as (dut, tv, avr, player, session):
             marker = tv.checkpoint()
             clock = [10.0]
@@ -432,8 +432,8 @@ class ComponentPowerAssertionTests(unittest.TestCase):
                 with self.assertRaises(TimeoutError):
                     tv.wait_for_power("on", since=marker)
             self.assertEqual(dut._runtime.timeout, 180)
-            self.assertGreaterEqual(clock[0] - 10, 5)
-            self.assertLess(clock[0] - 10, 5.1)
+            self.assertGreaterEqual(clock[0] - 10, 1)
+            self.assertLess(clock[0] - 10, 1.1)
 
     def test_wait_wakes_for_background_wire_delivery_and_keeps_bounded_snapshot_evidence(self):
         with self.fixture() as (dut, tv, avr, player, session):
