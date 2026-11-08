@@ -4,11 +4,13 @@ import http.client
 import io
 import json
 from pathlib import Path
+import socket
 import ssl
 import sys
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness.http_transport import HTTPSOpener
@@ -41,6 +43,7 @@ class Socket:
         self.factory = factory
         self.timeouts = []
         self.closed = False
+        self.shutdowns = []
         self.wire = b""
     def settimeout(self, timeout):
         self.timeouts.append(timeout)
@@ -50,6 +53,8 @@ class Socket:
         return WireFile(self.wire, self)
     def close(self):
         self.closed = True
+    def shutdown(self, how):
+        self.shutdowns.append(how)
 
 
 class Connection:
@@ -167,35 +172,87 @@ class TransportTests(unittest.TestCase):
         self.assertTrue(factory.sockets[0].closed)
         self.assertEqual(len(factory.connections[0].requests), 1)
 
-    def test_server_close_and_idle_expiry_open_fresh_before_later_request(self):
+    def test_long_idle_reuses_one_socket_without_extra_requests_or_handshakes(self):
+        factory = Factory(*(body({"n": number}) for number in range(5)))
+        factory.connect_delay = 1.5
+        opener = factory.opener()
+        opener.open(request(), timeout=3).close()
+        for idle in (2, 10, 60, 3600):
+            factory.clock.now += idle
+            before = factory.clock.now
+            opener.open(request(), timeout=1).close()
+            self.assertEqual(factory.clock.now, before)
+            self.assertEqual(len(factory.connections), 1)
+            self.assertEqual(len(factory.sockets), 1)
+            self.assertFalse(factory.sockets[0].closed)
+        self.assertEqual(len(factory.connections[0].requests), 5)
+        self.assertEqual(factory.responses, [])
+        self.assertTrue(all(not any(name.lower() == "connection" for name in headers)
+                            for _, _, _, headers in factory.connections[0].requests))
+        opener.close()
+        self.assertTrue(factory.sockets[0].closed)
+        self.assertIsNone(opener._connection)
+
+    def test_server_declared_close_opens_fresh_before_later_request(self):
         factory = Factory(body({"n": 1}, close=True), body({"n": 2}), body({"n": 3}))
         opener = factory.opener()
         with opener.open(request()) as response:
             self.assertEqual(json.load(response)["n"], 1)
         self.assertTrue(factory.sockets[0].closed)
         opener.open(request()).close()
-        factory.clock.now += 2
+        factory.clock.now += 3600
         opener.open(request()).close()
-        self.assertEqual(len(factory.connections), 3)
-        self.assertTrue(factory.sockets[1].closed)
+        self.assertEqual(len(factory.connections), 2)
+        self.assertFalse(factory.sockets[1].closed)
         opener.close()
 
     def test_stale_connection_error_never_resends_mutation_or_GET(self):
-        for payload in (None, b'{"request_id":"same"}'):
-            with self.subTest(payload=payload):
-                factory = Factory(body({}), ConnectionResetError("PRIVATE_ERROR"), body({"later": True}))
-                opener = factory.opener()
-                opener.open(request()).close()
-                with self.assertRaises(ConnectionResetError):
-                    opener.open(request(payload))
-                self.assertEqual(len(factory.connections), 1)
-                self.assertEqual(len(factory.connections[0].requests), 2)
-                self.assertEqual(len(factory.responses), 1)
-                self.assertTrue(factory.sockets[0].closed)
-                # A later caller request may connect, without replaying the failed one.
-                opener.open(request()).close()
-                self.assertEqual(len(factory.connections), 2)
-                opener.close()
+        for failure in (ConnectionResetError("PRIVATE_ERROR"), b""):
+            for payload in (None, b'{"request_id":"same"}'):
+                with self.subTest(payload=payload, failure=type(failure).__name__):
+                    factory = Factory(body({}), failure, body({"later": True}))
+                    opener = factory.opener()
+                    opener.open(request()).close()
+                    factory.clock.now += 60
+                    error = ConnectionResetError if isinstance(failure, BaseException) else http.client.RemoteDisconnected
+                    with self.assertRaises(error):
+                        opener.open(request(payload))
+                    self.assertEqual(len(factory.connections), 1)
+                    self.assertEqual(len(factory.connections[0].requests), 2)
+                    self.assertEqual(factory.connections[0].requests[1][2], payload)
+                    self.assertEqual(len(factory.responses), 1)
+                    self.assertTrue(factory.sockets[0].closed)
+                    # A later caller request may connect, without replaying the failed one.
+                    opener.open(request()).close()
+                    self.assertEqual(len(factory.connections), 2)
+                    self.assertEqual(len(factory.connections[1].requests), 1)
+                    opener.close()
+
+    def test_idle_connection_is_reused_before_explicit_client_disconnect(self):
+        factory = Factory(body({}), body({"unused": "hold response"}), body({"later": True}))
+        opener = factory.opener()
+        opener.open(request()).close()
+        connection = factory.connections[0]
+        factory.clock.now += 60
+
+        def admitted():
+            self.assertEqual(len(factory.connections), 1)
+            self.assertEqual(len(connection.requests), 2)
+            self.assertEqual(connection.requests[1][:3], ("POST", "/api/key", b'{"key":65,"duration_ms":3000}'))
+            self.assertFalse(factory.sockets[0].closed)
+            return "physical press"
+
+        with patch.object(connection, "getresponse", side_effect=AssertionError("The disconnected hold must not read its response")):
+            self.assertEqual(opener.disconnect_after(request(b'{"key":65,"duration_ms":3000}', "/api/key"), admitted),
+                             "physical press")
+        self.assertEqual(factory.sockets[0].shutdowns, [socket.SHUT_RDWR])
+        self.assertTrue(factory.sockets[0].closed)
+        self.assertIsNone(opener._connection)
+        self.assertFalse(opener._lock.locked())
+        opener.open(request()).close()
+        self.assertEqual(len(factory.connections), 2)
+        self.assertEqual(len(factory.connections[1].requests), 1)
+        opener.close()
 
     def test_redirects_and_foreign_origin_never_receive_bearer_or_mutation(self):
         factory = Factory(b'HTTP/1.1 307 Redirect\r\nLocation: https://other.local/api/steal\r\nContent-Length: 0\r\n\r\n')

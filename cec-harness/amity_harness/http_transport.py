@@ -86,13 +86,12 @@ class _DeadlineSocket:
 class HTTPSOpener:
     """Reuse one origin/context without ever resending a failed request.
 
-    Complete bodies are buffered before releasing the transport lock. An idle
-    socket expires after two seconds; a server close or any I/O failure drops
-    it. A later explicit request may open a new connection, with its own budget.
+    Complete bodies are buffered before releasing the transport lock. Healthy
+    sockets remain reusable across idle periods; a server close or any I/O
+    failure drops them. A later explicit request can connect, with its own budget.
     """
 
-    def __init__(self, origin, context, *, dut=None, idle_timeout=2.0,
-                 connection_factory=None, clock=None):
+    def __init__(self, origin, context, *, dut=None, connection_factory=None, clock=None):
         parsed = urlsplit(origin)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                 or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
@@ -100,16 +99,13 @@ class HTTPSOpener:
         self._host, self._port = parsed.hostname, parsed.port or 443
         self._context = context
         self._dut = dut
-        self._idle_timeout = idle_timeout
         self._factory = connection_factory or http.client.HTTPSConnection
         self._clock = clock or time.monotonic
         self._connection = None
-        self._last_used = None
         self._lock = threading.Lock()
 
     def _drop(self, reason):
         connection, self._connection = self._connection, None
-        self._last_used = None
         if connection is not None:
             try:
                 connection.close()
@@ -147,8 +143,6 @@ class HTTPSOpener:
         response = None
         try:
             self._budget(deadline)
-            if self._last_used is not None and self._clock() - self._last_used >= self._idle_timeout:
-                self._drop("idle_expired")
             if self._connection is None:
                 remaining = self._budget(deadline)
                 self._connection = self._factory(self._host, self._port, timeout=remaining, context=self._context)
@@ -180,7 +174,6 @@ class HTTPSOpener:
                                   for key, value in headers.items())
             response.close()
             response = None
-            self._last_used = self._clock()
             if result.will_close or close_requested:
                 self._drop("server_close" if result.will_close else "requested_close")
             if not 200 <= result.status < 300:
@@ -225,8 +218,6 @@ class HTTPSOpener:
             raise TimeoutError("HTTP transport deadline expired")
         try:
             self._budget(deadline)
-            if self._last_used is not None and self._clock() - self._last_used >= self._idle_timeout:
-                self._drop("idle_expired")
             if self._connection is None:
                 remaining = self._budget(deadline)
                 self._connection = self._factory(self._host, self._port, timeout=remaining, context=self._context)
