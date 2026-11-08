@@ -7,6 +7,7 @@
  */
 
 #include "system_services.hpp"
+#include "network_diagnostics.hpp"
 #include "web.hpp"
 #include "firmware_version.hpp"
 #include "esp_log.h"
@@ -107,7 +108,12 @@ int capture(const char *fmt, va_list args) {
         used = std::min(used+n, ring.size());
         xSemaphoreGive(lock);
     }
-    return original ? original(fmt, args) : length;
+    if(!original)return length;
+    const auto began=esp_timer_get_time();
+    const int result=original(fmt,args);
+    const auto elapsed=std::max<int64_t>(0,esp_timer_get_time()-began);
+    amity::network_diagnostics::record_console_call(static_cast<uint32_t>(began/1000),static_cast<uint32_t>(elapsed/1000));
+    return result;
 }
 void restart_task(void *delay) { vTaskDelay(pdMS_TO_TICKS(reinterpret_cast<uintptr_t>(delay))); esp_restart(); }
 }

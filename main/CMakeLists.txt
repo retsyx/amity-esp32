@@ -5,4 +5,4 @@
 # License, or (at your option) any later version.
 
 idf_component_register(SRCS "main.cpp" INCLUDE_DIRS "."
-    REQUIRES device_settings amity_hub ble_remote amity_matter amity_homekit config_store web_admin system_services consortium radio_control system_sync esp_driver_gpio espressif__mdns esp_event)
+    REQUIRES device_settings amity_hub ble_remote amity_matter amity_homekit config_store web_admin system_services consortium radio_control system_sync network_diagnostics esp_driver_gpio espressif__mdns esp_event)

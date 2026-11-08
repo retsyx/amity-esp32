@@ -240,6 +240,6 @@ def main():
         temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
         cpp,binary=temp/'test.cpp',temp/'test';cpp.write_text(prefix+EXTRA+'namespace amity::consortium {\n'+actual+worker+'\n}\n'+SUPPORT+SUITE)
         sources=[ROOT/'components/consortium'/n for n in ('json.cpp','wire.cpp','owned_intent.cpp','session.cpp','settings.cpp','update.cpp','transfer.cpp')]+[ROOT/'components/amity_system/model.cpp']
-        subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-pthread','-g','-fsanitize=address,undefined','-I'+str(temp)]+['-I'+str(ROOT/n) for n in ('components/consortium','components/consortium/include','components/amity_system/include')]+list(map(str,[cpp]+sources))+['-o',str(binary)],check=True)
+        subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-pthread','-g','-fsanitize=address,undefined','-I'+str(temp)]+['-I'+str(ROOT/n) for n in ('components/consortium','components/consortium/include','components/amity_system/include','components/network_diagnostics/include')]+list(map(str,[cpp]+sources))+['-o',str(binary)],check=True)
         subprocess.run([str(binary)],check=True)
 if __name__=='__main__':main()

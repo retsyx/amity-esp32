@@ -18,6 +18,7 @@ PREFIX = r'''
 #include "amity/consortium/settings.hpp"
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
+#include "network_diagnostics.hpp"
 #include "amity/consortium/hostname.hpp"
 #include <algorithm>
 #include <array>
@@ -31,6 +32,7 @@ PREFIX = r'''
 #include <mutex>
 #include <sys/socket.h>
 #include <tuple>
+namespace amity::network_diagnostics {Snapshot snapshot(){return {};}}
 namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;
@@ -63,7 +65,8 @@ struct Active{
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
 };
 // ACK observation has a separate native test; this fixture tests IPC policy.
-void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t){}
+void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
+void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,const char*,const network_diagnostics::Snapshot&,const network_diagnostics::Snapshot&){}
 std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
 RuntimeNetworkHooks network;RuntimeUpdateHooks updates;
 std::vector<std::tuple<model::OctopusId,model::BootId,model::LinkId>> restart_fences;
@@ -339,7 +342,8 @@ def main():
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined',
                         '-I' + str(temp), '-I' + str(ROOT / 'components/consortium'),
-                        '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include')] +
+                         '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include'),
+                         '-I' + str(ROOT / 'components/network_diagnostics/include')] +
                        list(map(str, [cpp] + sources)) + ['-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 

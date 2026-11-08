@@ -120,7 +120,7 @@ def main():
         cpp.write_text(timing_support() + prefix + EXTRA + 'namespace amity::consortium {\n' + actual + '\n}\n' + SUITE)
         sources = [ROOT / 'components/consortium' / name for name in ('json.cpp', 'wire.cpp', 'owned_intent.cpp', 'session.cpp', 'settings.cpp', 'update.cpp', 'transfer.cpp')]
         sources.append(ROOT / 'components/amity_system/model.cpp')
-        subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined', '-I' + str(temp)] + ['-I' + str(ROOT / path) for path in ('components/consortium', 'components/consortium/include', 'components/amity_system/include')] + list(map(str, [cpp] + sources)) + ['-o', str(binary)], check=True)
+        subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined', '-I' + str(temp)] + ['-I' + str(ROOT / path) for path in ('components/consortium', 'components/consortium/include', 'components/amity_system/include','components/network_diagnostics/include')] + list(map(str, [cpp] + sources)) + ['-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 
 

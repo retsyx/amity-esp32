@@ -10,6 +10,7 @@
 #include "hostname_registry.hpp"
 #include "production_storage.hpp"
 #include "tcp_ack_trace.hpp"
+#include "network_diagnostics.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/transfer.hpp"
@@ -110,6 +111,7 @@ struct Active {
     std::deque<Queued> queue;
     // Owned only by the link task, including its socket's lifetime.
     TcpAckTrace release_ack;
+    network_diagnostics::Snapshot release_network_before;
     model::OctopusId release_ack_owner;
     uint64_t release_ack_generation=0;
     uint8_t release_ack_key=0,release_ack_edges=0;
@@ -857,20 +859,51 @@ TcpAckSample sample_tcp_ack(int socket){
     UNLOCK_TCPIP_CORE();
     return sample;
 }
+void emit_key_network(const model::OctopusId& owner,uint8_t key,uint64_t generation,uint8_t edges,bool down,const char* state,
+                      const network_diagnostics::Snapshot& before,const network_diagnostics::Snapshot& network){
+    // Station-wide observations, including other peers and HTTPS traffic;
+    // neither these counters nor driver success identify this key's packets.
+    const bool release=edges==1&&!down;
+    const char* phase=edges==2?"tap":down?"down":"up";
+    const auto delta=[](uint32_t after,uint32_t prior){return static_cast<unsigned>(after-prior);};
+    // Times and counters share wrapping 32-bit milliseconds. An absent
+    // progress event is explicit rather than presented as a fresh event.
+    const auto age=[&](uint32_t last,bool observed){return observed?static_cast<unsigned>(network.now_ms-last):UINT32_MAX;};
+    ESP_LOGI("consortium","%s stage=network_sta owner=%s key=%u generation=%llu phase=%s edge_count=%u status=%s reg=%u regerr=%ld tx_nm=%u tx_err=%u tx_done=%u tx_fail=%u rx_nm=%u rx_err=%u tx_age_ms=%u done_age_ms=%u rx_age_ms=%u",
+        release?"Key release":"Key transfer",owner.str().c_str(),static_cast<unsigned>(key),static_cast<unsigned long long>(generation),phase,static_cast<unsigned>(edges),state,
+        static_cast<unsigned>(network.tx_done_registered!=0),static_cast<long>(network.registration_error),
+        delta(network.tx.no_mem,before.tx.no_mem),delta(network.tx.other,before.tx.other),delta(network.tx_done_ok,before.tx_done_ok),delta(network.tx_done_fail,before.tx_done_fail),delta(network.rx.no_mem,before.rx.no_mem),delta(network.rx.other,before.rx.other),
+        age(network.tx.last_call_ms,network.tx.attempts||network.tx.last_call_ms),age(network.tx_done_last_ms,network.tx_done_ok||network.tx_done_fail||network.tx_done_last_ms),age(network.rx.last_call_ms,network.rx.attempts||network.rx.last_call_ms));
+    const auto console_elapsed=delta(network.console_elapsed_ms,before.console_elapsed_ms);
+    const auto console_slow=delta(network.console_slow_calls,before.console_slow_calls);
+    if(console_elapsed>=100||console_slow){
+        // Completed global caller durations may overlap, without causality.
+        // Both snapshots precede our reports, excluding their own console cost.
+        ESP_LOGI("consortium","%s stage=console_all owner=%s key=%u generation=%llu phase=%s edge_count=%u status=%s calls=%u sum_ms=%u slow=%u last_began_age_ms=%u last_duration_ms=%u",
+            release?"Key release":"Key transfer",owner.str().c_str(),static_cast<unsigned>(key),static_cast<unsigned long long>(generation),phase,static_cast<unsigned>(edges),state,
+            delta(network.console_calls,before.console_calls),console_elapsed,console_slow,
+            age(network.console_last_slow_began_ms,network.console_slow_calls||network.console_last_slow_began_ms),static_cast<unsigned>(network.console_last_slow_duration_ms));
+    }
+}
 void emit_release_ack(const Active& active,const char* state){
     const auto& trace=active.release_ack;
+    const bool network_due=trace.elapsed_ms>=250||trace.max_nrtx||
+        (std::strcmp(state,"acked")&&std::strcmp(state,"replaced"));
+    // Sample before logging, always outside the TCP/IP core and runtime locks.
+    const auto network=network_due?network_diagnostics::snapshot():network_diagnostics::Snapshot{};
     const bool release=active.release_ack_edges==1&&!active.release_ack_down;
     const char* phase=active.release_ack_edges==2?"tap":active.release_ack_down?"down":"up";
     ESP_LOGI("consortium","%s stage=ack owner=%s key=%u generation=%llu phase=%s edge_count=%u status=%s elapsed_ms=%llu pending_bytes=%u max_nrtx=%u initial_rto_ms=%u poll_gap_ms=%llu busy=%u",
         release?"Key release":"Key transfer",active.release_ack_owner.str().c_str(),static_cast<unsigned>(active.release_ack_key),static_cast<unsigned long long>(active.release_ack_generation),phase,static_cast<unsigned>(active.release_ack_edges),state,
         static_cast<unsigned long long>(trace.elapsed_ms),trace.pending_bytes,static_cast<unsigned>(trace.max_nrtx),trace.initial_rto_ms,static_cast<unsigned long long>(trace.poll_gap_ms),trace.busy_samples);
+    if(network_due)emit_key_network(active.release_ack_owner,active.release_ack_key,active.release_ack_generation,active.release_ack_edges,active.release_ack_down,state,active.release_network_before,network);
 }
 void poll_release_ack(Active& active){
     if(!active.release_ack.pending)return;
     const auto sample=sample_tcp_ack(active.tls->socket);
     if(const auto* state=active.release_ack.observe(sample,now_ms()))emit_release_ack(active,state);
 }
-void begin_release_ack(Active& active,const model::OwnedIntent& intent,uint64_t written_at){
+void begin_release_ack(Active& active,const model::OwnedIntent& intent,uint64_t written_at,const network_diagnostics::Snapshot& network_before){
     // A second key message replaces metadata only, never transport work.
     if(active.release_ack.pending){
         poll_release_ack(active);
@@ -878,6 +911,7 @@ void begin_release_ack(Active& active,const model::OwnedIntent& intent,uint64_t 
     }
     active.release_ack_owner=intent.target.port.octopus_id;active.release_ack_key=intent.edges[0].key;active.release_ack_generation=intent.generation;
     active.release_ack_edges=intent.edge_count;active.release_ack_down=intent.edges[0].down;
+    active.release_network_before=network_before;
     const auto sample=sample_tcp_ack(active.tls->socket);
     if(const auto* state=active.release_ack.begin(sample,written_at,now_ms()))emit_release_ack(active,state);
 }
@@ -1015,10 +1049,12 @@ void active_loop_work(void *arg){
             const auto ttl=queued_firmware_stream(queued)?queued.ttl:queued.ttl-static_cast<uint32_t>(now-queued.created);
             const bool key=queued.owned&&queued.owned->kind==model::OwnedIntentKind::key_edges&&queued.owned->edge_count>=1&&queued.owned->edge_count<=2;
             const auto write_started=key?now_ms():0;
+            const auto network_before=key?network_diagnostics::snapshot():network_diagnostics::Snapshot{};
             const bool sent=send(*active,queued.kind,payload,ttl);
             if(key){
                 const auto completed=now_ms();const auto& intent=*queued.owned;
-                if(sent)begin_release_ack(*active,intent,completed);
+                if(sent)begin_release_ack(*active,intent,completed,network_before);
+                else emit_key_network(intent.target.port.octopus_id,intent.edges[0].key,intent.generation,intent.edge_count,intent.edges[0].down,"write_failed",network_before,network_diagnostics::snapshot());
                 const char* phase=intent.edge_count==2?"tap":intent.edges[0].down?"down":"up";
                 ESP_LOGI("consortium","%s stage=write owner=%s key=%u generation=%llu phase=%s edge_count=%u age_ms=%llu elapsed_ms=%llu sent=%d",
                     pure_key_release(intent)?"Key release":"Key transfer",intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),phase,static_cast<unsigned>(intent.edge_count),

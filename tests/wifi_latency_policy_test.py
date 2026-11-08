@@ -59,6 +59,12 @@ void log(const char *tag,const char *format,int previous,int current) {
     assert(size>0&&size<static_cast<int>(sizeof(line)));logs.emplace_back(line);calls.push_back("log");
 }
 #define ESP_LOGI(...) log(__VA_ARGS__)
+namespace amity::network_diagnostics {
+void start() {
+    assert(initialized&&mode==WIFI_PS_NONE&&get_calls==2&&set_calls==1);
+    calls.push_back("network-diagnostics");
+}
+}
 struct Configuration {uint64_t config_revision=11;};
 struct Hub {
     std::optional<Configuration> active_configuration(){return Configuration{};}
@@ -90,7 +96,7 @@ void expect_failure(int expected) {
 int main() {
     for(bool member:{false,true}) {
         reset(member);assert(startup()==ESP_OK&&start_calls==1);
-        assert((calls==std::vector<std::string>{member?"member-network":"main-network","get","set","get","log","profile","transport"}));
+        assert((calls==std::vector<std::string>{member?"member-network":"main-network","get","set","get","log","network-diagnostics","profile","transport"}));
         assert(logs==std::vector<std::string>{"Wi-Fi power save: previous=1 current=0"});
         // One startup application, with no event callback or packet-path work.
         assert(mode==WIFI_PS_NONE&&get_calls==2&&set_calls==1);

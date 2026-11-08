@@ -28,6 +28,7 @@
 #include "adapter_settings.hpp"
 #include "member_removal.hpp"
 #include "system_services.hpp"
+#include "network_diagnostics.hpp"
 #include "firmware_update.hpp"
 #include "group_firmware_update.hpp"
 #include "web_admin.hpp"
@@ -246,6 +247,7 @@ void remote_battery_task(void *) {
     for (;;) {
         amity_matter_flush_state();
         system_services::log_memory_if_due();
+        amity::network_diagnostics::poll();
         system_services::updates::poll_peer_timeout();
         ble_remote_status_t remote{};
         ble_remote_get_status(&remote);
@@ -586,6 +588,7 @@ extern "C" void app_main() {
     amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,nullptr};
     ESP_ERROR_CHECK(amity_matter_start(&callbacks));
     ESP_ERROR_CHECK(configure_wifi_latency_policy());
+    amity::network_diagnostics::start();
     const auto installed=hub.active_configuration();
     ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));
     const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->config_revision:1);

@@ -438,7 +438,8 @@ def main():
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread', '-g', '-fsanitize=address,undefined',
                         '-I' + str(temp), '-I' + str(ROOT / 'components/consortium'),
-                        '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include')] +
+                        '-I' + str(ROOT / 'components/consortium/include'), '-I' + str(ROOT / 'components/amity_system/include'),
+                        '-I' + str(ROOT / 'components/network_diagnostics/include')] +
                        list(map(str, [cpp] + sources)) + ['-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 

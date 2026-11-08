@@ -10,6 +10,7 @@ PREFIX=r'''
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/update.hpp"
 #include "controller_policy.hpp"
+#include "network_diagnostics.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -22,6 +23,7 @@ PREFIX=r'''
 #include <mutex>
 #include <sys/socket.h>
 #include <thread>
+namespace amity::network_diagnostics {Snapshot snapshot(){return {};}}
 namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
@@ -37,7 +39,8 @@ struct Tls{int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowe
 using TlsLink=Tls;
 struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::deque<Queued> queue;};
 // ACK observation has a separate native test; this fixture tests IPC policy.
-void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t){}
+void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
+void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,const char*,const network_diagnostics::Snapshot&,const network_diagnostics::Snapshot&){}
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 std::vector<std::shared_ptr<Active>*> task_arguments;unsigned task_attempts=0;bool task_creation_fails=false;
 void active_loop(void*){}
@@ -435,6 +438,6 @@ def main():
   temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')
   cpp=temp/'test.cpp';binary=temp/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+actual+'\n}\n'+SUITE)
   sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','owned_intent.cpp','session.cpp','settings.cpp','update.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
-  subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-pthread','-g','-fsanitize=address,undefined','-I'+str(temp)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+list(map(str,[cpp]+sources))+['-o',str(binary)],check=True)
+  subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-pthread','-g','-fsanitize=address,undefined','-I'+str(temp)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include','components/network_diagnostics/include']]+list(map(str,[cpp]+sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)
 if __name__=='__main__':main()
