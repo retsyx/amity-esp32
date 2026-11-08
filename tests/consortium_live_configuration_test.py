@@ -62,6 +62,8 @@ struct Active{
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
 };
+// ACK observation has a separate native test; this fixture tests IPC policy.
+void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t){}
 std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
 RuntimeNetworkHooks network;RuntimeUpdateHooks updates;
 std::vector<std::tuple<model::OctopusId,model::BootId,model::LinkId>> restart_fences;

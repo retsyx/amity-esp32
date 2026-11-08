@@ -9,6 +9,7 @@
 #include "enrollment_abort.hpp"
 #include "hostname_registry.hpp"
 #include "production_storage.hpp"
+#include "tcp_ack_trace.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/transfer.hpp"
@@ -27,10 +28,18 @@
 #include "mbedtls/platform_util.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
+#include "lwip/api.h"
+#include "lwip/tcpip.h"
+#include "lwip/priv/tcp_priv.h"
+// The pinned SDK declares this diagnostic accessor outside its C-linkage block.
+extern "C" {
+#include "lwip/priv/sockets_priv.h"
+}
 #include <fcntl.h>
 #include <cerrno>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
 #include <algorithm>
@@ -99,6 +108,11 @@ struct Active {
     std::mutex mutex;
     std::mutex close_mutex;bool closed_notified=false;
     std::deque<Queued> queue;
+    // Owned only by the link task, including its socket's lifetime.
+    TcpAckTrace release_ack;
+    model::OctopusId release_ack_owner;
+    uint64_t release_ack_generation=0;
+    uint8_t release_ack_key=0;
     std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false},context_requested{false},refreshing{false};
     std::atomic_bool execution_fenced{false};
     std::atomic_bool restart_requested{false};
@@ -822,6 +836,51 @@ bool initialize_context(Active& active){
     {std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);active.context_requested=false;}
     return false;
 }
+TcpAckSample sample_tcp_ack(int socket){
+    TcpAckSample sample;
+    // The calling link task retains its TlsLink: only its destructor closes
+    // this descriptor. Other tasks may shut it down; the core lock protects
+    // that PCB removal, and a missing connection/PCB is a diagnostic result.
+    // Unlike LOCK_TCPIP_CORE, diagnostics must never wait for this mutex.
+    if(xSemaphoreTake(lock_tcpip_core,0)!=pdTRUE){sample.state=TcpAckSampleState::busy;return sample;}
+    sys_thread_tcpip(LWIP_CORE_LOCK_MARK_HOLDER);
+    const auto* sock=lwip_socket_dbg_get_socket(socket);
+    const auto* conn=sock?sock->conn:nullptr;
+    const auto* pcb=conn&&NETCONNTYPE_GROUP(conn->type)==NETCONN_TCP?conn->pcb.tcp:nullptr;
+    if(pcb){
+        sample.state=TcpAckSampleState::ready;
+        sample.buffered=pcb->snd_lbb;sample.acknowledged=pcb->lastack;
+        sample.retransmissions=pcb->nrtx;
+        sample.rto_ms=pcb->rto>0?static_cast<uint32_t>(pcb->rto)*TCP_SLOW_INTERVAL:0;
+    }
+    UNLOCK_TCPIP_CORE();
+    return sample;
+}
+void emit_release_ack(const Active& active,const char* state){
+    const auto& trace=active.release_ack;
+    ESP_LOGI("consortium","Key release stage=ack owner=%s key=%u generation=%llu status=%s elapsed_ms=%llu pending_bytes=%u max_nrtx=%u initial_rto_ms=%u poll_gap_ms=%llu busy=%u",
+        active.release_ack_owner.str().c_str(),static_cast<unsigned>(active.release_ack_key),static_cast<unsigned long long>(active.release_ack_generation),state,
+        static_cast<unsigned long long>(trace.elapsed_ms),trace.pending_bytes,static_cast<unsigned>(trace.max_nrtx),trace.initial_rto_ms,static_cast<unsigned long long>(trace.poll_gap_ms),trace.busy_samples);
+}
+void poll_release_ack(Active& active){
+    if(!active.release_ack.pending)return;
+    const auto sample=sample_tcp_ack(active.tls->socket);
+    if(const auto* state=active.release_ack.observe(sample,now_ms()))emit_release_ack(active,state);
+}
+void begin_release_ack(Active& active,const model::OwnedIntent& intent,uint64_t written_at){
+    // A second release replaces diagnostic metadata only, never transport work.
+    if(active.release_ack.pending){
+        poll_release_ack(active);
+        if(active.release_ack.pending)emit_release_ack(active,"replaced");
+    }
+    active.release_ack_owner=intent.target.port.octopus_id;active.release_ack_key=intent.edges[0].key;active.release_ack_generation=intent.generation;
+    const auto sample=sample_tcp_ack(active.tls->socket);
+    if(const auto* state=active.release_ack.begin(sample,written_at,now_ms()))emit_release_ack(active,state);
+}
+void finish_release_ack(Active& active){
+    poll_release_ack(active);
+    if(active.release_ack.pending){active.release_ack.pending=false;emit_release_ack(active,"session_ended");}
+}
 struct LinkTraceSnapshot {
     LinkTrace trace;
     LinkScope scope;
@@ -915,6 +974,7 @@ void active_loop_work(void *arg){
     uint64_t receive_started=0,receive_until=0;bool retirement_attempted=false;
     while(!active->cancelled){
       while(!active->cancelled){
+        poll_release_ack(*active);
         trace=LinkTrace{};trace.phase="operational";
         if(active->restart_requested){trace.fail("application_restart_requested");break;}
         if(active->retiring&&!receive_until){retirement_attempted=true;finish_retirement(*active);break;}
@@ -954,6 +1014,7 @@ void active_loop_work(void *arg){
             const bool sent=send(*active,queued.kind,payload,ttl);
             if(release){
                 const auto completed=now_ms();const auto& intent=*queued.owned;
+                if(sent)begin_release_ack(*active,intent,completed);
                 ESP_LOGI("consortium","Key release stage=write owner=%s key=%u generation=%llu age_ms=%llu elapsed_ms=%llu sent=%d",
                     intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),
                     static_cast<unsigned long long>(write_started>=queued.created?write_started-queued.created:0),static_cast<unsigned long long>(completed>=write_started?completed-write_started:0),sent);
@@ -1085,6 +1146,7 @@ void active_loop_work(void *arg){
             }
         }
       }
+      finish_release_ack(*active);
       if(active->cancelled||active->retiring||!application_failure_recoverable(*active,trace))break;
       trace.retained=true;trace.receive=active->tls->receive_diagnostic();
       emit_link_trace(snapshot_link_trace(*active,trace,now_ms()));

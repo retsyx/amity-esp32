@@ -218,6 +218,11 @@ CONFIG_MBEDTLS_X509_CREATE_C=y
 
 # Room for the browser HTTP pool, authenticated peer links and network services.
 CONFIG_LWIP_MAX_SOCKETS=24
+# The pinned RTT estimator retains three slow ticks: 1.5s at 250ms, 300ms at 50ms.
+# Shorten established-link loss recovery while keeping the initial RTO unchanged.
+# This also increases TCP servicing and zero-window probe frequency fivefold.
+CONFIG_LWIP_TCP_TMR_INTERVAL=50
+CONFIG_LWIP_TCP_RTO_TIME=1500
 # Prefer the strongest AP when a network has multiple radios/access points.
 CONFIG_WIFI_SCAN_ALL_CHANNEL_MODE=y
 # Leave airtime for Bluetooth while an access point is unavailable.

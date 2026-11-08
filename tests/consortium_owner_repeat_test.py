@@ -36,6 +36,8 @@ struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64
 struct Tls{int socket=-1;model::OctopusId authenticated;std::vector<Peer> allowed;bool healthy=true;bool usable()const{return healthy;}};
 using TlsLink=Tls;
 struct Active{Session session;std::shared_ptr<Tls> tls=std::make_shared<Tls>();model::OctopusId peer,connection_peer;model::BootId claimed_boot;std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;std::string endpoint_hint;std::mutex mutex,close_mutex;bool cancelled=false,retiring=false,ready=true,management_ready=false,context_ready=true,context_requested=false,closed_notified=false,refreshing=false;RuntimePeerStatus status;std::deque<Queued> queue;};
+// ACK observation has a separate native test; this fixture tests IPC policy.
+void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t){}
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 std::vector<std::shared_ptr<Active>*> task_arguments;unsigned task_attempts=0;bool task_creation_fails=false;
 void active_loop(void*){}
