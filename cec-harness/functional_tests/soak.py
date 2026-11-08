@@ -252,10 +252,10 @@ def _soak(main_name):
 
 
 def test_soak():
-    """First phase of the explicit soak run: two hours with the original main."""
+    """Two-hour soak phase with the original board as main."""
     _soak("amity-dut")
 
 
 def test_soak_main4():
-    """Second phase of the explicit soak run: two hours with the fourth board as main."""
+    """Two-hour soak phase with the fourth board as main."""
     _soak("amity-dut-4")

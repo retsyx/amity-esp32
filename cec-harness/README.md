@@ -169,7 +169,8 @@ needs no development computer once setup and file transfer are complete.
 ## Main enrollment
 
 Each invocation of `cec-harness/run` requires a **factory-reset selected main**:
-`amity-dut` by default, or `amity-dut-4` for the explicit `_main4` variants.
+`amity-dut` by default, or `amity-dut-4` for the explicit `_main4` variants
+and `--soak-first amity-dut-4`.
 The combined soak run resets and enrolls its next main between phases.
 Preparation never resets it implicitly or reuses an enrolled
 main. Reachable HTTPS fails preparation. Standard Matter preflight must confirm
@@ -1227,7 +1228,8 @@ The endurance run requires explicit `--soak` (also selected by `--test soak`);
 neither the default nor `--test all` selects either phase. It runs two hours
 with `amity-dut` as main, resets and enrolls `amity-dut-4`, then runs the same
 two-hour workload with the other three boards as members. Both phases share
-this selector. Supply each main's admin and Matter credentials using
+this selector. Add `--soak-first amity-dut-4` to run the fourth-board phase first;
+both phases and their reset/enrollment transition still run. Supply each main's admin and Matter credentials using
 `--dut-credentials DUT=PATH` and `--dut-enrollment-credentials DUT=PATH`; the
 existing default credential options remain fallbacks. Run the entire process
 on the harness Pi, including
@@ -1242,7 +1244,8 @@ and checks its browser dependencies:
   --output test-results/functional/soak.json
 ```
 
-Start with a factory-reset `amity-dut` and three unclaimed members. Each phase
+Start with a factory-reset first main and three unclaimed members (`amity-dut`
+is first by default). Each phase
 adds the other three boards through the normal Add workflow.
 Each owns a TV, AVR and two sources. Eight saved activities cycle between
 shared-equipment handoffs and changes of owner, rotating actual UI clicks,

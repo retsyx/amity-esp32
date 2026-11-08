@@ -77,6 +77,50 @@ class MainFourRunnerTests(unittest.TestCase):
         self.assertEqual(self.calls, [(name, "amity-dut") for name in ("prepare", "upgrade1", "soak1", "finish")]
                          + [(name, "amity-dut-4") for name in ("prepare", "soak4", "finish")])
 
+    def test_soak_first_reverses_main_blocks_for_both_explicit_selectors(self):
+        for selector in (["--soak"], ["--test", "soak"]):
+            with self.subTest(selector=selector):
+                self.calls.clear()
+                self.assertEqual(self.invoke([*selector, "--soak-first", "amity-dut-4"]), 0)
+                self.assertEqual(self.calls, [(name, "amity-dut-4") for name in ("prepare", "soak4", "finish")]
+                                 + [(name, "amity-dut") for name in ("prepare", "soak1", "finish")])
+        self.calls.clear()
+        self.assertEqual(self.invoke(["--soak", "--soak-first", "amity-dut"]), 0)
+        self.assertEqual(self.calls, [(name, "amity-dut") for name in ("prepare", "soak1", "finish")]
+                         + [(name, "amity-dut-4") for name in ("prepare", "soak4", "finish")])
+
+    def test_soak_first_preserves_all_scenarios_inside_each_main_block(self):
+        one_a, one_b = self.record("one_a"), self.record("one_b")
+        four_a, four_b = self.record("four_a"), self.record("four_b")
+        self.assertEqual(self.invoke(["--soak", "--soak-first", "amity-dut-4"],
+            opt_in_tests={"soak": (one_a, one_b, four_a, four_b)},
+            scenario_mains={four_a: "amity-dut-4", four_b: "amity-dut-4"},
+            main_duts={"firmware_upgrade_main4": "amity-dut-4"}), 0)
+        self.assertEqual(self.calls, [(name, "amity-dut-4") for name in ("prepare", "four_a", "four_b", "finish")]
+                         + [(name, "amity-dut") for name in ("prepare", "one_a", "one_b", "finish")])
+
+    def test_soak_first_upgrade_matches_first_main_and_still_runs_once(self):
+        self.assertEqual(self.invoke(["--soak", "--soak-first", "amity-dut-4", "--firmware", str(self.firmware)]), 0)
+        self.assertEqual(self.calls, [(name, "amity-dut-4") for name in ("prepare", "upgrade4", "soak4", "finish")]
+                         + [(name, "amity-dut") for name in ("prepare", "soak1", "finish")])
+
+    def test_soak_first_requires_soak_and_a_registered_main_before_execution(self):
+        for options in (["--soak-first", "amity-dut-4"],
+                        ["--test", "all", "--soak-first", "amity-dut-4"],
+                        ["--test", "consortium_four_duts_main4", "--soak-first", "amity-dut-4"],
+                        ["--soak", "--soak-first", "amity-dut-2"]):
+            with self.subTest(options=options), self.assertRaises(SystemExit) as rejected:
+                self.invoke(options)
+            self.assertEqual(rejected.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_soak_first_missing_role_upgrade_is_rejected_before_enrollment(self):
+        with self.assertRaises(SystemExit) as rejected:
+            self.invoke(["--soak", "--soak-first", "amity-dut-4", "--firmware", str(self.firmware)],
+                        firmware_variants={}, main_duts={"consortium_four_duts_main4": "amity-dut-4"})
+        self.assertEqual(rejected.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
     def test_soak_selector_rejects_independent_main4_selection_and_conflicting_flags(self):
         for selection in (["--test", "soak_main4"], ["--soak", "--test", "soak"]):
             with self.subTest(selection=selection), self.assertRaises(SystemExit) as rejected:
@@ -143,6 +187,38 @@ class MainFourRunnerTests(unittest.TestCase):
                 expected += [(name, "amity-dut-4") for name in ("prepare4", "soak4", "finish4")]
                 self.assertEqual(self.calls, expected[:[name for name, _ in expected].index(failure_step) + 1])
 
+    def test_reverse_soak_failure_preserves_failed_main_and_stops_lifecycle(self):
+        expected = [(name, "amity-dut-4") for name in ("prepare4", "soak4", "finish4")]
+        expected += [(name, "amity-dut") for name in ("prepare1", "soak1", "finish1")]
+        for failure_step, _ in expected:
+            with self.subTest(failure_step=failure_step):
+                self.calls.clear()
+
+                def phase(name):
+                    def run():
+                        owner = current_config().main_dut
+                        step = name + ("4" if owner == "amity-dut-4" else "1")
+                        self.calls.append((step, owner))
+                        if step == failure_step:
+                            raise RuntimeError("injected lifecycle failure")
+                    run.__name__ = name
+                    return run
+
+                soak1, soak4 = phase("soak"), phase("soak")
+                self.assertEqual(self.invoke(["--soak", "--soak-first", "amity-dut-4"],
+                    opt_in_tests={"soak": (soak1, soak4)}, scenario_mains={soak4: "amity-dut-4"},
+                    main_duts={"firmware_upgrade_main4": "amity-dut-4"},
+                    prepare=phase("prepare"), finish=phase("finish")), 1)
+                self.assertEqual(self.calls, expected[:[name for name, _ in expected].index(failure_step) + 1])
+
+    def test_failed_reverse_soak_upgrade_keeps_first_main_without_reset(self):
+        def failure():
+            self.calls.append(("failed_upgrade", current_config().main_dut))
+            raise RuntimeError("OTA failed")
+        self.assertEqual(self.invoke(["--soak", "--soak-first", "amity-dut-4", "--firmware", str(self.firmware)],
+            firmware_variants={"firmware_upgrade_main4": failure}), 1)
+        self.assertEqual(self.calls, [(name, "amity-dut-4") for name in ("prepare", "failed_upgrade")])
+
     def test_main_transition_preserves_urls_and_uses_each_boards_private_credentials(self):
         seen = []
 
@@ -165,6 +241,30 @@ class MainFourRunnerTests(unittest.TestCase):
             main_duts={"firmware_upgrade_main4": "amity-dut-4"}, prepare=inspect, finish=inspect), 0)
         self.assertEqual(seen, [("amity-dut", Path("/private/one.json"), Path("/private/enrollment1.json"))] * 3
                          + [("amity-dut-4", Path("/private/four.json"), Path("/private/enrollment4.json"))] * 3)
+
+    def test_reverse_transition_preserves_origins_credentials_and_enrollment_per_owner(self):
+        seen = []
+
+        def inspect():
+            config = current_config()
+            owner = config.main_dut
+            commissioner = config.enrollment_factory()
+            seen.append((owner, config.credentials_for(owner), commissioner.credentials))
+            if owner == "amity-dut-4":
+                config.admin_origins[owner] = "https://four.local"
+            else:
+                self.assertEqual(config.admin_origins["amity-dut-4"], "https://four.local")
+                self.assertEqual(config.url_for(owner), "https://one.local")
+
+        soak1, soak4 = inspect, lambda: inspect()
+        self.assertEqual(self.invoke(["--test", "soak", "--soak-first", "amity-dut-4",
+            "--enrollment-credentials", "/private/enrollment1.json",
+            "--dut-enrollment-credentials", "amity-dut-4=/private/enrollment4.json",
+            "--dut-url", "amity-dut=https://one.local"],
+            opt_in_tests={"soak": (soak1, soak4)}, scenario_mains={soak4: "amity-dut-4"},
+            main_duts={"firmware_upgrade_main4": "amity-dut-4"}, prepare=inspect, finish=inspect), 0)
+        self.assertEqual(seen, [("amity-dut-4", Path("/private/four.json"), Path("/private/enrollment4.json"))] * 3
+                         + [("amity-dut", Path("/private/one.json"), Path("/private/enrollment1.json"))] * 3)
 
     def test_role_changes_require_both_preparation_and_reset_before_any_execution(self):
         for callbacks in (dict(prepare=None, finish=None), dict(finish=None)):

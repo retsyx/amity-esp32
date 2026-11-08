@@ -186,6 +186,10 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
     if "soak" in opt_in_tests:
         selection.add_argument("--soak", dest="test", action="store_const", const="soak",
                                help="run the explicitly selected soak scenarios")
+        soak_mains = tuple(dict.fromkeys(scenario_mains.get(scenario, main_duts.get("soak", "amity-dut"))
+                                         for scenario in registered["soak"]))
+        parser.add_argument("--soak-first", choices=soak_mains,
+                            help="main DUT for the first soak phase; defaults to the registered order")
     parser.add_argument("--credentials", type=Path, help="private JSON with an existing DUT admin_password")
     parser.add_argument("--dut-credentials", action="append", default=[], metavar="DUT=PATH",
                         help="per-DUT private credentials; repeat for multiple DUTs")
@@ -216,6 +220,9 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
     parser.add_argument("--log-level", choices=("INFO", "DEBUG"), default="INFO",
                         help="stderr detail: INFO progress (default), DEBUG also HTTP and CEC traffic")
     args = parser.parse_args(argv)
+    soak_first = getattr(args, "soak_first", None)
+    if soak_first is not None and args.test != "soak":
+        parser.error("--soak-first requires --soak or --test soak")
     for option, value in (("--timeout", args.timeout), ("--cec-timeout", args.cec_timeout),
                           ("--firmware-timeout", args.firmware_timeout),
                           ("--enrollment-timeout", args.enrollment_timeout)):
@@ -226,6 +233,11 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                 {} if args.test in firmware_tests or args.test == "enrollment" else {args.test: registered[args.test]})
     ordinary_plan = [(scenario, scenario_mains.get(scenario, group_main), False)
                      for group in selected.values() for scenario in group]
+    if soak_first is not None:
+        # Rotate at the requested main's first block, retaining each phase's
+        # scenarios and owner mappings. Preparation/reset still own transitions.
+        first = next(index for index, (_, owner, _) in enumerate(ordinary_plan) if owner == soak_first)
+        ordinary_plan = ordinary_plan[first:] + ordinary_plan[:first]
     selected_main = ordinary_plan[0][1] if ordinary_plan else group_main
     if any(owner != selected_main for _, owner, _ in ordinary_plan) and (prepare is None or finish is None):
         parser.error("Changing the main DUT requires preparation and reset callbacks")
