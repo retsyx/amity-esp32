@@ -284,8 +284,10 @@ Private controller state lives under
 `~/.local/state/amity-harness/matter/<device-id>/` on the Pi. Each enrollment uses
 fresh state. `current/commissioning.log` belongs to the latest successful
 enrollment; failed attempts retain their `generation-*/commissioning.log`.
-Matter accessory scenarios reuse that enrolled fabric; each bounded command
-keeps its native log in `current/accessory-*/controller.log`.
+Matter accessory scenarios reuse that enrolled fabric and keep one controller
+and its secure session for the accessory context. Commands remain individually
+bounded and are never replayed after an uncertain result. Each context keeps its
+native log in `current/accessory-*/controller.log`.
 Reset checks use `verification-*/commissioning.log`, with `last-verification`
 pointing to the latest successful check. Inspect these logs for BLE, credentials,
 attestation or network failures; they may contain secrets and must remain private.

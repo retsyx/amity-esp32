@@ -88,7 +88,7 @@ def _key(matter, main, component, key, command):
     action.trace["interface"] = "matter"
     if command() != 0:
         raise AssertionError("Matter rejected a supported accessory command")
-    # CASE establishment and worker shutdown are part of the command call.
+    # The first command may also establish the controller's secure session.
     # Retain its original wire boundary while allowing the usual CEC budget
     # after the caller returns; no second key event is sent.
     elapsed = (time.monotonic_ns() - action.started_ns) / 1e9
