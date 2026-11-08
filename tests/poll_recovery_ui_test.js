@@ -1,6 +1,6 @@
 'use strict';
 // Execute the shipping UI with deterministic DOM, HTTP and timer boundaries.
-const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto');
 class Element {
  constructor(tag='div'){
   this.tag=tag;this.children=[];this.listeners={};this.dataset={};this.attributes={};this.hidden=false;this.disabled=false;this.open=false;this.textContent='';this.value='';this.className='';
@@ -18,26 +18,33 @@ class Element {
  focus(){}
 }
 const flush=async()=>{for(let n=0;n<10;n++)await new Promise(resolve=>setImmediate(resolve));};
-function fixture(){
- const elements=new Map(),calls=[],intervals=[],storage=new Map(),faults=new Map();
+function fixture({adapter=false}={}){
+ const elements=new Map(),calls=[],intervals=[],storage=new Map(),faults=new Map(),timers=new Map(),requestOptions=[];
+ let now=0,nextTimer=0;
  const get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
  const document={getElementById:get,querySelectorAll:()=>[],querySelector:()=>null,createElement:tag=>new Element(tag),createElementNS:(_ns,tag)=>new Element(tag),addEventListener(){},activeElement:null};
  const response=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
  const status={hostname:'amity',boot_id:'a'.repeat(32),state_revision:'1',current_activity:-1,devices:[],activity_error:'',wifi_connected:true};
  const values={setup:{required:false,hostname:'amity'},status,remotes:{devices:[]},matter:{fabrics:[]},homekit:{available:true},activity:{ok:true}};
+ if(adapter){
+  values['activity-editor']={version:1,expected_config_revision:'1',expected_presentation_revision:'1',device_choices:[],activities:[{activity_id:'1'.repeat(32),name:'Watch',display:'',source:'',audio:''}]};
+  values['activity-editor/status']={...status,expected_boot_id:status.boot_id,expected_state_revision:'1',expected_config_revision:'1'};
+ }
  const fetch=async(url,options)=>{
-  const route=url.replace('/api/','');calls.push({route,method:options.method});
-  if(faults.has(route)){const fault=faults.get(route);faults.delete(route);return fault();}
+  const route=url.replace('/api/','');calls.push({route,method:options.method});requestOptions.push(options);
+  if(faults.has(route)){const fault=faults.get(route);faults.delete(route);return fault(options);}
   assert.ok(Object.hasOwn(values,route),'Unexpected HTTP route '+route);return response(values[route]);
  };
  const location={origin:'https://amity.local',href:'https://amity.local/',replace(){},reload(){}};
  const window={location,addEventListener(){},amityInterface:{route:(path,data)=>({path,data}),close(){},async refresh(){}}};
- const context={window,document,location,console,Response,URL,Headers,TypeError,Error,SyntaxError,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,DOMException,structuredClone,fetch,confirm:()=>true,
+ const context={window,document,location,console,Response,URL,Headers,TypeError,Error,SyntaxError,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,DOMException,structuredClone,fetch,confirm:()=>true,crypto:crypto.webcrypto,performance:{now:()=>now},
   sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value)),removeItem:key=>storage.delete(key)},
-  setInterval:(callback,delay)=>{intervals.push({callback,delay});return intervals.length;},clearInterval(){},setTimeout(){},clearTimeout(){},requestAnimationFrame(){},cancelAnimationFrame(){}};
+  setInterval:(callback,delay)=>{intervals.push({callback,delay});return intervals.length;},clearInterval(){},
+  setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id;},clearTimeout:id=>timers.delete(id),requestAnimationFrame(){},cancelAnimationFrame(){}};
  vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/app.js'),'utf8'),context);
+ if(adapter)vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/system.js'),'utf8'),context);
  const evaluate=source=>vm.runInContext(source,context);
- const initialize=async()=>{await flush();assert.equal(get('message').textContent,'');get('homekit').hidden=true;get('amityDevices').hidden=true;evaluate("token='session';");calls.length=0;};
+ const initialize=async()=>{await flush();assert.equal(get('message').textContent,'');get('homekit').hidden=true;get('amityDevices').hidden=true;evaluate("token='session';");if(adapter)await evaluate("(async()=>{config=await request('config');rememberSaved();state=await request('status');})()");calls.length=0;requestOptions.length=0;};
  const tick=async()=>{const timer=intervals.find(timer=>timer.delay===4000);assert.ok(timer);timer.callback();await flush();};
  const fail=(route,kind='transport')=>faults.set(route,()=>{
   if(kind==='transport')throw new TypeError('Failed to fetch');
@@ -47,7 +54,12 @@ function fixture(){
   throw Error('Unknown fault');
  });
  const message=()=>({text:get('message').textContent,error:get('message').classList.contains('error')});
- return {get,calls,window,status,faults,evaluate,initialize,tick,fail,message,response};
+ const advance=async milliseconds=>{
+  const target=now+milliseconds;await flush();
+  for(;;){const next=[...timers].filter(([,timer])=>timer.at<=target).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;const [id,timer]=next;timers.delete(id);now=timer.at;timer.callback();await flush();}
+  now=target;await flush();
+ };
+ return {get,calls,window,status,values,faults,evaluate,initialize,tick,fail,message,response,advance,requestOptions,clock:()=>now,timers};
 }
 (async()=>{
  const recovered=fixture();await recovered.initialize();recovered.fail('status');await recovered.tick();
@@ -99,5 +111,128 @@ function fixture(){
  const skipped=fixture();await skipped.initialize();skipped.fail('status');await skipped.tick();
  skipped.evaluate('polling=true;');const original=skipped.message();await skipped.tick();assert.deepEqual(skipped.message(),original,'A skipped poll is not successful recovery');
  assert.equal(skipped.calls.length,1);
- console.log('PASS shipped polling recovery UI: full-cycle transport recovery, HTTP/schema/action errors, message ownership, interrupted flows, and no action replay');
+
+ // Execute the real activity handler through both shipping scripts. The POST
+ // has already admitted a change when a later read of its receipt is lost.
+ const operationId='b'.repeat(32),operationRoute='operations/'+operationId;
+ const operationFixture=async()=>{
+  const ui=fixture({adapter:true});await ui.initialize();
+  ui.values['activity-editor/activity']={operation_id:operationId,stage:'admitted',status:'admitted',message:''};
+  ui.values[operationRoute]={operation_id:operationId,stage:'complete',status:'complete',message:''};
+  ui.values['activity-editor/status'].current_activity=0;
+  return ui;
+ };
+ const select=ui=>ui.evaluate('run(()=>startActivity(config.activities[0]))({})');
+ const receiptCalls=ui=>ui.calls.filter(call=>call.route.startsWith('operations/'));
+ const onePost=ui=>assert.equal(ui.calls.filter(call=>call.method==='POST').length,1,'An admitted activity must never be posted again');
+ const resumed=await operationFixture();resumed.fail(operationRoute);
+ const pending=select(resumed);await resumed.advance(250);
+ assert.equal(resumed.evaluate('activityActionPending'),true);onePost(resumed);
+ assert.equal(receiptCalls(resumed).length,1);assert.equal(resumed.message().error,false);
+ resumed.fail(operationRoute);await resumed.advance(250);await resumed.advance(250);await pending;
+ assert.equal(receiptCalls(resumed).length,3);assert.ok(receiptCalls(resumed).every(call=>call.route===operationRoute&&call.method==='GET'));
+ assert.deepEqual(resumed.message(),{text:'',error:false});assert.equal(resumed.evaluate('activityActionPending'),false);
+ assert.equal(resumed.evaluate('state.current_activity'),0);onePost(resumed);
+ assert.ok(resumed.requestOptions.filter((_,index)=>resumed.calls[index].route.startsWith('operations/')).every(options=>options.signal instanceof AbortSignal));
+ assert.ok(resumed.requestOptions.filter((_,index)=>!resumed.calls[index].route.startsWith('operations/')).every(options=>!Object.hasOwn(options,'signal')),'Ordinary callers retain their original HTTP options');
+ const bodyInterrupted=await operationFixture();
+ const interruptedBody=()=>new Response(new ReadableStream({start(controller){
+  controller.enqueue(new TextEncoder().encode('{"operation_id":'));
+  controller.error(new TypeError('Network stream interrupted'));
+ }}),{status:200,headers:{'Content-Type':'application/json'}});
+ bodyInterrupted.faults.set(operationRoute,interruptedBody);
+ const bodyInterruptedAction=select(bodyInterrupted);await bodyInterrupted.advance(250);
+ assert.equal(bodyInterrupted.evaluate('activityActionPending'),true);assert.equal(bodyInterrupted.message().error,false);
+ await bodyInterrupted.advance(250);await bodyInterruptedAction;
+ assert.equal(receiptCalls(bodyInterrupted).length,2);onePost(bodyInterrupted);
+ assert.deepEqual(bodyInterrupted.message(),{text:'',error:false});
+ // The adapter reads transport bodies before projecting status/config. A
+ // failed body read is recoverable; a transformation's TypeError is not.
+ const statusStream=await operationFixture();statusStream.faults.set('activity-editor/status',interruptedBody);
+ await statusStream.tick();assert.equal(statusStream.message().error,true);assert.match(statusStream.message().text,/Connection interrupted/);
+ await statusStream.tick();assert.deepEqual(statusStream.message(),{text:'',error:false});
+ const configStream=await operationFixture();configStream.faults.set('activity-editor',interruptedBody);
+ assert.equal(await configStream.evaluate("request('config').catch(error=>transportErrors.has(error))"),true);
+ const transformation=await operationFixture();const validStatus=transformation.values['activity-editor/status'];transformation.values['activity-editor/status']=null;
+ await transformation.tick();const transformationError=transformation.message();
+ assert.equal(transformationError.error,true);assert.doesNotMatch(transformationError.text,/Connection interrupted/);
+ transformation.values['activity-editor/status']=validStatus;await transformation.tick();assert.deepEqual(transformation.message(),transformationError);
+
+ // Many immediate failures consume the original 40-second budget; neither
+ // retry nor an outstanding request can restart that budget or run forever.
+ const exhausted=await operationFixture();
+ const unavailable=()=>{exhausted.faults.set(operationRoute,unavailable);throw new TypeError('Failed to fetch');};
+ exhausted.faults.set(operationRoute,unavailable);const exhaustedAction=select(exhausted);
+ await exhausted.advance(40000);await exhaustedAction;onePost(exhausted);
+ assert.equal(exhausted.clock(),40000);assert.equal(receiptCalls(exhausted).length,159);
+ assert.match(exhausted.message().text,/still applying the change/);assert.equal(exhausted.message().error,true);
+ const exhaustedCount=exhausted.calls.length;await exhausted.advance(60000);assert.equal(exhausted.calls.length,exhaustedCount);
+ const blocked=await operationFixture();blocked.fail(operationRoute);let pendingSignal;
+ const blockedAction=select(blocked);await blocked.advance(250);
+ blocked.faults.set(operationRoute,options=>new Promise((_resolve,reject)=>{
+  pendingSignal=options.signal;pendingSignal.addEventListener('abort',()=>reject(new DOMException('Timed out','AbortError')));
+ }));
+ await blocked.advance(39749);assert.ok(pendingSignal&&!pendingSignal.aborted);
+ assert.equal(blocked.evaluate('activityActionPending'),true);
+ await blocked.advance(1);await blockedAction;
+ assert.equal(pendingSignal.aborted,true);assert.equal(blocked.clock(),40000);
+ assert.equal(receiptCalls(blocked).length,2);assert.equal(blocked.timers.size,0);onePost(blocked);
+ assert.match(blocked.message().text,/still applying the change/);
+ const blockedBody=await operationFixture();let bodySignal,bodyRead=false;
+ blockedBody.faults.set(operationRoute,options=>{
+  bodySignal=options.signal;
+  return new Response(new ReadableStream({start(controller){
+   controller.enqueue(new TextEncoder().encode('{"operation_id":'));bodyRead=true;
+   bodySignal.addEventListener('abort',()=>controller.error(new DOMException('Timed out','AbortError')));
+  }}),{status:200});
+ });
+ const blockedBodyAction=select(blockedBody);await blockedBody.advance(39999);
+ assert.ok(bodyRead&&bodySignal&&!bodySignal.aborted);assert.equal(blockedBody.evaluate('activityActionPending'),true);
+ await blockedBody.advance(1);await blockedBodyAction;
+ assert.equal(bodySignal.aborted,true);assert.equal(receiptCalls(blockedBody).length,1);onePost(blockedBody);
+ assert.equal(blockedBody.timers.size,0);assert.match(blockedBody.message().text,/still applying the change/);
+
+ // Only branded fetch errors recover. HTTP/auth, malformed JSON, foreign
+ // aborts and explicit terminal failures keep their original meanings.
+ for(const kind of ['http','json','json-type']){
+  const invalid=await operationFixture();invalid.fail(operationRoute,kind);const action=select(invalid);
+  await invalid.advance(250);await action;onePost(invalid);assert.equal(receiptCalls(invalid).length,1);
+  const original=invalid.message();assert.equal(original.error,true);assert.doesNotMatch(original.text,/still applying|Connection interrupted/);
+  await invalid.tick();assert.deepEqual(invalid.message(),original);
+ }
+ for(const kind of ['malformed','used','locked','decoder']){
+  const invalid=await operationFixture();
+  if(kind==='malformed')invalid.faults.set(operationRoute,()=>new Response('{"operation_id":',{status:200}));
+  else if(kind==='used')invalid.faults.set(operationRoute,async()=>{const reply=invalid.response(invalid.values[operationRoute]);await reply.text();return reply;});
+  else if(kind==='locked')invalid.faults.set(operationRoute,()=>{const reply=invalid.response(invalid.values[operationRoute]);reply.body.getReader();return reply;});
+  else{
+   const route=invalid.window.amityInterface.route;
+   invalid.window.amityInterface.route=(path,data)=>path===operationRoute?{path,data,decode:async()=>{throw new TypeError('Invalid decoded receipt');}}:route(path,data);
+  }
+  const action=select(invalid);await invalid.advance(250);await action;
+  assert.equal(receiptCalls(invalid).length,1);onePost(invalid);assert.equal(invalid.message().error,true);
+  assert.doesNotMatch(invalid.message().text,/still applying|Connection interrupted/);
+ }
+ const cancelled=await operationFixture();cancelled.faults.set(operationRoute,()=>({ok:true,status:200,json:async()=>{throw new DOMException('Unrelated cancellation','AbortError');}}));
+ const cancelledAction=select(cancelled);await cancelled.advance(250);await cancelledAction;
+ assert.equal(cancelled.message().text,'Unrelated cancellation');assert.equal(receiptCalls(cancelled).length,1);onePost(cancelled);
+ const signedOut=await operationFixture();signedOut.faults.set(operationRoute,()=>signedOut.response({error:'Login required'},401));
+ const signedOutAction=select(signedOut);await signedOut.advance(250);await signedOutAction;
+ assert.equal(signedOut.evaluate('token'),'');assert.equal(signedOut.get('login').hidden,false);
+ assert.equal(receiptCalls(signedOut).length,1);onePost(signedOut);assert.equal(signedOut.timers.size,0);
+ for(const stage of ['failed','rejected','cancelled']){
+  const refused=await operationFixture();refused.values[operationRoute]={operation_id:operationId,stage,status:stage,message:'The receiver refused the change.'};
+  const action=select(refused);await refused.advance(250);await action;
+  assert.equal(refused.message().text,'The receiver refused the change.');assert.equal(receiptCalls(refused).length,1);onePost(refused);
+ }
+ for(const terminal of [null,{},[],{operation_id:operationId,stage:'unknown'},{operation_id:'c'.repeat(32),stage:'complete'},
+  {operation_id:operationId,stage:'complete',status:'failed'}]){
+  const invalid=await operationFixture();invalid.values[operationRoute]=terminal;const action=select(invalid);
+  await invalid.advance(250);await action;onePost(invalid);assert.equal(receiptCalls(invalid).length,1);
+  assert.match(invalid.message().text,/could not confirm the change/);assert.equal(invalid.message().error,true);
+ }
+ const lostPost=await operationFixture();lostPost.fail('activity-editor/activity');const lostPostAction=select(lostPost);
+ await flush();await lostPostAction;onePost(lostPost);assert.equal(receiptCalls(lostPost).length,0);
+ const uncertain=lostPost.message();assert.equal(uncertain.error,true);await lostPost.tick();assert.deepEqual(lostPost.message(),uncertain,'A lost mutation response remains an action error');
+ console.log('PASS shipped polling recovery UI: full-cycle recovery; bounded same-receipt GET recovery with cancelled timeout and no POST replay; HTTP/auth/schema/terminal errors and message ownership');
 })().catch(error=>{console.error(error);process.exitCode=1;});

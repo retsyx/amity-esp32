@@ -17,7 +17,7 @@ const original={version:1,expected_config_revision:'7',expected_presentation_rev
 ]};
 const copy=value=>JSON.parse(JSON.stringify(value));
 function fixture(){
- const context={window:{},crypto:crypto.webcrypto,structuredClone,Response,
+ const context={window:{},crypto:crypto.webcrypto,structuredClone,Response,readResponseJSON:response=>response.json(),
   config:{expected_config_revision:'7',expected_presentation_revision:'3'},
   $:()=>({addEventListener(){}}),run:action=>action};
  vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/system.js'),'utf8'),context);

@@ -34,10 +34,10 @@ function fixture(options={}){
   if(path==='membership/admission'){admissionReads++;const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
   if(path==='membership/cancel'){if(data.scan_id!==state.scan_id)throw Object.assign(Error('This search is no longer active.'),{status:409});state.phase='cancelled';return {stage:'complete'};}
   if(path==='membership/add'){if(options.failAdd)throw Object.assign(Error('The setup code could not be verified'),{status:409});state.phase='connecting';operationId=data.request_id;return {operation_id:operationId,stage:'admitted'};}
-  if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage,message:state.error};
+  if(path==='operations/'+operationId)return {operation_id:operationId,stage:operationStage,status:operationStage,message:state.error};
   throw Error('Unexpected HTTP request '+path);
  };
- const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,token:'fixture-session',console,
+ const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,readResponseJSON:response=>response.json(),token:'fixture-session',console,
   $:id=>walk(document.body).find(node=>node.id===id),customerText:value=>String(value??''),message:(value,error)=>messages.push([value,!!error]),request,
   setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id;},clearTimeout:id=>timers.delete(id),
   run:action=>async event=>{try{await action(event);}catch(error){errors.push(error.message);}},

@@ -35,16 +35,24 @@ function updateActivityButtons(){
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
 function reportError(error){if(!firmwareUpdating&&!hostnameReconnect&&!error.silent)message(error.message,true);}
 function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
-async function request(path,data,raw=false){
+async function readResponseJSON(response){
+ // A fresh body can lose its transport after headers arrive. Keep parsing
+ // and application decoding outside that read boundary.
+ if(response.bodyUsed!==false||(response.body!==null&&response.body?.locked!==false))return response.json();
+ let body;try{body=await response.text();}catch(error){if(error instanceof TypeError)transportErrors.add(error);throw error;}
+ return JSON.parse(body);
+}
+async function request(path,data,raw=false,signal){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
  const mapped=window.amityInterface?.route(path,data)||{path,data};
  const options={method:mapped.data===undefined?'GET':'POST',headers,body:mapped.data===undefined?undefined:typeof mapped.data==='string'?mapped.data:JSON.stringify(mapped.data)};
+ if(signal)options.signal=signal;
  let response;try{response=await fetch('/api/'+mapped.path,options);}catch(error){if(error instanceof TypeError)transportErrors.add(error);throw error;}
  if(response.ok&&mapped.decode)response=await mapped.decode(response);
 
  if(response.status===401&&path!=='login'){if(!firmwareUpdating&&!hostnameReconnect){await showWelcome();if(!hostnameReconnect)message('');}throw Object.assign(Error(),{silent:true});}
  if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(customerText(e.error||e.message||'Request failed'));error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
- return raw?response:response.json();
+ return raw?response:readResponseJSON(response);
 }
 function run(action){return async event=>{try{await action(event);}catch(e){reportError(e);}};}
 function button(text,handler){const b=document.createElement('button');b.textContent=text;b.addEventListener('click',run(handler));return b;}

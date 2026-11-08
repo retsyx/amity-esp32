@@ -55,28 +55,44 @@ window.amityInterface=(()=>{
  }
  function response(value,original){return new Response(JSON.stringify(value),{status:original.status,headers:original.headers});}
  async function wait(original){
-  const result=await original.json();
+  const result=await readResponseJSON(original);
   if(result.warning)message(result.warning,true);
   if(!result.operation_id||!['admitted','preparing','executing','configuring','activating','stopping'].includes(result.stage))return response(result,original);
+  const deadline=performance.now()+40000;
   for(let n=0;n<160;n++){
-   await new Promise(resolve=>setTimeout(resolve,250));
-   const next=await request('operations/'+result.operation_id);
+   await new Promise(resolve=>setTimeout(resolve,Math.min(250,Math.max(0,deadline-performance.now()))));
+   const remaining=deadline-performance.now();if(remaining<=0)break;
+   const controller=new AbortController();let expired=false,next;
+   const timer=setTimeout(()=>{expired=true;controller.abort();},remaining);
+   try{
+    next=await request('operations/'+result.operation_id,undefined,false,controller.signal);
+    if(performance.now()>=deadline)break;
+   }catch(error){
+    if(expired&&controller.signal.aborted&&error.name==='AbortError')break;
+    // Admission already succeeded. Resume this read without replaying the
+    // mutation, and retain the original deadline across network changes.
+    if(!transportErrors.has(error))throw error;
+    if(performance.now()>=deadline)break;
+    continue;
+   }finally{clearTimeout(timer);}
+   if(!next||typeof next!=='object'||next.operation_id!==result.operation_id||('status' in next&&next.status!==next.stage))throw Error('Amity could not confirm the change. Check its status before trying again.');
    if(['failed','rejected','cancelled'].includes(next.stage))throw Error(customerText(next.message||'The operation could not complete.'));
-   if(!['admitted','preparing','executing','configuring','activating','stopping'].includes(next.stage)){if(next.warning)message(next.warning,true);return response(next,original);}
+   if(['complete','applied'].includes(next.stage)){if(next.warning)message(next.warning,true);return response(next,original);}
+   if(!['admitted','preparing','executing','configuring','activating','stopping'].includes(next.stage))throw Error('Amity could not confirm the change. Check its status before trying again.');
   }
   throw Error('Amity is still applying the change. Check its status before trying again.');
  }
  async function saved(original,submitted){const completed=await wait(original),result=await completed.clone().json();if(result.stage==='applied'||result.saved===true)originalSelections=selections(submitted);return completed;}
  function route(path,data){
   if(path==='config'&&data===undefined)return {path:'activity-editor',decode:async original=>{
-   const document=await original.json();
+   const document=await readResponseJSON(original);
    if(document.version!==1||!Array.isArray(document.device_choices))throw Error('Amity returned an invalid activity document. Reload before continuing.');
    enabled=true;return response(project(document),original);
   }};
   if(!enabled)return {path,data};
   if(path==='config'){const submitted=submit(typeof data==='string'?JSON.parse(data):data);return {path:'activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
   if(path==='status')return {path:'activity-editor/status',decode:async original=>{
-   const value=await original.json();
+   const value=await readResponseJSON(original);
    updateChoices(value);
    value.state_revision=value.expected_state_revision;value.boot_id=value.expected_boot_id;
    value.devices=(value.devices||[]).map(d=>{const c=choices.find(c=>c.value===d.name),title=d.title||c?.title||d.name,location=d.location||c?.location||'';return {...d,title,location,name:c?attachment(c):[title,location].filter(Boolean).join(' · ')};});
