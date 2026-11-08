@@ -6,6 +6,7 @@ replace requests, or read application JavaScript variables.
 """
 
 import base64
+from collections import deque
 import json
 import math
 import re
@@ -23,6 +24,8 @@ _POLL_ROUTES = frozenset(("/api/activity-editor/status", "/api/remotes", "/api/m
                           "/api/homekit", "/api/system", "/api/config", "/api/updates/cohort"))
 _NETWORK_RECOVERY_SECONDS = 30
 _MAX_NETWORK_REQUESTS = 128
+# A recovery can contain 120 operation receipt polls plus status/failure events.
+_MAX_NETWORK_OBSERVATIONS = 256
 _OPERATION_PENDING_STAGES = frozenset(("admitted", "preparing", "executing", "configuring",
                                        "activating", "stopping"))
 _OPERATION_SUCCESS_STAGES = frozenset(("complete", "applied"))
@@ -94,6 +97,9 @@ class SoakBrowser:
         self._cdp = None
         self._original_boot = None
         self._network_requests = {}
+        self._network_observations = deque()
+        self._draining_network = False
+        self._network_body_read = None
         self._network_recovery = None
         self._network_recovery_error = None
         self._closing = False
@@ -162,15 +168,64 @@ class SoakBrowser:
             failures.append(evidence)
         event("soak.browser.request_failed", dut=self.main.name, **evidence)
 
-    def _network_fault(self, reason):
+    def _network_fault(self, reason, *, observed=None):
         if self._closing or self._network_recovery_error is not None:
             return
+        timing = None
+        pending = self._network_recovery
+        if reason == "recovery_timeout" and pending is not None:
+            timing = {"after": pending["after"], "deadline": pending["deadline"],
+                      "interrupted_at": pending["deadline"] - _NETWORK_RECOVERY_SECONDS}
+            if _network_time(observed):
+                timing["observed_browser_timestamp"] = observed
+            completions = []
+            for kind, record, ended, _ in self._network_observations:
+                operation = pending.get("operations", {}).get(record.get("operation_id"))
+                cutoff = operation["after"] if operation is not None else pending["after"]
+                if (kind == "complete" and record.get("status") == 200
+                        and (operation is not None or record.get("route") == "/api/activity-editor/status")
+                        and _network_time(record.get("started")) and _network_time(ended)
+                        and cutoff < record["started"] <= ended <= pending["deadline"]):
+                    completions.append((record["started"], ended))
+            timing["queued_qualifying_completions"] = len(completions)
+            if completions:
+                timing["earliest_queued_start"] = min(started for started, _ in completions)
+                timing["latest_queued_end"] = max(ended for _, ended in completions)
+            timing["body_reads_in_progress"] = int(self._network_body_read is not None)
+            if self._network_body_read is not None:
+                started, ended = self._network_body_read
+                if _network_time(started) and _network_time(ended):
+                    timing.update(body_started=started, body_completed=ended)
+            self.report["network_recovery_timing"] = timing
         self._network_recovery_error = reason
         self._network_recovery = None
         self.report["network_recovery_failure"] = reason
         if len(self._failures) < 16:
             self._failures.append({"kind": "network_recovery", "reason": reason})
-        event("soak.browser.recovery_failed", dut=self.main.name, reason=reason)
+        event("soak.browser.recovery_failed", dut=self.main.name, reason=reason,
+              **({"timing": timing} if timing is not None else {}))
+
+    def _queue_network_observation(self, kind, record, ended, identifier):
+        if self._closing or self._network_recovery_error is not None:
+            return
+        if len(self._network_observations) >= _MAX_NETWORK_OBSERVATIONS:
+            self._network_fault("observation_overflow")
+            return
+        self._network_observations.append((kind, record, ended, identifier))
+
+    def _drain_network_observations(self):
+        if self._draining_network:
+            return
+        self._draining_network = True
+        try:
+            while self._network_observations and not self._failures:
+                kind, record, ended, identifier = self._network_observations.popleft()
+                if kind == "failed":
+                    self._observe_network_failure(record, ended)
+                else:
+                    self._observe_network_completion(record, ended, identifier)
+        finally:
+            self._draining_network = False
 
     def _network_started(self, parameters):
         """Keep only bounded CDP metadata; browser clocks survive Python work."""
@@ -244,9 +299,12 @@ class SoakBrowser:
         if not recoverable:
             return
         self.report["network_interruptions"] += 1
+        self._queue_network_observation("failed", record, parameters.get("timestamp"), None)
+
+    def _observe_network_failure(self, record, ended):
         if self._network_recovery_error is not None:
             return
-        started, ended = record.get("started"), parameters.get("timestamp")
+        started = record.get("started")
         if not _network_time(started) or not _network_time(ended) or ended < started:
             self._network_fault("invalid_timing")
         elif self._original_boot is None:
@@ -254,7 +312,7 @@ class SoakBrowser:
         elif self._network_recovery is None:
             self._network_recovery = {"after": ended, "deadline": ended + _NETWORK_RECOVERY_SECONDS}
         elif ended > self._network_recovery["deadline"]:
-            self._network_fault("recovery_timeout")
+            self._network_fault("recovery_timeout", observed=ended)
         else:
             self._network_recovery["after"] = max(self._network_recovery["after"], ended)
         pending = self._network_recovery
@@ -289,34 +347,101 @@ class SoakBrowser:
 
     def _network_finished(self, parameters):
         record = self._network_requests.pop(parameters.get("requestId"), {})
-        pending = self._network_recovery
-        if (self._closing or pending is None or record.get("method") != "GET"
+        if (self._closing or record.get("method") != "GET"
                 or record.get("resource_type") != "fetch" or not record.get("same_origin")):
             return
+        status_reply = record.get("route") == "/api/activity-editor/status"
+        operation_id = record.get("operation_id")
+        if not status_reply:
+            pending_operations = (self._network_recovery or {}).get("operations", {})
+            interrupted = operation_id is not None and (operation_id in pending_operations or any(
+                kind == "failed" and failed.get("operation_id") == operation_id
+                for kind, failed, _, _ in self._network_observations))
+            if not interrupted:
+                return
+        if self._network_recovery is None and not any(kind == "failed" for kind, _, _, _ in self._network_observations):
+            # Healthy receipt polling is not recovery evidence. Retain only the
+            # latest status needed for conflict diagnostics during long actions.
+            self._network_observations.clear()
+        # Event fibers must not perform synchronous Playwright calls. A cached
+        # body read yields that fiber, allowing a later deadline event to win
+        # before a timely completion's proof resumes. Drain on the caller fiber.
+        self._queue_network_observation("complete", record, parameters.get("timestamp"), parameters.get("requestId"))
+
+    def _observe_preceding_failures(self, completed_at):
+        if not _network_time(completed_at):
+            return
+        pending = self._network_recovery
+        if pending is not None:
+            proof_times = [pending.get("health", {}).get("ended"),
+                           *(operation["completed"] for operation in pending.get("operations", {}).values())]
+            completed_at = max([completed_at, *(value for value in proof_times if _network_time(value))])
+        preceding, remaining = [], deque()
+        for observation in self._network_observations:
+            kind, record, ended, _ = observation
+            if kind == "failed" and (not _network_time(ended) or ended <= completed_at):
+                preceding.append((record, ended))
+            else:
+                remaining.append(observation)
+        self._network_observations.clear()
+        self._network_observations.extend(remaining)
+        for record, ended in preceding:
+            self._observe_network_failure(record, ended)
+
+    def _completion_recovery_scope(self, record, ended):
+        pending = self._network_recovery
+        status_reply = record.get("route") == "/api/activity-editor/status"
+        if pending is None:
+            return None
         operation_id = record.get("operation_id")
         operation = pending.get("operations", {}).get(operation_id)
-        status_reply = record.get("route") == "/api/activity-editor/status"
         if operation is None and not status_reply:
             return
         if record.get("status") != 200:
             if operation is not None:
                 self._network_fault("invalid_operation")
             return
-        started, ended = record.get("started"), parameters.get("timestamp")
+        started = record.get("started")
         if not _network_time(started) or not _network_time(ended) or ended < started:
             self._network_fault("invalid_timing")
             return
         if started <= (operation["after"] if operation is not None else pending["after"]):
             return
         if ended > pending["deadline"]:
-            self._network_fault("recovery_timeout")
+            self._network_fault("recovery_timeout", observed=ended)
+            return
+        return pending, operation
+
+    def _observe_network_completion(self, record, ended, identifier):
+        self._observe_preceding_failures(ended)
+        scope = self._completion_recovery_scope(record, ended)
+        status_reply = record.get("route") == "/api/activity-editor/status"
+        if self._failures or (scope is None and (self._network_recovery is not None
+                                                or not status_reply or record.get("status") != 200)):
+            return
+        valid_body = True
+        try:
+            document = self._cached_network_document(record, ended, identifier)
+        except Exception:
+            valid_body = False
+            document = None
+        # Body IPC can pump an older failure notification. Apply failures that
+        # ended before this completion before judging whether its GET is fresh.
+        # A genuinely later failure remains queued for the next recovery window.
+        self._observe_preceding_failures(ended)
+        scope = self._completion_recovery_scope(record, ended)
+        if status_reply:
+            self._last_status_fences = (_activity_fences(document, status=True) if valid_body
+                                        else {"invalid_fields": ["document"]})
+        if scope is None or self._failures:
+            return
+        pending, operation = scope
+        operation_id = record.get("operation_id")
+        started = record["started"]
+        if not valid_body:
+            self._network_fault("invalid_operation" if operation is not None else "invalid_status")
             return
         try:
-            response = self._cdp.send("Network.getResponseBody", {"requestId": parameters["requestId"]})
-            body = response["body"]
-            if response.get("base64Encoded"):
-                body = base64.b64decode(body, validate=True).decode("utf-8")
-            document = json.loads(body)
             if operation is not None:
                 if (not isinstance(document, dict) or document.get("operation_id") != operation_id
                         or document.get("stage") not in _OPERATION_PENDING_STAGES | _OPERATION_SUCCESS_STAGES
@@ -338,6 +463,7 @@ class SoakBrowser:
                     return
             else:
                 fences = _activity_fences(document, status=True)
+                self._last_status_fences = fences
                 required = {"expected_config_revision", "expected_state_revision", "expected_boot_id",
                             "current_activity", "activity_settling"}
                 if set(fences) != required or document.get("ready") is not True:
@@ -364,11 +490,23 @@ class SoakBrowser:
             pending["health"] = {"started": started, "ended": ended}
         self._complete_network_recovery(pending)
 
+    def _cached_network_document(self, record, ended, identifier):
+        self._network_body_read = (record.get("started"), ended)
+        try:
+            response = self._cdp.send("Network.getResponseBody", {"requestId": identifier})
+        finally:
+            self._network_body_read = None
+        body = response["body"]
+        if response.get("base64Encoded"):
+            body = base64.b64decode(body, validate=True).decode("utf-8")
+        return json.loads(body)
+
     def _await_network_recovery(self):
         safety_deadline = time.monotonic() + _NETWORK_RECOVERY_SECONDS
         while self._network_recovery is not None and not self._failures:
             try:
                 response = self._cdp.send("Performance.getMetrics")
+                self._drain_network_observations()
                 if self._network_recovery is None or self._failures:
                     break
                 metrics = response["metrics"]
@@ -380,7 +518,7 @@ class SoakBrowser:
                 break
             remaining = self._network_recovery["deadline"] - now
             if remaining <= 0 or time.monotonic() >= safety_deadline:
-                self._network_fault("recovery_timeout")
+                self._network_fault("recovery_timeout", observed=now)
                 break
             self.page.wait_for_timeout(min(100, remaining * 1000))
 
@@ -403,20 +541,6 @@ class SoakBrowser:
                 if self._last_status_fences is not None:
                     evidence["latest_status"] = dict(self._last_status_fences)
                 self.report["last_failed_activity_request"] = evidence
-
-    def _request_finished(self, request):
-        """Remember only naturally completed status replies, without waiting."""
-        if (self._closing or request.method != "GET"
-                or urlsplit(request.url).path != "/api/activity-editor/status"):
-            return
-        try:
-            response = request.response()
-            if response is not None and response.status == 200:
-                self._last_status_fences = _activity_fences(response.json(), status=True)
-        except Exception:
-            # Diagnostic extraction cannot replace the browser's actual result.
-            # No exception text or response body is retained.
-            self._last_status_fences = {"invalid_fields": ["document"]}
 
     def __enter__(self):
         credentials = self.main._runtime.credentials_for(self.main.name)
@@ -442,7 +566,6 @@ class SoakBrowser:
             self.page.set_default_timeout(self.main._runtime.timeout * 1000)
             self.page.on("pageerror", lambda error: self._record_failure("page_errors"))
             self.page.on("response", self._response)
-            self.page.on("requestfinished", self._request_finished)
             self._cdp = self._context.new_cdp_session(self.page)
             self._cdp.on("Network.requestWillBeSent", self._network_started)
             self._cdp.on("Network.responseReceived", self._network_response)
@@ -478,6 +601,7 @@ class SoakBrowser:
         # the browser clock or starting a potentially long DOM assertion.
         if self._cdp is not None and self.page is not None and not self._failures and not self.page.is_closed():
             self.page.wait_for_timeout(0)
+        self._drain_network_observations()
         if self._network_recovery is not None and not self._failures and self.page is not None:
             self._await_network_recovery()
         if self._failures:
@@ -577,6 +701,7 @@ class SoakBrowser:
             self.page = self._context = self._browser = self._playwright = None
             self._cdp = None
             self._network_requests.clear()
+            self._network_observations.clear()
 
     def __exit__(self, exc_type, exc, traceback):
         try:

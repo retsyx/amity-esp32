@@ -328,6 +328,69 @@ class SoakBrowserIntegrationTests(unittest.TestCase):
                 helper.assert_active(fixture.saved_activities[0])
             self.assert_resources_closed(fixture)
 
+    def test_completed_browser_recovery_survives_python_blocked_past_original_deadline(self):
+        class ObservedBrowser(SoakBrowser):
+            def __init__(self, *args):
+                super().__init__(*args)
+                self.status_completions = []
+                self.body_reads = 0
+                self.timeout_body_reads = None
+
+            def _network_fault(self, reason, **timing):
+                if reason == "recovery_timeout":
+                    self.timeout_body_reads = self.body_reads
+                super()._network_fault(reason, **timing)
+
+            def _network_finished(self, parameters):
+                record = self._network_requests.get(parameters.get("requestId"), {})
+                if (record.get("route") == "/api/activity-editor/status"
+                        and record.get("method") == "GET" and record.get("status") == 200):
+                    self.status_completions.append((record.get("started"), parameters.get("timestamp")))
+                super()._network_finished(parameters)
+
+        with local_interface() as fixture:
+            helper = fixture.browser_fixture = ObservedBrowser(fixture.main, fixture.saved_activities)
+            with helper:
+                metrics = helper._cdp.send("Performance.getMetrics")["metrics"]
+                failed_at = next(metric["value"] for metric in metrics if metric["name"] == "Timestamp")
+                send = helper._cdp.send
+
+                def observed_send(method, parameters=None):
+                    if method != "Network.getResponseBody":
+                        return send(method, parameters)
+                    helper.body_reads += 1
+                    try:
+                        return send(method, parameters)
+                    finally:
+                        helper.body_reads -= 1
+
+                helper._cdp.send = observed_send
+                # Chromium cannot synthesize ERR_NETWORK_CHANGED via route.abort.
+                # Model that one observer event against the loopback origin;
+                # all subsequent proof requests are the shipping UI's natural
+                # authenticated polls, with untouched responses and no actions.
+                helper._network_started({"requestId": "loopback-interruption", "timestamp": failed_at - 0.01,
+                                         "type": "Fetch", "request": {"method": "GET",
+                                         "url": fixture.main.url + "/api/remotes"}})
+                helper._network_failed({"requestId": "loopback-interruption", "timestamp": failed_at,
+                                        "errorText": "net::ERR_NETWORK_CHANGED"})
+                posts = deepcopy(fixture.activity_posts)
+                # Python native protocol work in a soak does not pump any
+                # Playwright fibers. Browser timers and loopback HTTP continue.
+                time.sleep(33)
+                try:
+                    helper.assert_healthy()
+                finally:
+                    timely = [(started, ended) for started, ended in helper.status_completions
+                              if started > failed_at and ended <= failed_at + 30]
+                    self.assertTrue(timely, "Chromium completed no timely natural status proof")
+                    self.assertEqual(fixture.activity_posts, posts)
+                    self.assertNotIn("network_recovery_failure", helper.report,
+                                     f"timely status proofs={len(timely)}; body lookups suspended at timeout={helper.timeout_body_reads}")
+                self.assertEqual(helper.report["network_recoveries"], 1)
+                self.assertNotIn("network_recovery_failure", helper.report)
+            self.assert_resources_closed(fixture)
+
     def test_other_real_get_failure_stays_fatal_after_background_ui_recovers(self):
         from playwright.sync_api import expect
 
