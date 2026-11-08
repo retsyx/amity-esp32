@@ -41,9 +41,9 @@ template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++)
 // real SnapshotTransfer a deterministic digest and still checks its binding.
 std::string sha256(std::string_view){return std::string(64,'a');}
 struct Queued{Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
-std::vector<std::string> diagnostic_logs;
+std::vector<std::string> diagnostic_logs,key_transfer_logs;
 template<class... Args>void capture_log(const char* level,const char* tag,const char* format,Args... args){
- const int length=snprintf(nullptr,0,format,args...);assert(length>=0);std::vector<char> text(static_cast<size_t>(length)+1);snprintf(text.data(),text.size(),format,args...);assert(length<384);if(std::string(format).find("Link scope")==0)return;diagnostic_logs.push_back(std::string(level)+":"+tag+" "+text.data());
+ const int length=snprintf(nullptr,0,format,args...);assert(length>=0);std::vector<char> text(static_cast<size_t>(length)+1);snprintf(text.data(),text.size(),format,args...);assert(length<384);if(std::string(format).find("Link scope")==0)return;if(std::string(text.data()).find("Key release")==0||std::string(text.data()).find("Key transfer")==0){key_transfer_logs.emplace_back(text.data());return;}diagnostic_logs.push_back(std::string(level)+":"+tag+" "+text.data());
 }
 template<class... Args>void ESP_LOGW(const char* tag,const char* format,Args... args){capture_log("W",tag,format,args...);}
 template<class... Args>void ESP_LOGI(const char* tag,const char* format,Args... args){capture_log("I",tag,format,args...);}
@@ -107,7 +107,7 @@ std::shared_ptr<Active> start(bool server,uint32_t caps=known_capabilities){
  a->peer=scope.peer_id;a->tls->authenticated=a->peer;a->status.id=a->peer;a->status.boot_id=scope.peer_boot_id;a->status.config_revision=7;a->status.ready=true;a->status.negotiated_capabilities=caps;
  HelloFrame h;h.consortium_id=scope.consortium_id;h.octopus_id=scope.peer_id;h.boot_id=scope.peer_boot_id;h.coordinator_epoch=1;h.config_revision=7;h.required_capabilities=caps;
  assert(a->session.authenticate(scope,scope.peer_id,server?PeerRole::actuator:PeerRole::coordinator,true)==Error::none&&a->session.hello(h,known_capabilities)==Error::none&&a->session.synchronized(7,true,true)==Error::none);
- clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();
+ clock_ms=100;controls={};updates={};restart_fences.clear();controls.restart_session=[](auto owner,auto peer_boot,auto old_link){restart_fences.emplace_back(owner,peer_boot,old_link);return true;};network={};network.get_hostname=[server]{return server?"amity-main":"amity-member";};configuration=7;configuration_hash=std::string(64,'a');status={};status.authority_ready=server;identity.id=scope.local_id;group={};group.consortium=scope.consortium_id;group.role=server?Group::coordinator:Group::member;group.authority=coordinator;group.epoch=1;links={a};on_send={};shutdowns=0;diagnostic_logs.clear();key_transfer_logs.clear();
  return a;
 }
 std::string controller_slice(const LinkScope& scope,uint64_t revision){return "{\"controller\":\""+scope.coordinator_id.str()+"\",\"config_revision\":\""+std::to_string(revision)+"\"}";}

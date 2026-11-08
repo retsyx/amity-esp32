@@ -112,7 +112,8 @@ struct Active {
     TcpAckTrace release_ack;
     model::OctopusId release_ack_owner;
     uint64_t release_ack_generation=0;
-    uint8_t release_ack_key=0;
+    uint8_t release_ack_key=0,release_ack_edges=0;
+    bool release_ack_down=false;
     std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false},context_requested{false},refreshing{false};
     std::atomic_bool execution_fenced{false};
     std::atomic_bool restart_requested{false};
@@ -858,8 +859,10 @@ TcpAckSample sample_tcp_ack(int socket){
 }
 void emit_release_ack(const Active& active,const char* state){
     const auto& trace=active.release_ack;
-    ESP_LOGI("consortium","Key release stage=ack owner=%s key=%u generation=%llu status=%s elapsed_ms=%llu pending_bytes=%u max_nrtx=%u initial_rto_ms=%u poll_gap_ms=%llu busy=%u",
-        active.release_ack_owner.str().c_str(),static_cast<unsigned>(active.release_ack_key),static_cast<unsigned long long>(active.release_ack_generation),state,
+    const bool release=active.release_ack_edges==1&&!active.release_ack_down;
+    const char* phase=active.release_ack_edges==2?"tap":active.release_ack_down?"down":"up";
+    ESP_LOGI("consortium","%s stage=ack owner=%s key=%u generation=%llu phase=%s edge_count=%u status=%s elapsed_ms=%llu pending_bytes=%u max_nrtx=%u initial_rto_ms=%u poll_gap_ms=%llu busy=%u",
+        release?"Key release":"Key transfer",active.release_ack_owner.str().c_str(),static_cast<unsigned>(active.release_ack_key),static_cast<unsigned long long>(active.release_ack_generation),phase,static_cast<unsigned>(active.release_ack_edges),state,
         static_cast<unsigned long long>(trace.elapsed_ms),trace.pending_bytes,static_cast<unsigned>(trace.max_nrtx),trace.initial_rto_ms,static_cast<unsigned long long>(trace.poll_gap_ms),trace.busy_samples);
 }
 void poll_release_ack(Active& active){
@@ -868,12 +871,13 @@ void poll_release_ack(Active& active){
     if(const auto* state=active.release_ack.observe(sample,now_ms()))emit_release_ack(active,state);
 }
 void begin_release_ack(Active& active,const model::OwnedIntent& intent,uint64_t written_at){
-    // A second release replaces diagnostic metadata only, never transport work.
+    // A second key message replaces metadata only, never transport work.
     if(active.release_ack.pending){
         poll_release_ack(active);
         if(active.release_ack.pending)emit_release_ack(active,"replaced");
     }
     active.release_ack_owner=intent.target.port.octopus_id;active.release_ack_key=intent.edges[0].key;active.release_ack_generation=intent.generation;
+    active.release_ack_edges=intent.edge_count;active.release_ack_down=intent.edges[0].down;
     const auto sample=sample_tcp_ack(active.tls->socket);
     if(const auto* state=active.release_ack.begin(sample,written_at,now_ms()))emit_release_ack(active,state);
 }
@@ -1009,14 +1013,15 @@ void active_loop_work(void *arg){
             if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
         if(have&&!queued_expired(queued,now)){
             const auto ttl=queued_firmware_stream(queued)?queued.ttl:queued.ttl-static_cast<uint32_t>(now-queued.created);
-            const bool release=queued.owned&&pure_key_release(*queued.owned);
-            const auto write_started=release?now_ms():0;
+            const bool key=queued.owned&&queued.owned->kind==model::OwnedIntentKind::key_edges&&queued.owned->edge_count>=1&&queued.owned->edge_count<=2;
+            const auto write_started=key?now_ms():0;
             const bool sent=send(*active,queued.kind,payload,ttl);
-            if(release){
+            if(key){
                 const auto completed=now_ms();const auto& intent=*queued.owned;
                 if(sent)begin_release_ack(*active,intent,completed);
-                ESP_LOGI("consortium","Key release stage=write owner=%s key=%u generation=%llu age_ms=%llu elapsed_ms=%llu sent=%d",
-                    intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),
+                const char* phase=intent.edge_count==2?"tap":intent.edges[0].down?"down":"up";
+                ESP_LOGI("consortium","%s stage=write owner=%s key=%u generation=%llu phase=%s edge_count=%u age_ms=%llu elapsed_ms=%llu sent=%d",
+                    pure_key_release(intent)?"Key release":"Key transfer",intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),phase,static_cast<unsigned>(intent.edge_count),
                     static_cast<unsigned long long>(write_started>=queued.created?write_started-queued.created:0),static_cast<unsigned long long>(completed>=write_started?completed-write_started:0),sent);
             }
             if(!sent){trace.queued(queued);trace.fail("queued_send");break;}
@@ -1853,7 +1858,8 @@ void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     }
 }
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
-    const bool release=pure_key_release(intent);const auto admission_started=release?now_ms():0;
+    const bool key_trace=intent.kind==model::OwnedIntentKind::key_edges&&intent.edge_count>=1&&intent.edge_count<=2;
+    const auto admission_started=key_trace?now_ms():0;
     // Return through this scope before logging, including every rejection, so
     // neither the runtime nor link queue mutex is held by the diagnostic.
     const auto admitted=[&]() -> esp_err_t {
@@ -1893,10 +1899,11 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
     if(result!=ESP_OK&&intent.kind==model::OwnedIntentKind::context)runtime_fence_owned_link(intent.target.port.octopus_id,link);
     return result;
     }();
-    if(release){
+    if(key_trace){
         const auto completed=now_ms();
-        ESP_LOGI("consortium","Key release stage=admit owner=%s key=%u generation=%llu elapsed_ms=%llu result=%d",
-            intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),
+        const char* phase=intent.edge_count==2?"tap":intent.edges[0].down?"down":"up";
+        ESP_LOGI("consortium","%s stage=admit owner=%s key=%u generation=%llu phase=%s edge_count=%u elapsed_ms=%llu result=%d",
+            pure_key_release(intent)?"Key release":"Key transfer",intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),static_cast<unsigned long long>(intent.generation),phase,static_cast<unsigned>(intent.edge_count),
             static_cast<unsigned long long>(completed>=admission_started?completed-admission_started:0),admitted);
     }
     return admitted;

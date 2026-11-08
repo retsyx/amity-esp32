@@ -53,7 +53,7 @@ struct Tls {int socket=1;};
 struct Active {
  std::shared_ptr<Tls> tls=std::make_shared<Tls>();
  TcpAckTrace release_ack;model::OctopusId release_ack_owner;
- uint64_t release_ack_generation=0;uint8_t release_ack_key=0;
+ uint64_t release_ack_generation=0;uint8_t release_ack_key=0,release_ack_edges=0;bool release_ack_down=false;
 };
 std::vector<std::string> logs;
 template<class... Args>void ESP_LOGI(const char*,const char* format,Args... args){
@@ -124,13 +124,13 @@ void missing_busy_replaced_and_ended_observations(){
  assert(active.release_ack.pending&&logs.empty()&&active.release_ack.busy_samples==2);
  core_busy=false;pcb.lastack=1000;clock_ms=160;poll_release_ack(active);
  assert(status("acked")&&active.release_ack.poll_gap_ms==60&&active.release_ack.busy_samples==2);
- logs.clear();pcb.lastack=500;begin_release_ack(active,release(),160);clock_ms=180;
- auto next=release();next.edges[0].key=4;next.generation=8;pcb.snd_lbb=1200;
+ logs.clear();pcb.lastack=500;auto down=release();down.edges[0].down=true;begin_release_ack(active,down,160);clock_ms=180;
+ auto next=release();next.edges[0]={4,true};next.edges[1]={4,false};next.edge_count=2;next.generation=8;pcb.snd_lbb=1200;
  begin_release_ack(active,next,180);
- assert(logs.size()==1&&status("replaced")&&logs[0].find("key=66 generation=7")!=std::string::npos);
- assert(active.release_ack.pending&&active.release_ack.target==1200&&active.release_ack_key==4&&active.release_ack_generation==8);
+ assert(logs.size()==1&&status("replaced")&&logs[0].find("key=66 generation=7 phase=down edge_count=1")!=std::string::npos);
+ assert(active.release_ack.pending&&active.release_ack.target==1200&&active.release_ack_key==4&&active.release_ack_generation==8&&active.release_ack_edges==2);
  clock_ms=200;finish_release_ack(active);
- assert(logs.size()==2&&status("session_ended")&&!active.release_ack.pending);
+ assert(logs.size()==2&&status("session_ended")&&!active.release_ack.pending&&logs.back().find("key=4 generation=8 phase=tap edge_count=2")!=std::string::npos);
  logs.clear();begin_release_ack(active,next,200);conn.pcb.tcp=nullptr;clock_ms=220;poll_release_ack(active);
  assert(status("closed")&&!active.release_ack.pending); // Concurrent shutdown under core lock.
 }
@@ -141,12 +141,31 @@ void observation_expiry_and_maximum_log_width(){
  logs.clear();clock_ms=200;begin_release_ack(active,release(),200);clock_ms=199;poll_release_ack(active);
  assert(status("clock_reversed")&&!active.release_ack.pending);
  active.release_ack_generation=UINT64_MAX;active.release_ack_key=UINT8_MAX;
+ active.release_ack_edges=UINT8_MAX;active.release_ack_down=true;
  auto& trace=active.release_ack;trace.elapsed_ms=trace.poll_gap_ms=UINT64_MAX;
  trace.pending_bytes=trace.initial_rto_ms=trace.busy_samples=UINT32_MAX;trace.max_nrtx=UINT8_MAX;
  emit_release_ack(active,"session_ended");assert(logs.back().size()<384);
 }
+void every_user_key_edge_shape(){
+ for(unsigned shape=0;shape<3;++shape){
+  reset();Active active;tcp_pcb pcb{1000,500,3,0};netconn conn;conn.pcb.tcp=&pcb;sockets[1].conn=&conn;
+  auto intent=release();intent.edges[0].down=shape!=1;
+  if(shape==2){intent.edge_count=2;intent.edges[1]={intent.edges[0].key,false};}
+  const auto edge_count=intent.edge_count;const auto down=intent.edges[0].down;
+  begin_release_ack(active,intent,100);
+  assert(active.release_ack.pending&&active.release_ack_edges==edge_count&&active.release_ack_down==down&&logs.empty());
+  pcb.lastack=1000;clock_ms=120;poll_release_ack(active);
+  const std::string phase=shape==0?"down":shape==1?"up":"tap";
+  assert(logs.size()==1&&status("acked"));
+  assert(logs[0].find(shape==1?"Key release stage=ack":"Key transfer stage=ack")==0);
+  assert(logs[0].find("phase="+phase+" edge_count="+std::to_string(edge_count))!=std::string::npos);
+  assert(intent.edge_count==edge_count&&intent.edges[0].down==down&&intent.edges[0].key==66&&intent.generation==7);
+  for(unsigned poll=0;poll<16;++poll){clock_ms+=20;poll_release_ack(active);}
+  assert(logs.size()==1); // No periodic key log or extra observation.
+ }
 }
-int main(){using namespace amity::consortium;snapshots_are_bounded_and_read_only();delayed_ack_and_later_writes();wrapped_sequences_and_slow_sampler();missing_busy_replaced_and_ended_observations();observation_expiry_and_maximum_log_width();std::cout<<"PASS passive TCP ACK diagnosis: zero-wait core lock, read-only snapshots, fixed release boundary/wrap, observed retransmit/gaps, busy/missing/replacement/session/10s diagnostic completion and bounded logs\n";}
+}
+int main(){using namespace amity::consortium;snapshots_are_bounded_and_read_only();delayed_ack_and_later_writes();wrapped_sequences_and_slow_sampler();missing_busy_replaced_and_ended_observations();observation_expiry_and_maximum_log_width();every_user_key_edge_shape();std::cout<<"PASS passive TCP ACK diagnosis: zero-wait core lock, read-only snapshots, fixed key boundary/wrap, down/up/tap phases, observed retransmit/gaps, busy/missing/replacement/session/10s diagnostic completion and bounded logs\n";}
 '''
 
 

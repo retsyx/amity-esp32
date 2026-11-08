@@ -68,7 +68,7 @@ struct HubService::Impl : Transport {
         bool activity_started=false,input_started=false,owned_waiting=false,owned_input_announced=false,configuration_applied=false,configuration_reservation=false,activity_reservation=false,selection_reservation=false,setup_blocked=false,selection_bound=false,selection_sent=false;
         system::AdmissionResult owned_result;
         uint32_t key_generation=0,release_generation=0,activity_generation=0,intent_generation=0,activity_receipt=0,expected_selection=0,activity_instance=0;
-        int64_t release_admitted_us=0;
+        int64_t input_admitted_us=0;
         uint8_t discovery_sides=0,lookup_adapter=0,edge_cursor=0;
         cec::Frame received_frame;BusSide received_side=BusSide::Back;uint8_t received_adapter=0;
         Hub::ReceiveStep received_step=Hub::ReceiveStep::Frame;
@@ -307,8 +307,8 @@ struct HubService::Impl : Transport {
             command->activity_reservation=true;++owner_activity_commands;
         }
         if(activity_request(*command)&&command->activity_receipt){command->selection_reservation=true;++activity_requests;}
-        if(command->kind==Kind::Release&&command->value>=0&&!command->selection_bound)
-            command->release_admitted_us=esp_timer_get_time();
+        if(command->kind==Kind::Key||(command->kind==Kind::Release&&command->value>=0&&!command->selection_bound))
+            command->input_admitted_us=esp_timer_get_time();
         command = owned.release();
         if (xQueueSend(commands, &command, 0) != pdTRUE) std::abort();
         unlock();
@@ -897,14 +897,19 @@ struct HubService::Impl : Transport {
             else if(xSemaphoreTake(command_slots,0)==pdTRUE){command->auth.deadline_ms=0;deferred.push_back(std::move(command));admitted=true;}
         }else{
             const bool release=intent.edge_count==1&&!first.down;
-            const auto started=release?esp_timer_get_time():0;
+            const auto started=esp_timer_get_time();
             admitted=owned_sender&&owned_sender(intent);
+            const auto elapsed=static_cast<long long>(esp_timer_get_time()-started);
             if(release){
-                const auto elapsed=static_cast<long long>(esp_timer_get_time()-started);
                 if(elapsed>100000)
                     ESP_LOGW(TAG,"Key release stage=owner_send key=%u owner=%s generation=%llu elapsed_us=%lld admitted=%d",static_cast<unsigned>(first.key),owner.str().c_str(),static_cast<unsigned long long>(intent.generation),elapsed,admitted);
                 else
                     ESP_LOGI(TAG,"Key release stage=owner_send key=%u owner=%s generation=%llu elapsed_us=%lld admitted=%d",static_cast<unsigned>(first.key),owner.str().c_str(),static_cast<unsigned long long>(intent.generation),elapsed,admitted);
+            }else{
+                if(elapsed>100000)
+                    ESP_LOGW(TAG,"Key transfer stage=owner_send key=%u owner=%s generation=%llu phase=%s edge_count=%u elapsed_us=%lld admitted=%d",static_cast<unsigned>(first.key),owner.str().c_str(),static_cast<unsigned long long>(intent.generation),intent.edge_count==2?"tap":"down",static_cast<unsigned>(intent.edge_count),elapsed,admitted);
+                else
+                    ESP_LOGI(TAG,"Key transfer stage=owner_send key=%u owner=%s generation=%llu phase=%s edge_count=%u elapsed_us=%lld admitted=%d",static_cast<unsigned>(first.key),owner.str().c_str(),static_cast<unsigned long long>(intent.generation),intent.edge_count==2?"tap":"down",static_cast<unsigned>(intent.edge_count),elapsed,admitted);
             }
         }
         if(admitted)pressed_owner[first.key]=intent.edges[intent.edge_count-1].down?slot:0xff;
@@ -1564,12 +1569,19 @@ struct HubService::Impl : Transport {
             Command* command=nullptr;
             p.refresh_activity_setup();
             if(xQueueReceive(p.commands,&command,pending?1:pdMS_TO_TICKS(10))==pdTRUE){
-                if(command->release_admitted_us){
-                    const auto elapsed=static_cast<long long>(esp_timer_get_time()-command->release_admitted_us);
-                    if(elapsed>100000)
-                        ESP_LOGW(TAG,"Key release stage=dequeue key=%u generation=%u elapsed_us=%lld",static_cast<unsigned>(command->value),static_cast<unsigned>(p.control_hub().activity_generation()),elapsed);
-                    else
-                        ESP_LOGI(TAG,"Key release stage=dequeue key=%u generation=%u elapsed_us=%lld",static_cast<unsigned>(command->value),static_cast<unsigned>(p.control_hub().activity_generation()),elapsed);
+                if(command->input_admitted_us){
+                    const auto elapsed=static_cast<long long>(esp_timer_get_time()-command->input_admitted_us);
+                    if(command->kind==Kind::Release){
+                        if(elapsed>100000)
+                            ESP_LOGW(TAG,"Key release stage=dequeue key=%u generation=%u elapsed_us=%lld",static_cast<unsigned>(command->value),static_cast<unsigned>(p.control_hub().activity_generation()),elapsed);
+                        else
+                            ESP_LOGI(TAG,"Key release stage=dequeue key=%u generation=%u elapsed_us=%lld",static_cast<unsigned>(command->value),static_cast<unsigned>(p.control_hub().activity_generation()),elapsed);
+                    }else{
+                        if(elapsed>100000)
+                            ESP_LOGW(TAG,"Key transfer stage=dequeue key=%u generation=%u phase=%s edge_count=%u elapsed_us=%lld",static_cast<unsigned>(command->value),static_cast<unsigned>(p.control_hub().activity_generation()),command->repeat?"down":"tap",command->repeat?1u:2u,elapsed);
+                        else
+                            ESP_LOGI(TAG,"Key transfer stage=dequeue key=%u generation=%u phase=%s edge_count=%u elapsed_us=%lld",static_cast<unsigned>(command->value),static_cast<unsigned>(p.control_hub().activity_generation()),command->repeat?"down":"tap",command->repeat?1u:2u,elapsed);
+                    }
                 }
                 const bool initial_configuration=command->kind==Kind::ScopedConfigure||
                     (command->kind==Kind::Configure&&p.local_coordinator.load());
