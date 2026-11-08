@@ -68,6 +68,15 @@ void startup_memory(const char* phase){
         unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)),
         unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)));
 }
+esp_err_t configure_wifi_latency_policy(){
+    // USB-powered Amities relay interactive input; avoid DTIM-buffered receive latency.
+    wifi_ps_type_t previous,current;
+    auto error=esp_wifi_get_ps(&previous);if(error!=ESP_OK)return error;
+    error=esp_wifi_set_ps(WIFI_PS_NONE);if(error!=ESP_OK)return error;
+    error=esp_wifi_get_ps(&current);if(error!=ESP_OK)return error;
+    ESP_LOGI("amity","Wi-Fi power save: previous=%d current=%d",static_cast<int>(previous),static_cast<int>(current));
+    return current==WIFI_PS_NONE?ESP_OK:ESP_ERR_INVALID_STATE;
+}
 esp_err_t refresh_admin_mdns_for_host(const char* hostname) {
     // Matter owns the responder's global hostname. Keep the admin hostname as a
     // delegated alias so a Matter republish cannot rename the HTTPS endpoint.
@@ -576,6 +585,7 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(amity::consortium::runtime_register_gatt());
     amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,nullptr};
     ESP_ERROR_CHECK(amity_matter_start(&callbacks));
+    ESP_ERROR_CHECK(configure_wifi_latency_policy());
     const auto installed=hub.active_configuration();
     ESP_ERROR_CHECK(amity::consortium::runtime_set_hardware_profile(hub.supported_tentacles(),hub.configured_tentacles_mask()));
     const auto group_start=amity::consortium::runtime_start(consortium_id,octopus_id,*boot,installed?installed->config_revision:1);
