@@ -34,6 +34,7 @@ struct PathStats {
     std::atomic<uint32_t> attempts{0},ok{0},no_mem{0},other{0};
     std::atomic<uint32_t> last_call_ms{0},last_ok_ms{0},last_error_ms{0},last_duration_ms{0};
     std::atomic<int32_t> last_error_code{0};
+    std::atomic<uint32_t> active{0},slow_calls{0},last_slow_ms{0},last_slow_duration_ms{0};
 };
 DRAM_ATTR PathStats tx_stats,rx_stats;
 DRAM_ATTR std::atomic<uint32_t> done_ok{0},done_fail{0},done_last{0},done_last_ok{0},done_last_fail{0};
@@ -45,20 +46,25 @@ DRAM_ATTR std::atomic<uint32_t> console_calls{0},console_elapsed{0},console_slow
 
 uint32_t now_ms(){return static_cast<uint32_t>(esp_timer_get_time()/1000);}
 uint32_t begin(PathStats& stats){
-    const auto now=now_ms();stats.attempts.fetch_add(1,relaxed);stats.last_call_ms.store(now,relaxed);return now;
+    const auto now=now_ms();stats.active.fetch_add(1,relaxed);stats.attempts.fetch_add(1,relaxed);stats.last_call_ms.store(now,relaxed);return now;
 }
 void finish(PathStats& stats,uint32_t began,esp_err_t result){
-    const auto now=now_ms();stats.last_duration_ms.store(now-began,relaxed);
+    const auto now=now_ms();const auto duration=now-began;stats.last_duration_ms.store(duration,relaxed);
     if(result==ESP_OK){stats.ok.fetch_add(1,relaxed);stats.last_ok_ms.store(now,relaxed);}
     else{
         (result==ESP_ERR_NO_MEM?stats.no_mem:stats.other).fetch_add(1,relaxed);
         stats.last_error_ms.store(now,relaxed);
         stats.last_error_code.store(result,relaxed);
     }
+    if(duration>=100){
+        stats.slow_calls.fetch_add(1,relaxed);stats.last_slow_ms.store(now,relaxed);stats.last_slow_duration_ms.store(duration,relaxed);
+    }
+    stats.active.fetch_sub(1,relaxed);
 }
 PathSnapshot read(const PathStats& stats){
     return {stats.attempts.load(relaxed),stats.ok.load(relaxed),stats.no_mem.load(relaxed),stats.other.load(relaxed),
-            stats.last_call_ms.load(relaxed),stats.last_ok_ms.load(relaxed),stats.last_error_ms.load(relaxed),stats.last_duration_ms.load(relaxed),stats.last_error_code.load(relaxed)};
+            stats.last_call_ms.load(relaxed),stats.last_ok_ms.load(relaxed),stats.last_error_ms.load(relaxed),stats.last_duration_ms.load(relaxed),stats.last_error_code.load(relaxed),
+            stats.active.load(relaxed),stats.slow_calls.load(relaxed),stats.last_slow_ms.load(relaxed),stats.last_slow_duration_ms.load(relaxed)};
 }
 void tx_done(uint8_t, uint8_t*, uint16_t*, bool success){
     // The SDK owns/reuses these buffers. Do not inspect or retain either pointer.

@@ -874,6 +874,17 @@ void emit_key_network(const model::OctopusId& owner,uint8_t key,uint64_t generat
         static_cast<unsigned>(network.tx_done_registered!=0),static_cast<long>(network.registration_error),
         delta(network.tx.no_mem,before.tx.no_mem),delta(network.tx.other,before.tx.other),delta(network.tx_done_ok,before.tx_done_ok),delta(network.tx_done_fail,before.tx_done_fail),delta(network.rx.no_mem,before.rx.no_mem),delta(network.rx.other,before.rx.other),
         age(network.tx.last_call_ms,network.tx.attempts||network.tx.last_call_ms),age(network.tx_done_last_ms,network.tx_done_ok||network.tx_done_fail||network.tx_done_last_ms),age(network.rx.last_call_ms,network.rx.attempts||network.rx.last_call_ms));
+    const auto path=[&](const char* direction,const network_diagnostics::PathSnapshot& prior,const network_diagnostics::PathSnapshot& current){
+        // An entry is not a completed handoff. The active gauge is read
+        // directly, rather than inferred from independently loaded counters.
+        // Spans include descheduling; they do not prove an SDK lock blocked.
+        ESP_LOGI("consortium","%s stage=network_path owner=%s key=%u generation=%llu phase=%s edge_count=%u status=%s path=%s calls=%u ok=%u active=%u/%u in_age=%u ok_age=%u last_ms=%u slow=%u slow_age=%u slow_ms=%u",
+            release?"Key release":"Key transfer",owner.str().c_str(),static_cast<unsigned>(key),static_cast<unsigned long long>(generation),phase,static_cast<unsigned>(edges),state,direction,
+            delta(current.attempts,prior.attempts),delta(current.ok,prior.ok),static_cast<unsigned>(prior.active),static_cast<unsigned>(current.active),
+            age(current.last_call_ms,current.attempts||current.last_call_ms),age(current.last_ok_ms,current.ok||current.last_ok_ms),static_cast<unsigned>(current.last_duration_ms),
+            delta(current.slow_calls,prior.slow_calls),age(current.last_slow_ms,current.slow_calls||current.last_slow_ms),static_cast<unsigned>(current.last_slow_duration_ms));
+    };
+    path("tx",before.tx,network.tx);path("rx",before.rx,network.rx);
     const auto console_elapsed=delta(network.console_elapsed_ms,before.console_elapsed_ms);
     const auto console_slow=delta(network.console_slow_calls,before.console_slow_calls);
     if(console_elapsed>=100||console_slow){

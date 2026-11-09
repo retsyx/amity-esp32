@@ -45,16 +45,19 @@ void diagnostic_log(const char*,const char*,const char*,...);
 PREFIX = r'''
 #include <atomic>
 #include <cassert>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <new>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "sdk.hpp"
-bool callback=false;
+thread_local bool callback=false;
 void* operator new(std::size_t size){assert(!callback&&"callback allocated");if(auto* p=std::malloc(size?size:1))return p;throw std::bad_alloc();}
 void* operator new[](std::size_t size){return ::operator new(size);}
 void operator delete(void* p) noexcept{std::free(p);}
@@ -65,8 +68,12 @@ void* guarded_malloc(size_t size){assert(!callback&&"callback malloc");return st
 void* guarded_calloc(size_t count,size_t size){assert(!callback&&"callback calloc");return std::calloc(count,size);}
 void* guarded_realloc(void* pointer,size_t size){assert(!callback&&"callback realloc");return std::realloc(pointer,size);}
 void guarded_free(void* pointer){assert(!callback&&"callback free");std::free(pointer);}
-uint64_t clock_ms=100;
-unsigned tx_calls=0,rx_calls=0,event_calls=0,register_calls=0,ps_calls=0,clock_reads=0;
+std::atomic<uint64_t> clock_ms{100};
+std::atomic<unsigned> tx_calls{0},rx_calls{0},clock_reads{0};
+unsigned event_calls=0,register_calls=0,ps_calls=0;
+uint32_t tx_duration_ms=7,rx_duration_ms=11;
+void (*inside_tx)()=nullptr;
+void (*inside_rx)()=nullptr;
 int tx_result=0,rx_result=0,event_result=0,register_result=0,ps_result=0;
 int registration_event=0;
 wifi_ps_type_t actual_ps=WIFI_PS_NONE;
@@ -94,16 +101,17 @@ esp_err_t esp_wifi_set_tx_done_cb(wifi_tx_done_cb_t fn){
 }
 esp_err_t esp_wifi_get_ps(wifi_ps_type_t* mode){++ps_calls;*mode=actual_ps;return ps_result;}
 extern "C" esp_err_t __real_esp_wifi_internal_tx(wifi_interface_t interface,void* buffer,uint16_t length){
-    assert(callback&&interface==WIFI_IF_AP&&buffer==expected_buffer&&length==UINT16_MAX);++tx_calls;clock_ms+=7;return tx_result;
+    assert(callback&&interface==WIFI_IF_AP&&buffer==expected_buffer&&length==UINT16_MAX);++tx_calls;clock_ms+=tx_duration_ms;if(inside_tx)inside_tx();return tx_result;
 }
 extern "C" esp_err_t __real_esp_netif_receive(esp_netif_t* interface,void* buffer,size_t length,void* driver){
-    assert(callback&&interface==expected_netif&&buffer==expected_buffer&&length==size_t{123456}&&driver==expected_driver);++rx_calls;clock_ms+=11;return rx_result;
+    assert(callback&&interface==expected_netif&&buffer==expected_buffer&&length==size_t{123456}&&driver==expected_driver);++rx_calls;clock_ms+=rx_duration_ms;if(inside_rx)inside_rx();return rx_result;
 }
 '''
 
 TARGET_ATOMICS = r'''
 uintptr_t model_external_low=0,model_external_high=0;
-unsigned model_critical_calls=0,model_hardware_calls=0;
+unsigned model_critical_calls=0;
+std::atomic<unsigned> model_hardware_calls{0};
 void model_enter_critical(){assert(!callback&&"DRAM callback used SDK global critical section");++model_critical_calls;}
 void model_exit_critical(){}
 // Hardware seam: these correspond to the pinned SDK helpers compiled with
@@ -111,6 +119,7 @@ void model_exit_critical(){}
 unsigned int __atomic_s32c1i_load_4(const volatile void* p,int order){++model_hardware_calls;return __atomic_load_n(static_cast<const volatile unsigned int*>(p),order);}
 void __atomic_s32c1i_store_4(volatile void* p,unsigned int value,int order){++model_hardware_calls;__atomic_store_n(static_cast<volatile unsigned int*>(p),value,order);}
 unsigned int __atomic_s32c1i_fetch_add_4(volatile void* p,unsigned int value,int order){++model_hardware_calls;return __atomic_fetch_add(static_cast<volatile unsigned int*>(p),value,order);}
+unsigned int __atomic_s32c1i_fetch_sub_4(volatile void* p,unsigned int value,int order){++model_hardware_calls;return __atomic_fetch_sub(static_cast<volatile unsigned int*>(p),value,order);}
 unsigned int __atomic_s32c1i_fetch_and_4(volatile void* p,unsigned int value,int order){++model_hardware_calls;return __atomic_fetch_and(static_cast<volatile unsigned int*>(p),value,order);}
 unsigned int __atomic_s32c1i_fetch_or_4(volatile void* p,unsigned int value,int order){++model_hardware_calls;return __atomic_fetch_or(static_cast<volatile unsigned int*>(p),value,order);}
 unsigned int __atomic_s32c1i_exchange_4(volatile void* p,unsigned int value,int order){++model_hardware_calls;return __atomic_exchange_n(static_cast<volatile unsigned int*>(p),value,order);}
@@ -118,6 +127,7 @@ bool __atomic_s32c1i_compare_exchange_4(volatile void* p,void* expected,unsigned
 #define __atomic_load_4 sdk_load_4
 #define __atomic_store_4 sdk_store_4
 #define __atomic_fetch_add_4 sdk_fetch_add_4
+#define __atomic_fetch_sub_4 sdk_fetch_sub_4
 #define __atomic_fetch_and_4 sdk_fetch_and_4
 #define __atomic_fetch_or_4 sdk_fetch_or_4
 #define __atomic_exchange_4 sdk_exchange_4
@@ -131,6 +141,7 @@ TARGET_ATOMICS_AFTER_HEADER = r'''
 ATOMIC_LOAD(4,unsigned int)
 ATOMIC_STORE(4,unsigned int)
 _ATOMIC_OP_FUNCTION(4,unsigned int,fetch,add,old,+,)
+_ATOMIC_OP_FUNCTION(4,unsigned int,fetch,sub,old,-,)
 _ATOMIC_OP_FUNCTION(4,unsigned int,fetch,and,old,&,)
 _ATOMIC_OP_FUNCTION(4,unsigned int,fetch,or,old,|,)
 ATOMIC_EXCHANGE(4,unsigned int)
@@ -139,6 +150,7 @@ ATOMIC_CMP_EXCHANGE(4,unsigned int)
 #undef __atomic_load_4
 #undef __atomic_store_4
 #undef __atomic_fetch_add_4
+#undef __atomic_fetch_sub_4
 #undef __atomic_fetch_and_4
 #undef __atomic_fetch_or_4
 #undef __atomic_exchange_4
@@ -155,6 +167,7 @@ public:
     T load(memory_order order=std::memory_order_seq_cst)const{return static_cast<T>(sdk_load_4(&value,order));}
     void store(T next,memory_order order=std::memory_order_seq_cst){sdk_store_4(&value,static_cast<unsigned int>(next),order);}
     T fetch_add(T next,memory_order order=std::memory_order_seq_cst){return static_cast<T>(sdk_fetch_add_4(&value,static_cast<unsigned int>(next),order));}
+    T fetch_sub(T next,memory_order order=std::memory_order_seq_cst){return static_cast<T>(sdk_fetch_sub_4(&value,static_cast<unsigned int>(next),order));}
     T fetch_and(T next,memory_order order=std::memory_order_seq_cst){return static_cast<T>(sdk_fetch_and_4(&value,static_cast<unsigned int>(next),order));}
     T fetch_or(T next,memory_order order=std::memory_order_seq_cst){return static_cast<T>(sdk_fetch_or_4(&value,static_cast<unsigned int>(next),order));}
     T exchange(T next,memory_order order=std::memory_order_seq_cst){return static_cast<T>(sdk_exchange_4(&value,static_cast<unsigned int>(next),order));}
@@ -250,7 +263,7 @@ void wrap_test(){
 }
 void console_test(){
     poll();const auto lines=logs.size();clock_ms=1000;
-    const auto reads=clock_reads;
+    const auto reads=clock_reads.load();
     {
         Callback guard;
         record_console_call(100,0);record_console_call(200,99);
@@ -269,6 +282,55 @@ void console_test(){
     assert(uint32_t(s.now_ms-s.console_last_slow_began_ms)==105);
     poll();assert(logs.size()==lines);
 }
+void held_and_nested_paths(){
+    inside_tx=[]{const auto s=snapshot();assert(s.tx.active==1&&s.tx.attempts==1&&s.tx.ok==0&&s.tx.last_duration_ms==0);};
+    tx();inside_tx=nullptr;
+    inside_rx=[]{const auto s=snapshot();assert(s.rx.active==1&&s.rx.attempts==1&&s.rx.ok==0&&s.rx.last_duration_ms==0);};
+    rx();inside_rx=nullptr;
+    assert(snapshot().tx.active==0&&snapshot().rx.active==0);
+    inside_tx=[]{
+        assert(snapshot().tx.active==1);
+        inside_tx=[]{assert(snapshot().tx.active==2);};
+        assert(__wrap_esp_wifi_internal_tx(WIFI_IF_AP,expected_buffer,UINT16_MAX)==tx_result);
+        assert(snapshot().tx.active==1);
+    };
+    tx();inside_tx=nullptr;
+    const auto s=snapshot();assert(s.tx.active==0&&s.tx.attempts==3&&s.tx.ok==3&&s.rx.ok==1);
+    assert(s.tx.slow_calls==0&&s.rx.slow_calls==0&&logs.empty()&&event_calls==0&&register_calls==0&&ps_calls==0);
+}
+std::mutex held_mutex;
+std::condition_variable held_condition;
+unsigned held_entries=0;
+bool release_held=false;
+void held_sdk(){
+    std::unique_lock<std::mutex> lock(held_mutex);++held_entries;held_condition.notify_all();
+    held_condition.wait(lock,[]{return release_held;});
+}
+void concurrent_paths(){
+    inside_tx=inside_rx=held_sdk;
+    std::thread first_tx(tx),second_tx(tx),first_rx(rx),second_rx(rx);
+    {
+        std::unique_lock<std::mutex> lock(held_mutex);
+        held_condition.wait(lock,[]{return held_entries==4;});
+        const auto s=snapshot();
+        assert(s.tx.active==2&&s.rx.active==2&&s.tx.attempts==2&&s.rx.attempts==2&&s.tx.ok==0&&s.rx.ok==0);
+        clock_ms+=200;release_held=true;
+    }
+    held_condition.notify_all();first_tx.join();second_tx.join();first_rx.join();second_rx.join();
+    const auto s=snapshot();assert(s.tx.active==0&&s.rx.active==0&&s.tx.ok==2&&s.rx.ok==2);
+    assert(s.tx.slow_calls==2&&s.rx.slow_calls==2&&s.tx.last_slow_duration_ms>=200&&s.rx.last_slow_duration_ms>=200);
+    assert(s.tx.last_slow_ms==s.now_ms&&s.rx.last_slow_ms==s.now_ms&&logs.empty()&&register_calls==0);
+}
+void slow_path_threshold_wrap_and_retention(){
+    tx_duration_ms=99;tx();auto s=snapshot();assert(s.tx.slow_calls==0&&s.tx.last_duration_ms==99);
+    rx_duration_ms=100;rx();s=snapshot();assert(s.rx.slow_calls==1&&s.rx.last_slow_ms==299&&s.rx.last_slow_duration_ms==100);
+    tx_duration_ms=100;tx();s=snapshot();assert(s.tx.slow_calls==1&&s.tx.last_slow_ms==399&&s.tx.last_slow_duration_ms==100);
+    tx_duration_ms=1;tx();s=snapshot();assert(s.tx.last_duration_ms==1&&s.tx.last_slow_ms==399&&s.tx.last_slow_duration_ms==100);
+    tx_duration_ms=200;tx_result=ESP_FAIL;tx();s=snapshot();assert(s.tx.other==1&&s.tx.slow_calls==2&&s.tx.last_slow_ms==600&&s.tx.last_slow_duration_ms==200);
+    tx_stats.slow_calls.store(UINT32_MAX);clock_ms=uint64_t{UINT32_MAX}-49;tx_duration_ms=100;tx_result=ESP_OK;tx();s=snapshot();
+    assert(s.tx.active==0&&s.tx.slow_calls==0&&s.tx.last_slow_ms==50&&s.tx.last_slow_duration_ms==100&&s.tx.last_duration_ms==100);
+    assert(logs.empty()&&register_calls==0&&ps_calls==0);
+}
 int main(int argc,char** argv){
 #ifdef NETWORK_TARGET_MODEL
     model_check_external_branch();
@@ -278,7 +340,8 @@ int main(int argc,char** argv){
     else if(name=="race")startup_race(ESP_ERR_WIFI_NOT_STARTED);else if(name=="race-ok")startup_race(ESP_OK);
     else if(name=="stop")stopped_registration();else if(name=="event-error")event_error_test();
     else if(name=="registration-error")registration_error_test();else if(name=="wrap")wrap_test();
-    else if(name=="console")console_test();else assert(false);
+    else if(name=="console")console_test();else if(name=="held")held_and_nested_paths();
+    else if(name=="concurrent")concurrent_paths();else if(name=="slow-path")slow_path_threshold_wrap_and_retention();else assert(false);
 #ifdef NETWORK_TARGET_MODEL
     assert(model_critical_calls==1&&model_hardware_calls>0);
 #endif
@@ -325,9 +388,9 @@ def main():
                               '"\n#undef malloc\n#undef calloc\n#undef realloc\n#undef free\n' + ('#undef std\n' if target_model else '') + SUITE)
             binary = directory / 'test'
             subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
-                '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
+                '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-pthread', '-fsanitize=address,undefined',
                 '-I' + str(directory), '-I' + str(component / 'include'), str(source), '-o', str(binary)], check=True)
-            for case in ('paths', 'lifecycle', 'eager', 'race', 'race-ok', 'stop', 'event-error', 'registration-error', 'wrap', 'console'):
+            for case in ('paths', 'lifecycle', 'eager', 'race', 'race-ok', 'stop', 'event-error', 'registration-error', 'wrap', 'console', 'held', 'concurrent', 'slow-path'):
                 subprocess.run([str(binary), case], check=True)
 
 

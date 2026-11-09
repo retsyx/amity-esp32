@@ -64,7 +64,7 @@ struct Active {
  network_diagnostics::Snapshot release_network_before;
  uint64_t release_ack_generation=0;uint8_t release_ack_key=0,release_ack_edges=0;bool release_ack_down=false;
 };
-std::vector<std::string> logs,network_logs,console_logs;
+std::vector<std::string> logs,network_logs,path_logs,console_logs;
 bool model_console_delay=false;
 template<class... Args>void ESP_LOGI(const char*,const char* format,Args... args){
  assert(!core_held&&!marked);char text[512];const int size=snprintf(text,sizeof(text),format,args...);
@@ -72,6 +72,8 @@ template<class... Args>void ESP_LOGI(const char*,const char* format,Args... args
  if(std::string(text).find("stage=network_sta ")!=std::string::npos){
   // Include the pinned SDK's maximum-width level/timestamp/tag/newline prefix.
   assert(size+28<384);network_logs.emplace_back(text);
+ }else if(std::string(text).find("stage=network_path ")!=std::string::npos){
+  assert(size+28<384);path_logs.emplace_back(text);
  }else if(std::string(text).find("stage=console_all ")!=std::string::npos){
   assert(size+28<384);console_logs.emplace_back(text);
  }else logs.emplace_back(text);
@@ -86,7 +88,7 @@ SUITE = r'''
 void reset(){
  assert(!core_held&&!marked);core_busy=false;takes=gives=marks=unmarks=accesses=0;
  for(auto& socket:sockets)socket.conn=nullptr;
- logs.clear();network_logs.clear();console_logs.clear();model_console_delay=false;clock_ms=100;network_diagnostics::values={};network_diagnostics::reads=0;
+ logs.clear();network_logs.clear();path_logs.clear();console_logs.clear();model_console_delay=false;clock_ms=100;network_diagnostics::values={};network_diagnostics::reads=0;
 }
 bool status(const char* value){return !logs.empty()&&logs.back().find(std::string("status=")+value+" ")!=std::string::npos;}
 model::OwnedIntent release(){
@@ -199,6 +201,7 @@ void station_window_deltas_progress_and_suppression(){
  network.tx_done_ok=2;network.tx_done_fail=6;
  pcb.lastack=1000;clock_ms=400;poll_release_ack(active);
  assert(network_diagnostics::reads==2&&network_logs.size()==1);
+ assert(path_logs.size()==2);
  const auto& line=network_logs[0];
  assert(line.find("stage=network_sta owner=11111111111111111111111111111111 key=66 generation=7 phase=up edge_count=1 status=acked")!=std::string::npos);
  assert(line.find("reg=1 regerr=0 tx_nm=3 tx_err=2 tx_done=3 tx_fail=2 rx_nm=2 rx_err=3 tx_age_ms=30 done_age_ms=25 rx_age_ms=10")!=std::string::npos);
@@ -206,7 +209,7 @@ void station_window_deltas_progress_and_suppression(){
  // Ordinary fast success adds no station log or after-snapshot.
  reset();pcb={1000,500,3,0};conn.pcb.tcp=&pcb;sockets[1].conn=&conn;
  begin_release_ack(active,release(),100,network_diagnostics::snapshot());pcb.lastack=1000;clock_ms=120;poll_release_ack(active);
- assert(network_diagnostics::reads==1&&network_logs.empty());
+ assert(network_diagnostics::reads==1&&network_logs.empty()&&path_logs.empty());
  // A retransmission observed even before 250ms still merits one window.
  reset();pcb={1000,500,3,0};conn.pcb.tcp=&pcb;sockets[1].conn=&conn;
  begin_release_ack(active,release(),100,network_diagnostics::snapshot());pcb.lastack=1000;pcb.nrtx=1;clock_ms=120;poll_release_ack(active);
@@ -235,12 +238,17 @@ void station_window_replacement_and_maximum_width(){
  active.release_network_before={};auto& network=network_diagnostics::values;network={};
  network.now_ms=UINT32_MAX;network.tx.attempts=network.rx.attempts=UINT32_MAX;
  network.tx.no_mem=network.tx.other=network.rx.no_mem=network.rx.other=UINT32_MAX;
+ network.tx.ok=network.rx.ok=network.tx.active=network.rx.active=UINT32_MAX;
+ network.tx.last_duration_ms=network.rx.last_duration_ms=UINT32_MAX;
+ network.tx.slow_calls=network.rx.slow_calls=network.tx.last_slow_duration_ms=network.rx.last_slow_duration_ms=UINT32_MAX;
+ active.release_network_before.tx.active=active.release_network_before.rx.active=UINT32_MAX;
  network.tx_done_ok=network.tx_done_fail=UINT32_MAX;network.tx_done_registered=1;network.registration_error=INT32_MIN;
  network.console_calls=network.console_elapsed_ms=network.console_slow_calls=network.console_last_slow_duration_ms=UINT32_MAX;
  active.release_ack_owner=*model::OctopusId::parse("ffffffffffffffffffffffffffffffff");
  active.release_ack_generation=UINT64_MAX;active.release_ack_key=active.release_ack_edges=UINT8_MAX;active.release_ack_down=true;
  emit_release_ack(active,"clock_reversed");
  assert(network_logs.back().size()+28<384);
+ assert(path_logs.size()>=2&&path_logs.back().size()+28<384&&path_logs[path_logs.size()-2].size()+28<384);
  assert(console_logs.back().size()+28<384);
 }
 void station_window_includes_send_and_failed_write(){
@@ -273,7 +281,7 @@ void global_console_window_is_bounded_and_excludes_reporting(){
  // Both must be excluded by the one cached after-snapshot, without feedback.
  model_console_delay=true;pcb.lastack=1000;clock_ms=400;poll_release_ack(active);
  assert(network_diagnostics::reads==2&&logs.size()==1&&network_logs.size()==1&&console_logs.empty());
- assert(network_diagnostics::values.console_elapsed_ms==400);
+ assert(path_logs.size()==2&&network_diagnostics::values.console_elapsed_ms==800);
  // Console counters and last slow-call start ages use the same uint32 wrap
  // rules as network observations. The sum may overlap across callers.
  reset();pcb={1000,500,3,0};conn.pcb.tcp=&pcb;sockets[1].conn=&conn;
@@ -300,8 +308,30 @@ void global_console_window_is_bounded_and_excludes_reporting(){
   if(scenario==3)assert(network_diagnostics::reads==1); // No extra fast-ACK sampling/logging.
  }
 }
+void station_path_returns_active_calls_and_slow_spans(){
+ reset();Active active;tcp_pcb pcb{1000,500,3,0};netconn conn;conn.pcb.tcp=&pcb;sockets[1].conn=&conn;
+ auto& network=network_diagnostics::values;
+ network.tx.attempts=UINT32_MAX-1;network.tx.ok=UINT32_MAX;network.tx.active=1;
+ network.rx.attempts=UINT32_MAX;network.rx.ok=UINT32_MAX-1;network.rx.active=2;network.rx.slow_calls=UINT32_MAX;
+ begin_release_ack(active,release(),100,network_diagnostics::snapshot());
+ network.now_ms=20;
+ network.tx.attempts=1;network.tx.ok=1;network.tx.active=0;network.tx.last_call_ms=UINT32_MAX-4;network.tx.last_ok_ms=UINT32_MAX-9;network.tx.last_duration_ms=7;
+ network.rx.attempts=2;network.rx.ok=2;network.rx.active=3;network.rx.last_call_ms=10;network.rx.last_ok_ms=5;network.rx.last_duration_ms=200;
+ network.rx.slow_calls=1;network.rx.last_slow_ms=UINT32_MAX-9;network.rx.last_slow_duration_ms=1020;
+ pcb.lastack=1000;clock_ms=400;poll_release_ack(active);
+ assert(network_diagnostics::reads==2&&path_logs.size()==2);
+ assert(path_logs[0].find("path=tx calls=3 ok=2 active=1/0 in_age=25 ok_age=30 last_ms=7 slow=0 slow_age=4294967295 slow_ms=0")!=std::string::npos);
+ assert(path_logs[1].find("path=rx calls=3 ok=4 active=2/3 in_age=10 ok_age=15 last_ms=200 slow=2 slow_age=30 slow_ms=1020")!=std::string::npos);
+ // No success is a distinct observation even after a fresh receive entry.
+ reset();active={};pcb={1000,500,3,0};conn.pcb.tcp=&pcb;sockets[1].conn=&conn;
+ begin_release_ack(active,release(),100,network_diagnostics::snapshot());
+ network.now_ms=400;network.rx.attempts=1;network.rx.active=1;network.rx.last_call_ms=350;
+ pcb.lastack=1000;clock_ms=400;poll_release_ack(active);
+ assert(path_logs[1].find("path=rx calls=1 ok=0 active=0/1 in_age=50 ok_age=4294967295 last_ms=0 slow=0 slow_age=4294967295 slow_ms=0")!=std::string::npos);
+ finish_release_ack(active);assert(path_logs.size()==2&&network_diagnostics::reads==2);
 }
-int main(){using namespace amity::consortium;snapshots_are_bounded_and_read_only();delayed_ack_and_later_writes();wrapped_sequences_and_slow_sampler();missing_busy_replaced_and_ended_observations();observation_expiry_and_maximum_log_width();every_user_key_edge_shape();station_window_deltas_progress_and_suppression();station_window_replacement_and_maximum_width();station_window_includes_send_and_failed_write();global_console_window_is_bounded_and_excludes_reporting();std::cout<<"PASS passive TCP ACK diagnosis: unchanged ACK lifecycle, zero-wait core snapshots, station/console counter-time wrap and send/ACK/failure windows outside locks, cached reports exclude their own console cost, suppression and bounded prefixed logs\n";}
+}
+int main(){using namespace amity::consortium;snapshots_are_bounded_and_read_only();delayed_ack_and_later_writes();wrapped_sequences_and_slow_sampler();missing_busy_replaced_and_ended_observations();observation_expiry_and_maximum_log_width();every_user_key_edge_shape();station_window_deltas_progress_and_suppression();station_window_replacement_and_maximum_width();station_window_includes_send_and_failed_write();global_console_window_is_bounded_and_excludes_reporting();station_path_returns_active_calls_and_slow_spans();std::cout<<"PASS passive TCP ACK diagnosis: unchanged ACK lifecycle, zero-wait core snapshots, station/path/console counter-time wrap and send/ACK/failure windows outside locks, active calls and retained slow spans, cached reports exclude their own console cost, suppression and bounded prefixed logs\n";}
 '''
 
 

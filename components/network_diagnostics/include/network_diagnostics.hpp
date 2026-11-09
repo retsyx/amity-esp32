@@ -7,6 +7,7 @@ struct PathSnapshot {
     uint32_t attempts=0,ok=0,no_mem=0,other=0;
     uint32_t last_call_ms=0,last_ok_ms=0,last_error_ms=0,last_duration_ms=0;
     int32_t last_error_code=0;
+    uint32_t active=0,slow_calls=0,last_slow_ms=0,last_slow_duration_ms=0;
 };
 struct Snapshot {
     PathSnapshot tx,rx;
@@ -25,6 +26,8 @@ struct Snapshot {
 void start();
 // Board-wide observations, not per-link delivery proof. Independent lock-free
 // loads are best effort; counters and millisecond timestamps wrap at 32 bits.
+// Slow calls span at least 100ms, including descheduling; last_slow_ms is the
+// completion time. Active is a separate concurrent-call counter, not inferred.
 Snapshot snapshot();
 // Sum caller durations, including overlaps. No console output is emitted here
 // or by poll(), so the existing console sink can record itself safely.
