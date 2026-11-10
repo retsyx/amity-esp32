@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 from .dut import _positive_seconds
 from .enrollment import _stop_process_group
+from .homekit_srp import pair_setup_srp
 from .trace import event
 
 
@@ -125,7 +126,8 @@ class _Session:
                 raise TimeoutError("The main did not advertise its HomeKit service")
             await asyncio.sleep(.1)
         finish = await matches[0].async_start_pairing("amity-functional")
-        self.pairing = await finish(pin)
+        with pair_setup_srp():
+            self.pairing = await finish(pin)
         # Persist ownership before the first encrypted read so a failed read
         # cannot lose the controller material needed for diagnosis/recovery.
         (self.storage / "pairing.json").write_text(json.dumps(self.pairing.pairing_data))
