@@ -36,7 +36,12 @@ struct PathStats {
     std::atomic<int32_t> last_error_code{0};
     std::atomic<uint32_t> active{0},slow_calls{0},last_slow_ms{0},last_slow_duration_ms{0};
 };
+struct TimerStats {
+    std::atomic<uint32_t> calls{0},completed{0},last_entry_ms{0},last_complete_ms{0},active{0},last_duration_ms{0};
+    std::atomic<uint32_t> late_entries{0},last_late_gap_ms{0},last_late_ms{0},has_entry{0};
+};
 DRAM_ATTR PathStats tx_stats,rx_stats;
+DRAM_ATTR TimerStats tcp_timer_stats;
 DRAM_ATTR std::atomic<uint32_t> done_ok{0},done_fail{0},done_last{0},done_last_ok{0},done_last_fail{0};
 DRAM_ATTR std::atomic<uint32_t> started{0},event_registered{0},pending{0},lifecycle{0},attempts{0};
 DRAM_ATTR std::atomic<int32_t> event_error{ESP_ERR_INVALID_STATE},registration_error{ESP_ERR_INVALID_STATE};
@@ -65,6 +70,27 @@ PathSnapshot read(const PathStats& stats){
     return {stats.attempts.load(relaxed),stats.ok.load(relaxed),stats.no_mem.load(relaxed),stats.other.load(relaxed),
             stats.last_call_ms.load(relaxed),stats.last_ok_ms.load(relaxed),stats.last_error_ms.load(relaxed),stats.last_duration_ms.load(relaxed),stats.last_error_code.load(relaxed),
             stats.active.load(relaxed),stats.slow_calls.load(relaxed),stats.last_slow_ms.load(relaxed),stats.last_slow_duration_ms.load(relaxed)};
+}
+uint32_t begin_timer(){
+    const auto now=now_ms();tcp_timer_stats.active.fetch_add(1,relaxed);tcp_timer_stats.calls.fetch_add(1,relaxed);
+    const auto previous=tcp_timer_stats.last_entry_ms.exchange(now,relaxed);
+    // tcp_tmr is serialized by the lwIP core lock. A separate first-entry bit
+    // preserves timestamps at zero and when the diagnostic call count wraps.
+    if(tcp_timer_stats.has_entry.exchange(1,relaxed)&&now-previous>=200){
+        tcp_timer_stats.late_entries.fetch_add(1,relaxed);
+        tcp_timer_stats.last_late_gap_ms.store(now-previous,relaxed);tcp_timer_stats.last_late_ms.store(now,relaxed);
+    }
+    return now;
+}
+void finish_timer(uint32_t began){
+    const auto now=now_ms();tcp_timer_stats.last_complete_ms.store(now,relaxed);
+    tcp_timer_stats.last_duration_ms.store(now-began,relaxed);tcp_timer_stats.completed.fetch_add(1,relaxed);
+    tcp_timer_stats.active.fetch_sub(1,relaxed);
+}
+TimerSnapshot read(const TimerStats& stats){
+    return {stats.calls.load(relaxed),stats.completed.load(relaxed),stats.last_entry_ms.load(relaxed),stats.last_complete_ms.load(relaxed),
+            stats.active.load(relaxed),stats.last_duration_ms.load(relaxed),stats.late_entries.load(relaxed),
+            stats.last_late_gap_ms.load(relaxed),stats.last_late_ms.load(relaxed)};
 }
 void tx_done(uint8_t, uint8_t*, uint16_t*, bool success){
     // The SDK owns/reuses these buffers. Do not inspect or retain either pointer.
@@ -111,7 +137,7 @@ void start(){
     register_tx_done();
 }
 Snapshot snapshot(){
-    Snapshot result;result.tx=read(tx_stats);result.rx=read(rx_stats);
+    Snapshot result;result.tx=read(tx_stats);result.rx=read(rx_stats);result.tcp_timer=read(tcp_timer_stats);
     result.tx_done_ok=done_ok.load(relaxed);result.tx_done_fail=done_fail.load(relaxed);result.tx_done_last_ms=done_last.load(relaxed);
     result.tx_done_last_ok_ms=done_last_ok.load(relaxed);result.tx_done_last_fail_ms=done_last_fail.load(relaxed);
     const auto generation=lifecycle.load(relaxed);result.tx_done_registered=generation&registered;
@@ -168,4 +194,9 @@ extern "C" esp_err_t __real_esp_netif_receive(esp_netif_t*,void*,size_t,void*);
 extern "C" esp_err_t __wrap_esp_netif_receive(esp_netif_t* interface,void* buffer,size_t length,void* driver_buffer){
     using namespace amity::network_diagnostics;
     const auto began=begin(rx_stats);const auto result=__real_esp_netif_receive(interface,buffer,length,driver_buffer);finish(rx_stats,began,result);return result;
+}
+extern "C" void __real_tcp_tmr(void);
+extern "C" void __wrap_tcp_tmr(void){
+    using namespace amity::network_diagnostics;
+    const auto began=begin_timer();__real_tcp_tmr();finish_timer(began);
 }

@@ -885,6 +885,16 @@ void emit_key_network(const model::OctopusId& owner,uint8_t key,uint64_t generat
             delta(current.slow_calls,prior.slow_calls),age(current.last_slow_ms,current.slow_calls||current.last_slow_ms),static_cast<unsigned>(current.last_slow_duration_ms));
     };
     path("tx",before.tx,network.tx);path("rx",before.rx,network.rx);
+    // The lwIP timer is on demand. Entry gaps include the previous callback,
+    // its normal interval, and any inactive period; they do not prove CPU
+    // starvation. This key's established TCP stream supplies the context.
+    const auto& timer=network.tcp_timer;
+    const auto& prior_timer=before.tcp_timer;
+    ESP_LOGI("consortium","%s stage=tcp_timer owner=%s key=%u generation=%llu phase=%s edge_count=%u status=%s calls=%u done=%u active=%u/%u in_age=%u out_age=%u last_ms=%u gaps=%u gap_age=%u gap_ms=%u",
+        release?"Key release":"Key transfer",owner.str().c_str(),static_cast<unsigned>(key),static_cast<unsigned long long>(generation),phase,static_cast<unsigned>(edges),state,
+        delta(timer.calls,prior_timer.calls),delta(timer.completed,prior_timer.completed),static_cast<unsigned>(prior_timer.active),static_cast<unsigned>(timer.active),
+        age(timer.last_entry_ms,timer.calls||timer.last_entry_ms),age(timer.last_complete_ms,timer.completed||timer.last_complete_ms),static_cast<unsigned>(timer.last_duration_ms),
+        delta(timer.late_entries,prior_timer.late_entries),age(timer.last_late_ms,timer.late_entries||timer.last_late_ms),static_cast<unsigned>(timer.last_late_gap_ms));
     const auto console_elapsed=delta(network.console_elapsed_ms,before.console_elapsed_ms);
     const auto console_slow=delta(network.console_slow_calls,before.console_slow_calls);
     if(console_elapsed>=100||console_slow){

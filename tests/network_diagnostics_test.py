@@ -69,11 +69,13 @@ void* guarded_calloc(size_t count,size_t size){assert(!callback&&"callback callo
 void* guarded_realloc(void* pointer,size_t size){assert(!callback&&"callback realloc");return std::realloc(pointer,size);}
 void guarded_free(void* pointer){assert(!callback&&"callback free");std::free(pointer);}
 std::atomic<uint64_t> clock_ms{100};
-std::atomic<unsigned> tx_calls{0},rx_calls{0},clock_reads{0};
+std::atomic<unsigned> tx_calls{0},rx_calls{0},timer_calls{0},clock_reads{0};
 unsigned event_calls=0,register_calls=0,ps_calls=0;
 uint32_t tx_duration_ms=7,rx_duration_ms=11;
+uint32_t timer_duration_ms=2;
 void (*inside_tx)()=nullptr;
 void (*inside_rx)()=nullptr;
+void (*inside_timer)()=nullptr;
 int tx_result=0,rx_result=0,event_result=0,register_result=0,ps_result=0;
 int registration_event=0;
 wifi_ps_type_t actual_ps=WIFI_PS_NONE;
@@ -105,6 +107,9 @@ extern "C" esp_err_t __real_esp_wifi_internal_tx(wifi_interface_t interface,void
 }
 extern "C" esp_err_t __real_esp_netif_receive(esp_netif_t* interface,void* buffer,size_t length,void* driver){
     assert(callback&&interface==expected_netif&&buffer==expected_buffer&&length==size_t{123456}&&driver==expected_driver);++rx_calls;clock_ms+=rx_duration_ms;if(inside_rx)inside_rx();return rx_result;
+}
+extern "C" void __real_tcp_tmr(void){
+    assert(callback);++timer_calls;clock_ms+=timer_duration_ms;if(inside_timer)inside_timer();
 }
 '''
 
@@ -191,6 +196,7 @@ void event(int id){assert(sdk_event);Callback guard;sdk_event(reinterpret_cast<v
 void done(bool success){assert(sdk_done);Callback guard;sdk_done(255,reinterpret_cast<uint8_t*>(uintptr_t{1}),reinterpret_cast<uint16_t*>(uintptr_t{3}),success);}
 void tx(){Callback guard;assert(__wrap_esp_wifi_internal_tx(WIFI_IF_AP,expected_buffer,UINT16_MAX)==tx_result);}
 void rx(){Callback guard;assert(__wrap_esp_netif_receive(expected_netif,expected_buffer,size_t{123456},expected_driver)==rx_result);}
+void timer(){Callback guard;__wrap_tcp_tmr();}
 void begin(){Callback guard;start();}
 void paths(){
     assert(snapshot().tx.attempts==0&&snapshot().rx.attempts==0);
@@ -331,6 +337,53 @@ void slow_path_threshold_wrap_and_retention(){
     assert(s.tx.active==0&&s.tx.slow_calls==0&&s.tx.last_slow_ms==50&&s.tx.last_slow_duration_ms==100&&s.tx.last_duration_ms==100);
     assert(logs.empty()&&register_calls==0&&ps_calls==0);
 }
+void timer_progress_threshold_and_retention(){
+    auto s=snapshot();assert(s.tcp_timer.calls==0&&s.tcp_timer.completed==0&&s.tcp_timer.active==0);
+    // First entry after a long boot delay is not a measured inter-entry gap.
+    clock_ms=100'000;timer();s=snapshot();
+    assert(timer_calls==1&&s.tcp_timer.calls==1&&s.tcp_timer.completed==1&&s.tcp_timer.active==0);
+    assert(s.tcp_timer.last_entry_ms==100'000&&s.tcp_timer.last_complete_ms==100'002&&s.tcp_timer.last_duration_ms==2);
+    assert(s.tcp_timer.late_entries==0&&s.tcp_timer.last_late_gap_ms==0&&s.tcp_timer.last_late_ms==0);
+    clock_ms=100'050;timer();clock_ms=100'249;timer();
+    assert(snapshot().tcp_timer.late_entries==0); // 50ms and 199ms are below the diagnostic threshold.
+    clock_ms=100'449;timer();s=snapshot();
+    assert(s.tcp_timer.late_entries==1&&s.tcp_timer.last_late_gap_ms==200&&s.tcp_timer.last_late_ms==100'449);
+    inside_timer=[]{
+        const auto held=snapshot().tcp_timer;
+        assert(held.calls==5&&held.completed==4&&held.active==1&&held.last_entry_ms==100'499);
+        assert(held.last_complete_ms==100'451&&held.last_duration_ms==2);
+        clock_ms+=300;
+    };
+    clock_ms=100'499;timer();inside_timer=nullptr;s=snapshot();
+    assert(s.tcp_timer.active==0&&s.tcp_timer.calls==5&&s.tcp_timer.completed==5);
+    assert(s.tcp_timer.last_complete_ms==100'801&&s.tcp_timer.last_duration_ms==302&&s.tcp_timer.late_entries==1);
+    // Entry spacing includes the previous callback's span plus rescheduling.
+    clock_ms=100'851;timer();s=snapshot();
+    assert(s.tcp_timer.late_entries==2&&s.tcp_timer.last_late_gap_ms==352&&s.tcp_timer.last_late_ms==100'851);
+    clock_ms=100'901;timer();s=snapshot();
+    assert(s.tcp_timer.last_duration_ms==2&&s.tcp_timer.late_entries==2&&s.tcp_timer.last_late_gap_ms==352);
+    // lwIP stops this timer without TCP PCBs. A later on-demand restart also
+    // counts as a raw long entry gap; it is not evidence of task starvation.
+    clock_ms=110'901;timer();s=snapshot();
+    assert(s.tcp_timer.late_entries==3&&s.tcp_timer.last_late_gap_ms==10'000&&s.tcp_timer.last_late_ms==110'901);
+    assert(timer_calls==8&&s.tcp_timer.calls==8&&s.tcp_timer.completed==8);
+    assert(logs.empty()&&tx_calls==0&&rx_calls==0&&event_calls==0&&register_calls==0&&ps_calls==0);
+}
+void timer_zero_and_wrap(){
+    clock_ms=0;timer();assert(snapshot().tcp_timer.late_entries==0);
+    clock_ms=200;timer();auto s=snapshot();
+    assert(s.tcp_timer.late_entries==1&&s.tcp_timer.last_late_gap_ms==200); // Zero is a valid first timestamp.
+    clock_ms=uint64_t{UINT32_MAX}-100;timer_duration_ms=7;timer();
+    tcp_timer_stats.calls.store(UINT32_MAX);tcp_timer_stats.completed.store(UINT32_MAX);tcp_timer_stats.late_entries.store(UINT32_MAX);
+    clock_ms=uint64_t{UINT32_MAX}+100;timer_duration_ms=9;timer();s=snapshot();
+    assert(s.tcp_timer.calls==0&&s.tcp_timer.completed==0&&s.tcp_timer.active==0&&s.tcp_timer.late_entries==0);
+    assert(s.tcp_timer.last_entry_ms==99&&s.tcp_timer.last_complete_ms==108&&s.tcp_timer.last_duration_ms==9);
+    assert(s.tcp_timer.last_late_gap_ms==200&&s.tcp_timer.last_late_ms==99);
+    clock_ms=uint64_t{UINT32_MAX}+150;timer();s=snapshot();
+    assert(s.tcp_timer.calls==1&&s.tcp_timer.completed==1&&s.tcp_timer.late_entries==0&&s.tcp_timer.last_late_ms==99);
+    assert(s.tcp_timer.last_late_gap_ms==200&&uint32_t(s.now_ms-s.tcp_timer.last_late_ms)==59);
+    assert(timer_calls==5&&logs.empty()&&event_calls==0&&register_calls==0&&ps_calls==0);
+}
 int main(int argc,char** argv){
 #ifdef NETWORK_TARGET_MODEL
     model_check_external_branch();
@@ -341,7 +394,8 @@ int main(int argc,char** argv){
     else if(name=="stop")stopped_registration();else if(name=="event-error")event_error_test();
     else if(name=="registration-error")registration_error_test();else if(name=="wrap")wrap_test();
     else if(name=="console")console_test();else if(name=="held")held_and_nested_paths();
-    else if(name=="concurrent")concurrent_paths();else if(name=="slow-path")slow_path_threshold_wrap_and_retention();else assert(false);
+    else if(name=="concurrent")concurrent_paths();else if(name=="slow-path")slow_path_threshold_wrap_and_retention();
+    else if(name=="timer")timer_progress_threshold_and_retention();else if(name=="timer-wrap")timer_zero_and_wrap();else assert(false);
 #ifdef NETWORK_TARGET_MODEL
     assert(model_critical_calls==1&&model_hardware_calls>0);
 #endif
@@ -359,6 +413,8 @@ def main():
                         'esp_err_t esp_wifi_set_tx_done_cb(wifi_tx_done_cb_t cb);'):
         assert declaration in wifi, declaration
     assert 'esp_err_t esp_netif_receive(esp_netif_t *esp_netif, void *buffer, size_t len, void *eb);' in netif
+    tcp = re.sub(r'\s+', ' ', (IDF / 'components/lwip/lwip/src/include/lwip/priv/tcp_priv.h').read_text())
+    assert 'void tcp_tmr (void);' in tcp
     libc_cmake = (IDF / 'components/esp_libc/CMakeLists.txt').read_text()
     assert re.search(r'set_source_files_properties\("src/port/xtensa/stdatomic_s32c1i.c"\s+'
                      r'PROPERTIES COMPILE_FLAGS "-mno-disable-hardware-atomics"\)', libc_cmake)
@@ -390,7 +446,7 @@ def main():
             subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
                 '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-pthread', '-fsanitize=address,undefined',
                 '-I' + str(directory), '-I' + str(component / 'include'), str(source), '-o', str(binary)], check=True)
-            for case in ('paths', 'lifecycle', 'eager', 'race', 'race-ok', 'stop', 'event-error', 'registration-error', 'wrap', 'console', 'held', 'concurrent', 'slow-path'):
+            for case in ('paths', 'lifecycle', 'eager', 'race', 'race-ok', 'stop', 'event-error', 'registration-error', 'wrap', 'console', 'held', 'concurrent', 'slow-path', 'timer', 'timer-wrap'):
                 subprocess.run([str(binary), case], check=True)
 
 
