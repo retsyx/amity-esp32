@@ -108,6 +108,12 @@ system::ExecutionSnapshot SystemControl::execution_snapshot()const{
     {std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config);for(const auto& pending:pending_)out.activity_outcomes.push_back({pending.id,pending.stage,pending.error});}
     out.native_observations=native_observations();return out;
 }
+SystemControl::AppliedConfiguration SystemControl::applied_configuration()const{
+    const auto published=std::atomic_load(&active_);if(!published)return {};
+    const auto state=local_.playback_state();const auto& config=published->configuration;
+    if(state.applied_config_revision!=config.config_revision||state.applied_presentation_revision!=config.presentation_revision)return {};
+    return {config.config_revision,config.presentation_revision,published->policy_hash};
+}
 std::vector<system::CecObservation> SystemControl::native_observations()const{
     std::vector<system::CecObservation> out;
     for(const auto& a:local_.owned_snapshots())if(a.owner==octopus_)for(const auto& d:a.devices)if(d.resolved){system::CecObservation o;o.endpoint={{consortium_,a.owner,a.adapter,d.side},d.logical_address};o.osd_name=d.osd_name;o.owner_boot_id=a.boot;o.local_sequence=a.discovery_generation+1;o.scan_id=system::ScanId::parse(a.boot.str()).value_or(system::ScanId{});o.physical_address=d.physical_address;o.device_type=d.device_type;o.vendor_id=d.vendor_id;out.push_back(std::move(o));}
@@ -120,11 +126,16 @@ std::optional<config_store::ExternalSlot> SystemControl::external_slot(unsigned 
     auto config=active_configuration();if(config)for(const auto& s:config->external_slots)if(s.slot==slot)return s;return {};
 }
 std::optional<unsigned> SystemControl::external_activity_index(const Snapshot& state)const{
-    auto config=active_configuration();
+    PlaybackState playback;playback.current_activity=state.current_activity;
+    if(state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size())
+        playback.activity_id=state.activities[state.current_activity].activity_id;
+    return external_activity_index(playback);
+}
+std::optional<unsigned> SystemControl::external_activity_index(const PlaybackState& state)const{
+    const auto config=active_configuration();
     if(!config)return state.current_activity<0?std::nullopt:std::optional<unsigned>{static_cast<unsigned>(state.current_activity)};
-    if(state.current_activity<0||static_cast<size_t>(state.current_activity)>=state.activities.size())return {};
-    const auto id=state.activities[state.current_activity].activity_id;
-    for(const auto& slot:config->external_slots)if(!slot.tombstone&&slot.activity_id==id){
+    if(!state.activity_id)return {};
+    for(const auto& slot:config->external_slots)if(!slot.tombstone&&slot.activity_id==state.activity_id){
         const auto* activity=config_store::activity_for_slot(*config,slot.slot);
         if(activity&&activity->zone_id==config->primary_zone_id)return slot.slot;
     }

@@ -13,7 +13,7 @@ static const auto controller_boot=*m::BootId::parse("555555555555555555555555555
 static const auto link=*m::LinkId::parse("66666666666666666666666666666666");
 static void reset_fixture(){
     fixture_tick=100000;fixture_time=1000000;fixture_present=true;fixture_async_autocomplete=true;
-    fixture_driver_paused=false;fixture_wire_deadlines=false;fixture_completion_ready={};fixture_submit_admission={};
+    fixture_wire_deadlines=false;
     fixture_wait_outcome={};fixture_before_start={};fixture_delay={};fixture_send={};fixture_transmit={};fixture_admission={};
     fixture_peer_address=[](int gpio)->uint8_t{return gpio==1||gpio==3||gpio==5?0:4;};
     fixture_sent.clear();fixture_completed.clear();fixture_incoming.clear();assert(fixture_pending.empty());

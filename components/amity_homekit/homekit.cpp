@@ -63,6 +63,8 @@ struct Input {
     bool hidden=false;
 };
 std::array<Input,16> inputs;
+uint64_t input_config_revision=0,input_presentation_revision=0;
+bool inputs_dirty=true;
 bool battery_known=false, charging_known=false, audio_known=false;
 struct HapLock { HapLock(){hap_amity_lock();} ~HapLock(){hap_amity_unlock();} };
 struct StatusLock { StatusLock(){xSemaphoreTake(status_lock,portMAX_DELAY);} ~StatusLock(){xSemaphoreGive(status_lock);} };
@@ -86,20 +88,19 @@ void refresh_remote_battery(){
     if(battery_known){const int percent=remote.bonded?std::clamp(remote.battery_percent,0,100):100;update(battery_level,percent);update(battery_low,percent<=20);}
     if(charging_known)update(battery_charging,remote.bonded?remote.charging:0);
 }
-void refresh_values(){
-    const auto s=hub->snapshot();
-    update(active,s.current_activity>=0);update(speaker_active,s.current_activity>=0);
-    const auto selected=hub->external_activity_index(s);update(active_input,selected?*selected+1:0);
-    audio_known=s.audio_status_known;
-    if(audio_known)update_bool(mute_char,s.muted);
+void refresh_inputs(){
     const auto configuration=hub->active_configuration();
-    const bool configured=bool(configuration);
+    const auto revision=configuration?configuration->config_revision:0;
+    const auto presentation=configuration?configuration->presentation_revision:0;
+    if(!inputs_dirty&&revision==input_config_revision&&presentation==input_presentation_revision)return;
     for(unsigned i=0;i<inputs.size();++i){
-        const auto activity=configured?hub->external_activity(i):std::optional<config_store::ConfiguredActivity>{};
-        const auto slot=configured?hub->external_slot(i):std::optional<config_store::ExternalSlot>{};
-        auto &in=inputs[i];const bool exists=configured?activity.has_value():i<s.activities.size();
-        const std::string name=exists?(configured?activity->label:s.activities[i].name):"Unused "+std::to_string(i+1);
-        const std::string identity=configured?(activity?hub->octopus_id().str()+":"+activity->activity_id.str():"tombstone:"+std::to_string(i)):name;
+        const auto* activity=configuration?config_store::activity_for_slot(*configuration,i):nullptr;
+        if(activity&&activity->zone_id!=configuration->primary_zone_id)activity=nullptr;
+        const config_store::ExternalSlot* slot=nullptr;
+        if(configuration)for(const auto& value:configuration->external_slots)if(value.slot==i){slot=&value;break;}
+        auto &in=inputs[i];const bool exists=activity!=nullptr;
+        const std::string name=exists?activity->label:"Unused "+std::to_string(i+1);
+        const std::string identity=exists?hub->octopus_id().str()+":"+activity->activity_id.str():"tombstone:"+std::to_string(i);
         if(in.activity!=identity){
             in.activity=identity;in.alias=slot?slot->alias:std::string{};in.hidden=slot&&slot->hidden;
             std::string record;
@@ -107,7 +108,7 @@ void refresh_values(){
                 const auto split=record.find('\0');
                 if(split!=std::string::npos&&record.size()>split+1&&(record[split+1]=='0'||record[split+1]=='1')&&record.size()-split-2<=63&&record.find('\0',split+1)==std::string::npos){
                     const auto guard=record.substr(0,split);
-                    const bool legacy=configured&&activity&&guard==activity->generated_label&&guard.size()<=63;
+                    const bool legacy=activity&&guard==activity->generated_label&&guard.size()<=63;
                     if(guard==identity||legacy){in.hidden=record[split+1]=='1';in.alias=record.substr(split+2);if(legacy)save_input(i);}
                 }
             }
@@ -117,6 +118,15 @@ void refresh_values(){
         update(in.configured,exists?1:0);update(in.visible,(!exists||in.hidden)?1:0);
         update(in.target_visible,(!exists||in.hidden)?1:0);
     }
+    input_config_revision=revision;input_presentation_revision=presentation;inputs_dirty=false;
+}
+void refresh_values(){
+    const auto s=hub->playback_state();
+    update(active,s.current_activity>=0);update(speaker_active,s.current_activity>=0);
+    const auto selected=hub->external_activity_index(s);update(active_input,selected?*selected+1:0);
+    audio_known=s.audio_status_known;
+    if(audio_known)update_bool(mute_char,s.muted);
+    refresh_inputs();
     refresh_remote_battery();
 }
 int read(hap_read_data_t data[],int count,void *,void *){
@@ -153,10 +163,10 @@ int write(hap_write_data_t data[],int count,void *,void *){
             auto &in=inputs[n];
             if(configuration&&!hub->external_activity(n))continue;
             if(d.hc==in.name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63){
-                const auto old=in.alias;in.alias=d.val.s;result=save_input(n);if(result!=ESP_OK)in.alias=old;break;
+                const auto old=in.alias;in.alias=d.val.s;result=save_input(n);if(result!=ESP_OK)in.alias=old;else inputs_dirty=true;break;
             }
             if(d.hc==in.target_visible&&(d.val.i==0||d.val.i==1)){
-                const bool old=in.hidden;in.hidden=d.val.i==1;result=save_input(n);if(result!=ESP_OK)in.hidden=old;break;
+                const bool old=in.hidden;in.hidden=d.val.i==1;result=save_input(n);if(result!=ESP_OK)in.hidden=old;else inputs_dirty=true;break;
             }
         }
         *d.status=result==ESP_OK?HAP_STATUS_SUCCESS:result==ESP_ERR_INVALID_ARG?HAP_STATUS_VAL_INVALID:HAP_STATUS_COMM_ERR;

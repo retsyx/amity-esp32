@@ -52,7 +52,7 @@ void reject_handshake(mbedtls_ssl_context &ssl,int socket,bool server,int reason
     }
 }
 }
-TlsLink::TlsLink(){mbedtls_ssl_init(&ssl);mbedtls_ssl_config_init(&config);mbedtls_x509_crt_init(&own);mbedtls_x509_crt_init(&anchors);mbedtls_pk_init(&key);}
+TlsLink::TlsLink(ConnectionAdmission& pool):admission_pool(pool){mbedtls_ssl_init(&ssl);mbedtls_ssl_config_init(&config);mbedtls_x509_crt_init(&own);mbedtls_x509_crt_init(&anchors);mbedtls_pk_init(&key);}
 TlsLink::~TlsLink(){if(socket>=0){::shutdown(socket,SHUT_RDWR);::close(socket);}mbedtls_ssl_free(&ssl);mbedtls_ssl_config_free(&config);mbedtls_x509_crt_free(&own);mbedtls_x509_crt_free(&anchors);mbedtls_pk_free(&key);}
 int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){
     auto &self=*static_cast<TlsLink*>(ctx);
@@ -68,7 +68,9 @@ int TlsLink::verify(void *ctx,mbedtls_x509_crt *crt,int depth,uint32_t *flags){
 bool TlsLink::setup(const Identity &identity,const std::vector<Peer> &peers,bool is_server,int fd,model::OctopusId expected){
     if(configured||socket>=0)return false;
     BoundedSetupTimings<5> timing("tls_setup",now_ms);timing.peer=expected;timing.begin("total");
-    socket=fd;server=is_server;if(peers.empty()||peers.size()>maximum_roster_peers)return false;allowed=peers;authenticated=expected;
+    socket=fd;server=is_server;if(peers.empty()||peers.size()>maximum_roster_peers)return false;
+    admission=admission_pool.reserve();if(!admission)return false;
+    allowed=peers;authenticated=expected;
     if(!timing.step("own_credentials",[&]{return !mbedtls_x509_crt_parse_der(&own,reinterpret_cast<const uint8_t*>(identity.der.data()),identity.der.size())&&!mbedtls_pk_parse_key(&key,reinterpret_cast<const uint8_t*>(identity.key_der.data()),identity.key_der.size(),nullptr,0);}))return timing.done(false);
     // The only callers copy Group peers, validated by load_group or the
     // authenticated bootstrap ingress. Retain local profile/id/pin binding on
@@ -110,7 +112,7 @@ bool TlsLink::handshake(){
     if(handshaken)return true;
     BoundedSetupTimings<3> timing("tls_handshake",now_ms);const auto total=timing.begin("handshake");
     timing_verify_ms=0;timing_verify_calls=0;uint64_t call_ms=0,wait_ms=0;uint32_t calls=0;
-    auto finished=[&](bool good,int code){handshaken=good;transport_failed=!good;timing.peer=authenticated;timing.finish(total,good,calls,call_ms,wait_ms,code);timing.sum("verify_callback",timing_verify_ms,timing_verify_calls,good);return good;};
+    auto finished=[&](bool good,int code){handshaken=good;transport_failed=!good;if(good)admission.authenticated();timing.peer=authenticated;timing.finish(total,good,calls,call_ms,wait_ms,code);timing.sum("verify_callback",timing_verify_ms,timing_verify_calls,good);return good;};
     const auto deadline=now_ms()+10000;
     while(now_ms()<deadline){
         auto began=now_ms();const int r=mbedtls_ssl_handshake(&ssl);call_ms+=now_ms()-began;++calls;

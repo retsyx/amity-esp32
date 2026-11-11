@@ -41,11 +41,7 @@ struct Bus::Impl {
         unsigned attempts = 3;
         ExecutionFence fence{};
         TxCompletion *completion = nullptr;
-        uint32_t operation_token = 0;
-        uint8_t batch_slot = tx_capacity, batch_index = 0;
-        bool requires_previous_start = false;
     };
-    struct BatchState { bool used = false; uint8_t remaining = 0; bool started[tx_capacity]{}; };
     struct AttemptResult {
         TxResult outcome = TxResult::Pending;
         TxDiagnostic diagnostic{};
@@ -55,16 +51,10 @@ struct Bus::Impl {
     gpio_num_t gpio = GPIO_NUM_NC;
     uint64_t pin_mask = 0;
     QueueHandle_t rx = nullptr, tx = nullptr, result = nullptr;
-    QueueHandle_t completions = nullptr;
-    SemaphoreHandle_t completion_slots = nullptr;
-    StaticQueue_t completions_control{};
-    StaticSemaphore_t completion_slots_control{};
-    uint8_t completion_storage[tx_capacity * sizeof(Completion)]{};
     StaticQueue_t rx_control{}, tx_control{}, result_control{};
     StaticSemaphore_t admission_control{};
     SemaphoreHandle_t admission = nullptr;
     unsigned tx_in_use = 0;
-    BatchState batches[tx_capacity]{}; // Dependency/completion metadata only, never frames.
     uint8_t* rx_storage = nullptr;
     uint8_t* tx_storage = nullptr;
     uint8_t result_storage[sizeof(AttemptResult)]{};
@@ -84,8 +74,7 @@ struct Bus::Impl {
                         const TxDiagnostic&) const;
     bool enqueue(const Work&);
     void free_slots(size_t count);
-    bool dependency_ready(const Work& work);
-    static void complete_work(Impl& p, const Work& work, TxResult outcome, bool started);
+    static void complete_work(Impl& p, const Work& work, TxResult outcome);
     ~Impl();
 };
 
@@ -200,9 +189,9 @@ bool Bus::Impl::Runtime::tick(gptimer_handle_t, const gptimer_alarm_event_data_t
     for (auto *p : r.ports) if (p)
         gpio_ll_set_level(&GPIO, p->gpio, (low & p->pin_mask) == 0);
     for (auto *p : r.ports) if (p) {
-        ReceiveObservation observation;
-        if (p->engine.take_observation(observation)) {
-            if (xQueueSendFromISR(p->rx, &observation, &wake) == pdTRUE) ++p->stats.received;
+        Frame frame;
+        if (p->engine.take_received(frame)) {
+            if (xQueueSendFromISR(p->rx, &frame, &wake) == pdTRUE) ++p->stats.received;
             else ++p->stats.rx_dropped;
         }
         const auto status = p->engine.take_result();
@@ -311,38 +300,15 @@ void Bus::Impl::free_slots(size_t count) {
     tx_in_use -= count;
     portEXIT_CRITICAL(&r.lock);
 }
-bool Bus::Impl::dependency_ready(const Work& work) {
-    if (!work.requires_previous_start) return true;
-    auto& r = runtime();
-    portENTER_CRITICAL(&r.lock);
-    const bool ready = work.batch_slot < tx_capacity && work.batch_index > 0 &&
-        batches[work.batch_slot].used && batches[work.batch_slot].started[work.batch_index - 1];
-    portEXIT_CRITICAL(&r.lock);
-    return ready;
-}
-void Bus::Impl::complete_work(Impl& p, const Work& work, TxResult outcome, bool started) {
-    if (work.batch_slot < tx_capacity) {
-        auto& r = runtime();
-        portENTER_CRITICAL(&r.lock);
-        auto& batch = p.batches[work.batch_slot];
-        batch.started[work.batch_index] = started;
-        if (!--batch.remaining) batch.used = false;
-        portEXIT_CRITICAL(&r.lock);
-    }
+void Bus::Impl::complete_work(Impl& p, const Work& work, TxResult outcome) {
     p.free_slots(1);
     if (work.completion) work.completion->result.store(outcome, std::memory_order_release);
-    if (work.operation_token) {
-        const Completion completion{work.operation_token, outcome, started};
-        if (xQueueSend(p.completions, &completion, 0) != pdTRUE) std::abort();
-    }
 }
 Bus::Impl::~Impl() {
     if (gpio != GPIO_NUM_NC) runtime().detach(*this);
     if (rx) vQueueDelete(rx);
     if (tx) vQueueDelete(tx);
     if (result) vQueueDelete(result);
-    if (completions) vQueueDelete(completions);
-    if (completion_slots) vSemaphoreDelete(completion_slots);
     if (admission) vSemaphoreDelete(admission);
     heap_caps_free(rx_storage); heap_caps_free(tx_storage);
 }
@@ -357,7 +323,6 @@ void Bus::Impl::service() {
         auto& r = runtime(); const uint64_t now = esp_timer_get_time();
         TxResult outcome = TxResult::Pending;
         TxDiagnostic diagnostic{};
-        if (!attempt && !dependency_ready(work)) outcome = TxResult::Cancelled;
         if (attempt_pending) {
             AttemptResult completed;
             if (xQueueReceive(result, &completed, 0) != pdTRUE) {
@@ -402,7 +367,7 @@ void Bus::Impl::service() {
         else if (!(work.frame.size == 1 && outcome == TxResult::Nack)) ++stats.tx_errors;
         portEXIT_CRITICAL(&r.lock);
         log_tx_failure(work, outcome, attempt, work_started, diagnostic);
-        complete_work(*this, work, outcome, work_started);
+        complete_work(*this, work, outcome);
         active = false;
     }
 }
@@ -434,16 +399,14 @@ esp_err_t Bus::start(int gpio, QueueProfile) {
     p.pin_mask = uint64_t{1} << gpio;
     gpio_set_level(p.gpio, 1);
     const unsigned rx_depth = 32, tx_depth = tx_capacity;
-    p.rx_storage = static_cast<uint8_t*>(heap_caps_malloc(rx_depth * sizeof(ReceiveObservation), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    p.rx_storage = static_cast<uint8_t*>(heap_caps_malloc(rx_depth * sizeof(Frame), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     p.tx_storage = static_cast<uint8_t*>(heap_caps_malloc(tx_depth * sizeof(Impl::Work), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (!p.rx_storage || !p.tx_storage) { xSemaphoreGive(r.lifecycle); return ESP_ERR_NO_MEM; }
-    p.rx = xQueueCreateStatic(rx_depth, sizeof(ReceiveObservation), p.rx_storage, &p.rx_control);
+    p.rx = xQueueCreateStatic(rx_depth, sizeof(Frame), p.rx_storage, &p.rx_control);
     p.tx = xQueueCreateStatic(tx_depth, sizeof(Impl::Work), p.tx_storage, &p.tx_control);
     p.result = xQueueCreateStatic(1, sizeof(Impl::AttemptResult), p.result_storage, &p.result_control);
     p.admission = xSemaphoreCreateMutexStatic(&p.admission_control);
-    p.completions = xQueueCreateStatic(tx_capacity, sizeof(Completion), p.completion_storage, &p.completions_control);
-    p.completion_slots = xSemaphoreCreateCountingStatic(tx_capacity, tx_capacity, &p.completion_slots_control);
-    if (!p.rx || !p.tx || !p.result || !p.admission || !p.completions || !p.completion_slots) {
+    if (!p.rx || !p.tx || !p.result || !p.admission) {
         xSemaphoreGive(r.lifecycle); return ESP_ERR_NO_MEM;
     }
     gpio_config_t pin{};
@@ -492,76 +455,9 @@ bool Bus::send_async_guarded(const Frame &frame, ExecutionFence fence, TxComplet
     if (!impl_ || !valid_fence_storage(fence) || !fence_current(fence) || !attempts) return false;
     return impl_->enqueue({frame, attempts, fence, &completion});
 }
-bool Bus::submit_guarded(const Frame &frame, ExecutionFence fence, uint32_t token, unsigned attempts) {
-    const Submission submission{frame, fence, token, attempts};
-    return submit_guarded_batch(&submission, 1);
-}
-bool Bus::submit_guarded_batch(const Submission* batch, size_t count) {
-    if (!impl_ || !impl_->started || !batch || !count || count > tx_capacity) return false;
-    for (size_t i = 0; i < count; ++i) {
-        const auto& item = batch[i];
-        if (!i && item.requires_previous_start) return false;
-        if (!item.operation_token || !item.attempts || !item.frame.size || item.frame.size > 16 ||
-            !valid_fence_storage(item.fence) || !fence_current(item.fence) ||
-            (item.fence.expires_at_us && uint64_t(esp_timer_get_time()) >= item.fence.expires_at_us)) return false;
-    }
-    if (xSemaphoreTake(impl_->admission, 0) != pdTRUE) return false;
-    if (!impl_->reserve_slots(count)) {
-        xSemaphoreGive(impl_->admission);
-        for (size_t i = 0; i < count; ++i) impl_->log_fifo_full(batch[i].frame);
-        return false;
-    }
-    size_t reserved = 0;
-    while (reserved < count && xSemaphoreTake(impl_->completion_slots, 0) == pdTRUE) ++reserved;
-    if (reserved != count) {
-        while (reserved--) xSemaphoreGive(impl_->completion_slots);
-        impl_->free_slots(count);
-        xSemaphoreGive(impl_->admission); return false;
-    }
-    uint8_t batch_slot = tx_capacity;
-    bool dependent = false;
-    for (size_t i = 1; i < count; ++i) dependent = dependent || batch[i].requires_previous_start;
-    if (dependent) {
-        auto& r = Impl::runtime();
-        portENTER_CRITICAL(&r.lock);
-        for (uint8_t i = 0; i < tx_capacity; ++i) if (!impl_->batches[i].used) {
-            batch_slot = i; impl_->batches[i] = {}; impl_->batches[i].used = true;
-            impl_->batches[i].remaining = static_cast<uint8_t>(count); break;
-        }
-        portEXIT_CRITICAL(&r.lock);
-        if (batch_slot == tx_capacity) {
-            for (size_t i = 0; i < count; ++i) xSemaphoreGive(impl_->completion_slots);
-            impl_->free_slots(count);
-            xSemaphoreGive(impl_->admission); return false;
-        }
-    }
-    // All producers use admission; consumers only make more space. Once the
-    // entire batch and its completion slots fit, every FIFO insertion succeeds.
-    for (size_t i = 0; i < count; ++i) {
-        const auto& item = batch[i];
-        const Impl::Work work{item.frame, item.attempts, item.fence, nullptr, item.operation_token,
-            batch_slot, static_cast<uint8_t>(i), item.requires_previous_start};
-        if (xQueueSend(impl_->tx, &work, 0) != pdTRUE) std::abort();
-    }
-    xSemaphoreGive(impl_->admission);
-    impl_->record_queue_depth();
-    return true;
-}
-bool Bus::take_completion(Completion &completion) {
-    if (!impl_) return false;
-    if (!impl_->started || xQueueReceive(impl_->completions, &completion, 0) != pdTRUE) return false;
-    xSemaphoreGive(impl_->completion_slots);
-    return true;
-}
 bool Bus::receive(Frame &frame, uint32_t timeout_ms) {
-    ReceiveObservation observation;
-    if (!receive_observation(observation, timeout_ms)) return false;
-    frame = observation.frame;
-    return true;
-}
-bool Bus::receive_observation(ReceiveObservation &observation, uint32_t timeout_ms) {
     if (!impl_) return false;
-    return impl_->started && xQueueReceive(impl_->rx, &observation, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    return impl_->started && xQueueReceive(impl_->rx, &frame, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 Statistics Bus::statistics() const {
     if (!impl_) return {};

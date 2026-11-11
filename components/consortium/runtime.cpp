@@ -1260,7 +1260,7 @@ bool connection_available(model::OctopusId peer){
 void launch(std::shared_ptr<TlsLink> tls,std::string endpoint_hint={},model::OctopusId expected={}){
     auto active=std::make_shared<Active>();active->tls=std::move(tls);active->endpoint_hint=std::move(endpoint_hint);active->connection_peer=expected;
     {std::lock_guard<std::mutex> guard(lock);
-        if(links.size()>=maximum_roster_peers)return;
+        if(links.size()>=maximum_connection_slots)return;
         if(expected&&std::any_of(links.begin(),links.end(),[&](const auto& link){return !link->cancelled&&link->tls&&link->tls->usable()&&(link->connection_peer==expected||link->peer==expected);}))return;
         links.push_back(active);
     }

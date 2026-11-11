@@ -51,6 +51,7 @@ struct HubService::Adapter : Transport {
         static void operator delete(void* p){heap_caps_free(p);}
 #endif
         std::atomic<uint32_t> owned{1},bindings[2][15]{};
+        std::atomic<uint32_t> keys{0},activity{0};
     };
     Impl& owner;
     const uint8_t adapter_id;
@@ -103,7 +104,7 @@ struct HubService::Adapter : Transport {
 };
 struct HubService::Impl : Adapter {
 #ifdef ESP_PLATFORM
-    static void *operator new(size_t size) { auto *p=heap_caps_malloc(size,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT); if(!p)std::abort(); return p; }
+    static void *operator new(size_t size) { auto *p=heap_caps_malloc(size,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT); if(!p)std::abort(); return p; }
     static void operator delete(void *p) { heap_caps_free(p); }
 #endif
     enum class Kind:uint8_t { Configure, Select, Key, Release, Standby, Discover, AuthorityTransition, Retire, MaintenanceBegin, MaintenanceEnd, SettingsCommit,
@@ -191,7 +192,8 @@ struct HubService::Impl : Adapter {
     static_assert(sizeof(Command)<=48,"Button IPC must not carry activity/configuration payloads");
     static_assert(sizeof(InputCommand)<=64,"Button edges carry only their activity generation");
 #endif
-    std::atomic<uint32_t> intent_generation{0},key_generation{0},activity_selection{0};
+    std::atomic<uint32_t> intent_generation{0},activity_selection{0};
+    std::atomic<uint32_t>& key_generation=guards->keys;
     std::atomic<unsigned> owner_activity_commands{0};
     std::atomic<unsigned> activity_requests{0};std::atomic<bool> setup_running{false};
     std::atomic<unsigned> scoped_configurations{0};bool scoped_publication_pending=false;
@@ -219,6 +221,7 @@ struct HubService::Impl : Adapter {
     QueueHandle_t commands=nullptr;SemaphoreHandle_t lock=nullptr,command_slots=nullptr,cleanup_slots=nullptr,configuration_gate=nullptr;TaskHandle_t task=nullptr;
     std::deque<std::unique_ptr<Command>> deferred;Snapshot cached;
     std::function<void(const Snapshot&)>callback;
+    std::function<void()> configuration_applied;
 
     // Boot enumerates both wires once. Only explicit UI requests and real
     // recipient-cache misses may request another enumeration afterwards.
@@ -235,7 +238,7 @@ struct HubService::Impl : Adapter {
     // alone does not establish that the owner accepted it.
     std::vector<system::OctopusId> unadmitted_selection_owners;
     uint32_t shared_selection_receipt=0;
-    std::atomic<uint32_t> activity_instance{0};
+    std::atomic<uint32_t>& activity_instance=guards->activity;
     // Normal selections are idempotent across authenticated link recovery.
     // This receipt is independent of the currently executing owner recipe.
     system::BootId accepted_controller_boot;
@@ -329,8 +332,8 @@ struct HubService::Impl : Adapter {
 
     esp_err_t start_owner() {
         auto err = start_buses(); if (err != ESP_OK) { reset_startup(); return err; }
-        // Key state is task data. Allocate after PSRAM setup; only the
-        // ISR-visible generation counters need the Impl's internal memory.
+        // Key state and Impl are task data. Every counter referenced by a
+        // frame-start fence lives in the separately allocated internal guards.
         keys.resize(256);release_generations.reset(new std::array<std::atomic<uint32_t>,256>{});if(local_coordinator.load())pressed_owner.assign(256,0xff);
 #ifdef ESP_PLATFORM
         ESP_LOGI(TAG,"Owner key state bytes=%u external=%d; controller owners bytes=%u",
@@ -712,8 +715,17 @@ struct HubService::Impl : Adapter {
         if(!owner)return false;
         intent.target.port={consortium,owner,0,system::Side::front};intent.target.osd_name.clear();
         auto position=std::find(key_owners.begin(),key_owners.end(),owner);
-        const bool inserted=position==key_owners.end();
-        if(inserted){if(key_owners.size()==4)return false;key_owners.push_back(owner);position=key_owners.end()-1;}
+        if(position==key_owners.end()){
+            // Slots remember recipients only while a button remains down.
+            // Reuse idle slots after activity changes or member replacements;
+            // never overwrite the recipient of a later matching button-up.
+            position=std::find_if(key_owners.begin(),key_owners.end(),[&](const auto& candidate){
+                const auto slot=static_cast<uint8_t>(&candidate-key_owners.data());
+                return std::find(pressed_owner.begin(),pressed_owner.end(),slot)==pressed_owner.end();
+            });
+            if(position!=key_owners.end())*position=owner;
+            else {if(key_owners.size()==4)return false;key_owners.push_back(owner);position=key_owners.end()-1;}
+        }
         const auto slot=static_cast<uint8_t>(position-key_owners.begin());
         if(!intent.edges[intent.edge_count-1].down)pressed_owner[first.key]=0xff;
         bool admitted=false;
@@ -742,7 +754,6 @@ struct HubService::Impl : Adapter {
             }
         }
         if(admitted)pressed_owner[first.key]=intent.edges[intent.edge_count-1].down?slot:0xff;
-        else if(inserted)key_owners.pop_back();
         return admitted;
     }
 
@@ -1285,8 +1296,10 @@ struct HubService::Impl : Adapter {
             if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.front_physical_address();if(pa!=0xffff)a.effective_front_physical=pa;a.observed_front_physical=engine->hub.detected_front_physical_address();}
         }
         auto observer=std::atomic_load(&observer_slot);auto cb=changed?callback:decltype(callback){};
+        auto applied=configuration_changed?configuration_applied:decltype(configuration_applied){};
         if(cb)notification=cached;
         xSemaphoreGive(lock);
+        if(applied)applied();
         if(observer)for(const auto& report:changed_reports)(*observer)(report);
         if(cb)cb(notification);
     }
@@ -2029,6 +2042,20 @@ bool HubService::discover() { return impl_->enqueue(new (std::nothrow) Impl::Com
 Snapshot HubService::snapshot() const {
     auto &p = *impl_; if (!p.lock) return {};
     xSemaphoreTake(p.lock, portMAX_DELAY); auto state = p.cached; xSemaphoreGive(p.lock); return state;
+}
+PlaybackState HubService::playback_state() const {
+    auto& p=*impl_;if(!p.lock)return {};
+    xSemaphoreTake(p.lock,portMAX_DELAY);
+    const auto& state=p.cached;
+    PlaybackState result{state.applied_config_revision,state.applied_presentation_revision,state.current_activity,
+        {},state.audio_status_known,state.muted,state.volume};
+    if(state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size())
+        result.activity_id=state.activities[state.current_activity].activity_id;
+    xSemaphoreGive(p.lock);return result;
+}
+void HubService::on_configuration_applied(std::function<void()> callback) {
+    auto& p=*impl_;if(!p.lock)return;
+    xSemaphoreTake(p.lock,portMAX_DELAY);p.configuration_applied=std::move(callback);xSemaphoreGive(p.lock);
 }
 void HubService::on_change(std::function<void(const Snapshot &)> callback) {
     auto &p = *impl_; if (!p.lock) return;

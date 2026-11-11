@@ -4,6 +4,7 @@
 #include "amity/consortium/credential_types.hpp"
 #include "setup_timing.hpp"
 #include "tls_receive_trace.hpp"
+#include "connection_admission.hpp"
 #include "mbedtls/ssl.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
@@ -36,7 +37,7 @@ struct TlsLink {
     model::OctopusId authenticated;
     bool server=false;
     uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;
-    TlsLink();~TlsLink();
+    explicit TlsLink(ConnectionAdmission& = connection_admission());~TlsLink();
     bool setup(const Identity &,const std::vector<Peer>&,bool is_server,int fd,model::OctopusId expected={});
     // The first blocking I/O establishes this transport. Subsequent exchanges
     // reuse it; application synchronization has no ownership of TLS lifetime.
@@ -60,6 +61,8 @@ struct TlsLink {
     const TlsReceiveDiagnostic& receive_diagnostic()const{return incoming_diagnostic;}
     static int verify(void *,mbedtls_x509_crt *,int,uint32_t *);
 private:
+    ConnectionAdmission& admission_pool;
+    ConnectionAdmission::Reservation admission;
     bool configured=false;
     std::atomic_bool handshaken{false},transport_failed{false};
     FrameReader incoming_reader;

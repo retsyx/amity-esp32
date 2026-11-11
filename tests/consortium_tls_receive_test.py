@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/json.hpp"
 #include "tls_receive_trace.hpp"
+#include "connection_admission.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
@@ -61,6 +62,7 @@ int mbedtls_ssl_write(int*,const uint8_t* bytes,size_t size){
     blocked_pointer=nullptr;const auto count=std::min(size,partial_write);written.insert(written.end(),bytes,bytes+count);return static_cast<int>(count);
 }
 struct TlsLink {
+    amity::consortium::platform::ConnectionAdmission::Reservation admission;
     int ssl=0,socket=3;bool server=true;
     model::OctopusId authenticated=*model::OctopusId::parse("00000000000000000000000000000001");
     bool configured=true,handshaken=true,transport_failed=false;

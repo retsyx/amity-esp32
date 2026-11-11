@@ -346,7 +346,7 @@ struct RecoveryOwners {
         assert(main.request_activity(0)==ESP_OK);finish(0);
         offers.clear();fixture_sent.clear();fixture_completed.clear();
     }
-    ~RecoveryOwners(){latest_task=main_task;fixture_peer_address={};fixture_completion_ready={};fixture_async_autocomplete=true;fixture_tick=100000;}
+    ~RecoveryOwners(){latest_task=main_task;fixture_peer_address={};fixture_async_autocomplete=true;fixture_tick=100000;}
     bool send(const m::OwnedIntent& intent){
         assert(intent.target.port.octopus_id==member);offers.push_back(intent);
         if(drop_next_activity&&intent.kind==m::OwnedIntentKind::activity){drop_next_activity=false;dropped.push_back(intent);return true;}

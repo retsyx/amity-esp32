@@ -28,7 +28,16 @@ int main(){
     fixture_present=true;fixture_tick=100000;
     auto config=direct_configuration();const auto boot=id<BootId>(90);
     amity::SystemControl original;original.set_identity(config.consortium_id,*config.controller_octopus_id);original.set_boot_identity(boot);assert(original.start(1,2)==ESP_OK);
-    assert(original.configure(config)==ESP_OK);drain(1000);
+    unsigned configuration_events=0;
+    original.on_configuration_applied([&]{
+        ++configuration_events;
+        const auto applied=original.applied_configuration();const auto saved=original.active_configuration();
+        assert(saved&&applied.config_revision==saved->config_revision&&applied.presentation_revision==saved->presentation_revision);
+        assert(applied.policy_hash==executable_policy_hash(*saved));
+    });
+    assert(original.configure(config)==ESP_OK);
+    assert(configuration_events==0&&original.applied_configuration().config_revision==0);
+    drain(1000);assert(configuration_events==1);
     const auto initial_configuration=original.active_configuration();
     assert(initial_configuration&&initial_configuration.get()==original.active_configuration().get());
     assert(original.accepts_local_input()&&original.active_configuration());
@@ -43,11 +52,13 @@ int main(){
     assert(original.configure(failed_hash_candidate,[&]{++failed_hash_commits;return ESP_OK;})==ESP_FAIL);
     fail_policy_hash=false;
     assert(failed_hash_commits==0&&original.active_configuration().get()==initial_configuration.get());
-    drain(4);assert(original.execution_snapshot().applied_policy_hash==executable_policy_hash(config));
+    drain(4);assert(configuration_events==1&&original.execution_snapshot().applied_policy_hash==executable_policy_hash(config));
     const auto first=config.activities[0].activity_id;
     auto generation=original.remote_activity_generation();const auto selection=original.activity_selection();
     assert(original.request_remote_activity(0,generation+1)==ESP_ERR_INVALID_STATE&&original.activity_selection()==selection);
     assert(original.request_remote_activity(0,generation)==ESP_OK);drain();assert(original.snapshot().current_activity==0&&original.execution_snapshot().sessions[0].activity_id==first);
+    const auto playback=original.playback_state();
+    assert(configuration_events==1&&playback.current_activity==0&&playback.activity_id==first&&original.external_activity_index(playback)==0);
     generation=original.remote_activity_generation();const auto selected=original.activity_selection();
     assert(original.request_remote_activity(0,generation)==ESP_OK&&original.activity_selection()==selected+1);drain();
     const auto repair=original.activity_selection();assert(original.repair_remote_activity(original.remote_activity_generation())==ESP_OK);drain();assert(original.activity_selection()==repair);

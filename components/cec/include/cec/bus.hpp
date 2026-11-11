@@ -22,15 +22,6 @@ struct RuntimeStatistics {
     uint8_t timer_instances = 0;
 };
 struct TxCompletion { std::atomic<TxResult> result{TxResult::Pending}; };
-struct Completion { uint32_t operation_token = 0; TxResult result = TxResult::Pending; bool started = false; };
-struct Submission {
-    Frame frame;
-    ExecutionFence fence{};
-    uint32_t operation_token = 0;
-    unsigned attempts = 3;
-    // A caller-selected batch dependency; no message/opcode interpretation.
-    bool requires_previous_start = false;
-};
 class Bus {
 public:
     // Source compatibility only: every profile uses identical shared dispatch,
@@ -51,20 +42,13 @@ public:
     // Rejection drops the submission without retaining it; FIFO-full drops log.
     bool send(const Frame &frame);
     bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3);
-    // Caller-owned tracking for legacy users of the same sole FIFO. Rejection
+    // Caller-owned tracking for the same sole FIFO. Rejection
     // leaves the tracker unchanged. Admission sets Pending; terminal publication
     // uses release ordering after the FIFO slot is freed. Read with acquire
     // ordering before reusing it, and keep it alive until that publication.
     bool send_async_guarded(const Frame &frame, ExecutionFence fence, TxCompletion &completion,
                             unsigned attempts = 1);
-    bool submit_guarded(const Frame&, ExecutionFence, uint32_t operation_token, unsigned attempts = 3);
-    // Copy the whole batch into this wire's sole FIFO, or admit none. Generic
-    // frame/fence/attempt metadata only; the caller chooses every message.
-    bool submit_guarded_batch(const Submission*, size_t count);
-    bool take_completion(Completion&);
     bool receive(Frame &frame, uint32_t timeout_ms = 0);
-    // The Bus instance supplies the observation's physical-port context.
-    bool receive_observation(ReceiveObservation &observation, uint32_t timeout_ms = 0);
     Statistics statistics() const;
     bool idle() const;
     static RuntimeStatistics runtime_statistics();

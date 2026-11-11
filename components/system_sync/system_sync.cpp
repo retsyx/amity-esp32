@@ -11,6 +11,7 @@
 #include <mutex>
 #include <set>
 #include <array>
+#include <atomic>
 #ifdef ESP_PLATFORM
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
@@ -23,6 +24,7 @@ struct State {
     SystemControl* control=nullptr;
     ConfigurationActivationStatus activation;
     bool activating=false;
+    std::atomic<bool> configuration_pending{false};
     uint64_t published_revision=0,owner_revision=0;
     std::vector<s::OwnedAdapterSnapshot> reports,pending_reports;
     std::array<std::optional<c::RuntimeSnapshotRetry>,amity::max_tentacles> retry_reports;
@@ -84,11 +86,15 @@ std::string configuration_snapshot(s::OctopusId,uint64_t revision){
 void publish_configuration_revision(){
     if(!c::runtime_status().coordinator)return;
     const auto config=state.control->active_configuration();if(!config)return;
-    const auto applied=state.control->execution_snapshot();
-    if(applied.applied_config_revision!=config->config_revision||applied.applied_presentation_revision!=config->presentation_revision)return;
-    if(applied.applied_policy_hash.size()!=64)return;
+    {std::lock_guard<std::mutex> guard(state.mutex);if(state.published_revision==config->config_revision)return;}
+    const auto applied=state.control->applied_configuration();
+    if(applied.config_revision!=config->config_revision||applied.presentation_revision!=config->presentation_revision)return;
+    if(applied.policy_hash.size()!=64)return;
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.published_revision==config->config_revision)return;state.published_revision=config->config_revision;}
-    c::runtime_configuration_changed(config->config_revision,applied.applied_policy_hash);
+    c::runtime_configuration_changed(config->config_revision,applied.policy_hash);
+}
+void flush_configuration(){
+    if(state.configuration_pending.exchange(false))publish_configuration_revision();
 }
 c::Error synchronize(s::OctopusId sender,const c::Json& value){
     if(value.type!=c::Json::Type::string)return c::Error::invalid_message;
@@ -191,7 +197,7 @@ void adopt_owners(){
 }
 void worker(void*){
     uint64_t next_state=0;
-    for(;;){publish_configuration_revision();flush_reports();const auto now=static_cast<uint64_t>(esp_timer_get_time()/1000);
+    for(;;){flush_configuration();flush_reports();const auto now=static_cast<uint64_t>(esp_timer_get_time()/1000);
         if(now>=next_state){if(c::runtime_status().coordinator)adopt_owners();next_state=now+1500;}
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -209,6 +215,10 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
         std::lock_guard<std::mutex> guard(state.mutex);state.control=nullptr;return ESP_ERR_NO_MEM;
     }
     control.set_owned_sender(send);control.set_owned_observer(observe);control.set_owned_authorizer(c::runtime_owned_authorized);control.set_owned_deadline(c::runtime_owned_deadline);
+    // The owner signals only after its cached applied revisions advance. Keep
+    // publication off the owner task and coalesce changes until this worker runs.
+    control.on_configuration_applied([]{state.configuration_pending.store(true);});
+    state.configuration_pending.store(true); // Capture configuration applied before startup.
     c::runtime_control_hooks({snapshot,synchronize,receive,disconnected,[](s::OctopusId owner,uint64_t revision,std::function<void(s::OwnedContextResult)> completed){return state.control->refresh_owned_context(owner,revision,std::move(completed));},[]{return state.control->executing_configuration_revision();},configuration_snapshot,retry_report,restart_session});return ESP_OK;
 }
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,
@@ -224,18 +234,16 @@ esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::Rev
             if(before_commit){const auto admitted=before_commit();if(admitted!=ESP_OK){error="The reviewed device removal changed before configuration commit";return admitted;}}
             return cs::activate_system_configuration(candidate,error);
         });
-        if(result==ESP_OK)publish_configuration_revision();
     }
     if(result!=ESP_OK)cs::cancel_staged_configuration();
     {std::lock_guard<std::mutex> guard(state.mutex);state.activation={request,candidate.config_revision,candidate.presentation_revision,result==ESP_OK?"configuring":"failed",result==ESP_OK?std::string{}:error.empty()?"Configuration could not be saved":error};}
     return result;
 }
 ConfigurationActivationStatus configuration_activation_status(){
-    if(state.control)publish_configuration_revision();
     std::lock_guard<std::mutex> guard(state.mutex);
     if(state.control&&state.activation.phase=="configuring"){
-        const auto applied=state.control->execution_snapshot();
-        if(applied.applied_config_revision==state.activation.config_revision&&applied.applied_presentation_revision==state.activation.presentation_revision)state.activation.phase="applied";
+        const auto applied=state.control->applied_configuration();
+        if(applied.config_revision==state.activation.config_revision&&applied.presentation_revision==state.activation.presentation_revision)state.activation.phase="applied";
     }
     return state.activation;
 }

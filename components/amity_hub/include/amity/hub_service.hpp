@@ -30,6 +30,8 @@ public:
     bool release_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
     uint32_t activity_generation()const;bool release_key(uint8_t);bool release_key();bool standby();bool discover();
     Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
+    PlaybackState playback_state()const;
+    void on_configuration_applied(std::function<void()>);
     // User-selection/configuration setup only; the original long-Power repair
     // neither selects an activity nor arms its input release gate.
     bool activity_setup_in_progress()const;

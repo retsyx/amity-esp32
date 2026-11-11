@@ -24,6 +24,8 @@ struct RuntimeStatus{bool member=false,coordinator=true,authority_ready=true;std
 RuntimeStatus runtime_status(){return role;}
 }}
 unsigned starts=0,stops=0,routes=0,effects=0;int stop_error=0;
+unsigned log_stops=0;
+namespace system_services {void stop_log_downloads(){++log_stops;}}
 std::atomic_bool ui_enabled{false},ui_revoked{false};std::mutex server_mutex;
 amity::SystemControl*hub=nullptr;httpd_handle_t server=nullptr;
 namespace web{
@@ -32,7 +34,7 @@ int route(httpd_handle_t,const char*,int,int(*)(httpd_req_t*)){++routes;return E
 int error(httpd_req_t*req,const char*,const char*status){req->status=std::atoi(status);return ESP_FAIL;}
 }
 int httpd_resp_send_err(httpd_req_t*,int status,const char*){return status;}
-int httpd_ssl_stop(httpd_handle_t){++stops;assert(ui_revoked&&!ui_enabled);return stop_error;}
+int httpd_ssl_stop(httpd_handle_t){++stops;assert(ui_revoked&&!ui_enabled&&log_stops==stops);return stop_error;}
 '''
 SUITE=r'''
 int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];amity::SystemControl control;httpd_req_t request;

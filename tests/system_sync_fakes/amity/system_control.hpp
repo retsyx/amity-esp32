@@ -21,6 +21,8 @@ public:
     esp_err_t configure_result = ESP_OK, bind_result = ESP_OK;
     system::AdmissionCode admission = system::AdmissionCode::accepted;
     unsigned configure_calls = 0, bind_calls = 0, local_scan_calls = 0;
+    mutable unsigned execution_reads=0,configuration_reads=0;
+    std::function<void()> configuration_applied;
     system::OctopusId bound_controller;
     uint64_t bound_revision = 0;
     std::vector<system::OwnedIntent> submitted;
@@ -54,7 +56,10 @@ public:
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> fn) { observer=std::move(fn); }
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> fn) { authorizer=std::move(fn); }
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)> fn) { deadline=std::move(fn); }
-    system::ExecutionSnapshot execution_snapshot() const { return applied; }
+    system::ExecutionSnapshot execution_snapshot() const { ++execution_reads;return applied; }
+    struct AppliedConfiguration {uint64_t config_revision,presentation_revision;std::string policy_hash;};
+    AppliedConfiguration applied_configuration()const{++configuration_reads;return {applied.applied_config_revision,applied.applied_presentation_revision,applied.applied_policy_hash};}
+    void on_configuration_applied(std::function<void()> callback){configuration_applied=std::move(callback);}
     uint64_t executing_configuration_revision()const{return applied.applied_config_revision;}
     system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth) {
         submitted.push_back(intent);authorizations.push_back(auth);
@@ -98,7 +103,7 @@ public:
         const auto result=commit?commit():ESP_OK;
         if(result==ESP_OK){
             configuration=std::move(next);
-            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;applied.applied_policy_hash=config_store::executable_policy_hash(configuration);}
+            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;applied.applied_policy_hash=config_store::executable_policy_hash(configuration);if(configuration_applied)configuration_applied();}
         }
         return result;
     }

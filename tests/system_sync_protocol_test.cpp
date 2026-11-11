@@ -41,6 +41,7 @@ std::unique_ptr<ConfigurationStore> journal;
 void reset(){
     {std::lock_guard<std::mutex> guard(amity::state.mutex);
         amity::state.control=nullptr;amity::state.activating=false;amity::state.activation={};
+        amity::state.configuration_pending=false;
         amity::state.reports.clear();amity::state.pending_reports.clear();amity::state.retry_reports={};amity::state.maintenance.clear();amity::state.published_revision=amity::state.owner_revision=0;}
     role={};role.coordinator=true;role.authority_ready=true;role.initialized=true;role.epoch=1;
     peers.clear();sent.clear();packets.clear();result_packets.clear();result_fences.clear();deadline_queries.clear();current_result_link={};configuration_changes.clear();hooks={};
@@ -128,6 +129,23 @@ void configuration_revision_waits_for_a_complete_hash(){
     const auto hash=executable_policy_hash(main.configuration);main.applied.applied_policy_hash=hash;
     amity::publish_configuration_revision();amity::publish_configuration_revision();
     assert(configuration_changes.size()==1&&configuration_changes[0].first==main.configuration.config_revision&&configuration_changes[0].second==hash);
+}
+void configuration_publication_is_driven_by_application(){
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    main.applied.applied_config_revision=main.configuration.config_revision;
+    main.applied.applied_presentation_revision=main.configuration.presentation_revision;
+    main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
+    amity::flush_configuration();assert(configuration_changes.size()==1&&main.execution_reads==0);
+    const auto reads=main.configuration_reads;
+    for(unsigned i=0;i<5000;++i){amity::flush_configuration();amity::configuration_activation_status();}
+    assert(main.configuration_reads==reads&&main.execution_reads==0&&configuration_changes.size()==1);
+    // Saving is not application. Only the owner's later applied notification
+    // publishes a revision, without an HTTP status read driving it.
+    ++main.configuration.config_revision;main.configuration_applied();amity::flush_configuration();
+    assert(configuration_changes.size()==1);
+    main.applied.applied_config_revision=main.configuration.config_revision;
+    main.configuration_applied();main.configuration_applied();amity::flush_configuration();
+    assert(configuration_changes.size()==2&&configuration_changes.back().first==main.configuration.config_revision&&main.execution_reads==0);
 }
 void startup_and_minimal_handshake(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
@@ -481,6 +499,7 @@ void scans_and_saved_intent_without_peer_ack(){
     assert(configuration_changes.empty());
     main.applied.applied_presentation_revision=status.presentation_revision;
     main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
+    main.configuration_applied();amity::flush_configuration();
     assert(amity::configuration_activation_status().phase=="applied");
     assert(configuration_changes.size()==1&&configuration_changes[0].first==status.config_revision);
     assert(main.configuration.activities[0].audio==candidate.activities[0].source&&packets.empty()&&sent.empty()&&configuration_changes.size()==1);
@@ -540,4 +559,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){configuration_revision_waits_for_a_complete_hash();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_a_complete_hash();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

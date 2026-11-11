@@ -68,8 +68,8 @@ esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){return
 '''
 SUITE=r'''
 namespace amity::consortium {
-std::shared_ptr<Active> connection(unsigned link=7,unsigned peer_boot=8){
- auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(3);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;a->status.negotiated_capabilities=known_capabilities;
+std::shared_ptr<Active> connection(unsigned link=7,unsigned peer_boot=8,unsigned owner=3){
+ auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(owner);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;a->status.negotiated_capabilities=known_capabilities;
  const LinkScope scope{ident<model::LinkId>(link),ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),a->peer,ident<model::OctopusId>(2),ident<model::BootId>(4),a->status.boot_id,1,1};
  assert(a->session.authenticate(scope,scope.peer_id,PeerRole::actuator,true)==Error::none);return a;
 }
@@ -164,13 +164,32 @@ void connection_launch(){
  launch(std::make_shared<Tls>(),"192.0.2.2",expected);
  assert(links.size()==2&&task_arguments.size()==2&&connection_available(expected));
  reset();
- for(unsigned peer=3;peer<6;++peer){
+ for(unsigned peer=3;peer<7;++peer){
   const auto owner=ident<model::OctopusId>(peer);launch(std::make_shared<Tls>(),"192.0.2.1",owner);
   assert(connection_available(owner));
  }
- assert(links.size()==3&&task_arguments.size()==3&&task_attempts==3);
- launch(std::make_shared<Tls>(),"192.0.2.1",ident<model::OctopusId>(6));
- assert(links.size()==3&&task_arguments.size()==3&&task_attempts==3&&!connection_available(ident<model::OctopusId>(6)));
+ assert(links.size()==maximum_connection_slots&&task_arguments.size()==maximum_connection_slots&&task_attempts==maximum_connection_slots);
+ launch(std::make_shared<Tls>(),"192.0.2.1",ident<model::OctopusId>(7));
+ assert(links.size()==maximum_connection_slots&&task_arguments.size()==maximum_connection_slots&&task_attempts==maximum_connection_slots&&!connection_available(ident<model::OctopusId>(7)));
+ reset();
+}
+void full_roster_replacement(){
+ for(bool rebooted:{false,true}){
+  reset();auto old=connection(),other=connection(9,10,4),third=connection(11,12,5);
+  group.peers={old->tls->allowed.front(),other->tls->allowed.front(),third->tls->allowed.front()};
+  links={old,other,third};old->ready=old->status.ready=false;old->refreshing=true;
+  const auto original=old->session.scope();
+  auto authenticated=connection(13,rebooted?18:8);
+  launch(authenticated->tls);
+  assert(links.size()==4&&task_attempts==1); // Must authenticate before choosing the old boot to replace.
+  auto incoming=links.back();incoming->peer=authenticated->peer;incoming->session=authenticated->session;incoming->status=authenticated->status;
+  unsigned fences=0;controls.disconnected=[&](auto owner,auto boot,auto link){++fences;assert(owner==old->peer&&boot==original.peer_boot_id&&link==original.link_id);return true;};
+  assert(fence_replaced_links(*incoming)==rebooted);
+  assert(!other->cancelled&&!third->cancelled&&other->ready&&third->ready);
+  if(rebooted)assert(old->cancelled&&!incoming->cancelled&&fences==1&&incoming->claimed_boot==ident<model::BootId>(18));
+  else assert(incoming->cancelled&&!old->cancelled&&!old->ready&&old->refreshing&&old->session.scope()==original&&fences==0);
+  reap_closed_links();assert(links.size()==3);
+ }
  reset();
 }
 void queues(){
@@ -417,7 +436,7 @@ void codec_and_session(){
 }
 
 }
-int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();release_sender_timing();all_key_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, down/up/tap sender timing outside locks, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
+int main(){using namespace amity::consortium;closure();duplicate_connections();unclaimed_disconnects();connection_launch();full_roster_replacement();queues();initial_context();future_context_is_recaptured();asynchronous_context_failure_is_scoped();asynchronous_context_ignores_ended_logical_session();diagnostic_lines_fit_capture();release_sender_timing();all_key_sender_timing();restart_flags_gate_front_doors_before_scope_rotation();authorization();codec_and_session();std::cout<<"PASS qualified transport: actual FIFO/key-up capacity, down/up/tap sender timing outside locks, full-roster replacement and healthy-link reuse, link loss/replacement fences, scoped codecs, stale boots/config, original message TTL and ordered button state without periodic grants\\n";}
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()

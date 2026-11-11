@@ -39,6 +39,7 @@ PREFIX=r'''
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <stdexcept>
 constexpr int ESP_ERR_NVS_NOT_FOUND=22;
 namespace amity::consortium::platform {
@@ -67,7 +68,7 @@ bool exchange(TlsLink& server,TlsLink& client){
  bool s=false,c=false;for(unsigned i=0;i<2000;++i){
   if(!s){const auto r=mbedtls_ssl_handshake(&server.ssl);if(!r)s=true;else if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;}
   if(!c){const auto r=mbedtls_ssl_handshake(&client.ssl);if(!r)c=true;else if(r!=MBEDTLS_ERR_SSL_WANT_READ&&r!=MBEDTLS_ERR_SSL_WANT_WRITE)return false;}
-  if(s&&c)return server.authenticated&&client.authenticated&&!mbedtls_ssl_get_verify_result(&server.ssl)&&!mbedtls_ssl_get_verify_result(&client.ssl);
+  if(s&&c)return server.handshake()&&client.handshake();
   ++clock_ms;
  }return false;
 }
@@ -80,7 +81,7 @@ void tcp_pair(int (&fd)[2]){
  fd[0]=::accept(listener,nullptr,nullptr);::close(listener);check(fd[0]>=0,"TCP loopback accept failed");
 }
 bool connect(const Identity& authority,const Identity& member,const std::vector<Peer>& permitted,model::OctopusId expected={}){
- int fd[2];tcp_pair(fd);TlsLink server,client;
+ int fd[2];tcp_pair(fd);ConnectionAdmission client_admission;TlsLink server,client(client_admission);
  if(!server.setup(authority,permitted,true,fd[0],expected)){::close(fd[1]);return false;}
  if(!client.setup(member,{peer(authority)},false,fd[1],authority.id))return false;
  check(server.config.MBEDTLS_PRIVATE(authmode)==MBEDTLS_SSL_VERIFY_REQUIRED&&client.config.MBEDTLS_PRIVATE(authmode)==MBEDTLS_SSL_VERIFY_REQUIRED,"mutual TLS authentication requirement changed");
@@ -99,6 +100,51 @@ void roster_capacity(const Identity& authority,const Identity& member,const Iden
  check(save_group(group)==ESP_ERR_INVALID_ARG&&records.at("amity_group/state")==committed,"fourth secondary replaced committed membership");
  TlsLink oversized;check(!oversized.setup(authority,group.peers,true,-1),"four-secondary TLS allowlist admitted");
  std::cout<<"PASS actual credentials/TLS capacity: all three secondary peers persist and authenticate; fourth rejected\n";
+}
+void connection_capacity(const Identity& authority,const Identity& member,const Identity& second,const Identity& third){
+ ConnectionAdmission main_admission;
+ const std::vector<Peer> permitted{peer(member),peer(second),peer(third)};
+ // A silent, unauthenticated socket occupies only the bounded handshake
+ // budget. Rejection occurs before even the local certificate is parsed.
+ int silent_fd[2];tcp_pair(silent_fd);
+ auto silent=std::make_unique<TlsLink>(main_admission);
+ check(silent->setup(authority,permitted,true,silent_fd[0]),"first pending handshake rejected");
+ {
+  TlsLink blocked(main_admission);
+  check(!blocked.setup(authority,permitted,true,-1)&&!blocked.own.raw.p,"pending limit allowed another TLS allocation");
+ }
+ const auto began=clock_ms;
+ check(!silent->handshake()&&clock_ms-began==10000,"silent handshake escaped its existing deadline");
+ {
+  TlsLink blocked(main_admission);
+  check(!blocked.setup(authority,permitted,true,-1)&&!blocked.own.raw.p,"failed but retained TLS buffers stopped counting against admission");
+ }
+ silent.reset();::close(silent_fd[1]);
+ // Each client budget represents its own board; all three server-side
+ // transports share the main board's actual admission budget.
+ ConnectionAdmission client_admission[4];
+ std::vector<std::unique_ptr<TlsLink>> servers,clients;
+ const Identity* identities[]={&member,&second,&third,&member};
+ for(unsigned i=0;i<4;++i){
+  int fd[2];tcp_pair(fd);
+  auto server=std::make_unique<TlsLink>(main_admission);
+  auto client=std::make_unique<TlsLink>(client_admission[i]);
+  check(server->setup(authority,permitted,true,fd[0])&&client->setup(*identities[i],{peer(authority)},false,fd[1],authority.id),"full roster prevented replacement TLS setup");
+  check(exchange(*server,*client),"full roster prevented replacement mutual authentication");
+  servers.push_back(std::move(server));clients.push_back(std::move(client));
+ }
+ check(servers[0]->authenticated==servers[3]->authenticated,"replacement did not authenticate the same saved peer");
+ for(const auto& server:servers)check(server->established(),"admission displaced an existing healthy transport");
+ {
+  TlsLink blocked(main_admission);
+  check(!blocked.setup(authority,permitted,true,-1)&&!blocked.own.raw.p,"total TLS limit grew after pending handshakes completed");
+ }
+ servers.pop_back();clients.pop_back();
+ {
+  int fd[2];tcp_pair(fd);TlsLink next(main_admission);
+  check(next.setup(authority,permitted,true,fd[0]),"destroying replacement did not release its slot");::close(fd[1]);
+ }
+ std::cout<<"PASS actual TLS admission: one pending handshake, four retained transports, pre-parse overload rejection, timeout/destruction cleanup, full-roster replacement authentication\n";
 }
 void binding_and_callback(const Identity& authority,const Identity& member,const Identity& outsider){
  mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);check(!mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(member.der.data()),member.der.size()),"fixture parse failed");std::string pin;
@@ -131,12 +177,14 @@ int main(){using namespace amity::consortium;using namespace amity::consortium::
  check(!decode_identity(replace(identity_record,hex(member.key_der),hex(outsider.key_der)),member.id,decoded),"mismatched boot private key accepted");
  check(!decode_identity(replace(identity_record,hex(member.der),hex(damaged)),member.id,decoded),"invalid boot self-signature accepted");
  binding_and_callback(authority,member,outsider);
- roster_capacity(authority,member,outsider,make_identity(4));
+ const auto third=make_identity(4);
+ roster_capacity(authority,member,outsider,third);
+ connection_capacity(authority,member,outsider,third);
  full_checks=0;check(connect(authority,member,{peer(member)}),"valid real mutual TLS failed");std::cout<<"mutual_tls_full_validations="<<full_checks<<"\n";check(full_checks==0||OBSERVE_REDUNDANT_VALIDATION,"TLS setup/verify repeated full trusted leaf signatures");
  // A changed certificate with the same stable ID is still an unknown leaf.
  const auto changed_member=make_identity(2);check(!connect(authority,changed_member,{peer(member)}),"unlisted same-ID certificate completed TLS");
  int fds[2];tcp_pair(fds);
- {TlsLink server,client;std::vector<Peer> original{peer(member)};check(server.setup(authority,original,true,fds[0]),"snapshot server setup failed");original[0]=peer(outsider);
+ {ConnectionAdmission client_admission;TlsLink server,client(client_admission);std::vector<Peer> original{peer(member)};check(server.setup(authority,original,true,fds[0]),"snapshot server setup failed");original[0]=peer(outsider);
   check(client.setup(member,{peer(authority)},false,fds[1],authority.id)&&exchange(server,client),"mutable source roster changed captured TLS allowlist");}
  check(!connect(authority,outsider,{peer(member)}),"unknown peer completed mutual TLS");
  check(!connect(authority,member,{peer(member)},outsider.id),"unexpected peer completed mutual TLS");
@@ -168,7 +216,7 @@ def main():
     source,build=native_library();credentials=(ROOT/'components/consortium/credentials.cpp').read_text();tls=args.tls_source.read_text()
     actual='}\nnamespace amity::consortium {\n'+function((ROOT/'components/consortium/wire.cpp').read_text(),'bool decimal(')+'}\nnamespace amity::consortium::platform {\n'+''.join(function(credentials,name) for name in ['std::string hex(', 'bool unhex(', 'std::string sha256(', 'bool certificate_binding(', 'bool parse_certificate(', 'bool decode_identity(', 'bool certificate(', 'esp_err_t load_identity(', 'esp_err_t load_group(', 'esp_err_t save_group('])
     actual=actual.replace('bool certificate(std::string_view der,model::OctopusId id,std::string &pin){','bool certificate(std::string_view der,model::OctopusId id,std::string &pin){++full_checks;')
-    actual+=''.join(function(tls,name) for name in ['int send_socket(', 'int receive_socket(', 'TlsLink::TlsLink()', 'TlsLink::~TlsLink()', 'int TlsLink::verify(', 'bool TlsLink::setup('])
+    actual+=''.join(function(tls,name) for name in ['int send_socket(', 'int receive_socket(', 'void reject_handshake(', 'TlsLink::TlsLink(', 'TlsLink::~TlsLink()', 'int TlsLink::verify(', 'bool TlsLink::setup(', 'bool TlsLink::handshake('])
     suite=SUITE
     with tempfile.TemporaryDirectory(prefix='amity-tls-credentials-') as directory:
         cpp,binary=Path(directory)/'test.cpp',Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+suite)

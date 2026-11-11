@@ -353,6 +353,7 @@ esp_err_t stop() {
     ui_revoked.store(true); ui_enabled.store(false);
     std::lock_guard<std::mutex> guard(server_mutex);
     if(!server)return ESP_OK;
+    system_services::stop_log_downloads();
     const auto result=httpd_ssl_stop(server);
     if(result==ESP_OK)server=nullptr;
     return result;

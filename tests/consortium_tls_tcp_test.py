@@ -13,7 +13,7 @@ from setup_timing_support import timing_support
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = r'''
 void real_tcp_records(const Identity& main,const Identity& member){
- int fd[2];tcp_pair(fd);TlsLink server,client;
+ int fd[2];tcp_pair(fd);ConnectionAdmission client_admission;TlsLink server,client(client_admission);
  check(server.setup(main,{peer(member)},true,fd[0])&&client.setup(member,{peer(main)},false,fd[1],main.id),"real TCP setup failed");
  for(int socket:fd){
   int value=0;socklen_t size=sizeof(value);
@@ -76,7 +76,7 @@ def main():
         "esp_err_t load_identity(", "esp_err_t load_group(", "esp_err_t save_group("))
     actual += "".join(function(tls, name) for name in (
         "int send_socket(", "int receive_socket(", "void reject_handshake(",
-        "TlsLink::TlsLink()", "TlsLink::~TlsLink()", "int TlsLink::verify(", "bool TlsLink::setup(",
+        "TlsLink::TlsLink(", "TlsLink::~TlsLink()", "int TlsLink::verify(", "bool TlsLink::setup(",
         "bool TlsLink::handshake(", "bool TlsLink::send(", "TlsLink::ReceiveResult TlsLink::receive_failed(",
         "TlsLink::ReceiveResult TlsLink::receive_expired(", "TlsLink::ReceiveResult TlsLink::poll_receive("))
     helpers = credentials_test.SUITE[:credentials_test.SUITE.index("bool connect(")]

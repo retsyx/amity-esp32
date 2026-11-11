@@ -54,6 +54,14 @@ struct Snapshot {
     uint8_t volume = 127; // CEC 0..100, 127 means unknown/unsupported.
     uint32_t tx_errors = 0, rx_dropped = 0;
 };
+// Playback consumers do not need copies of the activity list or device cache.
+struct PlaybackState {
+    uint64_t applied_config_revision=0,applied_presentation_revision=0;
+    int current_activity=-1;
+    system::ActivityId activity_id{};
+    bool audio_status_known=false,muted=false;
+    uint8_t volume=127;
+};
 class Transport {
 public:
     virtual ~Transport() = default;

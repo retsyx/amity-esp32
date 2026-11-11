@@ -56,12 +56,19 @@ public:
     bool discover_owned(system::OctopusId owner,uint8_t adapter){return local_.discover_owned(owner,adapter);}
     bool refresh_owned_context(system::OctopusId owner,uint64_t revision,std::function<void(system::OwnedContextResult)> completed){return local_.refresh_owned_context(owner,revision,std::move(completed));}
     Snapshot snapshot()const{return local_.snapshot();}
+    PlaybackState playback_state()const{return local_.playback_state();}
     void on_change(std::function<void(const Snapshot&)> f){local_.on_change(std::move(f));}
+    void on_configuration_applied(std::function<void()> f){local_.on_configuration_applied(std::move(f));}
     esp_err_t configure(config_store::Configuration,std::function<esp_err_t()> commit={});
     esp_err_t configure_passive_metadata(const config_store::Configuration&);
     esp_err_t request_activity(system::ZoneId,system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
     esp_err_t stop_zone(system::ZoneId);
     system::ExecutionSnapshot execution_snapshot()const;
+    struct AppliedConfiguration {
+        uint64_t config_revision=0,presentation_revision=0;
+        std::string policy_hash;
+    };
+    AppliedConfiguration applied_configuration()const;
     std::vector<system::CecObservation> native_observations()const;
     std::shared_ptr<const config_store::Configuration> active_configuration()const{
         auto published=std::atomic_load(&active_);
@@ -70,6 +77,7 @@ public:
     std::optional<config_store::ConfiguredActivity> external_activity(unsigned)const;
     std::optional<config_store::ExternalSlot> external_slot(unsigned)const;
     std::optional<unsigned> external_activity_index(const Snapshot&)const;
+    std::optional<unsigned> external_activity_index(const PlaybackState&)const;
     std::optional<unsigned> external_activity_index()const{return external_activity_index(local_.snapshot());}
     using OwnedSender=HubService::OwnedSender;
     void set_owned_sender(OwnedSender sender){std::atomic_store(&sender_,sender?std::make_shared<const OwnedSender>(std::move(sender)):std::shared_ptr<const OwnedSender>{});}

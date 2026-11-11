@@ -22,6 +22,8 @@ size_t log_size();
 // Stable bounded snapshot in PSRAM; a null snapshot reports unavailable memory.
 amity::consortium::LogSnapshot log_snapshot();
 esp_err_t download_logs(httpd_req_t *req,amity::system::OctopusId local);
+// Revoke new downloads and finish async request ownership before HTTPD stops.
+void stop_log_downloads();
 esp_err_t upload_firmware(httpd_req_t *req);
 void reboot_later();
 void reboot_later(uint32_t delay_ms);

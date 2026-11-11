@@ -206,6 +206,65 @@ static void removed_owner_snapshots_release_capacity(){
     const auto final=hub.owned_snapshots();assert(final.size()==remaining.size()&&has_owner(survivor)&&has_owner(controller));
     fixture_tick=100000;
 }
+static void replaced_key_owners_reuse_slots(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
+    HubService primary;primary.set_system_identity(group,controller);primary.set_boot_identity(boot);
+    assert(primary.start(1,2)==ESP_OK);auto* primary_task=latest_task;
+    std::unique_ptr<HubService> replacement;FakeTask* replacement_task=nullptr;
+    m::OctopusId replacement_id;
+    uint64_t revision=0;
+    const auto sender=[&](const m::OwnedIntent& intent){
+        assert(replacement&&intent.target.port.octopus_id==replacement_id);
+        auto* previous=latest_task;latest_task=replacement_task;
+        const m::OwnedAuthorization auth{controller,boot,controller_boot,link,revision,0};
+        const auto result=intent.kind==m::OwnedIntentKind::key_edges?
+            replacement->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):replacement->submit_owned(intent,auth);
+        latest_task=previous;
+        return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending;
+    };
+    const auto pump_owners=[&](unsigned count){for(unsigned pass=0;pass<count;++pass){
+        latest_task=replacement_task;run_idle(1);latest_task=primary_task;run_idle(1);
+    }};
+    const auto finish=[&](int selected){for(unsigned pass=0;pass<128;++pass){
+        pump_owners(1);
+        if(primary.snapshot().current_activity==selected&&!primary.activity_setup_in_progress()&&
+           !replacement->activity_setup_in_progress()&&fixture_pending.empty())return;
+    }assert(false&&"Replacement activity did not complete");};
+    const auto count=[&](int gpio,uint8_t opcode,uint8_t key=0){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){
+        return tx.gpio==gpio&&tx.frame.size>1&&tx.frame.data[1]==opcode&&(opcode!=0x44||(tx.frame.size==3&&tx.frame.data[2]==key));
+    });};
+    for(unsigned n=1;n<=8;++n){
+        ++revision;
+        replacement_id=*m::OctopusId::generate([n](uint8_t* bytes,size_t size){std::fill(bytes,bytes+size,0);bytes[0]=0xa2;bytes[size-1]=n;return true;});
+        replacement=std::make_unique<HubService>();replacement->set_system_identity(group,replacement_id);
+        replacement->set_boot_identity(controller_boot);replacement->set_coordinator_authority(false,1);
+        assert(replacement->start(3,4)==ESP_OK);replacement_task=latest_task;
+        assert(replacement->bind_owned_controller(controller,revision)==ESP_OK);fixture_finish_discovery(*replacement);
+        replacement->set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
+        latest_task=primary_task;
+        assert(primary.configure_scoped({{"Watch","display","source","","",0}},
+            {{"display",named(controller,m::Side::front,"TV")},{"source",named(replacement_id,m::Side::back,"Source")}},
+            sender,controller,revision)==ESP_OK);
+        run_one_command();if(n==1)fixture_finish_discovery(primary);
+        assert(primary.request_activity(0)==ESP_OK);finish(0);
+        fixture_tick=0;fixture_sent.clear();
+        // Holding audio while the source obtains a slot must preserve the
+        // original receiving owner for each independent button's release.
+        assert(primary.press_key(0x41,true));pump_owners(2);
+        assert(primary.press_key(4,true));pump_owners(2);
+        assert(count(1,0x44,0x41)>0&&count(4,0x44,4)>0);
+        assert(primary.release_key(4));pump_owners(2);
+        assert(count(4,0x45)==1&&count(1,0x45)==0);
+        const auto volume_presses=count(1,0x44,0x41);pump_owners(2);
+        assert(count(1,0x44,0x41)>volume_presses);
+        assert(primary.release_key(0x41));pump_owners(2);assert(count(1,0x45)==1);
+        assert(primary.request_activity(-1)==ESP_OK);finish(-1);
+        primary.forget_owned_snapshots(replacement_id);replacement.reset();latest_task=primary_task;
+        fixture_tick=100000;
+    }
+    fixture_peer_address={};
+}
 static void owner_keys(){
     fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);assert(hub.start(1,2)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
@@ -988,4 +1047,4 @@ static void distinct_activity_ids_with_identical_equipment(unsigned mode){
     if(other)assert(delivered_generations.back()!=second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){for(bool scoped:{false,true})compact_keys_and_quiet_publication(scoped);member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){for(bool scoped:{false,true})compact_keys_and_quiet_publication(scoped);member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();replaced_key_owners_reuse_slots();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}

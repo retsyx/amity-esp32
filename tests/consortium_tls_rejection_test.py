@@ -10,6 +10,7 @@ from setup_timing_support import timing_support
 
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
+#include "connection_admission.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -44,7 +45,7 @@ int recv(int,void*,size_t size,int flags){
     if(available_bytes){const auto count=std::min(available_bytes,size);available_bytes-=count;received_bytes+=count;return static_cast<int>(count);}
     errno=EAGAIN;return -1;
 }
-struct TlsLink{mbedtls_ssl_context ssl;int socket=31;bool server=true,configured=true,handshaken=false,transport_failed=false,incoming_failed=false;amity::system::OctopusId authenticated=*amity::system::OctopusId::parse("00000000000000000000000000000001");uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;bool usable()const{return configured&&!transport_failed&&!incoming_failed;}bool handshake();};
+struct TlsLink{amity::consortium::platform::ConnectionAdmission::Reservation admission;mbedtls_ssl_context ssl;int socket=31;bool server=true,configured=true,handshaken=false,transport_failed=false,incoming_failed=false;amity::system::OctopusId authenticated=*amity::system::OctopusId::parse("00000000000000000000000000000001");uint64_t timing_verify_ms=0;uint32_t timing_verify_calls=0;bool usable()const{return configured&&!transport_failed&&!incoming_failed;}bool handshake();};
 void reset(){clock_ms=0;handshake_error=handshake_calls=verify_flags=alerts=flushes=shutdowns=fcntl_flags=0;available_bytes=received_bytes=0;blocked_alert=fcntl_failure=false;}
 void check(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 '''
@@ -74,7 +75,7 @@ def main():
     actual=function(source,'void reject_handshake(mbedtls_ssl_context &ssl,')+function(source,'bool TlsLink::handshake()')
     with tempfile.TemporaryDirectory(prefix='amity-tls-reject-') as directory:
         cpp=Path(directory)/'test.cpp';binary=Path(directory)/'test';cpp.write_text(timing_support()+PREFIX+actual+SUITE)
-        subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(ROOT/'components/consortium/include'),'-I'+str(ROOT/'components/amity_system/include'),str(cpp),'-o',str(binary)],check=True)
+        subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(ROOT/'components/consortium'),'-I'+str(ROOT/'components/consortium/include'),'-I'+str(ROOT/'components/amity_system/include'),str(cpp),'-o',str(binary)],check=True)
         return subprocess.run([str(binary)],check=False).returncode
 
 
