@@ -13,6 +13,7 @@ namespace amity {
 class SystemControl {
 public:
     config_store::Configuration configuration;
+    config_store::ConfigurationSnapshot configured_snapshot;
     system::OctopusId identity;
     system::BootId boot;
     bool local_input = true, local_scan_result = true, remote_scan_result = true, lookup_result = true, auto_apply = true, update_result = true, refresh_result = true, fence_result = true;
@@ -97,13 +98,13 @@ public:
     bool discover_owned(system::OctopusId owner,uint8_t adapter) {
         remote_scans.push_back({owner,adapter});return remote_scan_result;
     }
-    esp_err_t configure(config_store::Configuration next,std::function<esp_err_t()> commit={}) {
+    esp_err_t configure(config_store::ConfigurationSnapshot next,std::function<esp_err_t()> commit={}) {
         ++configure_calls;
         if(configure_result!=ESP_OK)return configure_result;
         const auto result=commit?commit():ESP_OK;
         if(result==ESP_OK){
-            configuration=std::move(next);
-            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;applied.applied_policy_hash=config_store::executable_policy_hash(configuration);if(configuration_applied)configuration_applied();}
+            configured_snapshot=std::move(next);configuration=configured_snapshot->configuration;
+            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;applied.applied_policy_hash=configured_snapshot->policy_hash;if(configuration_applied)configuration_applied();}
         }
         return result;
     }

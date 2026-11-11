@@ -160,6 +160,7 @@ python3 "$root/tests/apple_fabric_lifecycle_test.py"
 
 sh "$root/tests/system_configuration_test.sh"
 sh "$root/tests/configuration_failure_test.sh"
+python3 "$root/tests/configuration_snapshot_web_test.py"
 python3 "$root/tests/json_memory_test.py"
 sh "$root/tests/activity_editor_test.sh"
 sh "$root/tests/native_ports_test.sh"

@@ -227,16 +227,18 @@ esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::Rev
     {std::lock_guard<std::mutex> guard(state.mutex);if(!state.control||state.activating)return ESP_ERR_INVALID_STATE;state.activating=true;control=state.control;state.activation={request,0,0,"admitted",{}};}
     struct Clear{~Clear(){std::lock_guard<std::mutex> guard(state.mutex);state.activating=false;}} clear;
     std::string error;esp_err_t result=ESP_ERR_INVALID_ARG;
+    auto revisions=candidate.revisions();cs::ConfigurationSnapshot prepared;
     if(request&&control->accepts_local_input()){
         result=cs::stage_system_configuration(std::move(candidate),expected,error);
-        if(result==ESP_OK)result=cs::staged_system_configuration(candidate);
-        if(result==ESP_OK)result=control->configure(candidate,[&]{
+        if(result==ESP_OK)result=cs::staged_system_configuration(prepared);
+        if(prepared)revisions=prepared->configuration.revisions();
+        if(result==ESP_OK)result=control->configure(prepared,[&]{
             if(before_commit){const auto admitted=before_commit();if(admitted!=ESP_OK){error="The reviewed device removal changed before configuration commit";return admitted;}}
-            return cs::activate_system_configuration(candidate,error);
+            return cs::activate_system_configuration(prepared,error);
         });
     }
     if(result!=ESP_OK)cs::cancel_staged_configuration();
-    {std::lock_guard<std::mutex> guard(state.mutex);state.activation={request,candidate.config_revision,candidate.presentation_revision,result==ESP_OK?"configuring":"failed",result==ESP_OK?std::string{}:error.empty()?"Configuration could not be saved":error};}
+    {std::lock_guard<std::mutex> guard(state.mutex);state.activation={request,revisions.config_revision,revisions.presentation_revision,result==ESP_OK?"configuring":"failed",result==ESP_OK?std::string{}:error.empty()?"Configuration could not be saved":error};}
     return result;
 }
 ConfigurationActivationStatus configuration_activation_status(){

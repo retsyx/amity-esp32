@@ -50,10 +50,10 @@ void canonical_bytes_and_projections(){
         assert(serialize_configuration(c,true)==json_text(saved));assert(executable_policy_hash(c)==sha256_hex(json_text(saved)));cJSON_Delete(saved);
         // Canonicalization must reorder the owned candidate without changing
         // presentation order or bytes across a restart.
-        Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,c,{},active);
-        assert(std::is_sorted(active.components.begin(),active.components.end(),[](const auto& a,const auto& b){return a.record.component_id<b.record.component_id;}));
-        ConfigurationStore reboot(memory);Configuration recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok);
-        assert(serialize_configuration(active)==serialize_configuration(recovered));
+        Memory memory;ConfigurationStore store(memory);ConfigurationSnapshot active;commit(store,c,{},active);
+        assert(std::is_sorted(active->configuration.components.begin(),active->configuration.components.end(),[](const auto& a,const auto& b){return a.record.component_id<b.record.component_id;}));
+        ConfigurationStore reboot(memory);ConfigurationSnapshot recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok);
+        assert(active->canonical==recovered->canonical);
     }
 }
 
@@ -68,12 +68,12 @@ void saved_text_and_staged_record_integrity(){
         std::string error;Memory memory;ConfigurationStore store(memory);
         assert(!validate_configuration(c,error)&&store.stage(c,{},error)==ConfigResult::invalid&&memory.writes==0);
     }
-    Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,direct_configuration(),{},active);
-    const auto committed=memory.values;const auto active_text=serialize_configuration(active);auto next=active;next.activities[0].label="Next";std::string error;
-    assert(store.stage(next,active.revisions(),error)==ConfigResult::ok);
+    Memory memory;ConfigurationStore store(memory);ConfigurationSnapshot active;commit(store,direct_configuration(),{},active);
+    const auto committed=memory.values;const auto active_text=active->canonical;auto next=active->configuration;next.activities[0].label="Next";std::string error;
+    assert(store.stage(next,active->configuration.revisions(),error)==ConfigResult::ok);
     for(const auto* key:{"c0","c1"})if(memory.values.count(key)&&(!committed.count(key)||committed.at(key)!=memory.values.at(key))){memory.values[key].back()=' ';break;}
-    const auto damaged=memory.values;assert(store.commit(next,error)==ConfigResult::recovery_required&&memory.values==damaged);
-    ConfigurationStore reboot(memory);Configuration recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok&&serialize_configuration(recovered)==active_text);
+    const auto damaged=memory.values;ConfigurationSnapshot rejected;assert(store.commit(rejected,error)==ConfigResult::recovery_required&&memory.values==damaged);
+    ConfigurationStore reboot(memory);ConfigurationSnapshot recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok&&recovered->canonical==active_text);
 }
 
 void codecs(){
@@ -129,11 +129,11 @@ void initialization(){
     assert(!initialize_configuration(group,owner,4,[](uint8_t*,size_t){return false;},initialized,error));assert(serialize_configuration(initialized)==before);
 }
 void journal(){
-    auto c=direct_configuration();std::string error;Memory baseline;ConfigurationStore original(baseline);Configuration active;commit(original,c,{},active);
-    auto labels=active;labels.activities[0].label="Cinema";assert(original.stage(labels,active.revisions(),error)==ConfigResult::ok&&original.staged()->revisions()==RevisionPair({1,2}));assert(original.commit(active,error)==ConfigResult::ok);
-    auto semantic=active;semantic.activities[0].switch_input=4;
+    auto c=direct_configuration();std::string error;Memory baseline;ConfigurationStore original(baseline);ConfigurationSnapshot active;commit(original,c,{},active);
+    auto labels=active->configuration;labels.activities[0].label="Cinema";assert(original.stage(labels,active->configuration.revisions(),error)==ConfigResult::ok&&original.staged()->configuration.revisions()==RevisionPair({1,2}));assert(original.commit(active,error)==ConfigResult::ok);
+    auto semantic=active->configuration;semantic.activities[0].switch_input=4;
     const auto before=baseline.values;
-    for(unsigned cut=1;cut<=80;++cut){Memory memory;memory.values=before;ConfigurationStore transaction(memory);Configuration old;assert(transaction.recover(old,error)==ConfigResult::ok);memory.operations=0;memory.cut_at=cut;try{if(transaction.stage(semantic,old.revisions(),error)==ConfigResult::ok){transaction.commit(old,error);}}catch(const PowerCut&){}memory.cut_at=0;ConfigurationStore reboot(memory);Configuration recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok);assert(recovered.activities[0].switch_input==0||recovered.activities[0].switch_input==4);assert(recovered.activities[0].activity_id==c.activities[0].activity_id);}
+    for(unsigned cut=1;cut<=80;++cut){Memory memory;memory.values=before;ConfigurationStore transaction(memory);ConfigurationSnapshot old;assert(transaction.recover(old,error)==ConfigResult::ok);memory.operations=0;memory.cut_at=cut;try{if(transaction.stage(semantic,old->configuration.revisions(),error)==ConfigResult::ok){transaction.commit(old,error);}}catch(const PowerCut&){}memory.cut_at=0;ConfigurationStore reboot(memory);ConfigurationSnapshot recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok);assert(recovered->configuration.activities[0].switch_input==0||recovered->configuration.activities[0].switch_input==4);assert(recovered->configuration.activities[0].activity_id==c.activities[0].activity_id);}
     // Only the current journal record header is readable. A matching digest
     // cannot authorize another saved format or cause committed data to be erased.
     for(const auto* header:{"AMITY2", "AMITY4"}){
@@ -145,13 +145,13 @@ void journal(){
     baseline.values["unrelated"]="application data";ConfigurationStore cleanup(baseline);assert(cleanup.recover(active,error)==ConfigResult::ok&&baseline.values.at("unrelated")=="application data");
     // Saving offline member locations does not require that device to approve
     // activity policy. Only the original controller owns this configuration.
-    auto peer=active;const auto owner=id<model::OctopusId>(70);peer.octopuses.push_back({owner,"offline","offline",false,1});peer.components[0].record.qualified_names[0].port.octopus_id=owner;assert(cleanup.stage(peer,active.revisions(),error)==ConfigResult::ok);
+    auto peer=active->configuration;const auto owner=id<model::OctopusId>(70);peer.octopuses.push_back({owner,"offline","offline",false,1});peer.components[0].record.qualified_names[0].port.octopus_id=owner;assert(cleanup.stage(peer,active->configuration.revisions(),error)==ConfigResult::ok);
 }
 void ownership_and_slots(){
     auto c=direct_configuration();std::string error;bool changed=false;assert(validate_configuration(c,error));
     auto unbound=c;unbound.controller_octopus_id.reset();assert(!validate_configuration(unbound,error));
-    Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,c,{},active);
-    auto foreign=active;const auto other_owner=id<model::OctopusId>(80);foreign.octopuses.push_back({other_owner,"other","other",false,1});foreign.controller_octopus_id=other_owner;assert(validate_configuration(foreign,error)&&store.stage(foreign,active.revisions(),error)==ConfigResult::invalid);
+    Memory memory;ConfigurationStore store(memory);ConfigurationSnapshot active;commit(store,c,{},active);
+    auto foreign=active->configuration;const auto other_owner=id<model::OctopusId>(80);foreign.octopuses.push_back({other_owner,"other","other",false,1});foreign.controller_octopus_id=other_owner;assert(validate_configuration(foreign,error)&&store.stage(foreign,active->configuration.revisions(),error)==ConfigResult::invalid);
     auto candidate=c;auto other=c.activities[0];other.activity_id=id<model::ActivityId>(71);other.label="Other";candidate.activities.push_back(other);candidate.zones[0].activity_order.push_back(other.activity_id);assert(reconcile_external_slots(c,candidate,error)&&candidate.external_slots.size()==2);
     auto deleted=candidate;deleted.activities.erase(deleted.activities.begin());deleted.zones[0].activity_order.erase(deleted.zones[0].activity_order.begin());deleted.activity_order.erase(deleted.activity_order.begin());assert(reconcile_external_slots(candidate,deleted,error)&&deleted.external_slots[0].tombstone&&deleted.external_slots[1].activity_id==other.activity_id);
     auto reused=deleted;reused.external_slots[0].activity_id=other.activity_id;assert(!reconcile_external_slots(deleted,reused,error));
@@ -195,9 +195,9 @@ void explicit_owner_removal(){
     // Reserved integration slots retain no device/equipment metadata and cannot
     // be reassigned to an unrelated activity when a device is deleted.
     for(size_t index=1;index<candidate.external_slots.size();++index){const auto& slot=candidate.external_slots[index];assert(slot.activity_id==doomed[index-1]&&slot.tombstone&&!slot.hidden&&slot.alias.empty());}
-    Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,previous,{},active);
-    assert(store.stage(candidate,active.revisions(),error)==ConfigResult::ok&&store.commit(active,error)==ConfigResult::ok);
-    assert(serialize_configuration(active).find(removed.str())==std::string::npos&&active.activities.size()==1);
-    for(size_t index=1;index<active.external_slots.size();++index)assert(active.external_slots[index].tombstone&&active.external_slots[index].alias.empty());
+    Memory memory;ConfigurationStore store(memory);ConfigurationSnapshot active;commit(store,previous,{},active);
+    assert(store.stage(candidate,active->configuration.revisions(),error)==ConfigResult::ok&&store.commit(active,error)==ConfigResult::ok);
+    assert(active->canonical.find(removed.str())==std::string::npos&&active->configuration.activities.size()==1);
+    for(size_t index=1;index<active->configuration.external_slots.size();++index)assert(active->configuration.external_slots[index].tombstone&&active->configuration.external_slots[index].alias.empty());
 }
 int main(){canonical_bytes_and_projections();saved_text_and_staged_record_integrity();codecs();current_format_only();initialization();journal();ownership_and_slots();candidate_network_recovery();explicit_owner_removal();std::cout<<"PASS intent-only configuration: canonical bytes/hash projections, saved-text invariants, staged-record tampering, scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}

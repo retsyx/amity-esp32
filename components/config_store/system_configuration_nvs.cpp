@@ -98,7 +98,7 @@ std::mutex gate;
 bool recovered = false;
 ConfigResult recover_once(std::string& error) {
     if (recovered) return ConfigResult::ok;
-    Configuration current; auto result = store.recover(current, error);
+    ConfigurationSnapshot current; auto result = store.recover(current, error);
     if (result == ConfigResult::ok || result == ConfigResult::missing) recovered = true;
     return result;
 }
@@ -124,7 +124,7 @@ esp_err_t storage_budget(StorageBudget& out) {
     if (status != ESP_OK) return status;
     out = {stats.used_entries, stats.available_entries, stats.total_entries, configuration_payload_limit}; return ESP_OK;
 }
-esp_err_t load_system_configuration(Configuration& out, std::string& error) {
+esp_err_t load_system_configuration(ConfigurationSnapshot& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); auto status = store.recover(out, error);
     if (status == ConfigResult::ok || status == ConfigResult::missing) recovered = true;
     return result(status);
@@ -134,12 +134,12 @@ esp_err_t stage_system_configuration(Configuration candidate, RevisionPair expec
     if (status != ConfigResult::ok && status != ConfigResult::missing) return result(status);
     return result(store.stage(std::move(candidate), expected, error));
 }
-esp_err_t staged_system_configuration(Configuration& out) {
+esp_err_t staged_system_configuration(ConfigurationSnapshot& out) {
     std::lock_guard<std::mutex> lock(gate); if (!store.staged()) return ESP_ERR_INVALID_STATE;
-    out = *store.staged(); return ESP_OK;
+    out = store.staged(); return ESP_OK;
 }
 esp_err_t cancel_staged_configuration() { std::lock_guard<std::mutex> lock(gate); store.cancel_stage(); return ESP_OK; }
-esp_err_t activate_system_configuration(Configuration& out, std::string& error) {
+esp_err_t activate_system_configuration(ConfigurationSnapshot& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); return result(store.commit(out, error));
 }
 esp_err_t load_candidate_network(CandidateNetwork& out,std::string& error){std::lock_guard<std::mutex> lock(gate);return result(candidate_network_store.recover(out,error));}

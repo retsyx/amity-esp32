@@ -38,6 +38,7 @@ struct JournalMemory:Memory {
     }
 } memory;
 std::unique_ptr<ConfigurationStore> journal;
+ConfigurationSnapshot committed_snapshot;
 void reset(){
     {std::lock_guard<std::mutex> guard(amity::state.mutex);
         amity::state.control=nullptr;amity::state.activating=false;amity::state.activation={};
@@ -49,7 +50,7 @@ void reset(){
     on_report_send={};
     require_retry_lock=require_report_lock=false;
     system_sync_test_log::messages.clear();
-    task_creations=authorization_checks=0;memory=JournalMemory{};journal=std::make_unique<ConfigurationStore>(memory);
+    task_creations=authorization_checks=0;committed_snapshot.reset();memory=JournalMemory{};journal=std::make_unique<ConfigurationStore>(memory);
 }
 amity::SystemControl control(bool member=false){
     amity::SystemControl result;result.configuration=direct_configuration();
@@ -112,8 +113,8 @@ void runtime_configuration_changed(uint64_t revision,const std::string& hash){fi
 }
 namespace config_store {
 esp_err_t stage_system_configuration(Configuration candidate,RevisionPair expected,std::string& error){return fixture::journal->stage(std::move(candidate),expected,error)==ConfigResult::ok?ESP_OK:ESP_FAIL;}
-esp_err_t staged_system_configuration(Configuration& out){if(!fixture::journal->staged())return ESP_ERR_INVALID_STATE;out=*fixture::journal->staged();return ESP_OK;}
-esp_err_t activate_system_configuration(Configuration& out,std::string& error){return fixture::journal->commit(out,error)==ConfigResult::ok?ESP_OK:ESP_FAIL;}
+esp_err_t staged_system_configuration(ConfigurationSnapshot& out){if(!fixture::journal->staged())return ESP_ERR_INVALID_STATE;out=fixture::journal->staged();return ESP_OK;}
+esp_err_t activate_system_configuration(ConfigurationSnapshot& out,std::string& error){const auto result=fixture::journal->commit(out,error);if(result==ConfigResult::ok)fixture::committed_snapshot=out;return result==ConfigResult::ok?ESP_OK:ESP_FAIL;}
 esp_err_t cancel_staged_configuration(){fixture::journal->cancel_stage();return ESP_OK;}
 }
 
@@ -492,6 +493,7 @@ void scans_and_saved_intent_without_peer_ack(){
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
     auto candidate=active;candidate.activities[0].audio=candidate.activities[0].source;candidate.activities[0].label="Renamed";candidate.activities[0].label_override=true;main.auto_apply=false;const auto began=now;const auto request=id<s::MessageId>(100);
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),request)==ESP_OK&&now==began);
+    assert(main.configured_snapshot&&main.configured_snapshot==committed_snapshot);
     assert(configuration_changes.empty()); // Admission cannot invalidate old-recipe cleanup.
     const auto status=amity::configuration_activation_status();assert(status.request_id==request&&status.phase=="configuring"&&status.config_revision==2&&status.presentation_revision==2);
     main.applied.applied_config_revision=status.config_revision;
@@ -505,10 +507,12 @@ void scans_and_saved_intent_without_peer_ack(){
     assert(main.configuration.activities[0].audio==candidate.activities[0].source&&packets.empty()&&sent.empty()&&configuration_changes.size()==1);
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos);
     const auto saved=serialize_configuration(main.configuration);const auto committed=memory.values;candidate=main.configuration;candidate.activities[0].audio=candidate.activities[0].display;
+    const auto previous_snapshot=main.configured_snapshot;
     memory.fail_marker=true;assert(amity::activate_distributed_configuration(candidate,main.configuration.revisions(),id<s::MessageId>(101))!=ESP_OK);memory.fail_marker=false;
+    assert(main.configured_snapshot==previous_snapshot&&committed_snapshot==previous_snapshot);
     assert(serialize_configuration(main.configuration)==saved&&configuration_changes.size()==1&&amity::configuration_activation_status().phase=="failed");
     for(const auto& item:committed)if(item.first=="cm0"||item.first=="cm1")assert(memory.values[item.first]==item.second);
-    ConfigurationStore recovered(memory);Configuration after;std::string error;assert(recovered.recover(after,error)==ConfigResult::ok&&serialize_configuration(after)==saved);
+    ConfigurationStore recovered(memory);ConfigurationSnapshot after;std::string error;assert(recovered.recover(after,error)==ConfigResult::ok&&after->canonical==saved);
 }
 void saved_owner_capacity_does_not_shrink(){
     reset();auto main=control();main.configuration.octopuses.push_back({id<s::OctopusId>(9),"saved owner","saved owner",false,4});

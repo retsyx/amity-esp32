@@ -49,7 +49,6 @@ bool restore_main_configuration(const Configuration& backup,const Configuration&
     // Portable choices are restored directly. Availability is determined by the
     // owner-local name lookup when used; no executable approval is imported.
     if(!validate_configuration(candidate,error))return false;
-    if(serialize_configuration(candidate).size()>configuration_payload_limit)return fail("The backup exceeds saved configuration capacity");
     tasks.push_back("Reset and add the other Amity devices again; saved equipment locations do not enroll or authorize them.");
     tasks.push_back("Pair your remote and reconnect your home apps to the new main Amity.");
     out=std::move(candidate);error.clear();return true;

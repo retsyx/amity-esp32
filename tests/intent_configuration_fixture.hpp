@@ -52,4 +52,6 @@ inline Configuration switch_configuration(Configuration c, const std::string& la
     activity.audio = activity.switch_device = fixture_equipment(c, "AVR", "receiver", model::Side::back);
     activity.switch_input = 6; fixture_activity(c, activity); return c;
 }
-inline void commit(ConfigurationStore& store,Configuration c,RevisionPair expected,Configuration& out){std::string error;assert(store.stage(std::move(c),expected,error)==ConfigResult::ok);assert(store.commit(out,error)==ConfigResult::ok);}
+inline void commit(ConfigurationStore& store,Configuration c,RevisionPair expected,Configuration& out){std::string error;assert(store.stage(std::move(c),expected,error)==ConfigResult::ok);ConfigurationSnapshot snapshot;assert(store.commit(snapshot,error)==ConfigResult::ok);out=snapshot->configuration;}
+
+inline void commit(ConfigurationStore& store,Configuration c,RevisionPair expected,ConfigurationSnapshot& out){std::string error;assert(store.stage(std::move(c),expected,error)==ConfigResult::ok);assert(store.commit(out,error)==ConfigResult::ok);}

@@ -59,8 +59,8 @@ public:
     PlaybackState playback_state()const{return local_.playback_state();}
     void on_change(std::function<void(const Snapshot&)> f){local_.on_change(std::move(f));}
     void on_configuration_applied(std::function<void()> f){local_.on_configuration_applied(std::move(f));}
-    esp_err_t configure(config_store::Configuration,std::function<esp_err_t()> commit={});
-    esp_err_t configure_passive_metadata(const config_store::Configuration&);
+    esp_err_t configure(config_store::ConfigurationSnapshot,std::function<esp_err_t()> commit={});
+    esp_err_t configure_passive_metadata(config_store::ConfigurationSnapshot);
     esp_err_t request_activity(system::ZoneId,system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
     esp_err_t stop_zone(system::ZoneId);
     system::ExecutionSnapshot execution_snapshot()const;
@@ -70,8 +70,9 @@ public:
     };
     AppliedConfiguration applied_configuration()const;
     std::vector<system::CecObservation> native_observations()const;
+    config_store::ConfigurationSnapshot configuration_snapshot()const{return std::atomic_load(&active_);}
     std::shared_ptr<const config_store::Configuration> active_configuration()const{
-        auto published=std::atomic_load(&active_);
+        auto published=configuration_snapshot();
         return published?std::shared_ptr<const config_store::Configuration>(published,&published->configuration):nullptr;
     }
     std::optional<config_store::ConfiguredActivity> external_activity(unsigned)const;
@@ -106,12 +107,7 @@ private:
     system::ConsortiumId consortium_;
     system::OctopusId octopus_;
     system::BootId boot_;
-    struct PublishedConfiguration {
-        explicit PublishedConfiguration(config_store::Configuration value):configuration(std::move(value)),policy_hash(config_store::executable_policy_hash(configuration)){}
-        config_store::Configuration configuration;
-        std::string policy_hash;
-    };
-    std::shared_ptr<const PublishedConfiguration> active_;
+    config_store::ConfigurationSnapshot active_;
     std::shared_ptr<const std::string> hardware_error_;
     std::shared_ptr<const OwnedSender> sender_;
     std::atomic<bool> local_coordinator_{true},maintenance_{false};

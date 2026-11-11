@@ -2,6 +2,7 @@
 #include "amity/system/discovery.hpp"
 #include "identity_journal.hpp"
 #include "esp_err.h"
+#include <memory>
 
 namespace config_store {
 namespace model = amity::system;
@@ -57,6 +58,22 @@ struct Configuration {
     std::vector<model::ActivityId> activity_order;
     RevisionPair revisions() const { return {config_revision, presentation_revision}; }
 };
+// One prepared immutable value is shared by persistence, control, and readers.
+// Old readers may retain an earlier revision while a candidate is committed.
+class PreparedConfiguration;
+using ConfigurationSnapshot = std::shared_ptr<const PreparedConfiguration>;
+ConfigurationSnapshot prepare_configuration(Configuration, std::string& error);
+class PreparedConfiguration {
+public:
+    const Configuration configuration;
+    const std::string canonical, policy_hash, presentation_hash;
+private:
+    PreparedConfiguration(Configuration value, std::string bytes, std::string policy, std::string presentation)
+        : configuration(std::move(value)), canonical(std::move(bytes)), policy_hash(std::move(policy)),
+          presentation_hash(std::move(presentation)) {}
+    friend ConfigurationSnapshot prepare_configuration(Configuration, std::string&);
+    friend class ConfigurationStore;
+};
 // The current saved format is the only readable and writable format.
 constexpr unsigned current_configuration_version = 3;
 // This board/112KiB NVS profile admits16KiB complete configuration payloads.
@@ -83,15 +100,15 @@ struct ConfigBackend : IdentityBackend { virtual bool erase(const char* key) = 0
 class ConfigurationStore {
 public:
     explicit ConfigurationStore(ConfigBackend& backend) : backend_(backend) {}
-    ConfigResult recover(Configuration&, std::string& error);
+    ConfigResult recover(ConfigurationSnapshot&, std::string& error);
     ConfigResult stage(Configuration candidate, RevisionPair expected, std::string& error);
-    ConfigResult commit(Configuration&, std::string& error);
+    ConfigResult commit(ConfigurationSnapshot&, std::string& error);
     void cancel_stage();
-    const std::optional<Configuration>& staged() const { return candidate_; }
+    ConfigurationSnapshot staged() const { return candidate_; }
 private:
     ConfigResult write_verified(const char*, const std::string&);
     ConfigBackend& backend_;
-    std::optional<Configuration> active_, candidate_;
+    ConfigurationSnapshot active_, candidate_;
     std::string candidate_record_hash_;
     uint64_t generation_ = 0;
     unsigned active_slot_ = 1;
@@ -111,10 +128,10 @@ bool reconcile_hardware_profile(Configuration&, model::OctopusId, uint8_t capaci
 
 // Real NVS-backed entrypoints. They share amity_config's two-generation journal;
 // callers reserve the live owner-queue transaction before invoking activation.
-esp_err_t load_system_configuration(Configuration&, std::string& error);
+esp_err_t load_system_configuration(ConfigurationSnapshot&, std::string& error);
 esp_err_t stage_system_configuration(Configuration, RevisionPair expected, std::string& error);
-esp_err_t activate_system_configuration(Configuration&, std::string& error);
-esp_err_t staged_system_configuration(Configuration&);
+esp_err_t activate_system_configuration(ConfigurationSnapshot&, std::string& error);
+esp_err_t staged_system_configuration(ConfigurationSnapshot&);
 esp_err_t cancel_staged_configuration();
 
 

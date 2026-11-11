@@ -255,6 +255,15 @@ std::string presentation_hash(const Configuration& c) {
     const auto encoded=encoded_configuration(c,Projection::presentation);return encoded.empty()?std::string{}:sha256_hex(encoded);
 }
 
+ConfigurationSnapshot prepare_configuration(Configuration configuration,std::string& error) {
+    if(!validate_configuration(configuration,error))return {};
+    auto policy=executable_policy_hash(configuration),presentation=presentation_hash(configuration);
+    if(policy.empty()||presentation.empty()){error="Configuration digest preparation failed";return {};}
+    auto canonical=serialize_configuration(configuration);
+    if(canonical.empty()){error="Configuration encoding failed";return {};}
+    return ConfigurationSnapshot(new PreparedConfiguration(std::move(configuration),std::move(canonical),std::move(policy),std::move(presentation)));
+}
+
 const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slot) {
     for (const auto& s : c.external_slots) if (s.slot == slot && !s.tombstone) for (const auto& a : c.activities) if (a.activity_id == s.activity_id) return &a;
     return nullptr;
@@ -372,14 +381,12 @@ bool reconcile_hardware_profile(Configuration& configuration, model::OctopusId o
         if(error.empty())error="Invalid HDMI adapter capacity";
         return false;
     }
-    auto candidate=configuration;
-    auto board=std::find_if(candidate.octopuses.begin(),candidate.octopuses.end(),[&](const auto& b){return b.octopus_id==owner;});
-    if(board==candidate.octopuses.end()){error="Hardware profile has no configured Amity device identity";return false;}
+    auto board=std::find_if(configuration.octopuses.begin(),configuration.octopuses.end(),[&](const auto& b){return b.octopus_id==owner;});
+    if(board==configuration.octopuses.end()){error="Hardware profile has no configured Amity device identity";return false;}
     // Detachable adapter availability stays with the live owner. The saved
     // roster records only the hardware profile capacity.
     if(board->supported_tentacles<capacity){board->supported_tentacles=capacity;changed=true;}
-    if(!validate_configuration(candidate,error))return false;
-    configuration=std::move(candidate);error.clear();return true;
+    error.clear();return true;
 }
 
 

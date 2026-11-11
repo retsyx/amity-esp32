@@ -82,10 +82,11 @@ namespace device_settings{const char*hostname(){return "amity-test";}const char*
 struct Config{uint64_t config_revision=2;std::vector<int>activities,components;};
 struct FakeHub {struct Id{std::string str()const{return std::string(32,'1');}};
 std::shared_ptr<Config>config;struct Snapshot{std::vector<int>activities;};Id octopus_id(){return {};}
-std::shared_ptr<Config>active_configuration(){return config;}Snapshot snapshot(){return {};}
+std::shared_ptr<Config>active_configuration(){return config;}
+struct Prepared {Config configuration;std::string policy_hash="exact-policy";};
+std::shared_ptr<const Prepared>configuration_snapshot(){return config?std::make_shared<const Prepared>(Prepared{*config,"exact-policy"}):nullptr;}Snapshot snapshot(){return {};}
 int retire_membership(){assert(!original_interfaces_enabled);events.push_back("retire");return fence_result;}
 int transition_coordinator_authority(bool on,unsigned epoch){assert(on&&epoch==1&&amity::consortium::role.coordinator);events.push_back("promote");return 0;}}hub;
-namespace config_store{std::string executable_policy_hash(const Config&){return "exact-policy";}}
 namespace web_admin{int load(FakeHub&,bool member){assert(!member);events.push_back("load");hub.config=std::make_shared<Config>();return 0;}
 int finish_configuration_activation(){events.push_back("activate_configuration");return 0;}int start(FakeHub&,const char*,const char*){assert(original_interfaces_enabled);events.push_back("web");return 0;}
 int stop(){assert(!original_interfaces_enabled);events.push_back("web-stop");if(block_mdns_add){std::lock_guard<std::mutex>guard(interleave_mutex);retire_at_web=true;interleave.notify_all();}return web_result;}}

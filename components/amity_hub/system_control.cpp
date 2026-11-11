@@ -18,18 +18,17 @@ std::vector<Activity> SystemControl::activities(const config_store::Configuratio
 bool SystemControl::dispatch_owned(const system::OwnedIntent& intent){
     const auto sender=std::atomic_load(&sender_);return sender&&(*sender)(intent);
 }
-esp_err_t SystemControl::configure(config_store::Configuration config,std::function<esp_err_t()> commit){
+esp_err_t SystemControl::configure(config_store::ConfigurationSnapshot published,std::function<esp_err_t()> commit){
     refresh_outcomes();
-    std::string error;
-    if(!accepts_local_input()||!config_store::validate_configuration(config,error)||config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
+    if(!published||!accepts_local_input())return ESP_ERR_INVALID_ARG;
+    const auto& config=published->configuration;
+    if(config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
     std::vector<system::ScopedSelector> selectors;
     for(const auto& c:config.components)for(const auto& name:c.record.qualified_names)
         selectors.push_back({c.record.component_id.str(),name});
     std::vector<system::OctopusId> owners;
     for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
     const auto previous=active_configuration();
-    auto published=std::make_shared<const PublishedConfiguration>(std::move(config));
-    if(published->policy_hash.empty())return ESP_FAIL;
     auto stored=std::shared_ptr<const config_store::Configuration>(published,&published->configuration);
     const auto can_commit=[previous,stored](const Snapshot& state){
         if(!previous)return state.current_activity<0;
@@ -48,10 +47,8 @@ esp_err_t SystemControl::configure(config_store::Configuration config,std::funct
     };
     return local_.configure_scoped(activities(*stored),std::move(selectors),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,persist,stored->presentation_revision,std::move(owners),can_commit);
 }
-esp_err_t SystemControl::configure_passive_metadata(const config_store::Configuration& config){
-    std::string error;if(local_coordinator_.load()||!config_store::validate_configuration(config,error)||config.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
-    auto published=std::make_shared<const PublishedConfiguration>(config);
-    if(published->policy_hash.empty())return ESP_FAIL;
+esp_err_t SystemControl::configure_passive_metadata(config_store::ConfigurationSnapshot published){
+    if(!published||local_coordinator_.load()||published->configuration.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
     std::atomic_store(&active_,std::move(published));return ESP_OK;
 }
 esp_err_t SystemControl::request_activity(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){

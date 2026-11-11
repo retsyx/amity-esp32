@@ -20,7 +20,7 @@ PREFIX = r'''
 #include <cassert>
 #include <cstdio>
 #include <iostream>
-#include <optional>
+#include <memory>
 #include <string>
 #include <vector>
 using esp_err_t=int;
@@ -66,8 +66,10 @@ void start() {
 }
 }
 struct Configuration {uint64_t config_revision=11;};
+struct PreparedConfiguration {Configuration configuration;};
 struct Hub {
-    std::optional<Configuration> active_configuration(){return Configuration{};}
+    std::shared_ptr<const PreparedConfiguration> installed=std::make_shared<const PreparedConfiguration>();
+    auto configuration_snapshot(){return installed;}
     unsigned supported_tentacles(){return 4;}
     unsigned configured_tentacles_mask(){return 15;}
 } hub;

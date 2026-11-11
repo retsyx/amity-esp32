@@ -34,9 +34,9 @@ void wipe_json(cJSON* value){if(!value)return;for(auto* child=value->child;child
 struct SensitiveRequest {std::string& body;cJSON* json;bool enabled;~SensitiveRequest(){if(enabled){wipe(body);wipe_json(json);}}};
 struct SensitiveString {std::string& value;~SensitiveString(){wipe(value);}};
 amity::SystemControl* control=nullptr;
-std::optional<config_store::Configuration> active;
+config_store::RevisionPair published_input_revisions;
 bool configuration_passive=false;
-std::optional<config_store::Configuration> deferred_configuration;
+config_store::ConfigurationSnapshot deferred_configuration;
 uint64_t deferred_epoch=1;
 struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;
     config_store::RevisionPair removal_revisions{};bool removal_enrolled=false;};
@@ -169,6 +169,7 @@ bool administrative_path(const std::string& path){
     return false;
 }
 void publish_inputs(){
+    const auto active=control->active_configuration();
     if(!active)return;
     amity_matter_input_t inputs[16]{};size_t count=0;
     for(const auto& slot:active->external_slots){
@@ -178,6 +179,7 @@ void publish_inputs(){
         snprintf(in.name,sizeof(in.name),"%s",(slot.alias.empty()?activity->label:slot.alias).c_str());
     }
     amity_matter_set_inputs(inputs,count);
+    published_input_revisions=active->revisions();
 }
 void update_operation(Tracked& operation){
     const bool removing=operation.path=="/api/membership/remove"||(operation.path=="/api/replacements/apply"&&operation.candidate);
@@ -247,6 +249,7 @@ esp_err_t operation_response(httpd_req_t* req,Tracked& operation){
     return sent;
 }
 esp_err_t snapshot(httpd_req_t* req){
+    const auto active=control->active_configuration();
     Json result(cJSON_CreateObject(),cJSON_Delete);
     const auto state=control->snapshot();const auto execution=control->execution_snapshot();
     const auto group=amity::consortium::runtime_status();
@@ -338,7 +341,6 @@ esp_err_t snapshot(httpd_req_t* req){
 }
 }
 
-std::string active_configuration_json(){return active?config_store::serialize_configuration(*active):"";}
 bool configuration_is_passive(){const auto membership=amity::consortium::runtime_status();return configuration_passive||!membership.coordinator||!membership.authority_ready;}
 esp_err_t load_configuration(amity::SystemControl& service,bool defer_configuration){
     control=&service;std::string message;
@@ -348,20 +350,22 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
     if(amity::consortium::runtime_read_startup(service.octopus_id(),original)!=ESP_OK || original.passive() || original.epoch>1)return ESP_ERR_INVALID_STATE;
     const auto controller=original.authority_id?original.authority_id:service.octopus_id();
     if(controller!=service.octopus_id())return ESP_ERR_INVALID_STATE;
-    config_store::Configuration configuration;
+    config_store::ConfigurationSnapshot configuration;
     auto result=config_store::load_system_configuration(configuration,message);
+    config_store::Configuration candidate;
     const bool initialize=result==ESP_ERR_NVS_NOT_FOUND;
     if(initialize){
         if(!config_store::initialize_configuration(service.consortium_id(),controller,service.supported_tentacles(),
-            [](uint8_t* bytes,size_t size){esp_fill_random(bytes,size);return true;},configuration,message))return ESP_ERR_INVALID_STATE;
+            [](uint8_t* bytes,size_t size){esp_fill_random(bytes,size);return true;},candidate,message))return ESP_ERR_INVALID_STATE;
     }else if(result!=ESP_OK)return result;
-    if(configuration.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
-    const auto expected=initialize?config_store::RevisionPair{}:configuration.revisions();
+    else candidate=configuration->configuration;
+    if(candidate.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;
+    const auto expected=initialize?config_store::RevisionPair{}:candidate.revisions();
     bool hardware_changed=false;
-    if(!config_store::reconcile_hardware_profile(configuration,service.octopus_id(),service.supported_tentacles(),hardware_changed,message))return ESP_ERR_INVALID_STATE;
+    if(!config_store::reconcile_hardware_profile(candidate,service.octopus_id(),service.supported_tentacles(),hardware_changed,message))return ESP_ERR_INVALID_STATE;
     const bool staged_configuration=initialize||hardware_changed;
     if(staged_configuration){
-        result=config_store::stage_system_configuration(configuration,expected,message);if(result!=ESP_OK)return result;
+        result=config_store::stage_system_configuration(std::move(candidate),expected,message);if(result!=ESP_OK)return result;
         result=config_store::staged_system_configuration(configuration);if(result!=ESP_OK)return result;
     }
     esp_ota_img_states_t boot_state{};const auto* running=esp_ota_get_running_partition();
@@ -371,27 +375,29 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
         amity::consortium::RuntimeStartup startup;if(amity::consortium::runtime_read_startup(service.octopus_id(),startup)!=ESP_OK)return ESP_ERR_INVALID_STATE;deferred_epoch=startup.epoch?startup.epoch:1;
         result=service.transition_coordinator_authority(false,deferred_epoch);if(result!=ESP_OK)return result;
         result=service.configure_passive_metadata(configuration);if(result!=ESP_OK)return result;
-        deferred_configuration=configuration;active=configuration;configuration_passive=true;return ESP_OK;
+        deferred_configuration=configuration;configuration_passive=true;return ESP_OK;
     }
     result=service.configure(configuration,staged_configuration?std::function<esp_err_t()>([&]{return config_store::activate_system_configuration(configuration,message);}):std::function<esp_err_t()>{});
     if(result!=ESP_OK)return result;
-    active=std::move(configuration);publish_inputs();return ESP_OK;
+    publish_inputs();return ESP_OK;
 }
 
 esp_err_t finish_configuration_activation(){
     if(!deferred_configuration)return ESP_OK;
     if(!system_services::firmware_ready())return ESP_ERR_INVALID_STATE;
-    auto candidate=*deferred_configuration;const auto enabled=control->transition_coordinator_authority(true,deferred_epoch);if(enabled!=ESP_OK)return enabled;
+    auto candidate=deferred_configuration;const auto enabled=control->transition_coordinator_authority(true,deferred_epoch);if(enabled!=ESP_OK)return enabled;
     const auto activated=control->configure(candidate,[candidate]() mutable {std::string message;return config_store::activate_system_configuration(candidate,message);});
     if(activated!=ESP_OK){control->transition_coordinator_authority(false,deferred_epoch);return activated;}
-    deferred_configuration.reset();configuration_passive=false;active=std::move(candidate);publish_inputs();return ESP_OK;
+    deferred_configuration.reset();configuration_passive=false;publish_inputs();return ESP_OK;
 }
 
 bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     if(!administrative_path(path))return false;
     const uint64_t admitted_until_ms=static_cast<uint64_t>(esp_timer_get_time()/1000)+5000;
     if(!control){result=error(req,"not_ready","System configuration is not ready.","503 Service Unavailable",true);return true;}
-    if(!configuration_passive){const auto configured=control->active_configuration();if(configured&&(!active||configured->revisions()!=active->revisions())){active=*configured;publish_inputs();}}
+    const auto published=control->configuration_snapshot();
+    const auto* active=published?&published->configuration:nullptr;
+    if(!configuration_passive&&active&&active->revisions()!=published_input_revisions)publish_inputs();
     if(req->method==HTTP_GET){
         if(const auto target=device_settings_target(path)){
             const auto owner=*m::OctopusId::parse(*target);
@@ -401,13 +407,13 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         }
         if(path=="/api/system"){result=snapshot(req);return true;}
         if(path=="/api/membership/admission"){result=admission_response(req);return true;}
-        if(path=="/api/config"){result=active?web::json(req,active_configuration_json()):error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
+        if(path=="/api/config"){result=active?web::json(req,published->canonical):error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
         if(path=="/api/updates"){result=web::json(req,system_services::updates::status_json());return true;}
         if(path=="/api/updates/cohort"){result=web::json(req,system_services::updates::cohort_status_json());return true;}
         if(path=="/api/backup"){
             if(!active){result=error(req,"configuration_unavailable","Equipment configuration needs recovery.","409 Conflict");return true;}
             httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity-config.json");
-            result=web::json(req,active_configuration_json());return true;
+            result=web::json(req,published->canonical);return true;
         }
         if(path.rfind("/api/operations/",0)==0){
             const auto id=path.substr(std::strlen("/api/operations/"));auto found=std::find_if(operations.begin(),operations.end(),[&](const auto& o){return o.id==id;});
@@ -501,7 +507,8 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
             if(amity::consortium::runtime_forget_removed_octopus(*previous)!=ESP_OK){operation.status="failed";operation.error="The replacement configuration was saved, but the previous device's name or settings could not be erased. Replacement is incomplete.";}
             finish();return true;
         }
-        Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddItemToObject(response.get(),"configuration",cJSON_Parse(config_store::serialize_configuration(candidate).c_str()));cJSON_AddStringToObject(response.get(),"canonical_configuration",config_store::serialize_configuration(candidate).c_str());
+        const auto canonical=config_store::serialize_configuration(candidate);
+        Json response(cJSON_CreateObject(),cJSON_Delete);cJSON_AddItemToObject(response.get(),"configuration",cJSON_Parse(canonical.c_str()));cJSON_AddStringToObject(response.get(),"canonical_configuration",canonical.c_str());
         auto* ids=cJSON_AddArrayToObject(response.get(),"affected_activity_ids");for(auto activity:affected)cJSON_AddItemToArray(ids,cJSON_CreateString(activity.str().c_str()));
         cJSON_AddStringToObject(response.get(),"pairing_notice","Reconnect and review the equipment on the replacement Amity before starting playback.");result=send(req,response.get());return true;
     }

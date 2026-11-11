@@ -46,8 +46,9 @@ extern "C" unsigned char* amity_failure_sha256(const unsigned char* data,
 
 struct AtomicMemory final : ConfigBackend {
     std::map<std::string, std::string> values;
-    size_t writes = 0;
+    size_t writes = 0, record_reads = 0;
     ReadResult read(const char* key, std::string& value) override {
+        if(std::string_view(key)=="c0"||std::string_view(key)=="c1")++record_reads;
         const auto found = values.find(key);
         if (found == values.end()) return ReadResult::missing;
         value = found->second;
@@ -87,14 +88,14 @@ struct Scenario {
         candidate_text = serialize_configuration(candidate);
         AtomicMemory next = saved;
         ConfigurationStore successful(next);
-        Configuration active;
+        ConfigurationSnapshot active;
         std::string error;
         assert(successful.recover(active, error) == ConfigResult::ok);
-        commit(successful, candidate, active.revisions(), active);
-        new_text = serialize_configuration(active);
+        commit(successful, candidate, active->configuration.revisions(), active);
+        new_text = active->canonical;
         assert(old_text != new_text);
         assert_unused(old);
-        assert_unused(active);
+        assert_unused(active->configuration);
     }
 
     void assert_unused(const Configuration& configuration) const {
@@ -107,33 +108,62 @@ struct Scenario {
 
     std::string reboot(AtomicMemory& memory) const {
         ConfigurationStore restarted(memory);
-        Configuration recovered;
+        ConfigurationSnapshot recovered;
         std::string error;
         assert(restarted.recover(recovered, error) == ConfigResult::ok);
-        assert_unused(recovered);
-        const auto actual = serialize_configuration(recovered);
+        assert_unused(recovered->configuration);
+        const auto actual = recovered->canonical;
         assert(actual == old_text || actual == new_text);
         return actual;
     }
 };
+
+void shared_snapshots_and_prepared_save(const Scenario& scenario) {
+    AtomicMemory memory=scenario.saved;ConfigurationStore store(memory);
+    std::string error;ConfigurationSnapshot current;
+    assert(store.recover(current,error)==ConfigResult::ok);
+    const auto previous=current;
+    auto reader=std::shared_ptr<const Configuration>(previous,&previous->configuration);
+    memory.record_reads=0;fault::hash_calls=0;
+    assert(store.stage(scenario.candidate,current->configuration.revisions(),error)==ConfigResult::ok);
+    const auto staged=store.staged();
+    assert(staged&&staged.get()!=previous.get()&&store.staged().get()==staged.get());
+    assert(fault::hash_calls==4&&memory.record_reads==1);
+    assert(previous->canonical==scenario.old_text&&serialize_configuration(*reader)==scenario.old_text);
+    assert(store.commit(current,error)==ConfigResult::ok&&current.get()==staged.get()&&!store.staged());
+    assert(fault::hash_calls==5&&memory.record_reads==2);
+    assert(current->canonical==scenario.new_text&&serialize_configuration(current->configuration)==current->canonical);
+    assert(current->policy_hash==executable_policy_hash(current->configuration));
+    assert(current->presentation_hash==presentation_hash(current->configuration));
+    assert(previous->canonical==scenario.old_text&&serialize_configuration(*reader)==scenario.old_text);
+    auto proposed=current->configuration;proposed.activities.front().label="Cancelled";
+    assert(store.stage(std::move(proposed),current->configuration.revisions(),error)==ConfigResult::ok);
+    std::weak_ptr<const PreparedConfiguration> cancelled=store.staged();
+    store.cancel_stage();assert(cancelled.expired()&&current.get()==staged.get());
+    const auto prepared=prepare_configuration(scenario.candidate,error);
+    assert(prepared&&prepared->canonical==scenario.candidate_text&&prepared->policy_hash.size()==64&&prepared->presentation_hash.size()==64);
+    auto invalid=scenario.candidate;invalid.controller_octopus_id.reset();
+    assert(!prepare_configuration(std::move(invalid),error));
+    std::cout<<"PASS shared immutable snapshots: staged/committed pointer identity, old readers, cancellation, cached bytes/digests; save uses 5 SHA256 operations and 2 full record reads\n";
+}
 
 size_t hash_failures(const Scenario& scenario) {
     size_t count = 0;
     {
         AtomicMemory memory = scenario.saved;
         ConfigurationStore store(memory);
-        Configuration active;
+        ConfigurationSnapshot active;
         std::string error;
         assert(store.recover(active, error) == ConfigResult::ok);
         fault::hash_calls = 0;
-        assert(store.stage(scenario.candidate, active.revisions(), error) == ConfigResult::ok);
+        assert(store.stage(scenario.candidate, active->configuration.revisions(), error) == ConfigResult::ok);
         count = fault::hash_calls;
     }
-    assert(count >= 6); // Two comparison pairs, payload digest, record digest.
+    assert(count == 4); // Candidate policy/presentation plus payload/record digests; active hashes are cached.
     const auto reject = [&](size_t first, size_t second) {
         AtomicMemory memory = scenario.saved;
         ConfigurationStore store(memory);
-        Configuration active;
+        ConfigurationSnapshot active;
         std::string error;
         assert(store.recover(active, error) == ConfigResult::ok);
         const auto durable = memory.values;
@@ -141,16 +171,15 @@ size_t hash_failures(const Scenario& scenario) {
         fault::hash_calls = 0;
         fault::fail_hash = first;
         fault::fail_hash_also = second;
-        const auto result = store.stage(scenario.candidate, active.revisions(), error);
+        const auto result = store.stage(scenario.candidate, active->configuration.revisions(), error);
         fault::fail_hash = fault::fail_hash_also = 0;
         assert(result == ConfigResult::storage_error && !store.staged());
         assert(memory.writes == 0 && memory.values == durable);
         assert(scenario.reboot(memory) == scenario.old_text);
     };
     for (size_t nth = 1; nth <= count; ++nth) reject(nth, 0);
-    reject(1, 2); // Two empty policy digests must never imply equal policies.
-    reject(3, 4); // The same invariant applies to presentation revisions.
-    return count + 2;
+    reject(1, 2); // Failed cached-candidate projections must never imply equality.
+    return count + 1;
 }
 
 size_t cjson_failures(const Scenario& scenario) {
@@ -159,15 +188,15 @@ size_t cjson_failures(const Scenario& scenario) {
     {
         AtomicMemory memory = scenario.saved;
         ConfigurationStore store(memory);
-        Configuration active;
+        ConfigurationSnapshot active;
         std::string error;
         assert(store.recover(active, error) == ConfigResult::ok);
         fault::json_calls = 0;
         fault::fail_all_json = true;
         assert(serialize_configuration(scenario.candidate) == scenario.candidate_text);
-        assert(store.stage(scenario.candidate, active.revisions(), error) == ConfigResult::ok);
+        assert(store.stage(scenario.candidate, active->configuration.revisions(), error) == ConfigResult::ok);
         assert(store.commit(active, error) == ConfigResult::ok);
-        assert(serialize_configuration(active) == scenario.new_text);
+        assert(active->canonical == scenario.new_text);
         assert(fault::json_calls == 0);
         fault::fail_all_json = false;
         assert(scenario.reboot(memory) == scenario.new_text);
@@ -218,12 +247,12 @@ size_t stage_allocations(const Scenario& scenario) {
     for (size_t nth = 0; nth <= count + 1; ++nth) {
         AtomicMemory memory = scenario.saved;
         ConfigurationStore store(memory);
-        Configuration active;
+        ConfigurationSnapshot active;
         std::string error;
         assert(store.recover(active, error) == ConfigResult::ok);
         bool interrupted = false;
         fault::start_new(nth);
-        try { assert(store.stage(scenario.candidate, active.revisions(), error) == ConfigResult::ok); }
+        try { assert(store.stage(scenario.candidate, active->configuration.revisions(), error) == ConfigResult::ok); }
         catch (const std::bad_alloc&) { interrupted = true; }
         const auto calls = fault::stop_new();
         if (!nth) { count = calls; assert(count > 0); }
@@ -239,10 +268,10 @@ size_t commit_allocations(const Scenario& scenario) {
     for (size_t nth = 0; nth <= count + 1; ++nth) {
         AtomicMemory memory = scenario.saved;
         ConfigurationStore store(memory);
-        Configuration active, committed;
+        ConfigurationSnapshot active, committed;
         std::string error;
         assert(store.recover(active, error) == ConfigResult::ok);
-        assert(store.stage(scenario.candidate, active.revisions(), error) == ConfigResult::ok);
+        assert(store.stage(scenario.candidate, active->configuration.revisions(), error) == ConfigResult::ok);
         bool interrupted = false;
         fault::start_new(nth);
         try { assert(store.commit(committed, error) == ConfigResult::ok); }
@@ -261,6 +290,7 @@ size_t commit_allocations(const Scenario& scenario) {
 
 int main() {
     const Scenario scenario;
+    shared_snapshots_and_prepared_save(scenario);
     const auto hashes = hash_failures(scenario);
     const auto json = cjson_failures(scenario);
     const auto serializer = serializer_allocations(scenario);
