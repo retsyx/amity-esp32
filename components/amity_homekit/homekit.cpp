@@ -16,7 +16,9 @@
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -253,7 +255,7 @@ void publish_status(bool available,esp_err_t error=ESP_OK){
     if(error!=ESP_OK)current_status.error=error;
     if(!current_status.pairing){memset(current_status.manual_code,0,sizeof(current_status.manual_code));memset(current_status.qr_payload,0,sizeof(current_status.qr_payload));}
 }
-void worker(void *){
+void worker_loop(){
     std::string record;
     const auto saved=config_store::read("hap_setup",record);
     if(saved==ESP_OK){HapLock lock;startup_result=initialize(record);publish_status(network_available(),startup_result);}
@@ -301,6 +303,10 @@ void worker(void *){
         if(error!=ESP_OK)ESP_LOGW(tag,"HomeKit operation: %s",esp_err_to_name(error));
     }
 }
+void worker(void *){
+    worker_loop();
+    vTaskDeleteWithCaps(nullptr);
+}
 esp_err_t submit(Command command){
     if(disabled.load()||!status_lock||!commands)return ESP_ERR_INVALID_STATE;
     StatusLock lock;if(current_status.busy)return ESP_ERR_INVALID_STATE;
@@ -316,7 +322,7 @@ esp_err_t start(amity::SystemControl &service,const amity_matter_callbacks_t &ha
     hub=&service;callbacks=handlers;
     status_lock=xSemaphoreCreateMutex();commands=xQueueCreate(1,sizeof(Command));startup_ready=xSemaphoreCreateBinary();
     if(!status_lock||!commands||!startup_ready||hap_amity_init(device_settings::hostname())!=HAP_SUCCESS)return ESP_ERR_NO_MEM;
-    if(xTaskCreate(worker,"homekit",8192,nullptr,3,nullptr)!=pdPASS)return ESP_ERR_NO_MEM;
+    if(xTaskCreateWithCaps(worker,"homekit",8192,nullptr,3,nullptr,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)!=pdPASS)return ESP_ERR_NO_MEM;
     if(xSemaphoreTake(startup_ready,pdMS_TO_TICKS(30000))!=pdTRUE)return ESP_ERR_TIMEOUT;
     return startup_result;
 }

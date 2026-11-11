@@ -60,6 +60,7 @@ using esp_err_t=int;
 constexpr int ESP_OK=0,ESP_FAIL=-1,ESP_ERR_INVALID_STATE=1,ESP_ERR_NO_MEM=2,ESP_ERR_TIMEOUT=3;
 constexpr int CHIP_NO_ERROR=0,HAP_SUCCESS=0,HAP_FAIL=-1;
 constexpr unsigned portMAX_DELAY=~0u;
+constexpr unsigned MALLOC_CAP_SPIRAM=1u<<10,MALLOC_CAP_8BIT=1u<<2;
 #define ESP_LOGI(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)
 #define pdMS_TO_TICKS(v) (v)
@@ -160,7 +161,14 @@ struct amity_matter_callbacks_t{};amity::SystemControl*hub=nullptr;amity_matter_
 namespace device_settings {const char*hostname(){return "amity";}}
 void* xSemaphoreCreateMutex(){return reinterpret_cast<void*>(1);}void*xQueueCreate(int,int){return reinterpret_cast<void*>(2);}void*xSemaphoreCreateBinary(){return reinterpret_cast<void*>(3);}
 int hap_amity_init(const char*){return service_enabled?0:-1;}
-void worker(void*){}int xTaskCreate(void(*)(void*),const char*,int,void*,int,void*){++starts;initialized=running=true;listener=1;hap_priv.server=reinterpret_cast<void*>(9);return 1;}
+bool task_creation_succeeds=true;
+void worker(void*){}
+int xTaskCreateWithCaps(void(*entry)(void*),const char*name,unsigned bytes,void*argument,unsigned priority,void*handle,unsigned caps){
+ assert(entry==worker&&!std::strcmp(name,"homekit")&&bytes==8192&&!argument&&priority==3&&!handle);
+ assert(caps==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));++starts;
+ if(!task_creation_succeeds)return 0;
+ initialized=running=true;listener=1;hap_priv.server=reinterpret_cast<void*>(9);return pdPASS;
+}
 int xSemaphoreTake(void*,unsigned){return 1;}
 enum class Command{Open,Close,Remove};int xQueueSend(void*,const void*,int){return 1;}
 ''' + home_functions + r'''
@@ -174,8 +182,12 @@ void tests(){
  // An allocation failure can leave the outer status mutex without the HAP mutex.
  status_lock=reinterpret_cast<void*>(1);lock=nullptr;assert(stop()==0&&depth==0);
  status_lock=nullptr;lock=reinterpret_cast<void*>(1);
- // New-process controller fixture, with two preexisting paired controllers.
+ // A failed external-stack creation cannot start the listener or its worker.
  disabled=service_enabled=false;service_enabled=true;
+ task_creation_succeeds=false;initialized=running=false;
+ assert(start(h,{})==ESP_ERR_NO_MEM&&starts==1&&!listener&&!running&&!initialized);
+ status_lock=commands=startup_ready=nullptr;starts=0;task_creation_succeeds=true;
+ // New-process controller fixture, with two preexisting paired controllers.
  assert(start(h,{})==0&&listener==1&&starts==1);
  http_failure=1;assert(stop()==ESP_FAIL&&disabled&&!service_enabled&&listener==1&&paired==2);
  assert(submit(Command::Remove)==ESP_ERR_INVALID_STATE&&start(h,{})==ESP_ERR_INVALID_STATE);

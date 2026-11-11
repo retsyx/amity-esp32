@@ -15,3 +15,4 @@ for encryption in plain encrypted; do
     "$out/homekit_platform_httpd.o" -o "$out/homekit_platform_test_$encryption"
   "$out/homekit_platform_test_$encryption"
 done
+python3 "$root/tests/homekit_worker_test.py"

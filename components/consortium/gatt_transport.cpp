@@ -11,6 +11,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 extern "C" {
@@ -29,7 +30,13 @@ namespace {
 const ble_uuid128_t service_uuid=BLE_UUID128_INIT(0x11,0xa3,0x0c,0x09,0x9d,0xcb,0xb5,0xa7,0x81,0x46,0x16,0x01,0xd0,0x7c,0x35,0xd6);
 const ble_uuid128_t record_uuid=BLE_UUID128_INIT(0x12,0xa3,0x0c,0x09,0x9d,0xcb,0xb5,0xa7,0x81,0x46,0x16,0x01,0xd0,0x7c,0x35,0xd6);
 struct Work {uint64_t generation=0,session=0;uint16_t connection=0,total=0,offset=0,length=0;uint32_t record=0;uint8_t endpoint=0,bytes[512]{};bool close=false;};
+constexpr size_t work_queue_capacity=16;
+// GAP/GATT callbacks and the admission worker are task context. Keep queue
+// control internal, but its copied records never require ISR/cache-off access.
+DRAM_ATTR StaticQueue_t work_queue_control;
+alignas(Work) EXT_RAM_BSS_ATTR uint8_t work_queue_storage[work_queue_capacity*sizeof(Work)]{};
 QueueHandle_t work_queue=nullptr;
+QueueHandle_t create_work_queue(){return xQueueCreateStatic(work_queue_capacity,sizeof(Work),work_queue_storage,&work_queue_control);}
 std::mutex state_mutex;
 uint64_t generation=0,deadline=0,server_session=0;
 uint16_t server_connection=BLE_HS_CONN_HANDLE_NONE,attribute_handle=0;
@@ -46,7 +53,7 @@ uint32_t response_record=0;uint16_t response_offset=0;
 uint8_t response_endpoint=0,response_status=0;
 BootstrapFailure response_failure=BootstrapFailure::none;
 std::unique_ptr<AdmissionServer> server_channel;
-BootstrapRecords records;
+EXT_RAM_BSS_ATTR BootstrapRecords records;
 uint64_t channel_generation=0,channel_session=0,channel_started=0,record_started=0;
 // Worker-owned result belongs only to this physical enrollment window. A new
 // connection may retry its diagnostic without repeating the expensive check.
@@ -249,7 +256,7 @@ void capture_gatt_link(GattTiming& timing){
     timing.mtu=ble_att_mtu(connection);
 }
 }
-esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=xQueueCreate(16,sizeof(Work));client_done=xSemaphoreCreateBinary();if(!work_queue||!client_done)return ESP_ERR_NO_MEM;
+esp_err_t gatt_register(){if(registered)return ESP_ERR_INVALID_STATE;work_queue=create_work_queue();client_done=xSemaphoreCreateBinary();if(!work_queue||!client_done)return ESP_ERR_NO_MEM;
     static ble_gatt_chr_def chars[2]{};chars[0].uuid=&record_uuid.u;chars[0].access_cb=access;chars[0].flags=BLE_GATT_CHR_F_READ|BLE_GATT_CHR_F_WRITE;chars[0].val_handle=&attribute_handle;
     static std::vector<ble_gatt_svc_def> services;ble_gatt_svc_def service{};service.type=BLE_GATT_SVC_TYPE_PRIMARY;service.uuid=&service_uuid.u;service.characteristics=chars;services.push_back(service);
     if(chip::DeviceLayer::Internal::BLEMgrImpl().ConfigureExtraServices(services,false)!=CHIP_NO_ERROR)return ESP_ERR_INVALID_STATE;

@@ -3,6 +3,9 @@ CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 #enable BT
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+# Host protocol state does not require controller DMA memory.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL=n
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 
 #disable BT connection reattempt
 CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
@@ -218,6 +221,12 @@ CONFIG_MBEDTLS_X509_CREATE_C=y
 
 # Room for the browser HTTP pool, authenticated peer links and network services.
 CONFIG_LWIP_MAX_SOCKETS=24
+# Keep service records, query buffers and the mDNS worker stack in PSRAM.
+# Its SDK task control block and the Wi-Fi hardware buffers stay internal.
+CONFIG_MDNS_MEMORY_ALLOC_INTERNAL=n
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
+CONFIG_MDNS_TASK_CREATE_FROM_INTERNAL=n
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
 # The pinned RTT estimator retains three slow ticks: 1.5s at 250ms, 300ms at 50ms.
 # Shorten established-link loss recovery while keeping the initial RTO unchanged.
 # This also increases TCP servicing and zero-window probe frequency fivefold.
