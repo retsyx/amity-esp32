@@ -87,15 +87,17 @@ def _exercise_split_theater(*, source_on_main):
                         tv.wait_for_power(PowerState.ON, since=action)
                         tv.wait_for_amity_input(since=action)
                         avr.wait_for_power(PowerState.ON, since=action)
+                        # The main can finish before the source owner's lookup.
+                        # Finish that same scan's identity proof before applying
+                        # the ordinary CEC command deadline to the resumed work.
+                        missing.assert_contains(*components)
                         player.wait_for_power(PowerState.ON, since=gate.released_at)
                         player.wait_for_source_request(since=gate.released_at)
                         avr_input.wait_for_active_source(player, since=started)
                         for component in (tv, avr, player):
                             component.assert_power(PowerState.ON)
                         activity.assert_active()
-                        # The returning name now has fresh physical identity
-                        # evidence; use this current scan for later actions.
-                        missing.assert_contains(*components)
+                        # Use the returned source's fresh scan for later actions.
                         activity.refresh_scan(missing)
                         main.press_key(Key.SELECT).assert_received_by(player)
                         main.press_key(Key.VOLUME_UP).assert_received_by(avr)
