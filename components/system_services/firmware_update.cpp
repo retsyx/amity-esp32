@@ -84,7 +84,6 @@ esp_err_t stage_release(std::string_view bytes,std::string_view proof,std::strin
 }
 std::string status_json(){std::lock_guard<std::mutex> lock(mutex);recover();return report();}
 std::optional<ReleaseManifest> staged_release(){std::lock_guard<std::mutex> lock(mutex);return phase=="staged"&&now()<deadline?staged:std::nullopt;}
-bool installation_active(){std::lock_guard<std::mutex> lock(mutex);return installing;}
 esp_err_t begin_install(std::string& error){
     std::function<esp_err_t()> begin;{std::lock_guard<std::mutex> lock(mutex);if(installing||phase!="staged"||!staged||now()>=deadline){error="Validate the release manifest before uploading this exact image";return ESP_ERR_INVALID_STATE;}installing=true;begin=begin_maintenance;}
     const auto admitted=begin?begin():ESP_ERR_INVALID_STATE;

@@ -122,7 +122,6 @@ esp_err_t runtime_finish_reclaim(std::function<esp_err_t()> preserve_network = {
 // rotates operational credentials and group identity via a resumable reboot.
 esp_err_t runtime_reclaim_membership(model::OctopusId confirmed_local_id);
 
-esp_err_t runtime_send_control(model::OctopusId,Kind,std::string payload,uint32_t ttl_ms=1000);
 struct RuntimeSettingsHooks {
     std::function<std::string()> snapshot;
     std::function<Error(model::MessageId,const Json&,uint64_t receiver_deadline_ms,std::string& response)> apply;

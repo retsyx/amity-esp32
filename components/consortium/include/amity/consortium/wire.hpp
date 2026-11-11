@@ -38,8 +38,6 @@ Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = n
 bool valid_envelope_payload(Kind, const Json&);
 Error parse_synchronization(const Json &,model::MessageId& round,std::string& phase,uint64_t& revision);
 std::string synchronization_json(model::MessageId round,std::string_view phase,uint64_t revision);
-bool parse_address(const Json &, model::FullyQualifiedCecAddress &);
-bool parse_name(const Json &, model::QualifiedDeviceName &);
 bool decimal(const Json *, uint64_t &);
 template<class Id> bool id(const Json *v, Id &out) {
     if(!v || v->type!=Json::Type::string) return false;

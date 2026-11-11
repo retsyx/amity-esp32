@@ -20,17 +20,7 @@ private:
     std::array<bool,capacity> received_{};size_t received_count_=0;
     bool connected_=false,processing_=false;
 };
-class EnrollmentWindow {
-public:
-    static constexpr uint64_t duration_ms=180000;
-    bool open(bool physical_authorization,uint64_t now_ms);
-    bool admit(uint64_t now_ms);
-    void failed_proof();
-    void close();
-    bool available(uint64_t now_ms)const;
-private:
-    uint64_t opened_=0,deadline_=0;unsigned failed_proofs_=0;bool open_=false,session_=false;
-};
+inline constexpr uint64_t enrollment_window_ms=180000;
 class CipherCounter {
 public:
     explicit CipherCounter(uint32_t value=1):value_(value){}

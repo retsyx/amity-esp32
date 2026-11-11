@@ -13,14 +13,14 @@ extern "C" unsigned char* amity_test_sha256(const unsigned char* data,size_t siz
 }
 using namespace amity::system;
 static void drain(unsigned count=120){run_idle(static_cast<int>(count));}
-static config_store::ConfigurationSnapshot prepared(config_store::Configuration config){std::string error;auto snapshot=config_store::prepare_configuration(std::move(config),error);assert(snapshot);return snapshot;}
+static config_store::ConfigurationSnapshot prepared(const config_store::Configuration& config){return saved_snapshot(config);}
 static std::string outcome(const amity::SystemControl& control,MessageId id){for(const auto& result:control.execution_snapshot().activity_outcomes)if(result.request_id==id)return result.stage;assert(false);return {};}
 static size_t presses(uint8_t key){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& s){return s.frame.size==3&&s.frame.data[1]==0x44&&s.frame.data[2]==key;});}
 static bool decode_key(const std::string& body,web_admin::KeyRequest& request){std::unique_ptr<cJSON,decltype(&cJSON_Delete)> root(web_admin::parse_json_input(body),cJSON_Delete);return web_admin::parse_key_request(root.get(),request);}
 int main(){
     {amity::HubService unstarted;
         const auto rejected=[&]{assert(!unstarted.press_key(0x41,true)&&!unstarted.press_key_for_activity(0x41,1,true)&&!unstarted.press_timed_key(0x41,1,1,0));};
-        rejected();assert(unstarted.start(1,1)==ESP_ERR_INVALID_ARG);rejected();
+        rejected();assert(fixture_start(unstarted,1,1)==ESP_ERR_INVALID_ARG);rejected();
     }
     web_admin::KeyRequest key_request;
     for(const auto* invalid:{"{}","[]","null",R"({"key":-1})",R"({"key":256})",R"({"key":1.5})",R"({"key":true})",R"({"key":"65"})",R"({"key":65,"key":66})",R"({"key":65,"duration_ms":1,"duration_ms":2})",R"({"key":65,"duration_ms":-1})",R"({"key":65,"duration_ms":5001})",R"({"key":65,"duration_ms":1.5})",R"({"key":65,"duration_ms":1e100})",R"({"key":65,"duration_ms":null})",R"({"key":65,"duration_ms":true})",R"({"key":65,"duration_ms":"5000"})",R"({"key":65,"action":"press"})"})assert(!decode_key(invalid,key_request));
@@ -28,7 +28,7 @@ int main(){
     assert(decode_key(R"({"key":255,"duration_ms":5000})",key_request)&&key_request.key==255&&key_request.duration_ms==5000);
     fixture_present=true;fixture_tick=100000;
     auto config=direct_configuration();const auto boot=id<BootId>(90);
-    amity::SystemControl original;original.set_identity(config.consortium_id,*config.controller_octopus_id);original.set_boot_identity(boot);assert(original.start(1,2)==ESP_OK);
+    amity::SystemControl original;original.set_identity(config.consortium_id,*config.controller_octopus_id);original.set_boot_identity(boot);assert(fixture_start(original,1,2)==ESP_OK);
     unsigned configuration_events=0;
     original.on_configuration_applied([&]{
         ++configuration_events;
@@ -46,17 +46,14 @@ int main(){
     const auto initial_configuration=original.active_configuration();
     assert(initial_configuration&&initial_configuration.get()==original.active_configuration().get());
     assert(original.accepts_local_input()&&original.active_configuration());
-    // A valid candidate whose hash cannot be computed must not reach either
-    // persistence or live publication, including equipment unused by activities.
+    // A candidate the store could not prepare reaches neither persistence nor
+    // live publication, including equipment unused by activities.
     auto failed_hash_candidate=config;
     fixture_equipment(failed_hash_candidate,"Unused player","source",Side::back);
     ++failed_hash_candidate.config_revision;
     std::string hash_candidate_error;assert(validate_configuration(failed_hash_candidate,hash_candidate_error));
     unsigned failed_hash_commits=0;
-    fail_policy_hash=true;
-    const auto failed_snapshot=config_store::prepare_configuration(failed_hash_candidate,hash_candidate_error);
-    assert(!failed_snapshot&&original.configure(failed_snapshot,[&]{++failed_hash_commits;return ESP_OK;})==ESP_ERR_INVALID_ARG);
-    fail_policy_hash=false;
+    assert(original.configure(nullptr,[&]{++failed_hash_commits;return ESP_OK;})==ESP_ERR_INVALID_ARG);
     assert(failed_hash_commits==0&&original.active_configuration().get()==initial_configuration.get());
     drain(4);assert(configuration_events==1&&original.execution_snapshot().applied_policy_hash==executable_policy_hash(config));
     const auto first=config.activities[0].activity_id;
@@ -212,16 +209,15 @@ int main(){
     // A foreign owner's lookup and loss never stall the main's local recipe.
     auto interrupted_config=direct_configuration();interrupted_config.octopuses.push_back({remote,"amity-offline","amity-offline",false,1});for(auto& component:interrupted_config.components)if(component.record.component_id==interrupted_config.activities[0].source)component.record.qualified_names[0].port.octopus_id=remote;
     amity::SystemControl interrupted;interrupted.set_identity(interrupted_config.consortium_id,*interrupted_config.controller_octopus_id);interrupted.set_boot_identity(id<BootId>(92));bool available=true;unsigned jobs=0;
-    interrupted.set_owned_sender([&](const auto& intent){if(intent.kind==OwnedIntentKind::activity)++jobs;return available;});assert(interrupted.start(1,2)==ESP_OK&&interrupted.configure(prepared(interrupted_config))==ESP_OK);drain(1000);
+    interrupted.set_owned_sender([&](const auto& intent){if(intent.kind==OwnedIntentKind::activity)++jobs;return available;});assert(fixture_start(interrupted,1,2)==ESP_OK&&interrupted.configure(prepared(interrupted_config))==ESP_OK);drain(1000);
     const auto broken=id<MessageId>(805);assert(interrupted.request_activity(interrupted_config.primary_zone_id,interrupted_config.activities[0].activity_id,broken,interrupted.execution_snapshot().state_revision)==ESP_OK);drain();
     assert(jobs==1&&interrupted.snapshot().current_activity==0&&!interrupted.snapshot().activity_settling&&outcome(interrupted,broken)=="applied");
     available=false;interrupted.fence_owned(remote,id<LinkId>(93));drain();assert(interrupted.snapshot().current_activity==0&&outcome(interrupted,broken)=="applied");
     // A headless member cannot originate activity, remote or integration work.
-    amity::SystemControl member;member.set_identity(config.consortium_id,remote);member.set_boot_identity(id<BootId>(91));member.set_coordinator_authority(false,1);assert(member.start(1,2)==ESP_OK);assert(!member.accepts_local_input()&&member.remote_activity_generation()==0);assert(member.request_remote_activity(0)==ESP_ERR_INVALID_STATE&&!member.press_remote_key(1)&&!member.release_remote_key());assert(member.request_activity(config.primary_zone_id,first,id<MessageId>(804))==ESP_ERR_INVALID_STATE);assert(!web_admin::submit_key_request(member,key_request,[](uint16_t){assert(false);}));
+    amity::SystemControl member;member.set_identity(config.consortium_id,remote);member.set_boot_identity(id<BootId>(91));member.set_coordinator_authority(false,1);assert(fixture_start(member,1,2)==ESP_OK);assert(!member.accepts_local_input()&&member.remote_activity_generation()==0);assert(member.request_remote_activity(0)==ESP_ERR_INVALID_STATE&&!member.press_remote_key(1)&&!member.release_remote_key(1));assert(member.request_activity(config.primary_zone_id,first,id<MessageId>(804))==ESP_ERR_INVALID_STATE);assert(!web_admin::submit_key_request(member,key_request,[](uint16_t){assert(false);}));
     fail_policy_hash=true;assert(member.configure_passive_metadata(initial_snapshot)==ESP_OK);fail_policy_hash=false;
     const auto previous_metadata=member.active_configuration();assert(member.configuration_snapshot()==initial_snapshot);
-    fail_policy_hash=true;const auto failed_metadata=config_store::prepare_configuration(failed_hash_candidate,hash_candidate_error);
-    assert(!failed_metadata&&member.configure_passive_metadata(failed_metadata)==ESP_ERR_INVALID_ARG);fail_policy_hash=false;
+    assert(member.configure_passive_metadata(nullptr)==ESP_ERR_INVALID_ARG);
     assert(member.active_configuration().get()==previous_metadata.get());
     const auto next_metadata=prepared(failed_hash_candidate);fail_policy_hash=true;
     assert(member.configure_passive_metadata(next_metadata)==ESP_OK&&member.configuration_snapshot()==next_metadata);fail_policy_hash=false;

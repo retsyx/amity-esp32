@@ -62,7 +62,6 @@ struct Configuration {
 // Old readers may retain an earlier revision while a candidate is committed.
 class PreparedConfiguration;
 using ConfigurationSnapshot = std::shared_ptr<const PreparedConfiguration>;
-ConfigurationSnapshot prepare_configuration(Configuration, std::string& error);
 class PreparedConfiguration {
 public:
     const Configuration configuration;
@@ -71,7 +70,6 @@ private:
     PreparedConfiguration(Configuration value, std::string bytes, std::string policy, std::string presentation)
         : configuration(std::move(value)), canonical(std::move(bytes)), policy_hash(std::move(policy)),
           presentation_hash(std::move(presentation)) {}
-    friend ConfigurationSnapshot prepare_configuration(Configuration, std::string&);
     friend class ConfigurationStore;
 };
 // The current saved format is the only readable and writable format.

@@ -46,7 +46,7 @@ static void core_selection() {
     std::vector<uint16_t> addresses{0x2000, 0x2100, 0x2310};
     do {
         Capture wire; amity::Hub hub(wire);
-        assert(hub.snapshot().front_physical_address == 0xffff && !hub.snapshot().ready);
+        assert(fixture_observe(hub).front_physical_address == 0xffff && !fixture_observe(hub).ready);
         hub.set_addresses(4, 0, 0xffff);
         hub.announce(BusSide::Front);
         hub.receive(BusSide::Front, physical_query(4));
@@ -60,7 +60,7 @@ static void core_selection() {
         // Front topology cannot influence the isolated back-side inference.
         hub.receive(BusSide::Front, physical_report(0, 0x1000, 0));
         hub.determine_front_physical_address(0x5000);
-        assert(hub.snapshot().front_physical_address == 0x2000 && hub.snapshot().ready);
+        assert(fixture_observe(hub).front_physical_address == 0x2000 && fixture_observe(hub).ready);
         hub.finish_discovery();
 
         wire.sent.clear(); hub.announce(BusSide::Front);
@@ -75,7 +75,7 @@ static void core_selection() {
         hub.receive(BusSide::Back, physical_report(8, 0x1000));
         hub.begin_discovery(); hub.receive(BusSide::Back, physical_report(8, 0x1000));
         hub.determine_front_physical_address(0x3000); hub.finish_discovery();
-        assert(hub.snapshot().front_physical_address == 0x2000);
+        assert(fixture_observe(hub).front_physical_address == 0x2000);
     } while (std::next_permutation(addresses.begin(), addresses.end()));
 
     for (const std::vector<uint16_t> &reports : {std::vector<uint16_t>{},
@@ -87,10 +87,10 @@ static void core_selection() {
         uint8_t logical = 6;
         for (auto physical : reports) hub.receive(BusSide::Back, physical_report(logical++, physical));
         hub.determine_front_physical_address(0x4000); hub.finish_discovery();
-        assert(hub.snapshot().front_physical_address == 0x4000);
+        assert(fixture_observe(hub).front_physical_address == 0x4000);
         hub.begin_discovery(); hub.receive(BusSide::Back, physical_report(5, 0x1000));
         hub.determine_front_physical_address(0x5000); hub.finish_discovery();
-        assert(hub.snapshot().front_physical_address == 0x4000);
+        assert(fixture_observe(hub).front_physical_address == 0x4000);
     }
     // Invalid low values must also be rejected when valid candidates exist.
     Capture wire; amity::Hub hub(wire); hub.set_addresses(4, 0, 0xffff); hub.begin_discovery();
@@ -99,7 +99,7 @@ static void core_selection() {
     hub.receive(BusSide::Back, physical_report(8, 0xffff));
     hub.receive(BusSide::Back, physical_report(9, 0x3100));
     hub.determine_front_physical_address(0x5000);
-    assert(hub.snapshot().front_physical_address == 0x3100);
+    assert(fixture_observe(hub).front_physical_address == 0x3100);
 
     // Numeric order is deliberately used: 1.2.0.0 is lower than 2.0.0.0,
     // even though the latter has more trailing zero digits. Both devices
@@ -114,7 +114,7 @@ static void core_selection() {
     duplicate.receive(BusSide::Back, physical_report(8, 0x2000));
     name.data[0] = 0x80; duplicate.receive(BusSide::Back, name);
     duplicate.determine_front_physical_address(0x5000); duplicate.finish_discovery();
-    const auto deduplicated = duplicate.snapshot();
+    const auto deduplicated = fixture_observe(duplicate);
     assert(deduplicated.front_physical_address == 0x1200);
     assert(deduplicated.devices.size() == 1 && deduplicated.devices[0].physical_address == 0x2000);
 }
@@ -123,11 +123,11 @@ static void live_default_selection() {
     Capture wire; amity::Hub fallback(wire);
     fallback.set_addresses(4, 0, 0xffff); fallback.begin_discovery();
     assert(!fallback.apply_default_front_physical_address(0x1000));
-    assert(fallback.snapshot().front_physical_address == 0xffff); // Initial scan still owns selection.
+    assert(fixture_observe(fallback).front_physical_address == 0xffff); // Initial scan still owns selection.
     fallback.determine_front_physical_address(0x1000); fallback.finish_discovery();
     assert(!fallback.detected_front_physical_address());
     assert(fallback.apply_default_front_physical_address(0x2000));
-    assert(fallback.snapshot().front_physical_address == 0x2000);
+    assert(fixture_observe(fallback).front_physical_address == 0x2000);
     assert(!fallback.apply_default_front_physical_address(0x2000));
 
     // Scanning updates the optional observation without changing selection.
@@ -135,14 +135,14 @@ static void live_default_selection() {
     fallback.begin_discovery(); fallback.receive(BusSide::Back, physical_report(5, 0x3000));
     fallback.determine_front_physical_address(0x2000); fallback.finish_discovery();
     assert(fallback.detected_front_physical_address() == 0x3000);
-    assert(fallback.snapshot().front_physical_address == 0x2000);
+    assert(fixture_observe(fallback).front_physical_address == 0x2000);
     assert(fallback.apply_default_front_physical_address(0x4000));
-    assert(fallback.snapshot().front_physical_address == 0x3000);
+    assert(fixture_observe(fallback).front_physical_address == 0x3000);
     assert(!fallback.apply_default_front_physical_address(0x5000));
     fallback.begin_discovery(); fallback.determine_front_physical_address(0x5000); fallback.finish_discovery();
-    assert(!fallback.detected_front_physical_address() && fallback.snapshot().front_physical_address == 0x3000);
+    assert(!fallback.detected_front_physical_address() && fixture_observe(fallback).front_physical_address == 0x3000);
     assert(fallback.apply_default_front_physical_address(0x6000));
-    assert(fallback.snapshot().front_physical_address == 0x6000);
+    assert(fixture_observe(fallback).front_physical_address == 0x6000);
 
     Capture detected_wire; amity::Hub detected(detected_wire);
     detected.set_addresses(4, 0, 0xffff); detected.begin_discovery();
@@ -151,11 +151,11 @@ static void live_default_selection() {
     // A scanned address equal to the old default still takes precedence.
     assert(detected.detected_front_physical_address() == 0x1000);
     assert(!detected.apply_default_front_physical_address(0x2000));
-    assert(detected.snapshot().front_physical_address == 0x1000);
+    assert(fixture_observe(detected).front_physical_address == 0x1000);
     detected.begin_discovery(); detected.determine_front_physical_address(0x2000); detected.finish_discovery();
     assert(!detected.detected_front_physical_address());
     assert(detected.apply_default_front_physical_address(0x3000));
-    assert(detected.snapshot().front_physical_address == 0x3000);
+    assert(fixture_observe(detected).front_physical_address == 0x3000);
 }
 
 static void reset_wire() {
@@ -208,7 +208,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     LocalHubService service;
     const auto boot = amity::system::BootId::parse("11111111111111111111111111111111").value();
     service.set_boot_identity(boot);
-    assert(service.start(1, 2, 0x5000) == ESP_OK);
+    assert(fixture_start(service,1,2,0x5000) == ESP_OK);
     assert(!service.adapter_runtime_snapshot()[0].effective_front_physical);
     // A pending allocation probe must leave the owner free to apply incoming
     // commands. Discovery continues only after its own completion arrives.
@@ -250,7 +250,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     fixture_sent.clear(); fixture_delay = {};
     fixture_incoming.push_back({1, physical_query(state.front_address)});
     fixture_incoming.push_back({2, physical_report(8, 0x1000)});
-    assert(service.select_activity(0)); run_one_command();
+    assert(fixture_select(service,0)); run_one_command();
     for(unsigned pass=0;pass<256&&service.activity_setup_in_progress();++pass)run_idle(1);
     assert(!service.activity_setup_in_progress());
     bool identity = false, active = false;
@@ -322,7 +322,7 @@ static void service_without_back_logical_address() {
         }
         return true;
     };
-    LocalHubService service; assert(service.start(1, 2, 0x1000) == ESP_OK);
+    LocalHubService service; assert(fixture_start(service,1,2,0x1000) == ESP_OK);
     assert(fixture_configure(service,{})); run_one_command();
     fixture_finish_discovery(service);
     const auto state = fixture_adapter(service);
@@ -348,7 +348,7 @@ static void service_claim_requires_two_nacks() {
         assert(gpio == 1 && frame.destination() == 8);
         ++front_eight; return cec::TxResult::Nack;
     };
-    LocalHubService service; assert(service.start(1, 2) == ESP_OK);
+    LocalHubService service; assert(fixture_start(service,1,2) == ESP_OK);
     assert(fixture_configure(service,{})); run_one_command(); fixture_finish_discovery(service);
     const auto state = fixture_adapter(service);
     assert(state.ready && state.back_address == 14 && state.front_address == 8);

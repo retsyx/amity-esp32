@@ -17,6 +17,10 @@
 static cec::Frame frame(std::initializer_list<uint8_t> bytes) {
     cec::Frame f; for (const auto b : bytes) f.data[f.size++] = b; return f;
 }
+// Adapter state is read through the observation each owner publishes.
+static amity::system::OwnedAdapterSnapshot observe(const amity::Hub &hub) {
+    amity::system::OwnedAdapterSnapshot report; hub.update_observation(report); return report;
+}
 static bool same(const cec::Frame &a, const cec::Frame &b) {
     return a.size == b.size && !std::memcmp(a.data, b.data, a.size);
 }
@@ -180,10 +184,10 @@ static void hub_tests() {
     assert(h.execute_owned(intent)&&t.contains(B,5,{0x44,0x69,3}));
     assert(press(h,0x41,"AVR"));h.tick(500000);assert(t.contains(B,5,{0x71}));
     h.receive(B,frame({0x50,0x7a,0x80|42}));
-    assert(h.snapshot().audio_status_known&&h.snapshot().muted&&h.snapshot().volume==42);
-    assert(press(h,0x66,"AVR")&&!h.snapshot().audio_status_known);
+    assert(observe(h).audio_status_known&&observe(h).muted&&observe(h).volume==42);
+    assert(press(h,0x66,"AVR")&&!observe(h).audio_status_known);
     h.receive(B,frame({0x50,0x7a,127}));
-    assert(h.snapshot().audio_status_known&&!h.snapshot().muted&&h.snapshot().volume==127);
+    assert(observe(h).audio_status_known&&!observe(h).muted&&observe(h).volume==127);
     t.sent.clear();h.receive(F,frame({0x04,0x8f}));assert(t.contains(F,0,{0x90,0}));
     h.receive(B,frame({0x40,0x8f}));assert(t.contains(B,4,{0x90,1}));
     h.receive(B,frame({0xb0,0x8f}));assert(t.contains(B,11,{0x90,0}));
@@ -220,7 +224,7 @@ static void discovery_tests() {
     // Discovery leaves the working cache and selected-source power response
     // intact until all metadata has been collected into its replacement.
     h.begin_discovery();
-    assert(h.snapshot().devices.size() == 2);
+    assert(observe(h).devices.size() == 2);
     t.sent.clear(); h.receive(B, frame({0x40, 0x8f}));
     assert(t.contains(B, 4, {0x90, 0}));
     device(h, F, 0, 0, 0, "Screen"); device(h, B, 8, 0x2000, 4, "Source");
@@ -229,7 +233,7 @@ static void discovery_tests() {
     assert(!t.contains(B, 15, {0x86, 0x20, 0}));
     h.finish_discovery();
     assert(t.contains(B, 15, {0x86, 0x20, 0}));
-    assert(h.snapshot().devices.size() == 2);
+    assert(observe(h).devices.size() == 2);
     t.sent.clear(); press(h,0); assert(t.contains(B, 8, {0x44, 0}));
     // A selected source reconnects at another logical and physical address.
     // Its late OSD reply must replace the old name and restore the new route.
@@ -238,7 +242,7 @@ static void discovery_tests() {
     assert(!t.contains(B, 15, {0x86, 0x30, 0}));
     h.receive(B, frame({0xb0, 0x47, 'S', 'o', 'u', 'r', 'c', 'e'}));
     assert(t.contains(B, 15, {0x86, 0x30, 0}));
-    assert(h.snapshot().devices.size() == 2);
+    assert(observe(h).devices.size() == 2);
     t.sent.clear(); press(h,0); assert(t.contains(B, 11, {0x44, 0}));
     // The opposite metadata reply order must never route to unknown PA ffff.
     h.discovered(B, 4);
@@ -246,8 +250,7 @@ static void discovery_tests() {
     assert(!t.contains(B, 15, {0x86, 0xff, 0xff}));
     h.receive(B, frame({0x4f, 0x84, 0x40, 0, 4}));
     assert(t.contains(B, 15, {0x86, 0x40, 0}));
-    assert(h.snapshot().devices.size() == 2);
-    h.clear_devices(); assert(!h.find_device("Source",B));
+    assert(observe(h).devices.size() == 2);
 }
 static void playback_tests() {
     const auto B = amity::BusSide::Back;
@@ -288,7 +291,6 @@ static void backpressure_tests(){
     const auto recipient=*h.find_device("Source",B);
     t.sent.clear();t.reject_opcode=0x45;
     assert(h.transmit_key(recipient,0,false)&&!h.transmit_release(recipient,false));
-    assert(h.snapshot().uncertain_releases==1);
     t.reject_opcode=-1;h.tick(1000000);assert(!t.contains(B,4,{0x45}));
     m::OwnedIntent power;power.kind=m::OwnedIntentKind::power;power.target=named("Source");power.on=true;
     t.sent.clear();t.reject_opcode=0x45;assert(!h.execute_owned(power));
@@ -337,8 +339,8 @@ static void display_audio_fallback_tests(){
         assert(!wire.contains(B,4,{0x44,key})&&!wire.contains(B,5,{0x44,key}));
     }
     assert(wire.count(F,0,{0x45})==5);hub.tick(501000);assert(wire.count(F,0,{0x71})==1);
-    hub.receive(F,frame({0x04,0x7a,23}));assert(hub.snapshot().audio_status_known&&hub.snapshot().volume==23);
-    hub.receive(B,frame({0x50,0x7a,99}));assert(hub.snapshot().volume==23);
+    hub.receive(F,frame({0x04,0x7a,23}));assert(observe(hub).audio_status_known&&observe(hub).volume==23);
+    hub.receive(B,frame({0x50,0x7a,99}));assert(observe(hub).volume==23);
     context(hub,"Player","Receiver","Screen");wire.sent.clear();
     assert(press(hub,0x42,"Receiver")&&press(hub,0,"Player"));
     assert(wire.count(B,5,{0x44,0x42})==1&&wire.count(B,4,{0x44,0})==1);

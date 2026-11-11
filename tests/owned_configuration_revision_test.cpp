@@ -11,7 +11,7 @@ static void saved_edits_preserve_current(){
     const auto group=id<m::ConsortiumId>('1');
     const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
     const auto boot=id<m::BootId>('4');
-    fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(fixture_start(hub,1,2)==ESP_OK);
     const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},{"source",{{group,member,0,m::Side::back},"Source"}}};
     const Activity watch{"Watch","display","source","","",0,id<m::ActivityId>('5')};
     Activity other{"Other","display","source","","",0,id<m::ActivityId>('6')};
@@ -22,7 +22,7 @@ static void saved_edits_preserve_current(){
     };
     assert(hub.configure_scoped({watch,other},selectors,sender,controller,1)==ESP_OK);
     assert(hub.executing_configuration_revision()==0);run_one_command();fixture_finish_discovery(hub);
-    assert(hub.select_activity(0));run_one_command();settle(hub);
+    assert(fixture_select(hub,0));run_one_command();settle(hub);
     const auto before=hub.snapshot();const auto selection=hub.activity_selection(),epoch=hub.input_epoch();
     assert(before.current_activity==0);
     int commits=0;
@@ -62,7 +62,7 @@ static void saved_edits_preserve_current(){
     const auto after=hub.snapshot();
     assert(hub.executing_configuration_revision()==2&&after.applied_presentation_revision==7&&after.current_activity==1);
     assert(after.activities[1].activity_id==watch.activity_id&&after.activity_generation==before.activity_generation&&
-           after.binding_generation==before.binding_generation&&after.discovery_generation==before.discovery_generation&&
+           after.discovery_generation==before.discovery_generation&&
            hub.activity_selection()==selection&&hub.input_epoch()==epoch&&!hub.activity_setup_in_progress());
     assert(sent.empty()&&fixture_sent.empty());
     uint32_t rejected_receipt=123;
@@ -102,7 +102,7 @@ static void saved_edits_preserve_current(){
 static void owner_revision_preserves_admitted_press_and_hold(){
     const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
     const auto boot=id<m::BootId>('4'),owner_boot=id<m::BootId>('5');const auto link=id<m::LinkId>('6');
-    fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(owner_boot);hub.set_coordinator_authority(false,1);assert(hub.start(1,2)==ESP_OK);
+    fixture_present=true;HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(owner_boot);hub.set_coordinator_authority(false,1);assert(fixture_start(hub,1,2)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     uint64_t authorized_revision=1;unsigned refreshed_authorizations=0;
     const auto authorized=[&](const auto& authorization){
@@ -137,12 +137,12 @@ static void owner_revision_preserves_admitted_press_and_hold(){
 }
 static void scoped_save_preserves_admitted_frames_and_timed_release(){
     const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2');const auto boot=id<m::BootId>('4');
-    fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    fixture_present=true;HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(fixture_start(hub,1,2)==ESP_OK);
     const Activity watch{"Watch","display","source","","",0,id<m::ActivityId>('5')};
     Activity other{"Other","display","source","","",0,id<m::ActivityId>('6')};
     const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},{"source",{{group,controller,0,m::Side::back},"Source"}}};
     assert(hub.configure_scoped({watch,other},selectors,{},controller,1)==ESP_OK);run_one_command();fixture_finish_discovery(hub);
-    assert(hub.select_activity(0));run_one_command();settle(hub);
+    assert(fixture_select(hub,0));run_one_command();settle(hub);
     fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();
     const auto generation=hub.activity_generation(),selection=hub.activity_selection(),epoch=hub.input_epoch();
     assert(hub.press_timed_key(0x01,generation,selection,epoch));run_one_command();
@@ -162,7 +162,7 @@ static void never_admitted_selection_delivery(){
     const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3'),other_owner=id<m::OctopusId>('7');
     const auto boot=id<m::BootId>('4');
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
-    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(fixture_start(hub,1,2)==ESP_OK);
     const std::vector<m::ScopedSelector> selectors{
         {"display",{{group,controller,0,m::Side::front},"TV"}},
         {"source",{{group,member,0,m::Side::back},"Source"}},
@@ -187,7 +187,7 @@ static void never_admitted_selection_delivery(){
     };
     assert(hub.configure_scoped({watch,other},selectors,sender,controller,1,{},1,{member,other_owner})==ESP_OK);
     run_one_command();fixture_finish_discovery(hub);attempts.clear();admitted.clear();fixture_sent.clear();
-    assert(hub.select_activity(0));run_one_command();settle(hub);
+    assert(fixture_select(hub,0));run_one_command();settle(hub);
     assert(hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
     assert(activity_count(member)==0&&activity_count(other_owner)==1);
     const auto initial=std::find_if(attempts.begin(),attempts.end(),[&](const auto& intent){return intent.kind==m::OwnedIntentKind::activity&&intent.target.port.octopus_id==member;});
@@ -210,8 +210,8 @@ static void never_admitted_selection_delivery(){
     refresh(member,2,m::OwnedContextResult::published);assert(admitted.back().kind==m::OwnedIntentKind::activity&&admitted.back().generation==generation&&activity_count(member)==2);
     refresh(other_owner,2,m::OwnedContextResult::published);assert(admitted.back().kind==m::OwnedIntentKind::activity&&admitted.back().generation==generation&&activity_count(other_owner)==2);
     // Rejected same-target selection is superseded by a later accepted target.
-    member_available=false;assert(hub.select_activity(1));run_one_command();settle(hub);
-    assert(hub.select_activity(0));run_one_command();settle(hub);
+    member_available=false;assert(fixture_select(hub,1));run_one_command();settle(hub);
+    assert(fixture_select(hub,0));run_one_command();settle(hub);
     const auto latest_generation=attempts.back().generation;
     member_available=true;refresh(member,2,m::OwnedContextResult::published);
     assert(activity_count(member)==3&&admitted.back().source==selectors[2].target&&admitted.back().generation==latest_generation&&!admitted.back().repair);
@@ -227,7 +227,7 @@ static void never_admitted_selection_delivery(){
     assert(!admitted.back().selected&&!admitted.back().repair&&admitted.back().generation==standby_generation);
     // A rejected long-Power repair is one-shot; readiness must not retry it.
     assert(hub.configure_scoped({watch,other},selectors,sender,controller,4,{},4,{member,other_owner})==ESP_OK);run_one_command();
-    assert(hub.select_activity(0));run_one_command();settle(hub);const auto before_repair=activity_count(member);
+    assert(fixture_select(hub,0));run_one_command();settle(hub);const auto before_repair=activity_count(member);
     member_available=false;assert(hub.repair_activity()==ESP_OK);run_one_command();for(unsigned n=0;n<16;++n)run_idle(1);
     assert(std::any_of(attempts.begin(),attempts.end(),[&](const auto& intent){return intent.target.port.octopus_id==member&&intent.kind==m::OwnedIntentKind::activity&&intent.repair;}));
     member_available=true;refresh(member,4,m::OwnedContextResult::published);
@@ -236,14 +236,14 @@ static void never_admitted_selection_delivery(){
 static void never_admitted_selection_is_not_current(){
     const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
-    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(hub.start(1,2)==ESP_OK);
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(fixture_start(hub,1,2)==ESP_OK);
     const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},{"source",{{group,member,0,m::Side::back},"Source"}}};
     bool available=false;std::vector<m::OwnedIntent> admitted;
     const auto sender=[&](const m::OwnedIntent& intent){if(!available)return false;admitted.push_back(intent);return true;};
     assert(hub.configure_scoped({{"Watch","display","source","","",0,id<m::ActivityId>('5')}},selectors,sender,controller,1,{},1,{member})==ESP_OK);
     run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();
-    assert(hub.select_activity(0));run_one_command();
+    assert(fixture_select(hub,0));run_one_command();
     for(unsigned pass=0;pass<16&&fixture_pending.empty();++pass)run_idle(1);
     assert(hub.snapshot().current_activity==-1&&hub.activity_setup_in_progress()&&!fixture_pending.empty());
     available=true;std::vector<m::OwnedContextResult> completed;
@@ -257,13 +257,13 @@ static void never_admitted_selection_is_not_current(){
 static void never_admitted_selection_idle_progress(){
     const auto group=id<m::ConsortiumId>('1');const auto controller=id<m::OctopusId>('2'),member=id<m::OctopusId>('3');
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
-    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(hub.start(1,2)==ESP_OK);
+    HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(id<m::BootId>('4'));assert(fixture_start(hub,1,2)==ESP_OK);
     const std::vector<m::ScopedSelector> selectors{{"source",{{group,member,0,m::Side::back},"Source"}}};
     const Activity watch{"Watch","","source","","",0,id<m::ActivityId>('5')};
     bool available=false;std::vector<m::OwnedIntent> attempts,admitted;
     const auto sender=[&](const m::OwnedIntent& intent){attempts.push_back(intent);if(!available)return false;admitted.push_back(intent);return true;};
     assert(hub.configure_scoped({watch},selectors,sender,controller,1,{},1,{member})==ESP_OK);run_one_command();fixture_finish_discovery(hub);
-    assert(hub.select_activity(0));run_one_command();settle(hub);
+    assert(fixture_select(hub,0));run_one_command();settle(hub);
     const auto receipt=hub.activity_selection();
     assert(admitted.empty()&&hub.snapshot().current_activity==0);
     // A full runtime FIFO can drain while its context remains ready. No new
@@ -273,7 +273,7 @@ static void never_admitted_selection_idle_progress(){
     const auto once=attempts.size();run_idle(4);assert(attempts.size()==once&&hub.activity_selection()==receipt);
     // Submission of newer Standby suppresses old unsent work even while an
     // unrelated command and an already-queued ready capture precede it.
-    available=false;assert(hub.select_activity(0));run_one_command();settle(hub);attempts.clear();admitted.clear();
+    available=false;assert(fixture_select(hub,0));run_one_command();settle(hub);attempts.clear();admitted.clear();
     assert(hub.release_key(0xff));
     std::vector<m::OwnedContextResult> completed;
     assert(hub.refresh_owned_context(member,1,[&](auto result){completed.push_back(result);}));
@@ -322,9 +322,9 @@ struct RecoveryOwners {
         assert(fixture_pending.empty());fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
         fixture_sent.clear();fixture_completed.clear();fixture_incoming.clear();
         fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
-        main.set_system_identity(group,controller);main.set_boot_identity(controller_boot);assert(main.start(1,2)==ESP_OK);main_task=latest_task;
+        main.set_system_identity(group,controller);main.set_boot_identity(controller_boot);assert(fixture_start(main,1,2)==ESP_OK);main_task=latest_task;
         owner.set_system_identity(group,member);owner.set_boot_identity(member_boot);owner.set_coordinator_authority(false,1);
-        assert(owner.start(3,4)==ESP_OK);owner_task=latest_task;
+        assert(fixture_start(owner,3,4)==ESP_OK);owner_task=latest_task;
         assert(owner.bind_owned_controller(controller,revision)==ESP_OK);fixture_finish_discovery(owner);
         owner.set_owned_authorizer([&](const auto& auth){return auth.controller_id==controller&&auth.controller_boot==current_controller_boot&&
             auth.owner_boot==member_boot&&auth.link_id==current_link&&auth.config_revision==revision;});

@@ -2,7 +2,6 @@
 #include "amity/consortium/json.hpp"
 #include "amity/consortium/session.hpp"
 #include "amity/consortium/settings.hpp"
-#include "amity/consortium/lifecycle.hpp"
 #include "amity/consortium/radio.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/bootstrap.hpp"
@@ -39,7 +38,7 @@ void frame_tests(std::string_view body){
     reader.reset();uint8_t big[]={0,0,32,1};assert(reader.feed(big,4,used,0)==FrameReader::Result::invalid_length);
     reader.reset();assert(reader.feed(bytes.data(),1,used,0)==FrameReader::Result::incomplete);assert(reader.check_deadline(2000)==FrameReader::Result::timed_out);
     reader.reset();for(uint64_t i=0;i<10;++i)assert(reader.feed(bytes.data()+i,1,used,i*1000)==FrameReader::Result::incomplete);assert(reader.check_deadline(10000)==FrameReader::Result::timed_out);
-    reader.reset();auto two=bytes;two.insert(two.end(),bytes.begin(),bytes.end());assert(reader.feed(two.data(),two.size(),used,0)==FrameReader::Result::frame);assert(used==bytes.size());reader.next_frame();assert(reader.feed(two.data()+used,two.size()-used,used,1)==FrameReader::Result::frame);
+    reader.reset();auto two=bytes;two.insert(two.end(),bytes.begin(),bytes.end());assert(reader.feed(two.data(),two.size(),used,0)==FrameReader::Result::frame);assert(used==bytes.size());reader.reset();assert(reader.feed(two.data()+used,two.size()-used,used,1)==FrameReader::Result::frame);
     const auto bulk=frame(body,true);assert(bulk.size()==bytes.size()&&(bulk[0]&0x80)!=0);
     for(size_t split=0;split<=bulk.size();++split){reader.reset();assert(reader.feed(bulk.data(),split,used,0)==(split==bulk.size()?FrameReader::Result::frame:FrameReader::Result::incomplete));if(split<bulk.size())assert(reader.feed(bulk.data()+split,bulk.size()-split,used,1)==FrameReader::Result::frame);assert(reader.bulk()&&reader.body()==body);}
     reader.reset();assert(reader.feed(bulk.data(),4,used,0)==FrameReader::Result::incomplete&&reader.bulk());
@@ -47,7 +46,7 @@ void frame_tests(std::string_view body){
     reader.reset();assert(reader.feed(bulk.data(),4,used,0)==FrameReader::Result::incomplete);
     assert(reader.feed(bulk.data()+4,1,used,20000)==FrameReader::Result::incomplete&&reader.feed(bulk.data()+5,1,used,40000)==FrameReader::Result::incomplete);
     assert(reader.check_deadline(60000)==FrameReader::Result::timed_out); // Progress never renews the frame bound.
-    reader.reset();assert(reader.feed(bulk.data(),bulk.size(),used,0)==FrameReader::Result::frame);reader.next_frame();
+    reader.reset();assert(reader.feed(bulk.data(),bulk.size(),used,0)==FrameReader::Result::frame);reader.reset();
     assert(reader.feed(bytes.data(),4,used,1)==FrameReader::Result::incomplete&&!reader.bulk()&&reader.check_deadline(2001)==FrameReader::Result::timed_out);
     reader.reset();assert(reader.feed(bulk.data(),1,used,0)==FrameReader::Result::incomplete&&!reader.bulk()&&reader.check_deadline(2000)==FrameReader::Result::timed_out); // Incomplete prefixes retain the ordinary bound.
 }
@@ -335,12 +334,6 @@ void hello_profile_tests(){
 }
 void adapter_index_tests(){
     Json value;JsonError detail;const auto s=scope();
-    m::QualifiedDeviceName name{{s.consortium_id,s.local_id,3,m::Side::back},"Player"};
-    m::QualifiedDeviceName parsed_name;m::FullyQualifiedCecAddress parsed_address;
-    assert(parse_json(m::name_json(name),value,detail)&&parse_name(value,parsed_name));
-    value.get("tentacle_id")->integer=4;assert(!parse_name(value,parsed_name));
-    assert(parse_json(m::address_json({name.port,4}),value,detail)&&parse_address(value,parsed_address));
-    value.get("tentacle_id")->integer=4;assert(!parse_address(value,parsed_address));
     DeviceSettingsWrite write,parsed_write;write.expected_boot=s.local_boot_id;write.expected_revision=1;write.changes.push_back({3,"2.0.0.0"});
     assert(parse_json(device_settings_write_json(write),value,detail)&&parse_device_settings_write(value,parsed_write)==Error::none);
     value.get("changes")->array[0].get("tentacle_id")->integer=4;assert(parse_device_settings_write(value,parsed_write)==Error::invalid_message);
@@ -458,30 +451,13 @@ void binary_update_tests(){
     assert(session.admit(received,100,100)==Error::stale_config&&session.discard_stale(received,100,100)==Error::none);
     auto malformed=received;malformed.update_chunk.reset();assert(session.discard_stale(malformed,100,100)==Error::invalid_message);
 }
-MembershipRecord prepared(){MembershipRecord r;r.state=MembershipState::prepared;r.consortium_id=ident<m::ConsortiumId>(1);r.coordinator_id=ident<m::OctopusId>(2);r.epoch=1;r.join_id=ident<m::JoinId>(3);r.join_digest=std::string(64,'a');return r;}
-void lifecycle_tests(){
-    MembershipRecord disk;bool writes=true;unsigned count=0;auto save=[&](const MembershipRecord &r){++count;if(!writes)return false;disk=r;return true;};MembershipJournal journal({},save);auto p=prepared();writes=false;assert(journal.prepare_authenticated(p)==Error::storage_failure);assert(disk.state==MembershipState::unclaimed);writes=true;assert(journal.prepare_authenticated(p)==Error::none);assert(journal.prepare_authenticated(p)==Error::none);auto changed=p;changed.coordinator_id=ident<m::OctopusId>(9);assert(journal.prepare_authenticated(changed)==Error::transaction_conflict);assert(!journal.permits_execution());
-    assert(journal.commit(p.join_id,p.join_digest,1)==Error::not_ready);auto link=ident<m::LinkId>(4);auto nonce=ident<m::MessageId>(5);assert(journal.challenge(p.join_id,p.join_digest,link,nonce)==Error::none);assert(journal.prove_lan(p.join_id,p.join_digest,ident<m::LinkId>(9),nonce)==Error::transaction_conflict);assert(journal.prove_lan(p.join_id,p.join_digest,link,nonce)==Error::none);
-    MembershipJournal rebooted(disk,save);assert(rebooted.commit(p.join_id,p.join_digest,1)==Error::not_ready); // old TLS proof does not survive crash
-    writes=false;assert(journal.commit(p.join_id,p.join_digest,1)==Error::storage_failure);assert(disk.state==MembershipState::prepared);writes=true;assert(journal.commit(p.join_id,p.join_digest,1)==Error::none);auto commit_writes=count;assert(journal.commit(p.join_id,p.join_digest,1)==Error::none);assert(count==commit_writes);assert(journal.abort(p.join_id,p.join_digest)==Error::not_ready);assert(journal.candidate_active(p.join_id,p.join_digest,1)==Error::none);assert(!journal.permits_execution());assert(journal.ready_after_sync(p.join_id,p.join_digest,1)==Error::none);assert(journal.permits_execution());MembershipJournal active_restart(disk,save);assert(!active_restart.permits_execution());
-    auto historic=disk;historic.epoch=2;MembershipJournal incompatible(historic,save);assert(incompatible.record().state==MembershipState::recovery_required&&!incompatible.permits_execution());
-    auto mutation=ident<m::MutationId>(12);assert(journal.retire(mutation,std::string(64,'d'),2)==Error::none);assert(journal.retire(mutation,std::string(64,'d'),2)==Error::none);MembershipJournal retired(disk,save);assert(retired.record().state==MembershipState::retired&&!retired.permits_execution());assert(retired.prepare_authenticated(p)==Error::transaction_conflict);
-    MembershipRecord corrupt=p;corrupt.coordinator_id={};MembershipJournal invalid(corrupt,save);assert(invalid.record().state==MembershipState::recovery_required);
-    // Cancellation is a durable passive decision, never an implicit return to
-    // the candidate's former independent singleton authority.
-    MembershipRecord cancelled_disk=p;bool cancel_writes=false;unsigned cancel_count=0;
-    auto cancel_save=[&](const MembershipRecord& r){++cancel_count;if(!cancel_writes)return false;cancelled_disk=r;return true;};
-    MembershipJournal cancelling(p,cancel_save);assert(cancelling.abort(p.join_id,p.join_digest)==Error::storage_failure);assert(cancelled_disk.state==MembershipState::prepared);
-    assert(cancelling.abort(ident<m::JoinId>(99),p.join_digest)==Error::transaction_conflict);cancel_writes=true;assert(cancelling.abort(p.join_id,p.join_digest)==Error::none);
-    MembershipJournal cancelled_boot(cancelled_disk,cancel_save);assert(cancelled_boot.record().state==MembershipState::retired&&!cancelled_boot.permits_execution());assert(cancelled_boot.record().join_id==p.join_id&&cancelled_boot.record().join_digest==p.join_digest);
-    const auto cancelled_count=cancel_count;assert(cancelled_boot.abort(p.join_id,p.join_digest)==Error::none&&cancel_count==cancelled_count);assert(cancelled_boot.prepare_authenticated(p)==Error::transaction_conflict);assert(cancelled_boot.commit(p.join_id,p.join_digest,1)==Error::not_ready);
-    amity::consortium::platform::Group candidate,next;candidate.role=amity::consortium::platform::Group::prepared;candidate.consortium=p.consortium_id;candidate.authority=p.coordinator_id;candidate.epoch=1;candidate.revision=1;candidate.join_id=p.join_id;candidate.join_digest=p.join_digest;candidate.join_revision=1;candidate.joining_id=ident<m::OctopusId>(8);candidate.peers.push_back({p.coordinator_id,"enrolled-leaf",std::string(64,'a'),false});
+void candidate_join_tests(){
+    const auto consortium=ident<m::ConsortiumId>(1);const auto coordinator=ident<m::OctopusId>(2);const auto join=ident<m::JoinId>(3);const std::string digest(64,'a');
+    amity::consortium::platform::Group candidate,next;candidate.role=amity::consortium::platform::Group::prepared;candidate.consortium=consortium;candidate.authority=coordinator;candidate.epoch=1;candidate.revision=1;candidate.join_id=join;candidate.join_digest=digest;candidate.join_revision=1;candidate.joining_id=ident<m::OctopusId>(8);candidate.peers.push_back({coordinator,"enrolled-leaf",std::string(64,'a'),false});
     using amity::consortium::platform::candidate_join_state;using amity::consortium::platform::abort_prepared_candidate;
-    assert(std::string_view(candidate_join_state(candidate,p.join_id,p.join_digest))=="prepared");assert(std::string_view(candidate_join_state(candidate,p.join_id,std::string(64,'b')))=="unknown");assert(!abort_prepared_candidate(candidate,ident<m::JoinId>(99),p.join_digest,next));
-    assert(abort_prepared_candidate(candidate,p.join_id,p.join_digest,next));assert(next.role==amity::consortium::platform::Group::retired&&next.mutation_id&&next.join_id==p.join_id&&!next.peers[0].active);assert(std::string_view(candidate_join_state(next,p.join_id,p.join_digest))=="aborted");
-    auto active_candidate=candidate;active_candidate.role=amity::consortium::platform::Group::member;assert(!abort_prepared_candidate(active_candidate,p.join_id,p.join_digest,next));assert(std::string_view(candidate_join_state(active_candidate,p.join_id,p.join_digest))=="active");
-    MembershipRoster roster([](const auto &,uint64_t){return true;});MemberCredential member{ident<m::OctopusId>(1),"DER",std::string(64,'a'),false};assert(roster.add(member,0)==Error::none);assert(roster.lookup(member.id));auto impostor=member;impostor.spki_sha256=std::string(64,'b');assert(roster.add(impostor,1)==Error::identity_conflict);assert(roster.revoke(member.id,1)==Error::none);assert(!roster.lookup(member.id));
-    VerifiedLeafEvidence evidence{member.leaf_der,member.spki_sha256,member.id,certificate_expired|certificate_future,true,true,true};assert(OperationalCredentialPolicy::accepts(member,evidence));evidence.flags|=certificate_other_failure;assert(!OperationalCredentialPolicy::accepts(member,evidence));evidence.flags=0;evidence.leaf_der="OTHER";assert(!OperationalCredentialPolicy::accepts(member,evidence));
+    assert(std::string_view(candidate_join_state(candidate,join,digest))=="prepared");assert(std::string_view(candidate_join_state(candidate,join,std::string(64,'b')))=="unknown");assert(!abort_prepared_candidate(candidate,ident<m::JoinId>(99),digest,next));
+    assert(abort_prepared_candidate(candidate,join,digest,next));assert(next.role==amity::consortium::platform::Group::retired&&next.mutation_id&&next.join_id==join&&!next.peers[0].active);assert(std::string_view(candidate_join_state(next,join,digest))=="aborted");
+    auto active_candidate=candidate;active_candidate.role=amity::consortium::platform::Group::member;assert(!abort_prepared_candidate(active_candidate,join,digest,next));assert(std::string_view(candidate_join_state(active_candidate,join,digest))=="active");
 }
 void source_abort_tests(const std::string& power){
     using namespace amity::consortium::platform;
@@ -507,8 +483,7 @@ void source_abort_tests(const std::string& power){
     auto other=pending;other.join=ident<m::JoinId>(78);assert(!other.may_send(abort)&&enrollment_abort_status(other,prove)==EnrollmentAbortStatus::invalid);
 }
 void radio_and_gesture_tests(){
-    RadioArbiter radio;assert(radio.request(RadioMode::consortium_candidate,0,180000)==RadioResult::unavailable);radio.remote_reconnect_running(true);assert(radio.request(RadioMode::consortium_inviter,0,180000,false)==RadioResult::cancelling);auto r=radio.reservation();assert(!radio.accepts_callback(r.generation-1));assert(radio.request(RadioMode::remote_pairing,1,10000)==RadioResult::busy);assert(radio.cleanup_complete(r.generation-1,2)==RadioResult::stale);assert(radio.cleanup_complete(r.generation,100)==RadioResult::granted);assert(radio.admit_setup_connection(r.generation,1)==RadioResult::granted);assert(radio.admit_setup_connection(r.generation,2)==RadioResult::busy);assert(radio.external_matter_will_open(200,60000,false)==RadioResult::cancelling);assert(!radio.accepts_callback(r.generation));r=radio.reservation();assert(radio.cleanup_complete(r.generation,300)==RadioResult::granted);radio.matter_ble_active(true);assert(radio.release(r.generation,400)==RadioResult::busy);radio.matter_ble_active(false);assert(radio.release(r.generation,500)==RadioResult::cancelling);r=radio.reservation();assert(radio.cleanup_complete(r.generation,501)==RadioResult::granted&&radio.remote_may_reconnect());
-    SetupEligibility eligible;eligible.physical_authorization_supported=eligible.radio_available=true;assert(consortium_setup_eligible(eligible));eligible.prepared_join=true;assert(!consortium_setup_eligible(eligible));
+    RadioArbiter radio;assert(radio.request(RadioMode::consortium_candidate,0,180000)==RadioResult::unavailable);radio.remote_reconnect_running(true);assert(radio.request(RadioMode::consortium_inviter,0,180000,false)==RadioResult::cancelling);auto r=radio.reservation();assert(!radio.accepts_callback(r.generation-1));assert(radio.request(RadioMode::remote_pairing,1,10000)==RadioResult::busy);assert(radio.cleanup_complete(r.generation-1,2)==RadioResult::stale);assert(radio.cleanup_complete(r.generation,100)==RadioResult::granted);assert(radio.external_matter_will_open(200,60000,false)==RadioResult::cancelling);assert(!radio.accepts_callback(r.generation));r=radio.reservation();assert(radio.cleanup_complete(r.generation,300)==RadioResult::granted);radio.matter_ble_active(true);assert(radio.release(r.generation,400)==RadioResult::busy);radio.matter_ble_active(false);assert(radio.release(r.generation,500)==RadioResult::cancelling);r=radio.reservation();assert(radio.cleanup_complete(r.generation,501)==RadioResult::granted&&radio.remote_may_reconnect());
     using G=device_settings::SetupGesture;using Button=device_settings::SetupGestureButton;
     auto gesture=[](uint64_t duration){Button b;assert(b.update(false,0)==G::none);assert(b.update(false,50)==G::none);assert(b.update(true,100)==G::none);assert(b.update(true,150)==G::none);assert(b.update(false,100+duration)==G::none);return b.update(false,150+duration);};
     assert(gesture(2999)==G::initial_matter);assert(gesture(3000)==G::consortium);assert(gesture(9999)==G::consortium);
@@ -521,7 +496,7 @@ void radio_and_gesture_tests(){
 }
 void bootstrap_tests(){
     BootstrapRecords records;auto rid=ident<m::MessageId>(1);records.connect(5);assert(records.fragment(4,rid,8,0,"abcd")==BootstrapRecords::Result::stale);assert(records.fragment(5,rid,4097,0,"abcd")==BootstrapRecords::Result::invalid);assert(records.fragment(5,rid,8,0,"abcd")==BootstrapRecords::Result::incomplete);assert(records.fragment(5,rid,8,1,"X")==BootstrapRecords::Result::conflicting);assert(records.fragment(5,rid,8,0,"abcd")==BootstrapRecords::Result::incomplete);assert(records.fragment(5,rid,8,4,"efgh")==BootstrapRecords::Result::complete);CipherCounter counter;assert(counter.consume()==1);assert(records.finish(rid,"ciphertext"));assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::duplicate);assert(records.cached_response()=="ciphertext");assert(counter.consume()==2); // duplicate consumed no counter
-    records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());EnrollmentWindow window;assert(!window.open(false,0));assert(window.open(true,0));for(int i=0;i<5;++i){assert(window.admit(i));assert(!window.admit(i));window.failed_proof();}assert(!window.available(100));assert(window.open(true,100));assert(!window.available(180100));
+    records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();candidate_join_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

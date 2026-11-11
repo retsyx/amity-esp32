@@ -31,26 +31,6 @@ bool QualifiedDeviceName::valid() const {
     return port.valid() && !osd_name.empty() && osd_name.size() <= 14 &&
            std::none_of(osd_name.begin(), osd_name.end(), [](unsigned char c) { return c < 32 || c == 127; });
 }
-std::string cec_uri(const FullyQualifiedCecAddress& a) {
-    if (!a.valid()) return {};
-    return "cec://" + a.port.consortium_id.str() + "/" + a.port.octopus_id.str() + "/" +
-           std::to_string(a.port.tentacle_id) + "/" + side_name(a.port.side) + "/" + std::to_string(a.logical_address);
-}
-std::optional<FullyQualifiedCecAddress> parse_cec_uri(std::string_view text) {
-    if (text.size() > 82 || text.substr(0, 6) != "cec://") return {};
-    text.remove_prefix(6);
-    std::array<std::string_view, 5> fields{};
-    for (size_t i = 0; i < fields.size(); ++i) {
-        size_t slash = text.find('/');
-        if ((i == 4) != (slash == std::string_view::npos)) return {};
-        fields[i] = text.substr(0, slash);
-        if (slash != std::string_view::npos) text.remove_prefix(slash + 1);
-    }
-    auto consortium = ConsortiumId::parse(fields[0]); auto octopus = OctopusId::parse(fields[1]);
-    auto tentacle = parse_uint64(fields[2]); auto side = parse_side(fields[3]); auto la = parse_uint64(fields[4]);
-    if (!consortium || !octopus || !tentacle || *tentacle > amity::last_tentacle_id || !side || !la || *la > 14) return {};
-    return FullyQualifiedCecAddress{{*consortium, *octopus, static_cast<uint8_t>(*tentacle), *side}, static_cast<uint8_t>(*la)};
-}
 namespace {
 std::string quote(std::string_view value) {
     std::string out = "\"";
@@ -61,7 +41,7 @@ std::string quote(std::string_view value) {
     return out + "\"";
 }
 struct JsonValue { std::string text; bool quoted = false; };
-// Small strict decoder for the two flat edge objects. Duplicate/unknown fields,
+// Small strict decoder for the flat qualified-name object. Duplicate/unknown fields,
 // number coercions and trailing data are never accepted.
 class ObjectReader {
 public:
@@ -142,23 +122,5 @@ std::optional<QualifiedDeviceName> parse_name_json(std::string_view text) {
     auto port = decode_port(*fields); auto name = fields->find("osd_name");
     if (!port || name == fields->end() || !name->second.quoted) return {};
     QualifiedDeviceName n{*port, name->second.text}; return n.valid() ? std::optional(n) : std::nullopt;
-}
-std::optional<FullyQualifiedCecAddress> parse_address_json(std::string_view text) {
-    if (text.size() > 512) return {};
-    auto fields = ObjectReader(text).read(); if (!fields || fields->size() != 5) return {};
-    auto port = decode_port(*fields); auto address = fields->find("logical_address");
-    if (!port || address == fields->end() || address->second.quoted) return {};
-    auto la = parse_uint64(address->second.text); if (!la || *la > 14) return {};
-    return FullyQualifiedCecAddress{*port, static_cast<uint8_t>(*la)};
-}
-bool valid_physical_address(uint16_t address, bool allow_root) {
-    if (address == 0xffff || (!allow_root && address == 0)) return false;
-    bool zero = false;
-    for (int shift = 12; shift >= 0; shift -= 4) {
-        uint8_t part = (address >> shift) & 15;
-        if (zero && part != 0) return false;
-        if (part == 0) zero = true;
-    }
-    return true;
 }
 } // namespace amity::system

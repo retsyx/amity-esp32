@@ -19,8 +19,6 @@ public:
     void set_coordinator_authority(bool enabled,uint64_t epoch){local_coordinator_.store(enabled&&epoch==1);local_.set_coordinator_authority(enabled&&epoch==1,epoch);}
     esp_err_t transition_coordinator_authority(bool enabled,uint64_t epoch);
     system::CecPortRef port(BusSide side)const{return {consortium_,octopus_,0,side==BusSide::Front?system::Side::front:system::Side::back};}
-    esp_err_t start(int front,int back,uint16_t pa=0x1000){return local_.start(front,back,pa);}
-    esp_err_t start(const cec::BoardProfile& profile,uint16_t pa=0x1000){auto e=local_.start(profile,pa);if(e==ESP_OK)profile_=profile;return e;}
     esp_err_t start(const cec::BoardProfile& profile,const std::array<uint16_t,amity::max_tentacles>& pa){auto e=local_.start(profile,pa);if(e==ESP_OK)profile_=profile;return e;}
     uint8_t supported_tentacles()const{return profile_.tentacle_count;}
     bool connector_enabled(uint8_t id)const{return cec::connector_enabled(profile_,id);}
@@ -36,13 +34,11 @@ public:
     bool activity_setup_in_progress()const{return local_.activity_setup_in_progress();}
     bool press_key(uint8_t key,bool repeat=false);
     bool press_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return accepts_local_input()&&local_.press_key_for_activity(key,generation,repeat);}
-    bool release_key(uint8_t key=0xff);
     bool standby(){return request_activity(-1)==ESP_OK;}
     esp_err_t request_remote_activity(unsigned index);
     esp_err_t request_remote_activity(unsigned index,uint32_t generation);
     bool press_remote_key(uint8_t key,bool repeat=false){return press_key(key,repeat);}
     bool press_remote_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return press_key_for_activity(key,generation,repeat);}
-    bool release_remote_key(){return release_key();}
     bool release_remote_key(uint8_t key){return local_coordinator_.load()&&local_.release_key(key);}
     uint32_t remote_input_epoch()const{return local_.input_epoch();}
     bool press_timed_remote_key(uint8_t key,uint32_t generation,uint32_t selection,uint32_t input_epoch){return accepts_local_input()&&local_.press_timed_key(key,generation,selection,input_epoch);}
@@ -62,7 +58,6 @@ public:
     esp_err_t configure(config_store::ConfigurationSnapshot,std::function<esp_err_t()> commit={});
     esp_err_t configure_passive_metadata(config_store::ConfigurationSnapshot);
     esp_err_t request_activity(system::ZoneId,system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
-    esp_err_t stop_zone(system::ZoneId);
     system::ExecutionSnapshot execution_snapshot()const;
     struct AppliedConfiguration {
         uint64_t config_revision=0,presentation_revision=0;
@@ -76,7 +71,6 @@ public:
         return published?std::shared_ptr<const config_store::Configuration>(published,&published->configuration):nullptr;
     }
     std::optional<config_store::ConfiguredActivity> external_activity(unsigned)const;
-    std::optional<config_store::ExternalSlot> external_slot(unsigned)const;
     std::optional<unsigned> external_activity_index(const Snapshot&)const;
     std::optional<unsigned> external_activity_index(const PlaybackState&)const;
     std::optional<unsigned> external_activity_index()const{return external_activity_index(local_.snapshot());}

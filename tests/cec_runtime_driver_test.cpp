@@ -146,7 +146,7 @@ static void caller_attempt_tests() {
         };
         // No receiver ACKs this line. The real worker/Engine must stop after
         // exactly the caller-provided budget; no opcode policy belongs here.
-        expect_attempts(3,[&]{assert(bus.send(press));});
+        expect_attempts(3,[&]{assert(bus.send_guarded(press,{}));});
         expect_attempts(3,[&]{assert(bus.send_guarded(press,fence,3));});
         cec::TxCompletion outcome;
         expect_attempts(1,[&]{
@@ -158,26 +158,26 @@ static void caller_attempt_tests() {
         expect_attempts(3,[&]{assert(bus.send_async_guarded(press,fence,outcome,3));});
         assert(outcome.result.load(std::memory_order_acquire)==cec::TxResult::Nack);
         expect_attempts(8,[&]{assert(bus.send_guarded(power,fence,8));});
-        expect_attempts(3,[&]{assert(bus.send(release));});
+        expect_attempts(3,[&]{assert(bus.send_guarded(release,{}));});
         expect_attempts(3,[&]{assert(bus.send_guarded(query,fence,3));});
         expect_attempts(3,[&]{assert(bus.send_guarded(poll,{},3));}); // Header0x44 alone is a poll, not an opcode.
         const auto edges=pin_edges[30];
         assert(!bus.send_guarded(press,fence,0)&&!bus.send_async_guarded(press,fence,outcome,0));
         pump();assert(pin_edges[30]==edges); // Invalid zero budget never becomes a send.
         const auto errors=bus.statistics().tx_errors;
-        for(unsigned queued=0;queued<8;++queued)assert(bus.send(press));
-        assert(!bus.send(press)); // Legacy and native TX FIFOs share the explicit eight-message bound.
+        for(unsigned queued=0;queued<8;++queued)assert(bus.send_guarded(press,{}));
+        assert(!bus.send_guarded(press,{})); // The TX FIFO holds at most eight messages.
         for(unsigned pass=0;pass<4000;++pass)pump();
         assert(bus.statistics().tx_errors==errors+8&&bus.statistics().tx_queue_high_water==8);
     }
     {
-        cec::Bus bus;assert(bus.start(31,cec::Bus::QueueProfile::Native)==ESP_OK);
+        cec::Bus bus;assert(bus.start(31)==ESP_OK);
         auto expect_attempts=[&](unsigned attempts,auto action){
             const auto before=bus.statistics();const auto edges=pin_edges[31];action();
             for(unsigned pass=0;pass<500;++pass)pump();
             assert(bus.statistics().retries-before.retries==attempts-1&&pin_edges[31]>edges);
         };
-        expect_attempts(3,[&]{assert(bus.send(press));});
+        expect_attempts(3,[&]{assert(bus.send_guarded(press,{}));});
         expect_attempts(3,[&]{assert(bus.send_guarded(power,fence,3));});
         cec::TxCompletion outcome;
         for (const auto& frame : {press, release, query, poll}) {
@@ -192,8 +192,8 @@ static void terminal_failure_diagnostics_tests() {
     const cec::Frame press{{0x40, 0x44, 0x6d}, 3}, broadcast{{0x4f, 0x36}, 2}, poll{{0x44}, 1};
     constexpr unsigned pin = 36;
     constexpr uint64_t mask = uint64_t{1} << pin;
-    for (auto profile : {cec::Bus::QueueProfile::Legacy, cec::Bus::QueueProfile::Native}) {
-        cec::Bus bus; assert(bus.start(pin, profile) == ESP_OK);
+    {
+        cec::Bus bus; assert(bus.start(pin) == ESP_OK);
         cec::TxCompletion completion;
         auto logged = warning_logs.size();
         const auto before = bus.statistics();
@@ -330,8 +330,8 @@ static void begin_rejection_diagnostics_tests() {
 
 static void async_completion_contract_tests() {
     const cec::Frame broadcast{{0x4f,0x99},2}, press{{0x40,0x44,0x41},3};
-    for(auto profile:{cec::Bus::QueueProfile::Legacy,cec::Bus::QueueProfile::Native}) {
-        cec::Bus bus;assert(bus.start(28,profile)==ESP_OK);
+    {
+        cec::Bus bus;assert(bus.start(28)==ESP_OK);
         std::array<cec::TxCompletion,8> complete;
         const auto admitted_at=now;
         for(auto& tracked:complete) {
@@ -375,8 +375,8 @@ static void async_completion_contract_tests() {
 
 static void copied_frame_fifo_tests() {
     const cec::Frame first{{0x40, 0x99}, 2}, second{{0x4f, 0xaa}, 2};
-    for (auto profile : {cec::Bus::QueueProfile::Legacy, cec::Bus::QueueProfile::Native}) {
-        cec::Bus bus; assert(bus.start(32, profile) == ESP_OK);
+    {
+        cec::Bus bus; assert(bus.start(32) == ESP_OK);
         cec::TxCompletion one, two;
         // Admission copies caller-owned frame bytes; failure of the earlier
         // transmission never suppresses an independently admitted successor.
@@ -393,7 +393,7 @@ static void copied_frame_fifo_tests() {
             assert(two.result.load() == cec::TxResult::Success);
         }
         const auto sent_before = bus.statistics().transmitted;
-        assert(bus.send(second));
+        assert(bus.send_guarded(second,{}));
         const auto admitted_at = now;
         assert(bus.send_async_guarded(first, {}, one, 1));
         assert(now == admitted_at && one.result.load() == cec::TxResult::Pending);
@@ -435,13 +435,13 @@ static void receive_fifo_tests() {
 
 static void full_fifo_tests() {
     const cec::Frame ordinary{{0x4f, 0x44, 1}, 3}, release{{0x4f, 0x45}, 2};
-    for (auto profile : {cec::Bus::QueueProfile::Legacy, cec::Bus::QueueProfile::Native}) {
-        cec::Bus bus; assert(bus.start(34, profile) == ESP_OK);
+    {
+        cec::Bus bus; assert(bus.start(34) == ESP_OK);
         const auto drain = [&] { for (unsigned pass = 0; pass < 4000; ++pass) pump(); };
         const auto before = bus.statistics().transmitted;
         for (unsigned i = 0; i < 8; ++i) assert(bus.send_guarded(ordinary, {}, 1));
         const auto full_at = now; const auto logged = warning_logs.size();
-        assert(!bus.send(release));
+        assert(!bus.send_guarded(release,{}));
         assert(!bus.send_guarded(ordinary, {}, 1));
         cec::TxCompletion rejected; rejected.result.store(cec::TxResult::Success);
         assert(!bus.send_async_guarded(release, {}, rejected, 1));
@@ -460,7 +460,7 @@ static void full_fifo_tests() {
         for (unsigned i = 0; i < 6; ++i) assert(bus.send_guarded(ordinary, {}, 1));
         assert(bus.send_async_guarded(ordinary, {}, press_done, 1));
         assert(bus.send_async_guarded(release, {}, release_done, 1));
-        assert(!bus.send(release));
+        assert(!bus.send_guarded(release,{}));
         finish(press_done); assert(release_done.result.load() == cec::TxResult::Pending);
         finish(release_done); assert(release_done.result.load() == cec::TxResult::Success);
         for (unsigned i = 0; i < 7; ++i) assert(bus.send_guarded(ordinary, {}, 1));
@@ -475,13 +475,13 @@ static void full_fifo_tests() {
         cec::Frame longest{}; longest.size = 16;
         for (unsigned i = 0; i < 16; ++i) longest.data[i] = i;
         for (unsigned i = 0; i < 8; ++i) assert(bus.send_guarded(ordinary, {}, 1));
-        assert(!bus.send(longest));
+        assert(!bus.send_guarded(longest,{}));
         assert(warning_logs.back() == "TX dropped: FIFO full (GPIO 34, 16 bytes: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)");
         drain();
     }
     assert(!timer && tasks.empty() && !output_low);
     // Total capacity includes a live first attempt on a stuck wire.
-    cec::Bus active; assert(active.start(35, cec::Bus::QueueProfile::Native) == ESP_OK);
+    cec::Bus active; assert(active.start(35) == ESP_OK);
     external_low |= uint64_t{1} << 35; gpio_set_level(35, 1); step();
     assert(active.send_guarded(ordinary, {}, 1)); pump();
     for (unsigned i = 0; i < 7; ++i) assert(active.send_guarded(ordinary, {}, 1));
@@ -499,7 +499,7 @@ static void independent_epoch_fence_tests() {
     fence.tertiary_generation=&epoch;fence.expected_tertiary_generation=1;
     const cec::Frame frame{{0x4f,0xab},2};
     {
-        cec::Bus bus;assert(bus.start(36,cec::Bus::QueueProfile::Native)==ESP_OK);
+        cec::Bus bus;assert(bus.start(36)==ESP_OK);
         const auto edges=pin_edges[36];cec::TxCompletion completion;
         // Changing only the third lifetime cancels queued work before dispatch.
         assert(bus.send_async_guarded(frame,fence,completion,1));epoch.store(2);
@@ -600,7 +600,7 @@ int main() {
         for (unsigned i = 0; i < lines.size(); ++i) {
             counters[i].store(1);
             // Include the XIAO's GPIO44 to exercise the high GPIO bank.
-            assert(lines[i].start(i + 1 == lines.size() ? 44 : 10 + i, cec::Bus::QueueProfile::Native) == ESP_OK);
+            assert(lines[i].start(i + 1 == lines.size() ? 44 : 10 + i) == ESP_OK);
         }
         assert(tasks.size() == 1 && cec::Bus::runtime_statistics().active_ports == amity::max_cec_ports);
         assert(cec::Bus::runtime_statistics().timer_instances == 1);
@@ -637,13 +637,13 @@ int main() {
     for (int budget : {0, 1, 2}) {
         allocation_budget = budget;
         cec::Bus missing;
-        assert(missing.start(20, cec::Bus::QueueProfile::Native) == ESP_ERR_NO_MEM);
+        assert(missing.start(20) == ESP_ERR_NO_MEM);
         missing.stop(); allocation_budget = -1;
         assert(!timer && tasks.empty());
-        assert(missing.start(20, cec::Bus::QueueProfile::Native) == ESP_OK);
+        assert(missing.start(20) == ESP_OK);
     }
     fail_task_creation = true;
-    { cec::Bus missing; assert(missing.start(20, cec::Bus::QueueProfile::Native) == ESP_ERR_NO_MEM); }
+    { cec::Bus missing; assert(missing.start(20) == ESP_ERR_NO_MEM); }
     fail_task_creation = false;
     assert(!timer && tasks.empty() && cec::Bus::runtime_statistics().active_ports == 0);
     caller_attempt_tests();

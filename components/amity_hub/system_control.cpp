@@ -67,10 +67,6 @@ esp_err_t SystemControl::request_activity(system::ZoneId zone,system::ActivityId
     if(result==ESP_OK){if(terminal!=pending_.end())pending_.erase(terminal);pending_.push_back({request,index,selection,config->revisions(),"admitted",{}});}
     return result;
 }
-esp_err_t SystemControl::stop_zone(system::ZoneId zone){
-    const auto state=execution_snapshot();if(!state.sessions.empty()&&state.sessions.front().zone_id!=zone)return ESP_ERR_INVALID_ARG;
-    return request_activity(-1);
-}
 void SystemControl::update_outcomes_locked(const Snapshot& state,const config_store::Configuration* config)const{
     for(auto& pending:pending_){
         if(pending.stage!="admitted")continue;
@@ -118,9 +114,6 @@ std::vector<system::CecObservation> SystemControl::native_observations()const{
 }
 std::optional<config_store::ConfiguredActivity> SystemControl::external_activity(unsigned slot)const{
     auto config=active_configuration();if(!config)return {};auto* activity=config_store::activity_for_slot(*config,slot);return activity&&activity->zone_id==config->primary_zone_id?std::optional<config_store::ConfiguredActivity>(*activity):std::nullopt;
-}
-std::optional<config_store::ExternalSlot> SystemControl::external_slot(unsigned slot)const{
-    auto config=active_configuration();if(config)for(const auto& s:config->external_slots)if(s.slot==slot)return s;return {};
 }
 std::optional<unsigned> SystemControl::external_activity_index(const Snapshot& state)const{
     PlaybackState playback;playback.current_activity=state.current_activity;

@@ -108,12 +108,6 @@ esp_err_t init() {
 }
 const amity::FactoryCredentials *factory() { return has_factory ? &provisioned : nullptr; }
 uint16_t front_physical_address() { std::lock_guard<std::mutex> lock(defaults_mutex);return saved_defaults.front_physical[0]; }
-esp_err_t save_front_physical_address(const std::string &value) {
-    uint16_t address;
-    if (!parse_front_physical_address(value, address)) return ESP_ERR_INVALID_ARG;
-    const auto current=adapter_defaults();
-    return save_adapter_defaults(current.revision,{{0,address}});
-}
 AdapterDefaults adapter_defaults(){std::lock_guard<std::mutex> lock(defaults_mutex);return saved_defaults;}
 esp_err_t save_adapter_defaults(uint64_t expected_revision,const std::vector<AdapterDefaultChange>& changes){
     std::lock_guard<std::mutex> mutation(adapter_mutation);

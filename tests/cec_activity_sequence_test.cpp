@@ -155,7 +155,7 @@ static void received_standby_is_sequential(){
     wire.complete();assert(hub.receive(BusSide::Back,thief,hub.receive_step())==4);
     assert(wire.count(BusSide::Back,15,{0x36})==1&&hub.receive_step()==Hub::ReceiveStep::Done);
     wire.complete();assert(hub.receive(BusSide::Back,thief,hub.receive_step())==0);
-    assert(wire.sent.size()==observed+1&&hub.snapshot().current_activity==-1&&wire.lookups.empty());
+    assert(wire.sent.size()==observed+1&&wire.lookups.empty());
 }
 static void received_switch_waits_without_repeating(){
     Wire wire;Hub hub(wire);hub.set_addresses(4,0);

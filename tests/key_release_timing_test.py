@@ -91,7 +91,7 @@ static void queue_and_owner_handoff() {
     const auto boot=*m::BootId::parse("44444444444444444444444444444444");
     fixture_present=true;fixture_tick=1000;
     amity::HubService hub;observed_hub=&hub;
-    hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(fixture_start(hub,1,2)==ESP_OK);
     int64_t sender_delay=0;bool sender_admitted=true,measure_down=false;std::vector<m::OwnedIntent> edges;
     const m::QualifiedDeviceName remote{{group,member,0,m::Side::back},"Remote"};
     assert(hub.configure_scoped({{"Watch","","source","","",0}},{{"source",remote}},[&](const auto& intent){
@@ -105,7 +105,7 @@ static void queue_and_owner_handoff() {
     m::OwnedAdapterSnapshot report;report.owner=member;report.boot=boot;report.ready=true;
     report.devices={{m::Side::back,"Remote",4,4,0x2000,0,true}};
     assert(hub.update_owned_snapshot(report));run_idle(1);
-    assert(hub.select_activity(0));run_one_command();
+    assert(fixture_select(hub,0));run_one_command();
     for(unsigned pass=0;pass<96&&hub.activity_setup_in_progress();++pass)run_idle(1);
     assert(!hub.activity_setup_in_progress()&&hub.snapshot().current_activity==0);
     fixture_tick=0;
@@ -176,9 +176,9 @@ static void queue_and_owner_handoff() {
 }
 static void owner_repeats_do_not_repeat_input_logs() {
     fixture_present=true;fixture_tick=1000;
-    LocalHubService hub;observed_hub=&hub;assert(hub.start(1,2)==ESP_OK);
+    LocalHubService hub;observed_hub=&hub;assert(fixture_start(hub,1,2)==ESP_OK);
     assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));
-    run_one_command();fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();
+    run_one_command();fixture_finish_discovery(hub);assert(fixture_select(hub,0));run_one_command();
     for(unsigned pass=0;pass<96&&hub.activity_setup_in_progress();++pass)run_idle(1);
     assert(!hub.activity_setup_in_progress());fixture_tick=0;
     entries.clear();transfers.clear();fixture_sent.clear();

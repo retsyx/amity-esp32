@@ -1,13 +1,10 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef ESP_PLATFORM
 #include "security2_client.hpp"
-#include "security2_vectors.hpp"
 #include "mbedtls/bignum.h"
 #include "session.pb-c.h"
 #include "esp_random.h"
 #include "esp_srp.h"
-#include "protocomm.h"
-#include "protocomm_security2.h"
 #include <algorithm>
 #include <cstring>
 namespace amity::consortium::platform {
@@ -61,36 +58,5 @@ bool crypt(bool encrypt,psa_key_id_t key,uint8_t (&nonce)[12],std::string_view i
 }
 bool Security2Client::encrypt(std::string_view input,std::string &out){return authenticated()&&crypt(true,state_->aes,state_->nonce,input,out);}
 bool Security2Client::decrypt(std::string_view input,std::string &out){return authenticated()&&crypt(false,state_->aes,state_->nonce,input,out);}
-bool security2_self_test(){
-    // Exercise the actual pinned Security2 server, not another copy of client
-    // equations. This test has no transport listener or operational authority.
-    const std::string username="00000000000000000000000000000001",password(64,'a');
-    std::string salt,verifier;
-    if(!unhex(selftest_salt_hex,salt,32)||!unhex(selftest_verifier_hex,verifier,384))return false;
-    protocomm_t *pc=protocomm_new();if(!pc)return false;protocomm_security2_params_t params{salt.data(),32,verifier.data(),384};bool good=protocomm_set_security(pc,"session",&protocomm_security2,&params)==ESP_OK&&protocomm_open_session(pc,1)==ESP_OK;
-    Security2Client client(username,password);std::string request,response;auto exchange=[&](){uint8_t *output=nullptr;ssize_t size=0;auto result=protocomm_req_handle(pc,"session",1,reinterpret_cast<const uint8_t*>(request.data()),request.size(),&output,&size);if(result!=ESP_OK||!output||size<=0||size>4096){free(output);return false;}response.assign(reinterpret_cast<char*>(output),size);free(output);return true;};
-    good=good&&client.begin(request)&&exchange()&&client.challenge(response,request)&&exchange();
-    if(good){auto altered=response;SessionData *proof=session_data__unpack(nullptr,altered.size(),reinterpret_cast<const uint8_t*>(altered.data()));if(!proof||!proof->sec2||!proof->sec2->sr1||proof->sec2->sr1->device_proof.len!=64)good=false;else{proof->sec2->sr1->device_proof.data[0]^=1;altered=pack(*proof);good=!client.verify(altered)&&client.verify(response);}if(proof)session_data__free_unpacked(proof,nullptr);}
-    auto echo=[](uint32_t,const uint8_t *in,ssize_t size,uint8_t **out,ssize_t *outsize,void*)->esp_err_t{if(size<=0||size>512)return ESP_ERR_INVALID_SIZE;*out=static_cast<uint8_t*>(malloc(size));if(!*out)return ESP_ERR_NO_MEM;memcpy(*out,in,size);*outsize=size;return ESP_OK;};
-    good=good&&protocomm_add_endpoint(pc,"echo",echo,nullptr)==ESP_OK;
-    for(unsigned i=0;i<3&&good;++i){const std::string plain="Security2 GCM counter "+std::to_string(i);good=client.encrypt(plain,request);uint8_t *out=nullptr;ssize_t size=0;good=good&&protocomm_req_handle(pc,"echo",1,reinterpret_cast<const uint8_t*>(request.data()),request.size(),&out,&size)==ESP_OK&&out&&size>0;if(good){response.assign(reinterpret_cast<char*>(out),size);std::string decrypted;good=client.decrypt(response,decrypted)&&decrypted==plain;}free(out);}
-    // An altered ciphertext must fail authentication; never pass plaintext to
-    // the endpoint or guess a replacement shared counter after this failure.
-    if(good){good=client.encrypt("tamper must be rejected",request);if(good){request.back()^=1;uint8_t *out=nullptr;ssize_t size=0;good=protocomm_req_handle(pc,"echo",1,reinterpret_cast<const uint8_t*>(request.data()),request.size(),&out,&size)!=ESP_OK;free(out);}}
-    // Invalid public values are rejected before deriving a key.
-    Security2Client invalid_public(username,password);std::string ignored;
-    good=good&&invalid_public.begin(ignored);
-    S2SessionResp0 bad=S2_SESSION_RESP0__INIT;std::string zero(384,0);bad.device_pubkey={zero.size(),reinterpret_cast<uint8_t*>(zero.data())};bad.device_salt={salt.size(),reinterpret_cast<uint8_t*>(salt.data())};Sec2Payload payload=SEC2_PAYLOAD__INIT;payload.msg=SEC2_MSG_TYPE__S2Session_Response0;payload.payload_case=SEC2_PAYLOAD__PAYLOAD_SR0;payload.sr0=&bad;SessionData packet=SESSION_DATA__INIT;packet.sec_ver=SEC_SCHEME_VERSION__SecScheme2;packet.proto_case=SESSION_DATA__PROTO_SEC2;packet.sec2=&payload;good=good&&!invalid_public.challenge(pack(packet),ignored);
-    Security2Client invalid_modulus(username,password);good=good&&invalid_modulus.begin(ignored);
-    Mpi N;std::string modulus_bytes;if(mbedtls_mpi_read_string(&N.n,16,modulus)==0)modulus_bytes=binary(N,384);
-    bad.device_pubkey={modulus_bytes.size(),reinterpret_cast<uint8_t*>(modulus_bytes.data())};good=good&&!modulus_bytes.empty()&&!invalid_modulus.challenge(pack(packet),ignored);
-    protocomm_close_session(pc,1);protocomm_delete(pc);
-    pc=protocomm_new();if(!pc)return false;
-    good=good&&protocomm_set_security(pc,"session",&protocomm_security2,&params)==ESP_OK&&protocomm_open_session(pc,1)==ESP_OK;
-    Security2Client wrong_password(username,std::string(64,'b'));
-    good=good&&wrong_password.begin(request)&&exchange()&&wrong_password.challenge(response,request);
-    if(good){const bool returned=exchange();good=!returned||!wrong_password.verify(response);}
-    protocomm_close_session(pc,1);protocomm_delete(pc);return good;
-}
 } // namespace
 #endif

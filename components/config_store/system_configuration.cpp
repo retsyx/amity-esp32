@@ -255,15 +255,6 @@ std::string presentation_hash(const Configuration& c) {
     const auto encoded=encoded_configuration(c,Projection::presentation);return encoded.empty()?std::string{}:sha256_hex(encoded);
 }
 
-ConfigurationSnapshot prepare_configuration(Configuration configuration,std::string& error) {
-    if(!validate_configuration(configuration,error))return {};
-    auto policy=executable_policy_hash(configuration),presentation=presentation_hash(configuration);
-    if(policy.empty()||presentation.empty()){error="Configuration digest preparation failed";return {};}
-    auto canonical=serialize_configuration(configuration);
-    if(canonical.empty()){error="Configuration encoding failed";return {};}
-    return ConfigurationSnapshot(new PreparedConfiguration(std::move(configuration),std::move(canonical),std::move(policy),std::move(presentation)));
-}
-
 const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slot) {
     for (const auto& s : c.external_slots) if (s.slot == slot && !s.tombstone) for (const auto& a : c.activities) if (a.activity_id == s.activity_id) return &a;
     return nullptr;

@@ -9,7 +9,7 @@ static void reset_fixture(bool present=false){
     fixture_send={};fixture_incoming.clear();fixture_sent.clear();fixture_completed.clear();
 }
 static void start(HubService& hub){
-    assert(hub.start(1,2)==ESP_OK);assert(hub.bind_owned_controller(fixture_local::owner(),1)==ESP_OK);fixture_finish_discovery(hub);
+    assert(fixture_start(hub,1,2)==ESP_OK);assert(hub.bind_owned_controller(fixture_local::owner(),1)==ESP_OK);fixture_finish_discovery(hub);
     fixture_tick=0;fixture_time+=300000000;fixture_sent.clear();
 }
 static void receive(cec::Frame frame,int gpio=2){
@@ -114,7 +114,7 @@ static void foreign_activity_still_caches_local_player(){
     const auto controller_boot=*m::BootId::parse("55555555555555555555555555555555");
     const auto link=*m::LinkId::parse("66666666666666666666666666666666");
     hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
-    assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_start(hub,1,2)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);
     fixture_finish_discovery(hub);fixture_tick=0;fixture_time+=300000000;fixture_sent.clear();
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.generation=1;

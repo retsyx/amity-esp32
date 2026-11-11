@@ -21,9 +21,6 @@ void initialize_json_memory();
 esp_err_t init();
 // Bounded single-flight flash broker; callbacks execute on its internal stack.
 bool with_internal_flash_stack(std::function<void()>);
-// Capacity preflight for an entire immutable blob/candidate plus any dependent
-// decision records. Uses available_entries, preserving IDF's GC reserve page.
-esp_err_t check_blob_storage(size_t bytes, bool final_decision = false);
 struct StorageBudget { size_t used_entries=0, available_entries=0, total_entries=0; size_t configuration_limit=16384; };
 esp_err_t storage_budget(StorageBudget&);
 esp_err_t read(const char *key, std::string &value);

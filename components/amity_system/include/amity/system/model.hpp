@@ -108,13 +108,9 @@ struct FullyQualifiedCecAddress {
     }
     friend bool operator!=(const FullyQualifiedCecAddress& a, const FullyQualifiedCecAddress& b) { return !(a == b); }
 };
-std::string cec_uri(const FullyQualifiedCecAddress&);
-std::optional<FullyQualifiedCecAddress> parse_cec_uri(std::string_view);
 std::string name_json(const QualifiedDeviceName&);
 std::string address_json(const FullyQualifiedCecAddress&);
 std::optional<QualifiedDeviceName> parse_name_json(std::string_view);
-std::optional<FullyQualifiedCecAddress> parse_address_json(std::string_view);
-bool valid_physical_address(uint16_t, bool allow_root = true);
 
 struct Component {
     ComponentId component_id;

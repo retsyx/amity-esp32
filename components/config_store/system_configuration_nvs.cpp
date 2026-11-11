@@ -113,11 +113,6 @@ esp_err_t result(ConfigResult value) {
 }
 }
 bool with_internal_flash_stack(std::function<void()> function) { return on_flash_stack(std::move(function)); }
-esp_err_t check_blob_storage(size_t bytes, bool decision) {
-    bool fits = false;
-    if (!on_flash_stack([&] { fits = detail::blob_space(bytes, decision); })) return ESP_FAIL;
-    return fits ? ESP_OK : ESP_ERR_NVS_NOT_ENOUGH_SPACE;
-}
 esp_err_t storage_budget(StorageBudget& out) {
     nvs_stats_t stats{}; esp_err_t status = ESP_FAIL;
     if (!on_flash_stack([&] { status = nvs_get_stats("amity_cfg", &stats); })) return ESP_FAIL;

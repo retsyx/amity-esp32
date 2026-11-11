@@ -12,5 +12,4 @@ idf_component_register(SRCS "amity_matter.cpp" "commissioning_credentials.cpp" "
 
 # Preserve one shared CHIP host while permanently suppressing member home-service publication.
 target_link_libraries(${COMPONENT_LIB} INTERFACE
-    "-Wl,--wrap=_ZN4chip3app11DnssdServer11StartServerEv"
-    "-Wl,--wrap=_ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE")
+    "-Wl,--wrap=_ZN4chip3app11DnssdServer11StartServerEv")

@@ -169,7 +169,7 @@ void failures_preserve_the_previous_snapshot(){
 void reads_pin_one_revision_and_reuse_canonical_bytes(){
  reset();amity::SystemControl service;assert(load_configuration(service,false)==ESP_OK);
  auto replacement=fixture::saved->configuration;replacement.activities[0].label="Renamed";++replacement.presentation_revision;
- std::string error;const auto next=prepare_configuration(std::move(replacement),error);assert(next);
+ const auto next=saved_snapshot(replacement);
  auto previous=service.published;const auto bytes=previous->canonical;std::weak_ptr<const PreparedConfiguration> retained=previous;
  fixture::serializations=0;
  httpd_req_t req;esp_err_t result=ESP_FAIL;

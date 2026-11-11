@@ -25,8 +25,8 @@ int main() {
         assert(!committed);
     }
     { // Every producer counts toward capacity; full queue forbids the commit.
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
-        for (int i = 0; i < 32; ++i) assert(hub.release_key());
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
+        for (int i = 0; i < 32; ++i) assert(hub.release_key(0));
         bool committed = false;
         assert(fixture_configure_with_commit(hub,config(), [&] { committed = true; return ESP_OK; }) == ESP_ERR_NO_MEM);
         assert(!committed && !hub.standby());
@@ -35,47 +35,47 @@ int main() {
         assert(!hub.standby());
     }
     { // Storage failure leaves all queue slots and the old live config intact.
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         int commits = 0;
         assert(fixture_configure_with_commit(hub,config(), [&] { ++commits; return ESP_FAIL; }) == ESP_FAIL);
         assert(commits == 1 && hub.snapshot().activities.empty());
         for (int i = 0; i < 32; ++i) assert(hub.press_key(0));
-        assert(hub.release_key()); // Emergency path consumes no queue slot.
+        assert(hub.release_key(0)); // Emergency path consumes no queue slot.
         assert(!hub.press_key(0));
     }
     { // A competing producer cannot steal the slot while commit is running.
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         int commits = 0;
         assert(fixture_configure_with_commit(hub,config(), [&] {
             ++commits;
             bool competing_commit = false;
             assert(fixture_configure_with_commit(hub,config(), [&] { competing_commit = true; return ESP_OK; }) == ESP_ERR_TIMEOUT);
             assert(!competing_commit);
-            for (int i = 0; i < 31; ++i) assert(hub.release_key());
+            for (int i = 0; i < 31; ++i) assert(hub.release_key(0));
             assert(!hub.press_key(0));
             return ESP_OK;
         }) == ESP_OK);
         assert(commits == 1 && !hub.standby()); // Committed config occupies reserved 32nd slot.
     }
     { // A committed config becomes live only through the ordinary owner task.
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure_with_commit(hub,config(), [] { return ESP_OK; }) == ESP_OK);
         assert(hub.snapshot().activities.empty());
         run_one_command();
         assert(hub.snapshot().activities.size() == 1);
         assert(hub.snapshot().activities[0].name == "Saved");
-        for (int i = 0; i < 32; ++i) assert(hub.release_key());
+        for (int i = 0; i < 32; ++i) assert(hub.release_key(0));
         assert(!hub.press_key(0));
     }
     { // The activity that caused discovery must still power and route newly
       // found devices; executing it before scanning used to lose these sends.
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Late devices", "TV", "Source", "Source", "", 0}}));
         run_one_command(); fixture_finish_discovery(hub);
         assert(hub.snapshot().devices.empty());
         const auto discovered = hub.snapshot().discovery_generation;
         fixture_present = true; fixture_sent.clear(); fixture_time += 120000000;
-        assert(hub.select_activity(0)); run_one_command();
+        assert(fixture_select(hub,0)); run_one_command();
         fixture_finish_discovery(hub, discovered);
         // The original activity resolves its recipients in sequence: the
         // front lookup/command can finish before the back lookup even starts.
@@ -94,13 +94,13 @@ int main() {
     { // Release survives full admission, cancels stale repetitions, and does
       // not cancel a later key accepted once the first slot becomes free.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
-        assert(hub.press_key(0, true)); run_one_command();
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
+        assert(hub.press_key(1, true)); run_one_command();
         fixture_sent.clear();
         for (int i = 0; i < 32; ++i) assert(hub.press_key(1, true));
-        assert(hub.release_key()); assert(!hub.press_key(2, true));
+        assert(hub.release_key(1)); assert(!hub.press_key(2, true));
         run_one_command();
         assert(hub.press_key(2, true));
         for (int i = 0; i < 32; ++i) run_one_command();
@@ -121,14 +121,14 @@ int main() {
     { // A volume key may pass application admission while a switch is still
       // queued. The real hub worker must check its generation at execution.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         const std::vector<amity::Activity> activities{{"First", "TV", "Source", "Source", "", 0},
                                                      {"Second", "TV", "Source", "Source", "", 0}};
         assert(fixture_configure(hub,activities)); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         const auto first = hub.activity_generation();
         fixture_sent.clear();
-        assert(hub.select_activity(1));
+        assert(fixture_select(hub,1));
         assert(hub.press_key_for_activity(0x41, first));
         run_one_command(); finish_activity(hub,1); // Transition-time down was never enqueued/registered.
         assert(hub.activity_generation() != first);
@@ -138,7 +138,7 @@ int main() {
         // invalidate the old generation; a new adjustment remains usable.
         auto changed = activities; changed[0].switch_input = 1;
         assert(fixture_configure(hub,changed)); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         assert(hub.activity_generation() != first);
         fixture_sent.clear();
         assert(hub.press_key_for_activity(0x41, first));
@@ -155,13 +155,13 @@ int main() {
     { // A held Siri press is also generation-bound: admission during a queued
       // activity transition cannot begin a held stream on its new source.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         const auto first = hub.activity_generation();
         fixture_sent.clear(); fixture_completed.clear();
-        assert(hub.select_activity(1));
+        assert(fixture_select(hub,1));
         assert(hub.press_key_for_activity(0x01, first, true));
         run_one_command(); finish_activity(hub,1); // No pressed state/IPC exists for the ignored down.
         for (const auto &sent : fixture_sent)
@@ -184,7 +184,7 @@ int main() {
         assert((keys == std::vector<uint8_t>{0x44, 0x44, 0x44, 0x45}));
         // Failed admission must not start or retain a held key.
         fixture_sent.clear(); fixture_completed.clear();
-        for (int i = 0; i < 32; ++i) assert(hub.release_key());
+        for (int i = 0; i < 32; ++i) assert(hub.release_key(0));
         assert(!hub.press_key_for_activity(0x03, hub.activity_generation(), true));
         for (int i = 0; i < 32; ++i) run_one_command();
         run_idle(3);
@@ -195,9 +195,9 @@ int main() {
     }
     { // Each key repeats only after its own outstanding transmission completes.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_sent.clear(); fixture_completed.clear(); fixture_async_autocomplete = false;
         assert(hub.press_key(0x41, true)); run_one_command(); run_idle(3);
         assert(fixture_completed.empty() && fixture_pending.size() == 1);
@@ -222,9 +222,9 @@ int main() {
     }
     { // Terminal failures end only that held key and retain one final cleanup.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0); fixture_async_autocomplete = false;
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0); fixture_async_autocomplete = false;
         auto count = [&](uint8_t opcode) {
             return std::count_if(fixture_sent.begin(), fixture_sent.end(), [&](const auto &sent) {
                 return sent.frame.size > 1 && sent.frame.data[1] == opcode;
@@ -270,9 +270,9 @@ int main() {
     { // Key up stops future continuation; a repeat already admitted to CEC
       // finishes and receives one final release in FIFO order.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_sent.clear(); fixture_completed.clear(); fixture_async_autocomplete = false;
         assert(hub.press_key(0x41, true)); run_one_command();
         assert(fixture_complete_next()); run_idle(1);
@@ -298,9 +298,9 @@ int main() {
     }
     { // Every caller supplies one UCP attempt, including power-on commands and
       // switch selection. Releases use the same eight-slot FIFO.
-        fixture_present=true;LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+        fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Switch","TV","","Source","Source",2}}));run_one_command(); fixture_finish_discovery(hub);
-        fixture_sent.clear();assert(hub.select_activity(0));run_one_command();finish_activity(hub,0);assert(hub.standby());run_one_command();
+        fixture_sent.clear();assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);assert(hub.standby());run_one_command();
         bool power=false,input=false;
         for(const auto& sent:fixture_sent)if(sent.frame.size>1){
             if(sent.frame.data[1]==0x44){assert(sent.attempts==1);power|=sent.frame.data[2]==0x6d;input|=sent.frame.size==4&&sent.frame.data[2]==0x69&&sent.frame.data[3]==2;}
@@ -310,17 +310,17 @@ int main() {
     }
     { // With eight ordinary frames already buffered in the driver, denied
       // finite UCPs cannot emit an unpaired release.
-        fixture_present=true;LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+        fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Switch","TV","","Source","Source",2}}));run_one_command(); fixture_finish_discovery(hub);
         unsigned occupied=8,presses=0,releases=0;
         fixture_admission=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45){++releases;return occupied++<8;}return true;};
-        assert(hub.select_activity(0));run_one_command();finish_activity(hub,0);assert(presses>=2&&releases==0&&occupied==8);
+        assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);assert(presses>=2&&releases==0&&occupied==8);
         fixture_admission={};fixture_present=false;
     }
     { // A finite key uses the last free slot for its press; a full-FIFO
       // release is dropped rather than rejecting or replaying the press.
-        fixture_present=true;LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();finish_activity(hub,0);
+        fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
+        assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);
         fixture_sent.clear();
         unsigned occupied=7,presses=0,releases=0;
         fixture_admission=[&](int,const cec::Frame& frame){
@@ -337,21 +337,21 @@ int main() {
     }
     { // A full eight-slot FIFO consumes final release; the owner retains no TX
       // retry and later up cannot regenerate the dropped release.
-        fixture_present=true;LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command(); fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();finish_activity(hub,0);
+        fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
+        assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command(); fixture_finish_discovery(hub);assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);
         assert(hub.press_key(0x41,true));run_one_command();fixture_sent.clear();
         fixture_send=[](int,const cec::Frame& frame){return frame.size<2||frame.data[1]!=0x45;};
-        assert(hub.release_key());run_one_command();run_idle(5);
+        assert(hub.release_key(0x41));run_one_command();run_idle(5);
         auto releases=[&]{return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){return sent.frame.size>1&&sent.frame.data[1]==0x45;});};
         assert(releases()==1);fixture_send={};run_idle(5);assert(releases()==1);
-        assert(hub.release_key());run_one_command();run_idle(2);assert(releases()==1);
+        assert(hub.release_key(0x41));run_one_command();run_idle(2);assert(releases()==1);
         fixture_present=false;
     }
     { // Releasing during the initial pending attempt preserves one tap.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_sent.clear(); fixture_completed.clear(); fixture_async_autocomplete = false;
         assert(hub.press_key(1, true)); run_one_command();
         assert(hub.release_key(1)); run_one_command();
@@ -381,15 +381,15 @@ int main() {
     { // Accepting an activity switch fences a queued old user press before
       // the owner advances initialization; its completion cannot revive a hold.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_completed.clear(); fixture_async_autocomplete = false;
         assert(hub.press_key(0x42, true)); run_one_command();
         assert(fixture_completed.empty() && fixture_pending.size() == 1);
         const auto old_press=fixture_pending.front().fence;
-        assert(hub.select_activity(1));assert(!cec::current_fence(old_press));run_one_command();
+        assert(fixture_select(hub,1));assert(!cec::current_fence(old_press));run_one_command();
         assert(hub.snapshot().current_activity == 0 && fixture_completed.empty());
         assert(fixture_complete_next()); run_idle(3);
         finish_activity(hub,1,true);
@@ -400,11 +400,11 @@ int main() {
     { // Matching releases and power commands survive activity changes but
       // cannot reach a replacement appliance at the same LA.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
         fixture_guarded.clear();
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         cec::ExecutionFence power_fence;
         bool found_power = false;
         for (const auto &work : fixture_guarded) if (work.gpio == 2 && work.frame.size == 3 && work.frame.data[1] == 0x44 && work.frame.data[2] == 0x6d) {
@@ -412,14 +412,14 @@ int main() {
         }
         assert(found_power && cec::current_fence(power_fence));
         assert(hub.press_key(0x41, true)); run_one_command();
-        assert(hub.release_key()); run_one_command();
+        assert(hub.release_key(0x41)); run_one_command();
         cec::ExecutionFence release_fence;
         bool found_release = false;
         for (const auto &work : fixture_guarded) if (work.gpio == 2 && work.frame.size == 2 && work.frame.data[1] == 0x45) {
             release_fence = work.fence; found_release = true;
         }
         assert(found_release && cec::current_fence(release_fence));
-        assert(hub.select_activity(1));
+        assert(fixture_select(hub,1));
         assert(cec::current_fence(power_fence)); // Already admitted work remains in FIFO order.
         assert(cec::current_fence(release_fence)); // It can still finish from the Bus FIFO.
         run_one_command();
@@ -436,11 +436,11 @@ int main() {
     { // A native PA update may invalidate compiled work while an explicit
       // activity request is still waiting to be compiled by the owner.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
-        assert(hub.select_activity(1));
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,1));
         fixture_incoming.push_back({2, cec::Frame{{0x4f, 0x84, 0x20, 0, 4}, 5}});
         run_one_command(); finish_activity(hub,1);
         assert(hub.snapshot().current_activity == 1 && hub.snapshot().activity_error.empty());
@@ -448,12 +448,12 @@ int main() {
     }
     { // Accepted activity selections execute in order, including before compilation.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
         fixture_async_autocomplete = false;
-        assert(hub.select_activity(0)); const auto first = hub.activity_selection();
-        assert(hub.select_activity(1));
+        assert(fixture_select(hub,0)); const auto first = hub.activity_selection();
+        assert(fixture_select(hub,1));
         run_one_command();
         for (unsigned n = 0; n < 2000 && hub.snapshot().processed_activity_selection < first; ++n) { fixture_complete_all(); run_idle(1); }
         assert(hub.snapshot().processed_activity_selection == first);
@@ -471,29 +471,29 @@ int main() {
                 return cec::TxResult::LineError;
             return f.destination() == (gpio == 1 ? 0 : 4) ? cec::TxResult::Success : cec::TxResult::Nack;
         };
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
         assert(tv_polls == 1 && hub.snapshot().devices.size() == 1);
         const auto scan = hub.snapshot().discovery_generation;
         assert(hub.discover()); run_one_command(); fixture_finish_discovery(hub, scan);
         assert(tv_polls == 2 && hub.snapshot().devices.size() == 2);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         assert(hub.snapshot().current_activity == 0);
         fixture_transmit = {}; fixture_present = false;
     }
     { // Standalone-policy merge: a denied finite press cannot emit an unpaired release.
-        fixture_present=true;LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+        fixture_present=true;LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
         assert(fixture_configure(hub,{{"Switch","TV","","Source","Source",2}}));run_one_command();fixture_finish_discovery(hub);
         unsigned presses=0,releases=0;fixture_send=[&](int,const cec::Frame& frame){if(frame.size>1&&frame.data[1]==0x44){++presses;return false;}if(frame.size>1&&frame.data[1]==0x45)++releases;return true;};
-        assert(hub.select_activity(0));run_one_command();finish_activity(hub,0);assert(presses>=2&&releases==0);fixture_send={};fixture_present=false;
+        assert(fixture_select(hub,0));run_one_command();finish_activity(hub,0);assert(presses>=2&&releases==0);fixture_send={};fixture_present=false;
     }
     { // Independent key state and command admission continue while the wire
       // has not acknowledged an earlier press, even on the same CEC bus.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"First", "TV", "Source", "Source", "", 0},
                               {"Second", "TV", "Source", "Source", "", 0}})); run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_sent.clear(); fixture_completed.clear(); fixture_async_autocomplete = false;
         const auto presses = [&](uint8_t key) {
             return std::count_if(fixture_sent.begin(), fixture_sent.end(), [&](const auto &sent) {
@@ -514,7 +514,7 @@ int main() {
         assert(presses(0x41) == 2 && presses(0x04) == 1);
         const auto pending_before_switch = fixture_pending.size();
         const auto sent_before_switch = fixture_sent.size();
-        assert(pending_before_switch > 0 && hub.select_activity(1)); run_one_command();
+        assert(pending_before_switch > 0 && fixture_select(hub,1)); run_one_command();
         for(const auto& pending:fixture_pending)if(pending.frame.size==3&&pending.frame.data[1]==0x44)
             assert(!cec::current_fence(pending.fence));
         run_idle(1); // Resolve/admit cleanup without waiting for the old press ACK.
@@ -527,10 +527,10 @@ int main() {
     { // A button released during asynchronous device lookup becomes a finite
       // tap when discovery resolves it, rather than reviving a stale hold.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}}));
         run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         // Establish a valid selected route first. A later authoritative scan
         // can withdraw missing metadata without selecting unresolved equipment.
         fixture_present = false;
@@ -553,10 +553,10 @@ int main() {
     { // Re-resolution can move a new hold to another appliance without
       // depending on an ended hold's pending completion for the same key.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}}));
         run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_sent.clear(); fixture_async_autocomplete = false;
         const auto is_volume = [](const cec::Frame& frame, uint8_t address) {
             return frame.size == 3 && frame.destination() == address && frame.data[1] == 0x44 && frame.data[2] == 0x41;
@@ -617,10 +617,10 @@ int main() {
     { // Command-queue overflow release remains keyed: ending Right through
       // the emergency path cannot cancel Volume Up or its pending completion.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         assert(fixture_configure(hub,{{"Watch", "TV", "Source", "Source", "", 0}}));
         run_one_command(); fixture_finish_discovery(hub);
-        assert(hub.select_activity(0)); run_one_command(); finish_activity(hub,0);
+        assert(fixture_select(hub,0)); run_one_command(); finish_activity(hub,0);
         fixture_sent.clear(); fixture_async_autocomplete = false;
         const auto presses = [&](uint8_t key) {
             return std::count_if(fixture_sent.begin(), fixture_sent.end(), [&](const auto &sent) {
@@ -663,7 +663,7 @@ int main() {
     { // Selection notifications include same-target activity requests and
       // standby, but not Power-long repairs or rejected requests/commits.
         fixture_present = true;
-        LocalHubService hub; assert(hub.start(1, 2) == ESP_OK);
+        LocalHubService hub; assert(fixture_start(hub,1,2) == ESP_OK);
         const auto initial = hub.activity_selection();
         assert(fixture_configure_with_commit(hub,config(), [] { return ESP_FAIL; }) == ESP_FAIL);
         assert(hub.activity_selection() == initial);
@@ -684,7 +684,7 @@ int main() {
         assert(hub.activity_selection() == repaired);
         assert(hub.request_activity(7) == ESP_ERR_INVALID_ARG);
         assert(hub.activity_selection() == repaired);
-        for (unsigned n = 0; n < 32; ++n) assert(hub.release_key());
+        for (unsigned n = 0; n < 32; ++n) assert(hub.release_key(0));
         assert(hub.request_activity(0) == ESP_ERR_NO_MEM);
         assert(hub.activity_selection() == repaired);
         for (unsigned n = 0; n < 32; ++n) run_one_command();

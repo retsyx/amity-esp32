@@ -664,13 +664,9 @@ extern "C" esp_err_t amity_matter_set_controller_enabled(bool enabled) {
     return ESP_OK;
 }
 
-// Checked-in link wrappers also fence ESP-Matter's private IP-event callback.
+// The checked-in link wrapper also fences ESP-Matter's private IP-event callback.
 // The pinned SDK would otherwise restart home discovery after Server shutdown.
 extern "C" void __real__ZN4chip3app11DnssdServer11StartServerEv(void*);
 extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(void* self) {
     if (controller_enabled.load()) __real__ZN4chip3app11DnssdServer11StartServerEv(self);
-}
-extern "C" void __real__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(void*, chip::Dnssd::CommissioningMode);
-extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(void* self, chip::Dnssd::CommissioningMode mode) {
-    if (controller_enabled.load()) __real__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(self, mode);
 }

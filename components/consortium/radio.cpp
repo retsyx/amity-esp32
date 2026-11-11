@@ -20,7 +20,7 @@ RadioResult RadioArbiter::cleanup_complete(uint64_t generation,uint64_t now){
     // Cleanup is now proven even if its caller's bounded wait has expired.
     // Consume it without reviving the expired setup reservation, so the radio
     // worker can resume reconnect and a later request can reserve fresh work.
-    remote_reconnect_=false;setup_handle_.reset();owner_=expired?RadioMode::operational:next_;
+    remote_reconnect_=false;owner_=expired?RadioMode::operational:next_;
     if(owner_==RadioMode::operational){next_=RadioMode::operational;deadline_=cancel_deadline_=0;}
     return expired?RadioResult::timed_out:RadioResult::granted;
 }
@@ -29,13 +29,6 @@ RadioResult RadioArbiter::release(uint64_t generation,uint64_t now){
     if(owner_==RadioMode::matter_induction&&matter_ble_active_)return RadioResult::busy;
     return transition(RadioMode::operational,now,cancel_ms+1);
 }
-RadioResult RadioArbiter::admit_setup_connection(uint64_t generation,uint16_t handle){
-    if(!accepts_callback(generation))return RadioResult::stale;
-    if(setup_handle_)return *setup_handle_==handle?RadioResult::granted:RadioResult::busy;
-    // One remote plus one setup leaves the third configured slot for cleanup.
-    setup_handle_=handle;return RadioResult::granted;
-}
-void RadioArbiter::setup_disconnected(uint64_t generation,uint16_t handle){if(generation==generation_&&setup_handle_&&*setup_handle_==handle)setup_handle_.reset();}
 RadioResult RadioArbiter::expire(uint64_t now){
     if(owner_==RadioMode::operational)return RadioResult::granted;
     if(owner_==RadioMode::transition)return now>=cancel_deadline_?RadioResult::timed_out:RadioResult::cancelling;
@@ -51,5 +44,4 @@ RadioResult RadioArbiter::external_matter_will_open(uint64_t now,uint32_t durati
     if(owner_==RadioMode::operational&&!remote_reconnect_)return request(RadioMode::matter_induction,now,duration,false);
     return transition(RadioMode::matter_induction,now,duration);
 }
-bool consortium_setup_eligible(const SetupEligibility &e){return !e.active_membership&&!e.prepared_join&&!e.retired&&!e.recovery_required&&e.physical_authorization_supported&&e.radio_available;}
 } // namespace amity::consortium

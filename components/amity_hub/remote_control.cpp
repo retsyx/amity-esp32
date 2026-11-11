@@ -14,7 +14,6 @@ esp_err_t SystemControl::request_activity(int index){
     return found==order.end()?ESP_ERR_INVALID_ARG:local_.request_activity(static_cast<int>(found-order.begin()),nullptr,activity->activity_id);
 }
 bool SystemControl::press_key(uint8_t key,bool repeat){return accepts_local_input()&&local_.press_key(key,repeat);}
-bool SystemControl::release_key(uint8_t key){return local_coordinator_.load()&&(key==0xff?local_.release_key():local_.release_key(key));}
 esp_err_t SystemControl::request_remote_activity(unsigned index){return request_remote_activity(index,remote_activity_generation());}
 esp_err_t SystemControl::request_remote_activity(unsigned index,uint32_t generation){
     if(!accepts_local_input()||generation!=activity_generation())return ESP_ERR_INVALID_STATE;

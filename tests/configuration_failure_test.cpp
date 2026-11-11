@@ -140,10 +140,6 @@ void shared_snapshots_and_prepared_save(const Scenario& scenario) {
     assert(store.stage(std::move(proposed),current->configuration.revisions(),error)==ConfigResult::ok);
     std::weak_ptr<const PreparedConfiguration> cancelled=store.staged();
     store.cancel_stage();assert(cancelled.expired()&&current.get()==staged.get());
-    const auto prepared=prepare_configuration(scenario.candidate,error);
-    assert(prepared&&prepared->canonical==scenario.candidate_text&&prepared->policy_hash.size()==64&&prepared->presentation_hash.size()==64);
-    auto invalid=scenario.candidate;invalid.controller_octopus_id.reset();
-    assert(!prepare_configuration(std::move(invalid),error));
     std::cout<<"PASS shared immutable snapshots: staged/committed pointer identity, old readers, cancellation, cached bytes/digests; save uses 5 SHA256 operations and 2 full record reads\n";
 }
 

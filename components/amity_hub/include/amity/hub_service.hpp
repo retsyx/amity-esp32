@@ -16,17 +16,15 @@ struct AdapterAddressChange { uint8_t tentacle_id=0;uint16_t default_physical=0x
 class HubService {
 public:
     HubService();~HubService();
-    esp_err_t start(int front,int back,uint16_t physical=0x1000);
-    esp_err_t start(const cec::BoardProfile&,uint16_t physical=0x1000);
     esp_err_t start(const cec::BoardProfile&,const std::array<uint16_t,amity::max_tentacles>&);
     std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const;
     esp_err_t commit_adapter_settings(system::BootId,std::vector<AdapterAddressChange>,uint64_t,std::function<esp_err_t()>);
     esp_err_t request_activity(int,uint32_t* accepted_selection=nullptr,std::optional<system::ActivityId> expected={});esp_err_t repair_activity();uint32_t activity_selection()const;int activity_target()const;
-    bool select_activity(int);bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
+    bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
     uint32_t input_epoch()const;
     bool press_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
     bool release_timed_key(uint8_t,uint32_t generation,uint32_t selection,uint32_t input_epoch);
-    uint32_t activity_generation()const;bool release_key(uint8_t);bool release_key();bool standby();bool discover();
+    uint32_t activity_generation()const;bool release_key(uint8_t);bool standby();bool discover();
     Snapshot snapshot()const;void on_change(std::function<void(const Snapshot&)>);
     PlaybackState playback_state()const;
     void on_configuration_applied(std::function<void()>);
@@ -52,7 +50,6 @@ public:
     std::vector<system::OwnedAdapterSnapshot> owned_snapshots()const;
     bool fence_owned(system::OctopusId controller,system::LinkId link);
     bool discover_owned(system::OctopusId owner,uint8_t adapter);
-    uint64_t applied_configuration_revision()const;
     uint64_t executing_configuration_revision()const;
 private:
     esp_err_t request_activity(int,bool notify_selection,uint32_t* accepted_selection,std::optional<system::ActivityId> expected={});struct Adapter;struct Impl;std::unique_ptr<Impl> impl_;

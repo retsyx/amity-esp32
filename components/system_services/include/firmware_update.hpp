@@ -10,7 +10,6 @@ esp_err_t stage_release(std::string_view canonical_manifest,std::string_view sig
 // Atomic NVS report. An interrupted stream is never resumed from browser state.
 std::string status_json();
 std::optional<ReleaseManifest> staged_release();
-bool installation_active();
 esp_err_t begin_install(std::string& error);
 void install_progress(uint64_t bytes);
 esp_err_t install_selected();

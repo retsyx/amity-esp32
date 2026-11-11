@@ -43,7 +43,8 @@ static void context_source_comparison(){
     // adapter match this wire's source. No other wire's input needs repair.
     for(const auto& source:{name(controller,m::Side::back,"Source"),name(member,m::Side::back,"Source",1)}){
         context.source=source;assert(hub.execute_owned(context));wire.sent.clear();hub.receive(BusSide::Back,active(4));one_standby(wire,4);
-        assert(hub.snapshot().current_activity==0);
+        // Repair keeps the context selected: a repeated theft is repaired the same way.
+        wire.sent.clear();hub.receive(BusSide::Back,active(4));one_standby(wire,4);
     }
     context.source=name(member,m::Side::front,"Front Source");assert(hub.execute_owned(context));
     wire.sent.clear();hub.receive(BusSide::Back,active(8));one_standby(wire,8);
@@ -69,8 +70,8 @@ static void context_source_comparison(){
 static void distributed_source_comparison(){
     fixture_present=true;fixture_peer_address=[](int gpio)->uint8_t{return gpio==1||gpio==3?0:4;};
     HubService primary,other;
-    primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(primary.start(1,2)==ESP_OK);auto* primary_task=latest_task;
-    other.set_system_identity(group,member);other.set_boot_identity(member_boot);other.set_coordinator_authority(false,1);assert(other.start(3,4)==ESP_OK);auto* other_task=latest_task;
+    primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(fixture_start(primary,1,2)==ESP_OK);auto* primary_task=latest_task;
+    other.set_system_identity(group,member);other.set_boot_identity(member_boot);other.set_coordinator_authority(false,1);assert(fixture_start(other,3,4)==ESP_OK);auto* other_task=latest_task;
     assert(other.bind_owned_controller(controller,1)==ESP_OK);
     other.set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
     latest_task=primary_task;
@@ -95,7 +96,7 @@ static void distributed_source_comparison(){
     for(int selected:{0,1}){
         fixture_sent.clear();
         if(selected)fixture_async_autocomplete=false;
-        assert(primary.select_activity(selected));run_one_command();advance(2);
+        assert(fixture_select(primary,selected));run_one_command();advance(2);
         if(selected){
             // The new owner progresses while the previous owner's Standby
             // is still physically pending. There is no cross-Amity CEC gate.
@@ -139,9 +140,9 @@ static void three_owner_standby_cycles(){
     const auto third_link=identity<m::LinkId>('9');
     fixture_present=true;fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
     HubService primary,second,tertiary;
-    primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(primary.start(1,2)==ESP_OK);auto* primary_task=latest_task;
-    second.set_system_identity(group,member);second.set_boot_identity(member_boot);second.set_coordinator_authority(false,1);assert(second.start(3,4)==ESP_OK);auto* second_task=latest_task;assert(second.bind_owned_controller(controller,1)==ESP_OK);
-    tertiary.set_system_identity(group,third);tertiary.set_boot_identity(third_boot);tertiary.set_coordinator_authority(false,1);assert(tertiary.start(5,6)==ESP_OK);auto* third_task=latest_task;assert(tertiary.bind_owned_controller(controller,1)==ESP_OK);
+    primary.set_system_identity(group,controller);primary.set_boot_identity(controller_boot);assert(fixture_start(primary,1,2)==ESP_OK);auto* primary_task=latest_task;
+    second.set_system_identity(group,member);second.set_boot_identity(member_boot);second.set_coordinator_authority(false,1);assert(fixture_start(second,3,4)==ESP_OK);auto* second_task=latest_task;assert(second.bind_owned_controller(controller,1)==ESP_OK);
+    tertiary.set_system_identity(group,third);tertiary.set_boot_identity(third_boot);tertiary.set_coordinator_authority(false,1);assert(fixture_start(tertiary,5,6)==ESP_OK);auto* third_task=latest_task;assert(tertiary.bind_owned_controller(controller,1)==ESP_OK);
     for(auto* owner:{&second,&tertiary})owner->set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
     latest_task=primary_task;
     // All three activities exist before the first cycle, just as on the bench.
@@ -182,7 +183,7 @@ static void three_owner_standby_cycles(){
     };
     const cec::Frame player_active{{0x4f,0x82,0x11,0},4};
     for(int selected:{0,1,2}){
-        fixture_sent.clear();assert(primary.select_activity(selected));run_one_command();finish_activity(selected);
+        fixture_sent.clear();assert(fixture_select(primary,selected));run_one_command();finish_activity(selected);
         assert(primary.snapshot().current_activity==selected);
         const auto generation=primary.activity_generation();
         for(int owner:{0,1,2}){

@@ -17,6 +17,5 @@ public:
 private:
     struct State;std::unique_ptr<State> state_;
 };
-bool security2_self_test();
 } // namespace
 #endif

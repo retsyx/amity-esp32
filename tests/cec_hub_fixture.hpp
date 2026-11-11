@@ -42,6 +42,26 @@ public:
         set_boot_identity(fixture_local::id<amity::system::BootId>(3));
     }
 };
+// Services start from a board profile with per-adapter default addresses.
+template<class Service> esp_err_t fixture_start(Service& service,const cec::BoardProfile& profile,uint16_t physical=0x1000) {
+    std::array<uint16_t,amity::max_tentacles> defaults{};defaults.fill(0x1000);defaults[0]=physical;
+    return service.start(profile,defaults);
+}
+// A single-adapter fixture names adapter 0's two GPIOs. The default board keeps
+// its exact profile; other pins use the development carrier's mapping.
+template<class Service> esp_err_t fixture_start(Service& service,int front,int back,uint16_t physical=0x1000) {
+    if(front==1&&back==2)return fixture_start(service,cec::legacy_board2_profile,physical);
+    cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,{},-1,-1};
+    for(uint8_t id=0;id<amity::max_tentacles;++id){
+        profile.ports[2u*id]={id,cec::Side::Front,id?-1:front};profile.ports[2u*id+1u]={id,cec::Side::Back,id?-1:back};
+    }
+    return fixture_start(service,profile,physical);
+}
+[[maybe_unused]] static bool fixture_select(amity::HubService& hub,int index){return hub.request_activity(index)==ESP_OK;}
+// Adapter state is read through the observation each owner publishes.
+[[maybe_unused]] static amity::system::OwnedAdapterSnapshot fixture_observe(const amity::Hub& hub){
+    amity::system::OwnedAdapterSnapshot report;hub.update_observation(report);return report;
+}
 [[maybe_unused]] static amity::system::OwnedAdapterSnapshot fixture_adapter(const amity::HubService& hub){
     for(const auto& report:hub.owned_snapshots())if(report.owner==fixture_local::owner()&&report.adapter==0)return report;
     assert(false&&"Missing local adapter observation");return {};
@@ -59,7 +79,7 @@ public:
         }
     }
     return hub.configure_scoped(std::move(activities),std::move(selectors),{},fixture_local::owner(),
-        hub.applied_configuration_revision()+1,std::move(commit));
+        hub.snapshot().applied_config_revision+1,std::move(commit));
 }
 [[maybe_unused]] static bool fixture_configure(amity::HubService& hub,std::vector<amity::Activity> activities){
     return fixture_configure_with_commit(hub,std::move(activities))==ESP_OK;
@@ -197,7 +217,6 @@ esp_err_t Bus::start(int gpio) {
     if (fixture_start_bus) { const auto error = fixture_start_bus(gpio); if (error != ESP_OK) return error; }
     impl_->gpio = gpio; return ESP_OK;
 }
-esp_err_t Bus::start(int gpio, QueueProfile) { return start(gpio); }
 void Bus::stop() {
     fixture_stopped_buses.push_back(impl_->gpio);
     fixture_pending.erase(std::remove_if(fixture_pending.begin(), fixture_pending.end(),
@@ -205,11 +224,12 @@ void Bus::stop() {
     impl_->gpio = 0; impl_->address = 15; impl_->received.clear();
 }
 void Bus::set_address(uint8_t address) { impl_->address = address; }
-bool Bus::send(const Frame &frame) {
-    fixture_sent.push_back({impl_->gpio, frame, 3, 0});
-    if (fixture_admission && !fixture_admission(impl_->gpio,frame)) return false;
-    if (fixture_send) return fixture_send(impl_->gpio, frame);
-    const uint8_t peer = fixture_peer(impl_->gpio);
+// Both admission paths record and answer frames through one wire model.
+static bool fixture_wire(int gpio, uint8_t address, std::deque<Frame> &received, const Frame &frame) {
+    fixture_sent.push_back({gpio, frame, 3, 0});
+    if (fixture_admission && !fixture_admission(gpio,frame)) return false;
+    if (fixture_send) return fixture_send(gpio, frame);
+    const uint8_t peer = fixture_peer(gpio);
     if (!fixture_present || frame.size < 2 || frame.destination() != peer) return true;
     Frame reply;
     switch (frame.data[1]) {
@@ -218,8 +238,8 @@ bool Bus::send(const Frame &frame) {
         reply.data[2] = peer ? 0x10 : 0; reply.data[3] = 0; reply.data[4] = peer ? 4 : 0;
         break;
     case 0x46: {
-        const auto name=fixture_peer_name?fixture_peer_name(impl_->gpio):std::string(peer?"Source":"TV");
-        reply.data[0] = (peer << 4) | impl_->address; reply.data[1] = 0x47; reply.size = 2;
+        const auto name=fixture_peer_name?fixture_peer_name(gpio):std::string(peer?"Source":"TV");
+        reply.data[0] = (peer << 4) | address; reply.data[1] = 0x47; reply.size = 2;
         for(const auto character:name)reply.data[reply.size++]=character;
         break;
     }
@@ -228,7 +248,7 @@ bool Bus::send(const Frame &frame) {
         break;
     default: return true;
     }
-    impl_->received.push_back(reply);
+    received.push_back(reply);
     return true;
 }
 bool Bus::receive(Frame &frame, uint32_t) {
@@ -252,7 +272,7 @@ static bool current_fence(ExecutionFence fence) {
 bool Bus::send_guarded(const Frame& frame,ExecutionFence fence,unsigned attempts) {
     if(!attempts||!current_fence(fence))return false;
     fixture_guarded.push_back({impl_->gpio, frame, fence, attempts});
-    const auto index=fixture_sent.size();const bool accepted=send(frame);
+    const auto index=fixture_sent.size();const bool accepted=fixture_wire(impl_->gpio,impl_->address,impl_->received,frame);
     fixture_sent[index].attempts=attempts;
     return accepted;
 }
@@ -260,7 +280,7 @@ bool Bus::send_async_guarded(const Frame& frame,ExecutionFence fence,TxCompletio
     if (!frame.size || frame.size > 16 || !attempts || !current_fence(fence)) return false;
     fixture_guarded.push_back({impl_->gpio, frame, fence, attempts});
     const auto index = fixture_sent.size();
-    const bool accepted = send(frame);
+    const bool accepted = fixture_wire(impl_->gpio, impl_->address, impl_->received, frame);
     fixture_sent[index].attempts = attempts;
     if (!accepted) return false;
     if (frame.size == 1) fixture_transmitted.push_back({impl_->gpio, frame, attempts, 0});

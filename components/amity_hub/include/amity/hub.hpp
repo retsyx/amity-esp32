@@ -41,7 +41,6 @@ struct Snapshot {
     std::vector<Device> devices;
     int current_activity = -1;
     uint32_t activity_generation = 0;
-    uint32_t binding_generation = 0, uncertain_releases = 0;
     std::string activity_error;
     uint32_t discovery_generation = 0;
     uint8_t front_address = 15, back_address = 15;
@@ -98,7 +97,6 @@ public:
     uint8_t receive(BusSide side, const cec::Frame &frame, ReceiveStep step = ReceiveStep::Frame);
     ReceiveStep receive_step() const { return receive_step_; }
     void discovered(BusSide side, uint8_t address);
-    void clear_devices();
     void begin_discovery(uint8_t sides = 3);
     void determine_front_physical_address(uint16_t fallback);
     bool apply_default_front_physical_address(uint16_t fallback);
@@ -108,8 +106,6 @@ public:
     // The resolver alone decides whether a missing recipient needs a scan.
     uint8_t pending_resolution() const { return pending_resolution_; }
     Device *find_device(const std::string &name, std::optional<BusSide> side = {});
-    Snapshot snapshot() const;
-    bool update_snapshot(Snapshot&)const;
     bool update_observation(system::OwnedAdapterSnapshot&)const;
     uint16_t front_physical_address()const{return physical_;}
     uint32_t activity_generation() const { return activity_generation_; }
@@ -142,7 +138,6 @@ private:
     ReceiveStep receive_step_ = ReceiveStep::Frame;
     int selected_ = -1;
     uint32_t activity_generation_ = 0;
-    uint32_t binding_generation_ = 0, uncertain_releases_ = 0;
     uint8_t front_ = 15, back_ = 15;
     uint16_t physical_ = 0xffff, discovered_physical_ = 0xffff;
     std::optional<uint16_t> detected_physical_;

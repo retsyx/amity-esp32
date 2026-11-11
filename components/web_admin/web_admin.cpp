@@ -102,8 +102,6 @@ esp_err_t status(httpd_req_t *req) {
     cJSON_AddStringToObject(root.get(),"activity_error",s.activity_error.c_str());
     cJSON_AddNumberToObject(root.get(),"discovery_generation",s.discovery_generation);
     cJSON_AddNumberToObject(root.get(),"activity_generation",s.activity_generation);
-    cJSON_AddNumberToObject(root.get(),"binding_generation",s.binding_generation);
-    cJSON_AddNumberToObject(root.get(),"uncertain_releases",s.uncertain_releases);
     cJSON_AddNumberToObject(root.get(),"current_activity",s.current_activity);
     cJSON_AddNumberToObject(root.get(),"front_address",s.front_address);
     cJSON_AddNumberToObject(root.get(),"back_address",s.back_address);

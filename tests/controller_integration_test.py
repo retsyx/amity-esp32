@@ -26,8 +26,7 @@ functions='\n'.join(body(matter,s) for s in [
     'void finish_controller_enrollment(',
     'extern "C" bool amity_matter_controller_enrollment_complete(',
     'extern "C" esp_err_t amity_matter_set_controller_enabled(',
-    'extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv(',
-    'extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE('])
+    'extern "C" void __wrap__ZN4chip3app11DnssdServer11StartServerEv('])
 # The member branch must occur before credentials, node and endpoint creation.
 s=(ROOT/matter).read_text();start=s[s.index('extern "C" esp_err_t amity_matter_start('):]
 assert start.index('if (!controller_enabled.load()) return start_actuator_substrate();')<start.index('amity_matter_prepare_credentials()')<start.index('node::create(')
@@ -76,7 +75,6 @@ std::mutex barrier;std::condition_variable cv;bool in_init=false,release_init=tr
 const char*tag="test";int observed_onoff=0,observed_volume=0;
 struct {int(*key)(unsigned char,void*)=nullptr;void*context=nullptr;} callbacks;
 namespace chip {
-namespace Dnssd {enum class CommissioningMode {kDisabled};}
 namespace Platform {int MemoryInit(){++memrefs;return 0;}}
 namespace DeviceLayer {
 struct Platform {int InitChipStack(){++host_inits;host=true;std::unique_lock<std::mutex>l(barrier);in_init=true;cv.notify_all();cv.wait(l,[]{return release_init;});return 0;}
@@ -99,7 +97,6 @@ namespace esp_matter::lock {struct ScopedChipStackLock{explicit ScopedChipStackL
 namespace amity_matter {int stops=0;void stop_apple_fabric_cleanup(){assert(stops==shutdowns);++stops;}}
 void event_callback(const void*,long){}int initialize_station_interface(){return ESP_OK;}int install_consortium_network_hooks(){++hooks;return 0;}
 extern "C" void __real__ZN4chip3app11DnssdServer11StartServerEv(void*){++dns;}
-extern "C" void __real__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(void*,chip::Dnssd::CommissioningMode){++dns;}
 ''' + functions + r'''
 void tests(){
  assert(!amity_matter_controller_enrollment_complete()&&!scheduled);
@@ -120,8 +117,7 @@ void tests(){
  assert(!amity_matter_controller_enrollment_complete()&&!scheduled);
  assert(amity_matter_set_controller_enabled(true)==ESP_ERR_INVALID_STATE&&!controller_enabled);
  assert(start_actuator_substrate()==0&&host&&wifi&&stack_started&&!started&&hooks==1&&driver_inits==1&&shutdowns==0);
- __wrap__ZN4chip3app11DnssdServer11StartServerEv(nullptr);
- __wrap__ZN4chip3app11DnssdServer11StartServerENS_5Dnssd17CommissioningModeE(nullptr,chip::Dnssd::CommissioningMode::kDisabled);assert(dns==0);
+ __wrap__ZN4chip3app11DnssdServer11StartServerEv(nullptr);assert(dns==0);
  callbacks.key=[](unsigned char,void*){++dispatches;return 0;};assert(dispatch_key(1)==ESP_ERR_INVALID_STATE&&dispatches==0);
  assert(amity_matter_set_controller_enabled(true)==ESP_ERR_INVALID_STATE);
  // Independently reset the process fixture to model a previously commissioned controller.

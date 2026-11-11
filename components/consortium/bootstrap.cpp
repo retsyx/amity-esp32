@@ -22,9 +22,4 @@ bool BootstrapRecords::finish(model::MessageId rid,std::string_view response){
     if(!connected_||!processing_||rid!=record_id_||response.empty()||response.size()>capacity)return false;
     cached_id_=rid;cached_request_=std::move(request_);response_.assign(response);record_id_={};processing_=false;received_.fill(false);received_count_=0;return true;
 }
-bool EnrollmentWindow::open(bool physical,uint64_t now){if(!physical||open_||now>UINT64_MAX-duration_ms)return false;opened_=now;deadline_=now+duration_ms;failed_proofs_=0;open_=true;session_=false;return true;}
-bool EnrollmentWindow::available(uint64_t now)const{return open_&&now>=opened_&&now<deadline_&&failed_proofs_<5;}
-bool EnrollmentWindow::admit(uint64_t now){if(!available(now)||session_)return false;session_=true;return true;}
-void EnrollmentWindow::failed_proof(){if(!open_)return;++failed_proofs_;session_=false;if(failed_proofs_>=5)close();}
-void EnrollmentWindow::close(){open_=session_=false;}
 } // namespace amity::consortium

@@ -24,15 +24,11 @@ struct RuntimeStatistics {
 struct TxCompletion { std::atomic<TxResult> result{TxResult::Pending}; };
 class Bus {
 public:
-    // Source compatibility only: every profile uses identical shared dispatch,
-    // Engine behavior and eight total queued-plus-active slots.
-    enum class QueueProfile { Legacy, Native };
     Bus();
     ~Bus();
+    // All ports share one nonblocking internal-memory dispatcher with
+    // identical queue limits, timing, attempts and completion semantics.
     esp_err_t start(int gpio);
-    // All ports share one nonblocking internal-memory dispatcher; the profile
-    // does not change queue limits, timing, attempts or completion semantics.
-    esp_err_t start(int gpio, QueueProfile);
     // Owner has already quiesced callers; also used to unwind partial startup.
     void stop();
     void set_address(uint8_t address);
@@ -40,7 +36,6 @@ public:
     // Admission never waits for FIFO capacity or wire acknowledgement. One
     // FIFO per wire holds eight queued+active messages, including releases.
     // Rejection drops the submission without retaining it; FIFO-full drops log.
-    bool send(const Frame &frame);
     bool send_guarded(const Frame &frame, ExecutionFence fence, unsigned attempts = 3);
     // Caller-owned tracking for the same sole FIFO. Rejection
     // leaves the tracker unchanged. Admission sets Pending; terminal publication

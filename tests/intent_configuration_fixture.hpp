@@ -54,4 +54,13 @@ inline Configuration switch_configuration(Configuration c, const std::string& la
 }
 inline void commit(ConfigurationStore& store,Configuration c,RevisionPair expected,Configuration& out){std::string error;assert(store.stage(std::move(c),expected,error)==ConfigResult::ok);ConfigurationSnapshot snapshot;assert(store.commit(snapshot,error)==ConfigResult::ok);out=snapshot->configuration;}
 
+// Publish a configuration exactly as saved, through the store's boot recovery.
+inline ConfigurationSnapshot saved_snapshot(const Configuration& c){
+    const auto payload=serialize_configuration(c);
+    const auto record="AMITY3\n"+c.consortium_id.str()+"\n"+std::to_string(c.config_revision)+"\n"+std::to_string(c.presentation_revision)+"\n"+
+        std::to_string(payload.size())+"\n"+sha256_hex(payload)+"\n"+payload;
+    Memory memory;memory.values["c0"]=record;memory.values["cm0"]="2:1:0:"+sha256_hex(record);
+    ConfigurationStore store(memory);ConfigurationSnapshot out;std::string error;
+    assert(store.recover(out,error)==ConfigResult::ok);return out;
+}
 inline void commit(ConfigurationStore& store,Configuration c,RevisionPair expected,ConfigurationSnapshot& out){std::string error;assert(store.stage(std::move(c),expected,error)==ConfigResult::ok);assert(store.commit(out,error)==ConfigResult::ok);}

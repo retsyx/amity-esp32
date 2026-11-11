@@ -79,17 +79,6 @@ K(snapshot_request);K(snapshot_chunk);K(update_begin);K(update_chunk);K(update_i
 #undef K
 }return "";}
 bool decimal(const Json *v,uint64_t &out) {if(!v||v->type!=Json::Type::string)return false;const auto parsed=model::parse_uint64(v->string);if(!parsed)return false;out=*parsed;return true;}
-bool parse_address(const Json &v,model::FullyQualifiedCecAddress &out) {
-    if(!closed(v,{"consortium_id","octopus_id","tentacle_id","side","logical_address"}))return false;
-    uint64_t tentacle=0,la=0;
-    if(!id(v.get("consortium_id"),out.port.consortium_id)||!id(v.get("octopus_id"),out.port.octopus_id)||!json_uint(v.get("tentacle_id"),tentacle,0,amity::last_tentacle_id)||!json_uint(v.get("logical_address"),la,0,14)||!text_is(v.get("side"),{"front","back"}))return false;
-    out.port.tentacle_id=tentacle;out.logical_address=la;out.port.side=text_is(v.get("side"),{"front"})?model::Side::front:model::Side::back;return out.valid();
-}
-bool parse_name(const Json &v,model::QualifiedDeviceName &out) {
-    if(!closed(v,{"consortium_id","octopus_id","tentacle_id","side","osd_name"}))return false;
-    uint64_t tentacle=0;if(!id(v.get("consortium_id"),out.port.consortium_id)||!id(v.get("octopus_id"),out.port.octopus_id)||!json_uint(v.get("tentacle_id"),tentacle,0,amity::last_tentacle_id)||!text_is(v.get("side"),{"front","back"})||!json_string(v.get("osd_name"),out.osd_name,1,14))return false;
-    out.port.tentacle_id=tentacle;out.port.side=text_is(v.get("side"),{"front"})?model::Side::front:model::Side::back;return out.valid();
-}
 Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     if(body.substr(0,4)=="AFU1")return parse_update_chunk_envelope(body,out);
     Json v;JsonError e;if(!parse_json(body,v,e,max_frame_bytes,2048)){if(detail)*detail=e;return Error::invalid_message;}

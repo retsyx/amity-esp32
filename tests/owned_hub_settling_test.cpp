@@ -16,10 +16,10 @@ struct Owners {
         fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
         fixture_peer_address=[](int gpio)->uint8_t{return gpio%2?0:4;};
         primary.set_system_identity(group,controller);primary.set_boot_identity(boot);
-        assert(primary.start(1,2)==ESP_OK);primary_task=latest_task;
+        assert(fixture_start(primary,1,2)==ESP_OK);primary_task=latest_task;
         if(remote){
             other=std::make_unique<HubService>();other->set_system_identity(group,member);other->set_boot_identity(other_boot);
-            other->set_coordinator_authority(false,1);assert(other->start(3,4)==ESP_OK);other_task=latest_task;
+            other->set_coordinator_authority(false,1);assert(fixture_start(*other,3,4)==ESP_OK);other_task=latest_task;
             assert(other->bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(*other);
             other->set_owned_observer([&](const auto& report){assert(primary.update_owned_snapshot(report));});
         }

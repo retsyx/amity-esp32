@@ -381,8 +381,7 @@ void Bus::Impl::record_queue_depth() {
 Bus::Bus() : impl_(new (std::nothrow) Impl) {}
 Bus::~Bus() = default;
 void Bus::stop() { impl_.reset(); }
-esp_err_t Bus::start(int gpio) { return start(gpio, QueueProfile::Legacy); }
-esp_err_t Bus::start(int gpio, QueueProfile) {
+esp_err_t Bus::start(int gpio) {
     if (!impl_) impl_.reset(new (std::nothrow) Impl);
     if (!impl_) return ESP_ERR_NO_MEM;
     auto &p = *impl_;
@@ -435,9 +434,6 @@ bool Bus::install_receive_policy(ReceivePolicy policy) {
     const bool valid = impl_->engine.install_receive_policy(policy);
     portEXIT_CRITICAL(&r.lock);
     return valid;
-}
-bool Bus::send(const Frame &frame) {
-    return send_guarded(frame, {});
 }
 static bool valid_fence_storage(ExecutionFence fence) {
     const auto valid = [](const std::atomic<uint32_t> *counter) {

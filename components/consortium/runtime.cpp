@@ -1431,7 +1431,7 @@ void invite_worker_work(void *arg){
     if(!reserved){admission_failed(scan,"Adding an Amity could not start. Finish the current setup operation and try again.");return;}
     // All paths return through C++ and release the exact reserved radio owner.
     struct Cleanup {uint64_t generation;~Cleanup(){gatt_client_disconnect();defer_radio_release(generation);}} cleanup{generation};
-    {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan||invitation_cancelled)return;admission.generation=generation;admission.deadline=deadline=now_ms()+EnrollmentWindow::duration_ms;}
+    {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id!=scan||invitation_cancelled)return;admission.generation=generation;admission.deadline=deadline=now_ms()+enrollment_window_ms;}
     auto current=[&](){return !invitation_cancelled&&now_ms()<deadline;};
     while(current()){
         std::vector<RuntimeAdmissionCandidate> candidates;
@@ -1667,7 +1667,7 @@ esp_err_t runtime_open_enrollment(uint64_t generation){
     std::lock_guard<std::mutex> guard(lock);
     if(!status.initialized||!status.credential_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;
     const auto e=gatt_server_open(generation,identity.id,bootstrap_request);
-    if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+EnrollmentWindow::duration_ms;status.enrollment_open=true;status.phase="enrollment_open";}
+    if(e==ESP_OK){candidate_generation=generation;candidate_deadline=now_ms()+enrollment_window_ms;status.enrollment_open=true;status.phase="enrollment_open";}
     return e;
 }
 void runtime_close_enrollment(){uint64_t generation;{std::lock_guard<std::mutex> guard(lock);generation=candidate_generation;candidate_generation=candidate_deadline=0;status.enrollment_open=false;if(group.role==Group::unclaimed&&!candidate_passive)status.phase="awaiting_setup";}gatt_server_close();defer_radio_release(generation);}
@@ -1943,10 +1943,6 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
         return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
-}
-esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){
-    if(kind==Kind::scoped_intent||kind==Kind::scoped_result)return ESP_ERR_INVALID_ARG;
-    return queue_control(owner,kind,std::move(payload),ttl,{});
 }
 esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint32_t ttl,uint64_t revision){
     return queue_control(owner,Kind::scoped_result,{},ttl,link?std::optional<model::LinkId>(link):std::nullopt,revision,{},0,std::make_shared<const model::OwnedAdapterSnapshot>(snapshot));

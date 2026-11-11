@@ -125,7 +125,6 @@ FrameReader::Result FrameReader::feed(const uint8_t *bytes,size_t size,size_t &c
     }
     return complete_?Result::frame:Result::incomplete;
 }
-void FrameReader::next_frame(){if(complete_)reset();}
 void FrameReader::reset(){prefix_size_=expected_=0;body_.clear();begun_=complete_=failed_=bulk_=false;last_progress_=started_at_=0;}
 std::vector<uint8_t> frame(std::string_view body,bool bulk){if(body.empty()||body.size()>max_frame_bytes)return {};const auto n=static_cast<uint32_t>(body.size())|(bulk?bulk_frame_flag:0);std::vector<uint8_t> out{uint8_t(n>>24),uint8_t(n>>16),uint8_t(n>>8),uint8_t(n)};out.insert(out.end(),body.begin(),body.end());return out;}
 } // namespace amity::consortium

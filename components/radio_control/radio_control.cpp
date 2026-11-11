@@ -160,7 +160,6 @@ bool matter_will_advertise(){
     return false;
 }
 void matter_advertising_disabled(){if(!mutex)return;Lock lock;const auto current=arbiter.reservation();if(current.owner==RadioMode::matter_induction)matter_disabled_generation=current.generation;}
-RadioReservation status(){if(!mutex)return {};Lock lock;return arbiter.reservation();}
 esp_err_t reserve_consortium(bool inviter,uint64_t& generation){
     generation=0;
     if(!mutex)return ESP_ERR_INVALID_STATE;

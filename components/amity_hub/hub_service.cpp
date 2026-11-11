@@ -243,7 +243,7 @@ struct HubService::Impl : Adapter {
     std::optional<system::OwnedIntent> accepted_selection;
 
     std::string last_activity_error;
-    system::OctopusId owned_controller;std::atomic<uint64_t> owned_config_revision{0};uint64_t owned_presentation_revision=0,cached_revision=0;
+    system::OctopusId owned_controller;std::atomic<uint64_t> owned_config_revision{0};uint64_t owned_presentation_revision=0;
     uint32_t processed_selection=0;
     OwnedSender owned_sender;
     system::OwnedAuthorization activity_auth;
@@ -284,14 +284,12 @@ struct HubService::Impl : Adapter {
 
     bool connector_configured(uint8_t id) const {
         if (id >= amity::max_tentacles) return false;
-        if (hardware_profile) return cec::connector_enabled(*hardware_profile, id);
-        return id == 0 && native_port_count == 2;
+        return hardware_profile && cec::connector_enabled(*hardware_profile, id);
     }
 
     esp_err_t start_buses_here() {
         for (size_t i = 0; i < native_port_count; ++i) {
-            const auto result = native_ports[i].bus->start(native_ports[i].gpio,
-                hardware_profile ? cec::Bus::QueueProfile::Native : cec::Bus::QueueProfile::Legacy);
+            const auto result = native_ports[i].bus->start(native_ports[i].gpio);
             if (result != ESP_OK) {
                 for (size_t j = 0; j < native_port_count; ++j) native_ports[j].bus->stop();
                 return result;
@@ -410,7 +408,7 @@ struct HubService::Impl : Adapter {
             command->activity_reservation=true;++owner_activity_commands;
         }
         if(activity_request(*command)&&command->receipt()){command->selection_reservation=true;++activity_requests;}
-        if(command->kind==Kind::Key||(command->kind==Kind::Release&&command->value>=0&&!command->selection_bound))
+        if(command->kind==Kind::Key||(command->kind==Kind::Release&&!command->selection_bound))
             command->input_admitted_us=esp_timer_get_time();
         command = owned.release();
         if (xQueueSend(commands, &command, 0) != pdTRUE) std::abort();
@@ -839,21 +837,11 @@ struct HubService::Impl : Adapter {
             // A completed timed web request belongs to its original activity
             // selection. It must not release a key newly pressed after setup.
             if(command.selection_bound&&(command.activity_generation!=activity_hub.activity_generation()||command.expected_selection!=activity_selection.load()||command.key_generation!=key_generation.load()))break;
-            if (command.value < 0) {
-                activity_hub.release_key();
-                // Disconnect/input loss also cancels key operations still
-                // awaiting device lookup, before they can reach the wire.
-                for (auto i = deferred.begin(); i != deferred.end();) {
-                    if ((*i)->kind != Kind::Key) { ++i; continue; }
-                    i = deferred.erase(i); xSemaphoreGive(command_slots);
-                }
-            } else {
-                activity_hub.release_key(static_cast<uint8_t>(command.value));
-                // A short tap whose recipient is still being discovered is
-                // finite: lookup may finish later, but cannot resurrect a hold.
-                for (auto &pending : deferred)
-                    if (pending->kind == Kind::Key && pending->value == command.value) pending->repeat = false;
-            }
+            activity_hub.release_key(static_cast<uint8_t>(command.value));
+            // A short tap whose recipient is still being discovered is
+            // finite: lookup may finish later, but cannot resurrect a hold.
+            for (auto &pending : deferred)
+                if (pending->kind == Kind::Key && pending->value == command.value) pending->repeat = false;
             {Command cleanup_command{Kind::KeyCleanup};clean_keys(cleanup_command);}
             break;
         case Kind::Standby:
@@ -1260,7 +1248,7 @@ struct HubService::Impl : Adapter {
         assign(cached.audio_status_known,audio.known);assign(cached.muted,audio.muted);assign(cached.volume,audio.volume);
         assign(cached.activity_settling,activity_settling(esp_timer_get_time()));assign(cached.activity_error,last_activity_error);
         assign(cached.applied_config_revision,owned_config_revision.load());assign(cached.applied_presentation_revision,owned_presentation_revision);
-        assign(cached.processed_activity_selection,processed_selection);cached_revision=owned_config_revision;
+        assign(cached.processed_activity_selection,processed_selection);
         if(scoped_publication_pending){scoped_publication_pending=false;--scoped_configurations;}
         for(uint8_t id=0;id<amity::max_tentacles;++id){auto& a=cached_adapters[id];a.tentacle_id=id;a.configured=connector_configured(id);a.observed_front_physical.reset();a.effective_front_physical.reset();
             if(a.configured)if(auto* engine=adapter(id)){const auto pa=engine->hub.front_physical_address();if(pa!=0xffff)a.effective_front_physical=pa;a.observed_front_physical=engine->hub.detected_front_physical_address();}
@@ -1800,23 +1788,6 @@ system::AdmissionResult HubService::Adapter::execute_owned(const system::OwnedIn
 
 HubService::HubService() : impl_(new Impl) {}
 HubService::~HubService() = default;
-esp_err_t HubService::start(int front_gpio, int back_gpio, uint16_t front_physical) {
-    auto &p = *impl_;
-    if (!p.lock || !p.configuration_gate) return ESP_ERR_NO_MEM;
-    if (p.commands) return ESP_ERR_INVALID_STATE;
-    if (front_gpio == back_gpio) return ESP_ERR_INVALID_ARG;
-    p.fallback_physical = front_physical;
-    p.front_defaults[0] = front_physical;
-    p.native_ports[0] = {0, system::Side::front, &p.front, front_gpio};
-    p.native_ports[1] = {0, system::Side::back, &p.back, back_gpio};
-    p.native_port_count = 2;
-    return p.start_owner();
-}
-esp_err_t HubService::start(const cec::BoardProfile& profile, uint16_t front_physical) {
-    auto defaults = filled_tentacles(uint16_t{0x1000});
-    defaults[0] = front_physical;
-    return start(profile, defaults);
-}
 esp_err_t HubService::start(const cec::BoardProfile& profile, const std::array<uint16_t, amity::max_tentacles>& front_physical) {
     auto& p = *impl_;
     if (!p.lock || !p.configuration_gate) return ESP_ERR_NO_MEM;
@@ -1936,7 +1907,6 @@ int HubService::activity_target() const {
     const auto target = p.activity_setup_in_progress()?p.reserved_target.load():p.cached.current_activity;
     xSemaphoreGive(p.lock); return target;
 }
-bool HubService::select_activity(int index) { return request_activity(index) == ESP_OK; }
 bool HubService::activity_setup_in_progress()const{return impl_->activity_setup_in_progress();}
 bool HubService::press_key(uint8_t key, bool repeat) {
     if (!impl_->task||!impl_->local_coordinator.load()) return false;
@@ -1990,12 +1960,6 @@ bool HubService::release_key(uint8_t key) {
     // new per-key epoch; unrelated buttons and commands are unaffected.
     (*impl_->release_generations)[key].fetch_add(1);
     ESP_LOGI(TAG,"Key release stage=fallback key=%u",static_cast<unsigned>(key));
-    return true;
-}
-bool HubService::release_key() {
-    if (impl_->enqueue(new (std::nothrow) Impl::Command{Impl::Kind::Release, -1})) return true;
-    if (!impl_->task) return false;
-    impl_->key_generation.fetch_add(1);
     return true;
 }
 bool HubService::standby() { return request_activity(-1) == ESP_OK; }
@@ -2175,9 +2139,6 @@ bool HubService::fence_owned(system::OctopusId controller,system::LinkId link){
 bool HubService::discover_owned(system::OctopusId owner,uint8_t adapter){
     if(!owner||adapter>=amity::max_tentacles)return false;
     auto* c=new(std::nothrow)Impl::ManagementCommand{Impl::Kind::OwnedDiscover,adapter};if(!c)return false;c->management().controller=owner;return impl_->submit(c)==ESP_OK;
-}
-uint64_t HubService::applied_configuration_revision()const{
-    auto& p=*impl_;xSemaphoreTake(p.lock,portMAX_DELAY);const auto revision=p.cached_revision;xSemaphoreGive(p.lock);return revision;
 }
 uint64_t HubService::executing_configuration_revision()const{return impl_->owned_config_revision.load();}
 }

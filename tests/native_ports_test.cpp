@@ -44,7 +44,7 @@ static void adapter_settings_owner_tests() {
     auto sparse = cec::legacy_buttonless_profile; sparse.id = cec::BoardProfileId::Development4Tentacle; sparse.tentacle_count = 4;
     for(unsigned i=0;i<8;++i)sparse.ports[i]={static_cast<uint8_t>(i/2),i%2?cec::Side::Back:cec::Side::Front,-1};
     {
-        LocalHubService owner; setup(owner); assert(owner.start(sparse)==ESP_OK);assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
+        LocalHubService owner; setup(owner); assert(fixture_start(owner,sparse)==ESP_OK);assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
         for(const auto& slot:owner.adapter_runtime_snapshot())assert(!slot.configured&&!slot.effective_front_physical);
         unsigned writes=0;assert(owner.commit_adapter_settings(boot,{{3,0x5200}},deadline(),[&]{++writes;return ESP_OK;})==ESP_ERR_INVALID_STATE);assert(!writes);
     }
@@ -73,7 +73,7 @@ static void pending_activity_rejects_settings(bool repair) {
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
     fixture_send={};fixture_transmit={};fixture_incoming.clear();fixture_sent.clear();
     const auto boot=live_id<BootId>(3);
-    LocalHubService owner;owner.set_boot_identity(boot);assert(owner.start(1,2,0x5000)==ESP_OK);
+    LocalHubService owner;owner.set_boot_identity(boot);assert(fixture_start(owner,1,2,0x5000)==ESP_OK);
     assert(fixture_configure(owner,{{"Watch","TV","Wanted","Source","",0}}));run_one_command();fixture_finish_discovery(owner);
     const auto boot_scan=owner.snapshot().discovery_generation;
     fixture_tick=0;fixture_time+=130000000;fixture_sent.clear();fixture_async_autocomplete=false;
@@ -110,11 +110,11 @@ static void passive_start_can_become_main() {
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
     fixture_send={};fixture_transmit={};fixture_incoming.clear();fixture_sent.clear();
     LocalHubService owner;owner.set_coordinator_authority(false,1);
-    assert(owner.start(1,2)==ESP_OK);
+    assert(fixture_start(owner,1,2)==ESP_OK);
     assert(owner.transition_coordinator_authority(true,2)==ESP_OK);
     assert(fixture_configure(owner,{{"Watch","TV","Source","Source","",0}}));
     run_one_command();fixture_finish_discovery(owner);
-    assert(owner.select_activity(0));run_one_command();
+    assert(fixture_select(owner,0));run_one_command();
     for(unsigned n=0;n<100&&owner.snapshot().activity_settling;++n)run_idle(1);
     assert(owner.snapshot().current_activity==0&&!owner.snapshot().activity_settling);
     fixture_tick=0;fixture_sent.clear();

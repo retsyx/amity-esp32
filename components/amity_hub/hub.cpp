@@ -126,23 +126,6 @@ void Hub::announce(BusSide side) {
     send(side, 15, {0x87, 0, 0, 0});
 }
 
-Snapshot Hub::snapshot() const {
-    Snapshot s;
-    update_snapshot(s);
-    return s;
-}
-
-bool Hub::update_snapshot(Snapshot& s)const {
-    bool changed=false;
-    const auto assign=[&](auto& previous,const auto& value){if(!(previous==value)){previous=value;changed=true;}};
-    assign(s.current_activity,selected_);assign(s.activity_generation,activity_generation_);
-    assign(s.binding_generation,binding_generation_);assign(s.uncertain_releases,uncertain_releases_);
-    assign(s.front_address,front_);assign(s.back_address,back_);assign(s.front_physical_address,physical_);
-    assign(s.devices,devices_);assign(s.ready,front_<15&&back_<15&&physical_!=0xffff);
-    assign(s.audio_status_known,audio_status_known_);assign(s.muted,muted_);assign(s.volume,volume_);
-    return changed;
-}
-
 bool Hub::update_observation(system::OwnedAdapterSnapshot& report)const {
     bool changed=false;
     const auto assign=[&](auto& previous,const auto& value){if(!(previous==value)){previous=value;changed=true;}};
@@ -260,7 +243,6 @@ bool Hub::transmit_key(const Device& recipient,uint8_t mapped,bool audio){
 bool Hub::transmit_release(const Device& recipient,bool audio){
     const bool admitted=send(recipient.bus,recipient.address,{0x45});
     if(admitted)key_released(audio);
-    if(!admitted)++uncertain_releases_;
     return admitted;
 }
 
@@ -282,7 +264,6 @@ void Hub::tick(uint64_t now_us) {
 
 void Hub::invalidate_endpoint(BusSide side, uint8_t address) {
     transport_.invalidate_binding(side, address);
-    ++binding_generation_;
     // Raw held state has no retained endpoint. The next repeat or release
     // resolves the current role again through the shared resolver.
     audio_query_pending_ = false;
@@ -290,7 +271,6 @@ void Hub::invalidate_endpoint(BusSide side, uint8_t address) {
     for (auto &d : devices_) if (d.bus == side && d.address == address) d.resolved = false;
 }
 
-void Hub::clear_devices() { devices_.clear(); discovery_.clear(); discovering_ = false; }
 
 void Hub::begin_discovery(uint8_t sides) {
     discovery_.clear();

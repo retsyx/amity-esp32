@@ -40,7 +40,6 @@ HostnameSettings hostname_settings();
 esp_err_t save_hostname(uint64_t expected_revision, std::string hostname);
 const char *initial_admin_auth();
 uint16_t front_physical_address();
-esp_err_t save_front_physical_address(const std::string &value);
 // Stable hardware slots, never a compact list of attached adapters. The owner
 // selects the stored scanned address or durable default on its task.
 constexpr std::array<uint16_t, amity::max_tentacles> default_adapter_physical_addresses() {

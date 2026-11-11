@@ -53,7 +53,6 @@ public:
     // Read-only diagnostics; admission/deadline decisions remain in the parser.
     struct Progress {uint64_t idle_ms,total_ms;bool clock_reversed;};
     Progress progress(uint64_t now)const{return {begun_&&now>=last_progress_?now-last_progress_:0,begun_&&now>=started_at_?now-started_at_:0,begun_&&now<last_progress_};}
-    void next_frame();
     void reset();
 private:
     uint8_t prefix_[4]{};

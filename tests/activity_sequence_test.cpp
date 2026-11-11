@@ -50,8 +50,8 @@ static void start_owner(HubService& hub,m::OctopusId id,bool two_adapters=false,
         const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
             {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
              {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
-        assert(hub.start(profile)==ESP_OK);
-    }else assert(hub.start(front,back)==ESP_OK);
+        assert(fixture_start(hub,profile)==ESP_OK);
+    }else assert(fixture_start(hub,front,back)==ESP_OK);
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     fixture_tick=0;
 }
@@ -98,7 +98,7 @@ static void owner_lane_and_independent_keys(){
     volume.edges[0].down=false;enqueue(hub,volume);assert(count(2,{0x45})==1);drain(hub);
 }
 static void cold_lookup_precedes_later_recipe(int next){
-    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    reset_fixture();LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
     assert(fixture_configure(hub,{{"First","TV","Wanted","Source","",0},{"Later","TV","Source","Source","",0}}));
     run_one_command();fixture_finish_discovery(hub);
     // Permit a genuine recipient-cache miss after boot's per-side cooldown.
@@ -165,7 +165,7 @@ static void revision_bind_waits_for_old_recipe_cleanup(){
     drain(hub);
 }
 static void newer_activity_fences_unfinished_reactive_standby(){
-    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    reset_fixture();LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
     assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;fixture_sent.clear();fixture_async_autocomplete=false;
     // The original no-activity reaction awaits Front Standby before Back.
@@ -184,7 +184,7 @@ static void newer_activity_fences_unfinished_reactive_standby(){
 static void active_source_reply_follows_route_completion(){
     reset_fixture();LocalHubService hub;
     hub.set_system_identity(group,controller);hub.set_boot_identity(boot);
-    assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_start(hub,1,2)==ESP_OK);
     {
         assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
             {{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},
@@ -242,7 +242,7 @@ struct UserInput {
     }
 };
 static void existing_release_gate_covers_actual_worker_setup(bool all_up){
-    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    reset_fixture();LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
     assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;assert(hub.request_activity(0)==ESP_OK);run_one_command();drain(hub);
     assert(hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
@@ -302,7 +302,7 @@ static void existing_release_gate_covers_actual_worker_setup(bool all_up){
     input.button(ble::RemoteButton::VolumeUp,false);assert(count(2,{0x45})==1);drain(hub);
 }
 static void long_power_repair_preserves_normal_input(){
-    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    reset_fixture();LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
     assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;assert(hub.request_activity(0)==ESP_OK);run_one_command();drain(hub);
     UserInput input(hub);assert(!input.policy.waiting_for_release());
