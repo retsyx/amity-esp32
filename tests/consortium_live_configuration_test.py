@@ -300,10 +300,10 @@ void observation_expiry_is_not_lost_causal_work(){
  assert(!queued_causal(observation)&&queued_causal(input));
  a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled&&diagnostic_logs.empty());
  assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
- a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_intent,{},1000,{},scope.config_revision,key)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
+ a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,key)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
  assert(retries.size()==2&&diagnostic_logs.empty()&&a->queue.front().owned==key);
  a->queue.clear();a->queue.push_back(input);
- assert(queue_control(a->peer,Kind::scoped_result,snapshot,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE);
+ assert(queue_control(a->peer,Kind::scoped_result,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE);
  assert(a->restart_requested&&a->execution_fenced&&!a->ready&&!a->context_ready&&!a->cancelled&&a->tls->usable()&&shutdowns==0&&a->queue.empty());
  assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_intent age_ms=1100 ttl_ms=1000")!=std::string::npos);
  a=start(false);a->queue.push_back(input);clock_ms=1200;assert(!pump(*a)&&a->queue.empty()&&a->tls->sent.empty());

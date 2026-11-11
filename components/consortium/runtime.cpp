@@ -1913,10 +1913,8 @@ esp_err_t runtime_send_update(model::OctopusId owner,Kind kind,std::string paylo
 esp_err_t runtime_stage_update(model::OctopusId owner,std::string payload,uint32_t ttl){
     return queue_update(owner,Kind::update_install,std::move(payload),ttl,true);
 }
-static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl,std::optional<model::LinkId> expected_link,uint64_t revision=0,std::shared_ptr<const model::OwnedIntent> owned=nullptr,uint64_t created=0,std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot=nullptr){
-    if(is_update_kind(kind))return runtime_send_update(owner,kind,std::move(payload),ttl);
-    if(retired_kind(kind))return ESP_ERR_NOT_SUPPORTED;
-    if(!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;
+static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std::optional<model::LinkId> expected_link,uint64_t revision=0,std::shared_ptr<const model::OwnedIntent> owned=nullptr,uint64_t created=0,std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot=nullptr){
+    if(!ttl||ttl>10000)return ESP_ERR_INVALID_ARG;
     SnapshotRetryBatch retries;DeferredLinkTrace diagnostics;
     std::lock_guard<std::mutex> guard(lock);if(!status.authority_ready&&group.role==Group::coordinator)return ESP_ERR_INVALID_STATE;
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
@@ -1938,14 +1936,14 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
             return ESP_ERR_NO_MEM;
         }
         const bool current_context=owned&&(owned->kind==model::OwnedIntentKind::context||owned->kind==model::OwnedIntentKind::activity)&&owned->config_revision==active->session.scope().config_revision;
-        active->queue.push_back({kind,std::move(payload),ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned),std::move(snapshot)});
+        active->queue.push_back({kind,{},ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned),std::move(snapshot)});
         if(current_context){active->context_ready=true;active->context_requested=false;active->refreshing=false;}
         return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
 }
 esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint32_t ttl,uint64_t revision){
-    return queue_control(owner,Kind::scoped_result,{},ttl,link?std::optional<model::LinkId>(link):std::nullopt,revision,{},0,std::make_shared<const model::OwnedAdapterSnapshot>(snapshot));
+    return queue_control(owner,Kind::scoped_result,ttl,link?std::optional<model::LinkId>(link):std::nullopt,revision,{},0,std::make_shared<const model::OwnedAdapterSnapshot>(snapshot));
 }
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     if(!link)return;
@@ -1994,7 +1992,7 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
     if(!intent.generation||!(key?bool(intent.target.port.consortium_id)&&bool(intent.target.port.octopus_id):(port_only?intent.target.port.valid():intent.target.valid())))return ESP_ERR_INVALID_ARG;
     const uint32_t cap=cleanup?2000:key?500:1000;
     const uint32_t ttl=cap;
-    const auto result=queue_control(intent.target.port.octopus_id,Kind::scoped_intent,{},ttl,link,intent.config_revision,std::make_shared<const model::OwnedIntent>(intent),now);
+    const auto result=queue_control(intent.target.port.octopus_id,Kind::scoped_intent,ttl,link,intent.config_revision,std::make_shared<const model::OwnedIntent>(intent),now);
     if(result!=ESP_OK&&intent.kind==model::OwnedIntentKind::context)runtime_fence_owned_link(intent.target.port.octopus_id,link);
     return result;
     }();

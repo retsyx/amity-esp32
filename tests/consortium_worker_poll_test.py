@@ -48,7 +48,7 @@ void admission_after_iteration_clock_does_not_expire_fresh_input(){
  a->mutex.before_lock=[&]{
   clock_ms+=10;admitted=clock_ms;
   auto key=action(*a);key.kind=model::OwnedIntentKind::key_edges;key.edges[0]={0x41,true};key.edge_count=1;
-  assert(queue_control(a->peer,Kind::scoped_intent,{},500,original.link_id,7,
+  assert(queue_control(a->peer,Kind::scoped_intent,500,original.link_id,7,
       std::make_shared<const model::OwnedIntent>(key),admitted)==ESP_OK);
   clock_ms+=20; // Queue-lock delay must still consume the original budget.
  };
@@ -67,7 +67,7 @@ void original_queue_deadline_and_clock_reversal_remain_fenced(){
 }
 void pending_receive_keeps_pumping(){
  auto a=start(true);a->tls->socket=3;status.authority_ready=true;reset_worker();on_send={};unsigned polls=0;uint64_t admitted=0,budget=0;
- auto admit=[&]{auto i=std::make_shared<const model::OwnedIntent>(action(*a));admitted=clock_ms;assert(queue_control(a->peer,Kind::scoped_intent,{},1000,a->session.scope().link_id,7,i,admitted)==ESP_OK);};
+ auto admit=[&]{auto i=std::make_shared<const model::OwnedIntent>(action(*a));admitted=clock_ms;assert(queue_control(a->peer,Kind::scoped_intent,1000,a->session.scope().link_id,7,i,admitted)==ESP_OK);};
  a->tls->poller=[&](std::string& text){++polls;if(polls==1)admit();if(clock_ms<1300)return FakeTls::ReceiveResult::pending;text=device_status;return FakeTls::ReceiveResult::frame;};
  // Only the old operational whole-frame read invokes this blocking seam.
  a->tls->incoming.push_back(device_status);a->tls->before_receive=[&]{admit();clock_ms+=1180;};
@@ -160,7 +160,7 @@ void fatal_receive_ends_worker_without_recovery(){
 }
 void retiring_does_not_pump_ordinary_work_during_partial_receive(){
  auto a=start(true);a->tls->socket=3;status.authority_ready=true;reset_worker();uint64_t budget=0;unsigned polls=0;
- a->tls->poller=[&](std::string& text){if(++polls==1){auto i=std::make_shared<const model::OwnedIntent>(action(*a));assert(queue_control(a->peer,Kind::scoped_intent,{},1000,a->session.scope().link_id,7,i,clock_ms)==ESP_OK);a->retiring=true;}if(clock_ms<300)return FakeTls::ReceiveResult::pending;text=device_status;return FakeTls::ReceiveResult::frame;};
+ a->tls->poller=[&](std::string& text){if(++polls==1){auto i=std::make_shared<const model::OwnedIntent>(action(*a));assert(queue_control(a->peer,Kind::scoped_intent,1000,a->session.scope().link_id,7,i,clock_ms)==ESP_OK);a->retiring=true;}if(clock_ms<300)return FakeTls::ReceiveResult::pending;text=device_status;return FakeTls::ReceiveResult::frame;};
  assert(operational_receive(*a,budget)&&a->tls->sent.empty()&&a->queue.size()==1&&budget==0);
 }
 std::string update_base(){return "\"request_id\":\"11111111111111111111111111111111\",\"release_id\":\"release-one\",\"image_sha256\":\""+std::string(64,'a')+"\"";}
@@ -175,7 +175,7 @@ void aged_firmware_survives_control_pruning_and_stays_before_validation(){
  assert(runtime_send_update(a->peer,Kind::update_install,activate_image(),5000)==ESP_OK);
  assert(runtime_stage_update(a->peer,stage_image(),5000)==ESP_OK);
  clock_ms=12100;
- assert(queue_control(a->peer,Kind::device_status,"{\"hostname\":\"fresh\"}",1000,{})==ESP_OK);
+ assert(queue_control(a->peer,Kind::scoped_intent,1000,a->session.scope().link_id,7,std::make_shared<const model::OwnedIntent>(action(*a)),clock_ms)==ESP_OK);
  assert(a->queue.size()==4&&a->queue[0].kind==Kind::update_chunk&&a->queue[1].kind==Kind::update_chunk&&a->queue[2].payload==stage_image());
  unsigned chunks=0;bool staged=false;
  on_send=[&](Active&,const Envelope& e){
@@ -203,7 +203,7 @@ void aged_firmware_keeps_existing_fifo_capacity(){
  auto a=start(true);reset_worker();
  for(unsigned n=0;n<16;++n)assert(runtime_send_update(a->peer,Kind::update_chunk,image_chunk(n*2048),5000)==ESP_OK);
  clock_ms=12100;
- assert(queue_control(a->peer,Kind::device_status,"{\"hostname\":\"fresh\"}",1000,{})==ESP_ERR_NO_MEM);
+ assert(queue_control(a->peer,Kind::scoped_intent,1000,a->session.scope().link_id,7,std::make_shared<const model::OwnedIntent>(action(*a)),clock_ms)==ESP_ERR_NO_MEM);
  assert(a->queue.size()==16&&recoveries==0&&shutdowns==0);
 }
 void firmware_dispatch_failure_restarts_upload_on_the_same_tls(){
