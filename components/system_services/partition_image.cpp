@@ -4,8 +4,6 @@
 #include "system_configuration.hpp"
 #include "esp_ota_ops.h"
 #include "esp_app_desc.h"
-#include "psa/crypto.h"
-#include <algorithm>
 #include <array>
 #include <cstring>
 
@@ -63,14 +61,8 @@ esp_err_t read_partition_release_direct(const esp_partition_t* partition,Release
     if(result!=ESP_OK||!memchr(app.version,0,sizeof(app.version))||release.firmware_version!=app.version||
        memcmp(app.project_name,esp_app_get_description()->project_name,sizeof(app.project_name))||
        release.image_elf_sha256!=hex(std::string_view(reinterpret_cast<const char*>(app.app_elf_sha256),32))){error="Firmware image identity differs from its release";return ESP_ERR_INVALID_CRC;}
-    psa_hash_operation_t digest=PSA_HASH_OPERATION_INIT;
-    if(psa_hash_setup(&digest,PSA_ALG_SHA_256)!=PSA_SUCCESS)return ESP_FAIL;
-    std::array<char,2048> bytes{};
-    for(uint64_t offset=0;offset<release.image_bytes;){const size_t count=std::min<uint64_t>(bytes.size(),release.image_bytes-offset);
-        result=partition_flash([&]{return esp_partition_read(partition,offset,bytes.data(),count);});
-        if(result!=ESP_OK||psa_hash_update(&digest,reinterpret_cast<const uint8_t*>(bytes.data()),count)!=PSA_SUCCESS){psa_hash_abort(&digest);error="Staged firmware could not be verified";return result==ESP_OK?ESP_FAIL:result;}offset+=count;}
-    uint8_t hash[32];size_t count=0;
-    if(psa_hash_finish(&digest,hash,sizeof(hash),&count)!=PSA_SUCCESS||count!=sizeof(hash)||release.image_sha256!=hex(std::string_view(reinterpret_cast<const char*>(hash),count))){psa_hash_abort(&digest);error="Staged firmware image digest differs from its release";return ESP_ERR_INVALID_CRC;}
+    // The trailer is committed only after the receiving stream and native OTA
+    // image pass validation. Reading its release must not hash the image again.
     return ESP_OK;
 }
 esp_err_t read_partition_image_direct(const esp_partition_t* partition,uint64_t offset,size_t count,std::string& bytes,std::string& error){
@@ -80,8 +72,7 @@ esp_err_t read_partition_image_direct(const esp_partition_t* partition,uint64_t 
 }
 }
 esp_err_t read_partition_release(const esp_partition_t* partition,ReleaseManifest& release,std::string& signature_hex,std::string& error){
-    // Keep a complete verification on the internal I/O task. Nested flash
-    // calls execute there directly instead of dispatching every image block.
+    // Read the release and application descriptor in one internal I/O dispatch.
     return partition_flash([&]{return read_partition_release_direct(partition,release,signature_hex,error);});
 }
 esp_err_t read_partition_image(const esp_partition_t* partition,uint64_t offset,size_t count,std::string& bytes,std::string& error){

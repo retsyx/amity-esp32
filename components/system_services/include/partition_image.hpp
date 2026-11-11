@@ -15,8 +15,11 @@ inline constexpr char partition_release_magic[16]="AMITY-IMAGE-V1\n";
 esp_err_t validate_release(std::string_view manifest,std::string_view signature_hex,
                            ReleaseManifest& release,std::string& error);
 esp_err_t erase_partition_release(const esp_partition_t* partition);
+// Commit only after image digest and native OTA validation both succeed.
 esp_err_t write_partition_release(const esp_partition_t* partition,const ReleaseManifest& release,
                                  std::string_view signature_hex,std::string& error);
+// The committed trailer records completed staging. Check its integrity and
+// application identity without repeating whole-image verification.
 esp_err_t read_partition_release(const esp_partition_t* partition,ReleaseManifest& release,
                                 std::string& signature_hex,std::string& error);
 esp_err_t read_partition_image(const esp_partition_t* partition,uint64_t offset,size_t count,

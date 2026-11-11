@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://amity.invalid/implementation/consortium/v1/payloads.schema.json",
   "title": "Implemented authenticated owner intents and Amity management payloads",
-  "$comment": "Closed typed owner delivery plus existing management. Scoped recipients resolve locally; no persisted enabled, route/binding/domain/resource approvals or prepared execution plans. Exact membership/boot/config/input authorization remains runtime enforcement.",
+  "$comment": "Closed typed owner delivery plus existing management. Scoped recipients resolve locally; no persisted enabled, route/binding/domain/resource approvals or prepared execution plans. Exact membership/boot/config/input authorization remains runtime enforcement. Firmware image chunks use the binary AFU1 frame defined in update.hpp; no JSON UpdateChunk is accepted.",
   "$defs": {
     "Hello": {
       "type": "object",
@@ -1698,47 +1698,6 @@
         "image_sha256",
         "canonical_manifest",
         "signature_hex"
-      ],
-      "additionalProperties": false
-    },
-    "UpdateChunk": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
-        },
-        "release_id": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9._-]{1,96}$"
-        },
-        "image_sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "offset": {
-          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/UInt64String"
-        },
-        "data_hex": {
-          "type": "string",
-          "pattern": "^([0-9a-f]{2}){1,2048}$",
-          "maxLength": 4096
-        },
-        "chunk_sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 64,
-          "maxLength": 64
-        }
-      },
-      "required": [
-        "request_id",
-        "release_id",
-        "image_sha256",
-        "offset",
-        "data_hex",
-        "chunk_sha256"
       ],
       "additionalProperties": false
     },

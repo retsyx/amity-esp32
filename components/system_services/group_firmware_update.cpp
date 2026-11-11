@@ -1,6 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "group_firmware_update.hpp"
-#include "config_store.hpp"
+#include "amity/consortium/update.hpp"
 #include "system_configuration.hpp"
 #include "system_services.hpp"
 #include "esp_random.h"
@@ -19,6 +19,7 @@ struct Target {
     m::OctopusId owner;
     uint64_t offset=0,last_progress=0,next_attempt=0;
     std::string phase="queued",error;
+    m::MessageId begin{};
 };
 struct Cohort {
     m::MessageId id;
@@ -47,7 +48,6 @@ std::string string(const c::Json& value,const char* field){const auto* p=value.g
 uint64_t decimal(const c::Json& value,const char* field){uint64_t n=0;c::decimal(value.get(field),n);return n;}
 m::MessageId fresh(){return m::MessageId::generate([](uint8_t* bytes,size_t count){esp_fill_random(bytes,count);return true;}).value_or(m::MessageId{});}
 std::string hex(std::string_view bytes){const char alphabet[]="0123456789abcdef";std::string out(2*bytes.size(),'0');for(size_t n=0;n<bytes.size();++n){const auto b=uint8_t(bytes[n]);out[2*n]=alphabet[b>>4];out[2*n+1]=alphabet[b&15];}return out;}
-bool unhex(std::string_view bytes,std::string& out){if(bytes.size()%2||bytes.size()>4096)return false;out.clear();for(size_t n=0;n<bytes.size();n+=2){const auto digit=[](char b){return b>='0'&&b<='9'?b-'0':b>='a'&&b<='f'?b-'a'+10:-1;};const int a=digit(bytes[n]),b=digit(bytes[n+1]);if(a<0||b<0)return false;out+=char(a*16+b);}return true;}
 std::string base(m::MessageId id,const ReleaseManifest& release){return "\"request_id\":"+quote(id.str())+",\"release_id\":"+quote(release.release_id)+",\"image_sha256\":"+quote(release.image_sha256);}
 bool busy(){return cohort.phase=="uploading"||cohort.phase=="distributing"||cohort.phase=="activating";}
 std::string report_job(const Cohort& value);
@@ -111,6 +111,16 @@ std::string receiver_result(const c::Envelope& envelope,const char* stage,const 
         ",\"offset\":"+quote(string(report,"received_bytes").empty()?"0":string(report,"received_bytes"))+",\"stage\":"+quote(stage)+",\"error\":"+quote(error)+"}";
 }
 c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
+    if(envelope.kind==c::Kind::update_chunk){
+        std::lock_guard<std::mutex> lock(incoming_gate);
+        if(!envelope.update_chunk||!incoming_begin||incoming_owner!=owner||
+           envelope.update_chunk->begin_id!=incoming_begin)return c::Error::transaction_conflict;
+        const auto& chunk=*envelope.update_chunk;std::string error;
+        const auto applied=peer_chunk(incoming_release,chunk.offset,chunk.bytes,error);
+        if(applied==ESP_OK)return c::Error::none;
+        peer_abort("Firmware stream rejected; current firmware retained");incoming_begin={};
+        return applied==ESP_ERR_INVALID_ARG?c::Error::transaction_conflict:c::Error::storage_failure;
+    }
     std::string error;esp_err_t applied=ESP_ERR_INVALID_ARG;const char* stage="rejected";const char* code="INVALID_MESSAGE";
     const auto& request=envelope.payload;const auto release_id=string(request,"release_id"),image_hash=string(request,"image_sha256");
     bool matching=false;{std::lock_guard<std::mutex> lock(incoming_gate);matching=incoming_begin&&incoming_owner==owner&&incoming_release==release_id&&incoming_hash==image_hash;}
@@ -128,8 +138,7 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
             applied=peer_begin(manifest.canonical,string(request,"signature_hex"),error);code=applied==ESP_ERR_INVALID_ARG?"INVALID_MANIFEST":"NOT_READY";
             if(applied==ESP_OK){stage="ready";std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=*m::MessageId::parse(string(request,"request_id"));incoming_release=release_id;incoming_hash=image_hash;}
         }
-    }else if(envelope.kind==c::Kind::update_chunk){std::string bytes;if(unhex(string(request,"data_hex"),bytes)&&config_store::sha256_hex(bytes)==string(request,"chunk_sha256")){applied=peer_chunk(release_id,decimal(request,"offset"),bytes,error);code=applied==ESP_ERR_INVALID_ARG?"OFFSET_MISMATCH":"STORAGE_FAILURE";if(applied==ESP_OK)stage="progress";}}
-    else if(envelope.kind==c::Kind::update_install){
+    }else if(envelope.kind==c::Kind::update_install){
         const bool staging=string(request,"phase")=="stage";
         applied=staging?peer_stage(release_id,error):peer_install(release_id,error,uint32_t(decimal(request,"reboot_delay_ms")));
         if(staging&&applied!=ESP_OK)peer_abort("Firmware staging failed; current firmware retained");
@@ -137,9 +146,6 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
     }else if(envelope.kind==c::Kind::update_abort){peer_abort("Main Amity cancelled the update");applied=ESP_OK;stage="aborted";}
     else if(envelope.kind==c::Kind::update_status){applied=ESP_OK;stage="status";}
     else return c::Error::unsupported_kind;
-    // Ordered stream chunks need no successful application acknowledgement.
-    // The final stage response confirms the complete image and its validation.
-    if(envelope.kind==c::Kind::update_chunk&&applied==ESP_OK)return c::Error::none;
     if(c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,stage,applied==ESP_OK?"":code),5000)!=ESP_OK)return c::Error::queue_full;
     return applied==ESP_OK?c::Error::none:applied==ESP_ERR_INVALID_ARG?c::Error::invalid_message:applied==ESP_ERR_INVALID_STATE?c::Error::not_ready:c::Error::storage_failure;
 }
@@ -196,7 +202,7 @@ void distribute(){
     else if(target.phase=="queued"){
         if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,true);
         success=exchange(target.owner,c::Kind::update_begin,"{"+base(id,snapshot.release)+",\"canonical_manifest\":"+quote(snapshot.release.canonical)+",\"signature_hex\":"+quote(snapshot.signature)+"}",id,snapshot.release,response)&&string(response,"stage")=="ready";
-        if(success){target.phase="uploading";target.offset=0;}else {error="This Amity has not accepted the firmware.";if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);}
+        if(success){target.phase="uploading";target.offset=0;target.begin=id;}else {error="This Amity has not accepted the firmware.";if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);}
     }else if(target.offset<snapshot.release.image_bytes){
         // Feed the existing bounded link FIFO, never another transfer queue.
         // Offset means locally admitted bytes; only staging confirms receipt.
@@ -204,8 +210,8 @@ void distribute(){
             std::string bytes;const auto count=size_t(std::min<uint64_t>(2048,snapshot.release.image_bytes-target.offset));
             const auto read=snapshot.automatic?read_running_image(target.offset,count,bytes,error):read_staged_image(target.offset,count,bytes,error);
             if(read!=ESP_OK){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,"{"+base(abort,snapshot.release)+",\"reason\":\"failed\"}",abort,snapshot.release,ignored,1000);fail_job(error);return;}
-            const auto chunk=fresh();
-            const auto sent=c::runtime_send_update(target.owner,c::Kind::update_chunk,"{"+base(chunk,snapshot.release)+",\"offset\":\""+std::to_string(target.offset)+"\",\"data_hex\":"+quote(hex(bytes))+",\"chunk_sha256\":"+quote(config_store::sha256_hex(bytes))+"}",5000);
+            const auto sent=c::runtime_send_update(target.owner,c::Kind::update_chunk,
+                c::encode_update_chunk(target.begin,target.offset,bytes),5000);
             if(sent==ESP_ERR_NO_MEM){backpressured=true;break;}
             if(sent!=ESP_OK){stream_failed=true;error="Waiting for the firmware connection.";break;}
             target.offset+=bytes.size();success=true;

@@ -91,6 +91,7 @@ bool parse_name(const Json &v,model::QualifiedDeviceName &out) {
     out.port.tentacle_id=tentacle;out.port.side=text_is(v.get("side"),{"front"})?model::Side::front:model::Side::back;return out.valid();
 }
 Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
+    if(body.substr(0,4)=="AFU1")return parse_update_chunk_envelope(body,out);
     Json v;JsonError e;if(!parse_json(body,v,e,max_frame_bytes,2048)){if(detail)*detail=e;return Error::invalid_message;}
     if(!closed(v,{"protocol_version","consortium_id","origin_octopus_id","origin_boot_id","destination_octopus_id","destination_boot_id","coordinator_epoch","config_revision","kind","ttl_ms","payload"}))return Error::invalid_message;
     uint64_t version=0,ttl=0;if(!json_uint(v.get("protocol_version"),version,1,1))return Error::protocol_mismatch;

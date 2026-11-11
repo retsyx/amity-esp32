@@ -18,6 +18,11 @@ enum class Kind { enrollment_control=11,
     scoped_intent=41, scoped_result=42, synchronization=43, log_request=44, log_result=45 };
 inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n<=10||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
 const char *kind_name(Kind);
+struct UpdateChunk {
+    model::MessageId begin_id;
+    uint64_t offset = 0;
+    std::string bytes;
+};
 struct Envelope {
     model::ConsortiumId consortium_id;
     model::OctopusId origin_octopus_id, destination_octopus_id;
@@ -26,6 +31,7 @@ struct Envelope {
     Kind kind = Kind::device_status;
     uint32_t ttl_ms = 0;
     Json payload;
+    std::optional<UpdateChunk> update_chunk;
 };
 // Supported kinds all have closed payload validators. Retired numeric slots reject.
 Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = nullptr);

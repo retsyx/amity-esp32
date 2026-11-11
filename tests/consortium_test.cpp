@@ -352,13 +352,8 @@ void update_tests() {
     const std::string base="\"request_id\":\""+ident<m::MessageId>(40).str()+"\",\"release_id\":\"0.1.56-dev\",\"image_sha256\":\""+std::string(64,'a')+"\"";
     const auto chunk="{"+base+",\"offset\":\"0\",\"data_hex\":\"0001\",\"chunk_sha256\":\""+std::string(64,'b')+"\"}";
     const auto valid=[&](Kind kind,const std::string& body){Json j;JsonError e;return parse_json(body,j,e)&&valid_update(kind,j);};
-    assert(valid(Kind::update_chunk,chunk));
-    assert(!valid(Kind::update_chunk,replace(chunk,"\"offset\":\"0\"","\"offset\":\"00\"")));
-    assert(!valid(Kind::update_chunk,replace(chunk,"\"data_hex\":\"0001\"","\"data_hex\":\"001\"")));
-    assert(!valid(Kind::update_chunk,replace(chunk,"0001",std::string(4098,'a'))));
-    assert(!valid(Kind::update_chunk,replace(chunk,"0.1.56-dev","../image")));
-    assert(!valid(Kind::update_chunk,replace(chunk,"\"offset\":\"0\"","\"offset\":0")));
-    assert(!valid(Kind::update_chunk,replace(chunk,"\"offset\":\"0\"","\"offset\":\"0\",\"force\":true")));
+    assert(!valid(Kind::update_chunk,chunk));
+    Envelope rejected;assert(parse_envelope(packet(scope(),Kind::update_chunk,chunk),rejected)==Error::invalid_message);
     const auto begin="{"+base+",\"canonical_manifest\":\"{}\",\"signature_hex\":\"\"}";
     assert(valid(Kind::update_begin,begin));
     assert(!valid(Kind::update_begin,begin.substr(0,begin.size()-1)+",\"validate_only\":true}"));
@@ -401,6 +396,67 @@ void update_tests() {
     assert(legacy.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);
     assert(legacy.hello(h,known_capabilities&~peer_firmware_update)==Error::none&&legacy.synchronized(7,true,true)==Error::none);
     auto e=envelope(sc);e.kind=Kind::update_begin;assert(legacy.admit(e,0,0)==Error::unsupported_kind);
+}
+void binary_update_tests(){
+    const auto begin=ident<m::MessageId>(40);
+    std::string image;for(unsigned n=0;n<2048;++n)image+=char(n);
+    const uint64_t offset=0x0102030405060708ULL;
+    const auto encoded=encode_update_chunk(begin,offset,image);
+    assert(encoded.size()==24+image.size()&&encoded.substr(24)==image);
+    for(unsigned n=0;n<8;++n)assert(uint8_t(encoded[16+n])==n+1);
+    UpdateChunk decoded;
+    assert(decode_update_chunk(encoded,decoded)&&decoded.begin_id==begin&&decoded.offset==offset&&decoded.bytes==image);
+    for(size_t n=0;n<=24;++n)assert(!decode_update_chunk(std::string_view(encoded).substr(0,n),decoded));
+    assert(!decode_update_chunk(encoded+"x",decoded));
+    auto invalid=encoded;invalid.replace(0,16,16,'\0');assert(!decode_update_chunk(invalid,decoded));
+    invalid=encoded;invalid.replace(16,8,8,'\xff');assert(!decode_update_chunk(invalid,decoded));
+    assert(encode_update_chunk({},0,image).empty()&&encode_update_chunk(begin,0,{}).empty());
+    assert(encode_update_chunk(begin,0,image+"x").empty()&&encode_update_chunk(begin,UINT64_MAX,"x").empty());
+    auto e=envelope(scope());e.kind=Kind::update_chunk;
+    const auto binary=update_chunk_envelope(e,encoded);
+    assert(binary.size()==128+image.size()&&binary.substr(0,4)=="AFU1"&&binary.substr(128)==image);
+    frame_tests(binary);
+    Envelope received;assert(parse_envelope(binary,received)==Error::none);
+    assert(received.kind==Kind::update_chunk&&received.consortium_id==e.consortium_id&&
+        received.origin_octopus_id==e.origin_octopus_id&&received.origin_boot_id==e.origin_boot_id&&
+        received.destination_octopus_id==e.destination_octopus_id&&received.destination_boot_id==e.destination_boot_id&&
+        received.coordinator_epoch==e.coordinator_epoch&&received.config_revision==e.config_revision&&received.ttl_ms==e.ttl_ms);
+    assert(received.update_chunk&&received.update_chunk->begin_id==begin&&received.update_chunk->offset==offset&&received.update_chunk->bytes==image);
+    for(size_t n=0;n<=128;++n)assert(parse_envelope(std::string_view(binary).substr(0,n),received)!=Error::none);
+    assert(parse_envelope(binary+"x",received)==Error::invalid_message);
+    invalid=binary;invalid[3]='2';assert(parse_envelope(invalid,received)==Error::invalid_message);
+    for(size_t position:{4,20,36,52,68,104}){
+        invalid=binary;invalid.replace(position,16,16,'\0');assert(parse_envelope(invalid,received)==Error::invalid_message);
+    }
+    for(uint32_t ttl:{0u,10001u,UINT32_MAX}){
+        invalid=binary;for(unsigned n=0;n<4;++n)invalid[100+n]=char(ttl>>(24-n*8));
+        assert(parse_envelope(invalid,received)==Error::invalid_message);
+        auto expired=e;expired.ttl_ms=ttl;assert(update_chunk_envelope(expired,encoded).empty());
+    }
+    assert(update_chunk_envelope(e,{}).empty());
+    auto missing=e;missing.destination_boot_id={};assert(update_chunk_envelope(missing,encoded).empty());
+    auto wrong_kind=e;wrong_kind.kind=Kind::update_begin;assert(update_chunk_envelope(wrong_kind,encoded).empty());
+    assert(parse_envelope(update_chunk_envelope(e,encode_update_chunk(begin,0,std::string_view(image).substr(0,1))),received)==Error::none);
+    assert(received.update_chunk->bytes==std::string(1,'\0'));
+
+    assert(parse_envelope(binary,received)==Error::none);
+    Session session;const auto sc=scope();
+    assert(session.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none&&session.hello(hello(sc),known_capabilities)==Error::none);
+    assert(session.admit(received,100,100)==Error::unauthorized_role);
+    assert(session.discard_synchronization_frame(received,100,100)==Error::none);
+    assert(session.synchronized(7,true,true)==Error::none&&session.admit(received,100,100)==Error::none);
+    assert(session.admit(e,100,100)==Error::invalid_message); // No typed chunk bypass.
+    for(unsigned n=0;n<6;++n){
+        auto stale=received;
+        switch(n){case 0:stale.origin_boot_id=ident<m::BootId>(99);break;case 1:stale.destination_boot_id=ident<m::BootId>(99);break;
+        case 2:stale.coordinator_epoch=2;break;case 3:stale.origin_octopus_id=ident<m::OctopusId>(99);break;
+        case 4:stale.destination_octopus_id=ident<m::OctopusId>(99);break;case 5:stale.config_revision=8;break;}
+        Envelope parsed;assert(parse_envelope(update_chunk_envelope(stale,encoded),parsed)==Error::none);
+        assert(session.admit(parsed,100,100)!=Error::none);
+    }
+    assert(session.advance_configuration(8)==Error::none);
+    assert(session.admit(received,100,100)==Error::stale_config&&session.discard_stale(received,100,100)==Error::none);
+    auto malformed=received;malformed.update_chunk.reset();assert(session.discard_stale(malformed,100,100)==Error::invalid_message);
 }
 MembershipRecord prepared(){MembershipRecord r;r.state=MembershipState::prepared;r.consortium_id=ident<m::ConsortiumId>(1);r.coordinator_id=ident<m::OctopusId>(2);r.epoch=1;r.join_id=ident<m::JoinId>(3);r.join_digest=std::string(64,'a');return r;}
 void lifecycle_tests(){
@@ -468,4 +524,4 @@ void bootstrap_tests(){
     records.disconnect();records.connect(6);assert(records.fragment(5,rid,8,0,"abcdefgh")==BootstrapRecords::Result::stale);CipherCounter end(UINT32_MAX);assert(!end.consume());EnrollmentWindow window;assert(!window.open(false,0));assert(window.open(true,0));for(int i=0;i<5;++i){assert(window.admit(i));assert(!window.admit(i));window.failed_proof();}assert(!window.available(100));assert(window.open(true,100));assert(!window.available(180100));
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();lifecycle_tests();source_abort_tests(power);original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, lifecycle/storage faults, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

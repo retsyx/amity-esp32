@@ -79,7 +79,9 @@ RuntimeStatus runtime_status(){return runtime_role;}
 std::vector<RuntimePeerStatus> runtime_peers(){return peers;}
 void runtime_update_hooks(RuntimeUpdateHooks hooks){transport=std::move(hooks);}
 esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_t){
-    auto value=parse(body);assert(valid_update(kind,value));
+    Json value;UpdateChunk chunk;
+    if(kind==Kind::update_chunk){assert(decode_update_chunk(body,chunk)&&body.size()==24+chunk.bytes.size());}
+    else {value=parse(body);assert(valid_update(kind,value));}
     if(kind==Kind::update_result){if(field(value,"stage")=="progress")++chunk_results;transport.result(destination,value);return ESP_OK;} // Wire admission is independent of accepting a late completion.
     assert(to!=local); // The primary stages one browser upload locally.
     const auto linked=std::find_if(peers.begin(),peers.end(),[&](const auto& peer){return peer.id==to;});
@@ -96,6 +98,12 @@ esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_
     const auto old=destination;destination=to;
     Envelope envelope;envelope.kind=kind;envelope.payload=value;envelope.origin_octopus_id=local;envelope.destination_octopus_id=to;
     envelope.origin_boot_id=nodes[local].boot;envelope.destination_boot_id=nodes[to].boot;envelope.config_revision=7;envelope.coordinator_epoch=1;
+    envelope.consortium_id=identity<m::ConsortiumId>(100);envelope.ttl_ms=5000;
+    if(kind==Kind::update_chunk){
+        const auto frame=update_chunk_envelope(envelope,body);
+        assert(frame.size()==128+chunk.bytes.size()&&parse_envelope(frame,envelope)==Error::none);
+        assert(envelope.update_chunk&&envelope.update_chunk->bytes==chunk.bytes);
+    }
     const bool interrupted=kind==Kind::update_chunk&&interrupt_next_chunk;
     if(interrupted)interrupt_next_chunk=false;
     const auto handled=transport.handle(local,envelope);
@@ -115,6 +123,8 @@ c::RuntimePeerStatus& add_peer(m::OctopusId owner,bool online=true,bool manageme
     c::RuntimePeerStatus peer;peer.id=owner;peer.boot_id=n.boot;peer.enrolled=true;peer.ready=online&&!management;peer.management_ready=online&&management;peer.negotiated_capabilities=c::known_capabilities;peer.firmware_identity=n.elf;peers.push_back(peer);return peers.back();
 }
 void setup(){
+    // Exercise every byte value, including NUL and JSON delimiters, on the wire.
+    for(size_t i=0;i<staged_bytes.size();++i){staged_bytes[i]=char(i);running_bytes[i]=char(255-i);}
     std::string error;assert(u::parse_release_manifest(manifest,uploaded_release,error));
     const auto replace=[](std::string& text,const std::string& from,const std::string& to){const auto at=text.find(from);assert(at!=std::string::npos);text.replace(at,from.size(),to);};
     replace(uploaded_release.canonical,uploaded_release.image_sha256,sha(staged_bytes));uploaded_release.image_sha256=sha(staged_bytes);
@@ -284,6 +294,20 @@ void streaming_without_chunk_results(){
     assert(chunk_admissions==2&&chunk_results==0&&stage_attempts==1&&nodes[one].bytes==running_bytes&&!nodes[one].selected);
     alarm(0);std::cout<<"PASS ordered chunks stream without progress replies; one final stage confirms the complete image\n";
 }
+void binary_chunks_bind_to_the_accepted_begin(){
+    setup();add_peer(one);upload_once();until([]{return nodes[one].received.has_value();});
+    const auto accepted=nodes[one].accepted_begin;assert(accepted);destination=one;
+    c::Envelope envelope;envelope.kind=c::Kind::update_chunk;
+    envelope.update_chunk=c::UpdateChunk{identity<m::MessageId>(999),0,staged_bytes.substr(0,2048)};
+    assert(transport.handle(local,envelope)==c::Error::transaction_conflict&&nodes[one].bytes.empty()&&nodes[one].received);
+    envelope.update_chunk->begin_id=accepted;
+    assert(transport.handle(two,envelope)==c::Error::transaction_conflict&&nodes[one].bytes.empty()&&nodes[one].received);
+    transport.disconnected(local,identity<m::MessageId>(999));assert(nodes[one].received&&nodes[one].maintenance);
+    assert(transport.handle(local,envelope)==c::Error::none&&nodes[one].bytes==staged_bytes.substr(0,2048));
+    assert(transport.handle(local,envelope)==c::Error::transaction_conflict&&!nodes[one].received&&!nodes[one].maintenance&&nodes[one].bytes.empty());
+    destination=local;assert(!nodes[one].staged&&!nodes[one].selected&&!nodes[local].selected);
+    std::cout<<"PASS binary chunks require the accepted begin and owner; stale cleanup cannot abort it; repeated offsets abort only the incomplete upload\n";
+}
 void fifo_backpressure_is_local(){
     alarm(5);setup();add_peer(one,true,true);until([]{return nodes[one].received.has_value();});
     full_chunk_attempts=1;u::poll_group_update();
@@ -325,4 +349,4 @@ void rejected(){
     const auto count=events.size();for(unsigned turn=0;turn<8;++turn)poll();assert(phase()=="failed"&&events.size()==count);
     std::cout<<"PASS browser cohort with one staged member and a second full-image SHA rejection fails before any activation\n";
 }
-int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(streaming_without_chunk_results);run(fifo_backpressure_is_local);run(missing_stream);run(bad_stream_hash);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}
+int main(int argc,char** argv){assert(argc==2);std::ifstream file(argv[1]);manifest.assign(std::istreambuf_iterator<char>(file),{});assert(!manifest.empty());run(distribution);run(offline);run(catchup);run(matching_hello_releases_sync_fence);run(same_image);run(receiver_staging);run(rejected);run(retry_transient);run(authority_denials);run(rollback_budget);run(logical_restart_during_chunk);run(streaming_without_chunk_results);run(binary_chunks_bind_to_the_accepted_begin);run(fifo_backpressure_is_local);run(missing_stream);run(bad_stream_hash);run(upload_failure_reporting);run(source_failure_reporting);run(multiple_failure_reporting);}

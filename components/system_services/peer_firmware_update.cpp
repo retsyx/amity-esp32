@@ -18,13 +18,12 @@ std::mutex gate;
 std::optional<ReleaseManifest> release;
 esp_ota_handle_t handle=0;
 psa_hash_operation_t digest=PSA_HASH_OPERATION_INIT;
-uint64_t offset=0,last_offset=0;
+uint64_t offset=0;
 int64_t last_progress_us=0;
-std::string last_hash;
 std::string release_signature;
 const esp_partition_t* receiving_partition=nullptr;
 esp_err_t flash(const std::function<esp_err_t()>& call){esp_err_t result=ESP_FAIL;return config_store::with_internal_flash_stack([&]{result=call();})?result:ESP_FAIL;}
-void abort_locked(const std::string& error){if(handle)flash([]{return esp_ota_abort(handle);});handle=0;psa_hash_abort(&digest);release.reset();release_signature.clear();receiving_partition=nullptr;last_hash.clear();offset=0;install_failed(error);}
+void abort_locked(const std::string& error){if(handle)flash([]{return esp_ota_abort(handle);});handle=0;psa_hash_abort(&digest);release.reset();release_signature.clear();receiving_partition=nullptr;offset=0;install_failed(error);}
 bool header(std::string_view bytes,const ReleaseManifest& expected){
     constexpr size_t size=sizeof(esp_image_header_t)+sizeof(esp_image_segment_header_t)+sizeof(esp_app_desc_t);
     if(bytes.size()<size)return false;
@@ -41,12 +40,11 @@ esp_err_t peer_begin(std::string_view manifest,std::string_view signature_hex,st
     release=staged_release();if(!release){error="Release admission expired";return ESP_ERR_INVALID_STATE;}
     result=begin_install(error);if(result!=ESP_OK){release.reset();return result;}
     if(psa_hash_setup(&digest,PSA_ALG_SHA_256)!=PSA_SUCCESS){error="Image digest initialization failed";abort_locked(error);return ESP_FAIL;}
-    offset=0;last_hash.clear();release_signature=signature_hex;receiving_partition=nullptr;last_progress_us=esp_timer_get_time();return ESP_OK;
+    offset=0;release_signature=signature_hex;receiving_partition=nullptr;last_progress_us=esp_timer_get_time();return ESP_OK;
 }
 esp_err_t peer_chunk(std::string_view release_id,uint64_t requested,std::string_view bytes,std::string& error){
     std::lock_guard<std::mutex> lock(gate);
     if(!release||release->release_id!=release_id||bytes.empty()||bytes.size()>2048){error="No matching admitted release";return ESP_ERR_INVALID_ARG;}
-    if(!last_hash.empty()&&requested==last_offset&&config_store::sha256_hex(bytes)==last_hash)return ESP_OK;
     if(requested!=offset||offset>=release->image_bytes||bytes.size()!=std::min<uint64_t>(2048,release->image_bytes-offset)){error="Chunk offset or size does not match the target checkpoint";return ESP_ERR_INVALID_ARG;}
     if(!offset){
         if(!header(bytes,*release)){error="Application header differs from the validated release";abort_locked(error);return ESP_ERR_INVALID_ARG;}
@@ -57,7 +55,7 @@ esp_err_t peer_chunk(std::string_view release_id,uint64_t requested,std::string_
     const auto next=offset+bytes.size();
     // Interrupted streams restart at zero; only phase changes need persistence.
     install_progress(next);
-    last_offset=offset;last_hash=config_store::sha256_hex(bytes);offset=next;last_progress_us=esp_timer_get_time();return ESP_OK;
+    offset=next;last_progress_us=esp_timer_get_time();return ESP_OK;
 }
 esp_err_t peer_stage(std::string_view release_id,std::string& error){
     std::lock_guard<std::mutex> lock(gate);
@@ -70,7 +68,7 @@ esp_err_t peer_stage(std::string_view release_id,std::string& error){
     auto result=flash([]{return esp_ota_end(handle);});handle=0;
     if(result==ESP_OK)result=write_partition_release(receiving_partition,*release,release_signature,error);
     if(result!=ESP_OK){if(error.empty())error="Firmware image validation failed";abort_locked(error);return result;}
-    release.reset();release_signature.clear();receiving_partition=nullptr;last_hash.clear();offset=0;
+    release.reset();release_signature.clear();receiving_partition=nullptr;offset=0;
     // The verified partition is self-contained. Losing RAM, TLS or power from
     // here cannot select it for boot, and no upload timeout applies to it.
     return install_staged();
@@ -85,7 +83,9 @@ esp_err_t peer_install(std::string_view release_id,std::string& error,uint32_t r
     result=stage_release(staged.canonical,proof,error);if(result!=ESP_OK)return result;
     result=begin_install(error);if(result!=ESP_OK)return result;
     result=install_selected();
-    if(result==ESP_OK)result=flash([&]{return esp_ota_set_boot_partition(partition);});
+    // A complete trailer is written only after esp_ota_end validates the image.
+    // Preserve native boot/rollback checks without repeating that pass here.
+    if(result==ESP_OK)result=flash([&]{return esp_ota_set_boot_partition_skip_validate(partition);});
     if(result!=ESP_OK){error="Firmware boot selection failed";install_failed(error);return result;}
     const auto elapsed=uint64_t(std::max<int64_t>(0,esp_timer_get_time()-activation_started)/1000);
     reboot_later(elapsed<reboot_delay_ms?uint32_t(reboot_delay_ms-elapsed):0);return ESP_OK;

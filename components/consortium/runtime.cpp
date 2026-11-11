@@ -227,7 +227,9 @@ bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
             if(kind!=Kind::enrollment_control||!abort_peer_credential(link,group)||!parse_json(payload,parsed,detail)||!link.enrollment_abort->may_send(parsed))return false;
         }
     }
-    return link.tls->send(envelope_json(outgoing(link,kind,ttl),payload),is_update_kind(kind));
+    const auto envelope=outgoing(link,kind,ttl);
+    const auto frame=kind==Kind::update_chunk?update_chunk_envelope(envelope,payload):envelope_json(envelope,payload);
+    return !frame.empty()&&link.tls->send(frame,is_update_kind(kind));
 }
 #include "settings_runtime.inc"
 #include "logs_runtime.inc"
@@ -628,7 +630,7 @@ bool application_failure_recoverable(const Active& active,const LinkTrace& trace
         if(!strcmp(trace.reason,terminal))return false;
     if(active.restart_requested)return true;
     for(const auto* recoverable:{"application_restart_requested","causal_expired","cleanup_queue_full","causal_result_fence","context_recapture_failed",
-        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","live_configuration_not_ready"})
+        "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","update_stream","live_configuration_not_ready"})
         if(!strcmp(trace.reason,recoverable))return true;
     return false;
 }
@@ -1194,15 +1196,9 @@ void active_loop_work(void *arg){
             if(!allowed){trace.fail("update_authority",Error::unauthorized_role);break;}
             if(envelope.kind==Kind::update_result) {if(hooks.result) hooks.result(active->peer,envelope.payload);}
             else {
-                if(envelope.kind==Kind::update_chunk) {
-                    std::string bytes;
-                    if(!unhex(envelope.payload.get("data_hex")->string,bytes,2048)||sha256(bytes)!=envelope.payload.get("chunk_sha256")->string) {
-                        const auto& p=envelope.payload;
-                        send(*active,Kind::update_result,"{\"request_id\":\""+p.get("request_id")->string+"\",\"release_id\":\""+p.get("release_id")->string+"\",\"image_sha256\":\""+p.get("image_sha256")->string+"\",\"offset\":\""+p.get("offset")->string+"\",\"stage\":\"rejected\",\"error\":\"HASH_MISMATCH\"}");
-                        continue;
-                    }
-                }
-                if(hooks.handle&&hooks.handle(active->peer,envelope)==Error::none) {
+                const auto handled=hooks.handle?hooks.handle(active->peer,envelope):Error::not_ready;
+                if(envelope.kind==Kind::update_chunk&&handled!=Error::none){trace.fail("update_stream",handled);break;}
+                if(handled==Error::none) {
                     if(envelope.kind==Kind::update_begin) active->update_begin_id=*model::MessageId::parse(envelope.payload.get("request_id")->string);
                     if(envelope.kind==Kind::update_install||envelope.kind==Kind::update_abort) active->update_begin_id={};
                 }
@@ -1901,6 +1897,7 @@ std::string runtime_device_settings_operation(model::OctopusId owner,model::Mess
 }
 static esp_err_t queue_update(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl,bool firmware_stream){
     if(!is_update_kind(kind)||!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;
+    if(kind==Kind::update_chunk){UpdateChunk chunk;if(!decode_update_chunk(payload,chunk))return ESP_ERR_INVALID_ARG;}
     std::lock_guard<std::mutex> guard(lock);
     const bool result=kind==Kind::update_result;
     if(result ? (group.role!=Group::member||group.authority!=owner) : (group.role!=Group::coordinator||!status.authority_ready))return ESP_ERR_INVALID_STATE;

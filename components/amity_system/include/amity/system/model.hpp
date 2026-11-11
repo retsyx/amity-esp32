@@ -31,6 +31,12 @@ public:
         if (!value.valid()) return {};
         return value;
     }
+    static std::optional<Id> from_bytes(const std::array<uint8_t, 16>& bytes) {
+        Id value;
+        value.bytes_ = bytes;
+        if (!value.valid()) return {};
+        return value;
+    }
     // The origin/storage adapter must supply a cryptographically secure RNG.
     static std::optional<Id> generate(const std::function<bool(uint8_t*, size_t)>& secure_random) {
         Id value;

@@ -41,9 +41,6 @@ namespace config_store {
 int write(const char* key,const std::string& value){++metadata_writes;records[key]=value;return ESP_OK;}
 int read(const char* key,std::string& value){auto found=records.find(key);if(found==records.end())return ESP_FAIL;value=found->second;return ESP_OK;}
 bool with_internal_flash_stack(const std::function<void()>& call){assert(!flash_depth);++flash_depth;call();--flash_depth;return true;}
-// Digest mechanics are covered by partition_staging_test. Preserve exact
-// duplicate comparison here without bringing a crypto backend into this test.
-std::string sha256_hex(std::string_view bytes){return std::string(bytes);}
 }
 const esp_partition_t* esp_ota_get_next_update_partition(void*){static esp_partition_t partition;return &partition;}
 int erase_partition_release(const esp_partition_t*){return ESP_OK;}
@@ -60,8 +57,8 @@ std::mutex mutex,gate;
 std::function<esp_err_t()> begin_maintenance=[](){++maintenance;return ESP_OK;};
 std::function<void()> end_maintenance=[](){assert(maintenance);--maintenance;};
 std::optional<ReleaseManifest> staged,release;
-uint64_t deadline=0,received=0,offset=0,last_offset=0;
-std::string job,phase="idle",reason,old_boot,last_hash,release_signature;
+uint64_t deadline=0,received=0,offset=0;
+std::string job,phase="idle",reason,old_boot,release_signature;
 bool installing=false;
 esp_ota_handle_t handle=0;
 psa_hash_operation_t digest;
@@ -76,7 +73,7 @@ SUITE = r'''
 std::string field(const std::string& json,const char* name){c::Json value;c::JsonError error;assert(c::parse_json(json,value,error));const auto* item=value.get(name);assert(item&&item->type==c::Json::Type::string);return item->string;}
 void clear_ram(){
  staged.reset();release.reset();job.clear();phase="idle";reason.clear();old_boot.clear();
- received=offset=last_offset=deadline=0;last_hash.clear();handle=0;installing=false;
+ received=offset=deadline=0;handle=0;installing=false;
  receiving_partition=nullptr;maintenance=0;
 }
 void prepare(uint64_t total){
@@ -95,8 +92,8 @@ void chunks(uint64_t count){
   assert(peer_chunk(release->release_id,before,bytes,error)==ESP_OK);
   assert(flash_writes==writes_before+1&&received==offset&&metadata_writes==1);
   assert(field(status_json(),"received_bytes")==std::to_string(offset));
-  // A retried last chunk neither rewrites flash nor adds durable metadata.
-  assert(peer_chunk(release->release_id,before,bytes,error)==ESP_OK&&flash_writes==writes_before+1&&metadata_writes==1);
+  // The ordered stream rejects repeated chunks without another flash write.
+  assert(peer_chunk(release->release_id,before,bytes,error)==ESP_ERR_INVALID_ARG&&flash_writes==writes_before+1&&metadata_writes==1);
  }
 }
 void lifecycle_writes_are_bounded(){

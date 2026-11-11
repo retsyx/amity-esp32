@@ -96,7 +96,9 @@ std::string packet(const Envelope& e){
  return "{\"protocol_version\":1,\"consortium_id\":\""+e.consortium_id.str()+"\",\"origin_octopus_id\":\""+e.origin_octopus_id.str()+"\",\"origin_boot_id\":\""+e.origin_boot_id.str()+"\",\"destination_octopus_id\":\""+e.destination_octopus_id.str()+"\",\"destination_boot_id\":\""+e.destination_boot_id.str()+"\",\"coordinator_epoch\":\""+std::to_string(e.coordinator_epoch)+"\",\"config_revision\":\""+std::to_string(e.config_revision)+"\",\"kind\":\""+kind_name(e.kind)+"\",\"ttl_ms\":"+std::to_string(e.ttl_ms)+",\"payload\":"+settings_json(e.payload)+"}";
 }
 bool send(Active& active,Kind kind,std::string_view payload,uint32_t ttl){
- auto e=outgoing(active,kind,ttl);JsonError error;assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));
+ auto e=outgoing(active,kind,ttl);JsonError error;
+ if(kind==Kind::update_chunk){const auto frame=update_chunk_envelope(e,payload);assert(!frame.empty()&&parse_envelope(frame,e)==Error::none);}
+ else assert(parse_json(payload,e.payload,error)&&valid_envelope_payload(kind,e.payload));
  active.tls->sent.push_back(e);if(on_send)on_send(active,e);return true;
 }
 Envelope inbound(const LinkScope& scope,uint64_t revision,Kind kind,std::string_view payload){

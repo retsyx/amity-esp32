@@ -18,8 +18,8 @@ esp_err_t install_staged();
 void install_failed(const std::string& error);
 void local_boot_healthy();
 // Called only by the authenticated current-coordinator transport adapter.
-// Chunks are exact ordered 2KiB blocks (last may be shorter); duplicate last
-// blocks require the same bytes. Incomplete streams restart at zero; a fully
+// Chunks are exact ordered 2KiB blocks (last may be shorter); repeated or
+// out-of-order blocks are rejected. Incomplete streams restart at zero; a fully
 // staged partition survives a lost connection or reboot without boot selection.
 esp_err_t peer_begin(std::string_view manifest,std::string_view signature_hex,std::string& error);
 esp_err_t peer_chunk(std::string_view release_id,uint64_t offset,std::string_view bytes,std::string& error);

@@ -150,6 +150,7 @@ struct RuntimeUpdateHooks {
 void runtime_update_hooks(RuntimeUpdateHooks);
 // Only the current coordinator may send requests; members may send results.
 // Uses the authenticated scoped link and retains the original bounded queue age.
+// update_chunk payloads are encode_update_chunk() binary; controls use JSON.
 esp_err_t runtime_send_update(model::OctopusId,Kind,std::string payload,uint32_t ttl_ms=5000);
 // The staging barrier follows admitted image bytes without expiring behind them.
 esp_err_t runtime_stage_update(model::OctopusId,std::string payload,uint32_t ttl_ms=5000);

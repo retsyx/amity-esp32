@@ -79,7 +79,7 @@ void mismatched(bool server,bool provisional,uint32_t capabilities){
  assert(active->tls->raw_sent.size()==hello_frames);
  for(auto kind:{Kind::device_status,Kind::settings_read,Kind::settings_write,Kind::settings_result,Kind::snapshot_request,Kind::snapshot_chunk,Kind::synchronization,Kind::scoped_intent,Kind::scoped_result})assert(active->session.admit(inbound(*active,kind),100,100)!=Error::none);
  for(auto kind:{Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_abort,Kind::update_status,Kind::update_result}){
-  auto message=inbound(*active,kind);const bool allowed=server?kind==Kind::update_result:kind!=Kind::update_result;
+  auto message=inbound(*active,kind);if(kind==Kind::update_chunk)message.update_chunk=UpdateChunk{ident<model::MessageId>(98),0,std::string(2048,'x')};const bool allowed=server?kind==Kind::update_result:kind!=Kind::update_result;
   assert(active->session.admit(message,100,100)==(allowed?Error::none:Error::unauthorized_role));
   if(allowed){message.origin_boot_id=ident<model::BootId>(99);assert(active->session.admit(message,100,100)==Error::stale_boot);}
  }

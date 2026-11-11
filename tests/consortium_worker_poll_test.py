@@ -164,7 +164,7 @@ void retiring_does_not_pump_ordinary_work_during_partial_receive(){
  assert(operational_receive(*a,budget)&&a->tls->sent.empty()&&a->queue.size()==1&&budget==0);
 }
 std::string update_base(){return "\"request_id\":\"11111111111111111111111111111111\",\"release_id\":\"release-one\",\"image_sha256\":\""+std::string(64,'a')+"\"";}
-std::string image_chunk(unsigned offset){return "{"+update_base()+",\"offset\":\""+std::to_string(offset)+"\",\"data_hex\":\""+std::string(4096,'1')+"\",\"chunk_sha256\":\""+std::string(64,'b')+"\"}";}
+std::string image_chunk(unsigned offset){return encode_update_chunk(*model::MessageId::parse("11111111111111111111111111111111"),offset,std::string(2048,'\x11'));}
 std::string stage_image(){return "{"+update_base()+",\"phase\":\"stage\"}";}
 std::string activate_image(){return "{"+update_base()+",\"phase\":\"activate\",\"reboot_delay_ms\":\"0\"}";}
 void aged_firmware_survives_control_pruning_and_stays_before_validation(){
@@ -179,7 +179,7 @@ void aged_firmware_survives_control_pruning_and_stays_before_validation(){
  assert(a->queue.size()==4&&a->queue[0].kind==Kind::update_chunk&&a->queue[1].kind==Kind::update_chunk&&a->queue[2].payload==stage_image());
  unsigned chunks=0;bool staged=false;
  on_send=[&](Active&,const Envelope& e){
-  if(e.kind==Kind::update_chunk){uint64_t offset=0;assert(!staged&&decimal(e.payload.get("offset"),offset)&&offset==chunks*2048&&e.ttl_ms==5000);++chunks;}
+  if(e.kind==Kind::update_chunk){assert(!staged&&e.update_chunk&&e.update_chunk->offset==chunks*2048&&e.update_chunk->bytes==std::string(2048,'\x11')&&e.ttl_ms==5000);++chunks;}
   if(e.kind==Kind::update_install){assert(e.payload.get("phase")->string=="stage"&&chunks==2&&e.ttl_ms==5000);staged=true;}
  };
  a->tls->poller=[&](std::string& text){if(!a->queue.empty())return FakeTls::ReceiveResult::pending;text=device_status;return FakeTls::ReceiveResult::frame;};
@@ -206,8 +206,31 @@ void aged_firmware_keeps_existing_fifo_capacity(){
  assert(queue_control(a->peer,Kind::device_status,"{\"hostname\":\"fresh\"}",1000,{})==ESP_ERR_NO_MEM);
  assert(a->queue.size()==16&&recoveries==0&&shutdowns==0);
 }
+void firmware_dispatch_failure_restarts_upload_on_the_same_tls(){
+ for(auto failure:{Error::transaction_conflict,Error::storage_failure}){
+  auto a=start(false);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto* tls=a->tls.get();const auto original=a->session.scope();
+  const auto begin=ident<model::MessageId>(111);a->update_begin_id=begin;
+  bool receiving=true;unsigned aborted=0,handled=0;
+  updates.handle=[&](auto owner,const Envelope& envelope){
+   assert(owner==original.peer_id&&envelope.kind==Kind::update_chunk&&envelope.update_chunk);
+   assert(envelope.update_chunk->begin_id==begin&&envelope.update_chunk->bytes==std::string(2048,'x'));
+   ++handled;return failure;
+  };
+  updates.disconnected=[&](auto owner,auto interrupted){assert(owner==original.peer_id&&interrupted==begin&&receiving);receiving=false;++aborted;};
+  a->tls->poller=[&](std::string& text){
+   auto envelope=inbound(a->session.scope(),7,Kind::device_status,device_status);
+   if(!recoveries){envelope.kind=Kind::update_chunk;text=update_chunk_envelope(envelope,encode_update_chunk(begin,0,std::string(2048,'x')));a->tls->last_bulk=true;}
+   else {text=packet(envelope);a->tls->last_bulk=false;}
+   return FakeTls::ReceiveResult::frame;
+  };
+  during_recovery=[&](auto& current,bool server){assert(!server&&current.tls.get()==tls&&current.session.scope()==original&&receiving);};
+  assert(operational_receive(*a,budget,false,true)&&recoveries==1&&handled==1&&aborted==1&&!receiving&&!a->update_begin_id);
+  assert(recovery_reasons==std::vector<std::string>{"update_stream"}&&a->tls.get()==tls&&a->tls->usable()&&shutdowns==0);
+  assert(a->session.scope().link_id!=original.link_id&&a->queue.empty()&&a->tls->sent.empty()&&restart_fences.size()==1);
+ }
 }
-int main(){using namespace amity::consortium;admission_after_iteration_clock_does_not_expire_fresh_input();original_queue_deadline_and_clock_reversal_remain_fenced();pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_stale_firmware();aged_firmware_keeps_existing_fifo_capacity();std::cout<<"PASS actual operational worker: queue-lock admission ordering and original TTL/future-clock fences; plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order and valid wireTTL without renewing controls/activation\n";}
+}
+int main(){using namespace amity::consortium;admission_after_iteration_clock_does_not_expire_fresh_input();original_queue_deadline_and_clock_reversal_remain_fenced();pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_stale_firmware();aged_firmware_keeps_existing_fifo_capacity();firmware_dispatch_failure_restarts_upload_on_the_same_tls();std::cout<<"PASS actual operational worker: queue-lock admission ordering and original TTL/future-clock fences; plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order; rejected upload/flash failures abort receiving on the same healthy TLS\n";}
 '''
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -221,9 +244,11 @@ def main():
     recovery_end=source.index('\n    }',recovery_start)
     restart_start=source.index('        if(active->restart_requested){',source.index('void active_loop_work('))
     restart_end=source.index('\n',restart_start)
-    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until){uint64_t receive_started=0;auto* active=&storage;const bool server=true;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+source[queue_start:receive_start]+source[receive_start:receive_end]+'return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
     class_start=source.index('        if(active->tls->received_bulk()!=is_update_kind(envelope.kind))')
     class_end=source.index('\n',class_start)
+    parse_end=source.index('\n',receive_end)
+    update_dispatch=function(source,'        if(is_update_kind(envelope.kind)) {')
+    worker='\nbool operational_receive(Active& storage,uint64_t& receive_until,bool server=true,bool dispatch_update=false){uint64_t receive_started=0;auto* active=&storage;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+source[queue_start:receive_start]+source[receive_start:receive_end]+'if(dispatch_update){'+source[receive_end:parse_end]+source[class_start:class_end]+update_dispatch+'}return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
     worker+='\nbool classify_received(Active& storage,Kind kind){auto* active=&storage;Envelope envelope;envelope.kind=kind;LinkTrace trace;while(true){'+source[class_start:class_end]+'return true;}return false;}\n'
     helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
     actual=function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(','static bool queued_firmware_stream(','static bool queued_expired(','static bool pure_key_release(', 'static bool queued_cleanup(','static bool queued_causal('))

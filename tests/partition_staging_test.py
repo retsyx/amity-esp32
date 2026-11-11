@@ -43,13 +43,15 @@ const esp_partition_t* selected=&current;
 esp_app_desc_t app;
 int64_t clock_us=0;int reboots=0,maintenance=0,failures=0,ends=0,activations=0,report_staged=0;
 unsigned flash_stack_depth=0,flash_dispatches=0;
+size_t image_bytes_read=0,hashed_image_bytes=0;
+unsigned image_hashes=0;
 bool native_valid=true;int fail_write=-1,writes=0;
 uint32_t reboot_delay=0;
 int64_t esp_timer_get_time(){return clock_us;}
 const esp_app_desc_t*esp_app_get_description(){return &app;}
 const esp_partition_t*esp_ota_get_running_partition(){return &current;}
 const esp_partition_t*esp_ota_get_next_update_partition(void*){return &candidate;}
-int esp_partition_read(const esp_partition_t*p,size_t off,void*out,size_t count){assert(flash_stack_depth==1&&off+count<=p->size);memcpy(out,memory[p->index].data()+off,count);return ESP_OK;}
+int esp_partition_read(const esp_partition_t*p,size_t off,void*out,size_t count){assert(flash_stack_depth==1&&off+count<=p->size);if(off<p->size-system_services::updates::partition_release_bytes)image_bytes_read+=count;memcpy(out,memory[p->index].data()+off,count);return ESP_OK;}
 int esp_partition_write(const esp_partition_t*p,size_t off,const void*input,size_t count){assert(flash_stack_depth==1&&off%16==0&&count%16==0&&off+count<=p->size);if(writes++==fail_write)return ESP_FAIL;const auto*bytes=static_cast<const char*>(input);for(size_t i=0;i<count;++i){assert((static_cast<unsigned char>(memory[p->index][off+i])&static_cast<unsigned char>(bytes[i]))==static_cast<unsigned char>(bytes[i]));memory[p->index][off+i]=bytes[i];}return ESP_OK;}
 int esp_partition_erase_range(const esp_partition_t*p,size_t off,size_t count){assert(flash_stack_depth==1&&off%4096==0&&count%4096==0&&off+count<=p->size);memory[p->index].replace(off,count,count,'\xff');return ESP_OK;}
 int esp_ota_get_partition_description(const esp_partition_t*p,esp_app_desc_t*out){assert(flash_stack_depth==1);const auto result=esp_partition_read(p,32,out,sizeof(*out));return result==ESP_OK&&out->magic_word==ESP_APP_DESC_MAGIC_WORD?ESP_OK:ESP_FAIL;}
@@ -57,15 +59,15 @@ size_t ota_offset=0;int esp_ota_begin(const esp_partition_t*p,size_t count,esp_o
 int esp_ota_write(int handle,const void*input,size_t count){assert(flash_stack_depth==1&&handle==1);memcpy(memory[1].data()+ota_offset,input,count);ota_offset+=count;return ESP_OK;}
 int esp_ota_abort(int){assert(flash_stack_depth==1);return ESP_OK;}
 int esp_ota_end(int){assert(flash_stack_depth==1);++ends;return native_valid?ESP_OK:ESP_FAIL;}
-int esp_ota_set_boot_partition(const esp_partition_t*p){assert(flash_stack_depth==1);selected=p;++activations;return ESP_OK;}
+int esp_ota_set_boot_partition_skip_validate(const esp_partition_t*p){assert(flash_stack_depth==1);selected=p;++activations;return ESP_OK;}
 void reboot_later(uint32_t delay){++reboots;reboot_delay=delay;}
 std::string sha(std::string_view bytes){uint8_t digest[32];SHA256(reinterpret_cast<const unsigned char*>(bytes.data()),bytes.size(),digest);std::string out;const char*digits="0123456789abcdef";for(auto b:digest){out+=digits[b>>4];out+=digits[b&15];}return out;}
 struct psa_hash_operation_t{std::string bytes;};
 #define PSA_HASH_OPERATION_INIT {}
 constexpr int PSA_SUCCESS=0,PSA_ALG_SHA_256=1;
 int psa_hash_setup(psa_hash_operation_t*op,int){op->bytes.clear();return 0;}
-int psa_hash_update(psa_hash_operation_t*op,const uint8_t*bytes,size_t count){op->bytes.append(reinterpret_cast<const char*>(bytes),count);return 0;}
-int psa_hash_finish(psa_hash_operation_t*op,uint8_t*out,size_t,size_t*count){SHA256(reinterpret_cast<const uint8_t*>(op->bytes.data()),op->bytes.size(),out);*count=32;return 0;}
+int psa_hash_update(psa_hash_operation_t*op,const uint8_t*bytes,size_t count){hashed_image_bytes+=count;op->bytes.append(reinterpret_cast<const char*>(bytes),count);return 0;}
+int psa_hash_finish(psa_hash_operation_t*op,uint8_t*out,size_t,size_t*count){++image_hashes;SHA256(reinterpret_cast<const uint8_t*>(op->bytes.data()),op->bytes.size(),out);*count=32;return 0;}
 int psa_hash_abort(psa_hash_operation_t*op){op->bytes.clear();return 0;}
 namespace config_store{std::string sha256_hex(std::string_view bytes){return sha(bytes);}bool with_internal_flash_stack(const std::function<void()>&call){if(flash_stack_depth){assert(flash_stack_depth==1);call();return true;}++flash_stack_depth;++flash_dispatches;call();--flash_stack_depth;return true;}}
 namespace system_services::updates{
@@ -92,13 +94,21 @@ int main(){using namespace system_services::updates;
  expected.canonical="canonical-publisher-release";expected.release_id="release-one";expected.image_bytes=native.size();expected.image_sha256=sha(native);expected.firmware_version=app.version;
  char identity[65]{};for(unsigned i=0;i<32;++i)snprintf(identity+2*i,3,"%02x",app.app_elf_sha256[i]);expected.image_elf_sha256=identity;
  std::string error,signature,bytes;ReleaseManifest stored;
- auto upload=[&](bool corrupt=false){assert(peer_begin(expected.canonical,proof,error)==ESP_OK);for(size_t off=0;off<native.size();off+=2048){auto block=native.substr(off,std::min<size_t>(2048,native.size()-off));if(corrupt&&off>0)block[0]^=1;assert(peer_chunk(expected.release_id,off,block,error)==ESP_OK);}};
+ auto upload=[&](bool corrupt=false){assert(peer_begin(expected.canonical,proof,error)==ESP_OK);for(size_t off=0;off<native.size();off+=2048){auto block=native.substr(off,std::min<size_t>(2048,native.size()-off));if(corrupt&&off>0)block[0]^=1;
+  const auto hashed_before=hashed_image_bytes;
+  assert(peer_chunk(expected.release_id,off+1,block,error)==ESP_ERR_INVALID_ARG&&hashed_image_bytes==hashed_before);
+  assert(peer_chunk(expected.release_id,off,std::string_view(block).substr(1),error)==ESP_ERR_INVALID_ARG&&hashed_image_bytes==hashed_before);
+  assert(peer_chunk(expected.release_id,off,block,error)==ESP_OK&&hashed_image_bytes==hashed_before+block.size());
+  assert(peer_chunk(expected.release_id,off,block,error)==ESP_ERR_INVALID_ARG&&hashed_image_bytes==hashed_before+block.size());
+ }};
  assert(partition_release(false,stored,signature,error)!=ESP_OK);
  upload();assert(maintenance==1&&selected==&current&&!reboots);
  assert(peer_stage(expected.release_id,error)==ESP_OK&&ends==1&&maintenance==0&&report_staged==1&&selected==&current&&!reboots);
+ assert(image_hashes==1&&hashed_image_bytes==native.size());
  const auto verification_dispatches=flash_dispatches;
+ const auto release_reads=image_bytes_read;
  assert(partition_release(false,stored,signature,error)==ESP_OK&&stored.canonical==expected.canonical&&signature==proof);
- assert(flash_dispatches==verification_dispatches+1); // One task handoff covers metadata, descriptor and every hash block.
+ assert(flash_dispatches==verification_dispatches+1&&image_bytes_read==release_reads+sizeof(esp_app_desc_t)); // Only metadata and the descriptor are read.
  // A lost TLS connection and idle timeout cannot abort a completed image.
  peer_abort("connection closed");clock_us+=3600000000;poll_peer_timeout();admission.reset();
  assert(partition_release(false,stored,signature,error)==ESP_OK&&selected==&current&&!reboots);
@@ -109,9 +119,11 @@ int main(){using namespace system_services::updates;
  assert(flash_dispatches==chunk_dispatches+1); // Header and image bytes share the same internal-stack dispatch.
  assert(read_staged_image(native.size(),1,bytes,error)!=ESP_OK);
  assert(peer_install(expected.release_id,error,4000)==ESP_OK&&selected==&candidate&&reboots==1&&reboot_delay==4000);
+ assert(image_hashes==1&&hashed_image_bytes==native.size()&&ends==1&&activations==1); // Metadata/replayed stage/activation never reverify the image.
  // The same self-contained bytes are a source after becoming the running slot.
  memory[0]=memory[1];assert(partition_release(true,stored,signature,error)==ESP_OK);
  assert(read_running_image(0,2048,bytes,error)==ESP_OK&&bytes==native.substr(0,2048));
+ assert(image_hashes==1&&hashed_image_bytes==native.size());
  maintenance=0;selected=&current;reboots=0;
  upload(true);assert(peer_stage(expected.release_id,error)!=ESP_OK&&!reboots&&selected==&current);
  assert(partition_release(false,stored,signature,error)!=ESP_OK); // A new stream invalidated the previous trailer.
@@ -119,12 +131,12 @@ int main(){using namespace system_services::updates;
  upload();fail_write=writes;assert(peer_stage(expected.release_id,error)!=ESP_OK);fail_write=-1;
  assert(partition_release(false,stored,signature,error)!=ESP_OK); // Payload-only/partial trailer is never staged.
  upload();assert(peer_stage(expected.release_id,error)==ESP_OK);
- memory[1][1000]^=1;assert(partition_release(false,stored,signature,error)!=ESP_OK);
- memory[1][1000]^=1;memory[1][candidate.size-partition_release_bytes+partition_release_header_bytes]^=1;
+ memory[1][176]^=1;assert(partition_release(false,stored,signature,error)!=ESP_OK); // Descriptor still binds metadata to the selected application.
+ memory[1][176]^=1;memory[1][candidate.size-partition_release_bytes+partition_release_header_bytes]^=1;
  assert(partition_release(false,stored,signature,error)!=ESP_OK);
  upload();clock_us+=11000000;poll_peer_timeout();assert(maintenance==1);clock_us+=110000000;poll_peer_timeout();assert(partition_release(false,stored,signature,error)!=ESP_OK&&maintenance==0);
  assert(flash_stack_depth==0&&flash_dispatches>0);
- std::puts("PASS durable partition staging: all flash reads/descriptors/writes on internal stack, full image/native validation, no early activation, TLS loss/reboot-safe metadata, running-image source, partial/corrupt trailer and timeout rejection");
+ std::puts("PASS durable partition staging: single streaming image digest and native validation, ordered blocks, metadata/source/activation without rehashing, internal flash stack, no early activation, TLS loss/reboot-safe metadata, partial/corrupt trailer and timeout rejection");
 }
 '''
 
