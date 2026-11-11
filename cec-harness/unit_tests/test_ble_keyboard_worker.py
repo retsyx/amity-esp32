@@ -170,6 +170,23 @@ class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
             await worker.dispatch("disconnect", {})
         await worker.close()
 
+    async def test_disconnect_status_read_cannot_extend_the_cec_deadline(self):
+        worker, backend = await self.opened()
+        clock = [1_000_000_000]
+        original_status = backend.status
+        async def delayed_status():
+            clock[0] += 2_000_000_000
+            return await original_status()
+        backend.status = delayed_status
+        with patch("amity_harness.ble_keyboard_worker.time.monotonic_ns", side_effect=lambda: clock[0]):
+            receipt = await worker.dispatch("disconnect", {})
+        self.assertFalse(receipt["connected"])
+        self.assertEqual(receipt["disconnected_monotonic_ns"], 1_000_000_000)
+        # The normal one-second CEC deadline has already expired while the
+        # read was pending; receiving its reply cannot create a new budget.
+        self.assertLess(receipt["disconnected_monotonic_ns"] + 1_000_000_000, clock[0])
+        await worker.close()
+
     async def test_forget_peer_resets_report_state_only_after_disconnected_backend_cleanup(self):
         worker, backend = await self.opened()
         await worker.dispatch("report", {"keyboard": [0x4f], "consumer": 0xe9})
