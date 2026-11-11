@@ -70,6 +70,8 @@ void* guarded_realloc(void* pointer,size_t size){assert(!callback&&"callback rea
 void guarded_free(void* pointer){assert(!callback&&"callback free");std::free(pointer);}
 std::atomic<uint64_t> clock_ms{100};
 std::atomic<unsigned> tx_calls{0},rx_calls{0},timer_calls{0},clock_reads{0};
+std::atomic<unsigned> plain_tx_calls{0},ref_tx_calls{0};
+bool use_ref_tx=false;
 unsigned event_calls=0,register_calls=0,ps_calls=0;
 uint32_t tx_duration_ms=7,rx_duration_ms=11;
 uint32_t timer_duration_ms=2;
@@ -83,6 +85,7 @@ wifi_tx_done_cb_t sdk_done=nullptr;
 esp_event_handler_t sdk_event=nullptr;
 void* expected_buffer=reinterpret_cast<void*>(uintptr_t{1});
 void* expected_driver=reinterpret_cast<void*>(uintptr_t{3});
+void* expected_netstack=reinterpret_cast<void*>(uintptr_t{13});
 esp_netif_t* expected_netif=reinterpret_cast<esp_netif_t*>(uintptr_t{5});
 std::vector<std::string> logs;
 struct Callback {Callback(){assert(!callback);callback=true;}~Callback(){callback=false;}};
@@ -103,7 +106,10 @@ esp_err_t esp_wifi_set_tx_done_cb(wifi_tx_done_cb_t fn){
 }
 esp_err_t esp_wifi_get_ps(wifi_ps_type_t* mode){++ps_calls;*mode=actual_ps;return ps_result;}
 extern "C" esp_err_t __real_esp_wifi_internal_tx(wifi_interface_t interface,void* buffer,uint16_t length){
-    assert(callback&&interface==WIFI_IF_AP&&buffer==expected_buffer&&length==UINT16_MAX);++tx_calls;clock_ms+=tx_duration_ms;if(inside_tx)inside_tx();return tx_result;
+    assert(callback&&interface==WIFI_IF_AP&&buffer==expected_buffer&&length==UINT16_MAX);++plain_tx_calls;++tx_calls;clock_ms+=tx_duration_ms;if(inside_tx)inside_tx();return tx_result;
+}
+extern "C" esp_err_t __real_esp_wifi_internal_tx_by_ref(wifi_interface_t interface,void* buffer,size_t length,void* netstack){
+    assert(callback&&interface==WIFI_IF_AP&&buffer==expected_buffer&&length==size_t{123456}&&netstack==expected_netstack);++ref_tx_calls;++tx_calls;clock_ms+=tx_duration_ms;if(inside_tx)inside_tx();return tx_result;
 }
 extern "C" esp_err_t __real_esp_netif_receive(esp_netif_t* interface,void* buffer,size_t length,void* driver){
     assert(callback&&interface==expected_netif&&buffer==expected_buffer&&length==size_t{123456}&&driver==expected_driver);++rx_calls;clock_ms+=rx_duration_ms;if(inside_rx)inside_rx();return rx_result;
@@ -194,7 +200,13 @@ SUITE = r'''
 using namespace amity::network_diagnostics;
 void event(int id){assert(sdk_event);Callback guard;sdk_event(reinterpret_cast<void*>(uintptr_t{9}),WIFI_EVENT,id,reinterpret_cast<void*>(uintptr_t{11}));}
 void done(bool success){assert(sdk_done);Callback guard;sdk_done(255,reinterpret_cast<uint8_t*>(uintptr_t{1}),reinterpret_cast<uint16_t*>(uintptr_t{3}),success);}
-void tx(){Callback guard;assert(__wrap_esp_wifi_internal_tx(WIFI_IF_AP,expected_buffer,UINT16_MAX)==tx_result);}
+void tx(){
+    Callback guard;
+    wifi_netif_driver_t driver=&fixture_driver;
+    const auto result=use_ref_tx?fixture_wifi_transmit_wrap(driver,expected_buffer,size_t{123456},expected_netstack):
+        __wrap_esp_wifi_internal_tx(WIFI_IF_AP,expected_buffer,UINT16_MAX);
+    assert(result==tx_result);
+}
 void rx(){Callback guard;assert(__wrap_esp_netif_receive(expected_netif,expected_buffer,size_t{123456},expected_driver)==rx_result);}
 void timer(){Callback guard;__wrap_tcp_tmr();}
 void begin(){Callback guard;start();}
@@ -202,6 +214,7 @@ void paths(){
     assert(snapshot().tx.attempts==0&&snapshot().rx.attempts==0);
     for(int result:{ESP_OK,ESP_ERR_NO_MEM,ESP_FAIL}){tx_result=rx_result=result;tx();rx();}
     assert(tx_calls==3&&rx_calls==3&&logs.empty()&&register_calls==0);
+    assert(ref_tx_calls==(use_ref_tx?3u:0u)&&plain_tx_calls==(use_ref_tx?0u:3u));
     const auto s=snapshot();assert(s.tx.attempts==3&&s.tx.ok==1&&s.tx.no_mem==1&&s.tx.other==1&&s.tx.last_duration_ms==7);
     assert(s.rx.attempts==3&&s.rx.ok==1&&s.rx.no_mem==1&&s.rx.other==1&&s.rx.last_duration_ms==11);
     assert(s.tx.last_error_code==ESP_FAIL&&s.rx.last_error_code==ESP_FAIL);
@@ -389,12 +402,13 @@ int main(int argc,char** argv){
     model_check_external_branch();
 #endif
     assert(argc==2);const std::string name=argv[1];
-    if(name=="paths")paths();else if(name=="lifecycle")lifecycle_test();else if(name=="eager")eager_success_start();
+    use_ref_tx=name=="paths-ref"||name=="concurrent-ref"||name=="wrap-ref";
+    if(name=="paths"||name=="paths-ref")paths();else if(name=="lifecycle")lifecycle_test();else if(name=="eager")eager_success_start();
     else if(name=="race")startup_race(ESP_ERR_WIFI_NOT_STARTED);else if(name=="race-ok")startup_race(ESP_OK);
     else if(name=="stop")stopped_registration();else if(name=="event-error")event_error_test();
-    else if(name=="registration-error")registration_error_test();else if(name=="wrap")wrap_test();
+    else if(name=="registration-error")registration_error_test();else if(name=="wrap"||name=="wrap-ref")wrap_test();
     else if(name=="console")console_test();else if(name=="held")held_and_nested_paths();
-    else if(name=="concurrent")concurrent_paths();else if(name=="slow-path")slow_path_threshold_wrap_and_retention();
+    else if(name=="concurrent"||name=="concurrent-ref")concurrent_paths();else if(name=="slow-path")slow_path_threshold_wrap_and_retention();
     else if(name=="timer")timer_progress_threshold_and_retention();else if(name=="timer-wrap")timer_zero_and_wrap();else assert(false);
 #ifdef NETWORK_TARGET_MODEL
     assert(model_critical_calls==1&&model_hardware_calls>0);
@@ -409,6 +423,7 @@ def main():
     wifi = re.sub(r'\s+', ' ', (IDF / 'components/esp_wifi/include/esp_private/wifi.h').read_text())
     netif = re.sub(r'\s+', ' ', (IDF / 'components/esp_netif/include/esp_netif.h').read_text())
     for declaration in ('int esp_wifi_internal_tx(wifi_interface_t wifi_if, void *buffer, uint16_t len);',
+                        'esp_err_t esp_wifi_internal_tx_by_ref(wifi_interface_t ifx, void *buffer, size_t len, void *netstack_buf);',
                         'typedef void (* wifi_tx_done_cb_t)(uint8_t ifidx, uint8_t *data, uint16_t *data_len, bool txStatus);',
                         'esp_err_t esp_wifi_set_tx_done_cb(wifi_tx_done_cb_t cb);'):
         assert declaration in wifi, declaration
@@ -419,6 +434,23 @@ def main():
     assert re.search(r'set_source_files_properties\("src/port/xtensa/stdatomic_s32c1i.c"\s+'
                      r'PROPERTIES COMPILE_FLAGS "-mno-disable-hardware-atomics"\)', libc_cmake)
     component = ROOT / 'components/network_diagnostics'
+    # Compile the pinned SDK's actual PSRAM transport dispatch. The host maps
+    # its unresolved SDK calls to the wrappers; target ELF proves interposition.
+    wifi_netif = (IDF / 'components/esp_wifi/src/wifi_netif.c').read_text()
+    dispatch = re.search(r'static esp_err_t wifi_transmit_wrap\([^\n]+\)\n\{.*?\n\}', wifi_netif, re.S)
+    assert dispatch
+    sdk_dispatch = ('\nstruct fixture_wifi_driver {wifi_interface_t wifi_if;};\n'
+                    'using wifi_netif_driver_t=fixture_wifi_driver*;\n'
+                    'fixture_wifi_driver fixture_driver{WIFI_IF_AP};\n'
+                    '#define CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP 1\n'
+                    '#define CONFIG_SPIRAM_IGNORE_NOTFOUND 0\n'
+                    '#define esp_wifi_internal_tx __wrap_esp_wifi_internal_tx\n'
+                    '#define esp_wifi_internal_tx_by_ref __wrap_esp_wifi_internal_tx_by_ref\n'
+                    + dispatch[0].replace('wifi_transmit_wrap', 'fixture_wifi_transmit_wrap', 1)
+                    .replace('wifi_netif_driver_t driver = h;',
+                             'wifi_netif_driver_t driver = static_cast<wifi_netif_driver_t>(h);')
+                    + '\n#undef esp_wifi_internal_tx\n#undef esp_wifi_internal_tx_by_ref\n')
+    assert '"-Wl,--wrap=esp_wifi_internal_tx_by_ref"' in (component / 'CMakeLists.txt').read_text()
     with tempfile.TemporaryDirectory(prefix='amity-network-diagnostics-') as temporary:
         directory = Path(temporary)
         (directory / 'sdk.hpp').write_text(SDK)
@@ -441,12 +473,12 @@ def main():
             source.write_text(PREFIX + model + '\n#define malloc guarded_malloc\n#define calloc guarded_calloc\n'
                               '#define realloc guarded_realloc\n#define free guarded_free\n#include "' +
                               str(component / 'network_diagnostics.cpp') +
-                              '"\n#undef malloc\n#undef calloc\n#undef realloc\n#undef free\n' + ('#undef std\n' if target_model else '') + SUITE)
+                              '"\n#undef malloc\n#undef calloc\n#undef realloc\n#undef free\n' + ('#undef std\n' if target_model else '') + sdk_dispatch + SUITE)
             binary = directory / 'test'
             subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
                 '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-pthread', '-fsanitize=address,undefined',
                 '-I' + str(directory), '-I' + str(component / 'include'), str(source), '-o', str(binary)], check=True)
-            for case in ('paths', 'lifecycle', 'eager', 'race', 'race-ok', 'stop', 'event-error', 'registration-error', 'wrap', 'console', 'held', 'concurrent', 'slow-path', 'timer', 'timer-wrap'):
+            for case in ('paths', 'paths-ref', 'lifecycle', 'eager', 'race', 'race-ok', 'stop', 'event-error', 'registration-error', 'wrap', 'wrap-ref', 'console', 'held', 'concurrent', 'concurrent-ref', 'slow-path', 'timer', 'timer-wrap'):
                 subprocess.run([str(binary), case], check=True)
 
 

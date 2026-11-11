@@ -190,6 +190,13 @@ extern "C" esp_err_t __wrap_esp_wifi_internal_tx(wifi_interface_t interface,void
     using namespace amity::network_diagnostics;
     const auto began=begin(tx_stats);const auto result=__real_esp_wifi_internal_tx(interface,buffer,length);finish(tx_stats,began,result);return result;
 }
+extern "C" esp_err_t __real_esp_wifi_internal_tx_by_ref(wifi_interface_t,void*,size_t,void*);
+extern "C" esp_err_t __wrap_esp_wifi_internal_tx_by_ref(wifi_interface_t interface,void* buffer,size_t length,void* netstack_buffer){
+    using namespace amity::network_diagnostics;
+    // The SDK's PSRAM transmit path owns buffer reference accounting. Observe
+    // its result without inspecting or retaining either SDK-owned pointer.
+    const auto began=begin(tx_stats);const auto result=__real_esp_wifi_internal_tx_by_ref(interface,buffer,length,netstack_buffer);finish(tx_stats,began,result);return result;
+}
 extern "C" esp_err_t __real_esp_netif_receive(esp_netif_t*,void*,size_t,void*);
 extern "C" esp_err_t __wrap_esp_netif_receive(esp_netif_t* interface,void* buffer,size_t length,void* driver_buffer){
     using namespace amity::network_diagnostics;
