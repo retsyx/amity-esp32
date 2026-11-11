@@ -155,10 +155,20 @@ class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker.dispatch("report", {"keyboard": [0x4f], "consumer": 0xe9})
         status = await worker.dispatch("disconnect", {})
         self.assertFalse(status["connected"])
+        self.assertGreater(status["disconnected_monotonic_ns"], 0)
         self.assertEqual(backend.events[-1], ("disconnect",))
         self.assertNotEqual(worker.reports, encode_reports([], 0))
         await worker.close()
         self.assertEqual(backend.events[-2:], [("disconnect",), ("close",)])
+
+    async def test_disconnect_requires_confirmed_link_loss(self):
+        worker, backend = await self.opened()
+        async def still_connected():
+            backend.events.append(("disconnect",))
+        backend.disconnect = still_connected
+        with self.assertRaisesRegex(RuntimeError, "link did not disconnect"):
+            await worker.dispatch("disconnect", {})
+        await worker.close()
 
     async def test_forget_peer_resets_report_state_only_after_disconnected_backend_cleanup(self):
         worker, backend = await self.opened()

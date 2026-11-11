@@ -481,6 +481,11 @@ class PairedKeyboard:
         action = self.checkpoint(kind="ble_disconnect")
         action.operation = self.worker.disconnect()
         self._disconnected = True
+        receipt = action.operation
+        confirmed = receipt.get("disconnected_monotonic_ns") if isinstance(receipt, dict) else None
+        if (not isinstance(receipt, dict) or receipt.get("connected") is not False or type(confirmed) is not int
+                or not action.started_ns <= confirmed <= time.monotonic_ns()):
+            raise KeyboardConflict("The keyboard disconnect has no confirmed link-loss timestamp")
         self._note("disconnect", started_monotonic_ns=action.started_ns, **action.operation)
         return action
 

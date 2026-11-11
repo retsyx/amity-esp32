@@ -186,9 +186,22 @@ class BLEInputEvidence:
         if any(action.state.get(name) != self._state.get(name) for name in
                ("expected_boot_id", "current_activity", "expected_config_revision", "expected_presentation_revision")):
             raise AssertionError("The activity changed during BLE report preflight")
-        deadline = marker + self._budget()
-        record.setdefault("input_changes", []).append({"phase": phase,
-            "started_monotonic_ns": marker, "deadline_monotonic_ns": deadline})
+        boundary = marker
+        change = {"phase": phase, "started_monotonic_ns": marker}
+        if kind == "ble_disconnect":
+            receipt = getattr(action, "operation", None)
+            confirmed = receipt.get("disconnected_monotonic_ns") if isinstance(receipt, dict) else None
+            if (not isinstance(receipt, dict) or receipt.get("connected") is not False
+                    or type(confirmed) is not int or not marker <= confirmed <= time.monotonic_ns()):
+                raise AssertionError("BLE disconnect has no confirmed link-loss timestamp")
+            # The request remains the freshness boundary. BlueZ's disconnect
+            # procedure can outlast a CEC frame; the ordinary CEC budget starts
+            # when the worker first confirms the link is down.
+            boundary = confirmed
+            change["disconnected_monotonic_ns"] = confirmed
+        deadline = boundary + self._budget()
+        change["deadline_monotonic_ns"] = deadline
+        record.setdefault("input_changes", []).append(change)
         return marker, deadline
 
     def _finish(self, record, *, routes, released, release_once=False, validate_frames=None):
@@ -583,6 +596,7 @@ class BLEInputEvidence:
                                    deadline_ns=first.timestamp_ns + self._budget())
             lost, deadline = self._change(keyboard.disconnect, record, "disconnect", kind="ble_disconnect")
             disconnected = True
+            confirmed = record["input_changes"][-1]["disconnected_monotonic_ns"]
             release = self._release(component, after=lost, deadline_ns=deadline)
             observed_until = release.timestamp_ns + self._budget()
             self._drain(observed_until)
@@ -599,7 +613,8 @@ class BLEInputEvidence:
             keyboard.assert_disconnected()
             record.update(component=component.name, first_press_wire_timestamp_ns=first.timestamp_ns,
                           repeat_wire_timestamp_ns=repeated.timestamp_ns,
-                          disconnected_monotonic_ns=lost, release_wire_timestamp_ns=release.timestamp_ns,
+                          disconnect_requested_monotonic_ns=lost, disconnected_monotonic_ns=confirmed,
+                          release_wire_timestamp_ns=release.timestamp_ns,
                           no_press_through_monotonic_ns=observed_until)
             return self._finish(record, routes={Key.VOLUME_UP: component}, released=((component, release),))
         except BaseException as error:

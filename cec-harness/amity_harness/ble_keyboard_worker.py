@@ -104,7 +104,13 @@ class KeyboardWorker:
         if operation == "disconnect":
             _keys(arguments, ())
             await self.backend.disconnect()
-            return await self.backend.status()
+            status = await self.backend.status()
+            if status.get("connected") is not False:
+                raise RuntimeError("The keyboard link did not disconnect")
+            # BlueZ can take seconds to finish its asynchronous Disconnect.
+            # Timestamp confirmed link loss separately from the request so
+            # physical CEC cleanup is measured after the link actually ends.
+            return {**status, "disconnected_monotonic_ns": time.monotonic_ns()}
         if operation == "forget_peer":
             _keys(arguments, ())
             await self.backend.forget_peer()

@@ -63,6 +63,7 @@ class Keyboard:
         self.report_error = None
         self.mutate = None
         self.preflight = self.delivery = None
+        self.disconnect_pending = self.disconnect_complete = None
 
     def action(self, kind):
         if self.preflight is not None:
@@ -190,7 +191,12 @@ class Keyboard:
     def disconnect(self):
         self.commands.append(("disconnect",))
         action = self.action("ble_disconnect")
+        if self.disconnect_pending is not None:
+            self.disconnect_pending()
         self.disconnected = True
+        action.operation = {"connected": False, "disconnected_monotonic_ns": time.monotonic_ns()}
+        if self.disconnect_complete is not None:
+            self.disconnect_complete()
         if self.disconnect_release:
             self.emit(self.f.avr, 0x45)
         if self.disconnect_restart:
@@ -540,6 +546,25 @@ class BLEInputEvidenceTests(unittest.TestCase):
                     with BLEInputEvidence(f.main, f.scan) as evidence:
                         evidence.assert_disconnect_cleanup(f.keyboard, f.avr)
                 self.assertEqual(f.keyboard.commands[-1], ("disconnect",))
+
+    def test_disconnect_wait_precedes_cec_budget_but_late_release_still_fails(self):
+        for late in (False, True):
+            with self.subTest(late=late), self.fixture() as f:
+                real_clock, offset = time.monotonic_ns, [0]
+                advance = lambda: offset.__setitem__(0, offset[0] + 1_000_000_000)
+                f.keyboard.disconnect_pending = advance
+                f.keyboard.disconnect_complete = advance if late else None
+                with patch("amity_harness.ble_input.time.monotonic_ns", side_effect=lambda: real_clock() + offset[0]):
+                    if late:
+                        with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key release"):
+                            with BLEInputEvidence(f.main, f.scan) as evidence:
+                                evidence.assert_disconnect_cleanup(f.keyboard, f.avr)
+                    else:
+                        with BLEInputEvidence(f.main, f.scan) as evidence:
+                            evidence.assert_disconnect_cleanup(f.keyboard, f.avr)
+                change = f.bed.control_observations[-1]["checks"][-1]["input_changes"][-1]
+                self.assertGreater(change["disconnected_monotonic_ns"] - change["started_monotonic_ns"], 12_000_000)
+                self.assertEqual(change["deadline_monotonic_ns"] - change["disconnected_monotonic_ns"], 12_000_000)
 
     def test_missing_receive_coverage_and_report_failure_both_release_keyboard(self):
         for failure in ("coverage", "report"):

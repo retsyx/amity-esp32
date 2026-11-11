@@ -141,7 +141,7 @@ class Worker:
         self.fixture.worker_calls.append(("disconnect",))
         self.connected = self.ready = False
         self.fixture.state["connected"] = False
-        return {"disconnected": True}
+        return {"connected": False, "disconnected_monotonic_ns": time.monotonic_ns()}
 
     def close(self):
         self.fixture.worker_calls.append(("close",))
