@@ -140,91 +140,83 @@ static void device(amity::Hub &hub, amity::BusSide side, uint8_t address, uint16
     for (const char *p = name; *p && f.size < 16; ++p) f.data[f.size++] = *p;
     hub.receive(side, f);
 }
+namespace m=amity::system;
+static m::QualifiedDeviceName named(const std::string& name,amity::BusSide side=amity::BusSide::Back){
+    return {{{},{},0,side==amity::BusSide::Front?m::Side::front:m::Side::back},name};
+}
+static void context(amity::Hub& hub,const std::string& source,const std::string& audio={},const std::string& display={}){
+    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::context;intent.selected=!source.empty()||!display.empty();
+    if(!source.empty())intent.source=named(source);
+    if(!audio.empty())intent.audio=named(audio);
+    if(!display.empty())intent.display=named(display,amity::BusSide::Front);
+    assert(hub.execute_owned(intent));
+}
+static bool press(amity::Hub& hub,uint8_t key,const std::string& name="Source"){
+    const auto* found=hub.find_device(name);if(!found)return false;
+    const auto recipient=*found;const bool audio=amity::Hub::audio_key(key);
+    if(!hub.transmit_key(recipient,hub.translated_key(key),audio))return false;
+    hub.transmit_release(recipient,audio);return true;
+}
 static void hub_tests() {
     using amity::BusSide;
-    const auto F = BusSide::Front, B = BusSide::Back;
-    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
+    const auto F=BusSide::Front,B=BusSide::Back;
+    Transport t;amity::Hub h(t);h.set_addresses(4,0);
     h.announce(F);
-    assert(t.sent.size() == 3);
-    assert((t.sent[0].bytes == std::vector<uint8_t>{0xa6, 6, 0x10, 0, 0}));
-    assert((t.sent[1].bytes == std::vector<uint8_t>{0x84, 0x10, 0, 4}));
-    assert((t.sent[2].bytes == std::vector<uint8_t>{0x87, 0, 0, 0}));
-    h.configure({{"TV", "Screen", "Apple TV", "AVR", "", 0}, {"Game", "Screen", "PS5", "AVR", "", 0},
-                 {"Analog", "Screen", "", "AVR", "AVR", 3}});
-    device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x1500, 4, "Apple TV");
-    device(h, B, 11, 0x1400, 4, "PS5"); device(h, B, 5, 0x1000, 5, "AVR");
+    assert(t.sent.size()==3);
+    assert((t.sent[0].bytes==std::vector<uint8_t>{0xa6,6,0x10,0,0}));
+    assert((t.sent[1].bytes==std::vector<uint8_t>{0x84,0x10,0,4}));
+    assert((t.sent[2].bytes==std::vector<uint8_t>{0x87,0,0,0}));
+    device(h,F,0,0,0,"Screen");device(h,B,4,0x1500,4,"Apple TV");
+    device(h,B,11,0x1400,4,"PS5");device(h,B,5,0x1000,5,"AVR");
+    context(h,"PS5","AVR","Screen");t.sent.clear();
+    m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.target=named("Screen",F);intent.on=true;
+    assert(h.execute_owned(intent)&&t.contains(F,0,{0x04}));
+    intent.target=named("Apple TV");assert(h.execute_owned(intent));
+    assert(t.contains(B,4,{0x44,0x6d})&&t.contains(B,4,{0x45}));
+    intent.on=false;assert(h.execute_owned(intent)&&t.contains(B,4,{0x36}));
+    intent.kind=m::OwnedIntentKind::source_input;intent.target=named("PS5");
+    assert(h.execute_owned(intent)&&t.contains(B,15,{0x86,0x14,0}));
+    intent.kind=m::OwnedIntentKind::switch_input;intent.target=named("AVR");intent.input=3;
+    assert(h.execute_owned(intent)&&t.contains(B,5,{0x44,0x69,3}));
+    assert(press(h,0x41,"AVR"));h.tick(500000);assert(t.contains(B,5,{0x71}));
+    h.receive(B,frame({0x50,0x7a,0x80|42}));
+    assert(h.snapshot().audio_status_known&&h.snapshot().muted&&h.snapshot().volume==42);
+    assert(press(h,0x66,"AVR")&&!h.snapshot().audio_status_known);
+    h.receive(B,frame({0x50,0x7a,127}));
+    assert(h.snapshot().audio_status_known&&!h.snapshot().muted&&h.snapshot().volume==127);
+    t.sent.clear();h.receive(F,frame({0x04,0x8f}));assert(t.contains(F,0,{0x90,0}));
+    h.receive(B,frame({0x40,0x8f}));assert(t.contains(B,4,{0x90,1}));
+    h.receive(B,frame({0xb0,0x8f}));assert(t.contains(B,11,{0x90,0}));
+    t.sent.clear();h.receive(B,frame({0x4f,0x82,0x15,0}));
+    assert(t.contains(B,4,{0x36})&&t.contains(B,15,{0x86,0x14,0}));
+    t.sent.clear();h.receive(B,frame({0xbf,0x82,0x14,0}));assert(t.sent.empty());
+    h.receive(B,frame({0xbf,0x84,0x13,0,4}));assert(t.contains(B,15,{0x86,0x13,0}));
+    context(h,"");t.sent.clear();h.receive(B,frame({0x4f,0x82,0x15,0}));
+    assert(t.contains(F,15,{0x36})&&t.contains(B,15,{0x36}));
+    t.sent.clear();h.receive(F,frame({0x04,0x83}));assert(t.contains(F,15,{0x84,0x10,0,4}));
+    h.receive(B,frame({0x40,0x83}));assert(t.contains(B,15,{0x84,0,0,0}));
+    h.receive(F,frame({0x04,0x9f}));assert(t.contains(F,0,{0x9e,6}));
+    h.receive(B,frame({0x40,0xa5}));assert(t.contains(B,15,{0xa6,6,0x80,0,0}));
+    h.receive(F,frame({0x04,0x46}));assert(t.contains(F,0,{0x47,'a','m','i','t','y'}));
     t.sent.clear();
-    assert(!h.select_activity(-2)); assert(!h.select_activity(3));
-    assert(h.select_activity(0)); assert(h.snapshot().current_activity == 0);
-    assert(t.contains(F, 0, {0x04})); assert(t.contains(B, 4, {0x44, 0x6d}));
-    assert(t.contains(B, 5, {0x44, 0x6d})); assert(t.contains(B, 15, {0x86, 0x15, 0}));
-    t.sent.clear(); h.select_activity(1);
-    assert(t.contains(B, 4, {0x36})); assert(t.contains(B, 11, {0x44, 0x6d}));
-    assert(!t.contains(F, 0, {0x36})); assert(!t.contains(B, 5, {0x36}));
-    t.sent.clear(); h.select_activity(1); assert(t.contains(F, 0, {0x04}));
-    t.sent.clear(); assert(h.press_key(0x41, true)); h.release_key();
-    assert(t.contains(B, 5, {0x44, 0x41})); assert(t.contains(B, 5, {0x45}));
-    assert(!t.contains(B, 5, {0x71})); h.tick(500000);
-    assert(t.contains(B, 5, {0x71}));
-    h.receive(B, frame({0x50, 0x7a, 0x80 | 42}));
-    assert(h.snapshot().audio_status_known && h.snapshot().muted && h.snapshot().volume == 42);
-    h.press_key(0x66); assert(t.contains(B, 5, {0x44, 0x66}));
-    assert(!h.snapshot().audio_status_known);
-    h.receive(B, frame({0x50, 0x7a, 127}));
-    assert(h.snapshot().audio_status_known && !h.snapshot().muted && h.snapshot().volume == 127);
-    assert(h.press_key(0)); assert(t.contains(B, 11, {0x44, 0}));
-    t.sent.clear(); h.press_key(0x61, true); h.press_key(0x61, true); h.release_key();
-    assert(t.contains(B, 11, {0x44, 0x44})); assert(!t.contains(B, 11, {0x44, 0x46}));
-    h.press_key(0x61); assert(t.contains(B, 11, {0x44, 0x46}));
-    t.sent.clear(); h.receive(F, frame({0x04, 0x8f})); assert(t.contains(F, 0, {0x90, 0}));
-    h.receive(B, frame({0x40, 0x8f})); assert(t.contains(B, 4, {0x90, 1}));
-    h.receive(B, frame({0xb0, 0x8f})); assert(t.contains(B, 11, {0x90, 0}));
-    t.sent.clear(); h.receive(B, frame({0x4f, 0x82, 0x15, 0}));
-    assert(t.contains(B, 4, {0x36})); assert(t.contains(B, 15, {0x86, 0x14, 0}));
-    t.sent.clear(); h.receive(B, frame({0xbf, 0x82, 0x14, 0})); assert(t.sent.empty());
-    h.receive(B, frame({0xbf, 0x84, 0x13, 0, 4})); assert(t.contains(B, 15, {0x86, 0x13, 0}));
-    t.sent.clear(); h.select_activity(2);
-    assert(t.contains(B, 5, {0x44, 0x69, 3})); assert(t.contains(F, 15, {0x82, 0x10, 0}));
-    h.standby(); assert(h.snapshot().current_activity == -1);
-    t.sent.clear(); h.standby(); assert(t.contains(F, 15, {0x36}) && t.contains(B, 15, {0x36}));
-    t.sent.clear(); h.receive(B, frame({0x4f, 0x82, 0x15, 0}));
-    assert(t.contains(F, 15, {0x36}) && t.contains(B, 15, {0x36}));
-    assert(!h.press_key(0));
-    t.sent.clear(); h.receive(F, frame({0x04, 0x83})); assert(t.contains(F, 15, {0x84, 0x10, 0, 4}));
-    h.receive(B, frame({0x40, 0x83})); assert(t.contains(B, 15, {0x84, 0, 0, 0}));
-    h.receive(F, frame({0x04, 0x9f})); assert(t.contains(F, 0, {0x9e, 6}));
-    h.receive(B, frame({0x40, 0xa5})); assert(t.contains(B, 15, {0xa6, 6, 0x80, 0, 0}));
-    h.receive(F, frame({0x04, 0x46})); assert(t.contains(F, 0, {0x47, 'a', 'm', 'i', 't', 'y'}));
-    t.sent.clear(); h.receive(F, frame({0x0f, 0x83})); assert(t.sent.empty());
-    h.receive(F, frame({0xf4, 0x8f})); assert(t.sent.empty());
-    h.receive(F, frame({0x04, 0xfe})); assert(t.sent.empty()); // Unknown op: follower suppresses automatic abort.
-    h.receive(F, frame({0x04, 0, 0xfe, 0})); assert(t.sent.empty()); // Never abort a Feature Abort.
-    h.receive(B, frame({0x4f, 0x04})); assert(t.sent.empty()); // Image View On must be directed.
-    h.receive(B, frame({0x40, 0x82, 0x15, 0})); assert(t.sent.empty()); // Active Source must broadcast.
-    h.receive(F, frame({0x04, 0xff})); assert(t.contains(F, 0, {0, 0xff, 4}));
-    t.sent.clear(); h.receive(F, frame({0x04, 0x9f, 0})); assert(t.contains(F, 0, {0x9e, 6}));
-    // Manufacturer identity never changes the normal power commands.
-    h.receive(B, frame({0x4f, 0x87, 0, 0x12, 0x34}));
-    h.configure({{"TV", "Screen", "Apple TV", "AVR", "", 0}});
-    t.sent.clear(); h.select_activity(0);
-    assert(t.contains(F, 0, {0x04}));
-    assert(t.contains(B, 4, {0x44, 0x6d}) && t.contains(B, 4, {0x45}));
-    assert(!t.contains(B, 4, {0x44, 0x40}));
-    t.sent.clear(); h.standby();
-    assert(t.contains(F, 0, {0x36}) && t.contains(B, 4, {0x36}));
-    // Device matching is scoped to a bus: front TV must survive a back PA=0.
-    device(h, B, 8, 0, 4, "Duplicate PA");
-    bool found_tv = false; for (const auto &d : h.snapshot().devices) if (d.name == "Screen") found_tv = true;
-    assert(found_tv);
+    for(const auto& f:{frame({0x0f,0x83}),frame({0xf4,0x8f}),frame({0x04,0xfe}),
+                      frame({0x04,0,0xfe,0}),frame({0x4f,0x04}),frame({0x40,0x82,0x15,0})})h.receive(F,f);
+    assert(t.sent.empty());
+    h.receive(F,frame({0x04,0xff}));assert(t.contains(F,0,{0,0xff,4}));
+    // Manufacturer identity does not change power translation.
+    h.receive(B,frame({0x4f,0x87,0,0x12,0x34}));t.sent.clear();
+    intent.kind=m::OwnedIntentKind::power;intent.target=named("Apple TV");intent.on=true;
+    assert(h.execute_owned(intent));assert(t.contains(B,4,{0x44,0x6d})&&!t.contains(B,4,{0x44,0x40}));
+    device(h,B,8,0,4,"Duplicate PA");
+    assert(h.find_device("Screen",F));
 }
 static void discovery_tests() {
     const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
-    h.configure({{"Watch", "Screen", "Source", "Source", "", 0}});
     assert(!h.find_device("Source",B));
     device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x1000, 4, "Source");
     assert(h.find_device("Source",B));
-    h.select_activity(0); assert(h.find_device("Source",B));
+    context(h,"Source","Source","Screen"); assert(h.find_device("Source",B));
     // Discovery leaves the working cache and selected-source power response
     // intact until all metadata has been collected into its replacement.
     h.begin_discovery();
@@ -238,7 +230,7 @@ static void discovery_tests() {
     h.finish_discovery();
     assert(t.contains(B, 15, {0x86, 0x20, 0}));
     assert(h.snapshot().devices.size() == 2);
-    t.sent.clear(); h.press_key(0); assert(t.contains(B, 8, {0x44, 0}));
+    t.sent.clear(); press(h,0); assert(t.contains(B, 8, {0x44, 0}));
     // A selected source reconnects at another logical and physical address.
     // Its late OSD reply must replace the old name and restore the new route.
     t.sent.clear();
@@ -247,7 +239,7 @@ static void discovery_tests() {
     h.receive(B, frame({0xb0, 0x47, 'S', 'o', 'u', 'r', 'c', 'e'}));
     assert(t.contains(B, 15, {0x86, 0x30, 0}));
     assert(h.snapshot().devices.size() == 2);
-    t.sent.clear(); h.press_key(0); assert(t.contains(B, 11, {0x44, 0}));
+    t.sent.clear(); press(h,0); assert(t.contains(B, 11, {0x44, 0}));
     // The opposite metadata reply order must never route to unknown PA ffff.
     h.discovered(B, 4);
     t.sent.clear(); h.receive(B, frame({0x40, 0x47, 'S', 'o', 'u', 'r', 'c', 'e'}));
@@ -257,43 +249,14 @@ static void discovery_tests() {
     assert(h.snapshot().devices.size() == 2);
     h.clear_devices(); assert(!h.find_device("Source",B));
 }
-static void shared_power_tests() {
-    const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
-    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
-    h.configure({{"Shared", "Front", "Back", "Back", "Back", 0},
-                 {"Other", "", "Other", "Other", "", 0}});
-    device(h, F, 5, 0x1000, 5, "Front"); device(h, B, 5, 0x1000, 5, "Back");
-    device(h, B, 8, 0x2000, 4, "Other");
-    for (const auto header : {0x5f, 0x8f}) h.receive(B, frame({static_cast<uint8_t>(header), 0x87, 0, 0x12, 0x34}));
-    h.receive(F, frame({0x5f, 0x87, 0, 0x12, 0x34}));
-    // Reused source/audio/switch roles send one power-on command, while the same logical
-    // address on another bus remains a separate device. Repairs do the same.
-    for (unsigned attempt = 0; attempt < 2; ++attempt) {
-        t.sent.clear(); assert(h.select_activity(0));
-        assert(t.count(F, 5, {0x44, 0x6d}) == 1);
-        assert(t.count(B, 5, {0x44, 0x6d}) == 1);
-        assert(t.count(B, 8, {0x44, 0x6d}) == 0);
-    }
-    t.sent.clear(); h.standby();
-    assert(t.count(F, 5, {0x36}) == 1);
-    assert(t.count(B, 5, {0x36}) == 1);
-    assert(h.select_activity(0)); t.sent.clear(); assert(h.select_activity(1));
-    assert(t.count(F, 5, {0x36}) == 1);
-    assert(t.count(B, 5, {0x36}) == 1);
-    assert(t.count(B, 8, {0x44, 0x6d}) == 1);
-    t.sent.clear(); h.standby(); assert(t.count(B, 8, {0x36}) == 1);
-}
 static void playback_tests() {
     const auto B = amity::BusSide::Back;
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
-    h.configure({{"Watch", "", "Source", "", "", 0},
-                 {"Other", "", "Source B", "", "", 0},
-                 {"Same source", "", "Source B", "", "", 0}});
-    device(h, B, 4, 0x1000, 4, "Source"); assert(h.select_activity(0));
+    device(h, B, 4, 0x1000, 4, "Source"); context(h,"Source");
     device(h, B, 8, 0x2000, 4, "Source B");
     const auto check = [&](std::initializer_list<uint8_t> keys, std::initializer_list<uint8_t> expected) {
         t.sent.clear();
-        for (const auto key : keys) assert(h.press_key(key));
+        for (const auto key : keys) assert(press(h,key));
         std::vector<uint8_t> emitted;
         for (const auto &s : t.sent) if (s.side == B && s.destination == 4 && s.bytes.size() == 2 && s.bytes[0] == 0x44)
             emitted.push_back(s.bytes[1]);
@@ -304,155 +267,39 @@ static void playback_tests() {
     check({0x44, 0x61}, {0x44, 0x46});
     check({0x61, 0x46, 0x61}, {0x44, 0x46, 0x44});
     check({0x44, 0x45, 0x61}, {0x44, 0x45, 0x44});
-    // Holding the toggle repeats its initial command without toggling again.
-    assert(h.press_key(0x61, true)); assert(h.press_key(0x61, true)); assert(h.release_key());
-    check({0x61}, {0x44});
     // Rejected explicit Pause/Stop cannot change a previously accepted Play.
     for (const auto key : {0x46, 0x45}) {
-        assert(h.press_key(0x44)); t.reject_opcode = 0x44; assert(!h.press_key(key));
+        assert(press(h,0x44)); t.reject_opcode = 0x44; assert(!press(h,key));
         t.reject_opcode = -1; check({0x61}, {0x46});
     }
     // Rejected explicit Play likewise cannot turn a paused state into playing.
-    t.reject_opcode = 0x44; assert(!h.press_key(0x44));
+    t.reject_opcode = 0x44; assert(!press(h,0x44));
     t.reject_opcode = -1; check({0x61}, {0x44});
     // Playback intent belongs to the selected source, so a new source starts
     // with Play. Activities sharing that source retain the accepted state.
-    assert(h.select_activity(1)); t.sent.clear(); assert(h.press_key(0x61));
+    context(h,"Source B"); t.sent.clear(); assert(press(h,0x61,"Source B"));
     assert(t.contains(B, 8, {0x44, 0x44}) && !t.contains(B, 8, {0x44, 0x46}));
-    assert(h.select_activity(2)); t.sent.clear(); assert(h.press_key(0x61));
+    context(h,"Source B"); t.sent.clear(); assert(press(h,0x61,"Source B"));
     assert(t.contains(B, 8, {0x44, 0x46}) && !t.contains(B, 8, {0x44, 0x44}));
 }
-static void backpressure_tests() {
-    const auto B = amity::BusSide::Back;
-    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
-    h.configure({{"Listen", "", "Source", "Source", "", 0}});
-    device(h, B, 4, 0x1000, 4, "Source"); h.select_activity(0);
-    // A final release is attempted once, using the driver's eight-slot FIFO. If
-    // that slot is full, no future up, tick or new key retries the dropped TX.
-    t.sent.clear(); t.reject_opcode = 0x45;
-    assert(h.press_key(0)); assert(t.contains(B, 4, {0x44, 0}));
-    assert(!t.contains(B, 4, {0x45}));
-    assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
-    h.tick(10000); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(20000); assert(!t.contains(B, 4, {0x45}));
-    assert(h.press_key(1)); assert(t.contains(B, 4, {0x44, 1}));
-    // Failed initial presses must not toggle the emulated playback state.
-    t.sent.clear(); t.reject_opcode = 0x44; assert(!h.press_key(0x61));
-    t.reject_opcode = -1; assert(h.press_key(0x61));
-    assert(t.contains(B, 4, {0x44, 0x44})); assert(!t.contains(B, 4, {0x44, 0x46}));
-    // Power-on and switch-input releases are likewise never buffered/retried.
-    t.sent.clear(); t.reject_opcode = 0x45; h.fix_current_activity();
-    assert(t.contains(B, 4, {0x44, 0x6d})); assert(!t.contains(B, 4, {0x45}));
-    t.reject_opcode = -1; h.tick(30000); assert(!t.contains(B, 4, {0x45}));
-    t.sent.clear();t.reject_opcode=0x44;h.fix_current_activity();assert(!t.contains(B,4,{0x45}));t.reject_opcode=-1;
-    // One long volume adjustment is 100 complete presses, but only one
-    // status query after the last press has been quiet for half a second.
-    t.sent.clear();
-    for (uint64_t i = 1; i <= 100; ++i) { h.tick(i * 250000); assert(h.press_key(0x41)); }
-    assert(!t.contains(B, 4, {0x71}));
-    h.tick(25499999); assert(!t.contains(B, 4, {0x71}));
-    h.tick(25500000); assert(t.contains(B, 4, {0x71}));
-    unsigned presses = 0, releases = 0, queries = 0;
-    for (const auto &sent : t.sent) {
-        if (sent.bytes == std::vector<uint8_t>{0x44, 0x41}) ++presses;
-        if (sent.bytes == std::vector<uint8_t>{0x45}) ++releases;
-        if (sent.bytes == std::vector<uint8_t>{0x71}) ++queries;
-    }
-    assert(presses == 100 && releases == 100 && queries == 1);
-}
-static void independent_key_tests() {
-    const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
-    constexpr uint8_t right = 0x04, volume_up = 0x41, volume_down = 0x42;
-    Transport t; amity::Hub h(t); h.set_addresses(4, 0);
-    h.configure({{"Separate", "", "Source", "Audio", "", 0},
-                 {"Shared", "", "Source", "Source", "", 0}});
-    // The same logical address on different buses is still two recipients.
-    device(h, B, 5, 0x1000, 4, "Source");
-    device(h, F, 5, 0x1000, 5, "Audio");
-    assert(h.select_activity(0)); h.tick(1000); t.sent.clear();
-    assert(h.press_key(volume_up, true));
-    assert(h.press_key(right, true));
-    assert(t.sent.size() == 2);
-    assert(t.count(F, 5, {0x44, volume_up}) == 1);
-    assert(t.count(B, 5, {0x44, right}) == 1);
-    assert(!t.contains(F, 5, {0x45}) && !t.contains(B, 5, {0x45}));
-    assert(h.release_key(right));
-    assert(t.count(B, 5, {0x45}) == 1 && !t.contains(F, 5, {0x45}));
-    assert(h.press_key(volume_up, true));
-    h.tick(600000);
-    assert(t.count(F, 5, {0x44, volume_up}) == 2 && !t.contains(F, 5, {0x71}));
-    assert(h.release_key(volume_up)); // Release is admitted immediately.
-    assert(t.count(F, 5, {0x45}) == 1);
-    h.tick(1099999); assert(!t.contains(F, 5, {0x71}));
-    h.tick(1100000); assert(t.count(F, 5, {0x71}) == 1);
-    assert(h.release_key(right) && h.release_key(volume_up));
-    assert(t.count(B, 5, {0x45}) == 1 && t.count(F, 5, {0x45}) == 1);
-
-    // CEC releases carry no key operand. Ending either key at a shared
-    // recipient must leave the other held, until the final key ends.
-    assert(h.select_activity(1)); h.tick(2000000); t.sent.clear();
-    assert(h.press_key(volume_up, true) && h.press_key(right, true));
-    assert(h.release_key(right)); assert(!t.contains(B, 5, {0x45}));
-    assert(h.press_key(volume_up, true)); assert(h.release_key(volume_up));
-    assert(t.count(B, 5, {0x45}) == 1);
-    t.sent.clear();
-    assert(h.press_key(right, true) && h.press_key(volume_up, true));
-    assert(h.release_key(volume_up)); assert(!t.contains(B, 5, {0x45}));
-    h.tick(2499999); assert(!t.contains(B, 5, {0x71}));
-    // Audio status can refresh after the audio key ends while Right remains
-    // held, even when both keys share their recipient.
-    h.tick(2500000); assert(t.count(B, 5, {0x71}) == 1);
-    assert(h.press_key(right, true) && h.release_key(right));
-    assert(t.count(B, 5, {0x45}) == 1);
-
-    // One-shot commands cannot release another held key. Multiple audio
-    // holds gate the coalesced query until the last audio key has ended.
-    h.tick(3000000); t.sent.clear();
-    assert(h.press_key(right, true)); assert(h.press_key(volume_up));
-    assert(!t.contains(B, 5, {0x45}));
-    assert(h.press_key(volume_up, true) && h.press_key(volume_down, true));
-    assert(h.release_key(volume_up)); h.tick(4000000);
-    assert(!t.contains(B, 5, {0x71}) && !t.contains(B, 5, {0x45}));
-    assert(h.release_key(volume_down));
-    h.tick(4499999); assert(!t.contains(B, 5, {0x71}));
-    h.tick(4500000); assert(t.count(B, 5, {0x71}) == 1);
-    assert(h.release_key()); assert(t.count(B, 5, {0x45}) == 1);
-
-    // A rejected initial press creates no key state that could suppress a
-    // later key's release or change a held toggle's original mapping.
-    t.sent.clear(); t.reject_opcode = 0x44;
-    assert(!h.press_key(volume_up, true)); t.reject_opcode = -1;
-    assert(h.press_key(right, true) && h.release_key(right));
-    assert(t.count(B, 5, {0x45}) == 1);
-    t.sent.clear();
-    assert(h.press_key(0x61, true)); assert(h.press_key(right, true));
-    assert(h.press_key(0x61, true)); assert(h.release_key(right));
-    assert(t.count(B, 5, {0x44, 0x44}) == 2 && !t.contains(B, 5, {0x44, 0x46}));
-    assert(!t.contains(B, 5, {0x45})); assert(h.release_key(0x61));
-    assert(t.count(B, 5, {0x45}) == 1);
-
-    // Each repeat and release resolves the current source again.
-    t.sent.clear(); assert(h.press_key(right, true));
-    device(h, B, 8, 0x2000, 4, "Source"); t.sent.clear();
-    assert(h.press_key(right, true) && h.release_key(right));
-    assert(t.count(B, 8, {0x44, right}) == 1 && t.count(B, 8, {0x45}) == 1);
-    assert(!t.contains(B, 5, {0x44, right}) && !t.contains(B, 5, {0x45}));
-    t.sent.clear(); assert(h.press_key(right));
-    assert(t.count(B, 8, {0x44, right}) == 1 && t.count(B, 8, {0x45}) == 1);
-
-    // Release performs its own lookup even when no repeat followed the change.
-    t.sent.clear(); assert(h.press_key(right, true));
-    device(h, B, 11, 0x3000, 4, "Source"); t.sent.clear();
-    assert(h.release_key(right));
-    assert(t.sent.size() == 1 && t.count(B, 11, {0x45}) == 1);
-    assert(!t.contains(B, 8, {0x45}));
-
-    // Activity changes still terminate every independent hold once per recipient.
-    assert(h.select_activity(0)); t.sent.clear();
-    assert(h.press_key(volume_up, true) && h.press_key(right, true));
-    assert(h.select_activity(-1));
-    assert(t.count(F, 5, {0x45}) == 1 && t.count(B, 11, {0x45}) == 1);
-    t.sent.clear(); assert(h.release_key()); assert(t.sent.empty());
+static void backpressure_tests(){
+    const auto B=amity::BusSide::Back;
+    Transport t;amity::Hub h(t);h.set_addresses(4,0);device(h,B,4,0x1000,4,"Source");context(h,"Source","Source");
+    const auto recipient=*h.find_device("Source",B);
+    t.sent.clear();t.reject_opcode=0x45;
+    assert(h.transmit_key(recipient,0,false)&&!h.transmit_release(recipient,false));
+    assert(h.snapshot().uncertain_releases==1);
+    t.reject_opcode=-1;h.tick(1000000);assert(!t.contains(B,4,{0x45}));
+    m::OwnedIntent power;power.kind=m::OwnedIntentKind::power;power.target=named("Source");power.on=true;
+    t.sent.clear();t.reject_opcode=0x45;assert(!h.execute_owned(power));
+    assert(t.contains(B,4,{0x44,0x6d})&&!t.contains(B,4,{0x45}));
+    t.reject_opcode=-1;h.tick(2000000);assert(!t.contains(B,4,{0x45}));
+    t.sent.clear();t.reject_opcode=0x44;assert(!h.execute_owned(power));assert(!t.contains(B,4,{0x45}));
+    t.reject_opcode=-1;t.sent.clear();
+    for(uint64_t i=1;i<=100;++i){h.tick(i*250000);assert(press(h,0x41));}
+    assert(!t.contains(B,4,{0x71}));h.tick(25499999);assert(!t.contains(B,4,{0x71}));
+    h.tick(25500000);assert(t.count(B,4,{0x71})==1);
+    assert(t.count(B,4,{0x44,0x41})==100&&t.count(B,4,{0x45})==100);
 }
 static void volume_sequence_tests() {
     amity::VolumeSequence volume;
@@ -479,61 +326,26 @@ static void volume_sequence_tests() {
     volume.tick(1500000, 9, send); assert(!volume.idle());
     volume.tick(1750000, 9, send); assert(volume.idle());
     assert(accepted.size() == 4 && accepted[2] == std::make_pair(uint8_t{0x42}, uint32_t{9}) && accepted[3] == accepted[2]);
-
-    Transport transport; amity::Hub hub(transport);
-    const std::vector<amity::Activity> activities{{"First", "", "", "", "", 0}, {"Second", "", "", "", "", 0}};
-    hub.configure(activities);
-    hub.select_activity(0); const auto first = hub.activity_generation();
-    hub.select_activity(0); assert(hub.activity_generation() == first); // Repair preserves the activity.
-    hub.select_activity(1); assert(hub.activity_generation() != first);
-    hub.select_activity(0); const auto restarted = hub.activity_generation();
-    assert(restarted != first); // Returning to index zero cannot revive old work.
-    hub.standby(); const auto standby = hub.activity_generation();
-    assert(standby != restarted);
-    hub.select_activity(0); assert(hub.activity_generation() != standby);
-    hub.configure(activities); assert(hub.activity_generation() != restarted);
-    assert(hub.snapshot().activity_generation == hub.activity_generation());
 }
 static void display_audio_fallback_tests(){
-    const auto front=amity::BusSide::Front,back=amity::BusSide::Back;
+    const auto F=amity::BusSide::Front,B=amity::BusSide::Back;
     Transport wire;amity::Hub hub(wire);hub.set_addresses(4,0);
-    hub.configure({{"TV sound","Screen","Player","","",0},
-                   {"Receiver sound","Screen","Player","Receiver","",0},
-                   {"Missing receiver","Screen","Player","Absent","",0},
-                   {"No audio recipient","","Player","","",0}});
-    device(hub,front,0,0,0,"Screen");device(hub,back,4,0x3200,4,"Player");
-    device(hub,back,5,0x3000,5,"Receiver");
-    assert(hub.select_activity(0));hub.tick(1000);wire.sent.clear();
+    device(hub,F,0,0,0,"Screen");device(hub,B,4,0x3200,4,"Player");device(hub,B,5,0x3000,5,"Receiver");
+    context(hub,"Player","","Screen");hub.tick(1000);wire.sent.clear();
     for(uint8_t key:{0x41,0x42,0x43,0x65,0x66}){
-        assert(hub.press_key(key));
-        assert(wire.count(front,0,{0x44,key})==1);
-        assert(!wire.contains(back,4,{0x44,key})&&!wire.contains(back,5,{0x44,key}));
+        assert(press(hub,key,"Screen"));assert(wire.count(F,0,{0x44,key})==1);
+        assert(!wire.contains(B,4,{0x44,key})&&!wire.contains(B,5,{0x44,key}));
     }
-    assert(wire.count(front,0,{0x45})==5);
-    wire.sent.clear();
-    assert(hub.press_key(0x41,true)&&hub.press_key(0x04,true));
-    assert(wire.count(front,0,{0x44,0x41})==1&&wire.count(back,4,{0x44,0x04})==1);
-    assert(hub.release_key(0x04));
-    assert(wire.count(back,4,{0x45})==1&&!wire.contains(front,0,{0x45}));
-    assert(hub.press_key(0x41,true));hub.tick(600000);
-    assert(wire.count(front,0,{0x44,0x41})==2&&!wire.contains(front,0,{0x71}));
-    assert(hub.release_key(0x41)&&wire.count(front,0,{0x45})==1);
-    hub.tick(1100000);assert(wire.count(front,0,{0x71})==1);
-    hub.receive(front,frame({0x04,0x7a,23}));
-    assert(hub.snapshot().audio_status_known&&hub.snapshot().volume==23);
-    hub.receive(back,frame({0x50,0x7a,99}));assert(hub.snapshot().volume==23);
-
-    assert(hub.select_activity(1));wire.sent.clear();
-    assert(hub.press_key(0x42)&&hub.press_key(0));
-    assert(wire.count(back,5,{0x44,0x42})==1&&wire.count(back,5,{0x45})==1);
-    assert(wire.count(back,4,{0x44,0})==1&&!wire.contains(front,0,{0x44,0x42}));
-    assert(hub.select_activity(2));wire.sent.clear();
-    assert(!hub.press_key(0x41)&&wire.sent.empty());
-    assert(hub.select_activity(3));wire.sent.clear();
-    assert(!hub.press_key(0x41)&&wire.sent.empty());
-    assert(hub.press_key(0)&&wire.count(back,4,{0x44,0})==1);
+    assert(wire.count(F,0,{0x45})==5);hub.tick(501000);assert(wire.count(F,0,{0x71})==1);
+    hub.receive(F,frame({0x04,0x7a,23}));assert(hub.snapshot().audio_status_known&&hub.snapshot().volume==23);
+    hub.receive(B,frame({0x50,0x7a,99}));assert(hub.snapshot().volume==23);
+    context(hub,"Player","Receiver","Screen");wire.sent.clear();
+    assert(press(hub,0x42,"Receiver")&&press(hub,0,"Player"));
+    assert(wire.count(B,5,{0x44,0x42})==1&&wire.count(B,4,{0x44,0})==1);
+    context(hub,"Player","Absent","Screen");wire.sent.clear();assert(!press(hub,0x41,"Absent")&&wire.sent.empty());
+    context(hub,"Player");wire.sent.clear();assert(!press(hub,0x41,"Absent")&&wire.sent.empty());assert(press(hub,0,"Player"));
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); shared_power_tests(); playback_tests(); backpressure_tests(); independent_key_tests(); volume_sequence_tests();display_audio_fallback_tests();
+    wire_tests(); hub_tests(); discovery_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();display_audio_fallback_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

@@ -28,17 +28,17 @@ static void device(Hub& hub,BusSide side,uint8_t address,const char* osd){
 static void one_standby(const Wire& wire,uint8_t destination){
     assert(wire.sent.size()==1&&wire.sent[0].side==BusSide::Back&&wire.sent[0].destination==destination&&wire.sent[0].data==std::vector<uint8_t>{0x36});
 }
-static void original_and_context_source_comparison(){
-    Wire wire;Hub hub(wire);hub.set_addresses(4,0);hub.qualified_names();
+static void context_source_comparison(){
+    Wire wire;Hub hub(wire);hub.set_addresses(4,0);
     device(hub,BusSide::Back,4,"Source");device(hub,BusSide::Back,8,"Other");
     device(hub,BusSide::Front,8,"Front Source");
-    hub.configure({{"Watch","","Source","","",0}});assert(hub.select_activity(0));wire.sent.clear();
+    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.selected=true;
+    context.source=name(member,m::Side::back,"Source");assert(hub.execute_owned(context));wire.sent.clear();
     hub.receive(BusSide::Back,active(8));
     assert(wire.sent.size()==2&&wire.sent[0].destination==8&&wire.sent[0].data==std::vector<uint8_t>{0x36});
     assert(wire.sent[1].side==BusSide::Back&&wire.sent[1].destination==15&&wire.sent[1].data==std::vector<uint8_t>({0x86,0x10,0}));
     wire.sent.clear();hub.receive(BusSide::Back,active(4));assert(wire.sent.empty());
 
-    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.selected=true;
     // Equal OSD and logical address cannot make a source on another owner or
     // adapter match this wire's source. No other wire's input needs repair.
     for(const auto& source:{name(controller,m::Side::back,"Source"),name(member,m::Side::back,"Source",1)}){
@@ -215,4 +215,4 @@ static void three_owner_standby_cycles(){
     }
     fixture_peer_address={};
 }
-int main(){original_and_context_source_comparison();distributed_source_comparison();three_owner_standby_cycles();std::puts("PASS assigned-source comparison: same-name/LA cross-owner/adapter/side suppression, no foreign route repair, local absence/fallback and original global standby");}
+int main(){context_source_comparison();distributed_source_comparison();three_owner_standby_cycles();std::puts("PASS assigned-source comparison: same-name/LA cross-owner/adapter/side suppression, no foreign route repair, local absence/fallback and original global standby");}

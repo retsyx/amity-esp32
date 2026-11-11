@@ -30,22 +30,30 @@ static void explicit_ui_discovery(HubService& hub){
     const m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     assert(hub.submit_owned(intent,auth,0));run_one_command();
 }
+static m::OwnedAdapterSnapshot observed(const HubService& hub){
+    const auto reports=hub.owned_snapshots();
+    const auto found=std::find_if(reports.begin(),reports.end(),[](const auto& report){return report.adapter==0;});
+    assert(found!=reports.end());return *found;
+}
 static void setup(HubService& hub){
     hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
     assert(hub.start(1,2)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);
     fixture_finish_discovery(hub);
-    assert(hub.snapshot().discovery_generation==1&&hub.snapshot().devices.size()==2);
+    assert(hub.snapshot().discovery_generation==1&&observed(hub).devices.size()==2);
 }
 static Device cached(const HubService& hub,BusSide side){
-    const auto devices=hub.snapshot().devices;const auto found=std::find_if(devices.begin(),devices.end(),[&](const auto& d){return d.bus==side;});
-    assert(found!=devices.end());return *found;
+    const auto devices=observed(hub).devices;
+    const auto wanted=side==BusSide::Front?m::Side::front:m::Side::back;
+    const auto found=std::find_if(devices.begin(),devices.end(),[&](const auto& d){return d.side==wanted;});
+    assert(found!=devices.end());
+    return {found->osd_name,side,found->logical_address,found->physical_address,found->device_type,found->vendor_id,found->resolved};
 }
 static void same_device(const Device& a,const Device& b){
     assert(a.name==b.name&&a.bus==b.bus&&a.address==b.address&&a.physical_address==b.physical_address&&
            a.type==b.type&&a.vendor_id==b.vendor_id&&a.resolved==b.resolved);
 }
 static void side_local_cooldown(){
-    reset_fixture();HubService hub;setup(hub);
+    reset_fixture();LocalHubService hub;setup(hub);
     const auto front=cached(hub,BusSide::Front),back=cached(hub,BusSide::Back);
     assert(polls(1)&&polls(2)); // The actual boot enumerates both sides.
     fixture_sent.clear();
@@ -81,7 +89,7 @@ static void side_local_cooldown(){
     assert(polls(1)&&polls(2));
 }
 static void no_configuration_or_rebind_scan(){
-    reset_fixture();HubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
+    reset_fixture();LocalHubService hub;hub.set_system_identity(group,controller);hub.set_boot_identity(boot);assert(hub.start(1,2)==ESP_OK);
     const std::vector<m::ScopedSelector> selectors{{"display",{{group,controller,0,m::Side::front},"TV"}},
                                                 {"source",{{group,controller,0,m::Side::back},"Source"}}};
     assert(hub.configure_scoped({{"Watch","display","source","source","",0}},selectors,{},controller,1)==ESP_OK);
@@ -101,7 +109,7 @@ static void no_configuration_or_rebind_scan(){
     assert(hub.snapshot().discovery_generation==generation&&fixture_sent.empty());
 }
 static void unrelated_scan_does_not_defer_cooldown_miss(){
-    reset_fixture();HubService hub;setup(hub);fixture_time=200000000;
+    reset_fixture();LocalHubService hub;setup(hub);fixture_time=200000000;
     missing(hub,m::Side::back);fixture_finish_discovery(hub,1);
     const auto generation=hub.snapshot().discovery_generation;
     fixture_sent.clear();missing(hub,m::Side::front);
@@ -122,7 +130,7 @@ static void independent_adapters(){
     cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
-    HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
     assert(hub.start(profile)==ESP_OK);assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     const auto generation=hub.snapshot().discovery_generation;assert(generation==2);
     fixture_time=200000000;fixture_sent.clear();missing(hub,m::Side::back,0);fixture_finish_discovery(hub,generation);
@@ -139,11 +147,11 @@ static void claim_maintenance_is_not_enumeration(){
         if(gpio==2&&frame.source()==frame.destination())return occupied?cec::TxResult::Success:cec::TxResult::Nack;
         return fixture_present&&frame.destination()==fixture_peer(gpio)?cec::TxResult::Success:cec::TxResult::Nack;
     };
-    HubService hub;setup(hub);assert(hub.snapshot().back_address==15);
+    LocalHubService hub;setup(hub);assert(observed(hub).back_address==15);
     const auto generation=hub.snapshot().discovery_generation;
     occupied=false;fixture_sent.clear();fixture_time+=6000000;
-    for(unsigned n=0;n<20&&hub.snapshot().back_address==15;++n)run_idle(1);
-    assert(hub.snapshot().back_address<15);run_idle(30);
+    for(unsigned n=0;n<20&&observed(hub).back_address==15;++n)run_idle(1);
+    assert(observed(hub).back_address<15);run_idle(30);
     assert(hub.snapshot().discovery_generation==generation&&!hub.snapshot().discovering);
     assert(std::all_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& sent){
         // Claim polls and the normal identity announcement are allowed. A
@@ -163,8 +171,8 @@ static void resolve_renamed_source(int gpio,const cec::Frame& frame){
 }
 static void every_caller_uses_one_resolver(){
     for(const auto opcode:{0x7a,0x8f,0x82,0x04}){
-        reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(hub.configure({{"Watch","TV","Wanted","Wanted","",0}}));run_one_command();fixture_finish_discovery(hub);
+        reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(fixture_configure(hub,{{"Watch","TV","Wanted","Wanted","",0}}));run_one_command();fixture_finish_discovery(hub);
         assert(hub.select_activity(0));run_one_command();run_idle(3);
         const auto generation=hub.snapshot().discovery_generation;
         fixture_time+=300000000;fixture_sent.clear();
@@ -197,8 +205,8 @@ static void every_caller_uses_one_resolver(){
     }
 }
 static void cold_miss_still_absent_and_stale_rx(){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Missing","Missing","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Missing","Missing","",0}}));run_one_command();fixture_finish_discovery(hub);
     assert(hub.select_activity(0));run_one_command();run_idle(3);
     const auto generation=hub.snapshot().discovery_generation;fixture_time+=300000000;fixture_sent.clear();
     fixture_incoming.push_back({2,{{0x40,0x8f},2}});run_idle(1);fixture_finish_discovery(hub,generation);run_idle(2);
@@ -214,7 +222,7 @@ static void cold_miss_still_absent_and_stale_rx(){
     assert(hub.snapshot().current_activity==-1);
 }
 static void owned_context_fences_pending_rx(){
-    reset_fixture();HubService hub;setup(hub);
+    reset_fixture();LocalHubService hub;setup(hub);
     const m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.generation=1;context.selected=true;
     context.target.port={group,owner,0,m::Side::front};context.source=m::QualifiedDeviceName{{group,owner,0,m::Side::back},"Missing"};
@@ -232,7 +240,7 @@ static void owned_context_fences_pending_rx(){
     assert(fixture_sent.size()==1&&fixture_sent[0].frame.data[1]==0x90&&fixture_sent[0].frame.data[2]==0);
 }
 static void rejected_owner_work_does_not_resolve(){
-    reset_fixture();HubService hub;setup(hub);fixture_time+=300000000;fixture_sent.clear();
+    reset_fixture();LocalHubService hub;setup(hub);fixture_time+=300000000;fixture_sent.clear();
     m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.on=true;intent.generation=1;
     intent.target={{group,owner,0,m::Side::back},"Missing"};
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
@@ -243,8 +251,8 @@ static void rejected_owner_work_does_not_resolve(){
     assert(fixture_sent.empty()&&hub.snapshot().discovery_generation==1);
 }
 static void received_continuation_uses_bounded_existing_ipc(){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Missing","Missing","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Missing","Missing","",0}}));run_one_command();fixture_finish_discovery(hub);
     assert(hub.select_activity(0));run_one_command();run_idle(3);
     const auto generation=hub.snapshot().discovery_generation;fixture_time+=300000000;
     fixture_async_autocomplete=false;
@@ -256,8 +264,8 @@ static void received_continuation_uses_bounded_existing_ipc(){
     assert(hub.release_key(4));run_one_command();
 }
 static void unregistered_received_source_is_bounded(){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Missing","Missing","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Missing","Missing","",0}}));run_one_command();fixture_finish_discovery(hub);
     assert(hub.select_activity(0));run_one_command();run_idle(3);
     const auto generation=hub.snapshot().discovery_generation;fixture_time+=300000000;
     fixture_incoming.push_back({2,{{0xf0,0x7a,50},3}});
@@ -268,8 +276,8 @@ static void unregistered_received_source_is_bounded(){
 static void cold_switch_resumes_after_single_suppression(){
     for(unsigned scenario=0;scenario<3;++scenario){
         const bool found=scenario!=1,dropped=scenario==2;
-        reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-        assert(hub.configure({{"Switch","TV","","Source","Wanted",3}}));run_one_command();fixture_finish_discovery(hub);
+        reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+        assert(fixture_configure(hub,{{"Switch","TV","","Source","Wanted",3}}));run_one_command();fixture_finish_discovery(hub);
         assert(hub.select_activity(0));run_one_command();run_idle(3);
         const auto generation=hub.snapshot().discovery_generation;fixture_time+=300000000;fixture_sent.clear();
         if(found)fixture_send=[](int gpio,const cec::Frame& frame){resolve_renamed_source(gpio,frame);return true;};
@@ -295,11 +303,13 @@ static void cold_switch_resumes_after_single_suppression(){
     }
 }
 static void audio_query_finishes_after_opaque_lookup(){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     bool blocked=true;unsigned queries=0;
     fixture_admission=[&](int,const cec::Frame& frame){if(frame.size==2&&frame.data[1]==0x71){++queries;return !blocked;}return true;};
-    assert(hub.select_activity(0));run_one_command();assert(queries==1);
+    assert(hub.select_activity(0));run_one_command();
+    for(unsigned n=0;n<100&&hub.snapshot().activity_settling;++n)run_idle(1);
+    assert(hub.snapshot().current_activity==0&&!hub.snapshot().activity_settling&&queries==1);
     // Preserve the original failed-query continuation, then replace the
     // audio record passively without performing a scan or changing activity.
     fixture_time+=300000000;fixture_incoming.push_back({2,{{0x8f,0x84,0x10,0,4},5}});run_idle(1);assert(queries==2);

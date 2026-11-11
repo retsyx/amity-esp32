@@ -176,8 +176,8 @@ static void queue_and_owner_handoff() {
 }
 static void owner_repeats_do_not_repeat_input_logs() {
     fixture_present=true;fixture_tick=1000;
-    amity::HubService hub;observed_hub=&hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));
+    LocalHubService hub;observed_hub=&hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));
     run_one_command();fixture_finish_discovery(hub);assert(hub.select_activity(0));run_one_command();
     for(unsigned pass=0;pass<96&&hub.activity_setup_in_progress();++pass)run_idle(1);
     assert(!hub.activity_setup_in_progress());fixture_tick=0;

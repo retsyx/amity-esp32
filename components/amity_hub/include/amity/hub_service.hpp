@@ -21,8 +21,6 @@ public:
     esp_err_t start(const cec::BoardProfile&,const std::array<uint16_t,amity::max_tentacles>&);
     std::vector<AdapterRuntimeState> adapter_runtime_snapshot()const;
     esp_err_t commit_adapter_settings(system::BootId,std::vector<AdapterAddressChange>,uint64_t,std::function<esp_err_t()>);
-    bool configure(std::vector<Activity>);
-    esp_err_t configure_with_commit(std::vector<Activity>,std::function<esp_err_t()>);
     esp_err_t request_activity(int,uint32_t* accepted_selection=nullptr,std::optional<system::ActivityId> expected={});esp_err_t repair_activity();uint32_t activity_selection()const;int activity_target()const;
     bool select_activity(int);bool press_key(uint8_t,bool repeat=false);bool press_key_for_activity(uint8_t,uint32_t,bool repeat=false);
     uint32_t input_epoch()const;
@@ -38,7 +36,7 @@ public:
     void set_system_identity(system::ConsortiumId,system::OctopusId);void set_boot_identity(system::BootId);
     void set_coordinator_authority(bool,uint64_t);esp_err_t transition_coordinator_authority(bool,uint64_t);
     esp_err_t retire_membership();esp_err_t begin_maintenance();void end_maintenance();bool maintenance_ready()const;
-    using OwnedSender=Hub::OwnedSender;
+    using OwnedSender=ActivityHub::OwnedSender;
     esp_err_t configure_scoped(std::vector<Activity>,std::vector<system::ScopedSelector>,OwnedSender,
         system::OctopusId controller,uint64_t config_revision,std::function<esp_err_t()> commit={},uint64_t presentation_revision=1,std::vector<system::OctopusId> owners={},std::function<bool(const Snapshot&)> can_commit={});
     system::AdmissionResult submit_owned(const system::OwnedIntent&,const system::OwnedAuthorization&,uint32_t timeout_ms=1000);

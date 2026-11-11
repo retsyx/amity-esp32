@@ -24,6 +24,10 @@ static bool is_frame(const SentFrame& sent,int gpio,std::initializer_list<uint8_
 static size_t count(int gpio,std::initializer_list<uint8_t> data){
     return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& sent){return is_frame(sent,gpio,data);});
 }
+static void await_frame(int gpio,std::initializer_list<uint8_t> data){
+    for(unsigned pass=0;pass<16&&!count(gpio,data);++pass)run_idle(1);
+    assert(count(gpio,data));
+}
 static size_t first(int gpio,std::initializer_list<uint8_t> data,size_t begin=0){
     for(size_t n=begin;n<fixture_sent.size();++n)if(is_frame(fixture_sent[n],gpio,data))return n;
     return fixture_sent.size();
@@ -58,7 +62,7 @@ static void drain(HubService& hub,FakeTask* task=nullptr){
     (void)hub;
 }
 static void owner_lane_and_independent_keys(){
-    reset_fixture();HubService hub;start_owner(hub,owner,true);
+    reset_fixture();LocalHubService hub;start_owner(hub,owner,true);
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,owner,0,m::Side::front};
     context.selected=true;context.source=context.audio=named(owner,m::Side::back,"Source");enqueue(hub,context);
     fixture_sent.clear();fixture_async_autocomplete=false;
@@ -94,12 +98,12 @@ static void owner_lane_and_independent_keys(){
     volume.edges[0].down=false;enqueue(hub,volume);assert(count(2,{0x45})==1);drain(hub);
 }
 static void cold_lookup_precedes_later_recipe(int next){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"First","TV","Wanted","Source","",0},{"Later","TV","Source","Source","",0}}));
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"First","TV","Wanted","Source","",0},{"Later","TV","Source","Source","",0}}));
     run_one_command();fixture_finish_discovery(hub);
     // Permit a genuine recipient-cache miss after boot's per-side cooldown.
     fixture_tick=0;fixture_time+=130000000;fixture_sent.clear();fixture_async_autocomplete=false;
-    assert(hub.request_activity(0)==ESP_OK);run_one_command();
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();await_frame(1,{0x04});
     assert(count(1,{0x04})==1&&fixture_sent.size()==1);
     assert(hub.request_activity(next)==ESP_OK);run_one_command();run_idle(2);
     assert(fixture_sent.size()==1); // Later start/standby/repair cannot overtake the earlier recipient's TX.
@@ -117,8 +121,8 @@ static void cold_lookup_precedes_later_recipe(int next){
     drain(hub);
 }
 static void different_owners_progress_independently(){
-    reset_fixture();HubService first_owner;start_owner(first_owner,owner);auto* first_task=latest_task;
-    HubService second_owner;start_owner(second_owner,other_owner,false,3,4);auto* second_task=latest_task;
+    reset_fixture();LocalHubService first_owner;start_owner(first_owner,owner);auto* first_task=latest_task;
+    LocalHubService second_owner;start_owner(second_owner,other_owner,false,3,4);auto* second_task=latest_task;
     fixture_sent.clear();fixture_async_autocomplete=false;
     latest_task=first_task;enqueue(first_owner,power(owner,m::Side::front));enqueue(first_owner,power(owner,m::Side::back));
     assert(count(1,{0x04})==1&&count(2,{0x44,0x6d})==0);
@@ -132,7 +136,7 @@ static void different_owners_progress_independently(){
     drain(first_owner,first_task);drain(second_owner,second_task);latest_task=first_task;
 }
 static void revision_bind_waits_for_old_recipe_cleanup(){
-    reset_fixture();HubService hub;start_owner(hub,owner);
+    reset_fixture();LocalHubService hub;start_owner(hub,owner);
     fixture_sent.clear();fixture_completed.clear();fixture_async_autocomplete=false;
     auto front=power(owner,m::Side::front),back=power(owner,m::Side::back);front.on=back.on=false;
     enqueue(hub,front);enqueue(hub,back);
@@ -161,8 +165,8 @@ static void revision_bind_waits_for_old_recipe_cleanup(){
     drain(hub);
 }
 static void newer_activity_fences_unfinished_reactive_standby(){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;fixture_sent.clear();fixture_async_autocomplete=false;
     // The original no-activity reaction awaits Front Standby before Back.
     // A subsequent accepted activity invalidates only the unfinished RX
@@ -177,15 +181,15 @@ static void newer_activity_fences_unfinished_reactive_standby(){
     assert(count(2,{0x44,0x6d})==1&&count(2,{0x86,0x10,0})==1);
     drain(hub);
 }
-static void active_source_reply_follows_route_completion(bool scoped){
-    reset_fixture();HubService hub;
-    if(scoped){hub.set_system_identity(group,controller);hub.set_boot_identity(boot);}
+static void active_source_reply_follows_route_completion(){
+    reset_fixture();LocalHubService hub;
+    hub.set_system_identity(group,controller);hub.set_boot_identity(boot);
     assert(hub.start(1,2)==ESP_OK);
-    if(scoped){
+    {
         assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
             {{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}},
             [](const auto&){assert(false&&"The local owner must use its actual worker");return false;},controller,1)==ESP_OK);
-    }else assert(hub.configure({{"Watch","TV","Source","Source","",0}}));
+    }
     run_one_command();fixture_finish_discovery(hub);fixture_tick=0;
     fixture_sent.clear();fixture_async_autocomplete=false;bool echoed=false;
     fixture_before_start=[&](int gpio,const cec::Frame& frame){
@@ -238,8 +242,8 @@ struct UserInput {
     }
 };
 static void existing_release_gate_covers_actual_worker_setup(bool all_up){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;assert(hub.request_activity(0)==ESP_OK);run_one_command();drain(hub);
     assert(hub.snapshot().current_activity==0&&!hub.activity_setup_in_progress());
     UserInput input(hub);assert(!input.policy.waiting_for_release());
@@ -298,12 +302,12 @@ static void existing_release_gate_covers_actual_worker_setup(bool all_up){
     input.button(ble::RemoteButton::VolumeUp,false);assert(count(2,{0x45})==1);drain(hub);
 }
 static void long_power_repair_preserves_normal_input(){
-    reset_fixture();HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    reset_fixture();LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;assert(hub.request_activity(0)==ESP_OK);run_one_command();drain(hub);
     UserInput input(hub);assert(!input.policy.waiting_for_release());
     fixture_sent.clear();fixture_async_autocomplete=false;
-    assert(hub.repair_activity()==ESP_OK);run_one_command();input.refresh();
+    assert(hub.repair_activity()==ESP_OK);run_one_command();await_frame(1,{0x04});input.refresh();
     assert(count(1,{0x04})==1&&!hub.activity_setup_in_progress()&&!input.policy.waiting_for_release());
     // Long-Power repair has never armed wait_for_release. Its sequential
     // activity TX cannot turn the ordinary key path into a new gate.
@@ -316,7 +320,7 @@ static void long_power_repair_preserves_normal_input(){
 
 static void isolated_source_input(bool nested,bool same_adapter,bool front_source=false,bool lose_authority=false,bool reject_announcement=false,bool missing=false){
     reset_fixture();fixture_present=false;
-    HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
     const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
@@ -366,7 +370,7 @@ static void isolated_source_input(bool nested,bool same_adapter,bool front_sourc
 
 static void selected_display_announces_its_own_input(bool projector,bool source_present,bool display_present=true){
     reset_fixture();fixture_present=false;
-    HubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    LocalHubService hub;hub.set_system_identity(group,owner);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
     const cec::BoardProfile profile{cec::BoardProfileId::Development4Tentacle,1,amity::max_tentacles,
         {{0,cec::Side::Front,1},{0,cec::Side::Back,2},{1,cec::Side::Front,5},{1,cec::Side::Back,6},
          {2,cec::Side::Front,-1},{2,cec::Side::Back,-1},{3,cec::Side::Front,-1},{3,cec::Side::Back,-1}},-1,-1};
@@ -416,7 +420,7 @@ int main(){
     different_owners_progress_independently();
     revision_bind_waits_for_old_recipe_cleanup();
     newer_activity_fences_unfinished_reactive_standby();
-    active_source_reply_follows_route_completion(false);active_source_reply_follows_route_completion(true);
+    active_source_reply_follows_route_completion();
     existing_release_gate_covers_actual_worker_setup(true);existing_release_gate_covers_actual_worker_setup(false);
     long_power_repair_preserves_normal_input();
     isolated_source_input(true,false);

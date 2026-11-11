@@ -9,15 +9,22 @@ static void reset_fixture(bool present=false){
     fixture_send={};fixture_incoming.clear();fixture_sent.clear();fixture_completed.clear();
 }
 static void start(HubService& hub){
-    assert(hub.start(1,2)==ESP_OK);fixture_finish_discovery(hub);
+    assert(hub.start(1,2)==ESP_OK);assert(hub.bind_owned_controller(fixture_local::owner(),1)==ESP_OK);fixture_finish_discovery(hub);
     fixture_tick=0;fixture_time+=300000000;fixture_sent.clear();
 }
 static void receive(cec::Frame frame,int gpio=2){
     fixture_incoming.push_back({gpio,frame});run_idle(12);
 }
 static std::optional<Device> peer(const HubService& hub,uint8_t address=8){
-    for(const auto& d:hub.snapshot().devices)if(d.bus==BusSide::Back&&d.address==address)return d;
+    for(const auto& report:hub.owned_snapshots())for(const auto& d:report.devices)
+        if(report.adapter==0&&d.side==m::Side::back&&d.logical_address==address)
+            return Device{d.osd_name,BusSide::Back,d.logical_address,d.physical_address,d.device_type,d.vendor_id,d.resolved};
     return {};
+}
+static uint8_t back_address(const HubService& hub){
+    const auto reports=hub.owned_snapshots();
+    const auto found=std::find_if(reports.begin(),reports.end(),[](const auto& report){return report.adapter==0;});
+    assert(found!=reports.end());return found->back_address;
 }
 static size_t first(uint8_t op,uint8_t destination=15){
     for(size_t i=0;i<fixture_sent.size();++i){const auto& f=fixture_sent[i];
@@ -38,7 +45,7 @@ static void only_targeted_identity_and_standby(){
     }
 }
 static void metadata(HubService& hub){
-    const auto destination=hub.snapshot().back_address;assert(destination<15);
+    const auto destination=back_address(hub);assert(destination<15);
     receive({{static_cast<uint8_t>(0x80|destination),0x47,'P','l','a','y','e','r'},8});
     receive({{0x8f,0x84,0x20,0,4},5});
     receive({{0x8f,0x87,0x12,0x34,0x56},5});
@@ -46,7 +53,7 @@ static void metadata(HubService& hub){
         d->type==4&&d->vendor_id==0x123456&&d->resolved);
 }
 static void active_announcement_without_configuration(){
-    reset_fixture();HubService hub;start(hub);assert(!peer(hub)&&hub.snapshot().activities.empty());
+    reset_fixture();LocalHubService hub;start(hub);assert(!peer(hub)&&hub.snapshot().activities.empty());
     const auto generation=hub.snapshot().discovery_generation;
     receive({{0x8f,0x82,0x20,0},4});
     const auto announced=peer(hub);assert(announced&&announced->physical_address==0x2000&&announced->name.empty()&&
@@ -65,7 +72,7 @@ static void active_announcement_without_configuration(){
     }
     // Saving and then starting a normal activity can use the announcement's
     // actual observed identity without another discovery sweep.
-    fixture_sent.clear();assert(hub.configure({{"Watch","","Player","","",0}}));run_one_command();run_idle(4);
+    fixture_sent.clear();assert(fixture_configure(hub,{{"Watch","","Player","","",0}}));run_one_command();run_idle(4);
     assert(peer(hub)&&hub.request_activity(0)==ESP_OK);run_one_command();run_idle(16);
     assert(hub.snapshot().current_activity==0&&first(0x44,8)<fixture_sent.size());
     const auto power=fixture_sent[first(0x44,8)].frame;assert(power.size==3&&power.data[2]==0x6d);
@@ -74,8 +81,8 @@ static void active_announcement_without_configuration(){
 }
 static void metadata_can_introduce_a_device(){
     for(const auto opcode:{0x47,0x84,0x87}){
-        reset_fixture();HubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
-        const auto destination=hub.snapshot().back_address;
+        reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
+        const auto destination=back_address(hub);
         if(opcode==0x47)receive({{static_cast<uint8_t>(0x80|destination),0x47,'P','l','a','y','e','r'},8});
         else if(opcode==0x84)receive({{0x8f,0x84,0x20,0,4},5});
         else receive({{0x8f,0x87,0x12,0x34,0x56},5});
@@ -88,8 +95,8 @@ static void metadata_can_introduce_a_device(){
     }
 }
 static void unselected_player_retains_its_observation(){
-    reset_fixture(true);HubService hub;start(hub);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();
+    reset_fixture(true);LocalHubService hub;start(hub);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();
     assert(hub.request_activity(0)==ESP_OK);run_one_command();run_idle(16);assert(hub.snapshot().current_activity==0);
     fixture_present=false;fixture_sent.clear();const auto generation=hub.snapshot().discovery_generation;
     receive({{0x8f,0x82,0x20,0},4});
@@ -99,7 +106,7 @@ static void unselected_player_retains_its_observation(){
     metadata(hub);assert(peer(hub,4)&&peer(hub,4)->name=="Source");no_enumeration(hub,generation);
 }
 static void foreign_activity_still_caches_local_player(){
-    reset_fixture();HubService hub;
+    reset_fixture();LocalHubService hub;
     const auto group=*m::ConsortiumId::parse("11111111111111111111111111111111");
     const auto controller=*m::OctopusId::parse("22222222222222222222222222222222");
     const auto owner=*m::OctopusId::parse("33333333333333333333333333333333");
@@ -124,8 +131,8 @@ static void foreign_activity_still_caches_local_player(){
     }));
 }
 static void malformed_announcements_are_not_cached(){
-    reset_fixture();HubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
-    const auto destination=hub.snapshot().back_address;
+    reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
+    const auto destination=back_address(hub);
     const std::vector<cec::Frame> invalid={
         {{0xff,0x82,0x20,0},4},{{static_cast<uint8_t>(0xf0|destination),0x47,'X'},3},
         {{0xff,0x84,0x20,0,4},5},{{0xff,0x87,0x12,0x34,0x56},5},

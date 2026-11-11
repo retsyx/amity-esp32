@@ -8,8 +8,8 @@ static void finish_selection(amity::HubService& hub,int target){
     assert(false&&"Accepted activity did not finish its original TX steps");
 }
 int main(){
-    fixture_present=true;amity::HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"First","TV","Source","Source","",0},{"Second","TV","Source","Source","",0}}));
+    fixture_present=true;LocalHubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"First","TV","Source","Source","",0},{"Second","TV","Source","Source","",0}}));
     run_one_command();fixture_finish_discovery(hub);
     fixture_tick=0;const auto started=fixture_time;fixture_async_autocomplete=false;fixture_sent.clear();
     assert(hub.request_activity(0)==ESP_OK&&hub.activity_target()==0);

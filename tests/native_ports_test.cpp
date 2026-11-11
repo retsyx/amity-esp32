@@ -13,7 +13,7 @@ static void adapter_settings_owner_tests() {
     };
     auto deadline = [] { return uint64_t(fixture_time) / 1000 + 5000; };
     {
-        amity::HubService owner; setup(owner);
+        LocalHubService owner; setup(owner);
         assert(owner.start(cec::legacy_buttonless_profile, std::array<uint16_t,4>{{0x2000,0x3000,0x4000,0x5000}}) == ESP_OK);
         assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);fixture_finish_discovery(owner);
         const auto initial = owner.snapshot();
@@ -37,20 +37,20 @@ static void adapter_settings_owner_tests() {
         // A fresh same-boot save and normal work remain available immediately.
         assert(owner.commit_adapter_settings(boot, {{0,0x7000}}, deadline(), [&]{++writes;return ESP_OK;}) == ESP_OK);
         assert(writes == 3 && owner.adapter_runtime_snapshot()[0].effective_front_physical == 0x7000);
-        assert(owner.configure({})); run_one_command();
+        assert(fixture_configure(owner,{})); run_one_command();
         assert(owner.commit_adapter_settings(boot, {{4,0x6000}}, deadline(), [&]{++writes;return ESP_OK;}) == ESP_ERR_INVALID_ARG);
         assert(owner.commit_adapter_settings(boot, {{0,0x6000},{0,0x5000}}, deadline(), [&]{++writes;return ESP_OK;}) == ESP_ERR_INVALID_ARG);
     }
     auto sparse = cec::legacy_buttonless_profile; sparse.id = cec::BoardProfileId::Development4Tentacle; sparse.tentacle_count = 4;
     for(unsigned i=0;i<8;++i)sparse.ports[i]={static_cast<uint8_t>(i/2),i%2?cec::Side::Back:cec::Side::Front,-1};
     {
-        amity::HubService owner; setup(owner); assert(owner.start(sparse)==ESP_OK);assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
+        LocalHubService owner; setup(owner); assert(owner.start(sparse)==ESP_OK);assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
         for(const auto& slot:owner.adapter_runtime_snapshot())assert(!slot.configured&&!slot.effective_front_physical);
         unsigned writes=0;assert(owner.commit_adapter_settings(boot,{{3,0x5200}},deadline(),[&]{++writes;return ESP_OK;})==ESP_ERR_INVALID_STATE);assert(!writes);
     }
     sparse.ports[6].gpio=9;sparse.ports[7].gpio=44;
     {
-        amity::HubService owner;setup(owner);
+        LocalHubService owner;setup(owner);
         assert(owner.start(sparse,std::array<uint16_t,4>{{0x1000,0x2000,0x3000,0x4000}})==ESP_OK);
         assert(owner.bind_owned_controller(live_id<OctopusId>(2),1)==ESP_OK);run_idle(2);
         assert(owner.adapter_runtime_snapshot()[3].configured);
@@ -73,8 +73,8 @@ static void pending_activity_rejects_settings(bool repair) {
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
     fixture_send={};fixture_transmit={};fixture_incoming.clear();fixture_sent.clear();
     const auto boot=live_id<BootId>(3);
-    amity::HubService owner;owner.set_boot_identity(boot);assert(owner.start(1,2,0x5000)==ESP_OK);
-    assert(owner.configure({{"Watch","TV","Wanted","Source","",0}}));run_one_command();fixture_finish_discovery(owner);
+    LocalHubService owner;owner.set_boot_identity(boot);assert(owner.start(1,2,0x5000)==ESP_OK);
+    assert(fixture_configure(owner,{{"Watch","TV","Wanted","Source","",0}}));run_one_command();fixture_finish_discovery(owner);
     const auto boot_scan=owner.snapshot().discovery_generation;
     fixture_tick=0;fixture_time+=130000000;fixture_sent.clear();fixture_async_autocomplete=false;
     assert((repair?owner.repair_activity():owner.request_activity(0))==ESP_OK);run_one_command();run_idle(2);
@@ -106,4 +106,27 @@ static void pending_activity_rejects_settings(bool repair) {
     assert(owner.commit_adapter_settings(boot,{{0,0x6000}},uint64_t(fixture_time)/1000+5000,[&]{++writes;return ESP_OK;})==ESP_OK&&writes==1);
     fixture_tick=100000;
 }
-int main(){adapter_settings_owner_tests();pending_activity_rejects_settings(false);pending_activity_rejects_settings(true);std::cout<<"PASS per-adapter settings owner: exact boot, configured sparse wires without CEC responses, activity/repair busy fences, quiescence, bounded deadline and durable persistence\n";}
+static void passive_start_can_become_main() {
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    fixture_send={};fixture_transmit={};fixture_incoming.clear();fixture_sent.clear();
+    LocalHubService owner;owner.set_coordinator_authority(false,1);
+    assert(owner.start(1,2)==ESP_OK);
+    assert(owner.transition_coordinator_authority(true,2)==ESP_OK);
+    assert(fixture_configure(owner,{{"Watch","TV","Source","Source","",0}}));
+    run_one_command();fixture_finish_discovery(owner);
+    assert(owner.select_activity(0));run_one_command();
+    for(unsigned n=0;n<100&&owner.snapshot().activity_settling;++n)run_idle(1);
+    assert(owner.snapshot().current_activity==0&&!owner.snapshot().activity_settling);
+    fixture_tick=0;fixture_sent.clear();
+    assert(owner.press_key(4,true));run_one_command();
+    assert(owner.release_key(4));run_one_command();
+    const auto press=std::find_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){
+        return tx.gpio==2&&tx.frame.destination()==4&&tx.frame.size==3&&tx.frame.data[1]==0x44&&tx.frame.data[2]==4;
+    });
+    assert(press!=fixture_sent.end());
+    assert(std::any_of(press,fixture_sent.end(),[](const auto& tx){
+        return tx.gpio==2&&tx.frame.destination()==4&&tx.frame.size==2&&tx.frame.data[1]==0x45;
+    }));
+    fixture_tick=100000;
+}
+int main(){passive_start_can_become_main();adapter_settings_owner_tests();pending_activity_rejects_settings(false);pending_activity_rejects_settings(true);std::cout<<"PASS per-adapter settings owner: exact boot, configured sparse wires without CEC responses, activity/repair busy fences, quiescence, bounded deadline and durable persistence\n";}

@@ -50,8 +50,8 @@ static void core_selection() {
         hub.set_addresses(4, 0, 0xffff);
         hub.announce(BusSide::Front);
         hub.receive(BusSide::Front, physical_query(4));
-        hub.configure({{"Watch", "TV", "", "", "", 0}});
-        assert(hub.select_activity(0));
+        amity::system::OwnedIntent announce;announce.kind=amity::system::OwnedIntentKind::announce_active_source;
+        assert(hub.execute_owned(announce));
         assert(wire.sent.empty()); // No physical announcement, reply, or Active Source yet.
 
         hub.begin_discovery();
@@ -67,11 +67,8 @@ static void core_selection() {
         assert(wire.sent.size() == 3 && carries_physical(wire.sent[1].frame, 0x84, 0x2000));
         wire.sent.clear(); hub.receive(BusSide::Front, physical_query(4));
         assert(wire.sent.size() == 1 && carries_physical(wire.sent[0].frame, 0x84, 0x2000));
-        wire.sent.clear(); assert(hub.select_activity(0));
-        assert(wire.sent.size() == 3 && wire.sent[0].frame.size == 2 && wire.sent[0].frame.data[1] == 0x04
-               && carries_physical(wire.sent[1].frame, 0x82, 0x2000)
-               && wire.sent[2].side == BusSide::Front && wire.sent[2].frame.destination() == 0
-               && wire.sent[2].frame.size == 2 && wire.sent[2].frame.data[1] == 0x71);
+        wire.sent.clear();assert(hub.execute_owned(announce));
+        assert(wire.sent.size()==1&&carries_physical(wire.sent[0].frame,0x82,0x2000));
 
         // Late broadcasts and ordinary rescans preserve selection, including
         // a changed fallback passed to the scan. Explicit settings apply below.
@@ -208,22 +205,22 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
         fixture_incoming.push_back({2, physical_report(5, reported, 5)});
         delayed_queued = false;
     };
-    amity::HubService service;
+    LocalHubService service;
     const auto boot = amity::system::BootId::parse("11111111111111111111111111111111").value();
     service.set_boot_identity(boot);
     assert(service.start(1, 2, 0x5000) == ESP_OK);
-    assert(service.snapshot().front_physical_address == 0xffff);
+    assert(!service.adapter_runtime_snapshot()[0].effective_front_physical);
     // A pending allocation probe must leave the owner free to apply incoming
     // commands. Discovery continues only after its own completion arrives.
     fixture_async_autocomplete = false;
-    assert(service.configure({{"Watch", "TV", "", "", "", 0}})); run_one_command();
+    assert(fixture_configure(service,{{"Watch", "TV", "", "", "", 0}})); run_one_command();
     assert(service.snapshot().activities.size() == 1 && !fixture_pending.empty());
-    assert(service.snapshot().front_physical_address == 0xffff);
+    assert(fixture_adapter(service).front_physical_address == 0xffff);
     fixture_async_autocomplete = true;
     fixture_complete_all();
     fixture_finish_discovery(service);
     const auto expected = ack_only || !reported ? 0x5000 : reported;
-    const auto state = service.snapshot();
+    const auto state = fixture_adapter(service);
     assert(state.ready && !state.discovering && state.front_physical_address == expected);
     assert(state.discovery_generation >= 1 && saw_front_announcement);
 
@@ -239,11 +236,11 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     assert(service.commit_adapter_settings(boot, {{0,0x6000}}, uint64_t(fixture_time)/1000 + 5000,
         [&]{ ++writes; return ESP_OK; }) == ESP_OK);
     assert(writes == 1 && !service.maintenance_ready() && fixture_stopped_buses.size() == stopped);
-    const auto applied = service.snapshot();
+    const auto applied = fixture_adapter(service);
     assert(applied.front_physical_address == announced_address && applied.front_address == state.front_address && applied.back_address == state.back_address);
     assert(applied.discovery_generation == state.discovery_generation && applied.devices.size() == state.devices.size());
     for(size_t n=0;n<state.devices.size();++n){const auto& old=state.devices[n];const auto& current=applied.devices[n];
-        assert(old.name==current.name && old.bus==current.bus && old.address==current.address && old.physical_address==current.physical_address);
+        assert(old.osd_name==current.osd_name && old.side==current.side && old.logical_address==current.logical_address && old.physical_address==current.physical_address);
     }
     address_state = service.adapter_runtime_snapshot()[0];
     assert(address_state.effective_front_physical == announced_address);
@@ -254,17 +251,19 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     fixture_incoming.push_back({1, physical_query(state.front_address)});
     fixture_incoming.push_back({2, physical_report(8, 0x1000)});
     assert(service.select_activity(0)); run_one_command();
+    for(unsigned pass=0;pass<256&&service.activity_setup_in_progress();++pass)run_idle(1);
+    assert(!service.activity_setup_in_progress());
     bool identity = false, active = false;
     for (const auto &sent : fixture_sent) if (sent.gpio == 1) {
         identity |= carries_physical(sent.frame, 0x84, announced_address);
         active |= carries_physical(sent.frame, 0x82, announced_address);
     }
-    assert(identity && active && service.snapshot().front_physical_address == announced_address);
+    assert(identity && active && fixture_adapter(service).front_physical_address == announced_address);
     const auto generation = service.snapshot().discovery_generation;
     reported = 0x1000; ack_only = false; delayed_avr = false;
     assert(service.discover()); run_one_command();
     fixture_finish_discovery(service, generation);
-    assert(service.snapshot().front_physical_address == announced_address);
+    assert(fixture_adapter(service).front_physical_address == announced_address);
     // The scan alone preserves selection. The next explicit save picks its
     // scanned address, regardless of the old selected address or default.
     const auto after_scan = service.adapter_runtime_snapshot()[0];
@@ -274,7 +273,7 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     for(unsigned pass=0;pass<64 && service.activity_setup_in_progress();++pass)run_idle(1);
     assert(service.commit_adapter_settings(boot, {{0,0x7000}}, uint64_t(fixture_time)/1000 + 5000,
         [&]{ ++writes; return ESP_OK; }) == ESP_OK);
-    assert(writes == 2 && service.snapshot().front_physical_address == 0x1000);
+    assert(writes == 2 && fixture_adapter(service).front_physical_address == 0x1000);
     assert(service.adapter_runtime_snapshot()[0].observed_front_physical == 0x1000);
 
     // A later completed scan with no usable address clears the observation.
@@ -283,11 +282,11 @@ static void service_boot(uint16_t reported, bool ack_only = false, bool delayed_
     reported=0; ack_only=false; delayed_avr=false;
     assert(service.discover());run_one_command();fixture_finish_discovery(service,observed_generation);
     assert(!service.adapter_runtime_snapshot()[0].observed_front_physical);
-    assert(service.snapshot().front_physical_address==0x1000);
+    assert(fixture_adapter(service).front_physical_address==0x1000);
     announced_address=0x8000;
     assert(service.commit_adapter_settings(boot,{{0,0x8000}},uint64_t(fixture_time)/1000+5000,
         [&]{++writes;return ESP_OK;})==ESP_OK);
-    assert(writes==3&&service.snapshot().front_physical_address==0x8000);
+    assert(writes==3&&fixture_adapter(service).front_physical_address==0x8000);
     fixture_send = {}; fixture_transmit = {}; fixture_delay = {};
 }
 
@@ -323,10 +322,10 @@ static void service_without_back_logical_address() {
         }
         return true;
     };
-    amity::HubService service; assert(service.start(1, 2, 0x1000) == ESP_OK);
-    assert(service.configure({})); run_one_command();
+    LocalHubService service; assert(service.start(1, 2, 0x1000) == ESP_OK);
+    assert(fixture_configure(service,{})); run_one_command();
     fixture_finish_discovery(service);
-    const auto state = service.snapshot();
+    const auto state = fixture_adapter(service);
     assert(state.front_physical_address == 0x6000 && state.front_address < 15 && state.back_address == 15);
     assert(!state.ready && !state.discovering && requested && announced);
     fixture_send = {}; fixture_transmit = {};
@@ -349,9 +348,9 @@ static void service_claim_requires_two_nacks() {
         assert(gpio == 1 && frame.destination() == 8);
         ++front_eight; return cec::TxResult::Nack;
     };
-    amity::HubService service; assert(service.start(1, 2) == ESP_OK);
-    assert(service.configure({})); run_one_command(); fixture_finish_discovery(service);
-    const auto state = service.snapshot();
+    LocalHubService service; assert(service.start(1, 2) == ESP_OK);
+    assert(fixture_configure(service,{})); run_one_command(); fixture_finish_discovery(service);
+    const auto state = fixture_adapter(service);
     assert(state.ready && state.back_address == 14 && state.front_address == 8);
     assert(back_zero == 1 && back_fourteen == 2 && front_four == 2 && front_eight == 2);
     fixture_transmit = {};

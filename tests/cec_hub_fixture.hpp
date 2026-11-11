@@ -24,6 +24,47 @@
 #include <vector>
 #include <array>
 
+
+// A single-board fixture uses the same qualified configuration entry as a
+// deployed main. Names below are fixture selectors, not a second hub mode.
+namespace fixture_local {
+template<class T> T id(unsigned value) {
+    char text[33]; std::snprintf(text,sizeof(text),"%032x",value);
+    return *T::parse(text);
+}
+inline auto group(){return id<amity::system::ConsortiumId>(1);}
+inline auto owner(){return id<amity::system::OctopusId>(2);}
+}
+class LocalHubService : public amity::HubService {
+public:
+    LocalHubService() {
+        set_system_identity(fixture_local::group(),fixture_local::owner());
+        set_boot_identity(fixture_local::id<amity::system::BootId>(3));
+    }
+};
+[[maybe_unused]] static amity::system::OwnedAdapterSnapshot fixture_adapter(const amity::HubService& hub){
+    for(const auto& report:hub.owned_snapshots())if(report.owner==fixture_local::owner()&&report.adapter==0)return report;
+    assert(false&&"Missing local adapter observation");return {};
+}
+[[maybe_unused]] static esp_err_t fixture_configure_with_commit(amity::HubService& hub,
+        std::vector<amity::Activity> activities,std::function<esp_err_t()> commit={}) {
+    std::vector<amity::system::ScopedSelector> selectors;
+    for(size_t i=0;i<activities.size();++i){
+        auto& activity=activities[i];
+        if(!activity.activity_id)activity.activity_id=fixture_local::id<amity::system::ActivityId>(100+i);
+        for(const auto& name:{activity.display,activity.source,activity.audio,activity.switch_device}){
+            if(name.empty()||std::any_of(selectors.begin(),selectors.end(),[&](const auto& s){return s.value==name;}))continue;
+            const auto side=name==activity.display?amity::system::Side::front:amity::system::Side::back;
+            selectors.push_back({name,{{fixture_local::group(),fixture_local::owner(),0,side},name}});
+        }
+    }
+    return hub.configure_scoped(std::move(activities),std::move(selectors),{},fixture_local::owner(),
+        hub.applied_configuration_revision()+1,std::move(commit));
+}
+[[maybe_unused]] static bool fixture_configure(amity::HubService& hub,std::vector<amity::Activity> activities){
+    return fixture_configure_with_commit(hub,std::move(activities))==ESP_OK;
+}
+
 struct FakeQueue { unsigned capacity; size_t item_size; std::deque<std::vector<unsigned char>> items; };
 struct FakeSemaphore { unsigned capacity, count; bool pump_owner = false; };
 struct FakeTask { TaskFunction_t entry; void *context; };
