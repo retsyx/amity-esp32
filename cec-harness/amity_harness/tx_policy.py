@@ -3,6 +3,29 @@
 import re
 
 
+_SECTION = re.compile(rb"\n===== (Main Amity|Amity)(?:: [^\r\n]+)? =====\n"
+                      rb"Device: ([0-9a-f]{32})\nBoot: ([0-9a-f]{32}|unknown)\n\n")
+
+
+def _main_log_bytes(capture):
+    """Extract the authenticated main's ring from the shipping log download."""
+    sections = list(_SECTION.finditer(capture.data))
+    if (not sections or sections[0].start() != 0 or sections[0][1] != b"Main Amity"
+            or sections[0][2].decode() != capture.device_id
+            or sections[0][3].decode() != capture.boot_before
+            or any(section[1] != b"Amity" for section in sections[1:])
+            or len({section[2] for section in sections}) != len(sections)
+            or capture.data.count(b"\n===== ") != len(sections)):
+        raise AssertionError("CEC policy logs need the exact main device and boot section")
+    end = sections[1].start() if len(sections) > 1 else len(capture.data)
+    data = capture.data[sections[0].end():end]
+    if data == b"[No logs captured.]\n":
+        return b""
+    if not data or data.startswith(b"[Local logs unavailable:") or b"[Log collection interrupted;" in data:
+        raise AssertionError("CEC policy logs need an available complete main capture")
+    return data
+
+
 def fresh_log_delta(before, after):
     """Return only newly appended complete log lines, failing on lost overlap."""
     before.assert_same_boot()
@@ -10,7 +33,7 @@ def fresh_log_delta(before, after):
     if (before.device_id != after.device_id or before.boot_after != after.boot_before
             or before.finished_ns > after.started_ns):
         raise AssertionError("CEC policy logs need ordered captures of the same device and boot")
-    previous, current = before.data, after.data
+    previous, current = _main_log_bytes(before), _main_log_bytes(after)
     if any(data and not data.endswith(b"\n") for data in (previous, current)):
         raise AssertionError("CEC policy log captures need complete lines")
     overlap = min(len(previous), len(current))

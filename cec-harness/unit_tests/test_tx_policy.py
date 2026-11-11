@@ -12,8 +12,11 @@ from amity_harness.tx_policy import failed_key_attempts, fresh_log_delta
 
 
 class FreshLogTests(unittest.TestCase):
-    def capture(self, data, *, started=1, finished=2):
-        return LogCapture(data, "a" * 32, "b" * 32, "b" * 32, "b" * 32, started, finished)
+    def capture(self, data, *, started=1, finished=2, hostname="bench", peers=b""):
+        header = ("\n===== Main Amity: " + hostname + " =====\nDevice: " + "a" * 32
+                  + "\nBoot: " + "b" * 32 + "\n\n").encode()
+        return LogCapture(header + (data or b"[No logs captured.]\n") + peers,
+                          "a" * 32, "b" * 32, "b" * 32, "b" * 32, started, finished)
 
     def test_exact_append_and_ring_wrap_return_only_new_lines(self):
         before = self.capture(b"old\nretained\n")
@@ -21,19 +24,47 @@ class FreshLogTests(unittest.TestCase):
             with self.subTest(data=data):
                 after = self.capture(data, started=3, finished=4)
                 self.assertEqual(fresh_log_delta(before, after), "fresh\n")
-        self.assertEqual(fresh_log_delta(before, self.capture(before.data, started=3, finished=4)), "")
+        self.assertEqual(fresh_log_delta(before, replace(before, started_ns=3, finished_ns=4)), "")
         self.assertEqual(fresh_log_delta(self.capture(b""), self.capture(b"new\n", started=3, finished=4)), "new\n")
 
     def test_missing_overlap_changed_boot_identity_or_capture_order_fails(self):
         before = self.capture(b"old\nretained\n")
         after = self.capture(b"retained\nfresh\n", started=3, finished=4)
-        invalid = (replace(after, data=b"fresh\n"), replace(after, device_id="c" * 32),
+        invalid = (self.capture(b"fresh\n", started=3, finished=4), replace(after, device_id="c" * 32),
                    replace(after, boot_before="c" * 32), replace(after, boot_after="c" * 32),
-                   replace(after, started_ns=1), replace(after, data=b"retained\nfresh"))
+                   replace(after, started_ns=1), self.capture(b"retained\nfresh", started=3, finished=4))
         for changed in invalid:
             with self.subTest(changed=changed):
                 with self.assertRaises(AssertionError):
                     fresh_log_delta(before, changed)
+
+    def test_section_headers_and_peer_logs_are_not_part_of_main_ring_overlap(self):
+        peer = (b"\n===== Amity: secondary =====\nDevice: " + b"c" * 32
+                + b"\nBoot: " + b"d" * 32 + b"\n\n")
+        before = self.capture(b"old\nretained\n", peers=peer + b"old peer logs\n")
+        after = self.capture(b"ld\nretained\nfresh\n", started=3, finished=4,
+                             hostname="renamed", peers=peer + b"unrelated fresh peer logs\n")
+        self.assertEqual(fresh_log_delta(before, after), "fresh\n")
+        unavailable = replace(after, data=after.data.split(peer)[0]
+                              + peer + b"[Logs unavailable: the device did not respond in time.]\n")
+        self.assertEqual(fresh_log_delta(before, unavailable), "fresh\n")
+        missing = self.capture(b"fresh\n", started=3, finished=4, peers=peer + b"retained\nfresh\n")
+        with self.assertRaisesRegex(AssertionError, "exact suffix/prefix overlap"):
+            fresh_log_delta(before, missing)
+
+    def test_missing_malformed_unavailable_or_duplicate_main_section_fails(self):
+        before = self.capture(b"retained\n")
+        after = self.capture(b"retained\nfresh\n", started=3, finished=4)
+        invalid = (b"retained\nfresh\n", after.data.replace(b"Device: " + b"a" * 32, b"Device: " + b"c" * 32),
+                   after.data.replace(b"Boot: " + b"b" * 32, b"Boot: " + b"c" * 32),
+                   after.data.replace(b"Boot: " + b"b" * 32, b"Boot: unknown"),
+                   after.data + after.data,
+                   self.capture(b"[Local logs unavailable: insufficient memory.]\n").data,
+                   after.data + b"\n===== Amity: broken =====\n",
+                   after.data + b"[Log collection interrupted; some logs may be missing.]\n")
+        for data in invalid:
+            with self.subTest(data=data), self.assertRaises(AssertionError):
+                fresh_log_delta(before, replace(after, data=data))
 
     def policy(self, entries, *, physical=4, evidence=None):
         before = self.capture(b"retained\n")

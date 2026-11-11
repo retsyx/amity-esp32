@@ -240,7 +240,9 @@ class BLEInputEvidenceTests(unittest.TestCase):
             fixture.log_data = b"retained\n"
             def capture_logs(*, expected_boot):
                 started = time.monotonic_ns()
-                return LogCapture(fixture.log_data, main.identity.device_id, boot, boot, expected_boot,
+                header = ("\n===== Main Amity: bench =====\nDevice: " + main.identity.device_id
+                          + "\nBoot: " + boot + "\n\n").encode()
+                return LogCapture(header + fixture.log_data, main.identity.device_id, boot, boot, expected_boot,
                                   started, time.monotonic_ns())
             main.capture_logs = capture_logs
             scan.fixture = fixture

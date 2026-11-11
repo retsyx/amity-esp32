@@ -143,7 +143,9 @@ class FIFOTests(unittest.TestCase):
             def capture(*, expected_boot):
                 self.assertEqual(expected_boot, fixture.scan._boot)
                 stamp = time.monotonic_ns()
-                result = LogCapture(("baseline\n" if not captures else logs).encode(),
+                header = ("\n===== Main Amity: bench =====\nDevice: " + fixture.main.identity.device_id
+                          + "\nBoot: " + fixture.scan._boot + "\n\n")
+                result = LogCapture((header + ("baseline\n" if not captures else logs)).encode(),
                                     fixture.main.identity.device_id, expected_boot, expected_boot, expected_boot,
                                     stamp, stamp + 1)
                 captures.append(result)
