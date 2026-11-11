@@ -165,7 +165,6 @@ void late_cleanup(){
   on_delay={};
   check(arbiter.reservation().owner==RadioMode::operational&&arbiter.reservation().deadline_ms==0,"late confirmed cleanup stranded radio or revived expired setup");
   check(arbiter.remote_may_reconnect()&&!background_paused&&resumes==1,"worker did not resume remote reconnect after late cleanup");
-  check(!arbiter.accepts_callback(cancelled.generation),"expired setup callback regained authority");
   check(arbiter.cleanup_complete(cancelled.generation,now())==RadioResult::stale,"late duplicate cleanup was accepted");
   for(const auto requested:{RadioMode::remote_pairing,RadioMode::consortium_candidate,RadioMode::matter_induction}){
    check(arbiter.request(requested,now(),30000,false)==RadioResult::granted,"fresh setup remained blocked after cleanup");
@@ -195,7 +194,6 @@ void late_advertising_cleanup(){
  try{worker(nullptr);}catch(const StopWorker&){}
  on_delay={};
  check(!advertising&&arbiter.reservation().owner==RadioMode::operational&&!background_paused,"worker did not release radio after advertiser stopped");
- check(!arbiter.accepts_callback(cancelled.generation),"timed-out advertiser handoff regained setup authority");
  uint64_t fresh=0;check(reserve_consortium(false,fresh)==ESP_OK&&fresh>cancelled.generation,"new admission could not start after confirmed advertiser cleanup");
 }
 void worker_cleanup_can_finish_while_handoff_disables(){

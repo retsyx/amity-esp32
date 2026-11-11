@@ -22,7 +22,6 @@ public:
     RadioResult external_matter_will_open(uint64_t now_ms,uint32_t duration_ms,bool matter_ble_active);
     void matter_ble_active(bool active){matter_ble_active_=active;}
     RadioReservation reservation()const{return {owner_,generation_,deadline_};}
-    bool accepts_callback(uint64_t generation)const{return generation==generation_&&owner_!=RadioMode::transition&&owner_!=RadioMode::operational;}
     bool cancellation_pending()const{return owner_==RadioMode::transition;}
     bool remote_may_reconnect()const{return owner_==RadioMode::operational&&!matter_ble_active_;}
 private:
