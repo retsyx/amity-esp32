@@ -1,6 +1,7 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "amity/consortium/session.hpp"
+#include "amity/consortium/logs.hpp"
 #include "amity/system/owned_intent.hpp"
 #include "esp_err.h"
 #include <functional>
@@ -127,6 +128,14 @@ struct RuntimeSettingsHooks {
     std::function<Error(model::MessageId,const Json&,uint64_t receiver_deadline_ms,std::string& response)> apply;
 };
 void runtime_settings_hooks(RuntimeSettingsHooks);
+struct RuntimeLogHooks {
+    std::function<LogSnapshot()> snapshot;
+};
+void runtime_log_hooks(RuntimeLogHooks);
+// One bounded pull at a time, on the existing authenticated member connection.
+// The consumer receives at most log_chunk_bytes and may stop by returning false.
+// Previously consumed bytes remain useful on timeout or loss of the member.
+esp_err_t runtime_pull_logs(model::OctopusId,const std::function<bool(std::string_view)>& consume);
 std::string runtime_device_settings(model::OctopusId owner);
 esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId,const Json& core,uint64_t admitted_until_ms=0);
 std::string runtime_device_settings_operation(model::OctopusId owner,model::MessageId);

@@ -9,6 +9,7 @@
 #pragma once
 #include "esp_err.h"
 #include "esp_http_server.h"
+#include "amity/consortium/logs.hpp"
 #include <string>
 #include <cstdint>
 namespace system_services {
@@ -18,6 +19,9 @@ void start_log_capture();
 void log_memory_if_due();
 std::string logs();
 size_t log_size();
+// Stable bounded snapshot in PSRAM; a null snapshot reports unavailable memory.
+amity::consortium::LogSnapshot log_snapshot();
+esp_err_t download_logs(httpd_req_t *req,amity::system::OctopusId local);
 esp_err_t upload_firmware(httpd_req_t *req);
 void reboot_later();
 void reboot_later(uint32_t delay_ms);

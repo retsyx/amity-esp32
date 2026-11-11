@@ -283,7 +283,7 @@ If you cannot access the administration page, you can also reinstall the saved U
 * **Equipment is missing or on the wrong input:** check HDMI connections and HDMI-CEC settings, scan again, and review the activity's device selections. If the activity is already running, try 'Repair'.
 * **The paired remote does not respond:** wake it, move it closer to Amity, and check 'Advanced' → 'Diagnostics'.
 
-To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'.
+To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'. The download includes available logs from added Amity devices and identifies any devices that could not be reached.
 
 Open the **Amity devices** tab and select **Settings** beside the named Amity to change
 an HDMI adapter's default front physical address (`1.0.0.0` initially; blank

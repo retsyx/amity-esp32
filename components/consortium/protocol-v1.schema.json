@@ -5618,6 +5618,94 @@
           ]
         }
       ]
+    },
+    "LogRequest": {
+      "type": "object",
+      "properties": {
+        "transfer_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "close": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "transfer_id",
+        "offset",
+        "close"
+      ],
+      "additionalProperties": false
+    },
+    "LogResult": {
+      "type": "object",
+      "properties": {
+        "transfer_id": {
+          "$ref": "https://amity.invalid/design/v0.1/core-types.schema.json#/$defs/Id128"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24576
+        },
+        "data": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{2}){0,1024}$",
+          "maxLength": 2048
+        },
+        "error": {
+          "enum": [
+            "",
+            "busy",
+            "unavailable",
+            "expired"
+          ]
+        }
+      },
+      "required": [
+        "transfer_id",
+        "offset",
+        "total",
+        "data",
+        "error"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "error": {
+              "const": ""
+            }
+          }
+        },
+        {
+          "properties": {
+            "error": {
+              "enum": [
+                "busy",
+                "unavailable",
+                "expired"
+              ]
+            },
+            "total": {
+              "const": 0
+            },
+            "data": {
+              "const": ""
+            }
+          }
+        }
+      ],
+      "$comment": "Runtime additionally requires offset + decoded data length <= total on success; empty success data requires offset == total. Log bytes are bounded to 24576, chunks to 1024; peer_logs is advertised only as an optional capability."
     }
   }
 }

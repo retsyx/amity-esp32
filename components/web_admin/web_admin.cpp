@@ -251,8 +251,7 @@ esp_err_t api(httpd_req_t *req) {
         if(path=="/api/matter")return matter(req);
         if(path=="/api/homekit")return homekit(req);
         if(path=="/api/logs") {
-            auto data=system_services::logs();httpd_resp_set_type(req,"text/plain");httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity.log");httpd_resp_set_hdr(req,"Cache-Control","no-store");
-            return web::response(req,data.data(),data.size());
+            return system_services::download_logs(req,hub->octopus_id());
         }
     }
     if(req->method==HTTP_POST) {

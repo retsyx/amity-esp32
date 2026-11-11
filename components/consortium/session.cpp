@@ -2,6 +2,7 @@
 #include "amity/consortium/session.hpp"
 #include "amity/consortium/update.hpp"
 #include "amity/consortium/settings.hpp"
+#include "amity/consortium/logs.hpp"
 #include "amity/consortium/owned_intent.hpp"
 namespace amity::consortium {
 Error Session::authenticate(const LinkScope &scope,model::OctopusId peer,PeerRole role,bool active) {
@@ -69,11 +70,12 @@ bool Session::permitted(Kind kind,bool discarding)const {
         (state_==ConnectionState::ready||state_==ConnectionState::synchronizing);
     if(!discarding&&state_==ConnectionState::synchronizing)return role_!=PeerRole::provisional_candidate&&(kind==Kind::device_status||kind==Kind::snapshot_request||kind==Kind::snapshot_chunk);
     if(!discarding&&state_==ConnectionState::restricted){
-        if(management_){if(!active_||role_==PeerRole::provisional_candidate)return false;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return role_==PeerRole::coordinator?kind==Kind::membership_event:kind==Kind::membership_result;}
+        if(management_){if(!active_||role_==PeerRole::provisional_candidate)return false;if(is_log_kind(kind))return role_==PeerRole::coordinator?kind==Kind::log_request:kind==Kind::log_result;if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:kind==Kind::update_result;return role_==PeerRole::coordinator?kind==Kind::membership_event:kind==Kind::membership_result;}
         return role_==PeerRole::provisional_candidate?kind==Kind::enrollment_control:(kind==Kind::membership_event||kind==Kind::membership_result);
     }
     if(!active_)return false;
     if(kind==Kind::device_status)return true;
+    if(is_log_kind(kind))return role_==PeerRole::coordinator?kind==Kind::log_request:role_==PeerRole::actuator&&kind==Kind::log_result;
     if(kind==Kind::snapshot_request||kind==Kind::snapshot_chunk)return ((capabilities_&live_configuration)||(discarding&&state_==ConnectionState::synchronizing))&&role_!=PeerRole::provisional_candidate;
     if(is_settings_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::settings_result:role_==PeerRole::actuator&&kind==Kind::settings_result;
     if(is_update_kind(kind))return role_==PeerRole::coordinator?kind!=Kind::update_result:role_==PeerRole::actuator&&kind==Kind::update_result;
@@ -102,6 +104,10 @@ Error Session::typed(const Envelope& e)const{
     }
     if(e.kind==Kind::scoped_result&&!(capabilities_&qualified_lookup))return Error::unsupported_kind;
     if(is_settings_kind(e.kind)&&!(capabilities_&per_adapter_settings))return Error::unsupported_kind;
+    if(is_log_kind(e.kind)){
+        if(!(capabilities_&peer_logs))return Error::unsupported_kind;
+        if(!valid_log_payload(e.kind,e.payload))return Error::invalid_message;
+    }
     if(e.kind==Kind::device_status&&!(capabilities_&hostname_metadata))return Error::unsupported_kind;
     if((e.kind==Kind::snapshot_request||e.kind==Kind::snapshot_chunk)&&!(capabilities_&chunked_snapshots))return Error::unsupported_kind;
     if(is_update_kind(e.kind)&&!(capabilities_&peer_firmware_update))return Error::unsupported_kind;
@@ -126,7 +132,7 @@ Error Session::discard_lifecycle_frame(const Envelope& e,uint64_t received,uint6
     if(state_!=ConnectionState::restricted||management_||!active_||role_==PeerRole::provisional_candidate)return Error::not_ready;
     switch(e.kind){
     case Kind::device_status:case Kind::scoped_result:
-    case Kind::settings_result:case Kind::update_result:break;
+    case Kind::settings_result:case Kind::update_result:case Kind::log_result:break;
     default:return Error::unsupported_kind;
     }
     auto error=common(e,received,now,false,true);if(error!=Error::none)return error;

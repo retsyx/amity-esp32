@@ -15,7 +15,7 @@ enum class Kind { enrollment_control=11,
     membership_event=14, membership_result=15, snapshot_request=16, snapshot_chunk=17,
     update_begin=27, update_chunk=28, update_install=29, update_status=30, update_abort=31, update_result=32,
     device_status=37, settings_read=38, settings_write=39, settings_result=40,
-    scoped_intent=41, scoped_result=42, synchronization=43 };
+    scoped_intent=41, scoped_result=42, synchronization=43, log_request=44, log_result=45 };
 inline bool retired_kind(Kind k){const auto n=static_cast<unsigned>(k);return n<=10||n==12||n==13||(n>=18&&n<=26)||(n>=33&&n<=36);}
 const char *kind_name(Kind);
 struct Envelope {
@@ -44,8 +44,8 @@ enum Capability : uint32_t { lifecycle_journal=8u,
     chunked_snapshots=64u, peer_firmware_update=512u,
     original_controller_only=8192u, hostname_metadata=16384u, per_adapter_settings=32768u,
     factory_reset_removal=65536u, owner_repeated_keys=131072u, qualified_lookup=262144u,
-    live_configuration=524288u };
-constexpr uint32_t known_capabilities = lifecycle_journal|chunked_snapshots|peer_firmware_update|original_controller_only|hostname_metadata|per_adapter_settings|factory_reset_removal|owner_repeated_keys|qualified_lookup|live_configuration;
+    live_configuration=524288u, peer_logs=1048576u };
+constexpr uint32_t known_capabilities = lifecycle_journal|chunked_snapshots|peer_firmware_update|original_controller_only|hostname_metadata|per_adapter_settings|factory_reset_removal|owner_repeated_keys|qualified_lookup|live_configuration|peer_logs;
 struct HelloFrame {
     uint8_t protocol_min = 1, protocol_max = 1;
     model::ConsortiumId consortium_id;

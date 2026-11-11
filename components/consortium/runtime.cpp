@@ -43,6 +43,7 @@ extern "C" {
 #include "freertos/semphr.h"
 #include "freertos/idf_additions.h"
 #include "esp_heap_caps.h"
+#include "esp_attr.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -128,6 +129,11 @@ struct Active {
     model::MessageId removal_request;uint64_t removal_until=0;
     model::MessageId update_begin_id;
     RuntimePeerStatus status;
+    // Link-task owned, at most one PSRAM snapshot for the main's current pull.
+    LogSnapshot log_snapshot;
+    model::MessageId log_transfer;
+    size_t log_next=0;
+    uint64_t log_expires=0;
     // One incoming application restart marker, never ordinary work or frames.
     SynchronizationRound synchronization;
     std::optional<SynchronizationRound> pending_synchronization;
@@ -202,7 +208,7 @@ bool abort_peer_credential(const Active &link,const Group &current){
 }
 bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
     if(retired_kind(kind)||link.cancelled|| (link.lifecycle_only&&!lifecycle_kind(kind)) || (link.retiring&&kind!=Kind::membership_event&&kind!=Kind::membership_result))return false;
-    if(link.management_ready&&!is_update_kind(kind)&&!lifecycle_kind(kind))return false;
+    if(link.management_ready&&!is_update_kind(kind)&&!is_log_kind(kind)&&!lifecycle_kind(kind))return false;
     if(link.restart_requested&&kind!=Kind::synchronization&&kind!=Kind::snapshot_request&&kind!=Kind::snapshot_chunk&&kind!=Kind::device_status&&!lifecycle_kind(kind))return false;
     // The TLS anchor snapshot may predate a roster mutation. Ordinary work must
     // still belong to the current allowlist immediately before it is sent.
@@ -216,6 +222,7 @@ bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
     return link.tls->send(envelope_json(outgoing(link,kind,ttl),payload),is_update_kind(kind));
 }
 #include "settings_runtime.inc"
+#include "logs_runtime.inc"
 #include "removal_runtime.inc"
 std::string control_json(model::JoinId join,std::string_view digest,std::string_view phase,std::string_view extra){return "{\"phase\":\""+std::string(phase)+"\",\"join_id\":\""+join.str()+"\",\"join_digest\":\""+std::string(digest)+"\""+std::string(extra)+"}";}
 bool enrollment_abort_pending(const Active& active){std::lock_guard<std::mutex> guard(lock);return abort_peer_credential(active,group);}
@@ -493,6 +500,7 @@ bool synchronization_barrier(Active& active,bool server,SynchronizationRound& ro
     return trace.fail("synchronization_barrier_timeout");
 }
 bool fence_synchronization_scope(Active& active,LinkTrace& trace){
+    log_snapshot_clear(active);
     const auto scope=active.session.scope();
     RuntimeControlHooks hooks;RuntimeUpdateHooks update_hooks;
     model::MessageId interrupted_update;bool already_cleaned=false;
@@ -536,8 +544,8 @@ bool restart_synchronization_scope(Active& active,const SynchronizationRound& ro
 bool exchange_hostname(Active&,const std::string&,LinkTrace*);
 bool synchronize_connection(Active& active,bool server,bool publish_ready=true,uint64_t revision=0,LinkTrace* diagnostic=nullptr){
     LinkTrace local;auto& trace=diagnostic?*diagnostic:local;
-    // An authenticated peer running another image may only receive firmware
-    // and explicit removal. Do not exchange application state on this stream
+    // An authenticated peer running another image may receive firmware,
+    // log collection and explicit removal. Do not exchange application state
     // until it reboots into the same image and completes a fresh hello.
     if(!active.execution_supported||!publish_ready){
         std::lock_guard<std::mutex> guard(active.mutex);
@@ -1035,6 +1043,7 @@ void active_loop_work(void *arg){
       while(!active->cancelled){
         poll_release_ack(*active);
         trace=LinkTrace{};trace.phase="operational";
+        if(active->log_snapshot&&now_ms()>=active->log_expires)log_snapshot_clear(*active);
         if(active->restart_requested){trace.fail("application_restart_requested");break;}
         if(active->retiring&&!receive_until){retirement_attempted=true;finish_retirement(*active);break;}
         if(server&&active->ready&&!active->retiring&&!receive_until&&(active->status.negotiated_capabilities&live_configuration)){
@@ -1138,6 +1147,12 @@ void active_loop_work(void *arg){
             if(!receive_live_hostname(*active,envelope,received)){trace.fail("hostname_admission");break;}
             continue;
         }
+        if(is_log_kind(envelope.kind)){
+            const auto admitted=active->session.admit(envelope,received,received);
+            if(admitted!=Error::none){trace.fail("log_admit",admitted);break;}
+            if(!log_dispatch(active,envelope,received)){trace.fail("log_dispatch");break;}
+            continue;
+        }
         if(is_settings_kind(envelope.kind)){
             // Preserve wire/security failures as terminal before the settings
             // helper's boolean result can also represent a raced local reset
@@ -1216,6 +1231,7 @@ void active_loop_work(void *arg){
       receive_until=0;
     }
     if(server&&active->retiring&&!retirement_attempted)finish_retirement(*active);
+    log_snapshot_clear(*active);
     if(active->update_begin_id) {RuntimeUpdateHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=updates;}if(hooks.disconnected) hooks.disconnected(active->peer,active->update_begin_id);}
     if(!trace.unexpected&&active->retiring)trace.reason="retired";
     trace.retained=false;
@@ -1790,6 +1806,8 @@ esp_err_t runtime_forget_removed_octopus(model::OctopusId owner){
     return ESP_OK;
 }
 void runtime_settings_hooks(RuntimeSettingsHooks hooks){std::lock_guard<std::mutex> guard(lock);settings_hooks=std::move(hooks);}
+void runtime_log_hooks(RuntimeLogHooks hooks){std::lock_guard<std::mutex> guard(lock);log_hooks=std::move(hooks);}
+esp_err_t runtime_pull_logs(model::OctopusId owner,const std::function<bool(std::string_view)>& consume){return pull_logs(owner,consume);}
 bool runtime_device_settings_authorized(model::MessageId id){std::lock_guard<std::mutex> guard(lock);return settings_authorized_locked(id);}
 std::string runtime_device_settings(model::OctopusId owner){
     RuntimeSettingsHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(!original_controller(group,identity.id)||!status.authority_ready)return "{\"status\":\"error\",\"settings\":null,\"error\":\"Settings are available on the main Amity only.\"}";if(owner==identity.id)hooks=settings_hooks;}

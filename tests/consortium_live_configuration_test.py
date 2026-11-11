@@ -63,6 +63,7 @@ struct Active{
  RuntimePeerStatus status;std::deque<Queued> queue;std::string endpoint_hint,expected_hostname,advertised_hostname;
  std::atomic_bool execution_fenced{false},restart_requested{false};model::LinkId cleaned_link;
  SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;bool execution_supported=true;model::MessageId update_begin_id;
+ LogSnapshot log_snapshot;model::MessageId log_transfer;size_t log_next=0;uint64_t log_expires=0;
 };
 // ACK observation has a separate native test; this fixture tests IPC policy.
 void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
@@ -85,6 +86,9 @@ void vTaskDelay(unsigned ticks){clock_ms+=ticks*10;}
 int capture_shutdown(int,int){++amity::consortium::shutdowns;return 0;}
 #define shutdown capture_shutdown
 '''
+PREFIX += 'namespace amity::consortium {\n' + function(
+    (ROOT/'components/consortium/logs_runtime.inc').read_text(),
+    'void log_snapshot_clear(') + '\n}\n'
 SUPPORT = r'''
 namespace amity::consortium {
 std::string packet(const Envelope& e){

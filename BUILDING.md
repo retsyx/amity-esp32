@@ -151,7 +151,9 @@ The 20 October 2026 amendment fixes the original device as sole controller/UI/ad
 
 ## Firmware distribution
 
-Authenticated TLS hellos compare running ELF identities before configuration synchronization. A mismatch permits firmware and explicit removal traffic only. The main updates newly added or returning members from its own running partition; no desired-release setting is persisted.
+Authenticated TLS hellos compare running ELF identities before configuration synchronization. A mismatch permits firmware, log collection and explicit removal traffic only. The main updates newly added or returning members from its own running partition; no desired-release setting is persisted.
+
+Log downloads stream the main's capture followed by each enrolled member over its existing authenticated connection. Each board keeps at most one 24 KiB PSRAM snapshot for a member pull; the main receives one 1 KiB chunk at a time and releases its local snapshot before collecting members. Member pulls expire after fifteen seconds, with a two-second response budget per chunk; cancellation, completion and connection loss release snapshots. Unavailable or interrupted members are noted in the downloaded file.
 
 A browser upload stages the main's inactive partition, then the main stages members sequentially. Complete-image validation precedes coordinated boot selection and delayed reboot. Each OTA partition carries its release manifest and signature in a reserved trailer, so the running image remains an update source after reboot. Firmware frames use a marked class on the existing TLS stream with longer fixed deadlines; control frames retain their ordinary deadlines, and receivers reject incorrectly marked controls.
 

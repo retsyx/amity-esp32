@@ -31,7 +31,7 @@ public:
     Error advance_configuration(uint64_t revision);
     void disconnect();
     void restrict_lifecycle();
-    // Different firmware images permit updates and explicit removal only.
+    // Different firmware images permit updates, logs and explicit removal.
     // A new authenticated hello after reboot is required for synchronization.
     void restrict_management();
     ConnectionState state() const {return state_;}

@@ -36,7 +36,7 @@
 #include <optional>
 namespace system_services {
 namespace {
-EXT_RAM_BSS_ATTR std::array<char, 24576> ring{};
+EXT_RAM_BSS_ATTR std::array<char, amity::consortium::log_capacity> ring{};
 size_t cursor = 0, used = 0;
 SemaphoreHandle_t lock=nullptr;
 char boot_identifier[33]{};
@@ -164,6 +164,19 @@ std::string logs() {
     xSemaphoreGive(lock);
     result.resize(n);
     return result;
+}
+amity::consortium::LogSnapshot log_snapshot() {
+    if(!lock)return {};
+    // Allocate outside the capture mutex: logging stays responsive to other
+    // tasks, and snapshot bytes never compete for internal/DMA heap memory.
+    auto* bytes=static_cast<char*>(heap_caps_malloc(ring.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!bytes)return {};
+    std::shared_ptr<const char> snapshot(bytes,[](const char* data){heap_caps_free(const_cast<char*>(data));});
+    xSemaphoreTake(lock,portMAX_DELAY);
+    const size_t size=used,start=(cursor+ring.size()-size)%ring.size();
+    for(size_t i=0;i<size;++i)bytes[i]=ring[(start+i)%ring.size()];
+    xSemaphoreGive(lock);
+    return {std::move(snapshot),size};
 }
 void reboot_later(uint32_t delay_ms) { xTaskCreate(restart_task,"restart",2048,reinterpret_cast<void*>(uintptr_t(delay_ms)),3,nullptr); }
 void reboot_later() { reboot_later(1500); }
