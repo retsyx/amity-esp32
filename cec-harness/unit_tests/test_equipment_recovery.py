@@ -367,7 +367,7 @@ class EquipmentRecoveryTests(unittest.TestCase):
                     since = time.monotonic_ns()
                     self.return_records(fixture, fixture.player, since)
                     clock = {"now": since}
-                    deadline = since + int(fixture.dut._runtime.cec_timeout * 1e9)
+                    deadline = since + 1 + int(fixture.dut._runtime.cec_timeout * 1e9)
                     validate = scan.validate_owners
 
                     def slow_owner(*args, **kwargs):
@@ -401,15 +401,51 @@ class EquipmentRecoveryTests(unittest.TestCase):
                 fixture, scan = self.fixture()
                 scan.expected = (fixture.tv, fixture.avr)
                 since = time.monotonic_ns()
-                deadline = since + int(fixture.dut._runtime.cec_timeout * 1e9)
+                deadline = since + 1 + int(fixture.dut._runtime.cec_timeout * 1e9)
                 if physical == "late":
                     self.return_records(fixture, fixture.player, deadline + 1)
+                    fixture.session.records[-3]["wire_timestamp_ns"] = since + 1
                 fixture.dut.wait_for = Mock(side_effect=AssertionError("An expired wire window must not poll UI"))
                 with patch("amity_harness.recovery.time.monotonic_ns", return_value=deadline + 1_000_000_000):
                     with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
                         assert_returned(scan, fixture.player, since=since)
                 fixture.dut.wait_for.assert_not_called()
                 self.assertNotIn(fixture.player, scan.expected)
+
+    def test_address_claim_setup_does_not_consume_the_physical_return_window(self):
+        fixture, scan = self.fixture()
+        scan.expected = (fixture.tv, fixture.avr)
+        since = time.monotonic_ns()
+        self.return_records(fixture, fixture.player, since)
+        announced = since + 2_000_000_000
+        # Linux announced its shared PA while reclaiming addresses. The DUT
+        # queried promptly, before the harness corrected the player's PA.
+        fixture.session.records[-3]["wire_timestamp_ns"] = announced
+        fixture.session.records[-2]["wire_timestamp_ns"] = announced - 500_000_000
+        fixture.session.records[-1]["wire_timestamp_ns"] = announced + 800_000_000
+        with patch("amity_harness.recovery.time.monotonic_ns", return_value=announced + 900_000_000):
+            assert_returned(scan, fixture.player, since=since)
+        proof = fixture.bed.control_observations[-1]
+        self.assertEqual(proof["since_monotonic_ns"], since)
+        self.assertEqual(proof["announcement_wire_timestamp_ns"], announced)
+        self.assertEqual(proof["deadline_monotonic_ns"], announced + 1_000_000_000)
+        self.assertIn(fixture.player, scan.expected)
+
+    def test_reannouncement_cannot_extend_an_incomplete_first_return_window(self):
+        fixture, scan = self.fixture()
+        scan.expected = (fixture.tv, fixture.avr)
+        since = time.monotonic_ns()
+        self.announcement(fixture, fixture.player, timestamp=since + 1)
+        deadline = since + 1 + int(fixture.dut._runtime.cec_timeout * 1e9)
+        # A second correct announcement has a complete exchange, but all of
+        # it is too late for the first physical identity announcement.
+        self.return_records(fixture, fixture.player, deadline + 1)
+        fixture.dut.wait_for = Mock(side_effect=AssertionError("An expired wire window must not poll UI"))
+        with patch("amity_harness.recovery.time.monotonic_ns", return_value=deadline + 100):
+            with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
+                assert_returned(scan, fixture.player, since=since)
+        fixture.dut.wait_for.assert_not_called()
+        self.assertNotIn(fixture.player, scan.expected)
 
     def test_scoped_passive_return_requires_genuine_identity_despite_other_adapter_discovery(self):
         fixture, scan = self.fixture()

@@ -252,6 +252,22 @@ class LookupScans:
         self._closed = True
 
 
+def _return_rows(records, component, since):
+    return [row for row in records if row.get("component") == component.name
+            and row.get("gpio") == component.gpio and row.get("transport") == "wire"
+            and since <= row.get("wire_timestamp_ns", 0) and not row.get("dropped")
+            and row.get("handled_frame", row.get("frame")) == row.get("frame")]
+
+
+def _return_announcement(rows, component):
+    expected = Frame(component.address.logical, 15, 0x84,
+                     component.address.physical.to_bytes(2, "big")
+                     + bytes([component.device_type])).raw.hex(":")
+    return min((row for row in rows if row.get("direction") == "tx" and row.get("ok") is True
+                and row.get("frame") == expected),
+               key=lambda row: row["wire_timestamp_ns"], default=None)
+
+
 def _fresh_return(records, component, initiator, since, deadline):
     """A real PA announcement and fresh targeted OSD exchange on this wire.
 
@@ -260,27 +276,23 @@ def _fresh_return(records, component, initiator, since, deadline):
     both exchanges must be fresh within this same return, and UI identity must
     agree with the corrected component announcement.
     """
-    rows = [row for row in records if row.get("component") == component.name
-            and row.get("gpio") == component.gpio and row.get("transport") == "wire"
-            and since <= row.get("wire_timestamp_ns", 0) <= deadline and not row.get("dropped")
-            and row.get("handled_frame", row.get("frame")) == row.get("frame")]
-    announcement = Frame(component.address.logical, 15, 0x84,
-                         component.address.physical.to_bytes(2, "big") + bytes([component.device_type])).raw.hex(":")
+    rows = [row for row in _return_rows(records, component, since)
+            if row["wire_timestamp_ns"] <= deadline]
+    announced = _return_announcement(rows, component)
+    if announced is None:
+        return None
     query = Frame(initiator, component.address.logical, 0x46).raw.hex(":")
     reply = Frame(component.address.logical, initiator, 0x47, component.name.encode("ascii")).raw.hex(":")
-    for announced in rows:
-        if announced.get("direction") != "tx" or not announced.get("ok") or announced.get("frame") != announcement:
+    for requested in rows:
+        if requested.get("direction") != "rx" or requested.get("frame") != query:
             continue
-        for requested in rows:
-            if requested.get("direction") != "rx" or requested.get("frame") != query:
-                continue
-            answer = next((answer for answer in rows if answer.get("direction") == "tx" and answer.get("ok")
-                           and answer.get("frame") == reply
-                           and answer["wire_timestamp_ns"] >= requested["wire_timestamp_ns"]), None)
-            if answer is not None:
-                return {"announcement_frame": announcement, "announcement_wire_timestamp_ns": announced["wire_timestamp_ns"],
-                        "query_frame": query, "query_wire_timestamp_ns": requested["wire_timestamp_ns"],
-                        "reply_frame": reply, "reply_wire_timestamp_ns": answer["wire_timestamp_ns"]}
+        answer = next((answer for answer in rows if answer.get("direction") == "tx" and answer.get("ok")
+                       and answer.get("frame") == reply
+                       and answer["wire_timestamp_ns"] >= requested["wire_timestamp_ns"]), None)
+        if answer is not None:
+            return {"announcement_frame": announced["frame"], "announcement_wire_timestamp_ns": announced["wire_timestamp_ns"],
+                    "query_frame": query, "query_wire_timestamp_ns": requested["wire_timestamp_ns"],
+                    "reply_frame": reply, "reply_wire_timestamp_ns": answer["wire_timestamp_ns"]}
     return None
 
 
@@ -302,11 +314,24 @@ def _assert_returned(scan, component, *, since, observation=None):
             or component.gpio not in scan.initiators):
         raise AssertionError("Returned equipment has no authorized physical owner/wire proof")
     scan.validate_owners()
-    deadline = since + int(dut._runtime.cec_timeout * 1e9)
+    window = int(dut._runtime.cec_timeout * 1e9)
+    deadline = since + window
+    announced_at = None
     evidence = None
 
     def physical_evidence():
-        proof = _fresh_return(session.records, component, scan.initiators[component.gpio], since, deadline)
+        nonlocal announced_at, deadline
+        records = session.records
+        if announced_at is None:
+            announcement = _return_announcement(_return_rows(records, component, since), component)
+            if announcement is not None:
+                # Address claiming and the harness's startup broadcasts precede
+                # this actual component identity on the wire. They are fixture
+                # setup, not DUT response time. Later announcements cannot move
+                # this first physical boundary or extend the response window.
+                announced_at = announcement["wire_timestamp_ns"]
+                deadline = announced_at + window
+        proof = _fresh_return(records, component, scan.initiators[component.gpio], since, deadline)
         if proof is None and time.monotonic_ns() >= deadline:
             raise TimeoutError("Passive equipment return exceeded the physical CEC deadline")
         return proof
