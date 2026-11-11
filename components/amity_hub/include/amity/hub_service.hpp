@@ -53,6 +53,6 @@ public:
     uint64_t applied_configuration_revision()const;
     uint64_t executing_configuration_revision()const;
 private:
-    esp_err_t request_activity(int,bool notify_selection,uint32_t* accepted_selection,std::optional<system::ActivityId> expected={});struct Impl;std::unique_ptr<Impl> impl_;
+    esp_err_t request_activity(int,bool notify_selection,uint32_t* accepted_selection,std::optional<system::ActivityId> expected={});struct Adapter;struct Impl;std::unique_ptr<Impl> impl_;
 };
 }

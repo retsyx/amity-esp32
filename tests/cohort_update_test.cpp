@@ -103,6 +103,10 @@ esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_
     if(interrupted){transport.disconnected(local,nodes[to].accepted_begin);for(auto& peer:peers)if(peer.id==to)peer.ready=peer.management_ready=false;}
     destination=old;return ESP_OK;
 }
+esp_err_t runtime_stage_update(m::OctopusId to,std::string body,uint32_t ttl){
+    assert(field(parse(body),"phase")=="stage");
+    return runtime_send_update(to,Kind::update_install,std::move(body),ttl);
+}
 }
 c::Json cohort(){return parse(u::cohort_status_json());}
 std::string phase(){return field(cohort(),"phase");}

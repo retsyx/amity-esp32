@@ -30,6 +30,10 @@
 #define kTLVError_Unavailable 6
 #define ESP_MFI_DEBUG(...) ((void)0)
 #define ESP_MFI_DEBUG_PLAIN(...) ((void)0)
+#define HTTPD_500 "500 Internal Server Error"
+#define HTTPD_207 "207 Multi-Status"
+#define HTTPD_204 "204 No Content"
+#define HAP_EVENT_SET_CHAR_COMPLETED 1
 
 typedef int esp_err_t;
 typedef void (*free_context_fn)(void *);
@@ -70,6 +74,10 @@ static bool fail_body_read, revoke_while_reading, secure_transition;
 static uint32_t pairing_window = 1;
 static pair_setup_ctx_t *active_setup;
 static void *last_allocation;
+static void *last_body_allocation;
+static size_t last_body_size;
+static int parses, parse_ends;
+static bool fail_parse;
 static struct { int server; unsigned pair_attempts; } hap_priv;
 
 static esp_err_t hap_http_pair_setup_handler(httpd_req_t *req);
@@ -131,7 +139,9 @@ static void *hap_platform_memory_malloc(size_t size) {
     assert(!lock_depth);
     if (fail_body_allocation) return NULL;
     ++body_allocs;
-    return malloc(size);
+    last_body_size = size;
+    last_body_allocation = malloc(size);
+    return last_body_allocation;
 }
 static void hap_platform_memory_free(void *data) {
     if (data) ++body_frees;
@@ -147,6 +157,25 @@ static int hap_http_read_body(httpd_req_t *req, char *data, size_t size) {
     memcpy(data, req->network_data, size);
     return ESP_OK;
 }
+typedef struct { const char *data; } jparse_ctx_t;
+static int json_parse_start(jparse_ctx_t *context, const char *data, int size) {
+    assert(lock_depth == 1 && data == last_body_allocation);
+    assert(last_body_size == (size_t)size + 1 && data[size] == '\0');
+    context->data = data;
+    ++parses;
+    return fail_parse ? HAP_FAIL : HAP_SUCCESS;
+}
+static void json_parse_end(jparse_ctx_t *context) { assert(context->data == last_body_allocation); ++parse_ends; }
+static int hap_http_handle_set_char(jparse_ctx_t *context, char *buffer, int size, httpd_req_t *req) {
+    (void)buffer; (void)size;
+    assert(context->data == last_body_allocation);
+    assert(memcmp(context->data, req->network_data, req->content_len) == 0);
+    ++handlers;
+    return HAP_SUCCESS;
+}
+static int httpd_send(httpd_req_t *req, const char *data, int size) { return httpd_resp_send(req, data, size); }
+static int httpd_resp_send_chunk(httpd_req_t *req, const char *data, int size) { return httpd_resp_send(req, data, size); }
+static void hap_report_event(int event, void *data, int size) { assert(event == HAP_EVENT_SET_CHAR_COMPLETED && !data && !size); }
 static void hap_prepare_error_tlv(uint8_t state, uint8_t error, void *buffer, int size, int *outlen) {
     assert(size >= 6);
     uint8_t response[6] = {6, 1, state, 7, 1, error};
@@ -235,6 +264,8 @@ static void reset(void) {
     revoke_while_reading = secure_transition = false;
     hap_priv.pair_attempts = 0;
     last_allocation = NULL;
+    last_body_allocation = NULL; last_body_size = 0;
+    parses = parse_ends = 0; fail_parse = false;
 }
 
 static httpd_req_t request(httpd_uri_t *endpoint, const char *data, size_t size, void *session) {
@@ -395,6 +426,28 @@ static void wrapper_tests(void) {
     }
 }
 
+static void borrowed_characteristic_body_tests(void) {
+    char content[32768]; memset(content, 'x', sizeof(content));
+    controller_t controller = {.valid = true};
+    hap_secure_session_t session = {.state = STATE_VERIFIED, .ctrl = &controller};
+    hap_characteristics_put.handler = hap_http_put_characteristics;
+    const size_t sizes[] = {1, 511, 512, sizeof(content)};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
+        reset();
+        httpd_req_t req = request(&hap_characteristics_put, content, sizes[i], &session);
+        assert(hap_locked_request(&req) == ESP_OK);
+        assert(reads == 1 && body_allocs == 1 && body_frees == 1);
+        assert(parses == 1 && parse_ends == 1 && handlers == 1);
+        assert(last_body_size == sizes[i] + 1 && req.user_ctx == &hap_characteristics_put && !lock_depth);
+    }
+    reset(); fail_parse = true;
+    httpd_req_t req = request(&hap_characteristics_put, content, sizeof(content), &session);
+    assert(hap_locked_request(&req) == ESP_OK);
+    assert(parses == 1 && !parse_ends && !handlers && body_allocs == 1 && body_frees == 1);
+    assert(strcmp(req.status, HTTPD_500) == 0 && req.user_ctx == &hap_characteristics_put && !lock_depth);
+    hap_characteristics_put.handler = buffered_handler;
+}
+
 int main(void) {
     setup_restart_test();
     failed_restart_test();
@@ -402,7 +455,8 @@ int main(void) {
     setup_completion_test(false);
     setup_completion_test(true);
     wrapper_tests();
+    borrowed_characteristic_body_tests();
     reset();
-    puts("HomeKit HTTP context replacement, cleanup, body buffering and authorization tests passed");
+    puts("HomeKit HTTP context, authorization and single-allocation borrowed characteristic bodies through 32 KiB passed");
     return 0;
 }

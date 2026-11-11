@@ -151,6 +151,8 @@ void runtime_update_hooks(RuntimeUpdateHooks);
 // Only the current coordinator may send requests; members may send results.
 // Uses the authenticated scoped link and retains the original bounded queue age.
 esp_err_t runtime_send_update(model::OctopusId,Kind,std::string payload,uint32_t ttl_ms=5000);
+// The staging barrier follows admitted image bytes without expiring behind them.
+esp_err_t runtime_stage_update(model::OctopusId,std::string payload,uint32_t ttl_ms=5000);
 struct RuntimePeerStatus {
     model::OctopusId id;model::BootId boot_id;
     uint64_t config_revision=0;
@@ -164,7 +166,8 @@ std::vector<RuntimePeerStatus> runtime_peers();
 std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames();
 // Delivery and live authorization for original Amity actions.
 esp_err_t runtime_send_owned(const model::OwnedIntent&);
-esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,std::string payload,uint32_t ttl_ms=1000,uint64_t config_revision=0);
+// An empty link publishes to the current session; retries name their exact link.
+esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,const model::OwnedAdapterSnapshot&,uint32_t ttl_ms=1000,uint64_t config_revision=0);
 void runtime_fence_owned_link(model::OctopusId,model::LinkId);
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);

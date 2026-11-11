@@ -63,7 +63,10 @@ public:
     esp_err_t stop_zone(system::ZoneId);
     system::ExecutionSnapshot execution_snapshot()const;
     std::vector<system::CecObservation> native_observations()const;
-    std::optional<config_store::Configuration> active_configuration()const{auto p=std::atomic_load(&active_);return p?std::optional<config_store::Configuration>(*p):std::nullopt;}
+    std::shared_ptr<const config_store::Configuration> active_configuration()const{
+        auto published=std::atomic_load(&active_);
+        return published?std::shared_ptr<const config_store::Configuration>(published,&published->configuration):nullptr;
+    }
     std::optional<config_store::ConfiguredActivity> external_activity(unsigned)const;
     std::optional<config_store::ExternalSlot> external_slot(unsigned)const;
     std::optional<unsigned> external_activity_index(const Snapshot&)const;
@@ -94,7 +97,12 @@ private:
     system::ConsortiumId consortium_;
     system::OctopusId octopus_;
     system::BootId boot_;
-    std::shared_ptr<const config_store::Configuration> active_;
+    struct PublishedConfiguration {
+        explicit PublishedConfiguration(config_store::Configuration value):configuration(std::move(value)),policy_hash(config_store::executable_policy_hash(configuration)){}
+        config_store::Configuration configuration;
+        std::string policy_hash;
+    };
+    std::shared_ptr<const PublishedConfiguration> active_;
     std::shared_ptr<const std::string> hardware_error_;
     std::shared_ptr<const OwnedSender> sender_;
     std::atomic<bool> local_coordinator_{true},maintenance_{false};

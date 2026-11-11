@@ -7,6 +7,7 @@ struct SettingsCache {
 struct SettingsOperation {
     model::OctopusId owner;model::MessageId id;model::BootId target_boot;model::LinkId link;
     std::string core,stage="admitted",error;uint64_t expires=0;
+    std::optional<std::string> hostname{};
 };
 struct SettingsReceived {
     model::MessageId id;model::BootId issuer_boot;std::string core,response;bool pending=true;
@@ -22,10 +23,7 @@ SettingsAuthorization settings_authorization;
 // Caller holds the runtime lock. An admitted rename reserves its name until
 // its outcome is known, including against a concurrent Add operation.
 bool settings_hostname_pending(model::OctopusId owner,const std::string& name){
-    for(const auto& operation:settings_operations)if(operation.owner!=owner&&operation.stage=="admitted"){
-        Json pending;JsonError detail;DeviceSettingsWrite write;
-        if(parse_json(operation.core,pending,detail)&&parse_device_settings_write(pending,write)==Error::none&&write.hostname&&*write.hostname==name)return true;
-    }
+    for(const auto& operation:settings_operations)if(operation.owner!=owner&&operation.stage=="admitted"&&operation.hostname&&*operation.hostname==name)return true;
     return false;
 }
 std::string settings_quote(std::string_view text){Json value;value.type=Json::Type::string;value.string=text;return settings_json(value);}
@@ -79,7 +77,6 @@ std::string settings_apply(const std::shared_ptr<Active>& active,model::MessageI
     if(parse_json(response,returned,detail,4096)&&closed(returned,{"request_id","stage","error","snapshot"})&&returned.get("request_id")->type==Json::Type::string&&returned.get("request_id")->string==id.str()&&returned.get("stage")->type==Json::Type::string&&returned.get("error")->type==Json::Type::string){
         const auto stage=returned.get("stage")->string;applied=result==Error::none&&stage=="applied";
         wire=settings_result(id,"write",applied?"applied":"failed",applied?"":settings_error(result),applied?settings_json(*returned.get("snapshot")):"null");
-        Json validated;if(!parse_json(wire,validated,detail,4096)||!valid_settings_payload(Kind::settings_result,validated))wire.clear();
     }
     if(wire.empty())wire=settings_result(id,"write","failed",settings_error(result==Error::none?Error::invalid_message:result));
     {std::lock_guard<std::mutex> guard(lock);settings_authorization={};for(auto& saved:settings_received)if(saved.id==id&&saved.issuer_boot==issuer){saved.pending=false;saved.response=wire;}settings_expire(now_ms());}
@@ -106,7 +103,7 @@ bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& env
         settings_expire(received);return true;
     }
     RuntimeSettingsHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(group.role!=Group::member||group.authority!=active->peer||!current_peer_credential(*active,group)||(!active->ready&&!active->management_ready))return false;hooks=settings_hooks;}
-    if(envelope.kind==Kind::settings_read){std::string snapshot=hooks.snapshot?hooks.snapshot():"";Json parsed;JsonError detail;const bool valid=parse_json(snapshot,parsed,detail,4096)&&valid_settings_snapshot(parsed)&&parsed.get("boot_id")->string==boot.str();return send(*active,Kind::settings_result,settings_result(id,"read",valid?"applied":"failed",valid?"":"NOT_READY",valid?snapshot:"null"),2000);}
+    if(envelope.kind==Kind::settings_read){const auto snapshot=hooks.snapshot?hooks.snapshot():"";return send(*active,Kind::settings_result,settings_result(id,"read",snapshot.empty()?"failed":"applied",snapshot.empty()?"NOT_READY":"",snapshot.empty()?"null":snapshot),2000);}
     DeviceSettingsWrite write;
     if(!id.valid()||parse_device_settings_write(*envelope.payload.get("settings"),write)!=Error::none||write.expected_boot!=boot)return false;
     if(received>UINT64_MAX-envelope.ttl_ms)return false;

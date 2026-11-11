@@ -35,7 +35,7 @@ def main() -> None:
         "hap_pair_setup_context_init", "hap_pair_setup_process"))
     extracted.extend(function(http, name) for name in (
         "hap_http_session_not_authorized", "hap_httpd_get_data",
-        "hap_http_pair_setup_handler", "hap_locked_request"))
+        "hap_http_pair_setup_handler", "hap_http_put_characteristics", "hap_locked_request"))
     fixture = (root / "tests/homekit_http_fixture.c").read_text()
     marker = "/* INSERT PRODUCTION FUNCTIONS */"
     assert fixture.count(marker) == 1

@@ -92,7 +92,8 @@ void refresh_values(){
     const auto selected=hub->external_activity_index(s);update(active_input,selected?*selected+1:0);
     audio_known=s.audio_status_known;
     if(audio_known)update_bool(mute_char,s.muted);
-    const bool configured=hub->active_configuration().has_value();
+    const auto configuration=hub->active_configuration();
+    const bool configured=bool(configuration);
     for(unsigned i=0;i<inputs.size();++i){
         const auto activity=configured?hub->external_activity(i):std::optional<config_store::ConfiguredActivity>{};
         const auto slot=configured?hub->external_slot(i):std::optional<config_store::ExternalSlot>{};
@@ -131,13 +132,14 @@ int read(hap_read_data_t data[],int count,void *,void *){
 }
 int write(hap_write_data_t data[],int count,void *,void *){
     if(disabled.load()){for(int i=0;i<count;++i)*data[i].status=HAP_STATUS_COMM_ERR;return HAP_SUCCESS;}
+    const auto configuration=hub->active_configuration();
     static const std::pair<int,uint8_t> keys[]={{0,0x48},{1,0x49},{2,0x4b},{3,0x4c},{4,0x01},{5,0x02},
         {6,0x03},{7,0x04},{8,0x00},{9,0x0d},{10,0x0d},{15,0x35}};
     for(int i=0;i<count;++i){
         auto &d=data[i];esp_err_t result=ESP_ERR_INVALID_ARG;
         if(d.hc==active&&(d.val.i==0||d.val.i==1))result=callbacks.power(d.val.i!=0,callbacks.context);
         else if(d.hc==active_input&&d.val.i>=1&&d.val.i<=static_cast<int>(inputs.size())&&
-                (hub->active_configuration().has_value()?hub->external_activity(d.val.i-1).has_value():d.val.i<=static_cast<int>(hub->snapshot().activities.size())))
+                (configuration?hub->external_activity(d.val.i-1).has_value():d.val.i<=static_cast<int>(hub->snapshot().activities.size())))
             result=callbacks.activity(d.val.i-1,callbacks.context);
         else if(d.hc==mute_char)result=callbacks.mute(d.val.b,callbacks.context);
         else if(d.hc==volume_selector&&(d.val.i==0||d.val.i==1))result=callbacks.volume_step(d.val.i==0?1:-1,callbacks.context);
@@ -149,7 +151,7 @@ int write(hap_write_data_t data[],int count,void *,void *){
             result=config_store::write("hap_name",d.val.s);
         else for(unsigned n=0;n<inputs.size();++n){
             auto &in=inputs[n];
-            if(hub->active_configuration().has_value()&&!hub->external_activity(n))continue;
+            if(configuration&&!hub->external_activity(n))continue;
             if(d.hc==in.name&&d.val.s&&strlen(d.val.s)>0&&strlen(d.val.s)<=63){
                 const auto old=in.alias;in.alias=d.val.s;result=save_input(n);if(result!=ESP_OK)in.alias=old;break;
             }
@@ -230,7 +232,7 @@ esp_err_t initialize(const std::string &record){
     if(disabled.load())return ESP_ERR_INVALID_STATE;
     if(record.size()!=404)return ESP_ERR_INVALID_SIZE;
     if(!initialized){
-        hap_cfg_t config;hap_get_config(&config);config.max_event_notif_chars=128;
+        hap_cfg_t config;hap_get_config(&config);config.max_event_notif_chars=16;
         if(hap_set_config(&config)!=HAP_SUCCESS||hap_init(HAP_TRANSPORT_WIFI)!=HAP_SUCCESS)return ESP_FAIL;
         const auto error=create_accessory();if(error!=ESP_OK)return error;
         initialized=true;

@@ -53,7 +53,12 @@ extern "C" {
 namespace amity::consortium {
 using namespace platform;
 namespace {
-struct Queued {Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
+struct Queued {
+    Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;
+    std::shared_ptr<const model::OwnedIntent> owned;
+    std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot{};
+    bool firmware_stream=false;
+};
 // Diagnostic metadata only: no retained payload, retry or execution decision.
 struct LinkTrace {
     const char* phase="handshake";
@@ -72,31 +77,21 @@ struct LinkTrace {
 // Admitted image bytes and their nonactivating validation barrier stay in
 // ordered TCP output under backpressure. Ordinary controls still age out.
 static bool queued_firmware_stream(const Queued& queued){
-    if(queued.kind==Kind::update_chunk)return true;
-    if(queued.kind!=Kind::update_install)return false;
-    Json value;JsonError error;
-    return parse_json(queued.payload,value,error)&&valid_update(queued.kind,value)&&value.get("phase")->string=="stage";
+    return queued.firmware_stream;
 }
 static bool queued_expired(const Queued& queued,uint64_t now){
     return now<queued.created||(!queued_firmware_stream(queued)&&now-queued.created>=queued.ttl);
 }
 static bool pure_key_release(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::key_edges&&intent.edge_count==1&&!intent.edges[0].down;}
 static bool queued_cleanup(const Queued& queued){
-    if(queued.owned)return pure_key_release(*queued.owned);
-    Json value;JsonError error;model::OwnedIntent intent;
-    return queued.kind==Kind::scoped_intent&&parse_json(queued.payload,value,error)&&parse_owned_intent(value,intent)==Error::none&&pure_key_release(intent);
+    return queued.owned&&pure_key_release(*queued.owned);
 }
 // Losing an accepted input state or activity selection breaks causal scope.
 // Fence this link instead of replaying ordinary work.
 static bool queued_causal(const Queued& queued){
-    if(queued.kind==Kind::scoped_intent)return true;
-    if(queued.kind!=Kind::scoped_result)return false;
-    Json value;JsonError error;
-    // An owner snapshot is replaceable observation state. Its expiry must not
-    // tear down an otherwise healthy member link during discovery. Unknown
-    // or malformed result shapes fail closed as causal work.
-    model::OwnedAdapterSnapshot snapshot;
-    return !parse_json(queued.payload,value,error)||!closed(value,{"snapshot"})||!parse_owned_snapshot(*value.get("snapshot"),snapshot);
+    // Owner snapshots are replaceable observations; accepted inputs and
+    // activity selections carry causal state. Admission retains these types.
+    return queued.kind==Kind::scoped_intent;
 }
 struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active {
@@ -1002,12 +997,11 @@ void context_capture_completed(const LinkScope& scope,model::OwnedContextResult 
     }
 }
 std::optional<RuntimeSnapshotRetry> snapshot_retry(const Active& active,const Queued& queued){
-    if(queued.kind!=Kind::scoped_result||active.cancelled||active.retiring||!active.ready)return {};
+    if(!queued.snapshot||active.cancelled||active.retiring||!active.ready)return {};
     const auto scope=active.session.scope();
     if(scope.peer_id!=scope.coordinator_id||queued.revision!=scope.config_revision)return {};
-    Json value;JsonError error;model::OwnedAdapterSnapshot snapshot;
-    if(!parse_json(queued.payload,value,error)||!closed(value,{"snapshot"})||!parse_owned_snapshot(*value.get("snapshot"),snapshot)||
-       snapshot.owner!=scope.local_id||snapshot.boot!=scope.local_boot_id)return {};
+    const auto& snapshot=*queued.snapshot;
+    if(snapshot.owner!=scope.local_id||snapshot.boot!=scope.local_boot_id)return {};
     return RuntimeSnapshotRetry{scope.peer_id,scope.local_boot_id,scope.peer_boot_id,scope.link_id,scope.config_revision,snapshot.adapter};
 }
 void notify_snapshot_retry(const RuntimeSnapshotRetry& retry){
@@ -1023,6 +1017,7 @@ struct SnapshotRetryBatch {
 enum class QueuedState {ready,waiting,stale,invalid};
 QueuedState prepare_queued(Active& active,const Queued& queued,std::string& payload){
     if(queued.revision!=active.session.scope().config_revision)return QueuedState::stale;
+    if(queued.snapshot){payload="{\"snapshot\":"+owned_snapshot_json(*queued.snapshot)+"}";return QueuedState::ready;}
     if(!queued.owned){payload=queued.payload;return QueuedState::ready;}
     const auto& intent=*queued.owned;
     if(intent.config_revision!=queued.revision)return QueuedState::invalid;
@@ -1063,8 +1058,8 @@ void active_loop_work(void *arg){
         Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
             if(!active->queue.empty()){
-                const auto prepared=prepare_queued(*active,active->queue.front(),payload);
                 const auto& front=active->queue.front();const bool expired=queued_expired(front,now_ms());
+                const auto prepared=expired?QueuedState::ready:prepare_queued(*active,front,payload);
                 if(prepared==QueuedState::invalid)invalid=true;
                 if(prepared==QueuedState::ready||expired){queued=std::move(active->queue.front());active->queue.pop_front();have=true;}
             }}
@@ -1811,7 +1806,7 @@ esp_err_t runtime_pull_logs(model::OctopusId owner,const std::function<bool(std:
 bool runtime_device_settings_authorized(model::MessageId id){std::lock_guard<std::mutex> guard(lock);return settings_authorized_locked(id);}
 std::string runtime_device_settings(model::OctopusId owner){
     RuntimeSettingsHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(!original_controller(group,identity.id)||!status.authority_ready)return "{\"status\":\"error\",\"settings\":null,\"error\":\"Settings are available on the main Amity only.\"}";if(owner==identity.id)hooks=settings_hooks;}
-    if(hooks.snapshot){const auto snapshot=hooks.snapshot();Json parsed;JsonError detail;if(parse_json(snapshot,parsed,detail,4096)&&valid_settings_snapshot(parsed)&&parsed.get("boot_id")->string==boot.str())return "{\"status\":\"ready\",\"settings\":"+snapshot+",\"error\":\"\"}";return "{\"status\":\"error\",\"settings\":null,\"error\":\"The device settings are not ready.\"}";}
+    if(hooks.snapshot){const auto snapshot=hooks.snapshot();if(!snapshot.empty())return "{\"status\":\"ready\",\"settings\":"+snapshot+",\"error\":\"\"}";return "{\"status\":\"error\",\"settings\":null,\"error\":\"The device settings are not ready.\"}";}
     std::lock_guard<std::mutex> guard(lock);const auto now=now_ms();settings_expire(now);auto* cache=settings_cache(owner,settings_enrolled(owner));
     const auto old=cache&&!cache->snapshot.empty()?cache->snapshot:"null";
     const auto wrapper=[&](std::string_view state,std::string_view error){return "{\"status\":"+settings_quote(state)+",\"settings\":"+old+",\"error\":"+settings_quote(error)+"}";};
@@ -1831,7 +1826,7 @@ std::string runtime_device_settings(model::OctopusId owner){
 esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId id,const Json& core,uint64_t admitted_until){
     DeviceSettingsWrite write;if(!id||parse_device_settings_write(core,write)!=Error::none)return ESP_ERR_INVALID_ARG;
     const auto encoded=device_settings_write_json(write);const auto now=now_ms();if(!admitted_until)admitted_until=now+5000;admitted_until=std::min<uint64_t>(admitted_until,now+5000);if(admitted_until<=now)return ESP_ERR_TIMEOUT;
-    bool local=false;Json normalized;JsonError detail;if(!parse_json(encoded,normalized,detail))return ESP_ERR_INVALID_ARG;
+    bool local=false;
     {std::lock_guard<std::mutex> guard(lock);settings_expire(now);
         if(!original_controller(group,identity.id)||!status.authority_ready)return ESP_ERR_INVALID_STATE;
         for(const auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id)return operation.core==encoded?ESP_OK:ESP_ERR_INVALID_ARG;
@@ -1848,7 +1843,7 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId 
             if(settings_hostname_pending(owner,*write.hostname))return ESP_ERR_INVALID_ARG;
         }
         local=owner==identity.id;
-        if(local){if(write.expected_boot!=boot)return ESP_ERR_INVALID_STATE;settings_operations.push_back({owner,id,boot,{},encoded,"admitted","",admitted_until});}
+        if(local){if(write.expected_boot!=boot)return ESP_ERR_INVALID_STATE;settings_operations.push_back({owner,id,boot,{},encoded,"admitted","",admitted_until,write.hostname});}
         else {
             if(!settings_enrolled(owner))return ESP_ERR_INVALID_STATE;
             const auto link=settings_link(owner);
@@ -1856,10 +1851,10 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId 
             const auto until=std::min<uint64_t>(admitted_until,now+5000);if(until<=now)return ESP_ERR_TIMEOUT;
             std::lock_guard<std::mutex> queue(link.active->mutex);if(link.active->queue.size()>=16)return ESP_ERR_NO_MEM;
             const auto payload="{\"request_id\":\""+id.str()+"\",\"settings\":"+encoded+"}";
-            link.active->queue.push_back({Kind::settings_write,payload,static_cast<uint32_t>(until-now),now,link.status.config_revision,{}});settings_operations.push_back({owner,id,link.status.boot_id,link.active->session.scope().link_id,encoded,"admitted","",until});
+            link.active->queue.push_back({Kind::settings_write,payload,static_cast<uint32_t>(until-now),now,link.status.config_revision,{}});settings_operations.push_back({owner,id,link.status.boot_id,link.active->session.scope().link_id,encoded,"admitted","",until,write.hostname});
         }
     }
-    if(local){const auto response=settings_apply({},id,normalized,admitted_until);Json result;if(!parse_json(response,result,detail)||!valid_settings_payload(Kind::settings_result,result))return ESP_FAIL;
+    if(local){const auto response=settings_apply({},id,core,admitted_until);Json result;JsonError detail;if(!parse_json(response,result,detail))return ESP_FAIL;
         {std::lock_guard<std::mutex> guard(lock);for(auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id){operation.stage=result.get("stage")->string;operation.error=operation.stage=="applied"?"":settings_message(result.get("error")->string);break;}settings_expire(now_ms());}
     }
     return ESP_OK;
@@ -1872,19 +1867,24 @@ std::string runtime_device_settings_operation(model::OctopusId owner,model::Mess
     }}
     return response.empty()?"{\"stage\":\"unknown\",\"message\":\"The result is no longer available. The request will not be repeated.\",\"rebooting\":false}":response;
 }
-esp_err_t runtime_send_update(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){
+static esp_err_t queue_update(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl,bool firmware_stream){
     if(!is_update_kind(kind)||!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;
     std::lock_guard<std::mutex> guard(lock);
     const bool result=kind==Kind::update_result;
     if(result ? (group.role!=Group::member||group.authority!=owner) : (group.role!=Group::coordinator||!status.authority_ready))return ESP_ERR_INVALID_STATE;
     for(auto& active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&(active->ready||active->management_ready)){
-        Envelope checked;if(parse_envelope(envelope_json(outgoing(*active,kind,ttl),payload),checked)!=Error::none)return ESP_ERR_INVALID_ARG;
         std::lock_guard<std::mutex> qguard(active->mutex);if(active->queue.size()>=16)return ESP_ERR_NO_MEM;
-        active->queue.push_back({kind,std::move(payload),ttl,now_ms(),active->status.config_revision,{}});return ESP_OK;
+        active->queue.push_back({kind,std::move(payload),ttl,now_ms(),active->status.config_revision,{},{},firmware_stream});return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
 }
-static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl,std::optional<model::LinkId> expected_link,uint64_t revision=0,std::shared_ptr<const model::OwnedIntent> owned=nullptr,uint64_t created=0){
+esp_err_t runtime_send_update(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){
+    return queue_update(owner,kind,std::move(payload),ttl,kind==Kind::update_chunk);
+}
+esp_err_t runtime_stage_update(model::OctopusId owner,std::string payload,uint32_t ttl){
+    return queue_update(owner,Kind::update_install,std::move(payload),ttl,true);
+}
+static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl,std::optional<model::LinkId> expected_link,uint64_t revision=0,std::shared_ptr<const model::OwnedIntent> owned=nullptr,uint64_t created=0,std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot=nullptr){
     if(is_update_kind(kind))return runtime_send_update(owner,kind,std::move(payload),ttl);
     if(retired_kind(kind))return ESP_ERR_NOT_SUPPORTED;
     if(!ttl||ttl>10000||payload.size()>6144)return ESP_ERR_INVALID_ARG;
@@ -1903,25 +1903,24 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,std::string payl
             if(expired)retries.dropped(*active,queued);
             return expired;
         }),active->queue.end());
-        const bool cleanup=queued_cleanup({kind,payload,ttl,now,revision,owned});
+        const bool cleanup=queued_cleanup({kind,{},ttl,now,revision,owned});
         if(active->queue.size()>=(cleanup?16u:15u)){
             if(cleanup){LinkTrace trace;trace.phase="queue_admission";trace.kind=kind;trace.has_kind=true;trace.fail("cleanup_queue_full");trace.retained=true;diagnostics.capture(*active,trace,now);request_session_restart(*active);}
             return ESP_ERR_NO_MEM;
         }
         const bool current_context=owned&&(owned->kind==model::OwnedIntentKind::context||owned->kind==model::OwnedIntentKind::activity)&&owned->config_revision==active->session.scope().config_revision;
-        active->queue.push_back({kind,std::move(payload),ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned)});
+        active->queue.push_back({kind,std::move(payload),ttl,created?created:now,revision?revision:active->status.config_revision,std::move(owned),std::move(snapshot)});
         if(current_context){active->context_ready=true;active->context_requested=false;active->refreshing=false;}
         return ESP_OK;
     }
     return ESP_ERR_INVALID_STATE;
 }
 esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){
-    if(kind==Kind::scoped_intent)return ESP_ERR_INVALID_ARG;
+    if(kind==Kind::scoped_intent||kind==Kind::scoped_result)return ESP_ERR_INVALID_ARG;
     return queue_control(owner,kind,std::move(payload),ttl,{});
 }
-esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){
-    if(!link)return ESP_ERR_INVALID_ARG;
-    return queue_control(owner,Kind::scoped_result,std::move(payload),ttl,link,revision);
+esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint32_t ttl,uint64_t revision){
+    return queue_control(owner,Kind::scoped_result,{},ttl,link?std::optional<model::LinkId>(link):std::nullopt,revision,{},0,std::make_shared<const model::OwnedAdapterSnapshot>(snapshot));
 }
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     if(!link)return;
@@ -1967,7 +1966,7 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
     const bool cleanup=pure_key_release(intent);
     const auto now=now_ms();
     const bool port_only=intent.kind==model::OwnedIntentKind::context||intent.kind==model::OwnedIntentKind::discover||intent.kind==model::OwnedIntentKind::activity;
-    if(!intent.generation||!(key?bool(intent.target.port.consortium_id)&&bool(intent.target.port.octopus_id):(port_only?intent.target.port.valid():intent.target.valid()))||(!pending&&owned_intent_json(intent).empty()))return ESP_ERR_INVALID_ARG;
+    if(!intent.generation||!(key?bool(intent.target.port.consortium_id)&&bool(intent.target.port.octopus_id):(port_only?intent.target.port.valid():intent.target.valid())))return ESP_ERR_INVALID_ARG;
     const uint32_t cap=cleanup?2000:key?500:1000;
     const uint32_t ttl=cap;
     const auto result=queue_control(intent.target.port.octopus_id,Kind::scoped_intent,{},ttl,link,intent.config_revision,std::make_shared<const model::OwnedIntent>(intent),now);

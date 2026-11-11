@@ -280,7 +280,16 @@ static int hap_add_char_val_json(hap_char_format_t format, char *key,
 		}
 		case HAP_CHAR_FORMAT_STRING : {
             if (val->s) {
-			    json_gen_obj_set_string(jptr, key, val->s);
+                /* json_generator accepts already-escaped string bytes. */
+                json_gen_obj_start_long_string(jptr, key, NULL);
+                for (const unsigned char *p = (const unsigned char *)val->s; *p; ++p) {
+                    char escaped[7] = {0};
+                    if (*p == '"' || *p == '\\') { escaped[0] = '\\'; escaped[1] = *p; }
+                    else if (*p < 0x20) snprintf(escaped, sizeof(escaped), "\\u%04x", *p);
+                    else escaped[0] = *p;
+                    json_gen_add_to_long_string(jptr, escaped);
+                }
+                json_gen_end_long_string(jptr);
             } else {
                 json_gen_obj_set_null(jptr, key);
             }
@@ -987,10 +996,7 @@ set_char_end:
 
 static int hap_http_put_characteristics(httpd_req_t *req)
 {
-    char stack_inbuf[512] = {0};
     char outbuf[512] = {0};
-    char *heap_inbuf = NULL;
-    char *inbuf = stack_inbuf;
 
     ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
     hap_secure_session_t *session = (hap_secure_session_t *)hap_platform_httpd_get_sess_ctx(req);
@@ -998,41 +1004,22 @@ static int hap_http_put_characteristics(httpd_req_t *req)
         return hap_http_session_not_authorized(req);
     }
 
-    /* If received content is larger than the buffer on stack, allocate one from heap.
-     * This will mostly be required only in case of bridges, wherein there could be a request to
-     * control all/many accessories at once.
-     */
-    int content_len = hap_platform_httpd_get_content_len(req);
-    if (content_len >= sizeof(stack_inbuf)) {
-        heap_inbuf = hap_platform_memory_calloc(content_len + 1, 1); /* Allocating an extra byte for NULL termination */
-        if (!heap_inbuf) {
-            ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to read HTTPD Data");
-            httpd_resp_set_status(req, HTTPD_500);
-            return httpd_resp_send(req, NULL, 0);
-        }
-        ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Allocated buffer of size %d for the large PUT",
-                    content_len + 1)
-        inbuf = heap_inbuf;
-    }
-	int data_len = hap_httpd_get_data(req, inbuf, content_len);
-	if (data_len < 0) {
+    /* The wrapper owns this terminated body until the handler returns. The
+     * parser borrows it, so a large PUT never needs a second complete copy. */
+    hap_request_body_t *body = req->user_ctx;
+    if (!body || body->offset || body->size != req->content_len || !body->data) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to read HTTPD Data");
 		httpd_resp_set_status(req, HTTPD_500);
-        if (heap_inbuf) {
-            hap_platform_memory_free(heap_inbuf);
-            ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Freed allocated buffer for PUT");
-        }
 		return httpd_resp_send(req, NULL, 0);
 	}
+    const char *inbuf = body->data;
+    const int data_len = body->size;
+    body->offset = body->size;
     ESP_MFI_DEBUG_PLAIN("Data Received: %s\n", inbuf);
 	jparse_ctx_t jctx;
 	if (json_parse_start(&jctx, inbuf, data_len) != HAP_SUCCESS) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to parse HTTPD JSON Data");
 		httpd_resp_set_status(req, HTTPD_500);
-        if (heap_inbuf) {
-            hap_platform_memory_free(heap_inbuf);
-            ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Freed allocated buffer for PUT");
-        }
 		return httpd_resp_send(req, NULL, 0);
 	}
 
@@ -1056,11 +1043,6 @@ static int hap_http_put_characteristics(httpd_req_t *req)
         ESP_MFI_DEBUG_PLAIN("\n");
     }
     json_parse_end(&jctx);
-
-    if (heap_inbuf) {
-        hap_platform_memory_free(heap_inbuf);
-        ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Freed allocated buffer for PUT");
-    }
 
     hap_report_event(HAP_EVENT_SET_CHAR_COMPLETED, NULL, 0);
     return HAP_SUCCESS;
@@ -1423,103 +1405,142 @@ static struct httpd_uri hap_prepare = {
     .handler = hap_http_put_prepare,
 };
 
+static const char hap_notif_prefix[] = "{\"characteristics\":[";
+
+typedef struct {
+    int fd;
+    bool ok;
+} hap_notif_stream_t;
+
+static bool hap_notif_send_all(int fd, const char *data, size_t size)
+{
+    while (size) {
+        const int sent = hap_httpd_send(hap_priv.server, fd, data, size, 0);
+        if (sent <= 0 || (size_t)sent > size) return false;
+        data += sent;
+        size -= sent;
+    }
+    return true;
+}
+
+static bool hap_notif_header(int fd, size_t size)
+{
+    char header[128];
+    const int length = snprintf(header, sizeof(header),
+        "EVENT/1.0 200 OK\r\nContent-Type: application/hap+json\r\nContent-Length: %u\r\n\r\n",
+        (unsigned)size);
+    return length > 0 && (size_t)length < sizeof(header) && hap_notif_send_all(fd, header, length);
+}
+
+static void hap_notif_flush(char *bytes, void *context)
+{
+    hap_notif_stream_t *stream = context;
+    if (stream->ok) stream->ok = hap_notif_send_all(stream->fd, bytes, strlen(bytes));
+}
+
+static int hap_notif_encode_char(hap_char_t *hc, char *buffer, size_t size,
+                                json_gen_flush_cb_t flush, void *context)
+{
+    __hap_char_t *characteristic = (__hap_char_t *)hc;
+    __hap_acc_t *accessory = (__hap_acc_t *)hap_serv_get_parent(hap_char_get_parent(hc));
+    json_gen_str_t json;
+    json_gen_str_start(&json, buffer, size, flush, context);
+    json_gen_start_object(&json);
+    json_gen_obj_set_int(&json, "aid", accessory->aid);
+    json_gen_obj_set_int(&json, "iid", characteristic->iid);
+    hap_add_char_val_json(characteristic->format, "value", &characteristic->val, &json);
+    json_gen_end_object(&json);
+    /* The generator counts the full encoded length even when a bounded buffer
+     * fills. Never transmit that truncated trial; retry in the next batch. */
+    return json_gen_str_end(&json) - 1;
+}
+
+static bool hap_notif_send_batch(int fd, char *buffer, size_t size)
+{
+    buffer[size++] = ']';
+    buffer[size++] = '}';
+    return hap_notif_header(fd, size) && hap_notif_send_all(fd, buffer, size);
+}
+
+static bool hap_notif_send_large(int fd, hap_char_t *hc, size_t encoded_size,
+                                char *buffer, size_t capacity)
+{
+    const size_t prefix_size = sizeof(hap_notif_prefix) - 1;
+    if (!hap_notif_header(fd, prefix_size + encoded_size + 2) ||
+        !hap_notif_send_all(fd, hap_notif_prefix, prefix_size)) return false;
+    /* A single unusually large value is streamed through the same fixed
+     * buffer. The failed bounded trial already supplied its Content-Length. */
+    hap_notif_stream_t stream = {.fd = fd, .ok = true};
+    hap_notif_encode_char(hc, buffer, capacity, hap_notif_flush, &stream);
+    return stream.ok && hap_notif_send_all(fd, "]}", 2);
+}
+
 static void hap_send_notification_unlocked(void *arg)
 {
-    int num_char = hap_priv.cfg.max_event_notif_chars;
-    hap_char_t *hc;
-    hap_char_t **char_arr = hap_platform_memory_calloc(num_char, sizeof(hap_char_t *));
+    (void)arg;
+    /* Fixed pointer scratch, not another outgoing queue or heap allocation. */
+    hap_char_t *characters[16];
+    size_t count = 0;
+    while (count < sizeof(characters) / sizeof(characters[0])) {
+        hap_char_t *hc = hap_get_pending_notif_char();
+        if (!hc) break;
+        characters[count++] = hc;
+    }
+    if (!count) return;
 
-    if (!char_arr) {
-        return;
-    }
-
-    int i, num_notif_chars;
-    for (i = 0; i < num_char; i++) {
-        hc = hap_get_pending_notif_char();
-        if (hc) {
-            char_arr[i] = hc;
-        } else {
-            break;
-        }
-    }
-    /* If no characteristic notifications are pending, free char_arr and exit */ 
-    if (i == 0) {
-	hap_platform_memory_free(char_arr); 
-        return;
-    }
-    num_notif_chars = i;
-	hap_secure_session_t *session;
-    /* Flag to indicate if any controller was connected */
     bool ctrl_connected = false;
-	char buf[250];
-	for (i = 0; i < HAP_MAX_SESSIONS; i++) {
-		session = hap_priv.sessions[i];
-		if (!session)
-			continue;
+    char buffer[1024];
+    const size_t prefix_size = sizeof(hap_notif_prefix) - 1;
+    for (int i = 0; i < HAP_MAX_SESSIONS; ++i) {
+        hap_secure_session_t *session = hap_priv.sessions[i];
+        if (!session || session->state != STATE_VERIFIED) continue;
         ctrl_connected = true;
-		int fd = session->conn_identifier;
-#define HTTPD_HDR_STR      "EVENT/1.0 200 OK\r\n"                   \
-		"Content-Type: application/hap+json\r\n"           \
-		"Content-Length: %d\r\n"
-		char notif_json[1024];
-		json_gen_str_t jstr;
-		json_gen_str_start(&jstr, notif_json, sizeof(notif_json), NULL, NULL);
-		json_gen_start_object(&jstr);
-		json_gen_push_array(&jstr, "characteristics");
-
-        int j;
-        bool notif_to_send = false;
-        for (j = 0; j < num_notif_chars; j++) {
-            hc = char_arr[j];
-            __hap_char_t *_hc = ( __hap_char_t *)hc;
-            /* If the controller is the owner, dont send notification to it */
-            if (hap_char_is_ctrl_owner(hc, i)) {
-                /* Since there can be only one owner, which we are anyways skipping,
-                 * we can reset owner value to 0
-                 */
-                _hc->owner_ctrl = 0;
+        const int fd = session->conn_identifier;
+        bool ok = true, have_entries = false, sent = false;
+        size_t used = prefix_size;
+        memcpy(buffer, hap_notif_prefix, prefix_size);
+        for (size_t j = 0; j < count; ++j) {
+            hap_char_t *hc = characters[j];
+            if (hap_char_is_ctrl_owner(hc, i) || !hap_char_is_ctrl_subscribed(hc, i)) continue;
+            const size_t entry = used + (have_entries ? 1 : 0);
+            const size_t capacity = sizeof(buffer) - entry - 2; /* Closing ]}. */
+            const int encoded = capacity ? hap_notif_encode_char(hc, buffer + entry, capacity, NULL, NULL) : 0;
+            if (encoded < 0) { ok = false; break; }
+            if ((size_t)encoded >= capacity) {
+                if (have_entries) {
+                    ok = hap_notif_send_batch(fd, buffer, used);
+                    if (!ok) break;
+                    sent = true;
+                    used = prefix_size;
+                    have_entries = false;
+                    memcpy(buffer, hap_notif_prefix, prefix_size);
+                    --j; /* This characteristic has not been sent yet. */
+                    continue;
+                }
+                ok = hap_notif_send_large(fd, hc, encoded, buffer, sizeof(buffer));
+                if (!ok) break;
+                sent = true;
+                memcpy(buffer, hap_notif_prefix, prefix_size);
                 continue;
             }
-            if (!hap_char_is_ctrl_subscribed(hc, i))
-                continue;
-
-            json_gen_start_object(&jstr);
-            hap_acc_t *ha = hap_serv_get_parent(hap_char_get_parent(hc));
-            int aid = ((__hap_acc_t *)ha)->aid;
-            json_gen_obj_set_int(&jstr, "aid", aid);
-            json_gen_obj_set_int(&jstr, "iid", _hc->iid);
-            hap_add_char_val_json(_hc->format, "value", &_hc->val, &jstr);
-            json_gen_end_object(&jstr);
-            notif_to_send = true;
+            if (have_entries) buffer[used] = ',';
+            used = entry + encoded;
+            have_entries = true;
         }
-        if (!notif_to_send) {
-            /* No notification required for this controller. Just continue */
-            continue;
+        if (ok && have_entries) { ok = hap_notif_send_batch(fd, buffer, used); sent = true; }
+        if (!ok) {
+            /* A partial event cannot be repaired on this ordered stream. */
+            session->state = STATE_INVALID;
+            hap_close_session(session);
+        } else if (sent) {
+            httpd_sess_update_lru_counter(hap_priv.server, fd);
         }
-
-        json_gen_pop_array(&jstr);
-		json_gen_end_object(&jstr);
-		json_gen_str_end(&jstr);
-
-		snprintf(buf, sizeof(buf), HTTPD_HDR_STR,
-				strlen(notif_json));
-		hap_httpd_send(hap_priv.server, fd, buf, strlen(buf), 0);
-		/* Space for sending additional headers based on set_header */
-		hap_httpd_send(hap_priv.server, fd, "\r\n", strlen("\r\n"), 0);
-		hap_httpd_send(hap_priv.server, fd, notif_json, strlen(notif_json), 0);
-        httpd_sess_update_lru_counter(hap_priv.server, fd);
-		ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Notification Sent");
-        ESP_MFI_DEBUG_PLAIN("Socket fd: %d; Event message: %s\n", fd, notif_json);
-	}
-    /* If no controller was connected and no disconnected event was sent,
-     * reannaounce mDNS. That will increment state number as required
-     * by HAP Spec R15.
-     */
+    }
+    for (size_t j = 0; j < count; ++j) ((__hap_char_t *)characters[j])->owner_ctrl = 0;
     if (!ctrl_connected && !hap_priv.disconnected_event_sent) {
         hap_mdns_announce(false);
         hap_priv.disconnected_event_sent = true;
     }
-    hap_platform_memory_free(char_arr);
 }
 
 void hap_http_debug_enable()
@@ -1588,12 +1609,13 @@ static esp_err_t hap_locked_request(httpd_req_t *req)
 
     char *data = NULL;
     if (req->content_len) {
-        data = hap_platform_memory_malloc(req->content_len);
+        data = hap_platform_memory_malloc(req->content_len + 1);
         if (!data) return ESP_FAIL;
         if (hap_http_read_body(req, data, req->content_len) != ESP_OK) {
             hap_platform_memory_free(data);
             return ESP_FAIL;
         }
+        data[req->content_len] = '\0';
     }
     hap_request_body_t body = {.data = data, .size = req->content_len};
     req->user_ctx = &body;

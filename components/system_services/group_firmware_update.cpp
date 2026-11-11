@@ -76,7 +76,7 @@ bool exchange(m::OctopusId owner,c::Kind kind,std::string payload,m::MessageId r
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout);
     bool admitted=false;
     while(std::chrono::steady_clock::now()<deadline){
-        const auto sent=c::runtime_send_update(owner,kind,payload,5000);
+        const auto sent=kind==c::Kind::update_install?c::runtime_stage_update(owner,payload,5000):c::runtime_send_update(owner,kind,payload,5000);
         if(sent==ESP_OK){admitted=true;break;}
         if(sent!=ESP_ERR_NO_MEM)break;
         const auto current=peer(owner);if(!current||!available(*current))break;

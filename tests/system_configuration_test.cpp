@@ -1,6 +1,80 @@
 #include "intent_configuration_fixture.hpp"
 #include "candidate_network.hpp"
 #include <iostream>
+#include <set>
+
+std::string json_text(cJSON* value){char* text=cJSON_PrintUnformatted(value);assert(text);std::string result(text);cJSON_free(text);return result;}
+void canonical_bytes_and_projections(){
+    // Frozen current-format example, independent of the C++ encoder. cJSON
+    // supplies the established escaping and field-preserving hash projections.
+    const char* fixture=R"JSON({
+      "version":3,"consortium_id":"00000000000000000000000000000001",
+      "config_revision":"18446744073709551615","presentation_revision":"18446744073709551614",
+      "primary_zone_id":"0000000000000000000000000000000a","controller_octopus_id":"00000000000000000000000000000002",
+      "activity_order":["0000000000000000000000000000001f","0000000000000000000000000000001e"],
+      "octopuses":[
+        {"octopus_id":"00000000000000000000000000000002","label":"Main \\","generated_label":"Amity 1","label_override":true,"supported_tentacles":4},
+        {"octopus_id":"00000000000000000000000000000003","label":"Second","generated_label":"Amity 2","label_override":false,"supported_tentacles":1}],
+      "components":[
+        {"component_id":"00000000000000000000000000000014","label":"Player \"A\"","generated_label":"Player","label_override":true,"kind":"source","qualified_names":[{"consortium_id":"00000000000000000000000000000001","octopus_id":"00000000000000000000000000000002","tentacle_id":3,"side":"back","osd_name":"Player \"A\""}]},
+        {"component_id":"00000000000000000000000000000015","label":"Café / TV","generated_label":"TV","label_override":true,"kind":"display","qualified_names":[{"consortium_id":"00000000000000000000000000000001","octopus_id":"00000000000000000000000000000003","tentacle_id":0,"side":"front","osd_name":"TV"}]}],
+      "activities":[
+        {"activity_id":"0000000000000000000000000000001e","zone_id":"0000000000000000000000000000000a","label":"Watch","generated_label":"Watch","label_override":false,"source":"00000000000000000000000000000014","display":"00000000000000000000000000000015","audio":"00000000000000000000000000000015","switch_device":"00000000000000000000000000000015","switch_input":255},
+        {"activity_id":"0000000000000000000000000000001f","zone_id":"0000000000000000000000000000000b","label":"Empty","generated_label":"Empty","label_override":false,"source":null,"display":null,"audio":null,"switch_device":null,"switch_input":0}],
+      "zones":[
+        {"zone_id":"0000000000000000000000000000000a","label":"Screen","generated_label":"Screen","label_override":false,"activity_order":["0000000000000000000000000000001e"]},
+        {"zone_id":"0000000000000000000000000000000b","label":"Other","generated_label":"Other","label_override":false,"activity_order":["0000000000000000000000000000001f"]}],
+      "external_slots":[
+        {"slot":0,"activity_id":"0000000000000000000000000000001e","tombstone":false,"hidden":true,"alias":"Favorite 🐙"},
+        {"slot":15,"activity_id":"00000000000000000000000000000020","tombstone":true,"hidden":false,"alias":""}]
+    })JSON";
+    for(bool global_order:{false,true}){
+        auto* saved=cJSON_Parse(fixture);assert(saved);
+        if(!global_order)cJSON_DeleteItemFromObjectCaseSensitive(saved,"activity_order");
+        const auto expected=json_text(saved);Configuration c;std::string error;
+        assert(parse_configuration(expected,c,error));
+        std::reverse(c.octopuses.begin(),c.octopuses.end());std::reverse(c.components.begin(),c.components.end());
+        std::reverse(c.activities.begin(),c.activities.end());std::reverse(c.zones.begin(),c.zones.end());std::reverse(c.external_slots.begin(),c.external_slots.end());
+        assert(serialize_configuration(c)==expected);
+        const auto retain=[](cJSON* object,const std::set<std::string>& fields){for(auto* field=object->child;field;){auto* next=field->next;if(!fields.count(field->string))cJSON_DeleteItemFromObjectCaseSensitive(object,field->string);field=next;}};
+        auto* presentation=cJSON_Duplicate(saved,true);assert(presentation);
+        retain(presentation,{"octopuses","components","activities","zones","external_slots","activity_order"});
+        for(const auto* category:{"octopuses","components","activities","zones","external_slots"})
+            for(auto* row=cJSON_GetObjectItemCaseSensitive(presentation,category)->child;row;row=row->next)
+                retain(row,{"octopus_id","component_id","activity_id","zone_id","slot","label","generated_label","label_override","activity_order","hidden","alias"});
+        assert(presentation_hash(c)==sha256_hex(json_text(presentation)));cJSON_Delete(presentation);
+        for(const auto* field:{"config_revision","presentation_revision","activity_order"})cJSON_DeleteItemFromObjectCaseSensitive(saved,field);
+        for(const auto* category:{"octopuses","components","activities","zones","external_slots"})
+            for(auto* row=cJSON_GetObjectItemCaseSensitive(saved,category)->child;row;row=row->next)
+                for(const auto* field:{"label","generated_label","label_override","kind","activity_order","hidden","alias"})cJSON_DeleteItemFromObjectCaseSensitive(row,field);
+        assert(serialize_configuration(c,true)==json_text(saved));assert(executable_policy_hash(c)==sha256_hex(json_text(saved)));cJSON_Delete(saved);
+        // Canonicalization must reorder the owned candidate without changing
+        // presentation order or bytes across a restart.
+        Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,c,{},active);
+        assert(std::is_sorted(active.components.begin(),active.components.end(),[](const auto& a,const auto& b){return a.record.component_id<b.record.component_id;}));
+        ConfigurationStore reboot(memory);Configuration recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok);
+        assert(serialize_configuration(active)==serialize_configuration(recovered));
+    }
+}
+
+void saved_text_and_staged_record_integrity(){
+    for(unsigned field=0;field<9;++field)for(char invalid:{'\0','\n','\x1f','\x7f'}){
+        auto c=direct_configuration();std::string* value=nullptr;
+        switch(field){case 0:value=&c.octopuses[0].label;break;case 1:value=&c.octopuses[0].generated_label;break;
+        case 2:value=&c.components[0].record.label;break;case 3:value=&c.components[0].generated_label;break;
+        case 4:value=&c.activities[0].label;break;case 5:value=&c.activities[0].generated_label;break;
+        case 6:value=&c.zones[0].label;break;case 7:value=&c.zones[0].generated_label;break;default:value=&c.external_slots[0].alias;break;}
+        value->assign("before");value->push_back(invalid);value->append("after");
+        std::string error;Memory memory;ConfigurationStore store(memory);
+        assert(!validate_configuration(c,error)&&store.stage(c,{},error)==ConfigResult::invalid&&memory.writes==0);
+    }
+    Memory memory;ConfigurationStore store(memory);Configuration active;commit(store,direct_configuration(),{},active);
+    const auto committed=memory.values;const auto active_text=serialize_configuration(active);auto next=active;next.activities[0].label="Next";std::string error;
+    assert(store.stage(next,active.revisions(),error)==ConfigResult::ok);
+    for(const auto* key:{"c0","c1"})if(memory.values.count(key)&&(!committed.count(key)||committed.at(key)!=memory.values.at(key))){memory.values[key].back()=' ';break;}
+    const auto damaged=memory.values;assert(store.commit(next,error)==ConfigResult::recovery_required&&memory.values==damaged);
+    ConfigurationStore reboot(memory);Configuration recovered;assert(reboot.recover(recovered,error)==ConfigResult::ok&&serialize_configuration(recovered)==active_text);
+}
 
 void codecs(){
     std::string error;auto c=direct_configuration();Configuration decoded;const auto text=serialize_configuration(c);
@@ -126,4 +200,4 @@ void explicit_owner_removal(){
     assert(serialize_configuration(active).find(removed.str())==std::string::npos&&active.activities.size()==1);
     for(size_t index=1;index<active.external_slots.size();++index)assert(active.external_slots[index].tombstone&&active.external_slots[index].alias.empty());
 }
-int main(){codecs();current_format_only();initialization();journal();ownership_and_slots();candidate_network_recovery();explicit_owner_removal();std::cout<<"PASS intent-only configuration: scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}
+int main(){canonical_bytes_and_projections();saved_text_and_staged_record_integrity();codecs();current_format_only();initialization();journal();ownership_and_slots();candidate_network_recovery();explicit_owner_removal();std::cout<<"PASS intent-only configuration: canonical bytes/hash projections, saved-text invariants, staged-record tampering, scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}

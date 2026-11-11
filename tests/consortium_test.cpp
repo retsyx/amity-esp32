@@ -67,7 +67,7 @@ void envelope_tests(const std::string& body){
     auto input=action(scope());input.display=m::QualifiedDeviceName{{scope().consortium_id,scope().peer_id,1,m::Side::front},"TV"};
     const auto selected=packet(scope(),Kind::scoped_intent,owned_intent_json(input));Envelope routed;
     assert(parse_envelope(selected,routed)==Error::none&&parse_owned_intent(routed.payload,decoded)==Error::none&&decoded.display==input.display);
-    input.display->port.consortium_id=ident<m::ConsortiumId>(99);assert(owned_intent_json(input).empty());
+    input.display->port.consortium_id=ident<m::ConsortiumId>(99);assert(parse_envelope(packet(scope(),Kind::scoped_intent,owned_intent_json(input)),routed)==Error::invalid_message);
     auto key=action(scope());key.kind=m::OwnedIntentKind::key_edges;key.edge_count=1;key.edges[0]={4,true};
     Json key_payload;JsonError key_error;assert(parse_json(owned_intent_json(key),key_payload,key_error));
     assert(closed(key_payload,{"generation","action","arguments"})&&closed(*key_payload.get("arguments"),{"edges"}));

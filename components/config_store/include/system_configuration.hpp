@@ -66,6 +66,7 @@ bool parse_configuration(const std::string&, Configuration&, std::string& error)
 std::string serialize_configuration(const Configuration&, bool executable_policy_only = false);
 std::string sha256_hex(std::string_view);
 std::string executable_policy_hash(const Configuration&);
+std::string presentation_hash(const Configuration&);
 const ConfiguredActivity* activity_for_slot(const Configuration&, unsigned slot);
 std::vector<model::ActivityId> ordered_activities(const Configuration&);
 // A running activity keeps its saved recipe and selected equipment targets.
@@ -91,6 +92,7 @@ private:
     ConfigResult write_verified(const char*, const std::string&);
     ConfigBackend& backend_;
     std::optional<Configuration> active_, candidate_;
+    std::string candidate_record_hash_;
     uint64_t generation_ = 0;
     unsigned active_slot_ = 1;
     bool initialized_ = false;

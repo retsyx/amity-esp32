@@ -21,6 +21,7 @@ struct Activity {
     std::string name, display, source, audio, switch_device;
     uint8_t switch_input = 0;
     system::ActivityId activity_id{};
+    bool operator==(const Activity& other)const{return name==other.name&&display==other.display&&source==other.source&&audio==other.audio&&switch_device==other.switch_device&&switch_input==other.switch_input&&activity_id==other.activity_id;}
 };
 struct Device {
     std::string name;
@@ -31,6 +32,7 @@ struct Device {
     uint32_t vendor_id = 0;
     // The original owner-local cache has a name for this appliance.
     bool resolved = false;
+    bool operator==(const Device& other)const{return name==other.name&&bus==other.bus&&address==other.address&&physical_address==other.physical_address&&type==other.type&&vendor_id==other.vendor_id&&resolved==other.resolved;}
 };
 struct Snapshot {
     uint64_t applied_config_revision=0,applied_presentation_revision=0;
@@ -138,6 +140,15 @@ public:
     void cancel_activity(){activity_execution_.reset();next_owned_generation_.reset();}
     Device *find_device(const std::string &name, std::optional<BusSide> side = {});
     Snapshot snapshot() const;
+    // Refresh published observations in place; unchanged traffic allocates no
+    // activity/device copies. These views do not resolve communication targets.
+    bool update_snapshot(Snapshot&,bool equipment=true)const;
+    bool update_observation(system::OwnedAdapterSnapshot&)const;
+    struct AudioStatus {bool known,muted;uint8_t volume;};
+    AudioStatus audio_status()const{return {audio_status_known_,muted_,volume_};}
+    uint16_t front_physical_address()const{return physical_;}
+    int current_activity()const{return selected_;}
+    size_t activity_count()const{return activities_.size();}
     uint32_t activity_generation() const { return activity_generation_; }
 private:
     BusSide lookup_side(const std::string &name) const;

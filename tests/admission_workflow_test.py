@@ -37,7 +37,7 @@ struct Active {model::OctopusId peer;bool cancelled=false,ready=false;std::mutex
 std::vector<std::shared_ptr<Active>> links;
 struct SettingsLink {std::shared_ptr<Active> active;RuntimePeerStatus status;};
 SettingsLink settings_link(model::OctopusId owner){for(const auto& active:links)if(active->peer==owner&&!active->cancelled&&active->ready){RuntimePeerStatus status;status.hostname=active->status.hostname;return {active,status};}return {};}
-struct SettingsOperation {model::OctopusId owner;std::string core,stage="admitted";uint64_t expires=0;};
+struct SettingsOperation {model::OctopusId owner;std::string core,stage="admitted";uint64_t expires=0;std::optional<std::string> hostname{};};
 std::vector<SettingsOperation> settings_operations;
 void settings_expire(uint64_t now){for(auto& operation:settings_operations)if(operation.stage=="admitted"&&now>=operation.expires)operation.stage="unknown";}
 
@@ -170,7 +170,7 @@ void rename_name_reservation(){
     auto active=std::make_shared<Active>();active->peer=owner;active->ready=active->status.ready=true;active->status.hostname="live-room";links.push_back(active);
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","live-room")==ESP_ERR_INVALID_ARG); // Live authenticated name wins if its metadata storage failed.
     DeviceSettingsWrite rename;rename.expected_boot=ident<model::BootId>(7);rename.expected_hostname_revision=2;rename.hostname="room";
-    settings_operations.push_back({owner,device_settings_write_json(rename),"admitted",500});
+    settings_operations.push_back({owner,device_settings_write_json(rename),"admitted",500,rename.hostname});
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_ERR_INVALID_ARG&&admission.view.phase=="found");
     assert(!connections&&!saves&&!wifi_exports&&!disconnects); // A rejected conflicting Add has no networking effect.
     clock_ms=500;assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_OK&&admission.submitted);

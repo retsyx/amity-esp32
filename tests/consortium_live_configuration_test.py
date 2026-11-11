@@ -42,7 +42,7 @@ template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++)
 // Cryptography has independent coverage; this lower-layer fixture gives the
 // real SnapshotTransfer a deterministic digest and still checks its binding.
 std::string sha256(std::string_view){return std::string(64,'a');}
-struct Queued{Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
+struct Queued{Kind kind;std::string payload;uint32_t ttl=0;uint64_t created=0,revision=0;std::shared_ptr<const model::OwnedIntent> owned;std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot{};bool firmware_stream=false;};
 std::vector<std::string> diagnostic_logs,key_transfer_logs;
 template<class... Args>void capture_log(const char* level,const char* tag,const char* format,Args... args){
  const int length=snprintf(nullptr,0,format,args...);assert(length>=0);std::vector<char> text(static_cast<size_t>(length)+1);snprintf(text.data(),text.size(),format,args...);assert(length<384);if(std::string(format).find("Link scope")==0)return;if(std::string(text.data()).find("Key release")==0||std::string(text.data()).find("Key transfer")==0){key_transfer_logs.emplace_back(text.data());return;}diagnostic_logs.push_back(std::string(level)+":"+tag+" "+text.data());
@@ -291,11 +291,9 @@ void observation_expiry_is_not_lost_causal_work(){
  const auto snapshot="{\"snapshot\":"+owned_snapshot_json(report)+"}";
  auto key=std::make_shared<model::OwnedIntent>();key->kind=model::OwnedIntentKind::key_edges;key->generation=1;key->config_revision=scope.config_revision;key->edges[0]={4,true};key->edge_count=1;
  key->target={{scope.consortium_id,scope.peer_id,0,model::Side::back},"Player"};
- const auto observation=Queued{Kind::scoped_result,snapshot,1000,100,scope.config_revision,{}};
+ const auto observation=Queued{Kind::scoped_result,{},1000,100,scope.config_revision,{},std::make_shared<const model::OwnedAdapterSnapshot>(report)};
  const auto input=Queued{Kind::scoped_intent,{},1000,100,scope.config_revision,key};
  assert(!queued_causal(observation)&&queued_causal(input));
- auto malformed=observation;malformed.payload="{\"snapshot\":{}}";assert(queued_causal(malformed));
- malformed.payload="{}";assert(queued_causal(malformed));malformed.payload="invalid";assert(queued_causal(malformed));
  a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled&&diagnostic_logs.empty());
  assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
  a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_intent,{},1000,{},scope.config_revision,key)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);

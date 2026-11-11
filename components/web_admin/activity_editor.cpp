@@ -81,15 +81,22 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
     const auto config=control.active_configuration();
     if(!config||!config->controller_octopus_id||*config->controller_octopus_id!=control.octopus_id()){result=reject(req,"Activity administration belongs to the original Amity controller","403 Forbidden");return true;}
     if(req->method!=HTTP_GET&&!control.accepts_local_input()){result=reject(req,"Activity control is unavailable while this Amity is passive or updating","503 Service Unavailable");return true;}
-    ae::OwnerHostnames hostnames;for(const auto& name:amity::consortium::runtime_known_hostnames())hostnames[name.first]=name.second;
-    hostnames[control.octopus_id()]=device_settings::hostname();
-    const auto peers=amity::consortium::runtime_peers();
-    ae::OwnerCapacities capacities{{control.octopus_id(),control.supported_tentacles()}};
-    for(const auto& peer:peers)if(peer.boot_id)capacities[peer.id]=peer.supported_tentacles;
-    const bool has_added_amities=std::any_of(peers.begin(),peers.end(),[&](const auto& peer){return peer.id!=control.octopus_id()&&peer.enrolled;});
-    std::vector<m::OctopusId> enrolled;for(const auto& peer:peers)if(peer.enrolled)enrolled.push_back(peer.id);
-    const auto component_owners=ae::component_owners(*config,hostnames,enrolled,capacities);
-    const auto state=control.execution_snapshot();const auto native=observations(control);const auto choices=ae::choices(*config,native,hostnames,has_added_amities,capacities);
+    const bool editor=path==prefix,status=path==std::string(prefix)+"/status",components=path==std::string(prefix)+"/components";
+    const bool restore=path==std::string(prefix)+"/restore",activity=path==std::string(prefix)+"/activity",discover=path==std::string(prefix)+"/discover";
+    if(!((req->method==HTTP_GET&&(editor||status))||(req->method==HTTP_POST&&(editor||components||restore||activity||discover)))){result=reject(req,"Unknown activity editor operation","404 Not Found");return true;}
+    std::vector<ae::ComponentOwner> component_owners;std::vector<ae::Choice> choices;
+    if(editor||status||components){
+        ae::OwnerHostnames hostnames;for(const auto& name:amity::consortium::runtime_known_hostnames())hostnames[name.first]=name.second;
+        hostnames[control.octopus_id()]=device_settings::hostname();
+        const auto peers=amity::consortium::runtime_peers();
+        ae::OwnerCapacities capacities{{control.octopus_id(),control.supported_tentacles()}};
+        for(const auto& peer:peers)if(peer.boot_id)capacities[peer.id]=peer.supported_tentacles;
+        const bool has_added_amities=std::any_of(peers.begin(),peers.end(),[&](const auto& peer){return peer.id!=control.octopus_id()&&peer.enrolled;});
+        std::vector<m::OctopusId> enrolled;for(const auto& peer:peers)if(peer.enrolled)enrolled.push_back(peer.id);
+        component_owners=ae::component_owners(*config,hostnames,enrolled,capacities);
+        if(editor||status)choices=ae::choices(*config,observations(control),hostnames,has_added_amities,capacities);
+    }
+    const auto state=(status||restore||activity||(editor&&req->method==HTTP_POST))?control.execution_snapshot():m::ExecutionSnapshot{};
     if(req->method==HTTP_GET&&path==prefix){
         Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddNumberToObject(root.get(),"version",1);decimal(root.get(),"expected_config_revision",config->config_revision);decimal(root.get(),"expected_presentation_revision",config->presentation_revision);cJSON_AddItemToObject(root.get(),"device_choices",encode_choices(choices));auto* rows=cJSON_AddArrayToObject(root.get(),"activities");
         cJSON_AddItemToObject(root.get(),"component_owners",encode_component_owners(component_owners));
@@ -107,7 +114,6 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         bool scanning=snapshot.discovering;for(const auto& owner:control.owned_snapshots())scanning=scanning||owner.discovering;cJSON_AddBoolToObject(root.get(),"discovering",scanning);cJSON_AddNumberToObject(root.get(),"discovery_generation",scan_generation+snapshot.discovery_generation);cJSON_AddNumberToObject(root.get(),"activity_generation",snapshot.activity_generation);cJSON_AddNumberToObject(root.get(),"front_address",snapshot.front_address);cJSON_AddNumberToObject(root.get(),"back_address",snapshot.back_address);cJSON_AddNumberToObject(root.get(),"tx_errors",snapshot.tx_errors);cJSON_AddNumberToObject(root.get(),"rx_dropped",snapshot.rx_dropped);
         auto* devices=cJSON_AddArrayToObject(root.get(),"devices");for(const auto& c:choices)if(c.observation){const auto& o=*c.observation;auto* item=cJSON_CreateObject();cJSON_AddItemToArray(devices,item);cJSON_AddStringToObject(item,"name",c.value.c_str());cJSON_AddStringToObject(item,"title",c.title.c_str());cJSON_AddStringToObject(item,"location",c.location.c_str());cJSON_AddStringToObject(item,"bus",o.endpoint.port.side==m::Side::front?"front":"back");cJSON_AddNumberToObject(item,"address",o.endpoint.logical_address);cJSON_AddNumberToObject(item,"physical_address",o.physical_address);cJSON_AddNumberToObject(item,"type",o.device_type);cJSON_AddNumberToObject(item,"vendor_id",o.vendor_id);}cJSON_AddItemToObject(root.get(),"device_choices",encode_choices(choices));result=respond(req,root.get());return true;
     }
-    if(req->method!=HTTP_POST||(path!=prefix&&path!=std::string(prefix)+"/discover"&&path!=std::string(prefix)+"/activity"&&path!=std::string(prefix)+"/restore"&&path!=std::string(prefix)+"/components")){result=reject(req,"Unknown activity editor operation","404 Not Found");return true;}
     std::string body;if(!web::body(req,body)){result=ESP_FAIL;return true;}Json root(parse_json_input(body),cJSON_Delete);
     if(!root||body.find('\0')!=std::string::npos){result=reject(req,"Invalid activity editor JSON","400 Bad Request");return true;}
     const auto request=m::MessageId::parse(text(root.get(),"request_id"));const auto digest=cs::sha256_hex(path+body);if(!request){result=reject(req,"An activity request identity is required","400 Bad Request");return true;}

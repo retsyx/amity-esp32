@@ -143,7 +143,7 @@ void application_failures_restart_scope_without_replaying_work(){
 }
 void invalid_local_ipc_restarts_scope_without_sending_or_replaying(){
  auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto original=a->session.scope();const auto* tls=a->tls.get();
- auto malformed=action(*a);malformed.target.port.octopus_id={};
+ auto malformed=action(*a);malformed.config_revision=8;
  auto work=std::make_shared<const model::OwnedIntent>(malformed);std::weak_ptr<const model::OwnedIntent> abandoned=work;
  a->queue.push_back({Kind::scoped_intent,{},1000,clock_ms,7,work});work.reset();
  a->tls->poller=[&](std::string& text){assert(recoveries==1);text=device_status;return FakeTls::ReceiveResult::frame;};
@@ -169,11 +169,11 @@ std::string stage_image(){return "{"+update_base()+",\"phase\":\"stage\"}";}
 std::string activate_image(){return "{"+update_base()+",\"phase\":\"activate\",\"reboot_delay_ms\":\"0\"}";}
 void aged_firmware_survives_control_pruning_and_stays_before_validation(){
  auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto* tls=a->tls.get();const auto scope=a->session.scope();
- a->queue.push_back({Kind::update_chunk,image_chunk(0),5000,100,7,{}});
+ assert(runtime_send_update(a->peer,Kind::update_chunk,image_chunk(0),5000)==ESP_OK);
  a->queue.push_back({Kind::device_status,"{\"hostname\":\"expired\"}",1000,100,7,{}});
- a->queue.push_back({Kind::update_chunk,image_chunk(2048),5000,100,7,{}});
- a->queue.push_back({Kind::update_install,activate_image(),5000,100,7,{}});
- a->queue.push_back({Kind::update_install,stage_image(),5000,100,7,{}});
+ assert(runtime_send_update(a->peer,Kind::update_chunk,image_chunk(2048),5000)==ESP_OK);
+ assert(runtime_send_update(a->peer,Kind::update_install,activate_image(),5000)==ESP_OK);
+ assert(runtime_stage_update(a->peer,stage_image(),5000)==ESP_OK);
  clock_ms=12100;
  assert(queue_control(a->peer,Kind::device_status,"{\"hostname\":\"fresh\"}",1000,{})==ESP_OK);
  assert(a->queue.size()==4&&a->queue[0].kind==Kind::update_chunk&&a->queue[1].kind==Kind::update_chunk&&a->queue[2].payload==stage_image());
@@ -186,13 +186,12 @@ void aged_firmware_survives_control_pruning_and_stays_before_validation(){
  assert(operational_receive(*a,budget)&&staged&&chunks==2&&a->tls->sent.size()==4&&a->queue.empty());
  assert(a->tls.get()==tls&&a->session.scope()==scope&&a->tls->usable()&&recoveries==0&&shutdowns==0&&diagnostic_logs.empty());
 }
-void worker_still_discards_expired_controls_activation_and_malformed_stage(){
+void worker_still_discards_expired_controls_activation_and_stale_firmware(){
  auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;
  a->queue.push_back({Kind::device_status,"{\"hostname\":\"expired\"}",1000,100,7,{}});
- a->queue.push_back({Kind::update_install,activate_image(),5000,100,7,{}});
- a->queue.push_back({Kind::update_install,"{\"phase\":\"stage\"}",5000,100,7,{}});
+ assert(runtime_send_update(a->peer,Kind::update_install,activate_image(),5000)==ESP_OK);
  // The exemption must not bypass the existing configuration fence either.
- a->queue.push_back({Kind::update_chunk,image_chunk(0),5000,100,6,{}});
+ assert(runtime_send_update(a->peer,Kind::update_chunk,image_chunk(0),5000)==ESP_OK);a->queue.back().revision=6;
  clock_ms=12100;
  a->queue.push_back({Kind::device_status,"{\"hostname\":\"fresh\"}",1000,clock_ms,7,{}});
  a->tls->poller=[&](std::string& text){if(!a->queue.empty())return FakeTls::ReceiveResult::pending;text=device_status;return FakeTls::ReceiveResult::frame;};
@@ -202,13 +201,13 @@ void worker_still_discards_expired_controls_activation_and_malformed_stage(){
 }
 void aged_firmware_keeps_existing_fifo_capacity(){
  auto a=start(true);reset_worker();
- for(unsigned n=0;n<16;++n)a->queue.push_back({Kind::update_chunk,image_chunk(n*2048),5000,100,7,{}});
+ for(unsigned n=0;n<16;++n)assert(runtime_send_update(a->peer,Kind::update_chunk,image_chunk(n*2048),5000)==ESP_OK);
  clock_ms=12100;
  assert(queue_control(a->peer,Kind::device_status,"{\"hostname\":\"fresh\"}",1000,{})==ESP_ERR_NO_MEM);
  assert(a->queue.size()==16&&recoveries==0&&shutdowns==0);
 }
 }
-int main(){using namespace amity::consortium;admission_after_iteration_clock_does_not_expire_fresh_input();original_queue_deadline_and_clock_reversal_remain_fenced();pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_malformed_stage();aged_firmware_keeps_existing_fifo_capacity();std::cout<<"PASS actual operational worker: queue-lock admission ordering and original TTL/future-clock fences; plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order and valid wireTTL without renewing controls/activation\n";}
+int main(){using namespace amity::consortium;admission_after_iteration_clock_does_not_expire_fresh_input();original_queue_deadline_and_clock_reversal_remain_fenced();pending_receive_keeps_pumping();partial_plaintext_deadline_recovers_on_idle_socket();partial_encrypted_record_keeps_original_outer_bound();bulk_prefix_allows_retransmission_and_keeps_fixed_outer_bound();bulk_class_never_authorizes_controls();application_failures_restart_scope_without_replaying_work();invalid_local_ipc_restarts_scope_without_sending_or_replaying();fatal_receive_ends_worker_without_recovery();retiring_does_not_pump_ordinary_work_during_partial_receive();aged_firmware_survives_control_pruning_and_stays_before_validation();worker_still_discards_expired_controls_activation_and_stale_firmware();aged_firmware_keeps_existing_fifo_capacity();std::cout<<"PASS actual operational worker: queue-lock admission ordering and original TTL/future-clock fences; plaintext2s/encrypted5s and input deadlines; bulk retransmission7s/fixed60s outer bound; class validation rejects bulk controls; sameTLS recovery without replay, responsive IPC and retirement fences; aged firmware bytes/stage retain bounded FIFO order and valid wireTTL without renewing controls/activation\n";}
 '''
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -229,12 +228,13 @@ def main():
     helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
     actual=function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(','static bool queued_firmware_stream(','static bool queued_expired(','static bool pure_key_release(', 'static bool queued_cleanup(','static bool queued_causal('))
     actual+=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
-    actual+=function(source,'static esp_err_t queue_control(')
+    actual+=''.join(function(source,n) for n in ('static esp_err_t queue_update(', 'esp_err_t runtime_send_update(', 'esp_err_t runtime_stage_update(', 'static esp_err_t queue_control('))
     actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')
     actual+=function(source,'bool fence_synchronization_scope(')+function(source,'bool restart_synchronization_scope(')
     actual+=''.join(function(source,n) for n in ('bool synchronization_current(','bool synchronization_recoverable(','bool application_failure_recoverable('))
     trace=function(source,'struct LinkTrace {').rstrip()+';\n'
     prefix=PREFIX.replace('struct Active{',trace+'using TlsLink=FakeTls;\nstruct Active{').replace('int socket=-1;model::OctopusId authenticated;','enum class ReceiveResult{pending,frame,expired,failed};\n unsigned expirations=0;std::function<void()> before_expire;ReceiveResult expire_receive(){++expirations;if(before_expire)before_expire();return ReceiveResult::expired;}\n int ssl=0;std::function<ReceiveResult(std::string&)> poller;ReceiveResult poll_receive(std::string& out){return poller(out);}\n int socket=-1;model::OctopusId authenticated;')
+    prefix=prefix.replace('esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){assert(false);return ESP_ERR_NOT_SUPPORTED;}', '')
     prefix=prefix.replace('struct Active{',QUEUE_MUTEX+'struct Active{').replace('std::mutex mutex;bool cancelled','QueueMutex mutex;bool cancelled')
     with tempfile.TemporaryDirectory(prefix='amity-worker-poll-') as directory:
         temp=Path(directory);(temp/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5,ESP_ERR_NOT_FOUND=6,ESP_ERR_NOT_SUPPORTED=7;\n')

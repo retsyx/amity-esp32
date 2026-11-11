@@ -96,7 +96,11 @@ void runtime_control_hooks(RuntimeControlHooks hooks){fixture::hooks=std::move(h
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){fixture::sent.push_back(intent);return fixture::send_result;}
 bool runtime_owned_authorized(const model::OwnedAuthorization&){++fixture::authorization_checks;return fixture::auth_allowed;}
 esp_err_t runtime_send_control(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});if(fixture::on_report_send)fixture::on_report_send();return fixture::report_result;}
-esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,std::string payload,uint32_t ttl,uint64_t revision){fixture::result_packets.push_back({owner,link,std::move(payload),ttl,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;}
+esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint32_t ttl,uint64_t revision){
+    const auto payload="{\"snapshot\":"+owned_snapshot_json(snapshot)+"}";
+    if(!link)return runtime_send_control(owner,Kind::scoped_result,payload,ttl);
+    fixture::result_packets.push_back({owner,link,payload,ttl,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;
+}
 std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){
     if(fixture::require_retry_lock)fixture::require_state_lock();
     for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;return {};

@@ -2,11 +2,11 @@
 namespace amity {
 bool SystemControl::accepts_local_input()const{
     if(!local_coordinator_.load()||maintenance_.load())return false;
-    const auto config=std::atomic_load(&active_);return !config||config->controller_octopus_id==octopus_;
+    const auto config=active_configuration();return !config||config->controller_octopus_id==octopus_;
 }
 esp_err_t SystemControl::request_activity(int index){
     if(!accepts_local_input())return ESP_ERR_INVALID_STATE;
-    auto config=std::atomic_load(&active_);
+    auto config=active_configuration();
     if(!config||index<0)return local_.request_activity(index);
     const auto* activity=config_store::activity_for_slot(*config,static_cast<unsigned>(index));
     if(!activity)return ESP_ERR_INVALID_ARG;

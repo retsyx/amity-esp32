@@ -1,5 +1,12 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "cec_hub_fixture.hpp"
+static bool measure_request_allocations=false;
+static size_t request_allocations=0,largest_request_allocation=0;
+void* operator new(size_t size,const std::nothrow_t&)noexcept{
+    if(measure_request_allocations){++request_allocations;largest_request_allocation=std::max(largest_request_allocation,size);}
+    try{return ::operator new(size);}catch(...){return nullptr;}
+}
+void operator delete(void* memory,const std::nothrow_t&)noexcept{::operator delete(memory);}
 using namespace amity;
 namespace m=amity::system;
 static const auto group=*m::ConsortiumId::parse("11111111111111111111111111111111");
@@ -12,6 +19,43 @@ static m::QualifiedDeviceName named(m::OctopusId owner,m::Side side,const char* 
 static void finish_local(HubService& hub){
     for(unsigned pass=0;pass<96;++pass){run_idle(1);if(!hub.activity_setup_in_progress()&&fixture_pending.empty())return;}
     assert(false&&"Local activity did not finish actual TX steps");
+}
+static void compact_keys_and_quiet_publication(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;assert(hub.start(1,2)==ESP_OK);
+    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    assert(hub.select_activity(0));run_one_command();finish_local(hub);run_idle(4);
+    fixture_tick=0;fixture_async_autocomplete=false;
+    unsigned publications=0,observations=0;
+    hub.on_change([&](const auto&){++publications;});hub.set_owned_observer([&](const auto&){++observations;});
+    request_allocations=largest_request_allocation=0;measure_request_allocations=true;
+    assert(hub.press_key(4,true));measure_request_allocations=false;
+    assert(request_allocations==1&&largest_request_allocation<=96); // Host pointer width is larger than the target's.
+    run_one_command();
+    for(unsigned repeat=0;repeat<4;++repeat){
+        assert(fixture_complete_next(cec::TxResult::Success,2));
+        request_allocations=0;measure_request_allocations=true;run_idle(1);measure_request_allocations=false;
+        assert(request_allocations==0&&"A cached held-key repeat must not allocate an IPC command");
+    }
+    assert(publications==0&&observations==0&&"Unchanged key traffic must not rebuild/publish observations");
+    assert(hub.release_key(4));run_one_command();fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);
+    fixture_tick=100000;
+}
+static void member_selection_refreshes_projection_without_discovery(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    fixture_tick=0;const auto scanned=hub.snapshot().discovery_generation;
+    m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+    m::OwnedIntent selection;selection.kind=m::OwnedIntentKind::activity;selection.target.port={group,member,0,m::Side::front};selection.selected=true;
+    selection.generation=1;selection.source=named(member,m::Side::back,"Source");
+    assert(hub.submit_owned(selection,auth));finish_local(hub);
+    const auto first=hub.snapshot();assert(first.devices.size()==1&&first.devices.front().bus==BusSide::Back);
+    selection.generation=2;selection.source=named(member,m::Side::front,"TV");
+    assert(hub.submit_owned(selection,auth));finish_local(hub);
+    const auto second=hub.snapshot();assert(second.discovery_generation==scanned);
+    assert(std::any_of(second.devices.begin(),second.devices.end(),[](const auto& device){return device.bus==BusSide::Front&&device.name.find(":TV")!=std::string::npos;}));
+    fixture_tick=100000;
 }
 static std::vector<SentFrame> select_trace(bool scoped){
     // Compare explicit activity commands without crossing an incidental
@@ -862,4 +906,4 @@ static void distinct_activity_ids_with_identical_equipment(unsigned mode){
     if(other)assert(delivered_generations.back()!=second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){compact_keys_and_quiet_publication();member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}

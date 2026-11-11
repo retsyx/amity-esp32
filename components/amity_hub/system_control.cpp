@@ -1,7 +1,7 @@
 #include "amity/system_control.hpp"
 namespace amity {
 esp_err_t SystemControl::transition_coordinator_authority(bool enabled,uint64_t epoch){
-    auto config=std::atomic_load(&active_);
+    auto config=active_configuration();
     if(enabled&&(epoch!=1||(config&&config->controller_octopus_id!=octopus_)))return ESP_ERR_INVALID_STATE;
     auto result=local_.transition_coordinator_authority(enabled,epoch);
     if(result==ESP_OK)local_coordinator_.store(enabled);
@@ -27,8 +27,9 @@ esp_err_t SystemControl::configure(config_store::Configuration config,std::funct
         selectors.push_back({c.record.component_id.str(),name});
     std::vector<system::OctopusId> owners;
     for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
-    const auto previous=std::atomic_load(&active_);
-    auto stored=std::make_shared<const config_store::Configuration>(std::move(config));
+    const auto previous=active_configuration();
+    auto published=std::make_shared<const PublishedConfiguration>(std::move(config));
+    auto stored=std::shared_ptr<const config_store::Configuration>(published,&published->configuration);
     const auto can_commit=[previous,stored](const Snapshot& state){
         if(!previous)return state.current_activity<0;
         if(state.applied_config_revision!=previous->config_revision||state.applied_presentation_revision!=previous->presentation_revision)return false;
@@ -36,25 +37,25 @@ esp_err_t SystemControl::configure(config_store::Configuration config,std::funct
         const auto order=config_store::ordered_activities(*previous);
         return static_cast<size_t>(state.current_activity)<order.size()&&config_store::retains_activity(*previous,*stored,order[state.current_activity]);
     };
-    const auto persist=[this,stored,commit=std::move(commit)]{
+    const auto persist=[this,published,commit=std::move(commit)]{
         const auto result=commit?commit():ESP_OK;
         // Publish the saved order before owner execution can expose that new
         // order. The owner admission lock and queued-save reservation keep
         // selections out until its matching snapshot has been published.
-        if(result==ESP_OK)std::atomic_store(&active_,stored);
+        if(result==ESP_OK)std::atomic_store(&active_,published);
         return result;
     };
     return local_.configure_scoped(activities(*stored),std::move(selectors),[this](const auto& intent){return dispatch_owned(intent);},octopus_,stored->config_revision,persist,stored->presentation_revision,std::move(owners),can_commit);
 }
 esp_err_t SystemControl::configure_passive_metadata(const config_store::Configuration& config){
     std::string error;if(local_coordinator_.load()||!config_store::validate_configuration(config,error)||config.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
-    std::atomic_store(&active_,std::make_shared<const config_store::Configuration>(config));return ESP_OK;
+    std::atomic_store(&active_,std::make_shared<const PublishedConfiguration>(config));return ESP_OK;
 }
 esp_err_t SystemControl::request_activity(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
     refresh_outcomes();
     if(!accepts_local_input()||!request)return ESP_ERR_INVALID_STATE;
-    if(expected&&*expected!=execution_snapshot().state_revision)return ESP_ERR_INVALID_STATE;
-    auto config=std::atomic_load(&active_);if(!config)return ESP_ERR_INVALID_STATE;
+    if(expected&&*expected!=local_.activity_selection())return ESP_ERR_INVALID_STATE;
+    auto config=active_configuration();if(!config)return ESP_ERR_INVALID_STATE;
     auto order=config_store::ordered_activities(*config);auto found=std::find(order.begin(),order.end(),activity);
     const auto target=std::find_if(config->activities.begin(),config->activities.end(),[&](const auto& a){return a.activity_id==activity&&a.zone_id==zone;});
     if(found==order.end()||target==config->activities.end())return ESP_ERR_INVALID_ARG;
@@ -86,21 +87,22 @@ void SystemControl::update_outcomes_locked(const Snapshot& state,const config_st
     }
 }
 void SystemControl::refresh_outcomes()const{
-    const auto config=std::atomic_load(&active_);const auto state=local_.snapshot();
+    const auto config=active_configuration();const auto state=local_.snapshot();
     std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config.get());
 }
 system::ExecutionSnapshot SystemControl::execution_snapshot()const{
-    system::ExecutionSnapshot out;auto config=std::atomic_load(&active_);const auto state=local_.snapshot();
+    system::ExecutionSnapshot out;const auto published=std::atomic_load(&active_);
+    const auto* config=published?&published->configuration:nullptr;const auto state=local_.snapshot();
     out.state_revision=local_.activity_selection();out.activity_settling=state.activity_settling;out.error=state.activity_error;
     const bool installed=config&&state.applied_config_revision==config->config_revision&&state.applied_presentation_revision==config->presentation_revision;
     if(installed){
-        out.applied_config_revision=config->config_revision;out.applied_presentation_revision=config->presentation_revision;out.applied_policy_hash=config_store::executable_policy_hash(*config);
+        out.applied_config_revision=config->config_revision;out.applied_presentation_revision=config->presentation_revision;out.applied_policy_hash=published->policy_hash;
     }
     if(config&&state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size()){
         const auto id=state.activities[state.current_activity].activity_id;
         for(const auto& a:config->activities)if(a.activity_id==id)out.sessions.push_back({system::SessionId::parse(boot_.str()).value_or(system::SessionId{}),a.zone_id,id,state.activity_generation});
     }
-    {std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config.get());for(const auto& pending:pending_)out.activity_outcomes.push_back({pending.id,pending.stage,pending.error});}
+    {std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config);for(const auto& pending:pending_)out.activity_outcomes.push_back({pending.id,pending.stage,pending.error});}
     out.native_observations=native_observations();return out;
 }
 std::vector<system::CecObservation> SystemControl::native_observations()const{
@@ -109,13 +111,13 @@ std::vector<system::CecObservation> SystemControl::native_observations()const{
     return out;
 }
 std::optional<config_store::ConfiguredActivity> SystemControl::external_activity(unsigned slot)const{
-    auto config=std::atomic_load(&active_);if(!config)return {};auto* activity=config_store::activity_for_slot(*config,slot);return activity&&activity->zone_id==config->primary_zone_id?std::optional<config_store::ConfiguredActivity>(*activity):std::nullopt;
+    auto config=active_configuration();if(!config)return {};auto* activity=config_store::activity_for_slot(*config,slot);return activity&&activity->zone_id==config->primary_zone_id?std::optional<config_store::ConfiguredActivity>(*activity):std::nullopt;
 }
 std::optional<config_store::ExternalSlot> SystemControl::external_slot(unsigned slot)const{
-    auto config=std::atomic_load(&active_);if(config)for(const auto& s:config->external_slots)if(s.slot==slot)return s;return {};
+    auto config=active_configuration();if(config)for(const auto& s:config->external_slots)if(s.slot==slot)return s;return {};
 }
 std::optional<unsigned> SystemControl::external_activity_index(const Snapshot& state)const{
-    auto config=std::atomic_load(&active_);
+    auto config=active_configuration();
     if(!config)return state.current_activity<0?std::nullopt:std::optional<unsigned>{static_cast<unsigned>(state.current_activity)};
     if(state.current_activity<0||static_cast<size_t>(state.current_activity)>=state.activities.size())return {};
     const auto id=state.activities[state.current_activity].activity_id;

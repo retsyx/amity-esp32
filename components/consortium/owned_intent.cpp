@@ -105,15 +105,12 @@ std::string owned_intent_json(const model::OwnedIntent& x) {
     case K::discover:break;
     default:return {};
     }
-    const auto json="{\"generation\":\""+std::to_string(x.generation)+"\""+(x.kind==K::key_edges?std::string{}:",\"target\":"+target_json(x.target))+",\"action\":\""+action(x.kind)+"\",\"arguments\":"+args+"}";
-    Json parsed;JsonError error;model::OwnedIntent verified;
-    return parse_json(json,parsed,error,max_frame_bytes,2048)&&parse_owned_intent(parsed,verified)==Error::none?json:std::string{};
+    return "{\"generation\":\""+std::to_string(x.generation)+"\""+(x.kind==K::key_edges?std::string{}:",\"target\":"+target_json(x.target))+",\"action\":\""+action(x.kind)+"\",\"arguments\":"+args+"}";
 }
 std::string owned_snapshot_json(const model::OwnedAdapterSnapshot& s) {
     std::string out="{\"owner\":\""+s.owner.str()+"\",\"boot\":\""+s.boot.str()+"\",\"adapter\":"+std::to_string(s.adapter)+",\"front_address\":"+std::to_string(s.front_address)+",\"back_address\":"+std::to_string(s.back_address)+",\"front_physical_address\":"+std::to_string(s.front_physical_address)+",\"ready\":"+(s.ready?"true":"false")+",\"discovering\":"+(s.discovering?"true":"false")+",\"discovery_generation\":"+std::to_string(s.discovery_generation)+",\"audio_status_known\":"+(s.audio_status_known?"true":"false")+",\"muted\":"+(s.muted?"true":"false")+",\"volume\":"+std::to_string(s.volume)+",\"devices\":[";
     for(const auto& d:s.devices){if(out.back()!='[')out+=',';out+="{\"side\":\""+std::string(model::side_name(d.side))+"\",\"osd_name\":"+quote(d.osd_name)+",\"logical_address\":"+std::to_string(d.logical_address)+",\"physical_address\":"+std::to_string(d.physical_address)+",\"device_type\":"+std::to_string(d.device_type)+",\"vendor_id\":"+std::to_string(d.vendor_id)+",\"resolved\":"+(d.resolved?"true":"false")+"}";}
-    out+="]}";Json parsed;JsonError error;model::OwnedAdapterSnapshot checked;
-    return parse_json(out,parsed,error,max_frame_bytes,2048)&&parse_owned_snapshot(parsed,checked)?out:std::string{};
+    return out+"]}";
 }
 bool parse_owned_snapshot(const Json& v,model::OwnedAdapterSnapshot& out) {
     model::OwnedAdapterSnapshot x;uint64_t n=0;

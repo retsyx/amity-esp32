@@ -102,11 +102,19 @@ static int hap_queue_event(hap_char_t *hc)
     if (!hap_event_queue) {
         return HAP_FAIL;
     }
-    if (xPortInIsrContext() == pdTRUE) {
-        ret = xQueueSendFromISR(hap_event_queue, &hc, NULL);
-    } else {
-        ret = xQueueSend(hap_event_queue, &hc, 0);
-    }
+    const bool from_isr = xPortInIsrContext() == pdTRUE;
+    do {
+        ret = from_isr ? xQueueSendFromISR(hap_event_queue, &hc, NULL) :
+                         xQueueSend(hap_event_queue, &hc, 0);
+        if (ret != pdTRUE) {
+            /* Keep the newest bounded window, in admission order. These are
+             * state notifications; an old pending update yields to a new one. */
+            hap_char_t *old = NULL;
+            if (from_isr) xQueueReceiveFromISR(hap_event_queue, &old, NULL);
+            else xQueueReceive(hap_event_queue, &old, 0);
+            if (old && old != hc) ((__hap_char_t *)old)->owner_ctrl = 0;
+        }
+    } while (ret != pdTRUE);
     if (ret == pdTRUE) {
         hap_send_event(HAP_INTERNAL_EVENT_TRIGGER_NOTIF);
         return HAP_SUCCESS;

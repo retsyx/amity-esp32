@@ -202,13 +202,35 @@ void Hub::announce(BusSide side) {
 }
 Snapshot Hub::snapshot() const {
     Snapshot s;
-    s.activities = activities_; s.devices = devices_; s.current_activity = selected_;
-    s.activity_generation = activity_generation_;
-    s.binding_generation = binding_generation_; s.uncertain_releases = uncertain_releases_;
-    s.front_address = front_; s.back_address = back_; s.front_physical_address = physical_;
-    s.ready = front_ < 15 && back_ < 15 && physical_ != 0xffff;
-    s.audio_status_known = audio_status_known_; s.muted = muted_; s.volume = volume_;
+    update_snapshot(s);
     return s;
+}
+bool Hub::update_snapshot(Snapshot& s,bool equipment)const {
+    bool changed=false;
+    const auto assign=[&](auto& previous,const auto& value){if(!(previous==value)){previous=value;changed=true;}};
+    assign(s.activities,activities_);assign(s.current_activity,selected_);
+    assign(s.activity_generation,activity_generation_);assign(s.binding_generation,binding_generation_);assign(s.uncertain_releases,uncertain_releases_);
+    assign(s.front_address,front_);assign(s.back_address,back_);assign(s.front_physical_address,physical_);
+    if(equipment){
+        assign(s.devices,devices_);assign(s.ready,front_<15&&back_<15&&physical_!=0xffff);
+        assign(s.audio_status_known,audio_status_known_);assign(s.muted,muted_);assign(s.volume,volume_);
+    }
+    return changed;
+}
+bool Hub::update_observation(system::OwnedAdapterSnapshot& report)const {
+    bool changed=false;
+    const auto assign=[&](auto& previous,const auto& value){if(!(previous==value)){previous=value;changed=true;}};
+    assign(report.front_address,front_);assign(report.back_address,back_);assign(report.front_physical_address,physical_);
+    assign(report.ready,front_<15&&back_<15&&physical_!=0xffff);
+    assign(report.audio_status_known,audio_status_known_);assign(report.muted,muted_);assign(report.volume,volume_);
+    if(report.devices.size()!=devices_.size()){report.devices.resize(devices_.size());changed=true;}
+    for(size_t i=0;i<devices_.size();++i){const auto& device=devices_[i];auto& observation=report.devices[i];
+        assign(observation.side,device.bus==BusSide::Front?system::Side::front:system::Side::back);
+        assign(observation.osd_name,device.name);assign(observation.logical_address,device.address);
+        assign(observation.physical_address,device.physical_address);assign(observation.device_type,device.type);
+        assign(observation.vendor_id,device.vendor_id);assign(observation.resolved,!device.name.empty());
+    }
+    return changed;
 }
 Activity Hub::current() const {
     return selected_ >= 0 && static_cast<size_t>(selected_) < activities_.size() ? activities_[selected_] : Activity{};

@@ -22,6 +22,8 @@ int main(){
     auto config=direct_configuration();const auto boot=id<BootId>(90);
     amity::SystemControl original;original.set_identity(config.consortium_id,*config.controller_octopus_id);original.set_boot_identity(boot);assert(original.start(1,2)==ESP_OK);
     assert(original.configure(config)==ESP_OK);drain(1000);
+    const auto initial_configuration=original.active_configuration();
+    assert(initial_configuration&&initial_configuration.get()==original.active_configuration().get());
     assert(original.accepts_local_input()&&original.active_configuration());
     const auto first=config.activities[0].activity_id;
     auto generation=original.remote_activity_generation();const auto selection=original.activity_selection();
@@ -164,6 +166,10 @@ int main(){
     assert(original.stop_remote_zone()==ESP_OK);drain();
     assert(original.configure(relocated)==ESP_OK);assert(original.execution_snapshot().applied_config_revision!=relocated.config_revision);drain();assert(original.execution_snapshot().applied_config_revision==relocated.config_revision);
     auto labels=relocated;++labels.presentation_revision;labels.activities[0].label="Renamed";assert(original.configure(labels)==ESP_OK);assert(original.execution_snapshot().applied_presentation_revision==0);drain();assert(original.execution_snapshot().applied_presentation_revision==labels.presentation_revision);
+    // Readers retain a coherent immutable version across later publications.
+    assert(initial_configuration.get()!=original.active_configuration().get());
+    assert(serialize_configuration(*initial_configuration)==serialize_configuration(config));
+    assert(original.execution_snapshot().applied_policy_hash==executable_policy_hash(labels));
     // A foreign owner's lookup and loss never stall the main's local recipe.
     auto interrupted_config=direct_configuration();interrupted_config.octopuses.push_back({remote,"amity-offline","amity-offline",false,1});for(auto& component:interrupted_config.components)if(component.record.component_id==interrupted_config.activities[0].source)component.record.qualified_names[0].port.octopus_id=remote;
     amity::SystemControl interrupted;interrupted.set_identity(interrupted_config.consortium_id,*interrupted_config.controller_octopus_id);interrupted.set_boot_identity(id<BootId>(92));bool available=true;unsigned jobs=0;
