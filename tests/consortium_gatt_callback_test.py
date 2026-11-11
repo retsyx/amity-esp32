@@ -172,7 +172,8 @@ void service_and_bounds(){
  advertise("A-abcdef",42,false);check(discovered.empty(),"suffix-only advertiser admitted without service UUID");
  advertise("A-abcdef",42);advertise("A-abcdef",42);check(discovered.size()==1,"same BLE address duplicated");
  advertise("<script>",43);check(discovered.back().public_value.label=="Amity","untrusted label copied into public UI");
- for(unsigned n=44;n<60;++n)advertise("A-abcdef",n);check(discovered.size()==8,"candidate list exceeded bound");
+ for(unsigned n=44;n<60;++n)advertise("A-abcdef",n);
+ check(discovered.size()==8,"candidate list exceeded bound");
 }
 void stale(){
  client_generation=UINT64_MAX;advertise("A-abcdef",42,true,6);check(discovered.empty()&&wakes==0,"stale callback affected scan");

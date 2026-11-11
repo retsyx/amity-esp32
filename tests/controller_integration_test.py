@@ -135,7 +135,8 @@ void tests(){
  std::thread launch([]{std::lock_guard<std::mutex>l(lifecycle_mutex);assert(start_actuator_substrate()==0);started=true;memrefs=2;udp=sessions=true;});
  {std::unique_lock<std::mutex>l(barrier);cv.wait(l,[]{return in_init;});}
  std::atomic<bool>done{false};std::thread revoke([&]{assert(amity_matter_set_controller_enabled(false)==0);done=true;});
- while(controller_enabled.load())std::this_thread::yield();assert(!done);
+ while(controller_enabled.load())std::this_thread::yield();
+ assert(!done);
  {std::lock_guard<std::mutex>l(barrier);release_init=true;}cv.notify_all();launch.join();revoke.join();
  assert(done&&!started&&!udp&&!sessions&&host&&wifi&&memrefs==1);
 }

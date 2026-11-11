@@ -66,11 +66,13 @@ int psa_key_derivation_output_bytes(psa_key_derivation_operation_t* op,uint8_t* 
 int psa_key_derivation_abort(psa_key_derivation_operation_t* op){if(!op->secret.empty())OPENSSL_cleanse(op->secret.data(),op->secret.size());return 0;}
 int psa_import_key(const psa_key_attributes_t*,const uint8_t* bytes,size_t size,unsigned* id){*id=++next_key;key_store[*id].aes.assign(bytes,bytes+size);return 0;}
 int psa_aead_encrypt(unsigned id,int,const uint8_t* nonce,size_t nonce_size,const uint8_t* aad,size_t aad_size,const uint8_t* input,size_t input_size,uint8_t* output,size_t capacity,size_t* size){
- if(capacity<input_size+16||nonce_size!=12)return -1;auto* context=EVP_CIPHER_CTX_new();int used=0,tail=0;
+ if(capacity<input_size+16||nonce_size!=12)return -1;
+ auto* context=EVP_CIPHER_CTX_new();int used=0,tail=0;
  bool good=context&&EVP_EncryptInit_ex(context,EVP_aes_256_gcm(),nullptr,key_store.at(id).aes.data(),nonce)>0&&EVP_EncryptUpdate(context,nullptr,&used,aad,aad_size)>0&&EVP_EncryptUpdate(context,output,&used,input,input_size)>0&&EVP_EncryptFinal_ex(context,output+used,&tail)>0&&EVP_CIPHER_CTX_ctrl(context,EVP_CTRL_GCM_GET_TAG,16,output+used+tail)>0;EVP_CIPHER_CTX_free(context);*size=used+tail+16;return good?0:-1;
 }
 int psa_aead_decrypt(unsigned id,int,const uint8_t* nonce,size_t nonce_size,const uint8_t* aad,size_t aad_size,const uint8_t* input,size_t input_size,uint8_t* output,size_t capacity,size_t* size){
- if(input_size<16||capacity<input_size-16||nonce_size!=12)return -1;auto* context=EVP_CIPHER_CTX_new();int used=0,tail=0;
+ if(input_size<16||capacity<input_size-16||nonce_size!=12)return -1;
+ auto* context=EVP_CIPHER_CTX_new();int used=0,tail=0;
  bool good=context&&EVP_DecryptInit_ex(context,EVP_aes_256_gcm(),nullptr,key_store.at(id).aes.data(),nonce)>0&&EVP_DecryptUpdate(context,nullptr,&used,aad,aad_size)>0&&EVP_DecryptUpdate(context,output,&used,input,input_size-16)>0&&EVP_CIPHER_CTX_ctrl(context,EVP_CTRL_GCM_SET_TAG,16,const_cast<uint8_t*>(input+input_size-16))>0&&EVP_DecryptFinal_ex(context,output+used,&tail)>0;EVP_CIPHER_CTX_free(context);*size=used+tail;return good?0:-1;
 }
 void mbedtls_platform_zeroize(void* p,size_t n){OPENSSL_cleanse(p,n);}

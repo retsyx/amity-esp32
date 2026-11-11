@@ -28,10 +28,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  browser-tests:
+    name: Web UI tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out firmware
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install browser test dependencies
+        run: |
+          python3 -m pip install -c cec-harness/runtime-requirements.txt playwright
+          python3 -m playwright install --with-deps chromium
+
+      - name: Run browser suites
+        run: |
+          for suite in tests/web_*_ui.py; do
+            echo "::group::$suite"
+            python3 "$suite"
+            echo "::endgroup::"
+          done
+
   build:
     name: ESP32-S3 firmware
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -59,6 +90,12 @@ jobs:
         with:
           go-version-file: amity-provision/go.mod
           cache-dependency-path: amity-provision/go.sum
+
+      - name: Set up Node.js for host tests
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
 
       - name: Validate release version
         if: inputs.release_tag != ''
@@ -149,6 +186,12 @@ jobs:
           source tools/env.sh
           idf.py set-target esp32s3
           idf.py build provisioning-package
+
+      # Host tests use the pinned SDK, managed components and generated build configuration.
+      - name: Run firmware host tests
+        run: |
+          source tools/env.sh
+          sh tests/run_host_tests.sh
 
       - name: Build provisioner release packages
         run: python3 amity-provision/build_release.py

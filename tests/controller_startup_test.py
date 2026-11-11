@@ -106,7 +106,8 @@ int mdns_init(){++mdns_initializations;responder_live=true;return 0;}int mdns_ho
 int mdns_service_add_for_host(const char*,const char*,const char*,const char*,int,void*,int){
  assert(responder_live);
  if(block_mdns_add){std::unique_lock<std::mutex>guard(interleave_mutex);mdns_add_entered=true;interleave.notify_all();interleave.wait(guard,[]{return release_mdns_add;});}
- if(mdns_add_result==ESP_OK)events.push_back("mdns");return mdns_add_result;
+ if(mdns_add_result==ESP_OK)events.push_back("mdns");
+ return mdns_add_result;
 }
 int mdns_service_remove_for_host(const char*,const char*,const char*,const char*){assert(responder_live);++mdns_removals;events.push_back("mdns-remove");return mdns_remove_result;}
 int mdns_delegate_hostname_set_address(const char*,mdns_ip_addr_t*){assert(responder_live);++mdns_updates;return ESP_OK;}

@@ -191,7 +191,8 @@ int main(){
     const auto saved=serialize_configuration(offline);assert(original.configure(prepared(offline))==ESP_OK);drain();const auto console=std::find_if(offline.activities.begin(),offline.activities.end(),[](const auto& a){return a.label=="Offline console";});assert(console!=offline.activities.end());assert(original.request_activity(console->zone_id,console->activity_id,id<MessageId>(803),original.execution_snapshot().state_revision)==ESP_OK);drain(1000);assert(original.active_configuration()&&serialize_configuration(*original.active_configuration())==saved);assert(original.activity_target()==2);
     // Configuration persistence runs only after ordinary IPC capacity has been
     // reserved. A full queue and a failed commit leave the active intent intact.
-    for(unsigned i=0;i<32;++i)assert(original.press_key(0xff));assert(!original.press_key(0xff));unsigned writes=0;auto changed=offline;changed.config_revision=5;changed.activities[0].switch_input=7;
+    for(unsigned i=0;i<32;++i)assert(original.press_key(0xff));
+    assert(!original.press_key(0xff));unsigned writes=0;auto changed=offline;changed.config_revision=5;changed.activities[0].switch_input=7;
     assert(original.configure(prepared(changed),[&]{++writes;return ESP_OK;})==ESP_ERR_NO_MEM&&writes==0);assert(serialize_configuration(*original.active_configuration())==saved);
     assert(original.begin_maintenance()!=ESP_OK&&original.accepts_local_input());drain();
     const auto before_failed_commit=original.configuration_snapshot(),uncommitted=prepared(changed);

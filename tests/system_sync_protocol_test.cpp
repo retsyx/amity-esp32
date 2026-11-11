@@ -105,7 +105,8 @@ esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,co
 }
 std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){
     if(fixture::require_retry_lock)fixture::require_state_lock();
-    for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;return {};
+    for(const auto& p:fixture::peers)if(p.ready&&p.id==owner&&p.boot_id==boot&&fixture::current_result_link)return fixture::current_result_link;
+    return {};
 }
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){fixture::result_fences.push_back({owner,link});}
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization& auth){fixture::deadline_queries.push_back(auth);return fixture::refreshed_deadline;}
@@ -345,7 +346,8 @@ void full_roster_adapter_reports_keep_exact_owner_fences(){
         const auto& owner=peers.back();std::string adapters="{\"adapters\":[";
         for(uint8_t adapter=0;adapter<amity::max_tentacles;++adapter){
             auto value=report(owner.id,owner.boot_id,adapter);value.discovery_generation=100+index*amity::max_tentacles+adapter;
-            if(adapter)adapters+=',';adapters+=c::owned_snapshot_json(value);expected.push_back(value);
+            if(adapter)adapters+=',';
+            adapters+=c::owned_snapshot_json(value);expected.push_back(value);
         }
         assert(hooks.synchronize(owner.id,string_document(adapters+"]}"))==c::Error::none);
     }

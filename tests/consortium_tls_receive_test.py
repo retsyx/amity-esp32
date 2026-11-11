@@ -305,7 +305,8 @@ void expired_frames_drain_without_replacing_tls(){
     check(encrypted.poll_receive(body)==Result::frame&&body=="after encrypted","outer expiry lost following frame");
     // A full-frame expiry cannot be extended by slow continuous progress.
     reset();TlsLink total;const auto slow=frame(std::string(20,'x'));
-    for(size_t i=0;i<slow.size();++i)incoming.push_back({i<4?0:(i-3)*1000,slow[i]});append("after total",21000,21000);
+    for(size_t i=0;i<slow.size();++i)incoming.push_back({i<4?0:(i-3)*1000,slow[i]});
+    append("after total",21000,21000);
     for(clock_ms=0;clock_ms<10000;clock_ms+=1000)check(total.poll_receive(body)==Result::pending,"slow frame expired early");
     check(total.poll_receive(body)==Result::expired&&total.receive_diagnostic().total_ms==10000,"total deadline extended");clock_ms=21000;
     check(total.poll_receive(body)==Result::pending&&body.empty()&&total.usable(),"total-expired payload was accepted");

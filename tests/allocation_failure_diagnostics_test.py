@@ -27,6 +27,7 @@ PREFIX = r'''
 bool allocations_forbidden=false;
 void* operator new(size_t size){assert(!allocations_forbidden);if(auto* p=std::malloc(size))return p;throw std::bad_alloc();}
 void operator delete(void* p)noexcept{std::free(p);}
+void operator delete(void* p,std::size_t)noexcept{::operator delete(p);}
 constexpr int ESP_OK=0;
 constexpr uint32_t MALLOC_CAP_DMA=8,MALLOC_CAP_INTERNAL=2048,MALLOC_CAP_8BIT=4,MALLOC_CAP_SPIRAM=1024;
 struct multi_heap_info_t{size_t total_free_bytes=0,minimum_free_bytes=0,largest_free_block=0;};

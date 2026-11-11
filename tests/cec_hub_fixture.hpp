@@ -36,7 +36,7 @@ static std::function<std::string(int)> fixture_peer_name;
 static uint8_t fixture_peer(int gpio) { return fixture_peer_address ? fixture_peer_address(gpio) : gpio == 1 ? 0 : 4; }
 static std::function<cec::TxResult(int, const cec::Frame&)> fixture_wait_outcome;
 static bool fixture_require_available_mutex = false;
-static bool fixture_wire_deadlines = false;
+[[maybe_unused]] static bool fixture_wire_deadlines = false;
 static int64_t fixture_time = 1000000;
 static int64_t fixture_tick = 100000;
 static int idle_passes = -1;
@@ -113,7 +113,8 @@ int xSemaphoreTake(SemaphoreHandle_t s, unsigned wait) {
     if (waiting_for_reply && wait != portMAX_DELAY && fixture_late_reply) {
         fixture_late_reply = false; return pdFALSE;
     }
-    if (!s->count) return pdFALSE; --s->count; return pdTRUE;
+    if (!s->count) return pdFALSE;
+    --s->count; return pdTRUE;
 }
 int xSemaphoreGive(SemaphoreHandle_t s) { if (s->count == s->capacity) return pdFALSE; ++s->count; return pdTRUE; }
 void vSemaphoreDelete(SemaphoreHandle_t s) { delete s; }

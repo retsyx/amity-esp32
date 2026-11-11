@@ -31,7 +31,8 @@ SettingsAuthorization settings_authorization;
 bool storage_ok=true;unsigned writes=0,revoked=0;std::string stored;model::OctopusId revoked_owner;
 esp_err_t write_record(const char* ns,const char* key,std::string_view bytes){
  assert(std::string(ns)=="amity_group"&&std::string(key)=="hostnames");++writes;
- if(!storage_ok)return ESP_FAIL;stored=bytes;return ESP_OK;
+ if(!storage_ok)return ESP_FAIL;
+ stored=bytes;return ESP_OK;
 }
 void reset(){
  group={};identity={};status={};hostnames={};settings_caches.clear();settings_operations.clear();settings_authorization={};

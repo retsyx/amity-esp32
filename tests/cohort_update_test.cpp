@@ -188,7 +188,8 @@ void matching_hello_releases_sync_fence(){
 }
 void same_image(){
     setup();add_peer(one);peers.front().firmware_identity=nodes[local].elf;
-    for(unsigned n=0;n<4;++n)poll();assert(phase()=="idle"&&events.empty()&&staged_reads==0&&running_reads==0&&disk_writes==0);
+    for(unsigned n=0;n<4;++n)poll();
+    assert(phase()=="idle"&&events.empty()&&staged_reads==0&&running_reads==0&&disk_writes==0);
     std::cout<<"PASS matching firmware does no catch-up work\n";
 }
 void receiver_staging(){
@@ -229,9 +230,11 @@ void rollback_budget(){
         until([]{return phase()=="failed";});
         const auto failed=cohort().get("targets")->array.front();assert(field(failed,"phase")=="failed"&&!field(failed,"error").empty());
     }
-    for(unsigned n=0;n<200;++n)poll();assert(activations()==3);
+    for(unsigned n=0;n<200;++n)poll();
+    assert(activations()==3);
     nodes[one].boot=identity<m::BootId>(99);peers.front().boot_id=nodes[one].boot;
-    for(unsigned n=0;n<100;++n)poll();assert(activations()==3&&phase()=="failed");
+    for(unsigned n=0;n<100;++n)poll();
+    assert(activations()==3&&phase()=="failed");
     // A different starting image receives a fresh budget.
     nodes[one].selected=false;nodes[one].elf=std::string(64,'f');peers.front().firmware_identity=nodes[one].elf;
     until([]{return nodes[one].selected;});assert(activations()==4&&!nodes[local].selected&&disk_writes==0);
@@ -258,7 +261,8 @@ void source_failure_reporting(){
     const auto report=cohort();assert(field(report,"phase")=="failed"&&report.get("automatic")->boolean);
     assert(field(report,"image_elf_sha256")==nodes[local].elf);
     const auto target=report.get("targets")->array.front();assert(field(target,"octopus_id")==one.str()&&field(target,"phase")=="failed"&&!field(target,"error").empty());
-    for(unsigned n=0;n<5;++n)poll();assert(events.empty()&&disk_writes==0);
+    for(unsigned n=0;n<5;++n)poll();
+    assert(events.empty()&&disk_writes==0);
     std::cout<<"PASS unavailable primary source reports the exact automatic target as failed without pretending to transfer\n";
 }
 void multiple_failure_reporting(){

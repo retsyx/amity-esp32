@@ -167,7 +167,8 @@ static void caller_attempt_tests() {
         const auto errors=bus.statistics().tx_errors;
         for(unsigned queued=0;queued<8;++queued)assert(bus.send(press));
         assert(!bus.send(press)); // Legacy and native TX FIFOs share the explicit eight-message bound.
-        for(unsigned pass=0;pass<4000;++pass)pump();assert(bus.statistics().tx_errors==errors+8&&bus.statistics().tx_queue_high_water==8);
+        for(unsigned pass=0;pass<4000;++pass)pump();
+        assert(bus.statistics().tx_errors==errors+8&&bus.statistics().tx_queue_high_water==8);
     }
     {
         cec::Bus bus;assert(bus.start(31,cec::Bus::QueueProfile::Native)==ESP_OK);
@@ -354,7 +355,8 @@ static void async_completion_contract_tests() {
             assert(bus.send_async_guarded(broadcast,{},rejected));
             assert(rejected.result.load()==cec::TxResult::Pending&&now==refilled_at);
         };
-        for(unsigned pass=0;pass<4000;++pass)pump();before_tick={};
+        for(unsigned pass=0;pass<4000;++pass)pump();
+        before_tick={};
         assert(refilled&&bus.idle()&&bus.statistics().transmitted==9);
         for(auto& tracked:complete)assert(tracked.result.load(std::memory_order_acquire)==cec::TxResult::Success);
         assert(rejected.result.load(std::memory_order_acquire)==cec::TxResult::Success);

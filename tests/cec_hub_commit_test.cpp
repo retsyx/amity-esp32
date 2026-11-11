@@ -13,7 +13,8 @@ static void finish_activity(amity::HubService& hub,int target,bool manual=false)
     for(unsigned n=0;n<2000;++n){
         const auto state=hub.snapshot();
         if(state.current_activity==target&&state.processed_activity_selection==selection)return;
-        if(manual)fixture_complete_all();run_idle(1);
+        if(manual)fixture_complete_all();
+        run_idle(1);
     }
     assert(false&&"Sequential activity did not finish its original continuation");
 }

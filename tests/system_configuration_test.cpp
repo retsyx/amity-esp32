@@ -106,7 +106,8 @@ void current_format_only(){
         rejected(modify([&](cJSON* root){cJSON_DeleteItemFromObjectCaseSensitive(root,key);}));
     for(const auto* category:{"octopuses","components","activities","zones","external_slots"}){
         auto* root=cJSON_Parse(encoded.c_str());auto* row=cJSON_GetObjectItemCaseSensitive(root,category)->child;std::vector<std::string> required;
-        for(auto* field=row->child;field;field=field->next)required.push_back(field->string);cJSON_Delete(root);
+        for(auto* field=row->child;field;field=field->next)required.push_back(field->string);
+        cJSON_Delete(root);
         for(const auto& key:required)rejected(modify([&](cJSON* value){cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetObjectItemCaseSensitive(value,category)->child,key.c_str());}));
         rejected(modify([&](cJSON* value){cJSON_AddBoolToObject(cJSON_GetObjectItemCaseSensitive(value,category)->child,"unrecognized",true);}));
     }

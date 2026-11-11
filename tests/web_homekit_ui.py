@@ -29,9 +29,14 @@ def main():
             self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data)))
             self.end_headers(); self.wfile.write(data)
         def do_GET(self):
-            fixtures={'/api/setup':{'required':False}, '/api/config':{'version':1,'activities':[]},
-                '/api/status':{'version':'test','ready':True,'current_activity':-1,'devices':[]},
-                '/api/remotes':{'bonded':False},'/api/matter':{'fabrics':[]},'/api/homekit':deepcopy(state)}
+            fixtures={'/api/setup':{'required':False},
+                '/api/config':{'version':3,'activities':[],'octopuses':[]},
+                '/api/activity-editor':{'version':1,'activities':[],'device_choices':[],
+                    'expected_config_revision':'1','expected_presentation_revision':'1'},
+                '/api/activity-editor/status':{'version':'test','ready':True,'current_activity':-1,
+                    'devices':[],'device_choices':[],'expected_state_revision':'0','expected_boot_id':'a'*32},
+                '/api/system':{'octopus_id':'1'*32,'hostname':'amity-test','membership':{'peers':[]}},
+                '/api/remotes':{'devices':[]},'/api/matter':{'fabrics':[]},'/api/homekit':deepcopy(state)}
             if self.path in fixtures: return self.reply(fixtures[self.path])
             return super().do_GET()
         def do_POST(self):

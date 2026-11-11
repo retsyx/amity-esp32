@@ -108,7 +108,8 @@ void respond(const std::shared_ptr<Active>& a,const Json& request,const std::str
  assert(dispatch(a,message(a,Kind::log_result,log_result_json(transfer,offset,error.empty()?source.size():0,data,error))));
 }
 void pump(const std::shared_ptr<Active>& a,const Responder& response){
- if(a->queue.empty())return;const auto queued=std::move(a->queue.front());a->queue.pop_front();assert(queued.kind==Kind::log_request&&queued.ttl&&queued.ttl<=2000&&queued.revision==7);
+ if(a->queue.empty())return;
+ const auto queued=std::move(a->queue.front());a->queue.pop_front();assert(queued.kind==Kind::log_request&&queued.ttl&&queued.ttl<=2000&&queued.revision==7);
  const auto request=parsed(queued.payload);assert(valid_log_payload(queued.kind,request));if(!request.get("close")->boolean)response(a,request);
 }
 void sender_exact_and_bounded(){

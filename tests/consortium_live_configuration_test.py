@@ -26,6 +26,7 @@ PREFIX = r'''
 #include <atomic>
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <iostream>

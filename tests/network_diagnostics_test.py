@@ -97,12 +97,14 @@ void diagnostic_log(const char* level,const char* tag,const char* format,...){
 }
 esp_err_t esp_event_handler_register(esp_event_base_t base,int32_t event,esp_event_handler_t fn,void* context){
     assert(base==WIFI_EVENT&&event==ESP_EVENT_ANY_ID&&context==nullptr&&register_calls==0);++event_calls;
-    if(event_result==ESP_OK)sdk_event=fn;return event_result;
+    if(event_result==ESP_OK)sdk_event=fn;
+    return event_result;
 }
 esp_err_t esp_wifi_set_tx_done_cb(wifi_tx_done_cb_t fn){
     assert(event_calls==1&&fn);++register_calls;
     if(registration_event)sdk_event(nullptr,WIFI_EVENT,registration_event,reinterpret_cast<void*>(uintptr_t{7}));
-    if(register_result==ESP_OK)sdk_done=fn;return register_result;
+    if(register_result==ESP_OK)sdk_done=fn;
+    return register_result;
 }
 esp_err_t esp_wifi_get_ps(wifi_ps_type_t* mode){++ps_calls;*mode=actual_ps;return ps_result;}
 extern "C" esp_err_t __real_esp_wifi_internal_tx(wifi_interface_t interface,void* buffer,uint16_t length){
