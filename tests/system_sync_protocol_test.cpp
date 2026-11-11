@@ -15,9 +15,9 @@ c::RuntimeStatus role;
 c::RuntimeControlHooks hooks;
 std::vector<c::RuntimePeerStatus> peers;
 std::vector<s::OwnedIntent> sent;
-struct Packet {s::OctopusId owner;c::Kind kind;std::string payload;uint32_t ttl;};
+struct Packet {s::OctopusId owner;c::Kind kind;std::string payload;};
 std::vector<Packet> packets;
-struct ResultPacket {s::OctopusId owner;s::LinkId link;std::string payload;uint32_t ttl;uint64_t revision;};
+struct ResultPacket {s::OctopusId owner;s::LinkId link;std::string payload;uint64_t revision;};
 std::vector<ResultPacket> result_packets;
 std::vector<std::pair<s::OctopusId,s::LinkId>> result_fences;
 std::vector<s::OwnedAuthorization> deadline_queries;
@@ -97,11 +97,11 @@ std::vector<RuntimePeerStatus> runtime_peers(){if(fixture::require_report_lock)f
 void runtime_control_hooks(RuntimeControlHooks hooks){fixture::hooks=std::move(hooks);}
 esp_err_t runtime_send_owned(const model::OwnedIntent& intent){fixture::sent.push_back(intent);return fixture::send_result;}
 bool runtime_owned_authorized(const model::OwnedAuthorization&){++fixture::authorization_checks;return fixture::auth_allowed;}
-static esp_err_t record_report(model::OctopusId owner,Kind kind,std::string payload,uint32_t ttl){fixture::packets.push_back({owner,kind,std::move(payload),ttl});if(fixture::on_report_send)fixture::on_report_send();return fixture::report_result;}
-esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint32_t ttl,uint64_t revision){
+static esp_err_t record_report(model::OctopusId owner,Kind kind,std::string payload){fixture::packets.push_back({owner,kind,std::move(payload)});if(fixture::on_report_send)fixture::on_report_send();return fixture::report_result;}
+esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint64_t revision){
     const auto payload="{\"snapshot\":"+owned_snapshot_json(snapshot)+"}";
-    if(!link)return record_report(owner,Kind::scoped_result,payload,ttl);
-    fixture::result_packets.push_back({owner,link,payload,ttl,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;
+    if(!link)return record_report(owner,Kind::scoped_result,payload);
+    fixture::result_packets.push_back({owner,link,payload,revision});if(fixture::on_report_send)fixture::on_report_send();return fixture::current_result_link&&fixture::current_result_link!=link?ESP_ERR_INVALID_STATE:fixture::report_result;
 }
 std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId boot){
     if(fixture::require_retry_lock)fixture::require_state_lock();
@@ -432,7 +432,7 @@ void report_coalescing_and_no_intent_backlog(){
     member.observer(local);local.discovery_generation=4;member.snapshots={local};member.observer(local);assert(amity::state.pending_reports.size()==1);
     report_result=ESP_FAIL;amity::flush_reports();assert(packets.size()==1&&amity::state.pending_reports.empty()&&amity::state.retry_reports[0]&&sent.empty());
     report_result=ESP_OK;amity::flush_reports();assert(packets.size()==2&&amity::state.pending_reports.empty());
-    assert(packets.back().kind==c::Kind::scoped_result&&packets.back().owner==original&&packets.back().ttl==1000);
+    assert(packets.back().kind==c::Kind::scoped_result&&packets.back().owner==original);
     auto body=json(packets.back().payload);s::OwnedAdapterSnapshot actual;assert(c::parse_owned_snapshot(*body.get("snapshot"),actual)&&actual.discovery_generation==4);
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);auto intent=down(main);intent.target.port.octopus_id=id<s::OctopusId>(9);
     send_result=ESP_FAIL;assert(!main.sender(intent)&&sent.size()==1);amity::flush_reports();assert(sent.size()==1);
@@ -451,7 +451,7 @@ void dropped_snapshot_recaptures_latest_without_regression(){
     // and immutable scope return; the worker recaptures the current cache.
     hooks.snapshot_retry(retry);assert(result_packets.empty());amity::flush_reports();assert(result_packets.size()==1);
     auto decoded=[&](const std::string& payload){s::OwnedAdapterSnapshot value;const auto body=json(payload);assert(c::parse_owned_snapshot(*body.get("snapshot"),value));return value;};
-    assert(decoded(result_packets.back().payload).discovery_generation==3&&result_packets.back().link==retry.link&&result_packets.back().revision==23&&result_packets.back().ttl==1000);
+    assert(decoded(result_packets.back().payload).discovery_generation==3&&result_packets.back().link==retry.link&&result_packets.back().revision==23);
     // A cache update can precede its observer. Recovery reads that latest state,
     // rather than replaying the payload which originally expired.
     latest.discovery_generation=4;member.snapshots={latest};hooks.snapshot_retry(retry);amity::flush_reports();

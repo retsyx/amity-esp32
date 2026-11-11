@@ -376,7 +376,7 @@ void restart_flags_gate_front_doors_before_scope_rotation(){
   assert(send_snapshot(a->peer)==ESP_ERR_INVALID_STATE);
   assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);
   model::OwnedAdapterSnapshot report;report.owner=original.local_id;report.boot=original.local_boot_id;
-  assert(runtime_send_owned_result(a->peer,original.link_id,report,1000,1)==ESP_ERR_INVALID_STATE);
+  assert(runtime_send_owned_result(a->peer,original.link_id,report,1)==ESP_ERR_INVALID_STATE);
   unsigned captures=0;a->context_ready=false;controls.ready=[&](auto,auto,auto){++captures;return true;};
   assert(!initialize_context(*a)&&captures==0&&a->queue.empty());
   group.role=Group::member;group.authority=a->peer;boot=original.local_boot_id;

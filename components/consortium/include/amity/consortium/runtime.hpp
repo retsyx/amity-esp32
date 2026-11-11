@@ -167,7 +167,7 @@ std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames();
 // Delivery and live authorization for original Amity actions.
 esp_err_t runtime_send_owned(const model::OwnedIntent&);
 // An empty link publishes to the current session; retries name their exact link.
-esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,const model::OwnedAdapterSnapshot&,uint32_t ttl_ms=1000,uint64_t config_revision=0);
+esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,const model::OwnedAdapterSnapshot&,uint64_t config_revision=0);
 void runtime_fence_owned_link(model::OctopusId,model::LinkId);
 uint64_t runtime_owned_deadline(const model::OwnedAuthorization&);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);

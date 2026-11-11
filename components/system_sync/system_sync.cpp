@@ -176,8 +176,8 @@ void flush_reports(){
         const auto report=std::find_if(latest.begin(),latest.end(),[&](const auto& p){return p.adapter==adapter&&p.owner==state.control->octopus_id()&&p.boot==local_boot;});
         if(report==latest.end())continue;
         bool sent=false;
-        if(retry.link)sent=c::runtime_send_owned_result(retry.controller,retry.link,*report,1000,retry.config_revision)==ESP_OK;
-        else for(const auto& remote:peers)if(remote.ready){sent=c::runtime_send_owned_result(remote.id,{},*report,1000)==ESP_OK;break;}
+        if(retry.link)sent=c::runtime_send_owned_result(retry.controller,retry.link,*report,retry.config_revision)==ESP_OK;
+        else for(const auto& remote:peers)if(remote.ready){sent=c::runtime_send_owned_result(remote.id,{},*report)==ESP_OK;break;}
         if(!sent){retry.owner_boot=local_boot;retry_report(retry);} // Bounded recapture flag, never expired payload or executable work.
     }
 }
