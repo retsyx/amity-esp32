@@ -5,8 +5,8 @@
 # License, or (at your option) any later version.
 
 cmake_minimum_required(VERSION 3.22)
-set(PROJECT_VER "0.1.159")
-set(PROJECT_VER_NUMBER 160)
+set(PROJECT_VER "0.1.160")
+set(PROJECT_VER_NUMBER 161)
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Source tools/env.sh before building")
 endif()
@@ -19,6 +19,28 @@ endforeach()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(amity)
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)
+
+# Keep the SDK's AES DMA implementation and release its first bounce buffer
+# when the second allocation fails. Compile a checked generated copy without
+# modifying the installed SDK or changing crypto modes and allocation sizes.
+if(CONFIG_SOC_AES_SUPPORT_DMA)
+    set(AMITY_AES_DMA_SOURCE "$ENV{IDF_PATH}/components/mbedtls/port/aes/dma/esp_aes_dma_core.c")
+    set(AMITY_AES_DMA_PATCH "${CMAKE_SOURCE_DIR}/tools/patch_esp_aes_dma.py")
+    set(AMITY_AES_DMA_FIXED "${CMAKE_BINARY_DIR}/sdk-fixes/esp_aes_dma_core.c")
+    get_target_property(AMITY_CRYPTO_SOURCES tfpsacrypto SOURCES)
+    list(FIND AMITY_CRYPTO_SOURCES "${AMITY_AES_DMA_SOURCE}" AMITY_AES_DMA_INDEX)
+    if(AMITY_AES_DMA_INDEX LESS 0)
+        message(FATAL_ERROR "The SDK AES DMA source changed; review its cleanup fix")
+    endif()
+    execute_process(COMMAND ${PYTHON} "${AMITY_AES_DMA_PATCH}"
+        --input "${AMITY_AES_DMA_SOURCE}" --output "${AMITY_AES_DMA_FIXED}"
+        COMMAND_ERROR_IS_FATAL ANY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${AMITY_AES_DMA_SOURCE}" "${AMITY_AES_DMA_PATCH}")
+    list(REMOVE_AT AMITY_CRYPTO_SOURCES ${AMITY_AES_DMA_INDEX})
+    list(APPEND AMITY_CRYPTO_SOURCES "${AMITY_AES_DMA_FIXED}")
+    set_property(TARGET tfpsacrypto PROPERTY SOURCES "${AMITY_CRYPTO_SOURCES}")
+endif()
 
 add_custom_target(check-firmware-layouts ALL
     COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_firmware_layouts.py
