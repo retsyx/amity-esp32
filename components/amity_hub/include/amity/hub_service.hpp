@@ -40,6 +40,8 @@ public:
     esp_err_t configure_scoped(std::vector<Activity>,std::vector<system::ScopedSelector>,OwnedSender,
         system::OctopusId controller,uint64_t config_revision,std::function<esp_err_t()> commit={},uint64_t presentation_revision=1,std::vector<system::OctopusId> owners={},std::function<bool(const Snapshot&)> can_commit={});
     system::AdmissionResult submit_owned(const system::OwnedIntent&,const system::OwnedAuthorization&,uint32_t timeout_ms=1000);
+    system::AdmissionResult submit_key_edges(const std::array<system::KeyEdge,2>&,uint8_t count,uint64_t activity_generation,
+        system::LinkId,uint64_t deadline_ms,uint32_t timeout_ms=1000);
     esp_err_t bind_owned_controller(system::OctopusId,uint64_t config_revision);
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)>);
     void set_owned_deadline(std::function<uint64_t(const system::OwnedAuthorization&)>);

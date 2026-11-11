@@ -29,6 +29,7 @@ esp_err_t SystemControl::configure(config_store::Configuration config,std::funct
     for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
     const auto previous=active_configuration();
     auto published=std::make_shared<const PublishedConfiguration>(std::move(config));
+    if(published->policy_hash.empty())return ESP_FAIL;
     auto stored=std::shared_ptr<const config_store::Configuration>(published,&published->configuration);
     const auto can_commit=[previous,stored](const Snapshot& state){
         if(!previous)return state.current_activity<0;
@@ -49,7 +50,9 @@ esp_err_t SystemControl::configure(config_store::Configuration config,std::funct
 }
 esp_err_t SystemControl::configure_passive_metadata(const config_store::Configuration& config){
     std::string error;if(local_coordinator_.load()||!config_store::validate_configuration(config,error)||config.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
-    std::atomic_store(&active_,std::make_shared<const PublishedConfiguration>(config));return ESP_OK;
+    auto published=std::make_shared<const PublishedConfiguration>(config);
+    if(published->policy_hash.empty())return ESP_FAIL;
+    std::atomic_store(&active_,std::move(published));return ESP_OK;
 }
 esp_err_t SystemControl::request_activity(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
     refresh_outcomes();

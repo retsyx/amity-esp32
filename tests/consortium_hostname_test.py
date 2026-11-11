@@ -7,6 +7,7 @@ from setup_timing_support import timing_support
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
 #include "hostname_registry.hpp"
+#include "runtime_persistence.hpp"
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include "amity/consortium/session.hpp"
@@ -17,7 +18,7 @@ PREFIX=r'''
 #include <mutex>
 using namespace amity::consortium;using namespace amity::consortium::platform;
 using esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NOT_SUPPORTED=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5;
-std::mutex lock;Group group,durable;Identity identity;HostnameRegistry hostnames;
+std::mutex lock,persistence_lock;Group group,durable;Identity identity;HostnameRegistry hostnames;
 uint64_t candidate_deadline=1000;bool candidate_passive=false;unsigned saves=0;bool save_failure=false,registry_failure=false;std::string current_name="factory-name",proposal_bytes;std::vector<std::string> effects;
 uint64_t now_ms(){return 100;}
 struct Network {std::function<esp_err_t(const std::string&)> set_hostname;std::function<std::string()> get_hostname;std::function<esp_err_t(model::JoinId,const std::string&,const std::string&,const std::string&)> stage_transaction;std::function<esp_err_t(model::JoinId,const std::string&)> commit_transaction,finish_transaction;std::function<void()> rollback;}network;
@@ -45,7 +46,7 @@ struct LinkTrace {const char* phase="",*reason="";Error error=Error::none;bool f
 struct Active {Session session;FakeTls storage;FakeTls* tls=&storage;model::OctopusId peer;std::mutex mutex;struct{std::string hostname;}status;SynchronizationRound synchronization;std::optional<SynchronizationRound> pending_synchronization;std::string advertised_hostname;};
 unsigned sent=0;bool send(Active&,Kind kind,std::string_view payload,uint32_t){assert(kind==Kind::device_status&&payload.find(current_name)!=std::string_view::npos);++sent;return true;}
 bool current_peer_credential(const Active& active,const Group&){return active.peer==id<model::OctopusId>(3);}
-Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}
+Error remember_hostname(model::OctopusId owner,const std::string& name,std::unique_lock<std::mutex>&){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}
 LinkScope scope(){return {id<model::LinkId>(5),id<model::ConsortiumId>(2),id<model::OctopusId>(4),id<model::OctopusId>(3),id<model::OctopusId>(4),id<model::BootId>(6),id<model::BootId>(7),1,1};}
 void start(Active& active,bool capable=true){auto sc=scope();active.peer=sc.peer_id;assert(active.session.authenticate(sc,sc.peer_id,PeerRole::actuator,true)==Error::none);HelloFrame h;h.consortium_id=sc.consortium_id;h.octopus_id=sc.peer_id;h.boot_id=sc.peer_boot_id;h.coordinator_epoch=1;h.config_revision=1;h.required_capabilities=known_capabilities&~(capable?0u:hostname_metadata);assert(active.session.hello(h,known_capabilities)==Error::none);}
 std::string packet(std::string name="remote-name",unsigned destination=4){auto sc=scope();return "{\"protocol_version\":1,\"consortium_id\":\""+sc.consortium_id.str()+"\",\"origin_octopus_id\":\""+sc.peer_id.str()+"\",\"origin_boot_id\":\""+sc.peer_boot_id.str()+"\",\"destination_octopus_id\":\""+id<model::OctopusId>(destination).str()+"\",\"destination_boot_id\":\""+sc.local_boot_id.str()+"\",\"coordinator_epoch\":\"1\",\"config_revision\":\"1\",\"kind\":\"device_status\",\"ttl_ms\":1000,\"payload\":{\"hostname\":\""+name+"\"}}";}

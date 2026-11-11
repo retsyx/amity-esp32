@@ -4,6 +4,13 @@
 #include "key_request.hpp"
 #include "json_input.hpp"
 #include <iostream>
+#include <openssl/evp.h>
+static bool fail_policy_hash=false;
+extern "C" unsigned char* amity_test_sha256(const unsigned char* data,size_t size,unsigned char* digest){
+    if(fail_policy_hash)return nullptr;
+    unsigned length=0;
+    return EVP_Digest(data,size,digest,&length,EVP_sha256(),nullptr)==1&&length==32?digest:nullptr;
+}
 using namespace amity::system;
 static void drain(unsigned count=120){run_idle(static_cast<int>(count));}
 static std::string outcome(const amity::SystemControl& control,MessageId id){for(const auto& result:control.execution_snapshot().activity_outcomes)if(result.request_id==id)return result.stage;assert(false);return {};}
@@ -25,6 +32,18 @@ int main(){
     const auto initial_configuration=original.active_configuration();
     assert(initial_configuration&&initial_configuration.get()==original.active_configuration().get());
     assert(original.accepts_local_input()&&original.active_configuration());
+    // A valid candidate whose hash cannot be computed must not reach either
+    // persistence or live publication, including equipment unused by activities.
+    auto failed_hash_candidate=config;
+    fixture_equipment(failed_hash_candidate,"Unused player","source",Side::back);
+    ++failed_hash_candidate.config_revision;
+    std::string hash_candidate_error;assert(validate_configuration(failed_hash_candidate,hash_candidate_error));
+    unsigned failed_hash_commits=0;
+    fail_policy_hash=true;
+    assert(original.configure(failed_hash_candidate,[&]{++failed_hash_commits;return ESP_OK;})==ESP_FAIL);
+    fail_policy_hash=false;
+    assert(failed_hash_commits==0&&original.active_configuration().get()==initial_configuration.get());
+    drain(4);assert(original.execution_snapshot().applied_policy_hash==executable_policy_hash(config));
     const auto first=config.activities[0].activity_id;
     auto generation=original.remote_activity_generation();const auto selection=original.activity_selection();
     assert(original.request_remote_activity(0,generation+1)==ESP_ERR_INVALID_STATE&&original.activity_selection()==selection);
@@ -179,5 +198,10 @@ int main(){
     available=false;interrupted.fence_owned(remote,id<LinkId>(93));drain();assert(interrupted.snapshot().current_activity==0&&outcome(interrupted,broken)=="applied");
     // A headless member cannot originate activity, remote or integration work.
     amity::SystemControl member;member.set_identity(config.consortium_id,remote);member.set_boot_identity(id<BootId>(91));member.set_coordinator_authority(false,1);assert(member.start(1,2)==ESP_OK);assert(!member.accepts_local_input()&&member.remote_activity_generation()==0);assert(member.request_remote_activity(0)==ESP_ERR_INVALID_STATE&&!member.press_remote_key(1)&&!member.release_remote_key());assert(member.request_activity(config.primary_zone_id,first,id<MessageId>(804))==ESP_ERR_INVALID_STATE);assert(!web_admin::submit_key_request(member,key_request,[](uint16_t){assert(false);}));
+    assert(member.configure_passive_metadata(config)==ESP_OK);const auto previous_metadata=member.active_configuration();
+    fail_policy_hash=true;assert(member.configure_passive_metadata(failed_hash_candidate)==ESP_FAIL);fail_policy_hash=false;
+    assert(member.active_configuration().get()==previous_metadata.get());
+    assert(member.configure_passive_metadata(failed_hash_candidate)==ESP_OK);
+    assert(serialize_configuration(*member.active_configuration())==serialize_configuration(failed_hash_candidate));
     std::cout<<"PASS actual activity facade: generation and gate/repair parity, independent key-up, stable-ID ordered selection, offline AVR/switch intent and IPC-before-persistence\n";
 }

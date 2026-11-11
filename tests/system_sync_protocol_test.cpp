@@ -118,6 +118,17 @@ esp_err_t cancel_staged_configuration(){fixture::journal->cancel_stage();return 
 
 namespace {
 using namespace fixture;
+void configuration_revision_waits_for_a_complete_hash(){
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    main.applied.applied_config_revision=main.configuration.config_revision;
+    main.applied.applied_presentation_revision=main.configuration.presentation_revision;
+    amity::publish_configuration_revision();assert(configuration_changes.empty());
+    main.applied.applied_policy_hash=std::string(63,'a');
+    amity::publish_configuration_revision();assert(configuration_changes.empty());
+    const auto hash=executable_policy_hash(main.configuration);main.applied.applied_policy_hash=hash;
+    amity::publish_configuration_revision();amity::publish_configuration_revision();
+    assert(configuration_changes.size()==1&&configuration_changes[0].first==main.configuration.config_revision&&configuration_changes[0].second==hash);
+}
 void startup_and_minimal_handshake(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     assert(hooks.snapshot&&hooks.synchronize&&hooks.control&&hooks.disconnected&&hooks.ready&&hooks.restart_session&&main.sender&&main.observer&&main.authorizer&&main.deadline);
@@ -155,27 +166,37 @@ void intent_delivery_preserves_authorization(){
     reset();auto member=control(true);assert(amity::start_configuration_synchronization(member)==ESP_OK);
     const auto original=*member.configuration.controller_octopus_id;const auto intent=down(member);auto received=envelope(member,original,intent);
     const auto link=id<s::LinkId>(44);const uint64_t deadline=123456;
-    assert(hooks.control(original,received,deadline,link)==c::Error::none&&member.submitted.size()==1&&authorization_checks==1);
-    const auto& actual=member.submitted.back();assert(actual.target.port.octopus_id==member.octopus_id()&&actual.target.port.consortium_id==member.consortium_id()&&actual.target.osd_name.empty()&&actual.generation==7&&actual.edge_count==1&&actual.edges[0].key==0x41&&actual.edges[0].down);
-    const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==received.origin_boot_id&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline);
-    assert(auth.authority==s::OwnedAuthority::input);
-    assert(member.deadline(auth)==refreshed_deadline&&deadline_queries.size()==1&&deadline_queries.back().link_id==link&&deadline_queries.back().deadline_ms==deadline);
+    assert(hooks.control(original,received,deadline,link)==c::Error::none&&member.key_deliveries.size()==1);
+    const auto& actual=member.key_deliveries.back();
+    assert(actual.generation==7&&actual.count==1&&actual.edges[0].key==0x41&&actual.edges[0].down&&actual.link==link&&actual.deadline_ms==deadline);
+    assert(member.submitted.empty()&&member.authorizations.empty()&&authorization_checks==0&&deadline_queries.empty());
+    // Session admission has already authenticated this ordered input stream.
+    // The owner receives only its edges, link, generation and original deadline.
+    auth_allowed=false;
     auto up=intent;up.edges[0].down=false;auto released=envelope(member,original,up);
-    assert(hooks.control(original,released,deadline,link)==c::Error::none&&member.authorizations.back().authority==s::OwnedAuthority::cleanup);
+    assert(hooks.control(original,released,deadline,link)==c::Error::none&&member.key_deliveries.size()==2);
+    assert(member.key_deliveries.back().count==1&&!member.key_deliveries.back().edges[0].down);
+    auto tap=intent;tap.edge_count=2;tap.edges[1]={tap.edges[0].key,false};
+    assert(hooks.control(original,envelope(member,original,tap),deadline,link)==c::Error::none&&member.key_deliveries.size()==3);
+    const auto& pair=member.key_deliveries.back();assert(pair.count==2&&pair.edges[0].down&&!pair.edges[1].down&&pair.edges[0].key==pair.edges[1].key&&pair.link==link&&pair.generation==7&&pair.deadline_ms==deadline);
+    assert(member.submitted.empty()&&member.authorizations.empty()&&authorization_checks==0&&deadline_queries.empty());
+    auth_allowed=true;
+    // Activity and other non-key work retain the existing ownership check.
     auto power=intent;power.kind=s::OwnedIntentKind::activity;power.selected=true;power.source=intent.target;auto powered=envelope(member,original,power);
-    assert(hooks.control(original,powered,deadline,link)==c::Error::none&&member.authorizations.back().authority==s::OwnedAuthority::control);
-    auto tap=intent;tap.edge_count=2;tap.edges[1]={tap.edges[0].key,false};const auto pair_calls=member.submitted.size();
-    assert(hooks.control(original,envelope(member,original,tap),deadline,link)==c::Error::none&&member.submitted.size()==pair_calls+1&&member.submitted.back().edge_count==2&&member.authorizations.back().authority==s::OwnedAuthority::input);
-    auth_allowed=false;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role);auth_allowed=true;
+    assert(hooks.control(original,powered,deadline,link)==c::Error::none&&member.submitted.size()==1&&authorization_checks==1);
+    const auto& auth=member.authorizations.back();assert(auth.controller_id==original&&auth.controller_boot==powered.origin_boot_id&&auth.owner_boot==member.boot&&auth.link_id==link&&auth.config_revision==23&&auth.deadline_ms==deadline&&auth.authority==s::OwnedAuthority::control);
+    assert(member.deadline(auth)==refreshed_deadline&&deadline_queries.size()==1&&deadline_queries.back().link_id==link&&deadline_queries.back().deadline_ms==deadline);
+    auth_allowed=false;assert(hooks.control(original,powered,deadline,link)==c::Error::unauthorized_role&&authorization_checks==2);auth_allowed=true;
     for(const auto& test:std::vector<std::pair<s::AdmissionCode,c::Error>>{{s::AdmissionCode::overloaded,c::Error::queue_full},{s::AdmissionCode::expired,c::Error::expired},{s::AdmissionCode::stale,c::Error::stale_boot},{s::AdmissionCode::invalid,c::Error::invalid_message}}){member.admission=test.first;assert(hooks.control(original,received,deadline,link)==test.second);}member.admission=s::AdmissionCode::accepted;
-    const auto calls=member.submitted.size();auto target=envelope(member,original,intent);target.destination_octopus_id=id<s::OctopusId>(99);
-    assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.submitted.size()==calls);
-    target=envelope(member,original,intent);target.consortium_id=id<s::ConsortiumId>(99);
-    assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.submitted.size()==calls);
-    for(unsigned retired:{2u,4u,6u,12u,18u,20u,26u,35u,36u}){received.kind=static_cast<c::Kind>(retired);assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.submitted.size()==calls);}
+    assert(authorization_checks==2&&deadline_queries.size()==1);
+    const auto calls=member.key_deliveries.size(),owned_calls=member.submitted.size();auto wrong_target=power;wrong_target.target.port.octopus_id=id<s::OctopusId>(99);auto target=envelope(member,original,wrong_target);
+    assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
+    wrong_target=power;wrong_target.kind=s::OwnedIntentKind::discover;wrong_target.target.port.consortium_id=id<s::ConsortiumId>(99);target=envelope(member,original,wrong_target);
+    assert(hooks.control(original,target,deadline,link)==c::Error::target_not_local&&member.key_deliveries.size()==calls);
+    for(unsigned retired:{2u,4u,6u,12u,18u,20u,26u,35u,36u}){received.kind=static_cast<c::Kind>(retired);assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls);}
     received.kind=c::Kind::scoped_result;assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role);
     role.member=false;role.coordinator=true;received.kind=c::Kind::scoped_intent;
-    assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.submitted.size()==calls);
+    assert(hooks.control(original,received,deadline,link)==c::Error::unauthorized_role&&member.key_deliveries.size()==calls&&member.submitted.size()==owned_calls);
 }
 void key_rejection_diagnostics_preserve_results(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
@@ -459,6 +480,7 @@ void scans_and_saved_intent_without_peer_ack(){
     assert(amity::configuration_activation_status().phase=="configuring");
     assert(configuration_changes.empty());
     main.applied.applied_presentation_revision=status.presentation_revision;
+    main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
     assert(amity::configuration_activation_status().phase=="applied");
     assert(configuration_changes.size()==1&&configuration_changes[0].first==status.config_revision);
     assert(main.configuration.activities[0].audio==candidate.activities[0].source&&packets.empty()&&sent.empty()&&configuration_changes.size()==1);
@@ -518,4 +540,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, derived authority/exact auth/deadline, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){configuration_revision_waits_for_a_complete_hash();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_snapshot_recaptures_latest_without_regression();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

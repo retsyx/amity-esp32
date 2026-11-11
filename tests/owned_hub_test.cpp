@@ -2,7 +2,9 @@
 #include "cec_hub_fixture.hpp"
 static bool measure_request_allocations=false;
 static size_t request_allocations=0,largest_request_allocation=0;
+static std::function<void()> before_request_allocation;
 void* operator new(size_t size,const std::nothrow_t&)noexcept{
+    if(before_request_allocation){auto callback=std::move(before_request_allocation);before_request_allocation={};callback();}
     if(measure_request_allocations){++request_allocations;largest_request_allocation=std::max(largest_request_allocation,size);}
     try{return ::operator new(size);}catch(...){return nullptr;}
 }
@@ -20,18 +22,20 @@ static void finish_local(HubService& hub){
     for(unsigned pass=0;pass<96;++pass){run_idle(1);if(!hub.activity_setup_in_progress()&&fixture_pending.empty())return;}
     assert(false&&"Local activity did not finish actual TX steps");
 }
-static void compact_keys_and_quiet_publication(){
+static void compact_keys_and_quiet_publication(bool scoped){
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
-    HubService hub;assert(hub.start(1,2)==ESP_OK);
-    assert(hub.configure({{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    HubService hub;if(scoped){hub.set_system_identity(group,controller);hub.set_boot_identity(boot);}assert(hub.start(1,2)==ESP_OK);
+    if(scoped)assert(hub.configure_scoped({{"Watch","display","source","source","",0}},
+        {{"display",named(controller,m::Side::front,"TV")},{"source",named(controller,m::Side::back,"Source")}}, {},controller,1)==ESP_OK);
+    else assert(hub.configure({{"Watch","TV","Source","Source","",0}}));
+    run_one_command();fixture_finish_discovery(hub);
     assert(hub.select_activity(0));run_one_command();finish_local(hub);run_idle(4);
     fixture_tick=0;fixture_async_autocomplete=false;
     unsigned publications=0,observations=0;
     hub.on_change([&](const auto&){++publications;});hub.set_owned_observer([&](const auto&){++observations;});
     request_allocations=largest_request_allocation=0;measure_request_allocations=true;
-    assert(hub.press_key(4,true));measure_request_allocations=false;
+    assert(hub.press_key(4,true));run_one_command();measure_request_allocations=false;
     assert(request_allocations==1&&largest_request_allocation<=96); // Host pointer width is larger than the target's.
-    run_one_command();
     for(unsigned repeat=0;repeat<4;++repeat){
         assert(fixture_complete_next(cec::TxResult::Success,2));
         request_allocations=0;measure_request_allocations=true;run_idle(1);measure_request_allocations=false;
@@ -207,12 +211,15 @@ static void owner_keys(){
     assert(hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     bool authority=true;hub.set_owned_authorizer([&](const auto&){return authority;});
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
-    auto issue=[&](m::OwnedIntent& intent){if(!intent.generation)intent.generation=1;auto scoped_auth=auth;scoped_auth.authority=intent.kind==m::OwnedIntentKind::key_edges?(intent.edges[0].down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup):m::OwnedAuthority::control;return hub.submit_owned(intent,scoped_auth);};
+    auto issue=[&](m::OwnedIntent& intent){if(!intent.generation)intent.generation=1;return intent.kind==m::OwnedIntentKind::key_edges?hub.submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):hub.submit_owned(intent,auth);};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.selected=true;context.source=context.audio=named(member,m::Side::back,"Source");assert(issue(context));
     auto down=[&](uint8_t key){m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::key_edges;intent.target.port={group,member,0,m::Side::front};intent.edges[0]={key,true};intent.edge_count=1;return intent;};
     auto right=down(4),volume=down(0x41);
     fixture_async_autocomplete=false;fixture_sent.clear();
-    assert(issue(right));assert(issue(volume));
+    request_allocations=largest_request_allocation=0;measure_request_allocations=true;
+    assert(issue(right));measure_request_allocations=false;
+    assert(request_allocations==1&&largest_request_allocation<=96);
+    assert(issue(volume));
     assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& f){return f.frame.size>=3&&f.frame.data[1]==0x44;})==2);
     auto up=right;up.edges[0].down=false;assert(issue(up));
     assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& f){return f.frame.size==2&&f.frame.data[1]==0x45;}));
@@ -220,8 +227,9 @@ static void owner_keys(){
     const auto stream_count=[](){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){return frame.frame.size>1&&(frame.frame.data[1]==0x44||frame.frame.data[1]==0x45);});};
     const auto count=stream_count();assert(issue(volume));assert(stream_count()==count);
     up=volume;up.edges[0].down=false;assert(issue(up));assert(stream_count()==count);
-    auto wrong=auth;wrong.authority=m::OwnedAuthority::input;wrong.owner_boot=controller_boot;auto bad=down(3);bad.generation=1;assert(!hub.submit_owned(bad,wrong));
-    authority=false;auto denied_auth=auth;denied_auth.authority=m::OwnedAuthority::input;assert(!hub.submit_owned(bad,denied_auth));authority=true;
+    auto wrong=auth;wrong.owner_boot=controller_boot;assert(!hub.submit_owned(context,wrong));
+    authority=false;assert(!hub.submit_owned(context,auth));authority=true;
+    auto bad=down(3);bad.generation=1;assert(!hub.submit_key_edges(bad.edges,bad.edge_count,bad.generation,*m::LinkId::parse(std::string(32,'7')),0));
     fixture_async_autocomplete=true;fixture_complete_all();run_idle(2);
 }
 static void audio_keys_use_audio_or_display(bool remote_owner){
@@ -269,8 +277,8 @@ static void audio_keys_use_audio_or_display(bool remote_owner){
             if(!remote_owner){const bool admitted=down?hub.press_key(raw,true):hub.release_key(raw);run_one_command();return admitted;}
             m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port=display.port;
             input.generation=generation;input.edges[0]={raw,down};input.edge_count=1;
-            auto permitted=auth;permitted.authority=down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup;
-            return bool(hub.submit_owned(input,permitted));
+
+            return bool(hub.submit_key_edges(input.edges,input.edge_count,input.generation,auth.link_id,auth.deadline_ms));
         };
         const int audio_gpio=phase==0?1:6;
         const uint8_t audio_address=phase==0?0:4;
@@ -446,7 +454,7 @@ static std::vector<std::vector<SentFrame>> receiver_transcript(bool remote){
             {{"display",named(member,m::Side::front,"TV")},{"player",named(member,m::Side::back,"Player")},{"receiver",named(member,m::Side::back,"Receiver")}},
             [&](const m::OwnedIntent& intent){
                 assert(intent.target.port.octopus_id==member);auto* previous=latest_task;latest_task=other_task;
-                m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};auth.authority=intent.kind==m::OwnedIntentKind::key_edges?(intent.edges[0].down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup):m::OwnedAuthority::control;const auto admitted=other->submit_owned(intent,auth);latest_task=previous;
+                m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};const auto admitted=(intent.kind==m::OwnedIntentKind::key_edges?other->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):other->submit_owned(intent,auth));latest_task=previous;
                 return admitted.code==m::AdmissionCode::accepted||admitted.code==m::AdmissionCode::pending||admitted.code==m::AdmissionCode::overloaded||admitted.code==m::AdmissionCode::unresolved;
             },controller,1)==ESP_OK);
     }else assert(primary.configure({{"Watch","TV","Player","Receiver","Receiver",3}}));
@@ -665,7 +673,7 @@ static void cold_lookup_waiters_resume_in_arrival_order(){
     const auto presses=[&](uint8_t raw){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){return raw==1?(tx.gpio==2&&tx.frame.size==3&&tx.frame.data[1]==0x44&&tx.frame.data[2]==0x6d):raw==2?(tx.gpio==5&&tx.frame.size==2&&tx.frame.data[1]==0x04):(tx.gpio==6&&tx.frame.size==3&&tx.frame.data[1]==0x44&&tx.frame.data[2]==raw);});};
     // This recipient is already cached on the unscanned opposite side. New
     // independent input and ordinary RX remain responsive past the waiters.
-    m::OwnedIntent key;key.kind=m::OwnedIntentKind::key_edges;key.target.port={group,member,0,m::Side::front};key.generation=1;key.edges[0]={0x41,true};key.edges[1]={0x41,false};key.edge_count=2;auto input_auth=auth;input_auth.authority=m::OwnedAuthority::input;assert(hub.submit_owned(key,input_auth));assert(presses(0x41)==1);
+    m::OwnedIntent key;key.kind=m::OwnedIntentKind::key_edges;key.target.port={group,member,0,m::Side::front};key.generation=1;key.edges[0]={0x41,true};key.edges[1]={0x41,false};key.edge_count=2;assert(hub.submit_key_edges(key.edges,key.edge_count,key.generation,auth.link_id,auth.deadline_ms));assert(presses(0x41)==1);
     fixture_incoming.push_back({1,{{0x04,0x46},2}});run_idle(2);
     assert(std::any_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.gpio==1&&tx.frame.size>1&&tx.frame.data[1]==0x47;}));
     bool front_ready=false;
@@ -711,7 +719,7 @@ static void transmission_only_rx_does_not_block_a_ready_lookup(){
     };
     m::OwnedIntent key;key.kind=m::OwnedIntentKind::power;key.target=named(member,m::Side::front,"WantedFront",1);key.generation=1;key.on=true;
     assert(hub.submit_owned(key,auth).code==m::AdmissionCode::pending);
-    m::OwnedIntent cached;cached.kind=m::OwnedIntentKind::key_edges;cached.target.port={group,member,0,m::Side::front};cached.generation=1;cached.edges[0]={0x41,true};cached.edges[1]={0x41,false};cached.edge_count=2;auto input_auth=auth;input_auth.authority=m::OwnedAuthority::input;assert(hub.submit_owned(cached,input_auth));
+    m::OwnedIntent cached;cached.kind=m::OwnedIntentKind::key_edges;cached.target.port={group,member,0,m::Side::front};cached.generation=1;cached.edges[0]={0x41,true};cached.edges[1]={0x41,false};cached.edge_count=2;assert(hub.submit_key_edges(cached.edges,cached.edge_count,cached.generation,auth.link_id,auth.deadline_ms));
     fixture_incoming.push_back({1,{{0x04,0x46},2}});run_idle(2);
     assert(std::any_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.gpio==1&&tx.frame.size>1&&tx.frame.data[1]==0x47;}));
     bool ready=false;
@@ -735,7 +743,7 @@ static void raw_keys_resolve_current_role_on_sparse_adapter(){
     assert(hub.start(profile)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,1,m::Side::front};context.generation=1;context.selected=true;context.source=context.audio=named(member,m::Side::back,"Source",1);assert(hub.submit_owned(context,auth));
-    auto edge=[&](uint8_t raw,bool down){m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port={group,member,0,m::Side::front};input.generation=1;input.edges[0]={raw,down};input.edge_count=1;auto permitted=auth;permitted.authority=down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup;return hub.submit_owned(input,permitted);};
+    auto edge=[&](uint8_t raw,bool down){m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port={group,member,0,m::Side::front};input.generation=1;input.edges[0]={raw,down};input.edge_count=1;return hub.submit_key_edges(input.edges,input.edge_count,input.generation,auth.link_id,auth.deadline_ms);};
     const auto count=[&](uint8_t address,uint8_t opcode,uint8_t key=0){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){return tx.gpio==6&&tx.frame.destination()==address&&tx.frame.size>1&&tx.frame.data[1]==opcode&&(opcode!=0x44||(tx.frame.size==3&&tx.frame.data[2]==key));});};
     fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();
     assert(edge(0x61,true)&&count(4,0x44,0x44)==1);assert(edge(0x61,true)&&count(4,0x44,0x44)==1);
@@ -757,18 +765,92 @@ static void raw_keys_resolve_current_role_on_sparse_adapter(){
     assert(edge(4,false)&&count(8,0x45)==before_audio_up+1);
     fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);fixture_peer_address={};fixture_tick=100000;
 }
-static void releasing_one_key_does_not_authorize_another_repeat(){
+static void independent_release_and_link_fencing(){
     fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
     HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=1;context.selected=true;context.source=context.audio=named(member,m::Side::back,"Source");assert(hub.submit_owned(context,auth));
-    bool positive=true;hub.set_owned_authorizer([&](const auto& current){return current.authority!=m::OwnedAuthority::input||positive;});
-    auto edge=[&](uint8_t raw,bool down){m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port={group,member,0,m::Side::front};input.generation=1;input.edges[0]={raw,down};input.edge_count=1;auto permitted=auth;permitted.authority=down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup;return hub.submit_owned(input,permitted);};
+    unsigned authorizations=0;hub.set_owned_authorizer([&](const auto&){++authorizations;return true;});
+    auto edge=[&](uint8_t raw,bool down){m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port={group,member,0,m::Side::front};input.generation=1;input.edges[0]={raw,down};input.edge_count=1;return hub.submit_key_edges(input.edges,input.edge_count,input.generation,auth.link_id,auth.deadline_ms);};
     const auto volume=[](){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.gpio==2&&tx.frame.size==3&&tx.frame.data[1]==0x44&&tx.frame.data[2]==0x41;});};
-    fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();assert(edge(4,true)&&edge(0x41,true)&&volume()==1);
-    assert(edge(4,false));positive=false;fixture_complete_all();run_idle(4);assert(volume()==1);
-    assert(!edge(0x41,true)&&volume()==1);assert(edge(0x41,false)&&volume()==1);
+    fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();assert(edge(4,true)&&edge(0x41,true)&&volume()==1);
+    assert(edge(4,false));const auto checked=authorizations;fixture_complete_all();run_idle(4);assert(volume()==2&&authorizations==checked);
+    const auto epoch=hub.input_epoch();
+    assert(hub.fence_owned(member,link)&&hub.input_epoch()==epoch);
+    assert(hub.fence_owned(controller,*m::LinkId::parse(std::string(32,'7')))&&hub.input_epoch()==epoch);
+    assert(hub.fence_owned(controller,link)&&hub.input_epoch()!=epoch);
+    fixture_complete_all();run_idle(4);assert(volume()==2&&authorizations==checked);
+    assert(std::count_if(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x41;})==1);
+    assert(!edge(0x41,true)&&!edge(0x41,false)&&volume()==2);
     fixture_complete_all();fixture_async_autocomplete=true;run_idle(4);fixture_tick=100000;
+}
+static void link_fence_during_key_admission(bool stale_down){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    m::OwnedAuthorization original{controller,controller_boot,boot,link,1,0},current=original;
+    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=1;context.selected=true;context.source=context.audio=named(member,m::Side::back,"Source");
+    assert(hub.submit_owned(context,original));
+    m::OwnedIntent fresh;fresh.kind=m::OwnedIntentKind::key_edges;fresh.target.port=context.target.port;fresh.generation=1;fresh.edges[0]={0x41,true};fresh.edge_count=1;
+    auto stale=fresh;stale.edges[0]={static_cast<uint8_t>(stale_down?4:0x41),stale_down};
+    before_request_allocation=[&](){
+            assert(hub.fence_owned(controller,link));
+            current.link_id=*m::LinkId::parse(std::string(32,'7'));
+            assert(!hub.submit_key_edges(fresh.edges,fresh.edge_count,fresh.generation,current.link_id,0)&&"A key cannot install a replacement connection context");
+            assert(hub.submit_owned(context,current));
+            assert(hub.submit_key_edges(fresh.edges,fresh.edge_count,fresh.generation,current.link_id,0));
+    };
+    fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();
+    assert(hub.submit_key_edges(stale.edges,stale.edge_count,stale.generation,original.link_id,0));
+    fixture_complete_all();run_idle(3);
+    const auto presses=[](uint8_t raw){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){return tx.frame.size==3&&tx.frame.data[1]==0x44&&tx.frame.data[2]==raw;});};
+    assert(presses(4)==0&&presses(0x41)==2);
+    assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.frame.size==2&&tx.frame.data[1]==0x45;}));
+    fresh.edges[0].down=false;
+    assert(hub.submit_key_edges(fresh.edges,fresh.edge_count,fresh.generation,current.link_id,0));fixture_complete_all();run_idle(3);
+    assert(fixture_completed.size()==3&&fixture_completed[0].data[1]==0x44&&fixture_completed[1].data[1]==0x44&&fixture_completed[2].data[1]==0x45);
+    fixture_async_autocomplete=true;fixture_tick=100000;
+}
+static void link_fence_discards_pending_key_lookup(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=1;context.selected=true;context.source=named(member,m::Side::front,"TV");context.audio=named(member,m::Side::back,"Late");
+    assert(hub.submit_owned(context,auth));
+    m::OwnedIntent key;key.kind=m::OwnedIntentKind::key_edges;key.target.port=context.target.port;key.generation=1;key.edges[0]={0x41,true};key.edge_count=1;
+
+    fixture_tick=0;fixture_time+=130000000;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();
+    assert(hub.submit_key_edges(key.edges,key.edge_count,key.generation,auth.link_id,auth.deadline_ms).code==m::AdmissionCode::pending);
+    assert(hub.fence_owned(controller,link));
+    auth.link_id=*m::LinkId::parse(std::string(32,'7'));assert(hub.submit_owned(context,auth));
+    fixture_incoming.push_back({2,{{0x8f,0x84,0x20,0,4},5}});fixture_incoming.push_back({2,{{0x80,0x47,'L','a','t','e'},6}});
+    fixture_complete_all();fixture_async_autocomplete=true;fixture_finish_discovery(hub,1);run_idle(4);
+    assert(std::none_of(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x41;}));
+    key.edges[1]={0x41,false};key.edge_count=2;assert(hub.submit_key_edges(key.edges,key.edge_count,key.generation,auth.link_id,auth.deadline_ms));run_idle(4);
+    assert(std::count_if(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.destination()==8&&frame.size==3&&frame.data[1]==0x44&&frame.data[2]==0x41;})==1);
+    fixture_tick=100000;
+}
+static void pending_new_boot_context_blocks_old_routing(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);
+    assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
+    m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
+    m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=7;context.selected=true;context.source=named(member,m::Side::back,"Source");
+    assert(hub.submit_owned(context,auth));
+    auth.controller_boot=*m::BootId::parse(std::string(32,'8'));auth.link_id=*m::LinkId::parse(std::string(32,'9'));
+    context.generation=1;context.source=named(member,m::Side::front,"Late");
+    fixture_peer_name=[](int gpio){return std::string(gpio==1?"Late":"Source");};
+    fixture_tick=0;fixture_time+=130000000;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();
+    assert(hub.submit_owned(context,auth).code==m::AdmissionCode::pending);
+    const std::array<m::KeyEdge,2> tap{{{4,true},{4,false}}};
+    assert(hub.submit_key_edges(tap,2,1,auth.link_id,0).code==m::AdmissionCode::stale);
+    assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){return frame.frame.size==3&&frame.frame.data[1]==0x44&&frame.frame.data[2]==4;}));
+    fixture_complete_all();fixture_async_autocomplete=true;fixture_finish_discovery(hub,1);run_idle(4);
+    assert(hub.submit_key_edges(tap,2,1,auth.link_id,0));run_idle(4);
+    assert(std::count_if(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.destination()==0&&frame.size==3&&frame.data[1]==0x44&&frame.data[2]==4;})==1);
+    assert(std::none_of(fixture_completed.begin(),fixture_completed.end(),[](const auto& frame){return frame.destination()==4&&frame.size==3&&frame.data[1]==0x44&&frame.data[2]==4;}));
+    fixture_peer_name={};fixture_tick=100000;
 }
 static void native_key_lookup_has_no_partial_side_effects(){
     struct ResolverWire:amity::Transport{
@@ -816,8 +898,8 @@ static void cold_audio_lookup_precedes_finite_switch_transmission(){
     };
     const auto input_count=[](){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.gpio==2&&tx.frame.destination()==4&&tx.frame.size==4&&tx.frame.data[1]==0x44&&tx.frame.data[2]==0x69&&tx.frame.data[3]==3;});};
     fixture_tick=0;fixture_time+=130000000;fixture_async_autocomplete=false;fixture_sent.clear();
-    m::OwnedIntent down;down.kind=m::OwnedIntentKind::key_edges;down.target.port={group,member,0,m::Side::front};down.generation=1;down.edges[0]={0x41,true};down.edge_count=1;auto input=auth;input.authority=m::OwnedAuthority::input;
-    assert(hub.submit_owned(down,input));run_idle(1);
+    m::OwnedIntent down;down.kind=m::OwnedIntentKind::key_edges;down.target.port={group,member,0,m::Side::front};down.generation=1;down.edges[0]={0x41,true};down.edge_count=1;
+    assert(hub.submit_key_edges(down.edges,down.edge_count,down.generation,auth.link_id,auth.deadline_ms));run_idle(1);
     // A valid OSD update replaces the formerly named audio record while its
     // raw hold remains registered. The explicit switch is now warm, while
     // its independent audio role must resolve through a cold lookup.
@@ -827,7 +909,7 @@ static void cold_audio_lookup_precedes_finite_switch_transmission(){
     if(input_count())std::fprintf(stderr,"finite switch sent before aggregate lookup: %td\n",input_count());
     assert(input_count()==0);
     fixture_async_autocomplete=true;fixture_complete_all();fixture_finish_discovery(hub,1);run_idle(8);assert(input_count()==1);
-    down.edges[0].down=false;input.authority=m::OwnedAuthority::cleanup;assert(hub.submit_owned(down,input));run_idle(4);assert(input_count()==1);
+    down.edges[0].down=false;assert(hub.submit_key_edges(down.edges,down.edge_count,down.generation,auth.link_id,auth.deadline_ms));run_idle(4);assert(input_count()==1);
     fixture_send={};fixture_transmit={};fixture_tick=100000;
 }
 static void source_theft_switch_repair_preserves_audio_hold(){
@@ -835,7 +917,7 @@ static void source_theft_switch_repair_preserves_audio_hold(){
     HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=1;context.selected=true;context.display=named(member,m::Side::front,"TV");context.audio=context.switch_device=named(member,m::Side::back,"Source");context.input=3;assert(hub.submit_owned(context,auth));
-    auto edge=[&](bool down){m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port={group,member,0,m::Side::front};input.generation=1;input.edges[0]={0x41,down};input.edge_count=1;auto permitted=auth;permitted.authority=down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup;return hub.submit_owned(input,permitted);};
+    auto edge=[&](bool down){m::OwnedIntent input;input.kind=m::OwnedIntentKind::key_edges;input.target.port={group,member,0,m::Side::front};input.generation=1;input.edges[0]={0x41,down};input.edge_count=1;return hub.submit_key_edges(input.edges,input.edge_count,input.generation,auth.link_id,auth.deadline_ms);};
     const auto count=[](uint8_t opcode,uint8_t key=0){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){return tx.gpio==2&&tx.frame.destination()==4&&tx.frame.size>1&&tx.frame.data[1]==opcode&&(opcode!=0x44||(tx.frame.size>2&&tx.frame.data[2]==key));});};
     fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();assert(edge(true)&&count(0x44,0x41)==1);run_idle(1);
     fixture_incoming.push_back({2,{{0x8f,0x82,0x20,0},4}});run_idle(2);
@@ -851,9 +933,9 @@ static void member_maintenance_finishes_key_cleanup(){
     HubService hub;hub.set_system_identity(group,member);hub.set_boot_identity(boot);hub.set_coordinator_authority(false,1);assert(hub.start(1,2)==ESP_OK&&hub.bind_owned_controller(controller,1)==ESP_OK);fixture_finish_discovery(hub);
     m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
     m::OwnedIntent context;context.kind=m::OwnedIntentKind::context;context.target.port={group,member,0,m::Side::front};context.generation=1;context.selected=true;context.source=context.audio=named(member,m::Side::back,"Source");assert(hub.submit_owned(context,auth));
-    m::OwnedIntent down;down.kind=m::OwnedIntentKind::key_edges;down.target.port={group,member,0,m::Side::front};down.generation=1;down.edges[0]={0x41,true};down.edge_count=1;auto input=auth;input.authority=m::OwnedAuthority::input;
+    m::OwnedIntent down;down.kind=m::OwnedIntentKind::key_edges;down.target.port={group,member,0,m::Side::front};down.generation=1;down.edges[0]={0x41,true};down.edge_count=1;
     const auto count=[](uint8_t opcode){return std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& tx){return tx.gpio==2&&tx.frame.size>1&&tx.frame.data[1]==opcode;});};
-    fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();assert(hub.submit_owned(down,input)&&count(0x44)==1);
+    fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();assert(hub.submit_key_edges(down.edges,down.edge_count,down.generation,auth.link_id,auth.deadline_ms)&&count(0x44)==1);
     fixture_delay=[](){fixture_complete_next(cec::TxResult::Success);};
     assert(hub.begin_maintenance()==ESP_OK);fixture_delay={};fixture_complete_all();run_idle(4);
     hub.end_maintenance();fixture_async_autocomplete=true;run_idle(4);
@@ -878,7 +960,7 @@ static void distinct_activity_ids_with_identical_equipment(unsigned mode){
     const auto sender=[&](const m::OwnedIntent& intent){
         assert(other&&intent.target.port.octopus_id==member);if(intent.kind==m::OwnedIntentKind::activity)delivered_generations.push_back(intent.generation);
         auto* previous=latest_task;latest_task=other_task;m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};
-        const auto result=other->submit_owned(intent,auth);latest_task=previous;
+        const auto result=(intent.kind==m::OwnedIntentKind::key_edges?other->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):other->submit_owned(intent,auth));latest_task=previous;
         return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending;
     };
     latest_task=primary_task;
@@ -906,4 +988,4 @@ static void distinct_activity_ids_with_identical_equipment(unsigned mode){
     if(other)assert(delivered_generations.back()!=second_wire_generation);
     assert(primary.request_activity(-1)==ESP_OK);finish(-1);latest_task=primary_task;fixture_peer_address={};fixture_tick=100000;
 }
-int main(){compact_keys_and_quiet_publication();member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();releasing_one_key_does_not_authorize_another_repeat();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}
+int main(){for(bool scoped:{false,true})compact_keys_and_quiet_publication(scoped);member_selection_refreshes_projection_without_discovery();scoped_audio_fallback_chooses_display_owner();for(bool remote_owner:{false,true})audio_keys_use_audio_or_display(remote_owner);removed_owner_snapshots_release_capacity();native_key_lookup_has_no_partial_side_effects();cold_audio_lookup_precedes_finite_switch_transmission();source_theft_switch_repair_preserves_audio_hold();member_maintenance_finishes_key_cleanup();raw_keys_resolve_current_role_on_sparse_adapter();independent_release_and_link_fencing();for(bool down:{false,true})link_fence_during_key_admission(down);link_fence_discards_pending_key_lookup();pending_new_boot_context_blocks_old_routing();for(unsigned mode:{0u,1u,2u})distinct_activity_ids_with_identical_equipment(mode);cold_lookup_waiters_resume_in_arrival_order();transmission_only_rx_does_not_block_a_ready_lookup();local_parity();first_matching_osd();startup_parity();observation_pressure();owner_keys();cec_ack_controls_hold();queued_request_lifetime();every_adapter();remote_receiver_parity();configuration_preserves_discovery();activity_commits_after_source_tx_without_peer_status(false);activity_commits_after_source_tx_without_peer_status(true);for(bool scoped:{false,true})for(int next:{-1,0,1})cold_lookup_blocks_following_activity(scoped,next);std::puts("FIFO cold-lookup resumption with responsive cached keys/RX, original local/owned start/standby frame parity, queued request lifetime, CEC ACK-based hold lifecycle, first OSD match, startup taps, observation pressure, removed-owner snapshot cleanup/capacity reuse, independent owner keys, authorization, and all-adapter discovery passed");}

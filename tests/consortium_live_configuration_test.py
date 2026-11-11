@@ -12,6 +12,7 @@ from setup_timing_support import timing_support
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/runtime.hpp"
+#include "runtime_persistence.hpp"
 #include "tls_receive_trace.hpp"
 #include "amity/consortium/owned_intent.hpp"
 #include "amity/consortium/transfer.hpp"
@@ -68,7 +69,7 @@ struct Active{
 // ACK observation has a separate native test; this fixture tests IPC policy.
 void begin_release_ack(Active&,const model::OwnedIntent&,uint64_t,const network_diagnostics::Snapshot&){}
 void emit_key_network(const model::OctopusId&,uint8_t,uint64_t,uint8_t,bool,const char*,const network_diagnostics::Snapshot&,const network_diagnostics::Snapshot&){}
-std::mutex lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
+std::mutex lock,persistence_lock;RuntimeControlHooks controls;RuntimeStatus status;Group group;Identity identity;
 RuntimeNetworkHooks network;RuntimeUpdateHooks updates;
 std::vector<std::tuple<model::OctopusId,model::BootId,model::LinkId>> restart_fences;
 uint64_t configuration=7;std::string configuration_hash=std::string(64,'a');
@@ -79,7 +80,7 @@ esp_err_t runtime_send_update(model::OctopusId,Kind,std::string,uint32_t){assert
 std::function<void(Active&,const Envelope&)> on_send;
 bool send(Active&,Kind,std::string_view,uint32_t ttl=1000);
 bool current_peer_credential(const Active&,const Group&){return true;}
-Error remember_hostname(model::OctopusId,const std::string&){return Error::none;}
+Error remember_hostname(model::OctopusId,const std::string&,std::unique_lock<std::mutex>&){return Error::none;}
 unsigned pdMS_TO_TICKS(unsigned ms){return ms/10;}
 void vTaskDelay(unsigned ticks){clock_ms+=ticks*10;}
 }

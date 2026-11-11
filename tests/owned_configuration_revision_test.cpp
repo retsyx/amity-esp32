@@ -119,17 +119,18 @@ static void owner_revision_preserves_admitted_press_and_hold(){
     assert(hub.submit_owned(context,auth));
     fixture_tick=0;fixture_async_autocomplete=false;fixture_sent.clear();fixture_completed.clear();
     m::OwnedIntent press;press.kind=m::OwnedIntentKind::key_edges;press.target.port={group,member,0,m::Side::front};press.generation=7;press.edge_count=1;press.edges[0]={0x01,true};
-    auth.authority=m::OwnedAuthority::input;assert(hub.submit_owned(press,auth));
+    assert(hub.submit_key_edges(press.edges,press.edge_count,press.generation,link,0));
     assert(fixture_pending.size()==1&&fixture_pending.front().frame.data[1]==0x44);const auto generation=hub.snapshot().activity_generation;
     authorized_revision=2;assert(hub.bind_owned_controller(controller,2)==ESP_OK);
     assert(fixture_pending.size()==1&&fixture_complete_next(cec::TxResult::Success));run_idle(3);
     assert(hub.snapshot().activity_generation==generation&&hub.snapshot().current_activity==0);
     assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.frame.size>=2&&tx.frame.data[1]==0x45;}));
     fixture_time+=1000000;run_idle(3);assert(!fixture_pending.empty());
-    assert(refreshed_authorizations>0);
+    assert(refreshed_authorizations==0&&"An admitted hold does not revalidate copied per-key authority");
     assert(fixture_pending.front().frame.data[1]==0x44);assert(fixture_complete_next(cec::TxResult::Success));run_idle(2);
-    press.edges[0].down=false;auth.config_revision=2;auth.authority=m::OwnedAuthority::cleanup;
-    assert(hub.submit_owned(press,auth));fixture_complete_all(cec::TxResult::Success);run_idle(3);
+    press.edges[0].down=false;
+    assert(hub.submit_key_edges(press.edges,press.edge_count,press.generation,link,0));fixture_complete_all(cec::TxResult::Success);run_idle(3);
+    assert(refreshed_authorizations==0&&"Button edges reuse the established authenticated connection");
     assert(std::count_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.frame.size==2&&tx.frame.data[1]==0x45;})==1);
     fixture_tick=100000;fixture_async_autocomplete=true;
 }
@@ -351,8 +352,8 @@ struct RecoveryOwners {
         if(drop_next_activity&&intent.kind==m::OwnedIntentKind::activity){drop_next_activity=false;dropped.push_back(intent);return true;}
         auto* previous=latest_task;latest_task=owner_task;
         m::OwnedAuthorization auth{controller,current_controller_boot,member_boot,current_link,revision,0};
-        auth.authority=intent.kind==m::OwnedIntentKind::key_edges?(intent.edges[0].down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup):m::OwnedAuthority::control;
-        const auto result=owner.submit_owned(intent,auth);last_admission=result.code;latest_task=previous;
+
+        const auto result=(intent.kind==m::OwnedIntentKind::key_edges?owner.submit_key_edges(intent.edges,intent.edge_count,intent.generation,current_link,0):owner.submit_owned(intent,auth));last_admission=result.code;latest_task=previous;
         return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::unresolved;
     }
     void pump(unsigned count=1){for(unsigned pass=0;pass<count;++pass){latest_task=owner_task;run_idle(1);latest_task=main_task;run_idle(1);}}
@@ -367,7 +368,9 @@ struct RecoveryOwners {
         assert(completed==std::vector<m::OwnedContextResult>{m::OwnedContextResult::published});
     }
     void recover(){
-        const auto previous=current_link;latest_task=owner_task;assert(owner.fence_owned(controller,previous));
+        const auto previous=current_link;const auto input_epoch=owner.input_epoch();
+        latest_task=owner_task;assert(owner.fence_owned(controller,previous));
+        assert(owner.input_epoch()==input_epoch+1&&"Connection invalidation fences stale key work independently of activity progress");
         current_link=id<m::LinkId>(previous==id<m::LinkId>('6')?'9':'6');
         refresh();
     }
@@ -400,7 +403,11 @@ static void transport_admitted_selection_recovers_its_physical_recipe(){
     assert(owners.owner.snapshot().discovery_generation==discovered&&owners.owner.snapshot().current_activity>=0);
     const auto sent=fixture_sent.size();const auto receipt=owners.owner.activity_selection(),epoch=owners.owner.input_epoch();
     owners.refresh();owners.pump(8);owners.recover();owners.pump(8);
-    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch);
+    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch+1);
+    // Rebinding input after recovery preserves the committed source context
+    // used by a fresh announcement from the previously selected player.
+    fixture_incoming.push_back({4,{{0x4f,0x82,0x10,0},4}});owners.pump(16);
+    assert(owners.completed(4,{0x36})==2&&owners.completed(15,{0x86,0x20,0})==2);
 }
 static void owner_admitted_selection_survives_recovery(bool first_step_completed){
     RecoveryOwners owners;const auto discovered=owners.owner.snapshot().discovery_generation;
@@ -421,7 +428,7 @@ static void owner_admitted_selection_survives_recovery(bool first_step_completed
     assert(owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch);
     assert(owners.latest_selection().generation==generation&&!owners.latest_selection().repair);
     owners.recover();owners.pump(3);
-    assert(owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch);
+    assert(owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch+1);
     assert(owners.owner.activity_setup_in_progress()&&owners.pending(4,first_step_completed?0x44:0x36)==1);
     // The admitted local TX retains its authority across a logical session
     // fence. Completing it after the fence must still complete the wire frame.
@@ -431,7 +438,7 @@ static void owner_admitted_selection_survives_recovery(bool first_step_completed
     assert(owners.completed(4,{0x36})==1&&owners.completed(8,{0x44,0x6d})==1&&owners.completed(15,{0x86,0x20,0})==1);
     assert(owners.owner.snapshot().discovery_generation==discovered);
     const auto sent=fixture_sent.size();owners.refresh();owners.recover();owners.pump(8);
-    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch);
+    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch+2);
 }
 static void same_target_selection_is_fresh_but_recovery_is_not(){
     RecoveryOwners owners;
@@ -446,7 +453,7 @@ static void same_target_selection_is_fresh_but_recovery_is_not(){
     assert(owners.owner.activity_selection()==receipt+2&&owners.owner.input_epoch()==epoch+2);
     assert(owners.count(4,4,{0x44,0x6d})==2&&owners.count(4,15,{0x86,0x10,0})==2);
     const auto sent=fixture_sent.size();owners.refresh();owners.recover();owners.pump(8);
-    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt+2&&owners.owner.input_epoch()==epoch+2);
+    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt+2&&owners.owner.input_epoch()==epoch+3);
 }
 static void reselected_target_still_transitions_an_owner_that_missed_it(){
     RecoveryOwners owners;owners.drop_next_activity=true;
@@ -469,7 +476,7 @@ static void recovery_of_newer_queued_selection_preserves_order(){
     const auto receipt=owners.owner.activity_selection(),epoch=owners.owner.input_epoch();
     assert(owners.latest_selection().source&&owners.latest_selection().source->osd_name=="Source");
     owners.recover();owners.pump(3);
-    assert(owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch&&owners.latest_selection().generation==generation);
+    assert(owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch+1&&owners.latest_selection().generation==generation);
     assert(owners.count(4,4,{0x36})==1&&owners.count(4,8,{0x44,0x6d})==0);
     assert(fixture_complete_next(cec::TxResult::Success,4));fixture_complete_all(cec::TxResult::Success);fixture_async_autocomplete=true;owners.finish(0);
     assert(owners.count(4,4,{0x36})==1&&owners.count(4,8,{0x44,0x6d})==1);
@@ -479,7 +486,7 @@ static void recovery_of_newer_queued_selection_preserves_order(){
     const auto old_on=std::find_if(fixture_sent.begin(),fixture_sent.end(),[](const auto& tx){return tx.gpio==4&&tx.frame.destination()==4&&tx.frame.size==3&&tx.frame.data[1]==0x44;});
     assert(new_on!=fixture_sent.end()&&new_off!=fixture_sent.end()&&old_on!=fixture_sent.end()&&new_on<new_off&&new_off<old_on);
     const auto sent=fixture_sent.size();owners.refresh();owners.pump(4);
-    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch);
+    assert(fixture_sent.size()==sent&&owners.owner.activity_selection()==receipt&&owners.owner.input_epoch()==epoch+1);
 }
 static void conflicting_duplicate_and_stale_repair_are_rejected(){
     RecoveryOwners owners;assert(owners.main.request_activity(1)==ESP_OK);owners.finish(1);

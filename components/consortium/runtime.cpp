@@ -8,6 +8,7 @@
 #include "controller_policy.hpp"
 #include "enrollment_abort.hpp"
 #include "hostname_registry.hpp"
+#include "runtime_persistence.hpp"
 #include "production_storage.hpp"
 #include "tcp_ack_trace.hpp"
 #include "network_diagnostics.hpp"
@@ -144,6 +145,8 @@ void request_session_restart(Active& active){
     active.context_ready=false;active.context_requested=false;
     active.queue.clear();
 }
+// Writers acquire persistence_lock before lock, and release lock during flash.
+std::mutex persistence_lock;
 std::mutex lock;
 std::mutex connection_lock;
 std::mutex enrollment_lock;
@@ -166,12 +169,22 @@ std::string configuration_hash;
 RuntimeStatus status;
 RuntimeRadioHooks radio;
 RuntimeNetworkHooks network;
-Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view bytes){return write_record("amity_group","hostnames",bytes)==ESP_OK;});}
-// The caller holds the runtime lock. A metadata storage failure must not
-// discard an authenticated transport or hide the peer's current live name.
+bool current_peer_credential(const Active& active,const Group& current);
+// Both persistence_lock and guard are held. The registry prepares its private
+// next entries before storage, then publishes only after this callback relocks.
+Error remember_hostname(model::OctopusId owner,const std::string& name,std::unique_lock<std::mutex>& guard){
+    return hostnames.remember(owner,name,[&](std::string_view bytes){
+        return without_runtime_lock(guard,[&]{return write_record("amity_group","hostnames",bytes);})==ESP_OK;
+    });
+}
+// Storage failure must not discard authenticated transport or its live name.
 void remember_live_hostname(Active& active,const std::string& name){
-    if(remember_hostname(active.peer,name)!=Error::none)status.last_error="The saved device name could not be updated.";
-    std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;
+    std::lock_guard<std::mutex> persistence(persistence_lock);
+    std::unique_lock<std::mutex> guard(lock);
+    if(!current_peer_credential(active,group))return;
+    {std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;}
+    if(remember_hostname(active.peer,name,guard)!=Error::none)
+        status.last_error="The saved device name could not be updated.";
 }
 RuntimeControlHooks controls;
 RuntimeLifecycleHooks lifecycle;
@@ -265,9 +278,9 @@ bool abort_candidate_enrollment(Active& active,model::JoinId join,const std::str
     // if a cut prevented the subsequent Group::member marker.
     if(loaded==ESP_OK&&(saved.join_id!=join||saved.proposal_digest!=digest||saved.decided)){candidate_join_status(active,join,digest);return false;}
     RuntimeNetworkHooks network_hooks;RuntimeLifecycleHooks lifecycle_hooks;
-    {std::lock_guard<std::mutex> guard(lock);Group next;
+    {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);Group next;
         if(group.authority!=active.peer||!abort_prepared_candidate(group,join,digest,next))return false;
-        if(group.role!=Group::retired&&save_group(next)!=ESP_OK)return false;
+        if(group.role!=Group::retired&&without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;
         group=std::move(next);network_hooks=network;lifecycle_hooks=lifecycle;
         status.member=false;status.coordinator=false;status.authority_ready=false;status.synchronized=false;status.phase="enrollment_aborted";
         status.last_error="Enrollment cancelled; this Amity remains passive. Use physical reclaim to operate independently.";
@@ -305,13 +318,13 @@ bool enroll_lan(Active &active,bool server){
         auto nonce=random_id<model::MessageId>();if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"challenge",",\"challenge_nonce\":\""+nonce.str()+"\""))||!receive()||envelope.payload.get("phase")->string!="prove"||envelope.payload.get("challenge_nonce")->string!=nonce.str())return interrupted();
         timing.finish(proof,true);const auto store=timing.begin("membership_store");
         bool removed=false;
-        {std::lock_guard<std::mutex> guard(lock);removed=abort_peer_credential(active,group);if(!removed){if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;bool found=false;for(auto &peer:next.peers)if(peer.id==active.peer){peer.active=true;found=true;}if(!found)return false;next.revision=std::max(next.revision,next.join_revision);if(save_group(next)!=ESP_OK)return false;group=std::move(next);status.membership_revision=group.revision;}}
+        {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);removed=abort_peer_credential(active,group);if(!removed){if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;bool found=false;for(auto &peer:next.peers)if(peer.id==active.peer){peer.active=true;found=true;}if(!found)return false;next.revision=std::max(next.revision,next.join_revision);if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);status.membership_revision=group.revision;}}
         timing.finish(store,!removed);if(removed)return finish_enrollment_abort(active);
         const auto acknowledgement=timing.begin("commit_ack");
         if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"commit",",\"membership_revision\":\""+std::to_string(current.join_revision)+"\",\"ready\":false"))||!receive()||envelope.payload.get("phase")->string!="ack")return interrupted();
         uint64_t acknowledged=0;if(!decimal(envelope.payload.get("membership_revision"),acknowledged)||acknowledged!=current.join_revision)return false;
         timing.finish(acknowledgement,true);const auto finalize=timing.begin("finalize_store");
-        {std::lock_guard<std::mutex> guard(lock);removed=abort_peer_credential(active,group);if(!removed){if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;if(save_group(next)!=ESP_OK)return false;group=std::move(next);}}
+        {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);removed=abort_peer_credential(active,group);if(!removed){if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);}}
         timing.finish(finalize,!removed);
         if(removed)return finish_enrollment_abort(active);
     }else{
@@ -321,7 +334,7 @@ bool enroll_lan(Active &active,bool server){
         uint64_t revision=0;if(!decimal(envelope.payload.get("membership_revision"),revision)||revision!=current.join_revision)return false;
         RuntimeNetworkHooks network_hooks;{std::lock_guard<std::mutex> guard(lock);network_hooks=network;}
         if(!network_hooks.commit_transaction||network_hooks.commit_transaction(current.join_id,digest)!=ESP_OK)return false;
-        {std::lock_guard<std::mutex> guard(lock);if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.role=Group::member;next.revision=std::max(next.revision,revision);for(auto &p:next.peers)p.active=true;if(save_group(next)!=ESP_OK)return false;group=std::move(next);status.member=true;status.membership_revision=group.revision;}
+        {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.role=Group::member;next.revision=std::max(next.revision,revision);for(auto &p:next.peers)p.active=true;if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);status.member=true;status.membership_revision=group.revision;}
         if(!network_hooks.finish_transaction||network_hooks.finish_transaction(current.join_id,digest)!=ESP_OK)return false;
         if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"ack",",\"membership_revision\":\""+std::to_string(revision)+"\",\"state\":\"active\"")))return false;
         if(current.role==Group::prepared){
@@ -441,7 +454,7 @@ bool synchronize(Active &active,bool server,bool publish_ready=true,uint64_t rev
     // A hostname update can cross the peer's configuration refresh and be
     // discarded with old-scope observation traffic. Publish it again in the
     // new scope without replacing the connection or execution session.
-    {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;if(refresh)active.advertised_hostname.clear();}if(!server){std::lock_guard<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(save_group(next)==ESP_OK)group=std::move(next);}}
+    {std::lock_guard<std::mutex> guard(active.mutex);active.ready=publish_ready;active.status.ready=publish_ready;if(refresh)active.advertised_hostname.clear();}if(!server){std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);configuration=target;if(group.role==Group::member&&!active.endpoint_hint.empty()&&group.authority_host!=active.endpoint_hint){auto next=group;next.authority_host=active.endpoint_hint;if(without_runtime_lock(guard,[&]{return save_group(next);})==ESP_OK)group=std::move(next);}}
     return timing.done(true);
 }
 bool synchronization_current(const Active& active){
@@ -659,9 +672,10 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
     if(response.kind!=Kind::device_status)return trace.fail("hostname_kind",Error::invalid_message);
     const auto& name=response.payload.get("hostname")->string;
     if(!expected.empty()&&name!=expected)return trace.fail("hostname_identity",Error::identity_conflict);
-    std::lock_guard<std::mutex> guard(lock);
+    std::lock_guard<std::mutex> persistence(persistence_lock);
+    std::unique_lock<std::mutex> guard(lock);
     if(!current_peer_credential(active,group))return trace.fail("hostname_credential",Error::identity_conflict);
-    const auto remembered=remember_hostname(active.peer,name);if(remembered!=Error::none)return trace.fail("hostname_persist",remembered);
+    const auto remembered=remember_hostname(active.peer,name,guard);if(remembered!=Error::none)return trace.fail("hostname_persist",remembered);
     std::lock_guard<std::mutex> snapshot(active.mutex);active.status.hostname=name;return timing.done(true);
 }
 // Hostnames are public observation metadata, independent of the ordered
@@ -678,7 +692,7 @@ bool refresh_local_hostname(Active& active){
 bool receive_live_hostname(Active& active,const Envelope& envelope,uint64_t received){
     if(envelope.kind!=Kind::device_status||active.session.admit(envelope,received,received)!=Error::none)return false;
     const auto* name=envelope.payload.get("hostname");if(!name||name->type!=Json::Type::string||!valid_hostname(name->string))return false;
-    std::lock_guard<std::mutex> guard(lock);if(!current_peer_credential(active,group))return false;
+    {std::lock_guard<std::mutex> guard(lock);if(!current_peer_credential(active,group))return false;}
     remember_live_hostname(active,name->string);return true;
 }
 bool notify_link_closed(Active& active){
@@ -810,10 +824,10 @@ bool retire_member(Active &active,const Envelope &envelope,uint64_t received){
     if(received>UINT64_MAX-envelope.ttl_ms)return false;
     const auto until=received+envelope.ttl_ms;
     RuntimeLifecycleHooks hooks;
-    {std::lock_guard<std::mutex> guard(lock);
+    {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);
         if(group.role!=Group::member||group.authority!=active.peer||identity.id==active.peer||group.epoch!=1||configuration!=envelope.config_revision||revision<=group.revision||!current_peer_credential(active,group)||!lifecycle.retire||!lifecycle.factory_reset||!lifecycle.after_factory_reset)return false;
         auto next=group;next.role=Group::retired;next.revision=revision;next.mutation_id=mutation;next.mutation_digest=digest;next.peers.clear();next.authority_host.clear();next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;
-        if(save_group(next)!=ESP_OK)return false;
+        if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;
         group=std::move(next);status.member=false;status.authority_ready=false;status.synchronized=false;status.membership_revision=revision;status.phase="removed_reset_pending";hooks=lifecycle;
         for(auto &other:links)if(other.get()!=&active){other->cancelled=true;::shutdown(other->tls->socket,SHUT_RDWR);}
     }
@@ -1363,6 +1377,7 @@ std::string proposal_json(model::JoinId join,model::ConsortiumId consortium,cons
 std::string host_ip(){auto iface=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");esp_netif_ip_info_t ip{};if(!iface||esp_netif_get_ip_info(iface,&ip)!=ESP_OK||!ip.ip.addr)return {};char text[16];snprintf(text,sizeof(text),IPSTR,IP2STR(&ip.ip));return text;}
 esp_err_t bootstrap_request(std::string_view request,std::string &response){
     Json p;JsonError err;if(!parse_json(request,p,err)||!p.get("phase")||p.get("phase")->type!=Json::Type::string)return ESP_ERR_INVALID_ARG;
+    std::unique_lock<std::mutex> persistence(persistence_lock);
     std::unique_lock<std::mutex> guard(lock);if(!candidate_deadline||now_ms()>=candidate_deadline)return ESP_ERR_INVALID_STATE;
     if(p.get("phase")->string=="identify"){if(!closed(p,{"phase"}))return ESP_ERR_INVALID_ARG;if(!network.set_hostname||!network.get_hostname)return ESP_ERR_NOT_SUPPORTED;response="{\"phase\":\"identity\",\"bootstrap_profile\":2,\"octopus_id\":\""+identity.id.str()+"\",\"leaf\":\""+hex(identity.der)+"\",\"networked\":"+(host_ip().empty()?"false":"true")+"}";return ESP_OK;}
     if(p.get("phase")->string=="wifi"){
@@ -1370,7 +1385,7 @@ esp_err_t bootstrap_request(std::string_view request,std::string &response){
         if(!closed(p,{"phase","join_id","digest","ssid","password"})||!id(p.get("join_id"),join)||!json_string(p.get("digest"),digest,64,64)||group.role!=Group::prepared||join!=group.join_id||digest!=group.join_digest||p.get("ssid")->type!=Json::Type::string||p.get("password")->type!=Json::Type::string||!unhex(p.get("ssid")->string,ssid,32)||ssid.empty()||!unhex(p.get("password")->string,password,64))return ESP_ERR_INVALID_ARG;
         if(!host_ip().empty()){response="{\"phase\":\"networked\",\"ready\":true}";return ESP_OK;}
         auto hooks=network;if(!hooks.stage_transaction||!hooks.commit_transaction||!hooks.finish_transaction)return ESP_ERR_NOT_SUPPORTED;
-        status.phase="connecting_wifi";guard.unlock();
+        status.phase="connecting_wifi";guard.unlock();persistence.unlock();
         auto result=hooks.stage_transaction(join,digest,ssid,password);
         std::fill(password.begin(),password.end(),0);password.clear();
         if(result==ESP_OK&&host_ip().empty())result=ESP_ERR_INVALID_STATE;
@@ -1387,8 +1402,9 @@ esp_err_t bootstrap_request(std::string_view request,std::string &response){
     next.role=Group::prepared;next.join_digest=p.get("digest")->string;next.join_revision=next.revision;next.joining_id=identity.id;next.peers.push_back(authority);
     if(group.role!=Group::unclaimed&&!(group.role==Group::prepared&&group.join_id==next.join_id&&group.join_digest==next.join_digest))return ESP_ERR_INVALID_STATE;
     if(!network.set_hostname||!network.get_hostname)return ESP_ERR_NOT_SUPPORTED;
-    const auto named=network.set_hostname(decoded.candidate_hostname);if(named!=ESP_OK||network.get_hostname()!=decoded.candidate_hostname)return named==ESP_OK?ESP_ERR_INVALID_STATE:named;
-    auto saved=save_group(next);if(saved!=ESP_OK)return saved;group=std::move(next);status.member=true;status.authority_ready=false;status.phase="finishing_enrollment";candidate_passive=false;auto hooks=lifecycle;const auto prepared_id=group.join_id;const auto prepared_digest=group.join_digest;guard.unlock();esp_err_t remote=ESP_ERR_TIMEOUT;for(unsigned attempt=0;attempt<50&&remote==ESP_ERR_TIMEOUT;++attempt){remote=ble_remote_set_controller_enabled(false);if(remote==ESP_ERR_TIMEOUT)vTaskDelay(pdMS_TO_TICKS(100));}const auto fenced=hooks.retire?hooks.retire():ESP_ERR_INVALID_STATE;guard.lock();if(group.join_id!=prepared_id||group.join_digest!=prepared_digest||fenced!=ESP_OK||remote!=ESP_OK)return ESP_ERR_INVALID_STATE;candidate_passive=true;gatt_server_seal();response="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+decoded.candidate_hostname+"\"}";return ESP_OK;
+    const auto network_hooks=network;
+    const auto named=without_runtime_lock(guard,[&]{const auto result=network_hooks.set_hostname(decoded.candidate_hostname);return result==ESP_OK&&network_hooks.get_hostname()!=decoded.candidate_hostname?ESP_ERR_INVALID_STATE:result;});if(named!=ESP_OK)return named;
+    auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK)return saved;group=std::move(next);status.member=true;status.authority_ready=false;status.phase="finishing_enrollment";candidate_passive=false;auto hooks=lifecycle;const auto prepared_id=group.join_id;const auto prepared_digest=group.join_digest;guard.unlock();persistence.unlock();esp_err_t remote=ESP_ERR_TIMEOUT;for(unsigned attempt=0;attempt<50&&remote==ESP_ERR_TIMEOUT;++attempt){remote=ble_remote_set_controller_enabled(false);if(remote==ESP_ERR_TIMEOUT)vTaskDelay(pdMS_TO_TICKS(100));}const auto fenced=hooks.retire?hooks.retire():ESP_ERR_INVALID_STATE;guard.lock();if(group.join_id!=prepared_id||group.join_digest!=prepared_digest||fenced!=ESP_OK||remote!=ESP_OK)return ESP_ERR_INVALID_STATE;candidate_passive=true;gatt_server_seal();response="{\"phase\":\"prepared\",\"join_id\":\""+group.join_id.str()+"\",\"digest\":\""+group.join_digest+"\",\"hostname\":\""+decoded.candidate_hostname+"\"}";return ESP_OK;
 }
 void admission_failed(model::MessageId scan,const std::string& failure){
     std::lock_guard<std::mutex> guard(lock);
@@ -1476,8 +1492,8 @@ void invite_worker_work(void *arg){
         if(good){
             proposal=proposal_json(join,current_group.consortium,local,peer,current_group.epoch,current_group.revision+1,host,hostname);digest=sha256(proposal);
             current_group.join_id=join;current_group.joining_id=peer.id;current_group.join_digest=digest;current_group.join_hostname=hostname;current_group.join_revision=current_group.revision+1;current_group.peers.push_back(peer);
-            std::lock_guard<std::mutex> guard(lock);
-            good=current()&&!proposal.empty()&&admission.view.scan_id==scan&&group.role==Group::coordinator&&!group.join_id&&group.revision+1==current_group.join_revision&&save_group(current_group)==ESP_OK;
+            std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);
+            good=current()&&!proposal.empty()&&admission.view.scan_id==scan&&group.role==Group::coordinator&&!group.join_id&&group.revision+1==current_group.join_revision&&without_runtime_lock(guard,[&]{return save_group(current_group);})==ESP_OK;
             if(good)group=current_group;
         }
         timing.finish(proposal_stage,good);
@@ -1486,7 +1502,7 @@ void invite_worker_work(void *arg){
     if(good){
         const auto acknowledged=timing.begin("prepare_ack");
         Json prepared;good=parse_json(response,prepared,err)&&closed(prepared,{"phase","join_id","digest","hostname"})&&prepared.get("phase")->type==Json::Type::string&&prepared.get("phase")->string=="prepared"&&prepared.get("join_id")->type==Json::Type::string&&prepared.get("join_id")->string==join.str()&&prepared.get("digest")->type==Json::Type::string&&prepared.get("digest")->string==digest&&prepared.get("hostname")->type==Json::Type::string&&prepared.get("hostname")->string==hostname;
-        if(good){std::lock_guard<std::mutex> guard(lock);good=remember_hostname(peer.id,hostname)==Error::none;}
+        if(good){std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);good=group.join_id==join&&group.join_digest==digest&&group.joining_id==peer.id&&remember_hostname(peer.id,hostname,guard)==Error::none;}
         timing.finish(acknowledged,good);
     }
     if(good&&!networked){
@@ -1532,7 +1548,7 @@ esp_err_t runtime_finish_reclaim(std::function<esp_err_t()> preserve_network){
     return erase_record("amity_reclaim","pending");
 }
 esp_err_t runtime_reclaim_membership(model::OctopusId confirmed){
-    RuntimeLifecycleHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(!status.initialized||confirmed!=identity.id||(!recovery_console&&group.role==Group::unclaimed))return ESP_ERR_INVALID_STATE;auto result=write_record("amity_reclaim","pending","1:"+confirmed.str());if(result!=ESP_OK)return result;status.phase="reclaim_pending";status.authority_ready=false;status.synchronized=false;for(auto &active:links){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}hooks=lifecycle;}
+    RuntimeLifecycleHooks hooks;{std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(!status.initialized||confirmed!=identity.id||(!recovery_console&&group.role==Group::unclaimed))return ESP_ERR_INVALID_STATE;auto result=without_runtime_lock(guard,[&]{return write_record("amity_reclaim","pending","1:"+confirmed.str());});if(result!=ESP_OK)return result;status.phase="reclaim_pending";status.authority_ready=false;status.synchronized=false;for(auto &active:links){active->cancelled=true;::shutdown(active->tls->socket,SHUT_RDWR);}hooks=lifecycle;}
     runtime_cancel_radio_workflows();if(!hooks.retire)return ESP_ERR_NOT_SUPPORTED;return hooks.retire();
 }
 namespace {
@@ -1620,14 +1636,15 @@ RuntimeStatus runtime_status(){
     return out;
 }
 esp_err_t runtime_claim_original_controller(){
-    std::lock_guard<std::mutex> guard(lock);
+    std::lock_guard<std::mutex> persistence(persistence_lock);
+    std::unique_lock<std::mutex> guard(lock);
     if(!status.initialized||!status.credential_ready)return ESP_ERR_INVALID_STATE;
     if(original_controller(group,identity.id))return ESP_OK;
     // Only the application's verified Matter/network completion path calls
     // this entry. The durable candidate decision wins any concurrent claim.
     if(group.role!=Group::unclaimed||group.join_id||candidate_passive||candidate_generation||candidate_deadline||!singleton)return ESP_ERR_INVALID_STATE;
     Group next;next.role=Group::coordinator;next.consortium=singleton;next.authority=identity.id;next.epoch=1;next.revision=1;
-    const auto saved=save_group(next);if(saved!=ESP_OK){candidate_passive=true;status.phase="recovery_usb";status.last_error="Controller setup could not be stored; restart to recover the saved role";return saved;}
+    const auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK){candidate_passive=true;status.phase="recovery_usb";status.last_error="Controller setup could not be stored; restart to recover the saved role";return saved;}
     group=std::move(next);status.coordinator=true;status.authority_ready=true;status.member=false;status.epoch=1;status.membership_revision=1;status.phase="idle";return ESP_OK;
 }
 bool runtime_original_setup_eligible(){
@@ -1650,6 +1667,7 @@ std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootI
 
 esp_err_t runtime_register_gatt(){return gatt_register();}
 esp_err_t runtime_open_enrollment(uint64_t generation){
+    std::lock_guard<std::mutex> persistence(persistence_lock);
     std::lock_guard<std::mutex> guard(lock);
     if(!status.initialized||!status.credential_ready||!generation||candidate_passive||candidate_deadline||group.role!=Group::unclaimed)return ESP_ERR_INVALID_STATE;
     const auto e=gatt_server_open(generation,identity.id,bootstrap_request);
@@ -1658,8 +1676,8 @@ esp_err_t runtime_open_enrollment(uint64_t generation){
 }
 void runtime_close_enrollment(){uint64_t generation;{std::lock_guard<std::mutex> guard(lock);generation=candidate_generation;candidate_generation=candidate_deadline=0;status.enrollment_open=false;if(group.role==Group::unclaimed&&!candidate_passive)status.phase="awaiting_setup";}gatt_server_close();defer_radio_release(generation);}
 bool runtime_cancel_radio_workflows(){
-    invitation_cancelled=true;
-    {std::lock_guard<std::mutex> guard(lock);
+    {std::lock_guard<std::mutex> persistence(persistence_lock);std::lock_guard<std::mutex> guard(lock);
+        invitation_cancelled=true;
         if(group.join_id&&group.joining_id==admission.view.candidate_id){admission.view.phase="finishing";admission.view.error="Setup could not be confirmed yet. Check the Amity devices list before trying again.";}
         else if(admission.view.phase=="scanning"||admission.view.phase=="found"||admission.view.phase=="connecting"){admission.view.phase="cancelled";admission.view.error="Adding this Amity was cancelled.";}
         admission.pin=0;
@@ -1693,7 +1711,7 @@ esp_err_t runtime_scan_admission(model::MessageId scan){
     return ESP_OK;
 }
 esp_err_t runtime_cancel_admission(model::MessageId scan){
-    {std::lock_guard<std::mutex> guard(lock);
+    {std::lock_guard<std::mutex> persistence(persistence_lock);std::lock_guard<std::mutex> guard(lock);
         if(!scan||admission.view.scan_id!=scan)return ESP_ERR_INVALID_STATE;
         if(admission.view.phase=="cancelled")return ESP_OK;
         // A prepared enrollment is reconciled by its durable transaction. It
@@ -1724,14 +1742,14 @@ esp_err_t runtime_add_octopus(model::MessageId scan,const std::string& token,con
 esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,uint64_t expected_revision,std::optional<model::BootId> expected_target_boot){
     if(!id||!request||!expected_revision||(expected_target_boot&&!expected_target_boot->valid()))return ESP_ERR_INVALID_ARG;
     RuntimeLifecycleHooks hooks;const auto now=now_ms();
-    {std::lock_guard<std::mutex> guard(lock);removal_expire(now);
+    {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);removal_expire(now);
         for(const auto& operation:removal_operations)if(operation.id==request)return operation.owner==id?ESP_OK:ESP_ERR_INVALID_ARG;
         if(!original_controller(group,identity.id)||!status.authority_ready||id==identity.id||group.revision!=expected_revision||group.revision==UINT64_MAX||(group.join_id&&group.joining_id!=id))return ESP_ERR_INVALID_STATE;
         if(removal_operations.size()>=10)return ESP_ERR_NO_MEM;
         auto next=group;auto found=std::find_if(next.peers.begin(),next.peers.end(),[&](const auto &p){return p.id==id;});if(found==next.peers.end())return ESP_ERR_NOT_FOUND;
         std::optional<EnrollmentAbort> pending;
         if(group.join_id&&group.joining_id==id)pending=EnrollmentAbort{*found,group.consortium,group.authority,group.epoch,group.join_id,group.join_digest};
-        std::shared_ptr<Active> target;
+        std::shared_ptr<Active> target;std::optional<LinkScope> target_scope;
         if(!pending)for(const auto& active:links){
             if(!active->tls||!active->tls->server||active->peer!=id||active->cancelled||active->retiring||(!active->ready&&!active->management_ready)||!current_peer_credential(*active,group))continue;
             std::lock_guard<std::mutex> queue_guard(active->mutex);
@@ -1740,13 +1758,24 @@ esp_err_t runtime_remove_octopus(model::OctopusId id,model::MessageId request,ui
             if(active->status.config_revision!=configuration)continue;
             if(expected_target_boot&&*expected_target_boot!=active->status.boot_id)return ESP_ERR_INVALID_STATE;
             if(!(active->status.negotiated_capabilities&factory_reset_removal))return ESP_ERR_NOT_SUPPORTED;
-            target=active;break;
+            target=active;target_scope=active->session.scope();break;
         }
         next.peers.erase(found);
         if(next.joining_id==id){next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;}
-        ++next.revision;const auto saved=save_group(next);if(saved!=ESP_OK)return saved;
+        ++next.revision;const auto saved=without_runtime_lock(guard,[&]{return save_group(next);});if(saved!=ESP_OK)return saved;
+        // Removal is durable even if the admitted connection disappeared or
+        // synchronized while flash was busy. Never restamp its reset request
+        // onto another boot, link, or configuration scope.
+        const bool had_target=bool(target);
+        if(target){
+            const auto admitted_target=target;
+            std::lock_guard<std::mutex> snapshot(admitted_target->mutex);
+            if(target->cancelled||target->retiring||(!target->ready&&!target->management_ready)||
+               !(target->session.scope()==*target_scope)||target->status.boot_id!=target_scope->peer_boot_id||
+               target->refreshing||configuration!=target_scope->config_revision)target.reset();
+        }
         group=std::move(next);status.membership_revision=group.revision;hooks=lifecycle;
-        removal_operations.push_back({id,request,now+2000,target?"pending":pending?"unconfirmed":"offline",!target,target?std::optional<LinkScope>(target->session.scope()):std::nullopt,group.revision});
+        removal_operations.push_back({id,request,now+2000,target?"pending":pending||had_target?"unconfirmed":"offline",!target,target?target_scope:std::nullopt,group.revision});
         const auto mutation=*model::MutationId::parse(request.str());
         for(auto& active:links){
             bool held=false;
@@ -1779,11 +1808,14 @@ esp_err_t runtime_forget_removed_octopus(model::OctopusId owner){
     if(!owner)return ESP_ERR_INVALID_ARG;
     RuntimeLifecycleHooks hooks;
     {
-        std::lock_guard<std::mutex> guard(lock);
+        std::lock_guard<std::mutex> persistence(persistence_lock);
+        std::unique_lock<std::mutex> guard(lock);
         if(!original_controller(group,identity.id)||!status.authority_ready||owner==identity.id||
            std::any_of(group.peers.begin(),group.peers.end(),[&](const auto& peer){return peer.id==owner;}))
             return ESP_ERR_INVALID_STATE;
-        const auto saved=hostnames.forget(owner,[](std::string_view bytes){return write_record("amity_group","hostnames",bytes)==ESP_OK;});
+        const auto saved=hostnames.forget(owner,[&](std::string_view bytes){
+            return without_runtime_lock(guard,[&]{return write_record("amity_group","hostnames",bytes);})==ESP_OK;
+        });
         if(saved!=Error::none)return ESP_FAIL;
         settings_caches.erase(std::remove_if(settings_caches.begin(),settings_caches.end(),
             [&](const auto& item){return item.owner==owner;}),settings_caches.end());

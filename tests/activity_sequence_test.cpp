@@ -29,15 +29,12 @@ static size_t first(int gpio,std::initializer_list<uint8_t> data,size_t begin=0)
     return fixture_sent.size();
 }
 static m::QualifiedDeviceName named(m::OctopusId id,m::Side side,const char* name,uint8_t adapter=0){return {{group,id,adapter,side},name};}
-static m::OwnedAuthorization authorization(m::OwnedIntentKind kind){
-    m::OwnedAuthorization auth{controller,controller_boot,boot,link,1,0};
-    auth.authority=kind==m::OwnedIntentKind::key_edges?m::OwnedAuthority::input:m::OwnedAuthority::control;
-    return auth;
-}
+static m::OwnedAuthorization authorization(){return {controller,controller_boot,boot,link,1,0};}
 static void enqueue(HubService& hub,m::OwnedIntent intent){
     intent.generation=1;intent.config_revision=1;
-    auto auth=authorization(intent.kind);if(intent.kind==m::OwnedIntentKind::key_edges&&!intent.edges[0].down)auth.authority=m::OwnedAuthority::cleanup;
-    assert(hub.submit_owned(intent,auth,0));run_one_command();
+    if(intent.kind==m::OwnedIntentKind::key_edges)assert(hub.submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0,0));
+    else assert(hub.submit_owned(intent,authorization(),0));
+    run_one_command();
 }
 static m::OwnedIntent power(m::OctopusId id,m::Side side,uint8_t adapter=0){
     m::OwnedIntent intent;intent.kind=m::OwnedIntentKind::power;intent.target=named(id,side,side==m::Side::front?"TV":"Source",adapter);
@@ -157,9 +154,9 @@ static void revision_bind_waits_for_old_recipe_cleanup(){
     fixture_delay={};assert(completed==2&&hub.executing_configuration_revision()==2);
     assert(count(1,{0x36})==1&&count(2,{0x36})==1&&fixture_completed.size()==2&&fixture_pending.empty());
     auto stale=power(owner,m::Side::front);stale.generation=1;stale.config_revision=1;
-    const auto before=fixture_sent.size();assert(!hub.submit_owned(stale,authorization(stale.kind)));
+    const auto before=fixture_sent.size();assert(!hub.submit_owned(stale,authorization()));
     assert(fixture_sent.size()==before); // The old authorization is no longer executable after the boundary.
-    auto current=stale;current.config_revision=2;auto auth=authorization(current.kind);auth.config_revision=2;
+    auto current=stale;current.config_revision=2;auto auth=authorization();auth.config_revision=2;
     assert(hub.submit_owned(current,auth,0));run_one_command();assert(count(1,{0x04})==1);
     drain(hub);
 }

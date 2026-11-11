@@ -87,20 +87,26 @@ bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& env
     if(active->session.admit(envelope,received,received)!=Error::none)return false;
     model::MessageId id;if(!consortium::id(envelope.payload.get("request_id"),id))return false;
     if(envelope.kind==Kind::settings_result){
-        std::lock_guard<std::mutex> guard(lock);if(!original_controller(group,identity.id)||!status.authority_ready||!settings_enrolled(active->peer))return false;
+        std::string accepted_hostname;
+        {std::lock_guard<std::mutex> guard(lock);if(!original_controller(group,identity.id)||!status.authority_ready||!settings_enrolled(active->peer))return false;
         const auto operation=envelope.payload.get("operation")->string;const auto stage=envelope.payload.get("stage")->string;
         if(operation=="read"){
             auto* cache=settings_cache(active->peer,false);if(!cache||cache->read_id!=id||cache->read_link!=active->session.scope().link_id)return true;
             cache->read_id={};cache->read_until=0;
-            if(stage=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string==active->session.scope().peer_boot_id.str()){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=active->session.scope().peer_boot_id;cache->received=received;cache->error.clear();remember_live_hostname(*active,envelope.payload.get("snapshot")->get("hostname")->string);}
+            if(stage=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string==active->session.scope().peer_boot_id.str()){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=active->session.scope().peer_boot_id;cache->received=received;cache->error.clear();accepted_hostname=envelope.payload.get("snapshot")->get("hostname")->string;}
             else cache->error=settings_message(envelope.payload.get("error")->string);
         }else for(auto& pending:settings_operations)if(pending.owner==active->peer&&pending.id==id&&pending.link==active->session.scope().link_id&&pending.target_boot==active->session.scope().peer_boot_id&&pending.stage=="admitted"){
             if(stage=="admitted")return true;
             if(stage=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string!=pending.target_boot.str())return false;
             pending.stage=stage=="applied"?"applied":"failed";pending.error=stage=="applied"?"":settings_message(envelope.payload.get("error")->string);
-            if(stage=="applied"){remember_live_hostname(*active,envelope.payload.get("snapshot")->get("hostname")->string);auto* cache=settings_cache(active->peer,true);if(cache){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=pending.target_boot;cache->received=received;cache->error.clear();}}break;
+            if(stage=="applied"){accepted_hostname=envelope.payload.get("snapshot")->get("hostname")->string;auto* cache=settings_cache(active->peer,true);if(cache){cache->snapshot=settings_json(*envelope.payload.get("snapshot"));cache->boot=pending.target_boot;cache->received=received;cache->error.clear();}}break;
         }
-        settings_expire(received);return true;
+        // Keep the live name visible as the admitted rename reservation ends,
+        // even if another persistence transaction delays its durable copy.
+        if(!accepted_hostname.empty()){std::lock_guard<std::mutex> snapshot(active->mutex);active->status.hostname=accepted_hostname;}
+        settings_expire(received);}
+        if(!accepted_hostname.empty())remember_live_hostname(*active,accepted_hostname);
+        return true;
     }
     RuntimeSettingsHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(group.role!=Group::member||group.authority!=active->peer||!current_peer_credential(*active,group)||(!active->ready&&!active->management_ready))return false;hooks=settings_hooks;}
     if(envelope.kind==Kind::settings_read){const auto snapshot=hooks.snapshot?hooks.snapshot():"";return send(*active,Kind::settings_result,settings_result(id,"read",snapshot.empty()?"failed":"applied",snapshot.empty()?"NOT_READY":"",snapshot.empty()?"null":snapshot),2000);}

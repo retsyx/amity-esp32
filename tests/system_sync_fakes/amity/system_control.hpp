@@ -24,6 +24,14 @@ public:
     system::OctopusId bound_controller;
     uint64_t bound_revision = 0;
     std::vector<system::OwnedIntent> submitted;
+    struct KeyDelivery {
+        std::array<system::KeyEdge,2> edges;
+        uint8_t count;
+        uint64_t generation;
+        system::LinkId link;
+        uint64_t deadline_ms;
+    };
+    std::vector<KeyDelivery> key_deliveries;
     std::vector<system::OctopusId> refreshed_context;
     std::vector<system::OwnedAuthorization> authorizations;
     std::vector<system::OwnedAdapterSnapshot> snapshots, updates;
@@ -54,6 +62,10 @@ public:
         system::AdmissionResult result{admission,{}};
         if(admission==system::AdmissionCode::accepted||admission==system::AdmissionCode::unresolved||admission==system::AdmissionCode::overloaded)result.source_present=source_present;
         return result;
+    }
+    system::AdmissionResult submit_key_edges(const std::array<system::KeyEdge,2>& edges,uint8_t count,uint64_t generation,system::LinkId link,uint64_t deadline_ms,uint32_t=1000) {
+        key_deliveries.push_back({edges,count,generation,link,deadline_ms});
+        return {admission,{}};
     }
     esp_err_t bind_owned_controller(system::OctopusId controller,uint64_t revision) {
         ++bind_calls;
@@ -86,7 +98,7 @@ public:
         const auto result=commit?commit():ESP_OK;
         if(result==ESP_OK){
             configuration=std::move(next);
-            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;}
+            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;applied.applied_policy_hash=config_store::executable_policy_hash(configuration);}
         }
         return result;
     }

@@ -30,8 +30,8 @@ struct Owners {
         delivered.push_back(intent.kind);
         assert(other&&intent.target.port.octopus_id==member);auto* previous=latest_task;latest_task=other_task;
         m::OwnedAuthorization auth{controller,boot,other_boot,link,1,0};
-        auth.authority=intent.kind==m::OwnedIntentKind::key_edges?(intent.edges[0].down?m::OwnedAuthority::input:m::OwnedAuthority::cleanup):m::OwnedAuthority::control;
-        const auto result=other->submit_owned(intent,auth);latest_task=previous;
+
+        const auto result=(intent.kind==m::OwnedIntentKind::key_edges?other->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,0):other->submit_owned(intent,auth));latest_task=previous;
         return result.code==m::AdmissionCode::accepted||result.code==m::AdmissionCode::pending||result.code==m::AdmissionCode::overloaded||result.code==m::AdmissionCode::unresolved;
     }
     void configure(std::vector<Activity> activities,std::vector<m::ScopedSelector> selectors){

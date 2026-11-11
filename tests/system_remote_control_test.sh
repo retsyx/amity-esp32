@@ -11,6 +11,7 @@ if test -d /opt/homebrew/opt/openssl@3; then
  openssl_include="-I/opt/homebrew/opt/openssl@3/include"; openssl_lib="-L/opt/homebrew/opt/openssl@3/lib"
 fi
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+ -DSHA256=amity_test_sha256 \
  $openssl_include -I"$json" \
  -I"$root/tests/cec_hub_fakes" -I"$root/components/config_store/include" -I"$root/components/cec/include" \
  -I"$root/components/amity_hub/include" -I"$root/components/amity_system/include" \

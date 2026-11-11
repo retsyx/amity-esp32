@@ -17,18 +17,22 @@ PREFIX = r'''
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/settings.hpp"
 #include "hostname_registry.hpp"
+#include "runtime_persistence.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <chrono>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
 namespace amity::consortium {
 namespace platform { enum class BootstrapFailure : uint8_t { none=0,crypto_self_test_failed=1 }; }
 using namespace amity::consortium::platform;
+using namespace std::chrono_literals;
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 #define pdMS_TO_TICKS(x) (x)
-std::mutex lock;
+std::mutex lock,persistence_lock;
 Group group;Identity identity;RuntimeStatus status;RuntimeRadioHooks radio;RuntimeNetworkHooks network;HostnameRegistry hostnames;
 struct InviteRequest {model::MessageId scan_id;};
 struct Admission {RuntimeAdmissionStatus view;uint64_t generation=0,deadline=0;std::string selected_token,hostname;uint32_t pin=0;bool submitted=false;} admission;
@@ -76,8 +80,9 @@ bool certificate(std::string_view leaf,model::OctopusId,std::string& pin){++cert
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 template<class T>T random_id(){return ident<T>(90);}
 std::string host_ip(){return "192.0.2.1";}
-int save_group(const Group&){++saves;return ESP_OK;}
-Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view){return true;});}
+std::function<void()> during_save;
+int save_group(const Group&){if(during_save)during_save();++saves;return ESP_OK;}
+Error remember_hostname(model::OctopusId owner,const std::string& name,std::unique_lock<std::mutex>&){return hostnames.remember(owner,name,[](std::string_view){return true;});}
 void mbedtls_platform_zeroize(void* data,size_t count){std::fill_n(static_cast<char*>(data),count,0);}
 struct AdmissionClient {
     AdmissionClient(AdmissionMode chosen,uint32_t pin){assert(chosen==mode&&(mode==AdmissionMode::button?pin==0:pin==20202021));}
@@ -112,7 +117,7 @@ void reset(){
     admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();settings_operations.clear();
     fail_phase.clear();clock_ms=100;during_wait={};mode=AdmissionMode::button;spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
     discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;candidate_snapshots=0;early_candidate_published=false;
-    self_tests=connections=handshakes=0;crypto_ok=true;candidate_crypto_failed=false;during_selftest={};
+    self_tests=connections=handshakes=0;crypto_ok=true;candidate_crypto_failed=false;during_selftest={};during_save={};
     platform::recorded_setup_timings.clear();
     radio.reserve=[](bool inviter,uint64_t& generation){assert(inviter);++reservations;generation=77;return ESP_OK;};
     network.get_hostname=[]{return "main-amity";};
@@ -129,6 +134,20 @@ void select(){
     else assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room","unexpected")==ESP_ERR_INVALID_ARG);
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room",mode==AdmissionMode::setup_code?"valid-matter-code":"")==ESP_OK);
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","room")==ESP_ERR_INVALID_STATE || mode==AdmissionMode::setup_code);
+}
+void cancellation_waits_for_proposal_store(){
+    reset();const auto scan=ident<model::MessageId>(1);assert(runtime_scan_admission(scan)==ESP_OK);during_wait=select;
+    std::promise<void> entered,release,cancelling;auto released=release.get_future().share();
+    during_save=[&]{entered.set_value();released.wait();};
+    auto worker=std::async(std::launch::async,[]{run();});
+    assert(entered.get_future().wait_for(2s)==std::future_status::ready);
+    auto cancel=std::async(std::launch::async,[&]{cancelling.set_value();return runtime_cancel_admission(scan);});cancelling.get_future().wait();
+    auto read=std::async(std::launch::async,[]{std::lock_guard<std::mutex> guard(lock);return !group.join_id&&admission.view.phase=="connecting";});
+    assert(read.wait_for(2s)==std::future_status::ready&&read.get());
+    assert(cancel.wait_for(50ms)==std::future_status::timeout);
+    release.set_value();assert(cancel.get()==ESP_ERR_INVALID_STATE);worker.get();
+    assert(group.join_id&&group.joining_id==ident<model::OctopusId>(3)&&!invitation_cancelled&&admission.view.phase=="finishing");
+    std::cout<<"PASS actual Add cancellation waits for blocked proposal storage and cannot claim to cancel a durable enrollment; runtime readers remain responsive\n";
 }
 void proposal_record_lifetime(){
     reset();auto local=identity;Peer peer{ident<model::OctopusId>(3),"candidate-leaf",std::string(64,'c'),false};
@@ -166,7 +185,7 @@ void roster_capacity(){
 }
 void rename_name_reservation(){
     reset();invitation_running=true;admission.view.scan_id=ident<model::MessageId>(1);admission.view.phase="found";admission.deadline=1000;admission.view.candidates={{"two","Amity-654321"}};
-    const auto owner=ident<model::OctopusId>(3);group.peers.push_back({owner,"leaf","pin",true});assert(remember_hostname(owner,"old-room")==Error::none);
+    const auto owner=ident<model::OctopusId>(3);group.peers.push_back({owner,"leaf","pin",true});{std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);assert(remember_hostname(owner,"old-room",guard)==Error::none);}
     auto active=std::make_shared<Active>();active->peer=owner;active->ready=active->status.ready=true;active->status.hostname="live-room";links.push_back(active);
     assert(runtime_add_octopus(ident<model::MessageId>(1),"two","live-room")==ESP_ERR_INVALID_ARG); // Live authenticated name wins if its metadata storage failed.
     DeviceSettingsWrite rename;rename.expected_boot=ident<model::BootId>(7);rename.expected_hostname_revision=2;rename.hostname="room";
@@ -243,6 +262,7 @@ int run_tests(){
     for(unsigned unavailable=0;unavailable<2;++unavailable){reset();if(unavailable)status.credential_ready=false;else status.initialized=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE&&!invitation_running&&!self_tests);}
     std::cout<<"PASS self-test only on selected Add in both profiles; primary and candidate security failures reach Add status before credentials/membership, with cancellation/expiry cleanup\n";
     std::cout<<"PASS actual stale IDs/tokens, invalid inputs, pre-scan/found cancellation, timeout, identity mismatch, configured network preservation and task/role rejection; exact readiness latches transient completion across removal until a new scan\n";
+    cancellation_waits_for_proposal_store();
     return 0;
 }
 }
@@ -267,7 +287,7 @@ def main():
                    'components/amity_system/include', 'components/device_settings/include']
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
-                       ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined'] +
+                       ['-std=c++17', '-pthread', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined'] +
                        ['-I' + str(ROOT / path) for path in include] +
                        [str(cpp)] + [str(path) for path in sources] + ['-o', str(binary)], check=True)
         return subprocess.run([str(binary)], check=False).returncode

@@ -14,6 +14,7 @@ PREFIX = r'''
 #include "amity/consortium/runtime.hpp"
 #include "controller_policy.hpp"
 #include "hostname_registry.hpp"
+#include "runtime_persistence.hpp"
 #include <cassert>
 #include <iostream>
 #include <memory>
@@ -21,7 +22,7 @@ PREFIX = r'''
 namespace amity::consortium {
 using namespace platform;
 template<class T>T id(unsigned n){char value[33];snprintf(value,sizeof(value),"%032x",n);return *T::parse(value);}
-std::mutex lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;HostnameRegistry hostnames;
+std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;RuntimeLifecycleHooks lifecycle;HostnameRegistry hostnames;
 struct Active{model::OctopusId peer;};
 struct Cache{model::OctopusId owner;std::string snapshot;};
 struct SettingsAuthorization{bool local=false;std::weak_ptr<Active> link;};

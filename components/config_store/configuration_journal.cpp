@@ -36,6 +36,7 @@ bool verified(ConfigBackend& backend, const char* key, const std::string& payloa
     std::string reread; return backend.read(key, reread) == ReadResult::found && reread == payload;
 }
 std::string record(const Configuration& config,std::string payload) {
+    if(payload.empty())return {};
     const auto digest=sha256_hex(payload);if(digest.empty())return {};
     const auto header="AMITY3\n" + config.consortium_id.str() + "\n" + model::format_uint64(config.config_revision) + "\n" +
         model::format_uint64(config.presentation_revision) + "\n" + model::format_uint64(payload.size()) + "\n" + digest + "\n";
@@ -97,8 +98,21 @@ ConfigResult ConfigurationStore::stage(Configuration candidate, RevisionPair exp
             candidate.controller_octopus_id = active_->controller_octopus_id;
         }
         if (!reconcile_external_slots(*active_, candidate, error)) return ConfigResult::invalid;
-        semantic = executable_policy_hash(candidate) != executable_policy_hash(*active_);
-        const bool presentation = presentation_hash(candidate) != presentation_hash(*active_);
+        {
+            const auto candidate_policy=executable_policy_hash(candidate),active_policy=executable_policy_hash(*active_);
+            if(candidate_policy.empty()||active_policy.empty()){
+                error="Configuration comparison failed";return ConfigResult::storage_error;
+            }
+            semantic = candidate_policy != active_policy;
+        }
+        bool presentation;
+        {
+            const auto candidate_presentation=presentation_hash(candidate),active_presentation=presentation_hash(*active_);
+            if(candidate_presentation.empty()||active_presentation.empty()){
+                error="Configuration comparison failed";return ConfigResult::storage_error;
+            }
+            presentation = candidate_presentation != active_presentation;
+        }
         if ((semantic && active_->config_revision == UINT64_MAX) || (presentation && active_->presentation_revision == UINT64_MAX)) { error = "Configuration revision exhausted"; return ConfigResult::recovery_required; }
         candidate.config_revision = active_->config_revision + (semantic ? 1 : 0);
         candidate.presentation_revision = active_->presentation_revision + (presentation ? 1 : 0);
@@ -106,11 +120,14 @@ ConfigResult ConfigurationStore::stage(Configuration candidate, RevisionPair exp
     if (!candidate.controller_octopus_id) { error = "Establish the original controller before activating this configuration"; return ConfigResult::invalid; }
     if (!validate_configuration(candidate, error)) return ConfigResult::invalid;
     canonicalize(candidate);
-    const auto complete_record = record(candidate,serialize_configuration(candidate)); const auto inactive = active_slot_ ? 0u : 1u;
-    const auto digest=sha256_hex(complete_record);
-    if(complete_record.empty()||digest.empty()){error="Candidate encoding failed";return ConfigResult::storage_error;}
+    auto payload=serialize_configuration(candidate);
+    if(payload.empty()){error="Candidate encoding failed";return ConfigResult::storage_error;}
+    const auto complete_record = record(candidate,std::move(payload)); const auto inactive = active_slot_ ? 0u : 1u;
+    if(complete_record.empty()){error="Candidate encoding failed";return ConfigResult::storage_error;}
+    auto digest=sha256_hex(complete_record);
+    if(digest.empty()){error="Candidate encoding failed";return ConfigResult::storage_error;}
     if (write_verified(inactive ? "c1" : "c0", complete_record) != ConfigResult::ok) { error = "Candidate write/readback failed; old active record retained"; return ConfigResult::storage_error; }
-    candidate_ = std::move(candidate); candidate_record_hash_=digest;return ConfigResult::ok;
+    candidate_ = std::move(candidate); candidate_record_hash_=std::move(digest);return ConfigResult::ok;
 }
 ConfigResult ConfigurationStore::commit(Configuration& out, std::string& error) {
     if (!candidate_) { error = "No configuration transaction is staged"; return ConfigResult::not_ready; }

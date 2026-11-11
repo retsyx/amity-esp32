@@ -86,8 +86,9 @@ void publish_configuration_revision(){
     const auto config=state.control->active_configuration();if(!config)return;
     const auto applied=state.control->execution_snapshot();
     if(applied.applied_config_revision!=config->config_revision||applied.applied_presentation_revision!=config->presentation_revision)return;
+    if(applied.applied_policy_hash.size()!=64)return;
     {std::lock_guard<std::mutex> guard(state.mutex);if(state.published_revision==config->config_revision)return;state.published_revision=config->config_revision;}
-    c::runtime_configuration_changed(config->config_revision,cs::executable_policy_hash(*config));
+    c::runtime_configuration_changed(config->config_revision,applied.applied_policy_hash);
 }
 c::Error synchronize(s::OctopusId sender,const c::Json& value){
     if(value.type!=c::Json::Type::string)return c::Error::invalid_message;
@@ -113,11 +114,14 @@ c::Error receive(s::OctopusId sender,const c::Envelope& envelope,uint64_t deadli
     if(envelope.kind!=c::Kind::scoped_intent||!c::runtime_status().member)return c::Error::unauthorized_role;
     s::OwnedIntent intent;
     if(c::parse_owned_intent(envelope.payload,intent)!=c::Error::none)return c::Error::invalid_message;
-    if(intent.kind==s::OwnedIntentKind::key_edges){intent.target.port.consortium_id=envelope.consortium_id;intent.target.port.octopus_id=envelope.destination_octopus_id;}
-    if(intent.target.port.octopus_id!=state.control->octopus_id()||intent.target.port.consortium_id!=state.control->consortium_id())return c::Error::target_not_local;
-    s::OwnedAuthorization auth{sender,envelope.origin_boot_id,envelope.destination_boot_id,link,envelope.config_revision,deadline};
-    auth.authority=intent.kind==s::OwnedIntentKind::key_edges?(intent.edge_count==1&&!intent.edges[0].down?s::OwnedAuthority::cleanup:s::OwnedAuthority::input):s::OwnedAuthority::control;
-    const auto admitted=state.control->submit_owned(intent,auth);
+    s::AdmissionResult admitted;
+    if(intent.kind==s::OwnedIntentKind::key_edges){
+        admitted=state.control->submit_key_edges(intent.edges,intent.edge_count,intent.generation,link,deadline);
+    }else{
+        if(intent.target.port.octopus_id!=state.control->octopus_id()||intent.target.port.consortium_id!=state.control->consortium_id())return c::Error::target_not_local;
+        s::OwnedAuthorization auth{sender,envelope.origin_boot_id,envelope.destination_boot_id,link,envelope.config_revision,deadline};
+        admitted=state.control->submit_owned(intent,auth);
+    }
     if(intent.kind==s::OwnedIntentKind::key_edges&&
        admitted.code!=s::AdmissionCode::accepted&&admitted.code!=s::AdmissionCode::pending)
         ESP_LOGW("system_sync","Key rejected phase=owner key=%u generation=%llu admission=%d",

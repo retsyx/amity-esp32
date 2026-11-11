@@ -20,7 +20,7 @@ namespace amity::consortium {
 bool credentials_current=true;
 bool current_peer_credential(const Active& active,const Group&){return credentials_current&&active.tls->authenticated==active.peer;}
 unsigned remembered=0,hostname_failures=0;
-Error remember_hostname(model::OctopusId,const std::string&){return ++remembered<=hostname_failures?Error::storage_failure:Error::none;}
+Error remember_hostname(model::OctopusId,const std::string&,std::unique_lock<std::mutex>&){return ++remembered<=hostname_failures?Error::storage_failure:Error::none;}
 unsigned pdMS_TO_TICKS(unsigned ms){return ms;}
 void vTaskDelay(unsigned ms){clock_ms+=ms;assert(clock_ms<1000000);}
 }
@@ -420,7 +420,7 @@ def main():
     prefix = prefix.replace('++receives;if(before_receive)before_receive();',
                             'if(++receives>=200){for(const auto& log:diagnostic_logs)std::cerr<<log<<"\\n";assert(false);}if(before_receive)before_receive();if(!healthy)return false;')
     prefix = prefix.replace('bool current_peer_credential(const Active&,const Group&){return true;}\n', '')
-    prefix = prefix.replace('Error remember_hostname(model::OctopusId,const std::string&){return Error::none;}\n', '')
+    prefix = prefix.replace('Error remember_hostname(model::OctopusId,const std::string&,std::unique_lock<std::mutex>&){return Error::none;}\n', '')
     prefix = prefix.replace('unsigned pdMS_TO_TICKS(unsigned ms){return ms/10;}\nvoid vTaskDelay(unsigned ticks){clock_ms+=ticks*10;}\n', '')
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool same_manifest(', 'bool synchronize(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',

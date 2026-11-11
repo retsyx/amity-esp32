@@ -125,7 +125,7 @@ struct HubService::Impl : Adapter {
     struct Command {
         explicit Command(Kind k,int v=0,bool r=false)
             :kind(k),repeat(r),cleanup_reservation(false),activity_bound(false),route_transition(false),owned_deferred(false),
-             local_activity_step(false),activity_canceled(false),activity_started(false),activity_completed(false),input_started(false),
+             local_activity_step(false),activity_canceled(false),activity_started(false),activity_completed(false),
              owned_waiting(false),owned_input_announced(false),configuration_applied(false),configuration_reservation(false),
              activity_reservation(false),selection_reservation(false),setup_blocked(false),selection_bound(false),selection_sent(false),
              value(static_cast<int16_t>(v)){}
@@ -133,7 +133,7 @@ struct HubService::Impl : Adapter {
         virtual uint32_t receipt()const{return 0;}
         Kind kind;
         bool repeat:1,cleanup_reservation:1,activity_bound:1,route_transition:1,owned_deferred:1,local_activity_step:1;
-        bool activity_canceled:1,activity_started:1,activity_completed:1,input_started:1,owned_waiting:1,owned_input_announced:1;
+        bool activity_canceled:1,activity_started:1,activity_completed:1,owned_waiting:1,owned_input_announced:1;
         bool configuration_applied:1,configuration_reservation:1,activity_reservation:1,selection_reservation:1,setup_blocked:1,selection_bound:1;
         bool selection_sent:1;
         int64_t input_admitted_us=0;
@@ -177,29 +177,20 @@ struct HubService::Impl : Adapter {
         system::BootId received_boot;
     };
     struct InputState {
-        system::OctopusId owner;system::ConsortiumId consortium;
-        system::OwnedAuthorization auth;
         uint64_t generation=0;
         std::array<system::KeyEdge,2> edges{};uint8_t edge_count=0;
         InputState()=default;
-        InputState(const system::OwnedIntent& intent,const system::OwnedAuthorization& authorization)
-            :owner(intent.target.port.octopus_id),consortium(intent.target.port.consortium_id),auth(authorization),generation(intent.generation),edges(intent.edges),edge_count(intent.edge_count){}
+        InputState(const std::array<system::KeyEdge,2>& value,uint8_t count,uint64_t activity_generation)
+            :generation(activity_generation),edges(value),edge_count(count){}
     };
     struct InputCommand:Command {
         InputState state;
-        InputCommand(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth):Command(Kind::KeyEdges),state(intent,auth){}
+        InputCommand(const std::array<system::KeyEdge,2>& edges,uint8_t count,uint64_t generation):Command(Kind::KeyEdges),state(edges,count,generation){}
     };
 #ifdef ESP_PLATFORM
     static_assert(sizeof(Command)<=48,"Button IPC must not carry activity/configuration payloads");
-    static_assert(sizeof(InputCommand)<=184,"Authenticated button IPC must remain compact");
+    static_assert(sizeof(InputCommand)<=64,"Button edges carry only their activity generation");
 #endif
-    static Command* owned_request(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth){
-        if(intent.kind==system::OwnedIntentKind::key_edges)return new(std::nothrow)InputCommand(intent,auth);
-        auto* command=new(std::nothrow)ActionCommand{Kind::Owned};
-        if(command){command->owned=intent;command->auth=auth;}
-        return command;
-    }
-
     std::atomic<uint32_t> intent_generation{0},key_generation{0},activity_selection{0};
     std::atomic<unsigned> owner_activity_commands{0};
     std::atomic<unsigned> activity_requests{0};std::atomic<bool> setup_running{false};
@@ -263,7 +254,8 @@ struct HubService::Impl : Adapter {
     static constexpr size_t report_capacity=64*amity::max_tentacles;
     std::vector<uint8_t> pressed_owner;
     std::vector<system::OctopusId> key_owners;
-    system::OwnedAuthorization input_auth;
+    bool input_context_valid=false; // Protected by lock; invalidated synchronously with the connection.
+    system::LinkId input_link;
     std::optional<system::OwnedIntent> owner_context;
     uint64_t input_activity_generation=0;
     uint8_t key_cleanup_roles=0;bool key_cleanup_queued=false;
@@ -407,7 +399,6 @@ struct HubService::Impl : Adapter {
         if (error != ESP_OK) { free_reservation(*command); unlock(); return error; }
         if(command->kind==Kind::Key||(command->kind==Kind::KeyEdges&&command->input().state.edges[0].down))
             command->setup_blocked=activity_setup_in_progress();
-        if(command->kind==Kind::KeyEdges)command->key_generation=key_generation.load();
         // Reservations include deferred discovery requests. No CEC capacity
         // or completion wait may delay admission of another command.
         if ((configuration&&command->kind!=Kind::ScopedConfigure) || command->route_transition) {
@@ -572,7 +563,6 @@ struct HubService::Impl : Adapter {
     }
     bool send_held_key(uint8_t raw,Command& command){
         auto& state=keys[raw];
-        if(input_auth.controller_id&&!owner_authorized(input_auth,false)){stop_key(raw);return true;}
         auto recipient=resolve_key_role(Hub::audio_key(raw),command);if(command.discovery_sides)return false;
         if(!recipient){state.phase=KeyPhase::failed;state.waiting=false;if(state.emitted)key_cleanup_roles|=key_role(raw);return true;}
         if(!state.emitted)state.mapped=recipient->engine->hub.translated_key(raw);
@@ -580,7 +570,7 @@ struct HubService::Impl : Adapter {
         if(!flight){state.phase=KeyPhase::failed;state.waiting=false;if(state.emitted)key_cleanup_roles|=key_role(raw);return true;}
         flight->key=raw;flight->instance=state.instance;
         auto& engine=*recipient->engine;engine.sending_key=flight;engine.emitting_user_key=true;
-        const auto* previous=engine.executing_auth;engine.executing_auth=input_auth.controller_id?&(command.kind==Kind::KeyEdges?command.input().state.auth:input_auth):nullptr;
+        const auto* previous=engine.executing_auth;engine.executing_auth=nullptr;
         const bool sent=engine.hub.transmit_key(recipient->device,state.mapped,Hub::audio_key(raw));
         engine.executing_auth=previous;engine.sending_key=nullptr;engine.emitting_user_key=false;
         if(sent){state.waiting=true;state.emitted=true;}else{flight->used=false;state.phase=KeyPhase::failed;state.waiting=false;if(state.emitted)key_cleanup_roles|=key_role(raw);}
@@ -689,17 +679,6 @@ struct HubService::Impl : Adapter {
         InputState local;
         if(native){local.edge_count=command.repeat?1:2;local.edges[0]={static_cast<uint8_t>(command.value),true};local.edges[1]={static_cast<uint8_t>(command.value),false};}
         const auto& intent=native?local:command.input().state;
-        if(!command.input_started){
-            const auto expected=intent.edges[0].down?system::OwnedAuthority::input:system::OwnedAuthority::cleanup;
-            if(!intent.edge_count||intent.edge_count>2||(!native&&(intent.auth.authority!=expected||!owner_authorized(intent.auth)||intent.owner!=octopus||intent.consortium!=consortium))){finish(command.reply,{system::AdmissionCode::unauthorized,"Original input authority is unavailable"});return true;}
-            if(!native)observe_controller_boot(intent.auth.controller_boot);
-            if(input_auth.controller_boot!=intent.auth.controller_boot||input_auth.link_id!=intent.auth.link_id){
-                stop_holds();xSemaphoreTake(lock,portMAX_DELAY);
-                for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){engine->received_controller_boot=intent.auth.controller_boot;engine->received_link=intent.auth.link_id;}
-                xSemaphoreGive(lock);
-            }
-            input_auth=intent.auth;input_auth.deadline_ms=0;input_auth.authority=system::OwnedAuthority::input;command.input_started=true;
-        }else if(!native&&!owner_authorized(intent.auth,false)){finish(command.reply,{system::AdmissionCode::unauthorized,"Original input authority is unavailable"});return true;}
         if(command.key_generation!=applied_key_generation||(input_activity_generation&&intent.generation!=input_activity_generation)){finish(command.reply,{system::AdmissionCode::accepted,{}});return true;}
         for(;command.edge_cursor<intent.edge_count;++command.edge_cursor){const auto edge=intent.edges[command.edge_cursor];
             if(edge.down){
@@ -713,10 +692,11 @@ struct HubService::Impl : Adapter {
         }
         finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
     }
-    void finish_pending_down(const InputState& up){
+    void finish_pending_down(const InputCommand& command){
+        const auto& up=command.state;
         if(up.edge_count!=1||up.edges[0].down)return;
         for(auto& pending:deferred)if(pending->kind==Kind::KeyEdges&&
-            pending->input().state.edge_count==1&&pending->input().state.edges[0].down&&pending->input().state.edges[0].key==up.edges[0].key&&pending->input().state.generation==up.generation){
+            pending->key_generation==command.key_generation&&pending->input().state.edge_count==1&&pending->input().state.edges[0].down&&pending->input().state.edges[0].key==up.edges[0].key&&pending->input().state.generation==up.generation){
             pending->input().state.edge_count=2;pending->input().state.edges[1]={up.edges[0].key,false};
         }
     }
@@ -738,12 +718,12 @@ struct HubService::Impl : Adapter {
         if(!intent.edges[intent.edge_count-1].down)pressed_owner[first.key]=0xff;
         bool admitted=false;
         if(owner==octopus){
-            system::OwnedAuthorization auth{owned_controller,local_boot,local_boot,{},owned_config_revision,0};auth.authority=first.down?system::OwnedAuthority::input:system::OwnedAuthority::cleanup;
-            auto command=std::unique_ptr<Command>(new(std::nothrow)InputCommand(intent,auth));if(!command)return false;
-            finish_pending_down(command->input().state);
-            command->key_generation=key_generation.load();command->setup_blocked=activity_setup_in_progress();
-            if(execute_key_edges(*command))admitted=true;
-            else if(xSemaphoreTake(command_slots,0)==pdTRUE){command->input().state.auth.deadline_ms=0;deferred.push_back(std::move(command));admitted=true;}
+            InputCommand command(intent.edges,intent.edge_count,intent.generation);command.key_generation=key_generation.load();command.setup_blocked=activity_setup_in_progress();
+            finish_pending_down(command);
+            if(execute_key_edges(command))admitted=true;
+            else if(auto pending=std::unique_ptr<Command>(new(std::nothrow)InputCommand(command))){
+                if(xSemaphoreTake(command_slots,0)==pdTRUE){deferred.push_back(std::move(pending));admitted=true;}
+            }
         }else{
             const bool release=intent.edge_count==1&&!first.down;
             const auto started=esp_timer_get_time();
@@ -1010,7 +990,7 @@ struct HubService::Impl : Adapter {
             if(!intent.repair&&accepted_selection){
                 if(intent.generation<=accepted_selection->generation){
                     const bool duplicate=intent.generation==accepted_selection->generation&&same_selection(intent,*accepted_selection);
-                    if(duplicate)refresh_input_authority(command->action().auth);
+                    if(duplicate)establish_input_context(command->action().auth);
                     finish(command->reply,duplicate?system::AdmissionResult{system::AdmissionCode::accepted,{}}:
                         system::AdmissionResult{system::AdmissionCode::stale,"Original activity was superseded or changed"});
                     free_reservation(*command);return;
@@ -1022,14 +1002,14 @@ struct HubService::Impl : Adapter {
                 command->selection_reservation=true;++activity_requests;
             }
             key_generation.fetch_add(1);apply_emergency_release();input_activity_generation=command->action().owned.generation;
-            refresh_input_authority(command->action().auth);
+            establish_input_context(command->action().auth);
             command->kind=Kind::OwnerActivity;finish(command->reply,{system::AdmissionCode::accepted,{}});command->reply.reset();
         }
         if(command->kind==Kind::Select||command->kind==Kind::Standby){apply_emergency_release();broadcast_selection(*command);}
         if(command->kind==Kind::KeyEdges){
-            finish_pending_down(command->input().state);
+            finish_pending_down(command->input());
             if(execute(*command)){free_reservation(*command);return;}
-            finish(command->reply,{system::AdmissionCode::pending,"Original owner lookup is in progress"});command->input().state.auth.deadline_ms=0;deferred.push_back(std::move(command));return;
+            finish(command->reply,{system::AdmissionCode::pending,"Original owner lookup is in progress"});deferred.push_back(std::move(command));return;
         }
         if(command->kind==Kind::Owned){
             auto* engine=adapter(command->action().owned.target.port.tentacle_id);
@@ -1136,16 +1116,31 @@ struct HubService::Impl : Adapter {
     void observe_controller_boot(system::BootId boot){
         if(accepted_controller_boot&&accepted_controller_boot!=boot){
             cancel_owner_activity();accepted_selection.reset();key_generation.fetch_add(1);apply_emergency_release();
+            input_activity_generation=0;
+            xSemaphoreTake(lock,portMAX_DELAY);input_context_valid=false;xSemaphoreGive(lock);
+            for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->received_generation=0;
         }
         accepted_controller_boot=boot;
     }
-    void refresh_input_authority(const system::OwnedAuthorization& auth){
-        input_auth=auth;input_auth.deadline_ms=0;input_auth.authority=system::OwnedAuthority::input;
+    void establish_input_context(const system::OwnedAuthorization& auth){
         xSemaphoreTake(lock,portMAX_DELAY);
+        const bool changed=!input_context_valid||input_link!=auth.link_id;
+        if(changed&&input_context_valid)key_generation.fetch_add(1);
         for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){
             engine->received_controller_boot=auth.controller_boot;engine->received_link=auth.link_id;
         }
+        input_context_valid=true;input_link=auth.link_id;
         xSemaphoreGive(lock);
+        if(changed)apply_emergency_release();
+    }
+    bool admit_input(system::LinkId link,uint64_t deadline,uint32_t& generation){
+        // The transport already authenticated this connection. Only a current
+        // activity/context can make its button edges eligible for execution.
+        xSemaphoreTake(lock,portMAX_DELAY);
+        generation=key_generation.load();
+        const bool current=input_context_valid&&link==input_link;
+        xSemaphoreGive(lock);
+        return current&&(!deadline||uint64_t(esp_timer_get_time())/1000<deadline);
     }
     bool accepted_activity_authorized(const system::OwnedAuthorization& auth)const{
         return !maintenance.load()&&!retiring.load()&&!authority_transition.load()&&
@@ -1312,14 +1307,19 @@ struct HubService::Impl : Adapter {
     }
     void refresh_configuration_revision(system::OctopusId controller,uint64_t revision){
         const auto previous=owned_config_revision.load();
-        if(owned_controller!=controller){cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};}
+        if(owned_controller!=controller){
+            cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};
+            key_generation.fetch_add(1);apply_emergency_release();
+            xSemaphoreTake(lock,portMAX_DELAY);
+            input_context_valid=false;
+            xSemaphoreGive(lock);
+        }
         if(owned_controller==controller){
             const auto refresh=[&](system::OwnedAuthorization& auth){if(auth.controller_id==controller&&auth.config_revision==previous)auth.config_revision=revision;};
-            refresh(input_auth);refresh(activity_auth);
+            refresh(activity_auth);
             if(owner_context)owner_context->config_revision=revision;
             if(shared_selection)shared_selection->config_revision=revision;
             if(accepted_selection)accepted_selection->config_revision=revision;
-            for(auto& pending:deferred)if(pending->kind==Kind::KeyEdges)refresh(pending->input().state.auth);
         }
         xSemaphoreTake(lock,portMAX_DELAY);owned_controller=controller;owned_config_revision=revision;xSemaphoreGive(lock);
     }
@@ -1804,7 +1804,10 @@ system::AdmissionResult HubService::Adapter::execute_owned(const system::OwnedIn
         if(!input_announced&&hub.source_input_announcement_here(intent))admitted=hub.announce_owned_input();
         else admitted=hub.execute_owned(intent);
         executing_auth=nullptr;executing_activity_step=false;
-        if(intent.kind==K::context&&admitted){root.owner_context=intent;root.input_activity_generation=std::max(root.input_activity_generation,intent.generation);}
+        if(intent.kind==K::context&&admitted){
+            root.owner_context=intent;root.input_activity_generation=std::max(root.input_activity_generation,intent.generation);
+            if(!local_step)root.establish_input_context(auth);
+        }
         if(hub.pending_resolution())return {system::AdmissionCode::pending,"Original owner lookup is in progress"};
         const auto present=intent.kind==K::source_input?std::optional<bool>{true}:std::nullopt;
         return admitted?system::AdmissionResult{system::AdmissionCode::accepted,{},present}:
@@ -2105,7 +2108,22 @@ esp_err_t HubService::configure_scoped(std::vector<Activity> activities,std::vec
     return result;
 }
 system::AdmissionResult HubService::submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,uint32_t timeout){
-    auto* c=Impl::owned_request(intent,auth);if(!c)return {system::AdmissionCode::overloaded,"Owner request allocation failed"};
+    if(intent.kind==system::OwnedIntentKind::key_edges)return {system::AdmissionCode::invalid,"Button edges require the input entry"};
+    auto* c=new(std::nothrow)Impl::ActionCommand{Impl::Kind::Owned};if(!c)return {system::AdmissionCode::overloaded,"Owner request allocation failed"};
+    c->owned=intent;c->auth=auth;
+    if(!timeout){const auto result=impl_->submit(c);return result==ESP_OK?system::AdmissionResult{system::AdmissionCode::accepted,{}}:system::AdmissionResult{system::AdmissionCode::overloaded,"Owner input IPC is full"};}
+    return impl_->request(c,timeout);
+}
+system::AdmissionResult HubService::submit_key_edges(const std::array<system::KeyEdge,2>& edges,uint8_t count,uint64_t activity_generation,
+    system::LinkId link,uint64_t deadline,uint32_t timeout){
+    if(!count||count>2||!activity_generation||(count==2&&(edges[0].key!=edges[1].key||!edges[0].down||edges[1].down)))
+        return {system::AdmissionCode::invalid,"Invalid button edges"};
+    uint32_t generation=0;
+    if(!impl_->admit_input(link,deadline,generation))return {system::AdmissionCode::stale,"Original input context is unavailable"};
+    auto* c=new(std::nothrow)Impl::InputCommand(edges,count,activity_generation);if(!c)return {system::AdmissionCode::overloaded,"Owner input allocation failed"};
+    // Retain the epoch captured before allocation: a concurrent connection
+    // fence also invalidates edges which reach the owner queue afterward.
+    c->key_generation=generation;
     if(!timeout){const auto result=impl_->submit(c);return result==ESP_OK?system::AdmissionResult{system::AdmissionCode::accepted,{}}:system::AdmissionResult{system::AdmissionCode::overloaded,"Owner input IPC is full"};}
     return impl_->request(c,timeout);
 }
@@ -2159,6 +2177,9 @@ bool HubService::fence_owned(system::OctopusId controller,system::LinkId link){
     xSemaphoreTake(p.lock,portMAX_DELAY);
     if(!controller||controller==p.owned_controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=p.adapter(id))
         if(!link||link==engine->received_link)engine->owned_wire_generation.fetch_add(1);
+    if(p.input_context_valid&&(!controller||controller==p.owned_controller)&&(!link||link==p.input_link)){
+        p.input_context_valid=false;p.key_generation.fetch_add(1);
+    }
     xSemaphoreGive(p.lock);
     auto* c=new(std::nothrow)Impl::ManagementCommand{Impl::Kind::OwnedFence};if(!c)return false;c->management().controller=controller;c->management().link=link;
     return bool(p.request(c));

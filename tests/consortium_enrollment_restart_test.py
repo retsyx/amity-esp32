@@ -14,6 +14,7 @@ from setup_timing_support import timing_support
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "amity/consortium/runtime.hpp"
+#include "runtime_persistence.hpp"
 #include "amity/consortium/update.hpp"
 #include "amity/consortium/credential_types.hpp"
 #include <algorithm>
@@ -37,7 +38,7 @@ struct FakeTls {
     bool receive(std::string& out){if(next==frames.size())return false;out=frames[next++];return true;}
 };
 struct Active {Session session;FakeTls transport;FakeTls* tls=&transport;model::OctopusId peer;};
-std::mutex lock,enrollment_lock;
+std::mutex lock,enrollment_lock,persistence_lock;
 Group group;RuntimeStatus status;RuntimeNetworkHooks network;
 std::vector<std::string> events;
 bool ack_fails=false,commit_fails=false,save_fails=false,finish_fails=false,handoff_fails=false,internal_stack=false;
@@ -126,7 +127,7 @@ def main():
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) +
                        ['-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
-                        '-I' + str(directory), '-I' + str(ROOT / 'components/consortium/include'),
+                        '-I' + str(directory), '-I' + str(ROOT / 'components/consortium'), '-I' + str(ROOT / 'components/consortium/include'),
                         '-I' + str(ROOT / 'components/amity_system/include')] +
                        [str(path) for path in sources] + [str(cpp), '-o', str(binary)], check=True)
         return subprocess.run([str(binary)], check=False).returncode

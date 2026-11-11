@@ -248,8 +248,12 @@ std::string sha256_hex(std::string_view input) {
     static constexpr char hex[] = "0123456789abcdef"; std::string result(64, '0');
     for (size_t i = 0; i < 32; ++i) { result[i * 2] = hex[digest[i] >> 4]; result[i * 2 + 1] = hex[digest[i] & 15]; } return result;
 }
-std::string executable_policy_hash(const Configuration& c) { return sha256_hex(serialize_configuration(c, true)); }
-std::string presentation_hash(const Configuration& c) { return sha256_hex(encoded_configuration(c,Projection::presentation)); }
+std::string executable_policy_hash(const Configuration& c) {
+    const auto encoded=serialize_configuration(c,true);return encoded.empty()?std::string{}:sha256_hex(encoded);
+}
+std::string presentation_hash(const Configuration& c) {
+    const auto encoded=encoded_configuration(c,Projection::presentation);return encoded.empty()?std::string{}:sha256_hex(encoded);
+}
 
 const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slot) {
     for (const auto& s : c.external_slots) if (s.slot == slot && !s.tombstone) for (const auto& a : c.activities) if (a.activity_id == s.activity_id) return &a;

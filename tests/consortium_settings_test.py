@@ -9,6 +9,7 @@ PREFIX=r'''
 #include "amity/consortium/settings.hpp"
 #include "controller_policy.hpp"
 #include "hostname_registry.hpp"
+#include "runtime_persistence.hpp"
 #include <cassert>
 #include <deque>
 #include <iostream>
@@ -22,11 +23,11 @@ template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++)
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls{model::OctopusId authenticated;};
 struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,restart_requested=false,execution_fenced=false;RuntimePeerStatus status;std::string advertised_hostname;};
-std::mutex lock;Group group;Identity identity;RuntimeStatus status;HostnameRegistry hostnames;RuntimeNetworkHooks network;struct{bool submitted=false;std::string hostname;RuntimeAdmissionStatus view;}admission;std::string local_hostname="main-name";bool registry_failure=false;model::BootId boot=ident<model::BootId>(6);uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
+std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;HostnameRegistry hostnames;RuntimeNetworkHooks network;struct{bool submitted=false;std::string hostname;RuntimeAdmissionStatus view;}admission;std::string local_hostname="main-name";bool registry_failure=false;model::BootId boot=ident<model::BootId>(6);uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 unsigned saves=0,restarts=0;uint64_t revision=2,hostname_revision=10;bool send_success=true,applied_sent=false,http_sent=false;unsigned effect_fault=0;
 std::shared_ptr<Active> current_link;std::vector<std::string> sent;
 bool current_peer_credential(const Active& active,const Group& current){for(const auto& peer:current.peers)if(peer.id==active.peer&&peer.id==active.tls->authenticated&&peer.active)return true;return false;}
-Error remember_hostname(model::OctopusId owner,const std::string& name){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}
+Error remember_hostname(model::OctopusId owner,const std::string& name,std::unique_lock<std::mutex>&){return hostnames.remember(owner,name,[](std::string_view){return !registry_failure;});}
 bool send(Active&,Kind kind,std::string_view payload,uint32_t){sent.emplace_back(payload);Json parsed;JsonError detail;assert(parse_json(payload,parsed,detail)&&valid_envelope_payload(kind,parsed));if(send_success&&kind==Kind::settings_result&&parsed.get("stage")->string=="applied")applied_sent=true;return send_success;}
 }
 '''
@@ -166,7 +167,7 @@ void local_tests(){
 }
 void rename_sender_tests(){
  reset(true);auto active=connection(false);const auto original=active->session.scope();const auto tls=active->tls;
- assert(remember_hostname(active->peer,"member-old")==Error::none);
+ {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);assert(remember_hostname(active->peer,"member-old",guard)==Error::none);}
  auto rename=rename_core("member-new",active->status.boot_id);
  const auto request=ident<model::MessageId>(90);
  admission.submitted=true;admission.view.phase="connecting";admission.hostname="member-new";
