@@ -121,9 +121,13 @@ def test_activity():
                                   command="standby", broadcast=True)
             for component in components:
                 component.assert_power(PowerState.STANDBY)
-            state = dut.get_state()
-            assert state["current_activity"] == -1
-            assert state["activity_settling"] is False
+            def standby_preserved(state):
+                # The received frame can precede TX-completion publication.
+                # Suppression must retain Standby throughout that completion.
+                assert state["current_activity"] == -1
+                return state["activity_settling"] is False
+
+            dut.wait_for(standby_preserved, timeout=dut._runtime.timeout)
 
 
 def test_activity_no_display():

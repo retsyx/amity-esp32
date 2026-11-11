@@ -21,7 +21,7 @@ class ActivityScenario(Scenario):
                  repair_standby=False, disconnect_failure=False, missing_followup=False,
                  selected_standby=False, changed_active_selection=False,
                  directed_standby=False, changed_standby_selection=False,
-                 standby_settling=False, missing_display_input=False,
+                 standby_settling=False, standby_states=(), missing_display_input=False,
                  missing_repair_display_input=False, wrong_display_input=False,
                  wrong_repair_display_input=False):
         super().__init__()
@@ -35,6 +35,8 @@ class ActivityScenario(Scenario):
         self.directed_standby = directed_standby
         self.changed_standby_selection = changed_standby_selection
         self.standby_settling = standby_settling
+        self.standby_states = tuple(standby_states)
+        self.standby_reads = 0
         self.missing_display_input = missing_display_input
         self.missing_repair_display_input = missing_repair_display_input
         self.wrong_display_input = wrong_display_input
@@ -173,6 +175,10 @@ class ActivityScenario(Scenario):
 
     def state(self, main):
         self.events.append(("standby.state", main))
+        if self.standby_states:
+            selected, settling = self.standby_states[min(self.standby_reads, len(self.standby_states) - 1)]
+            self.standby_reads += 1
+            return {"current_activity": selected, "activity_settling": settling}
         return {"current_activity": 0 if self.changed_standby_selection else -1,
                 "activity_settling": self.standby_settling}
 
@@ -335,14 +341,32 @@ class ActivityScenarioTests(unittest.TestCase):
         self.assertTrue(all(component.power == PowerState.STANDBY for component in fixture.components))
         self.assert_cleanup(fixture)
 
-    def test_changed_or_settling_standby_selection_fails_after_broadcast(self):
-        for option in ("changed_standby_selection", "standby_settling"):
-            with self.subTest(option=option):
-                fixture = ActivityScenario(**{option: True})
+    def test_standby_suppression_waits_for_completion_publication_without_replaying_actions(self):
+        fixture = ActivityScenario(standby_states=((-1, True), (-1, False)))
+        fixture.run()
+        self.assertEqual(fixture.standby_reads, 2)
+        self.assertEqual(len(fixture.announcements), 2)
+        self.assertEqual([action.kind for action in fixture.actions], ["start", "repair", "standby"])
+        self.assertTrue(any(row[0] == "announcement.standby" for row in fixture.events))
+        self.assert_cleanup(fixture)
+
+    def test_changed_standby_selection_fails_even_during_pending_completion(self):
+        for states in (((0, False),), ((-1, True), (0, True), (-1, False))):
+            with self.subTest(states=states):
+                fixture = ActivityScenario(standby_states=states)
                 with self.assertRaises(AssertionError):
                     fixture.run()
+                self.assertEqual(fixture.standby_reads, 1 if len(states) == 1 else 2)
                 self.assertTrue(any(row[0] == "announcement.standby" for row in fixture.events))
                 self.assert_cleanup(fixture)
+
+    def test_standby_completion_that_never_publishes_still_times_out(self):
+        fixture = ActivityScenario(standby_settling=True)
+        with patch("amity_harness.dut.time.monotonic", side_effect=(0, 1_000_000_000)):
+            with self.assertRaisesRegex(TimeoutError, "Amity UI state"):
+                fixture.run()
+        self.assertTrue(any(row[0] == "announcement.standby" for row in fixture.events))
+        self.assert_cleanup(fixture)
 
     def test_missing_repair_power_fails_even_when_final_model_power_is_on(self):
         for recipient in range(3):
