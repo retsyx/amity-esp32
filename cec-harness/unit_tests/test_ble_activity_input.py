@@ -39,10 +39,11 @@ class TransitionKeyboard:
         self.select_down = False
         self.select_released = self.fast_complete = False
         self.selection_ownership = None
+        self.setup_delay = .005
     def assert_paired(self):
         return self
 
-    def emit(self, target, opcode, operands=b""):
+    def emit(self, target, opcode, operands=b"", *, before_observe=None):
         destination = 15 if opcode == 0x86 and self.fault != "directed_route" else target.address.logical
         frame = Frame(self.f.scan.initiators[target.gpio], destination,
                       opcode, operands, timestamp_ns=time.monotonic_ns())
@@ -50,6 +51,8 @@ class TransitionKeyboard:
         if ((repairing and target is self.f.next_player and opcode == 0x44 and operands == b"\x6d")
                 or (not repairing and target is self.f.old_source and opcode == 0x36)):
             self.initialized_time = frame.timestamp_ns
+        if before_observe is not None:
+            before_observe()
         for component in self.f.components:
             if component.gpio == target.gpio:
                 component.receive(frame, transport="wire")
@@ -76,7 +79,11 @@ class TransitionKeyboard:
         if self.fault != "missing_power":
             self.emit(f.next_player, 0x44, b"\x6d")
             self.emit(f.next_player, 0x45)
-        self.route_time = self.emit(f.avr, 0x86, f.next_player.address.physical.to_bytes(2, "big"))
+        # Normal simulated commit happens when routing finishes, before its
+        # observation wakes the host. The late-commit fault keeps these apart.
+        self.phase = "gate"
+        self.route_time = self.emit(f.avr, 0x86, f.next_player.address.physical.to_bytes(2, "big"),
+                                   before_observe=None if self.fault == "late_local_commit" else self._commit)
         if self.fault == "late_local_commit":
             def commit_after_probe():
                 if self.fresh_probe_received.wait(.5):
@@ -85,9 +92,6 @@ class TransitionKeyboard:
             timer = threading.Thread(target=commit_after_probe)
             self.timers.append(timer)
             timer.start()
-        else:
-            self._commit()
-        self.phase = "gate"
         if self.fault == "old_replay":
             self.emit(f.old_source, 0x44, bytes([Key.RIGHT]))
             self.emit(f.old_source, 0x45)
@@ -128,7 +132,7 @@ class TransitionKeyboard:
         self.selection_inputs.append("setup_left")
         if self.fault == "setup_press":
             self.emit(self.f.next_player, 0x44, bytes([Key.LEFT]))
-        timer = threading.Timer(1.02 if self.fault == "slow_local_setup" else .005, self._route)
+        timer = threading.Timer(self.setup_delay, self._route)
         self.timers.append(timer)
         timer.start()
         if self.fault == "late_setup_delivery":
@@ -271,7 +275,7 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                                       volume=None if repair else avr,
                                       old_source=next_player if repair else player, components=components,
                                       session=session, bed=bed, scan=scan, state=state,
-                                      activity=SimpleNamespace(activity_id="2" * 32, _needs_standby=False,
+                                      activity=SimpleNamespace(activity_id="2" * 32, timeout=1, _needs_standby=False,
                                                                _last_start_request="previous-http-request",
                                                                _last_start_terminal=True),
                                       pin_active=False, pin_closed=False, pin_frames=[])
@@ -579,8 +583,9 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                 self.assertTrue(all(not component._wire_observers for component in fixture.components))
 
     def test_local_setup_can_exceed_one_second_before_a_timely_physical_gate_proof(self):
-        with self.fixture(repair=True, fault="slow_local_setup") as fixture:
-            fixture.main._runtime.cec_timeout = 1.2
+        with self.fixture(repair=True) as fixture:
+            fixture.activity.timeout = 2
+            fixture.keyboard.setup_delay = 1.02
             self.transition(fixture)
             record, = fixture.bed.control_observations[-1]["checks"]
             selected = next(change["started_monotonic_ns"] for change in record["input_changes"]
@@ -588,6 +593,44 @@ class BLEActivityEvidenceTests(unittest.TestCase):
             self.assertGreater(record["routing_wire_timestamp_ns"] - selected, 1_000_000_000)
             self.assertLess(record["fresh_press_wire_timestamp_ns"], record["fallback_lower_bound_monotonic_ns"])
             self.assertTrue(record["passed"])
+
+    def test_remote_handoff_uses_the_activity_budget_without_moving_the_gate_window(self):
+        with self.fixture(remote=True) as fixture:
+            fixture.activity.timeout = 2
+            fixture.keyboard.setup_delay = 1.02
+            self.transition(fixture, all_up=False)
+            record, = fixture.bed.control_observations[-1]["checks"]
+            changes = {change["phase"]: change for change in record["input_changes"]}
+            selected = changes["shortcut_up_setup_left_down"]["started_monotonic_ns"]
+            self.assertEqual(record["activity_deadline_monotonic_ns"], selected + 2_000_000_000)
+            self.assertEqual(record["fallback_lower_bound_monotonic_ns"], selected + 1_000_000_000)
+            self.assertLess(changes["gated_down_down"]["finished_monotonic_ns"], selected + 1_000_000_000)
+            self.assertGreater(record["routing_wire_timestamp_ns"], selected + 1_000_000_000)
+            self.assertLess(record["routing_wire_timestamp_ns"], record["activity_deadline_monotonic_ns"])
+            self.assertLess(record["old_release_wire_timestamp_ns"], selected + 120_000_000)
+            self.assertLess(record["old_volume_release_wire_timestamp_ns"], selected + 120_000_000)
+            self.assertTrue(record["passed"])
+
+    def test_initialization_and_readiness_share_the_original_activity_deadline(self):
+        for delayed in ("route", "readiness"):
+            with self.subTest(delayed=delayed), self.fixture(fault="delayed_selection", remote=True) as fixture:
+                fixture.activity.timeout = .04
+                if delayed == "route":
+                    fixture.keyboard.setup_delay = .03
+                else:
+                    def delayed_status():
+                        time.sleep(.08)
+                        return {"current_activity": 1, "activity_settling": False, "activity_error": ""}
+
+                    fixture.read_status = delayed_status
+                with self.assertRaisesRegex(TimeoutError, "initialization command|did not become current"):
+                    self.transition(fixture, all_up=False)
+                record, = fixture.bed.control_observations[-1]["checks"]
+                selected = next(change["started_monotonic_ns"] for change in record["input_changes"]
+                                if change["phase"] == "shortcut_up_setup_left_down")
+                self.assertEqual(record["activity_deadline_monotonic_ns"], selected + 40_000_000)
+                self.assertFalse(record["passed"])
+                self.assertNotIn("fresh_select_down", [change["phase"] for change in record["input_changes"]])
 
     def test_coalesced_setup_report_must_finish_before_final_routing(self):
         with self.fixture(fault="late_setup_delivery") as fixture:

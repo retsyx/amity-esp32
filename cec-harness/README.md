@@ -1043,6 +1043,9 @@ change cancels both the old source's navigation hold and the old AVR's volume
 hold through fallback; reselection tests all-buttons-up without an audio role.
 The source-only activity keeps the all-buttons-up check short enough to prove
 acceptance with a fresh physical CEC press before the fallback deadline.
+Ordered initialization and UI readiness share the activity's operation deadline
+from selection. Old-hold cancellation and individual key responses retain the
+ordinary CEC deadline; the one-second input-gate proof is unchanged.
 Activity-transition assertions use UI state and physical CEC traffic.
 The fixture stops that activity and restarts the original TV/AVR/source activity
 with fresh power and routing evidence. Disconnecting BLE during a held Volume

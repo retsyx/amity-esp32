@@ -72,20 +72,23 @@ class BLEActivityEvidence(BLEInputEvidence):
                                           keyboard=(0x50, 0x51, 0x52), consumer=consumer)
         return finished
 
-    def _settled(self, target):
-        deadline = time.monotonic_ns() + self._budget()
+    def _settled(self, target, deadline_ns):
         while True:
-            state = self.dut.request("/api/status")
+            remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+            if remaining <= 0:
+                raise TimeoutError("The BLE-selected activity did not become current")
+            state = self.dut.request("/api/status", timeout=min(15, remaining))
             if (not isinstance(state, dict) or type(state.get("current_activity")) is not int
                     or state["current_activity"] < -1 or type(state.get("activity_settling")) is not bool
                     or not isinstance(state.get("activity_error"), str)):
                 raise AssertionError("The BLE activity handoff has invalid readiness state")
+            observed = time.monotonic_ns()
+            if observed >= deadline_ns:
+                raise TimeoutError("The BLE-selected activity did not become current")
             if state.get("current_activity") == target and state.get("activity_settling") is False:
                 if state.get("activity_error") != "":
                     raise AssertionError("The BLE activity handoff failed")
-                return time.monotonic_ns()
-            if time.monotonic_ns() >= deadline:
-                raise TimeoutError("The BLE-selected activity did not become current")
+                return observed
             self._live()
 
     def assert_transition(self, keyboard, *, old_source, source, display, old_display, routing, volume, activity, all_up):
@@ -129,6 +132,11 @@ class BLEActivityEvidence(BLEInputEvidence):
             activity._last_start_request, activity._last_start_terminal = None, False
             selected, setup_sent = self._report_change(reports, record, "shortcut_up_setup_left_down",
                                                        keyboard=(0x4F, 0x50), consumer=consumer)
+            # A handoff executes several ordered CEC actions. Give the whole
+            # initialization its Activity budget, anchored at this selection;
+            # cancellation, individual keys and the gate retain their bounds.
+            activity_deadline = selected + int(activity.timeout * 1_000_000_000)
+            record["activity_deadline_monotonic_ns"] = activity_deadline
             ended = self._release(old_source, after=selected, deadline_ns=selected + self._budget())
             volume_ended = (self._release(volume, after=selected, deadline_ns=selected + self._budget())
                             if volume is not None else ended)
@@ -136,7 +144,7 @@ class BLEActivityEvidence(BLEInputEvidence):
             initializer = source if repairing else old_source
             initialize_opcode = 0x44 if repairing else 0x36
             initialized = self._control(initializer, initialize_opcode,
-                                        after=selected, deadline_ns=selected + self._budget(),
+                                        after=selected, deadline_ns=activity_deadline,
                                         operands=b"\x6d" if repairing else b"")
             # Cancellation and this initialization witness share the back
             # wire. Front-side display Standby is verified independently.
@@ -144,13 +152,13 @@ class BLEActivityEvidence(BLEInputEvidence):
                 raise AssertionError("The accepted BLE transition did not stop both old holds before setup")
             # A same-target selection initially has the old ready snapshot.
             # Start its readiness reads only after physical acceptance proof.
-            settled_read = readiness.submit(copy_context().run, self._settled, target)
+            settled_read = readiness.submit(copy_context().run, self._settled, target, activity_deadline)
             # Probe the held fallback during setup, after cancellation is
             # already physically proven while both old buttons remain down.
             blocked_sent = self._gate_probes(reports, record, consumer) if not all_up else None
-            route = self._control(routing, 0x86, after=selected, deadline_ns=selected + self._budget(),
+            route = self._control(routing, 0x86, after=selected, deadline_ns=activity_deadline,
                                   operands=source.address.physical.to_bytes(2, "big"))
-            powered = self._control(source, 0x44, after=selected, deadline_ns=selected + self._budget(),
+            powered = self._control(source, 0x44, after=selected, deadline_ns=activity_deadline,
                                     operands=b"\x6d")
             if powered.timestamp_ns >= route.timestamp_ns:
                 raise AssertionError("The selected BLE source was not powered before routing")
