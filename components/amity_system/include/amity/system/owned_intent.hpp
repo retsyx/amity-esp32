@@ -23,8 +23,11 @@ struct OwnedIntent {
     uint64_t generation = 0;
     // Local IPC metadata. The authenticated envelope carries this on wire.
     uint64_t config_revision = 0;
-    // A same-target repair repeats this owner's original power/input recipe.
+    // Long-Power repair is one-shot and does not arm the selection input gate.
     bool repair = false;
+    // A fresh selection of the current activity repeats its power/input recipe.
+    // Its generation still distinguishes it from a recovered duplicate.
+    bool reselect = false;
     // Owner-task IPC metadata for its original local recipe, never on wire.
     bool activity_step = false;
     uint8_t input = 0;

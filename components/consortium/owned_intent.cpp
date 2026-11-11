@@ -48,10 +48,10 @@ bool parse_action(const Json* value,K& out){
 }
 bool parse_context(const Json& v,model::OwnedIntent& x,bool activity=false){
     uint64_t input=0;
-    if(!(activity?closed(v,{"selected","source_changed","source","audio","display","switch_device","input","repair"}):closed(v,{"selected","source_changed","source","audio","display","switch_device","input"}))||
+    if(!(activity?closed(v,{"selected","source_changed","source","audio","display","switch_device","input","repair","reselect"}):closed(v,{"selected","source_changed","source","audio","display","switch_device","input"}))||
        !json_bool(v.get("selected"),x.selected)||!json_bool(v.get("source_changed"),x.source_changed)||
        !json_uint(v.get("input"),input,0,255))return false;
-    if(activity&&!json_bool(v.get("repair"),x.repair))return false;
+    if(activity&&(!json_bool(v.get("repair"),x.repair)||!json_bool(v.get("reselect"),x.reselect)))return false;
     x.input=static_cast<uint8_t>(input);
     for(const auto& item:{std::pair<const char*,std::optional<model::QualifiedDeviceName>*>{"source",&x.source},{"audio",&x.audio},{"display",&x.display},{"switch_device",&x.switch_device}}){
         const auto* value=v.get(item.first);if(value->type==Json::Type::null_value)continue;
@@ -61,7 +61,7 @@ bool parse_context(const Json& v,model::OwnedIntent& x,bool activity=false){
     return true;
 }
 std::string context_json(const model::OwnedIntent& x,bool activity=false){
-    return "{\"selected\":"+std::string(x.selected?"true":"false")+",\"source_changed\":"+(x.source_changed?"true":"false")+",\"source\":"+(x.source?target_json(*x.source):"null")+",\"audio\":"+(x.audio?target_json(*x.audio):"null")+",\"display\":"+(x.display?target_json(*x.display):"null")+",\"switch_device\":"+(x.switch_device?target_json(*x.switch_device):"null")+",\"input\":"+std::to_string(x.input)+(activity?",\"repair\":"+std::string(x.repair?"true":"false"):"")+"}";
+    return "{\"selected\":"+std::string(x.selected?"true":"false")+",\"source_changed\":"+(x.source_changed?"true":"false")+",\"source\":"+(x.source?target_json(*x.source):"null")+",\"audio\":"+(x.audio?target_json(*x.audio):"null")+",\"display\":"+(x.display?target_json(*x.display):"null")+",\"switch_device\":"+(x.switch_device?target_json(*x.switch_device):"null")+",\"input\":"+std::to_string(x.input)+(activity?",\"repair\":"+std::string(x.repair?"true":"false")+",\"reselect\":"+(x.reselect?"true":"false"):"")+"}";
 }
 }
 Error parse_owned_intent(const Json& v,model::OwnedIntent& out) {

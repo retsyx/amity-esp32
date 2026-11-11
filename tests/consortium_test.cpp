@@ -60,7 +60,7 @@ m::OwnedIntent action(const LinkScope& s){m::OwnedIntent x;x.kind=m::OwnedIntent
 void envelope_tests(const std::string& body){
     Envelope out;assert(parse_envelope(body,out)==Error::none);m::OwnedIntent decoded;
     const auto* arguments=out.payload.get("arguments");
-    assert(arguments&&closed(*arguments,{"selected","source_changed","source","audio","display","switch_device","input","repair"}));
+    assert(arguments&&closed(*arguments,{"selected","source_changed","source","audio","display","switch_device","input","repair","reselect"}));
     assert(parse_owned_intent(out.payload,decoded)==Error::none&&decoded.kind==m::OwnedIntentKind::activity&&decoded.selected&&!decoded.repair);
     assert(parse_envelope(replace(body,"\"repair\":false","\"repair\":true"),out)==Error::none);
     assert(parse_owned_intent(out.payload,decoded)==Error::none&&decoded.repair);
@@ -82,6 +82,8 @@ void envelope_tests(const std::string& body){
     assert(parse_envelope(replace(body,"\"protocol_version\":1","\"protocol_version\":2"),out)==Error::protocol_mismatch);
     assert(parse_envelope(replace(body,"\"kind\":\"scoped_intent\"","\"kind\":\"raw_cec\""),out)==Error::unsupported_kind);
     assert(parse_envelope(replace(body,"\"repair\":false","\"repair\":1"),out)==Error::invalid_message);
+    assert(parse_envelope(replace(body,"\"reselect\":false","\"reselect\":1"),out)==Error::invalid_message);
+    assert(parse_envelope(replace(body,"\"reselect\":false","\"obsolete_reselect\":false"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"repair\":false","\"repair\":false,\"toggle\":true"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":1000,\"extra\":false"),out)==Error::invalid_message);
     assert(parse_envelope(replace(body,"\"ttl_ms\":1000","\"ttl_ms\":1000,\"ttl_ms\":10"),out)==Error::invalid_message);
@@ -105,10 +107,10 @@ void session_tests(){
 }
 void owner_activity_selection_tests(){
     auto request=action(scope());request.target.osd_name.clear();Json value;JsonError detail;m::OwnedIntent decoded;
-    for(bool selected:{false,true})for(bool repair:{false,true}){
-        request.selected=selected;request.repair=repair;request.activity_step=true;
+    for(bool selected:{false,true})for(bool repair:{false,true})for(bool reselect:{false,true}){
+        request.selected=selected;request.repair=repair;request.reselect=reselect;request.activity_step=true;
         assert(parse_json(owned_intent_json(request),value,detail)&&parse_owned_intent(value,decoded)==Error::none);
-        assert(decoded.selected==selected&&decoded.repair==repair&&decoded.source==request.source&&!decoded.activity_step);
+        assert(decoded.selected==selected&&decoded.repair==repair&&decoded.reselect==reselect&&decoded.source==request.source&&!decoded.activity_step);
         assert(!value.get("activity_step"));
     }
     value.object.emplace_back("activity_step",Json{});assert(parse_owned_intent(value,decoded)==Error::invalid_message);

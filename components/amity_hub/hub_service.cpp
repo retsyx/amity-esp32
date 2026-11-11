@@ -65,11 +65,11 @@ struct HubService::Impl : Transport {
     struct Command {
         explicit Command(Kind k,int v=0,bool r=false):kind(k),value(v),repeat(r){}
         Kind kind; int value=0; bool repeat=false,cleanup_reservation=false,activity_bound=false,route_transition=false,owned_deferred=false;
-        bool activity_started=false,input_started=false,owned_waiting=false,owned_input_announced=false,configuration_applied=false,configuration_reservation=false,activity_reservation=false,selection_reservation=false,setup_blocked=false,selection_bound=false,selection_sent=false;
+        bool local_activity_step=false,activity_canceled=false,activity_started=false,activity_completed=false,input_started=false,owned_waiting=false,owned_input_announced=false,configuration_applied=false,configuration_reservation=false,activity_reservation=false,selection_reservation=false,setup_blocked=false,selection_bound=false,selection_sent=false;
         system::AdmissionResult owned_result;
         uint32_t key_generation=0,release_generation=0,activity_generation=0,intent_generation=0,activity_receipt=0,expected_selection=0,activity_instance=0;
         int64_t input_admitted_us=0;
-        uint8_t discovery_sides=0,lookup_adapter=0,edge_cursor=0;
+        uint8_t discovery_sides=0,lookup_adapter=0,edge_cursor=0,context_cursor=0;
         cec::Frame received_frame;BusSide received_side=BusSide::Back;uint8_t received_adapter=0;
         Hub::ReceiveStep received_step=Hub::ReceiveStep::Frame;
         uint64_t received_generation=0,received_deadline=0;uint32_t received_activity=0,received_binding=0,received_wire=0;
@@ -125,11 +125,16 @@ struct HubService::Impl : Transport {
     struct StepResult {system::OwnedIntent request;system::AdmissionResult result;};
     std::optional<StepResult> pending_step;bool step_pending=false;uint64_t shared_generation=1;
     std::optional<system::OwnedIntent> shared_selection;
-    // Owner IDs only: their latest accepted selection never entered the
-    // transport. Successful admission removes them, even if that scope ends.
+    // Retry owners whose latest normal selection could not enter transport.
+    // A later ready capture also offers that selection: transport admission
+    // alone does not establish that the owner accepted it.
     std::vector<system::OctopusId> unadmitted_selection_owners;
     uint32_t shared_selection_receipt=0;
-    uint32_t activity_instance=0;
+    std::atomic<uint32_t> activity_instance{0};
+    // Normal selections are idempotent across authenticated link recovery.
+    // This receipt is independent of the currently executing owner recipe.
+    system::BootId accepted_controller_boot;
+    std::optional<system::OwnedIntent> accepted_selection;
     enum class DiscoveryPhase {Idle,ClaimBack,ScanBack,BackReplies,ClaimFront,ScanFront,FinalReplies};
     struct DiscoveryState {DiscoveryPhase phase=DiscoveryPhase::Idle;bool waiting=false,claim_only=false,claimed=false;uint8_t candidate=0,nacks=0,address=0,sides=0;int64_t deadline=0,quiet_since=0;}discovery;
     std::string last_activity_error;
@@ -150,6 +155,7 @@ struct HubService::Impl : Transport {
     uint64_t input_activity_generation=0;
     uint8_t key_cleanup_roles=0;bool key_cleanup_queued=false,emitting_user_key=false,emitting_key_cleanup=false;
     const system::OwnedAuthorization *executing_auth=nullptr;
+    bool executing_activity_step=false;uint32_t executing_activity_instance=0;
     system::BootId received_controller_boot;system::LinkId received_link;
     std::vector<system::ScopedSelector> active_selectors;
     std::vector<system::OctopusId> activity_owners;
@@ -596,7 +602,11 @@ struct HubService::Impl : Transport {
             fence.secondary_generation = &key_generation;
             fence.expected_secondary_generation = applied_key_generation;
         }
-        if(executing_auth) {
+        if(executing_activity_step){
+            const auto& root=parent?*parent:*this;
+            fence.secondary_generation=&root.activity_instance;
+            fence.expected_secondary_generation=executing_activity_instance;
+        }else if(executing_auth) {
             fence.secondary_generation=&owned_wire_generation;
             fence.expected_secondary_generation=owned_wire_generation.load();
             uint64_t deadline=executing_auth->deadline_ms;
@@ -844,6 +854,7 @@ struct HubService::Impl : Transport {
         if(!command.input_started){
             const auto expected=intent.edges[0].down?system::OwnedAuthority::input:system::OwnedAuthority::cleanup;
             if(!intent.edge_count||intent.edge_count>2||(!native&&(command.auth.authority!=expected||!owner_authorized(command.auth)||intent.target.port.octopus_id!=octopus||intent.target.port.consortium_id!=consortium))){finish(command.reply,{system::AdmissionCode::unauthorized,"Original input authority is unavailable"});return true;}
+            if(!native)observe_controller_boot(command.auth.controller_boot);
             if(input_auth.controller_boot!=command.auth.controller_boot||input_auth.link_id!=command.auth.link_id){
                 stop_holds();xSemaphoreTake(lock,portMAX_DELAY);
                 for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){engine->received_controller_boot=command.auth.controller_boot;engine->received_link=command.auth.link_id;}
@@ -920,15 +931,15 @@ struct HubService::Impl : Transport {
     bool execute(Command &command) {
         if(command.kind==Kind::Owned){
             if(command.owned.kind==system::OwnedIntentKind::key_edges)return execute_key_edges(command);
-            if(command.owned.activity_step&&command.activity_instance!=activity_instance)return true;
+            if(command.local_activity_step&&command.activity_instance!=activity_instance)return true;
             auto* engine=adapter(command.owned.target.port.tentacle_id);
             if(command.owned_waiting){
                 if(owner_activity_pending())return false;
-                if(!engine||!engine->owner_authorized(command.auth,false)){
+                if(!engine||!(command.local_activity_step?local_activity_authorized(command.auth,command.activity_instance):engine->owner_authorized(command.auth,false))){
                     complete_owned(command,{system::AdmissionCode::unauthorized,"Original controller authority is unavailable"});return true;
                 }
                 if(engine->source_input_next(command.owned,command.owned_result,command.owned_input_announced)){
-                    if(command.owned.generation!=engine->received_generation){
+                    if(!command.local_activity_step&&command.owned.generation!=engine->received_generation){
                         complete_owned(command,{system::AdmissionCode::stale,"Original source input was superseded"});return true;
                     }
                     // The upstream selection has completed (or was dropped).
@@ -940,7 +951,7 @@ struct HubService::Impl : Transport {
                 }
                 complete_owned(command,command.owned_result);return true;
             }
-            const auto result=engine?engine->execute_owned(command.owned,command.auth,false,command.owned_input_announced):
+            const auto result=engine?engine->execute_owned(command.owned,command.auth,false,command.owned_input_announced,command.activity_instance,command.local_activity_step):
                 system::AdmissionResult{system::AdmissionCode::invalid,"Unknown HDMI adapter"};
 
             if(result.code==system::AdmissionCode::pending){command.discovery_sides=engine->hub.pending_resolution();return false;}
@@ -981,11 +992,25 @@ struct HubService::Impl : Transport {
             command.activity_started=true;if(!apply_activity(command.value,command.activity_receipt!=0)){command.discovery_sides=control_hub().pending_resolution();return false;}
             break;
         case Kind::OwnerActivity:
-            if(!owner_authorized(command.auth,false)){++activity_instance;activity_hub.cancel_activity();step_pending=false;pending_step.reset();last_activity_error="Original controller authority is unavailable";break;}
-            if(!command.activity_started)stage_owner_selection(command);
+            if(!accepted_activity_authorized(command.auth)||(command.activity_started&&command.activity_instance!=activity_instance.load())){
+                if(command.activity_started){activity_hub.cancel_activity();step_pending=false;pending_step.reset();}
+                last_activity_error="Original controller authority is unavailable";break;
+            }
+            if(!command.activity_started){stage_owner_selection(command);command.activity_started=true;}
             if(key_cleanup_roles||key_cleanup_pending())return false;
-            command.activity_started=true;if(!apply_activity(command.value,!command.owned.repair)){command.discovery_sides=control_hub().pending_resolution();return false;}
-            owner_context=command.owned;activity_hub.refresh_owned_context(octopus);
+            if(!command.activity_completed){
+                if(!apply_activity(command.value,!command.owned.repair)){command.discovery_sides=control_hub().pending_resolution();return false;}
+                command.activity_completed=true;
+            }
+            // These contexts are the result of the admitted local recipe,
+            // independent of whether its original transport scope still lives.
+            owner_context=command.owned;
+            for(;command.context_cursor<amity::max_tentacles;++command.context_cursor)if(connector_configured(command.context_cursor))if(auto* engine=adapter(command.context_cursor)){
+                auto context=command.owned;context.kind=system::OwnedIntentKind::context;context.activity_step=false;context.source_changed=false;
+                context.target.port={consortium,octopus,command.context_cursor,system::Side::front};context.target.osd_name.clear();
+                engine->hub.execute_owned(context);
+                if(engine->hub.pending_resolution()){command.discovery_sides=engine->hub.pending_resolution();return false;}
+            }
             break;
         case Kind::Key:
             if(stale_key(command))break;
@@ -1059,20 +1084,22 @@ struct HubService::Impl : Transport {
         const auto state=activity_hub.snapshot();const bool selected=command.kind==Kind::Select;
         const auto next=selected&&command.value>=0&&static_cast<size_t>(command.value)<state.activities.size()?state.activities[command.value]:Activity{};
         shared_generation=std::max(shared_generation,activity_hub.scoped_generation());
-        if(command.route_transition||command.kind==Kind::ScopedConfigure)++shared_generation;
+        if(command.activity_receipt||command.kind==Kind::ScopedConfigure)++shared_generation;
         command.owned.generation=shared_generation;
+        // The main is also an owner. A fresh same-target selection advances
+        // input identity even though its local repair keeps the same context.
+        input_activity_generation=shared_generation;
         system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::activity;intent.generation=shared_generation;intent.config_revision=owned_config_revision;
-        intent.selected=selected;intent.repair=!command.activity_receipt&&selected;
+        intent.selected=selected;intent.repair=!command.activity_receipt;intent.reselect=command.activity_receipt&&!command.route_transition;
         intent.source=selector(next.source);intent.audio=selector(next.audio);intent.display=selector(next.display);intent.switch_device=selector(next.switch_device);intent.input=next.switch_input;
-        shared_selection=intent;shared_selection->repair=false;
-        if(command.activity_receipt){shared_selection_receipt=command.activity_receipt;unadmitted_selection_owners.clear();}
+        if(command.activity_receipt){shared_selection=intent;shared_selection_receipt=command.activity_receipt;unadmitted_selection_owners.clear();}
         std::vector<system::OctopusId> sent;
         auto owners=activity_owners;for(const auto& item:active_selectors)if(std::find(owners.begin(),owners.end(),item.target.port.octopus_id)==owners.end())owners.push_back(item.target.port.octopus_id);
         for(const auto owner:owners){
             if(owner==octopus||std::find(sent.begin(),sent.end(),owner)!=sent.end())continue;
             sent.push_back(owner);intent.target.port={consortium,owner,0,system::Side::front};
             const bool admitted=owned_sender&&owned_sender(intent);
-            if(admitted)unadmitted_selection_owners.erase(std::remove(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),owner),unadmitted_selection_owners.end());
+            if(admitted&&!intent.repair)unadmitted_selection_owners.erase(std::remove(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),owner),unadmitted_selection_owners.end());
             else if(command.activity_receipt){
                 unadmitted_selection_owners.push_back(owner);
                 ESP_LOGW(TAG,"Activity delivery not admitted owner=%s generation=%llu",owner.str().c_str(),static_cast<unsigned long long>(intent.generation));
@@ -1095,25 +1122,16 @@ struct HubService::Impl : Transport {
         if(!admit_unadmitted_selection(owner))std::rotate(unadmitted_selection_owners.begin(),unadmitted_selection_owners.begin()+1,unadmitted_selection_owners.end());
     }
     bool refresh_selection_context(system::OctopusId owner){
-        if(!shared_selection)return activity_hub.refresh_owned_context(owner);
-        const auto pending=std::find(unadmitted_selection_owners.begin(),unadmitted_selection_owners.end(),owner);
-        if(pending!=unadmitted_selection_owners.end()){
-            // A newer selection is already queued. Park the ready capture
-            // without publishing the superseded intent; its admission will
-            // establish context, including if its first attempt is rejected.
-            if(shared_selection_receipt!=activity_selection.load())return true;
-            return admit_unadmitted_selection(owner);
-        }
-        auto context=*shared_selection;context.kind=system::OwnedIntentKind::context;context.repair=false;context.source_changed=false;context.config_revision=owned_config_revision;
-        bool admitted=true;std::vector<system::CecPortRef> ports;
-        for(const auto& item:active_selectors)if(item.target.port.octopus_id==owner){auto port=item.target.port;port.side=system::Side::front;
-            if(std::find(ports.begin(),ports.end(),port)!=ports.end())continue;
-            ports.push_back(port);context.target.port=port;context.target.osd_name.clear();admitted=bool(dispatch_owned(context))&&admitted;
-        }
-        return admitted;
+        if(!shared_selection||owner==octopus)return activity_hub.refresh_owned_context(owner);
+        if(std::find(activity_owners.begin(),activity_owners.end(),owner)==activity_owners.end()&&
+           std::none_of(active_selectors.begin(),active_selectors.end(),[&](const auto& item){return item.target.port.octopus_id==owner;}))return true;
+        // A newer accepted selection is queued. Its broadcast must establish
+        // context; recapture must never resurrect the superseded selection.
+        if(shared_selection_receipt!=activity_selection.load())return true;
+        return admit_unadmitted_selection(owner);
     }
     void stage_owner_selection(Command& command){
-        ++activity_instance;
+        command.activity_instance=activity_instance.fetch_add(1)+1;
         const auto& intent=command.owned;std::vector<system::ScopedSelector> selectors;
         activity_auth=command.auth;activity_auth.deadline_ms=0;
         for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){
@@ -1138,7 +1156,7 @@ struct HubService::Impl : Transport {
         for(uint8_t id=0;id<amity::max_tentacles;++id)if(connector_configured(id))ports.push_back({consortium,octopus,id,system::Side::front});
         activity_hub.scoped_ports(std::move(ports));active_selectors=selectors;
         for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->hub.qualified_names();
-        command.value=activity_hub.stage_activity(std::move(next),std::move(selectors),selected,intent.generation);
+        command.value=activity_hub.stage_activity(std::move(next),std::move(selectors),selected,intent.generation,intent.reselect||intent.repair);
     }
 
     void accept(Command *raw) {
@@ -1146,10 +1164,29 @@ struct HubService::Impl : Transport {
         if(command->reply&&command->reply->canceled.load()&&command->kind!=Kind::SettingsCommit){free_reservation(*command);return;}
         if(command->kind==Kind::Owned&&command->owned.kind==system::OwnedIntentKind::activity){
             const auto& intent=command->owned;
-            if(!owner_authorized(command->auth)||intent.target.port.octopus_id!=octopus||intent.target.port.consortium_id!=consortium){finish(command->reply,{system::AdmissionCode::unauthorized,"Original controller authority is unavailable"});free_reservation(*command);return;}
+            if(command->auth.authority!=system::OwnedAuthority::control||!owner_authorized(command->auth)||
+               intent.target.port.octopus_id!=octopus||intent.target.port.consortium_id!=consortium){finish(command->reply,{system::AdmissionCode::unauthorized,"Original controller authority is unavailable"});free_reservation(*command);return;}
+            if(!intent.generation){finish(command->reply,{system::AdmissionCode::invalid,"Missing original activity generation"});free_reservation(*command);return;}
+            observe_controller_boot(command->auth.controller_boot);
+            if(intent.repair&&accepted_selection&&intent.generation<accepted_selection->generation){
+                finish(command->reply,{system::AdmissionCode::stale,"Original activity repair was superseded"});free_reservation(*command);return;
+            }
+            if(!intent.repair&&accepted_selection){
+                if(intent.generation<=accepted_selection->generation){
+                    const bool duplicate=intent.generation==accepted_selection->generation&&same_selection(intent,*accepted_selection);
+                    if(duplicate)refresh_input_authority(command->auth);
+                    finish(command->reply,duplicate?system::AdmissionResult{system::AdmissionCode::accepted,{}}:
+                        system::AdmissionResult{system::AdmissionCode::stale,"Original activity was superseded or changed"});
+                    free_reservation(*command);return;
+                }
+            }
+            if(!intent.repair){
+                accepted_selection=intent;
+                command->activity_receipt=activity_selection.fetch_add(1)+1;
+                command->selection_reservation=true;++activity_requests;
+            }
             key_generation.fetch_add(1);apply_emergency_release();input_activity_generation=command->owned.generation;
-            input_auth=command->auth;input_auth.deadline_ms=0;input_auth.authority=system::OwnedAuthority::input;
-            xSemaphoreTake(lock,portMAX_DELAY);for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){engine->received_controller_boot=command->auth.controller_boot;engine->received_link=command->auth.link_id;}xSemaphoreGive(lock);
+            refresh_input_authority(command->auth);
             command->kind=Kind::OwnerActivity;finish(command->reply,{system::AdmissionCode::accepted,{}});command->reply.reset();
         }
         if(command->kind==Kind::Select||command->kind==Kind::Standby){apply_emergency_release();broadcast_selection(*command);}
@@ -1166,7 +1203,7 @@ struct HubService::Impl : Transport {
                 finish(command->reply,{system::AdmissionCode::pending,"Original owner lookup is in progress"});command->auth.deadline_ms=0;deferred.push_back(std::move(command));return;
             }
             if(owner_activity(*command)&&(owner_activity_pending()||queued_owner_activity())){
-                const auto result=engine?engine->execute_owned(command->owned,command->auth,true):
+                const auto result=engine?engine->execute_owned(command->owned,command->auth,true,false,command->activity_instance,command->local_activity_step):
                     system::AdmissionResult{system::AdmissionCode::invalid,"Unknown HDMI adapter"};
                 if(!result){free_reservation(*command);complete_owned(*command,result);return;}
 
@@ -1176,7 +1213,7 @@ struct HubService::Impl : Transport {
             if(command->discovery_sides||command->owned_waiting)command->auth.deadline_ms=0;
             deferred.push_back(std::move(command));return;
         }
-        if(command->kind==Kind::OwnedBind&&(owner_activity_pending()||owner_activity_commands.load()||hub.activity_pending())){
+        if(command->kind==Kind::OwnedBind&&command->controller==owned_controller&&(owner_activity_pending()||owner_activity_commands.load()||hub.activity_pending())){
             deferred.push_back(std::move(command));return;
         }
         const bool earlier_activity=std::any_of(deferred.begin(),deferred.end(),[](const auto& pending){return activity_request(*pending);});
@@ -1192,7 +1229,8 @@ struct HubService::Impl : Transport {
     bool resume_discovered() {
         bool changed = false,owner_blocked=false,activity_blocked=false,lookup_blocked=false;
         for (auto i = deferred.begin(); i != deferred.end();) {
-            if((*i)->kind==Kind::Owned&&(*i)->owned.activity_step&&(*i)->activity_instance!=activity_instance){
+            if((*i)->activity_canceled){free_reservation(**i);i=deferred.erase(i);changed=true;continue;}
+            if((*i)->kind==Kind::Owned&&(*i)->local_activity_step&&(*i)->activity_instance!=activity_instance){
                 free_reservation(**i);i=deferred.erase(i);changed=true;continue;
             }
             if((*i)->kind==Kind::Received&&!current_received(**i)){
@@ -1220,7 +1258,7 @@ struct HubService::Impl : Transport {
                 auto* engine=adapter((*i)->received_adapter);
                 if(engine&&(engine->pending_scan_sides()&(*i)->discovery_sides)){++i;continue;}
             }else if((*i)->kind==Kind::OwnedBind){
-                if(owner_activity_pending()||owner_activity_commands.load()||hub.activity_pending()){++i;continue;}
+                if((*i)->controller==owned_controller&&(owner_activity_pending()||owner_activity_commands.load()||hub.activity_pending())){++i;continue;}
             }else if(activity){
                 if(((*i)->kind==Kind::Select||(*i)->kind==Kind::Standby)&&
                    step_pending&&!control_hub().activity_pending()){++i;continue;}
@@ -1243,6 +1281,45 @@ struct HubService::Impl : Transport {
         return changed;
     }
 
+    static bool same_selection(const system::OwnedIntent& a,const system::OwnedIntent& b){
+        return a.selected==b.selected&&a.reselect==b.reselect&&a.source==b.source&&a.audio==b.audio&&a.display==b.display&&
+            a.switch_device==b.switch_device&&a.input==b.input;
+    }
+    void cancel_owner_activity(){
+        ++activity_instance;activity_hub.cancel_activity();step_pending=false;pending_step.reset();
+        for(auto& command:deferred)if(activity_request(*command)||command->local_activity_step)command->activity_canceled=true;
+    }
+    bool purge_canceled_activity(){
+        bool changed=false;
+        for(auto i=deferred.begin();i!=deferred.end();)if((*i)->activity_canceled){
+            finish((*i)->reply,{system::AdmissionCode::unauthorized,"Original activity authority changed"});
+            free_reservation(**i);i=deferred.erase(i);changed=true;
+        }else ++i;
+        return changed;
+    }
+    void observe_controller_boot(system::BootId boot){
+        if(accepted_controller_boot&&accepted_controller_boot!=boot){
+            cancel_owner_activity();accepted_selection.reset();key_generation.fetch_add(1);apply_emergency_release();
+        }
+        accepted_controller_boot=boot;
+    }
+    void refresh_input_authority(const system::OwnedAuthorization& auth){
+        input_auth=auth;input_auth.deadline_ms=0;input_auth.authority=system::OwnedAuthority::input;
+        xSemaphoreTake(lock,portMAX_DELAY);
+        for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id)){
+            engine->received_controller_boot=auth.controller_boot;engine->received_link=auth.link_id;
+        }
+        xSemaphoreGive(lock);
+    }
+    bool accepted_activity_authorized(const system::OwnedAuthorization& auth)const{
+        return !maintenance.load()&&!retiring.load()&&!authority_transition.load()&&
+            auth.controller_id==owned_controller&&auth.owner_boot==local_boot&&auth.config_revision==owned_config_revision&&
+            (local_coordinator.load()?auth.controller_boot==local_boot:auth.controller_boot==accepted_controller_boot);
+    }
+    bool local_activity_authorized(const system::OwnedAuthorization& auth,uint32_t instance)const{
+        const auto& root=parent?*parent:*this;
+        return instance==root.activity_instance.load()&&root.accepted_activity_authorized(auth);
+    }
     bool owner_authorized(const system::OwnedAuthorization& auth,bool arrival=true) const {
         const auto& root=parent?*parent:*this;
         if(!root.owned_controller || auth.controller_id!=root.owned_controller || auth.owner_boot!=root.local_boot ||
@@ -1256,28 +1333,29 @@ struct HubService::Impl : Transport {
         return !input_announced&&hub.source_input_announcement_here(intent)&&result.source_present.value_or(false)&&
             (result.code==system::AdmissionCode::accepted||result.code==system::AdmissionCode::overloaded);
     }
-    system::AdmissionResult execute_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,bool validate_only=false,bool input_announced=false) {
+    system::AdmissionResult execute_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth,bool validate_only=false,bool input_announced=false,uint32_t instance=0,bool local_step=false) {
         auto& root=parent?*parent:*this;
         using K=system::OwnedIntentKind;
         if(auth.authority!=system::OwnedAuthority::control)return {system::AdmissionCode::unauthorized,"Original action has the wrong authority class"};
-        if(!owner_authorized(auth))return {system::AdmissionCode::unauthorized,"Original controller authority is unavailable"};
+        if(!(local_step?local_activity_authorized(auth,instance):owner_authorized(auth)))return {system::AdmissionCode::unauthorized,"Original controller authority is unavailable"};
         if(intent.target.port.octopus_id!=root.octopus || intent.target.port.consortium_id!=root.consortium ||
            intent.target.port.tentacle_id!=adapter_id || !root.connector_configured(adapter_id))
             return {system::AdmissionCode::invalid,"The selected HDMI adapter is unavailable"};
         if(root.maintenance.load()||root.retiring.load())return {system::AdmissionCode::unauthorized,"This Amity is unavailable while updating or removed"};
         if(!intent.generation)return {system::AdmissionCode::invalid,"Missing original input generation"};
-        if(received_controller_boot!=auth.controller_boot || received_link!=auth.link_id) {
+        if(!local_step)root.observe_controller_boot(auth.controller_boot);
+        if(!local_step&&(received_controller_boot!=auth.controller_boot || received_link!=auth.link_id)) {
             stop_holds();received_generation=0;
             xSemaphoreTake(root.lock,portMAX_DELAY);
             received_controller_boot=auth.controller_boot;received_link=auth.link_id;
             xSemaphoreGive(root.lock);
         }
         if(validate_only){
-            if(intent.generation<received_generation)return {system::AdmissionCode::stale,"Activity input was superseded"};
+            if(!local_step&&intent.generation<received_generation)return {system::AdmissionCode::stale,"Activity input was superseded"};
             return {system::AdmissionCode::accepted,{}};
         }
-        if(intent.generation<received_generation)return {system::AdmissionCode::stale,"Activity input was superseded"};
-        received_generation=intent.generation;
+        if(!local_step&&intent.generation<received_generation)return {system::AdmissionCode::stale,"Activity input was superseded"};
+        if(!local_step)received_generation=intent.generation;
         if(intent.kind==K::context&&intent.selected&&intent.source&&intent.source->port.octopus_id==intent.target.port.octopus_id&&intent.source->port.tentacle_id==intent.target.port.tentacle_id){
             hub.find_device(intent.source->osd_name,intent.source->port.side==system::Side::front?BusSide::Front:BusSide::Back);
             if(hub.pending_resolution())return {system::AdmissionCode::pending,"Original owner lookup is in progress"};
@@ -1292,11 +1370,11 @@ struct HubService::Impl : Transport {
         struct SettingScope {bool& value;bool previous;~SettingScope(){value=previous;}} setting_scope{setting_activity,setting_activity};
         if(owner_activity(intent))setting_activity=true;
         if(intent.kind==K::discover){requested_scan_sides=3;return {system::AdmissionCode::accepted,{}};}
-        executing_auth=&auth;
+        executing_auth=&auth;executing_activity_step=local_step;executing_activity_instance=instance;
         bool admitted=false;
         if(!input_announced&&hub.source_input_announcement_here(intent))admitted=hub.announce_owned_input();
         else admitted=hub.execute_owned(intent);
-        executing_auth=nullptr;
+        executing_auth=nullptr;executing_activity_step=false;
         if(intent.kind==K::context&&admitted){root.owner_context=intent;root.input_activity_generation=std::max(root.input_activity_generation,intent.generation);}
         if(hub.pending_resolution())return {system::AdmissionCode::pending,"Original owner lookup is in progress"};
         const auto present=intent.kind==K::source_input?std::optional<bool>{true}:std::nullopt;
@@ -1349,7 +1427,7 @@ struct HubService::Impl : Transport {
             auth.authority=system::OwnedAuthority::control;
             if(intent.activity_step){
                 auto* request=new(std::nothrow)Command{Kind::Owned};if(!request)return dispatched(false);
-                request->owned=intent;request->auth=auth;request->activity_instance=activity_instance;return dispatched(submit(request)==ESP_OK,{},true);
+                request->owned=intent;request->auth=auth;request->activity_instance=activity_instance.load();request->local_activity_step=true;return dispatched(submit(request)==ESP_OK,{},true);
             }
             const auto result=engine->execute_owned(intent,auth);
             if(result.code==system::AdmissionCode::pending){
@@ -1442,9 +1520,9 @@ struct HubService::Impl : Transport {
         if(cb)cb(state);
     }
     void complete_owned(Command& command,const system::AdmissionResult& result){
-        if(command.owned.activity_step){
+        if(command.local_activity_step){
             if(command.activity_instance!=activity_instance)return;
-            if(!local_coordinator.load()&&(command.auth.controller_boot!=activity_auth.controller_boot||command.auth.link_id!=activity_auth.link_id||command.auth.config_revision!=activity_auth.config_revision))return;
+            if(!local_activity_authorized(command.auth,command.activity_instance))return;
             if(command.owned.kind==system::OwnedIntentKind::source_input&&result.code==system::AdmissionCode::accepted&&result.source_present.value_or(false)){
                 // The source step has completed its actual CEC transmission.
                 // Commit this owner's original next context before causal RX.
@@ -1458,11 +1536,13 @@ struct HubService::Impl : Transport {
     }
     void refresh_configuration_revision(system::OctopusId controller,uint64_t revision){
         const auto previous=owned_config_revision.load();
+        if(owned_controller!=controller){cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};}
         if(owned_controller==controller){
             const auto refresh=[&](system::OwnedAuthorization& auth){if(auth.controller_id==controller&&auth.config_revision==previous)auth.config_revision=revision;};
             refresh(input_auth);refresh(activity_auth);
             if(owner_context)owner_context->config_revision=revision;
             if(shared_selection)shared_selection->config_revision=revision;
+            if(accepted_selection)accepted_selection->config_revision=revision;
             for(auto& pending:deferred){
                 if(pending->kind!=Kind::Key&&pending->kind!=Kind::KeyRepeat&&pending->kind!=Kind::KeyCleanup&&
                    !(pending->kind==Kind::Owned&&pending->owned.kind==system::OwnedIntentKind::key_edges))continue;
@@ -1470,7 +1550,7 @@ struct HubService::Impl : Transport {
                 if(pending->owned.config_revision==previous)pending->owned.config_revision=revision;
             }
         }
-        owned_controller=controller;owned_config_revision=revision;
+        xSemaphoreTake(lock,portMAX_DELAY);owned_controller=controller;owned_config_revision=revision;xSemaphoreGive(lock);
     }
     bool owned_command(Command& command){
         using K=Kind;
@@ -1515,22 +1595,25 @@ struct HubService::Impl : Transport {
             for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->hub.qualified_names();
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::OwnedFence:
-            if(step_pending&&pending_step&&(!command.controller||pending_step->request.target.port.octopus_id==command.controller)){
+            if(step_pending&&pending_step&&pending_step->request.target.port.octopus_id!=octopus&&(!command.controller||pending_step->request.target.port.octopus_id==command.controller)){
                 last_activity_error="The equipment owner disconnected before activity setup completed";
                 action_result({pending_step->request,{system::AdmissionCode::unauthorized,last_activity_error}});
             }
             if(!command.controller||command.controller==owned_controller)for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))if(!command.link||command.link==engine->received_link){engine->stop_holds();}
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::AuthorityTransition:
+            cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};
             if(!command.repeat)unadmitted_selection_owners.clear();
             activity_hub.release_key();for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();
             local_coordinator.store(command.repeat);coordinator_epoch=command.config_revision;authority_transition.store(false);
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::Retire:
+            cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};
             unadmitted_selection_owners.clear();
             activity_hub.release_key();legacy_enabled=false;for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();passive_ports();
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::MaintenanceBegin:
+            cancel_owner_activity();accepted_selection.reset();
             maintenance_started=true;maintenance_applied.store(wires_idle());
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::MaintenanceEnd:maintenance_started=false;maintenance.store(false);maintenance_applied.store(false);finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
@@ -1548,6 +1631,7 @@ struct HubService::Impl : Transport {
             if(p.pending_settings)p.complete_settings(uint64_t(esp_timer_get_time())/1000);
             if(p.maintenance_started)p.maintenance_applied.store(p.wires_idle());
             bool changed=p.receive_reports(),pending=false;
+            changed=p.purge_canceled_activity()||changed;
             if(p.legacy_enabled&&!p.maintenance_started&&!p.retiring.load()){
                 p.apply_emergency_release();p.schedule_key_cleanup();
                 // A reply may already be waiting when its preceding TX
@@ -1598,7 +1682,7 @@ struct HubService::Impl : Transport {
             }
             p.schedule_key_cleanup();changed=p.update_settling()||changed;
             p.refresh_activity_setup();
-            p.retry_unadmitted_selection();
+            p.retry_unadmitted_selection();changed=p.purge_canceled_activity()||changed;
             if(changed)p.publish();
         }
     }
@@ -1833,6 +1917,7 @@ void HubService::set_coordinator_authority(bool local, uint64_t epoch) {
 }
 esp_err_t HubService::transition_coordinator_authority(bool local, uint64_t epoch) {
     if (!epoch || impl_->maintenance.load() || impl_->authority_transition.exchange(true)) return ESP_ERR_INVALID_STATE;
+    ++impl_->activity_instance;
     auto* command = new (std::nothrow) Impl::Command{Impl::Kind::AuthorityTransition};
     if (command) { command->repeat = local; command->config_revision = epoch; }
     const auto result = impl_->request(command, 5000);
@@ -1840,7 +1925,7 @@ esp_err_t HubService::transition_coordinator_authority(bool local, uint64_t epoc
     return ESP_OK;
 }
 esp_err_t HubService::retire_membership() {
-    impl_->retiring.store(true);
+    impl_->retiring.store(true);++impl_->activity_instance;
     impl_->local_coordinator.store(false);
     const auto result = impl_->request(new (std::nothrow) Impl::Command{Impl::Kind::Retire}, 5000);
     return result ? ESP_OK : result.code == system::AdmissionCode::expired ? ESP_ERR_TIMEOUT : ESP_ERR_INVALID_STATE;
@@ -1848,7 +1933,7 @@ esp_err_t HubService::retire_membership() {
 esp_err_t HubService::begin_maintenance() {
     if (xSemaphoreTake(impl_->configuration_gate, 0) != pdTRUE) return ESP_ERR_INVALID_STATE;
     if (impl_->settings_gate.load()) { xSemaphoreGive(impl_->configuration_gate); return ESP_ERR_INVALID_STATE; }
-    impl_->maintenance.store(true);
+    impl_->maintenance.store(true);++impl_->activity_instance;
     xSemaphoreGive(impl_->configuration_gate);
     if (impl_->maintenance_applied.load()) return ESP_OK;
     const auto result = impl_->request(new (std::nothrow) Impl::Command{Impl::Kind::MaintenanceBegin}, 5000);
@@ -1900,13 +1985,13 @@ system::AdmissionResult HubService::submit_owned(const system::OwnedIntent& inte
     auto* c=new(std::nothrow)Impl::Command{Impl::Kind::Owned};if(!c)return {system::AdmissionCode::overloaded,"Owner request allocation failed"};
     // The queued command owns the request before either caller reference expires.
     c->owned=intent;c->auth=auth;
-    if(intent.kind==system::OwnedIntentKind::activity&&!intent.repair)c->activity_receipt=impl_->activity_selection.fetch_add(1)+1;
     if(!timeout){const auto result=impl_->submit(c);return result==ESP_OK?system::AdmissionResult{system::AdmissionCode::accepted,{}}:system::AdmissionResult{system::AdmissionCode::overloaded,"Owner input IPC is full"};}
     return impl_->request(c,timeout);
 }
 esp_err_t HubService::bind_owned_controller(system::OctopusId controller,uint64_t revision){
     if(!controller||!revision)return ESP_ERR_INVALID_ARG;
     auto* c=new(std::nothrow)Impl::Command{Impl::Kind::OwnedBind};if(!c)return ESP_ERR_NO_MEM;c->controller=controller;c->config_revision=revision;
+    xSemaphoreTake(impl_->lock,portMAX_DELAY);if(impl_->owned_controller!=controller)++impl_->activity_instance;xSemaphoreGive(impl_->lock);
     const auto result=impl_->request(c,5000);return result?ESP_OK:ESP_ERR_INVALID_STATE;
 }
 void HubService::set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> observer){

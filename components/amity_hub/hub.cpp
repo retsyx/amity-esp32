@@ -63,9 +63,9 @@ bool Hub::configure_scoped(std::vector<Activity> activities) {
     activities_=std::move(activities);selected_=selected;
     return true;
 }
-int Hub::stage_activity(Activity next,std::vector<system::ScopedSelector> selectors,bool selected,uint64_t generation){
+int Hub::stage_activity(Activity next,std::vector<system::ScopedSelector> selectors,bool selected,uint64_t generation,bool reselect){
     const auto before=current();const bool had_selection=selected_>=0;
-    const bool same=had_selection&&generation==owned_generation_&&before.display==next.display&&before.source==next.source&&before.audio==next.audio&&before.switch_device==next.switch_device&&before.switch_input==next.switch_input;
+    const bool same=reselect&&had_selection&&before.display==next.display&&before.source==next.source&&before.audio==next.audio&&before.switch_device==next.switch_device&&before.switch_input==next.switch_input;
     activities_={before,std::move(next)};selected_=had_selection?0:-1;
     scoped_selectors_=std::move(selectors);next_owned_generation_=generation;
     return selected?(same?0:1):-1;

@@ -83,7 +83,7 @@ public:
     void scoped_ports(std::vector<system::CecPortRef> ports){scoped_owner_ports_=std::move(ports);}
     // Install one transient owner-local selection without configure's cleanup.
     // The previous effective activity remains the recipe's before state.
-    int stage_activity(Activity,std::vector<system::ScopedSelector>,bool selected,uint64_t generation);
+    int stage_activity(Activity,std::vector<system::ScopedSelector>,bool selected,uint64_t generation,bool reselect);
     void selection_generation(uint64_t generation){next_owned_generation_=generation;}
     uint64_t scoped_generation() const { return owned_generation_; }
     // Owner-local actions reuse the same original translation and held state.
