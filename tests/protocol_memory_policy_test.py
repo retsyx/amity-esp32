@@ -296,8 +296,12 @@ def main() -> None:
     # explicit cast in the native fixture. No allocation/lifetime logic changes.
     actual_task = actual_task.replace('s_stack_buffer = mdns_mem_task_malloc(MDNS_SERVICE_STACK_DEPTH);',
                                      's_stack_buffer = static_cast<StackType_t*>(mdns_mem_task_malloc(MDNS_SERVICE_STACK_DEPTH));')
+    # `va_list x = {0};` is valid C everywhere, but C++ rejects it where
+    # va_list is an array of structs (x86_64 System V). va_start initializes
+    # the list either way; no allocation logic changes.
     actual_heap = ''.join(function(heap, name) for name in (
-        'void *heap_caps_malloc_prefer(', 'void *heap_caps_realloc_prefer(', 'void *heap_caps_calloc_prefer('))
+        'void *heap_caps_malloc_prefer(', 'void *heap_caps_realloc_prefer(', 'void *heap_caps_calloc_prefer(')
+    ).replace('va_list argp = {0};', 'va_list argp = {};')
     actual_wifi = ''.join(function(wifi, name) for name in (
         'void *wifi_malloc(', 'void *wifi_realloc(', 'void *wifi_calloc(',
         'void * IRAM_ATTR realloc_internal_wrapper(', 'void * IRAM_ATTR calloc_internal_wrapper(',
