@@ -771,6 +771,18 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                 self.assertEqual(fixture.keyboard.commands[-1], ((), 0))
                 self.assertTrue(all(not component._wire_observers for component in fixture.components))
 
+    def test_readiness_polling_is_paced(self):
+        states = [{"current_activity": 0, "activity_settling": True, "activity_error": ""}] * 2 + [
+            {"current_activity": 1, "activity_settling": False, "activity_error": ""}]
+        evidence = BLEActivityEvidence.__new__(BLEActivityEvidence)
+        evidence.dut = SimpleNamespace(request=lambda path, **kwargs: dict(states.pop(0)))
+        evidence._live = lambda: None
+        with patch("amity_harness.ble_activity_input.time.sleep") as sleep:
+            evidence._settled(1, time.monotonic_ns() + 5_000_000_000)
+        self.assertEqual(states, [])
+        self.assertEqual(sleep.call_count, 2)
+        self.assertTrue(all(call.args[0] == 0.05 for call in sleep.call_args_list))
+
     def test_new_source_power_before_old_source_standby_fails(self):
         with self.fixture(fault="power_before_standby") as fixture:
             with self.assertRaisesRegex(AssertionError, "before the old source's Standby"):

@@ -12,6 +12,9 @@ from .pin_observation import PinObservation
 from .trace import event
 
 
+_STATUS_POLL_SECONDS = 0.05
+
+
 class BLEActivityEvidence(BLEInputEvidence):
     def _validate(self):
         return super()._validate(allow_activity_change=True)
@@ -90,6 +93,9 @@ class BLEActivityEvidence(BLEInputEvidence):
                     raise AssertionError("The BLE activity handoff failed")
                 return observed
             self._live()
+            # Pace reads so polling does not load the main's HTTPS server
+            # during the very setup and gate timing under test.
+            time.sleep(min(_STATUS_POLL_SECONDS, max(0, (deadline_ns - time.monotonic_ns()) / 1e9)))
 
     def assert_transition(self, keyboard, *, old_source, source, display, old_display, routing, volume, activity, all_up):
         """Cancel both old holds, discard setup input, then prove both gate exits.
