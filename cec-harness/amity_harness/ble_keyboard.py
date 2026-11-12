@@ -6,6 +6,7 @@ operations through the shipping UI.
 
 from copy import deepcopy
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -489,6 +490,22 @@ class PairedKeyboard:
         self._note("disconnect", started_monotonic_ns=action.started_ns, **action.operation)
         return action
 
+    def _release_before_unpair(self):
+        """Send a courtesy all-up on a live link; the DUT unpair never needs it.
+
+        A failed or exited worker has already dropped its link, and the DUT
+        releases held input on link loss. Removing the owned bond proceeds.
+        """
+        if self.worker is None or self._disconnected:
+            return
+        try:
+            worker = self.worker.status()
+            if worker.get("connected") is True and worker.get("ready") is True:
+                self.worker.report(keyboard=(), consumer=0)
+        except Exception as error:
+            event("ble_keyboard.cleanup_all_up_failed", level=logging.WARNING, dut=self.dut.name,
+                  error_type=type(error).__name__)
+
     def _unpair(self, deadline, *, check_health):
         if self._pair_pending is not None:
             # A lost POST reply is never resent. Only a fresh bonded link
@@ -501,9 +518,7 @@ class PairedKeyboard:
                 raise KeyboardConflict("Remote administration changed before keyboard cleanup")
             if state["bonded"] or state["connected"] or state["pairing"] or state["unpairing"]:
                 if self._unpair_pending is None:
-                    worker = self.worker.status()
-                    if not self._disconnected and worker.get("connected") is True and worker.get("ready") is True:
-                        self.worker.report(keyboard=(), consumer=0)
+                    self._release_before_unpair()
                     self._post("unpair", state, deadline)
                 while True:
                     state = self._status(deadline, check_health=check_health)

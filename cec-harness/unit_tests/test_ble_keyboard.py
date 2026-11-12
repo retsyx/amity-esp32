@@ -548,6 +548,40 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
         self.assertFalse(fixture.state["bonded"])
 
+    def test_exited_worker_does_not_prevent_removing_the_owned_dut_bond(self):
+        fixture = Fixture()
+        keyboard = fixture.main.pair_ble_keyboard()
+
+        def exited():
+            raise EOFError("BLE keyboard worker exited")
+
+        fixture.worker.status = exited
+        fixture.worker.report = lambda **kwargs: exited()
+        keyboard.close()
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+        self.assertFalse(fixture.state["bonded"])
+        self.assertIsNone(keyboard.worker)
+
+    def test_cleanup_retry_after_worker_close_still_removes_the_owned_dut_bond(self):
+        fixture = Fixture()
+        keyboard = fixture.main.pair_ble_keyboard()
+        original = fixture.request
+        failures = [OSError("Remote status read failed")]
+
+        def request(path, data=None, **kwargs):
+            if path == "/api/remotes" and data is None and failures:
+                raise failures.pop()
+            return original(path, data, **kwargs)
+
+        fixture.main.request = request
+        with self.assertRaisesRegex(OSError, "status read failed"):
+            keyboard.close()
+        self.assertIsNone(keyboard.worker)
+        self.assertTrue(fixture.state["bonded"])
+        keyboard.close()
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/unpair"), 1)
+        self.assertFalse(fixture.state["bonded"])
+
     def test_changed_remote_generation_prevents_cleanup_overwriting_external_work(self):
         fixture = Fixture()
         keyboard = fixture.main.pair_ble_keyboard()
