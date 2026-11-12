@@ -17,6 +17,7 @@ import time
 
 from .connections import TentacleEndpoint
 from .cec import Frame
+from .dut import _positive_seconds
 from .trace import event, owner_assertion
 
 
@@ -499,13 +500,17 @@ class ScanResult:
             self.validate_owners()
 
     @_logged_assertion
-    def assert_contains(self, *components):
+    def assert_contains(self, *components, timeout=None):
         """Require requested identities and fresh physical RX/TX, awaiting late metadata.
 
         Polling uses the original scan's remaining deadline and its live
-        session. A completed scan with absent equipment is a normal result;
-        only this explicit assertion requires the selected equipment to appear.
+        session, or ``timeout`` seconds when a later lookup completed this
+        scan's identity after that deadline. A completed scan with absent
+        equipment is a normal result; only this explicit assertion requires
+        the selected equipment to appear.
         """
+        if timeout is not None:
+            _positive_seconds(timeout, "Scan identity timeout")
         if not self.started:
             raise AssertionError("The HDMI scan has not started")
         for component in components:
@@ -527,7 +532,7 @@ class ScanResult:
                     and self._contains(components))
 
         try:
-            self.dut.wait_for(present, timeout=self._remaining())
+            self.dut.wait_for(present, timeout=self._remaining() if timeout is None else timeout)
             return self
         finally:
             self._retain()

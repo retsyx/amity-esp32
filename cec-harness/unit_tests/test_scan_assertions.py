@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import threading
+from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -104,6 +106,18 @@ class ScanAssertionTests(unittest.TestCase):
                               lambda: self.result.assert_on(self.avr, self.avr.endpoint)):
                 with self.subTest(opcode=opcode, operands=operands), self.assertRaises(AssertionError):
                     assertion()
+
+    def test_late_identity_uses_an_explicit_timeout_after_the_scan_deadline(self):
+        complete = deepcopy(self.result.status)
+        self.result.status["devices"] = self.rows[:2]
+        self.result._session = SimpleNamespace(_stop=threading.Event(), records=self.result.records,
+                                               assert_healthy=lambda: None)
+        self.dut.get_state = lambda: deepcopy(complete)
+        with self.assertRaisesRegex(TimeoutError, "scan deadline expired"):
+            self.result.assert_contains(self.player)
+        with self.assertRaises(ValueError):
+            self.result.assert_contains(self.player, timeout=0)
+        self.assertIs(self.result.assert_contains(self.player, timeout=1), self.result)
 
     def test_exact_set_rejects_extra_rows_including_other_owners(self):
         extra = deepcopy(self.rows[0])

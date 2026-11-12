@@ -40,10 +40,13 @@ class SplitScenario(Scenario):
         scan = super().scan(main)
         original = scan.assert_contains
 
-        def contains(*components):
+        def contains(*components, timeout=None):
             if scan is self.missing and self.source in components:
                 if self.released_at is None:
                     raise AssertionError("The source name is still withheld")
+                # The cooldown consumed the scan's own deadline.
+                if timeout is None:
+                    raise TimeoutError("The HDMI scan deadline expired")
                 self.now = max(self.now, self.lookup_done)
             return original(*components)
 

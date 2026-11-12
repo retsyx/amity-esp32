@@ -93,7 +93,8 @@ def _exercise_split_theater(*, source_on_main):
                         # The main can finish before the source owner's lookup.
                         # Finish that same scan's identity proof before applying
                         # the ordinary CEC command deadline to the resumed work.
-                        missing.assert_contains(*components)
+                        # The scan's own deadline already covered the cooldown.
+                        missing.assert_contains(*components, timeout=main._runtime.timeout)
                         player.wait_for_power(PowerState.ON, since=gate.released_at)
                         player.wait_for_source_request(since=gate.released_at)
                         avr_input.wait_for_active_source(player, since=started)
