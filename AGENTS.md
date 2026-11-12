@@ -14,6 +14,8 @@
 
 - Do not put internal protocol or build-profile terminology or descriptions into the UI or the top README.md.
 
+- Do not byline commits with co-authorship claims.
+
 ## Adapters
 
 - There are no separate inputs that detect whether an HDMI adapter is attached. The absence of an adapter
