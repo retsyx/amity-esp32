@@ -108,12 +108,13 @@ class SplitScenario(Scenario):
         return component
 
     def run(self, test):
+        self.lookups = []
         with ExitStack() as patches:
             for target, name, replacement in (
                 (split_theater, "TestBed", self.bed),
                 (split_theater, "LookupNameGate", self.gate),
                 (split_theater, "LookupScans", lambda *args: nullcontext(
-                    SimpleNamespace(wait_for_cooldown=lambda: None))),
+                    SimpleNamespace(wait_for_cooldown=lambda: None, assert_lookup_of=self.lookups.append))),
                 (DUT, "add_amity", self.add),
                 (DUT, "scan_hdmi", self.scan),
                 (DUT, "create_activity", self.activity),
@@ -141,6 +142,7 @@ class SplitScenarioTests(unittest.TestCase):
                 # Initial discovery, missing-name scan and final cleanup only:
                 # awaiting the original lookup must never enumerate again.
                 self.assertEqual(fixture.scan_count, 3)
+                self.assertEqual([component.name for component in fixture.lookups], ["Split Player"])
 
     def test_completed_lookup_cannot_replace_a_fresh_source_power_command(self):
         fixture = SplitScenario(missing_source_power=True)

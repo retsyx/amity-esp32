@@ -336,6 +336,53 @@ class EquipmentRecoveryTests(unittest.TestCase):
                         with self.assertRaises(AssertionError):
                             observer.assert_scan_on(fixture.avr.endpoint)
 
+    def test_back_scan_requires_exactly_one_enumeration_of_the_scanned_side(self):
+        for extra in (None, 0x83, 0x46):
+            with self.subTest(extra=extra):
+                fixture, scan = self.fixture()
+                with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+                    self.identity(fixture, observer, fixture.avr)
+                    fixture.generation += 1
+                    if extra is None:
+                        observer.assert_scan_on(fixture.avr.endpoint)
+                    else:
+                        self.query(fixture, observer, fixture.avr, extra)
+                        with self.assertRaisesRegex(AssertionError, "exactly once"):
+                            observer.assert_scan_on(fixture.avr.endpoint)
+
+    def unwitnessed_identity(self, fixture, component):
+        # Only witnesses register the observer; the recipient has records only.
+        initiator = fixture.dut.last_scan.initiators[component.gpio]
+        for opcode in (0x83, 0x46):
+            self.record(fixture, component, "rx", Frame(initiator, component.address.logical, opcode,
+                                                        timestamp_ns=time.monotonic_ns()))
+
+    def test_lookup_of_requires_one_enumeration_of_the_recipient_and_none_on_witnesses(self):
+        for wrong in (None, "twice", "missing", "witness"):
+            with self.subTest(wrong=wrong):
+                fixture, scan = self.fixture()
+                with LookupScans(scan, fixture.tv) as observer:
+                    if wrong != "missing":
+                        self.unwitnessed_identity(fixture, fixture.player)
+                    if wrong == "twice":
+                        self.unwitnessed_identity(fixture, fixture.player)
+                    elif wrong == "witness":
+                        self.query(fixture, observer, fixture.tv)
+                    if wrong is None:
+                        observer.assert_lookup_of(fixture.player)
+                        check = observer._report["checks"][-1]
+                        self.assertEqual((check["kind"], check["passed"], len(check["frames"])),
+                                         ("lookup_of", True, 2))
+                    else:
+                        with self.assertRaises(AssertionError):
+                            observer.assert_lookup_of(fixture.player)
+
+    def test_lookup_of_rejects_a_witness_on_the_recipients_side(self):
+        fixture, scan = self.fixture()
+        with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+            with self.assertRaisesRegex(ValueError, "other CEC sides"):
+                observer.assert_lookup_of(fixture.player)
+
     def return_records(self, fixture, component, since):
         initiator = fixture.dut.last_scan.initiators[component.gpio]
         self.record(fixture, component, "tx", Frame(component.address.logical, 15, 0x84,

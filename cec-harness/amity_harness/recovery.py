@@ -226,6 +226,12 @@ class LookupScans:
         if not frames or any(component.endpoint != endpoint for component, _ in frames):
             raise AssertionError("A lookup scan did not stay on the missing recipient's CEC side")
         witnesses = [component for component in self.witnesses if component.endpoint == endpoint]
+        # Enumeration queries each device on the scanned side once, so one
+        # lookup sends exactly one Give Physical Address and Give OSD Name.
+        if any(sorted(frame.raw for queried, frame in frames if queried is component)
+               != sorted(Frame(self.scan.initiators[component.gpio], component.address.logical, opcode).raw
+                         for opcode in (0x83, 0x46)) for component in witnesses):
+            raise AssertionError("The missing recipient's CEC side was not enumerated exactly once")
         if not witnesses or not all(_fresh_discovery(self.session.records, component,
                                                     self.scan.initiators[component.gpio], self._started)
                                     for component in witnesses):
@@ -243,6 +249,36 @@ class LookupScans:
         self.scan._retain(state)
         check.update(passed=True, owner=endpoint.dut.identity.device_id,
                      tentacle=endpoint.tentacle, side=endpoint.direction)
+        return self
+
+    def assert_lookup_of(self, component):
+        """Require one enumeration of an unwitnessed recipient's side only.
+
+        Every witness must be on another owner, adapter or side, and none may
+        receive enumeration queries. The recipient receives exactly one Give
+        Physical Address and one Give OSD Name, proving a single lookup scan.
+        """
+        if component in self.witnesses or any(witness.endpoint == component.endpoint
+                                              for witness in self.witnesses):
+            raise ValueError("Lookup scope needs witnesses only on other CEC sides")
+        self.assert_no_scan_on_witnesses()
+        initiator = self.scan.initiators[component.gpio]
+        expected = {opcode: Frame(initiator, component.address.logical, opcode).raw.hex(":")
+                    for opcode in (0x83, 0x46)}
+        queries = [row for row in self.session.records
+                   if row.get("direction") == "rx" and row.get("transport") == "wire"
+                   and row.get("gpio") == component.gpio and row.get("component") == component.name
+                   and row.get("source") == initiator and row.get("destination") == component.address.logical
+                   and row.get("opcode") in expected and row.get("wire_timestamp_ns", 0) >= self._started]
+        check = {"kind": "lookup_of", "component": component.name, "owner": component.dut.identity.device_id,
+                 "gpio": component.gpio, "passed": False,
+                 "frames": [{"frame": row.get("frame"), "wire_timestamp_ns": row.get("wire_timestamp_ns")}
+                            for row in queries]}
+        self._report["checks"].append(check)
+        if sorted(row.get("frame") for row in queries) != sorted(expected.values()):
+            raise AssertionError("The missing recipient's CEC side was not enumerated exactly once")
+        check["passed"] = True
+        event("lookup.scan_of", dut=self.scan.dut.name, component=component.name)
         return self
 
     def __exit__(self, *args):

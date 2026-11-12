@@ -80,6 +80,9 @@ def _exercise_split_theater(*, source_on_main):
                                     # can wait for the original operation.
                                     gate.release()
                                 started = pending.wait()
+                            # Only the source owner's back side may scan,
+                            # once, for this cache miss.
+                            cooldown.assert_lookup_of(player)
 
                         # Validate applied effects after releasing the lookup.
                         # B's commands may precede A's query; their only shared

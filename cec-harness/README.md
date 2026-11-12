@@ -927,7 +927,9 @@ its OSD name through an explicit scan and the real 120-second lookup cooldown.
 The original activity start must power and select the TV and power the AVR on
 the display-side Amity while the source-side lookup remains pending. The test
 compares no command order across Amities. Releasing the source name completes
-that same start, then source routing, key receivers and Standby are verified.
+that same start. The lookup must enumerate only the source owner's back side,
+exactly once; the other three CEC sides receive no enumeration. Source
+routing, key receivers and Standby are then verified.
 Source cleanup explicitly scans after disconnecting its responder before the
 ordinary adapter setting is restored.
 
@@ -976,8 +978,8 @@ then explicitly scans to establish its absence. Starts of the unchanged saved
 activity must retain its source selector and send fresh numeric switch-input
 commands. Repeated misses during the real 120-second cooldown must not scan;
 expiry alone must not launch deferred enumeration. A subsequent real miss
-must scan only the source's back side, preserve the front cache, and complete
-that original operation's fallback.
+must scan only the source's back side, exactly once, preserve the front cache,
+and complete that original operation's fallback.
 
 Restoring the responder must yield a fresh physical announcement and targeted
 identity exchange plus the correct UI observation without another full scan.
