@@ -1173,6 +1173,8 @@ activities and equipment before member removal/reset.
 Its `duration_ms` defaults to zero for a complete tap and accepts at most 5000
 milliseconds; firmware owns the final release even if the client disconnects.
 The routing cases include zero-duration taps and a 100 ms Volume Up hold.
+A tap must produce exactly one physical press before its release. Holds of
+400 ms or longer, through the key API or BLE, must show repeated presses.
 Key reports retain the requested duration, actual press/release wire timestamps,
 recipient and owner boots. No separate release request is needed.
 Wire freshness starts before the POST; the CEC completion budget starts when

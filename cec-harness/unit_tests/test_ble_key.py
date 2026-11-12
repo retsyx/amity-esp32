@@ -20,6 +20,8 @@ class ReportKeyboard(input_fixture.Keyboard):
         self.contexts = self.cleanup_reports = 0
         self.preflight_delay = self.press_delay = 0
         self.missing_release = self.early_release = self.bad_release = False
+        # Owners stream held presses while a key stays down.
+        self.repeat_holds = True
         self.exit_change = None
         self.in_reports = False
         self.down = None
@@ -73,11 +75,14 @@ class ReportKeyboard(input_fixture.Keyboard):
             else:
                 press()
         elif self.down is not None:
-            target, _ = self.down
+            target, key = self.down
             self.down = None
             self.up_ns = action.started_ns
 
             def release():
+                if (self.repeat_holds and self.first_press_ns is not None
+                        and self.up_ns - self.down_ns >= 100_000_000):
+                    self.emit(target, 0x44, key)
                 if not self.missing_release:
                     self.emit(target, 0x45, 1 if self.bad_release else None)
 
@@ -127,10 +132,19 @@ class BLEKeyTests(unittest.TestCase):
                 self.assertGreaterEqual(check["all_up_monotonic_ns"] - check["down_monotonic_ns"],
                                         check["duration_ms"] * 1_000_000)
                 self.assertGreater(check["release_wire_timestamp_ns"], check["all_up_monotonic_ns"])
-                self.assertEqual(check["presses"], 1)
+                self.assertEqual(check["presses"], 2 if check["duration_ms"] else 1)
                 self.assertEqual(check["release_frame"].split(":")[1:], ["45"])
             self.assertEqual(f.keyboard.commands[-1], ((), 0))
             self.assertTrue(all(component.pressed_key is None for component in f.components))
+
+    def test_long_hold_without_held_repetition_fails(self):
+        with self.reports() as f:
+            f.keyboard.repeat_holds = False
+            with self.assertRaisesRegex(AssertionError, "no repeated physical presses"):
+                with BLEInputEvidence(f.main, f.scan) as evidence:
+                    evidence.assert_key(f.keyboard, f.avr, key=Key.VOLUME_UP, consumer_usage=0xE9,
+                                        duration_ms=750)
+            self.assertEqual(f.keyboard.commands[-1], ((), 0))
 
     def test_hold_up_is_not_delayed_by_waiting_for_its_first_physical_press(self):
         with self.reports() as f:

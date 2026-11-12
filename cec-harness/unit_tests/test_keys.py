@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT, Frame, Hooks, Key, PowerState
+from amity_harness.keys import HOLD_REPEAT_MIN_MS
 from test_activity import Fixture
 
 
@@ -47,14 +48,15 @@ class KeyTests(unittest.TestCase):
         return f
 
     def receive(self, f, component, key, *, transport="wire", timestamp=None, source=None,
-                release=True):
+                release=True, presses=1):
         initiator = f.dut.last_scan.initiators[component.gpio] if source is None else source
         stamp = time.monotonic_ns() if timestamp is None else timestamp
-        component.receive(Frame(initiator, component.address.logical, 0x44, bytes([key]),
-                                timestamp_ns=stamp), transport=transport)
+        for index in range(presses):
+            component.receive(Frame(initiator, component.address.logical, 0x44, bytes([key]),
+                                    timestamp_ns=stamp + index), transport=transport)
         if release:
             component.receive(Frame(initiator, component.address.logical, 0x45,
-                                    timestamp_ns=stamp + 1), transport=transport)
+                                    timestamp_ns=stamp + presses), transport=transport)
 
     def test_zero_duration_tap_and_bounded_hold_use_the_shipping_api(self):
         for duration in (0, 100, 5000):
@@ -62,7 +64,7 @@ class KeyTests(unittest.TestCase):
                 f = self.fixture()
                 action = f.dut.press_key(Key.VOLUME_UP, duration_ms=duration)
                 self.assertEqual(f.calls, [("/api/key", {"key": 0x41, "duration_ms": duration})])
-                self.receive(f, f.avr, Key.VOLUME_UP)
+                self.receive(f, f.avr, Key.VOLUME_UP, presses=2 if duration >= HOLD_REPEAT_MIN_MS else 1)
                 self.assertIs(action.assert_received_by(f.avr, timeout=.01), action)
                 self.assertTrue(f.dut.key_operations[0]["released"])
                 self.assertEqual(action.trace["press_frame"], "05:44:41")
@@ -96,7 +98,7 @@ class KeyTests(unittest.TestCase):
 
     def test_held_repetition_needs_a_release_after_the_final_press(self):
         f = self.fixture()
-        action = f.dut.press_key(Key.RIGHT)
+        action = f.dut.press_key(Key.RIGHT, duration_ms=HOLD_REPEAT_MIN_MS)
         self.receive(f, f.player, Key.RIGHT)
         self.receive(f, f.player, Key.RIGHT, release=False)
         with self.assertRaises(TimeoutError):
@@ -104,6 +106,23 @@ class KeyTests(unittest.TestCase):
         f.player.receive(Frame(0, f.player.address.logical, 0x45, timestamp_ns=time.monotonic_ns()))
         action.assert_received_by(f.player, timeout=.01)
         self.assertEqual(action.trace["presses"], 2)
+
+    def test_tap_requires_exactly_one_press_and_hold_requires_repetition(self):
+        for duration, presses, accepted in ((0, 1, True), (0, 2, False),
+                                            (HOLD_REPEAT_MIN_MS - 1, 1, True),
+                                            (HOLD_REPEAT_MIN_MS, 1, False), (HOLD_REPEAT_MIN_MS, 2, True)):
+            with self.subTest(duration=duration, presses=presses):
+                f = self.fixture()
+                action = f.dut.press_key(Key.RIGHT, duration_ms=duration)
+                self.receive(f, f.player, Key.RIGHT, presses=presses)
+                if accepted:
+                    self.assertIs(action.assert_received_by(f.player, timeout=.01), action)
+                    self.assertEqual(action.trace["presses"], presses)
+                else:
+                    with self.assertRaises(AssertionError):
+                        action.assert_received_by(f.player, timeout=.01)
+                    self.assertEqual(action.trace["presses"], presses)
+                    self.assertNotIn("released", action.trace)
 
     def test_virtual_stale_wrong_source_and_missing_release_cannot_prove_a_key(self):
         for wrong in ("virtual", "stale", "source", "release", "dropped", "rewritten"):
@@ -205,7 +224,8 @@ class KeyTests(unittest.TestCase):
                         self.assertEqual(path, "/api/key")
                         self.assertEqual(kwargs, {})  # Keep the shipping HTTP helper's own deadline.
                         if physical == "during_request":
-                            self.receive(f, f.player, Key.RIGHT, timestamp=started + 50_000_000)
+                            self.receive(f, f.player, Key.RIGHT, timestamp=started + 50_000_000,
+                                         presses=2 if duration_ms else 1)
                         clock[0] = completed
                         return {"ok": True}
 
@@ -214,9 +234,10 @@ class KeyTests(unittest.TestCase):
                         action = f.dut.press_key(Key.RIGHT, duration_ms=duration_ms)
                         if physical != "during_request":
                             stamp = {"after_response": completed + 100_000_000,
-                                     "stale": started - 1,
+                                     "stale": started - 2,
                                      "late": completed + 1_000_000_001}[physical]
-                            self.receive(f, f.player, Key.RIGHT, timestamp=stamp)
+                            self.receive(f, f.player, Key.RIGHT, timestamp=stamp,
+                                         presses=2 if duration_ms else 1)
                         clock[0] = completed + 2_000_000_000
                         if physical in ("stale", "late"):
                             with self.assertRaises(TimeoutError):

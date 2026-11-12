@@ -10,6 +10,12 @@ from .dut import _positive_seconds
 from .trace import event
 
 
+# A press frame with one operand occupies about 93 ms of bus time including
+# the initiator's signal-free time. A hold at least this long therefore spans
+# several press frames, and its owner must have emitted held repetitions.
+HOLD_REPEAT_MIN_MS = 400
+
+
 class Key(IntEnum):
     SELECT = 0x00
     UP = 0x01
@@ -61,10 +67,12 @@ class KeyAction(ActivityAction):
     def assert_received_by(self, component, *, emitted_key=None, timeout=None):
         """Require a fresh directed press and final release on the correct wire.
 
-        Held-key repetition is legitimate. Original kernel frames must contain
-        this key and an operand-free release after its final press; virtual,
-        stale, rewritten or dropped RX cannot qualify. Any matching press to
-        another fixture recipient fails, including on another Amity's wire.
+        A tap emits exactly one press: every key press uses one wire attempt.
+        A hold of at least ``HOLD_REPEAT_MIN_MS`` must show held repetition.
+        Original kernel frames must contain this key and an operand-free
+        release after its final press; virtual, stale, rewritten or dropped RX
+        cannot qualify. Any matching press to another fixture recipient fails,
+        including on another Amity's wire.
         """
         timeout = self.dut._runtime.cec_timeout if timeout is None else timeout
         _positive_seconds(timeout, "Key assertion timeout")
@@ -124,6 +132,11 @@ class KeyAction(ActivityAction):
                 proof = inspect()
                 if proof is not None:
                     press, release, count = proof
+                    self.trace["presses"] = count
+                    if not self.duration_ms and count != 1:
+                        raise AssertionError("A key tap emitted more than one physical press")
+                    if self.duration_ms >= HOLD_REPEAT_MIN_MS and count < 2:
+                        raise AssertionError("A held key produced no repeated physical presses")
                     self.trace.update(component=component.name, owner_id=component.dut.identity.device_id,
                                       emitted_key=emitted_key,
                                       gpio=component.gpio, press_frame=press["frame"], release_frame=release["frame"],

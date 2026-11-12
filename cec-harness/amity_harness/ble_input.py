@@ -3,7 +3,7 @@
 import threading
 import time
 
-from .keys import Key
+from .keys import HOLD_REPEAT_MIN_MS, Key
 from .trace import event
 
 
@@ -329,6 +329,8 @@ class BLEInputEvidence:
                    for gpio, frame in frames):
                 raise AssertionError("A BLE key released before its physical all-up report")
             record["presses"] = len(presses)
+            if duration_ms >= HOLD_REPEAT_MIN_MS and len(presses) < 2:
+                raise AssertionError("A held BLE key produced no repeated physical presses")
 
         record.update(press_frame=press.raw.hex(":"), press_wire_timestamp_ns=press.timestamp_ns,
                       release_frame=release.raw.hex(":"), release_wire_timestamp_ns=release.timestamp_ns)
