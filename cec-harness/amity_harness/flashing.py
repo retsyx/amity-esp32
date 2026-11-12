@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-from .usb import verify_usb
+from .usb import locate_usb
 from .wiring import Wiring
 
 
@@ -49,11 +49,19 @@ def esptool_command(python, port, otadata, image):
 
 def flash_all(image, *, wiring=None, python=sys.executable, popen=subprocess.Popen,
               timeout=TIMEOUT_SECONDS, out=sys.stdout, err=sys.stderr):
-    """Flash every documented DUT; return the names of DUTs that failed."""
+    """Flash every documented DUT; return the names of DUTs that failed.
+
+    A missing or inaccessible board fails on its own; the others are flashed.
+    """
     image = validate_image(image)
     wiring = Wiring.from_markdown() if wiring is None else wiring
-    targets = verify_usb(wiring)
-    failed = []
+    targets, failed = [], []
+    for target in locate_usb(wiring):
+        if "error" in target:
+            failed.append(target["dut"])
+            print(f"{target['dut']}: FAILED (USB {target['error']})", file=err, flush=True)
+        else:
+            targets.append(target)
     with tempfile.TemporaryDirectory(prefix="amity-flash-") as directory, ExitStack() as logs:
         otadata = Path(directory) / "otadata.bin"
         otadata.write_bytes(b"\xff" * OTADATA_BYTES)

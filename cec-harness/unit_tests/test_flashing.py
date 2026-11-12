@@ -49,10 +49,10 @@ class FlashingTests(unittest.TestCase):
 
     def flash(self, popen, **kwargs):
         out, err = io.StringIO(), io.StringIO()
-        with patch.object(flashing, "verify_usb", return_value=self.targets) as verify:
+        with patch.object(flashing, "locate_usb", return_value=self.targets) as locate:
             failed = flashing.flash_all(self.image, wiring=self.wiring, python="/runtime/python",
                                         popen=popen, out=out, err=err, **kwargs)
-        verify.assert_called_once_with(self.wiring)
+        locate.assert_called_once_with(self.wiring)
         return failed, out.getvalue(), err.getvalue()
 
     def test_invalid_images_are_rejected_before_usb_or_flashing(self):
@@ -64,10 +64,10 @@ class FlashingTests(unittest.TestCase):
         wrong_magic.write_bytes(b"\xff" * flashing.SLOT_BYTES)
         popen = Mock()
         for path in (bundle, short, wrong_magic, self.root / "missing.bin"):
-            with self.subTest(path=path.name), patch.object(flashing, "verify_usb") as verify:
+            with self.subTest(path=path.name), patch.object(flashing, "locate_usb") as locate:
                 with self.assertRaisesRegex(ValueError, path.name):
                     flashing.flash_all(path, wiring=self.wiring, popen=popen)
-                verify.assert_not_called()
+                locate.assert_not_called()
         popen.assert_not_called()
 
     def test_every_documented_dut_is_flashed_in_parallel_with_only_otadata_and_ota_0(self):
@@ -93,6 +93,23 @@ class FlashingTests(unittest.TestCase):
             self.assertEqual(worker.otadata, b"\xff" * 0x2000)
             self.assertIn(f"{target['dut']}: flashed amity-partition.bin on {target['port']}", out)
         self.assertFalse(Path(workers[0].command[-3]).exists(), "Temporary OTA data is removed")
+
+    def test_missing_board_fails_alone_while_the_others_are_flashed(self):
+        missing = self.targets[2]
+        self.targets[2] = {"dut": missing["dut"], "usb_serial": missing["usb_serial"],
+                           "error": "USB_DEVICE_NOT_FOUND"}
+        workers = []
+
+        def popen(command, **kwargs):
+            workers.append(FakeWorker(command, kwargs["stdout"]))
+            return workers[-1]
+
+        failed, out, err = self.flash(popen)
+        self.assertEqual(failed, [missing["dut"]])
+        self.assertEqual(len(workers), len(self.targets) - 1)
+        self.assertIn(f"{missing['dut']}: FAILED (USB USB_DEVICE_NOT_FOUND)", err)
+        for target in self.targets[:2] + self.targets[3:]:
+            self.assertIn(f"{target['dut']}: flashed", out)
 
     def test_failure_is_reported_per_dut_without_retry(self):
         workers = []

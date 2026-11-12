@@ -39,8 +39,8 @@ def _matching_device(serial_number, ports):
     return device
 
 
-def verify_usb(wiring, *, enumerate_ports=None, check_access=os.access):
-    """Verify every documented DUT is uniquely connected and usable on this Pi.
+def locate_usb(wiring, *, enumerate_ports=None, check_access=os.access):
+    """Locate each documented DUT, reporting an unusable one in its own row.
 
     This checks USB identity and device permissions only. It never opens a
     serial port, changes modem-control lines, or imports flashing dependencies.
@@ -57,8 +57,18 @@ def verify_usb(wiring, *, enumerate_ports=None, check_access=os.access):
             if not check_access(device, os.R_OK | os.W_OK):
                 raise USBWorkerError("USB_DEVICE_NOT_ACCESSIBLE")
         except USBWorkerError as error:
-            raise RuntimeError(f"USB verification failed for {identity.name}: {error}") from None
+            result.append({"dut": identity.name, "usb_serial": serial_number, "error": str(error)})
+            continue
         result.append({"dut": identity.name, "usb_serial": serial_number, "port": device})
+    return result
+
+
+def verify_usb(wiring, *, enumerate_ports=None, check_access=os.access):
+    """Verify every documented DUT is uniquely connected and usable on this Pi."""
+    result = locate_usb(wiring, enumerate_ports=enumerate_ports, check_access=check_access)
+    for row in result:
+        if "error" in row:
+            raise RuntimeError(f"USB verification failed for {row['dut']}: {row['error']}")
     return result
 
 
