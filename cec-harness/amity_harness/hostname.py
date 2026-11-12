@@ -121,14 +121,24 @@ class HostnameChanges:
     def _ready(self, deadline, *, rebooted=()):
         """Verify connectivity and persisted state before any fresh scan."""
         rebooted = set(rebooted)
+        main = self.main.identity.device_id
         while True:
             self.bed.session.assert_healthy()
             system = self._get("/api/system", deadline)
+            if main not in rebooted and system.get("boot_id") != self.boots[main]:
+                raise AssertionError("An Amity restarted without a requested reboot")
+            if (system.get("membership", {}).get("authority_ready") is not True
+                    or system.get("mode") == "configuration_pending"):
+                # A restarted main publishes its role and member links only
+                # once its saved configuration and authority are ready.
+                self._pause(deadline)
+                continue
             peers = self._identity(system)
-            boots = {self.main.identity.device_id: system["boot_id"],
+            boots = {main: system["boot_id"],
                      **{owner: row.get("boot_id") for owner, row in peers.items()}}
             for owner, boot in boots.items():
-                if owner not in rebooted and boot != self.boots[owner]:
+                # A member's boot is null until its link reconnects.
+                if owner not in rebooted and _identifier(boot) and boot != self.boots[owner]:
                     raise AssertionError("An Amity restarted without a requested reboot")
             ready = (system.get("ready") is True
                      and system.get("membership", {}).get("authority_ready") is True

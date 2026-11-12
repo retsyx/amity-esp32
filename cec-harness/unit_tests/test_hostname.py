@@ -400,6 +400,46 @@ class HostnameTests(unittest.TestCase):
                     self.assertLess(fixture.events.index(("usb.reset", fixture.secondary.name)),
                                     fixture.events.index(("http.reboot", fixture.main.name)))
 
+    def test_main_reboot_waits_for_authority_and_member_link_reconnection(self):
+        fixture, names = self.fixture()
+        prior = dict(names.boots)
+        original = fixture.system
+        transient = [
+            {"mode": "configuration_pending",
+             "membership": {"coordinator": False, "authority_ready": False, "member": False, "peers": []}},
+            {"membership_peer_boot": None},
+        ]
+
+        def system():
+            result = original()
+            if ("http.reboot", fixture.main.name) in fixture.events and transient:
+                change = transient.pop(0)
+                if "membership_peer_boot" in change:
+                    result["membership"]["peers"][0].update(boot_id=None, ready=False)
+                else:
+                    result.update(change)
+            return result
+
+        fixture.system = system
+        names.reboot(fixture.main)
+        self.assertEqual(transient, [])
+        self.assertNotEqual(names.boots[fixture.main.identity.device_id], prior[fixture.main.identity.device_id])
+        self.assertEqual(names.boots[fixture.secondary.identity.device_id], prior[fixture.secondary.identity.device_id])
+
+    def test_reconnected_member_with_a_new_boot_still_fails_after_main_reboot(self):
+        fixture, names = self.fixture()
+        original = fixture.system
+
+        def system():
+            result = original()
+            if ("http.reboot", fixture.main.name) in fixture.events:
+                result["membership"]["peers"][0]["boot_id"] = "c" * 32
+            return result
+
+        fixture.system = system
+        with self.assertRaisesRegex(AssertionError, "without a requested reboot"):
+            names.reboot(fixture.main)
+
     def test_successful_reset_process_without_new_boot_is_a_failure(self):
         fixture, names = self.fixture()
         old_boot = names.boots[fixture.secondary.identity.device_id]
