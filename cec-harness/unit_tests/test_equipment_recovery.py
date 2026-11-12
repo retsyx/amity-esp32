@@ -71,6 +71,12 @@ class EquipmentRecoveryTests(unittest.TestCase):
         fixture.dut.get_state = lambda: {**original(), "discovery_generation": fixture.generation}
         return fixture, scan
 
+    @staticmethod
+    def add_owner(scan):
+        # Another owner's adapters contribute to the UI's aggregate discovery.
+        scan.owner_duts = {**scan.owner_duts, "f" * 32: object()}
+        scan.owner_boots = {**scan.owner_boots, "f" * 32: "e" * 32}
+
     def record(self, fixture, component, direction, frame, *, transport="wire", **extra):
         fixture.session.records.append({"timestamp": frame.timestamp_ns / 1e9, "direction": direction,
                                         "component": component.name, "gpio": component.gpio,
@@ -117,6 +123,7 @@ class EquipmentRecoveryTests(unittest.TestCase):
 
     def test_scoped_witness_assertion_retains_unrelated_aggregate_discovery(self):
         fixture, scan = self.fixture()
+        self.add_owner(scan)
         with LookupScans(scan, fixture.tv, fixture.avr) as observer:
             original = fixture.dut.get_state
             fixture.generation += 1
@@ -358,17 +365,20 @@ class EquipmentRecoveryTests(unittest.TestCase):
                                                         timestamp_ns=time.monotonic_ns()))
 
     def test_lookup_of_requires_one_enumeration_of_the_recipient_and_none_on_witnesses(self):
-        for wrong in (None, "twice", "missing", "witness"):
+        for wrong in (None, "generation", "twice", "missing", "witness"):
             with self.subTest(wrong=wrong):
                 fixture, scan = self.fixture()
                 with LookupScans(scan, fixture.tv) as observer:
                     if wrong != "missing":
                         self.unwitnessed_identity(fixture, fixture.player)
+                    if wrong == "generation":
+                        # The recipient's own completed lookup advances it.
+                        fixture.generation += 1
                     if wrong == "twice":
                         self.unwitnessed_identity(fixture, fixture.player)
                     elif wrong == "witness":
                         self.query(fixture, observer, fixture.tv)
-                    if wrong is None:
+                    if wrong in (None, "generation"):
                         observer.assert_lookup_of(fixture.player)
                         check = observer._report["checks"][-1]
                         self.assertEqual((check["kind"], check["passed"], len(check["frames"])),
@@ -410,6 +420,8 @@ class EquipmentRecoveryTests(unittest.TestCase):
             with self.subTest(scoped=scoped):
                 fixture, scan = self.fixture()
                 scan.expected = (fixture.tv, fixture.avr)
+                if scoped:
+                    self.add_owner(scan)
                 with LookupScans(scan, fixture.tv, fixture.avr) as observer:
                     since = time.monotonic_ns()
                     self.return_records(fixture, fixture.player, since)
@@ -497,6 +509,7 @@ class EquipmentRecoveryTests(unittest.TestCase):
     def test_scoped_passive_return_requires_genuine_identity_despite_other_adapter_discovery(self):
         fixture, scan = self.fixture()
         scan.expected = (fixture.tv, fixture.avr)
+        self.add_owner(scan)
         with LookupScans(scan, fixture.tv, fixture.avr) as observer:
             original = fixture.dut.get_state
             fixture.state = fixture.dut.get_state = lambda: {**original(), "discovering": True}
@@ -514,6 +527,24 @@ class EquipmentRecoveryTests(unittest.TestCase):
             proof = fixture.bed.control_observations[-1]
             self.assertEqual(proof["component"], fixture.player.name)
             self.assertLess(proof["query_wire_timestamp_ns"], proof["reply_wire_timestamp_ns"])
+
+    def test_single_owner_scoped_checks_reject_any_new_discovery(self):
+        for change in ({"discovering": True}, "generation"):
+            with self.subTest(change=change):
+                fixture, scan = self.fixture()
+                scan.expected = (fixture.tv, fixture.avr)
+                with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+                    original = fixture.dut.get_state
+                    if change == "generation":
+                        fixture.generation += 1
+                    else:
+                        fixture.dut.get_state = lambda: {**original(), **change}
+                    with self.assertRaisesRegex(AssertionError, "unsolicited discovery"):
+                        observer.assert_no_scan_on_witnesses()
+                    since = time.monotonic_ns()
+                    self.return_records(fixture, fixture.player, since)
+                    with self.assertRaisesRegex(AssertionError, "unsolicited discovery"):
+                        observer.assert_passive_return(fixture.player, since=since)
 
     def test_scoped_passive_return_rejects_unannounced_query_before_admitting_peer(self):
         fixture, scan = self.fixture()

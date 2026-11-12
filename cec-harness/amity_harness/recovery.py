@@ -181,11 +181,19 @@ class LookupScans:
     def assert_no_scan_on_witnesses(self):
         """Require no enumeration on these exact owner/adapter/side wires.
 
-        The UI busy flag and generation aggregate other adapters, whose already
-        requested scans may still finish independently. Retain those UI values
-        as context; only physical witness evidence establishes scanning here.
+        With several owners, the UI busy flag and generation aggregate other
+        owners' adapters, whose already requested scans may still finish
+        independently; only physical witness evidence establishes scanning.
+        With a single owner they describe only its own completed scan, so a
+        change also fails, even when queries follow a sibling's announcement.
         """
-        through, _, check = self._no_scan_evidence("no_scan_on_witnesses")
+        return self._no_scan_on_witnesses(single_owner_generation=True)
+
+    def _no_scan_on_witnesses(self, *, single_owner_generation):
+        through, state, check = self._no_scan_evidence("no_scan_on_witnesses")
+        if (single_owner_generation and set(self.scan.owner_duts) == {self.scan.dut.identity.device_id}
+                and (state.get("discovering", False) or state.get("discovery_generation") != self._generation)):
+            raise AssertionError("DUT restarted or began unsolicited discovery")
         check["passed"] = True
         event("lookup.no_scan_on_witnesses", dut=self.scan.dut.name, through_monotonic_ns=through)
         return self
@@ -261,7 +269,8 @@ class LookupScans:
         if component in self.witnesses or any(witness.endpoint == component.endpoint
                                               for witness in self.witnesses):
             raise ValueError("Lookup scope needs witnesses only on other CEC sides")
-        self.assert_no_scan_on_witnesses()
+        # The recipient's own lookup legitimately advances the generation.
+        self._no_scan_on_witnesses(single_owner_generation=False)
         initiator = self.scan.initiators[component.gpio]
         expected = {opcode: Frame(initiator, component.address.logical, opcode).raw.hex(":")
                     for opcode in (0x83, 0x46)}
