@@ -82,6 +82,7 @@ esp_err_t amity_matter_update_state(const amity_matter_state_t *state);
 esp_err_t amity_matter_flush_state(void);
 // Unknown readings use -1. Unpaired defaults to 100%/not charging;
 // paired but disconnected is unknown, regardless of supplied readings.
+// Updates succeed as no-ops while the controller is disabled.
 esp_err_t amity_matter_update_remote(bool paired, bool connected, int battery_percent, int charging);
 esp_err_t amity_matter_get_status(amity_matter_status_t *status);
 esp_err_t amity_matter_open_commissioning(uint16_t seconds);

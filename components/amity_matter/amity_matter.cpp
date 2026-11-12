@@ -551,7 +551,9 @@ extern "C" esp_err_t amity_matter_flush_state(void)
 extern "C" esp_err_t amity_matter_update_remote(bool paired, bool connected, int percent, int charging)
 {
     if (percent < -1 || percent > 100 || charging < -1 || charging > 1) return ESP_ERR_INVALID_ARG;
-    if (!started.load() || !controller_enabled.load()) return ESP_ERR_INVALID_STATE;
+    // Members and retired mains run no Matter user services; nothing to publish.
+    if (!controller_enabled.load()) return ESP_OK;
+    if (!started.load()) return ESP_ERR_INVALID_STATE;
     if (!paired) { percent = 100; charging = 0; }
     else if (!connected) { percent = charging = -1; }
     using namespace esp_matter;
@@ -564,7 +566,8 @@ extern "C" esp_err_t amity_matter_update_remote(bool paired, bool connected, int
     const auto level = percent < 0 || percent > 20 ? BatChargeLevelEnum::kOk :
         percent > 10 ? BatChargeLevelEnum::kWarning : BatChargeLevelEnum::kCritical;
     esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-    if (!controller_enabled.load() || !started.load()) return ESP_ERR_INVALID_STATE;
+    if (!controller_enabled.load()) return ESP_OK;
+    if (!started.load()) return ESP_ERR_INVALID_STATE;
     static bool valid = false;
     static int old_percent, old_charge, old_status;
     if (valid && old_percent == percent && old_charge == static_cast<int>(charge) && old_status == static_cast<int>(status)) return ESP_OK;
