@@ -962,8 +962,8 @@ physical addresses. The scan must still report six exact owner/adapter/side
 identities. Each owner's activity must deliver fresh physical power, routing,
 volume and navigation commands to that owner's equipment. Original-frame
 observations reject unintended power, routing or key commands on the other
-owner's wires, including transient commands hidden by hooks. Both directions
-finish in Standby, and fixture configuration closes before member removal.
+owner's wires, including transient commands hidden by hooks, through each
+activity's Standby. Fixture configuration closes before member removal.
 Select `--test qualified_names`.
 
 The activity group's `test_activity_same_osd_locations` applies the same checks

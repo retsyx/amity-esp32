@@ -73,10 +73,11 @@ def _exercise_owner(main, activity, equipment, scan, *inactive):
         activity.assert_active()
         for component in inactive:
             component.assert_power(PowerState.STANDBY)
+        # Standby must not reach the same-named inactive equipment.
+        stopped = activity.standby()
+        for component in equipment:
+            component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
         observation.assert_clear()
-    stopped = activity.standby()
-    for component in equipment:
-        component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
     for component in inactive:
         component.assert_power(PowerState.STANDBY)
 

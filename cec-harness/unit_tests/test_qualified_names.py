@@ -208,6 +208,11 @@ class QualifiedNamesScenarioTests(unittest.TestCase):
                                      for row in fixture.events for name in ("Same TV", "Same AVR", "Same Player")), 3)
         self.assertEqual([row[1] for row in fixture.events if row[0] == "observe.clear"],
                          [member.name, main.name])
+        # The inactive owner's observation stays open through the Standby.
+        for active, inactive in ((main.name, member.name), (member.name, main.name)):
+            standby = max(index for index, row in enumerate(fixture.events)
+                          if row[:3] == ("power.wait", "standby", active))
+            self.assertLess(standby, fixture.events.index(("observe.clear", inactive)))
         self.assertEqual([row[1:] for row in fixture.events if row[0] == "display.wait"],
                          [(main.name, 0, first[0]), (member.name, 0, second[0])])
         self.assertEqual(fixture.events[-1], ("bed.close",))

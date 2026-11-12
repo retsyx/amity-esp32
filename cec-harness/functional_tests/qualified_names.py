@@ -43,10 +43,11 @@ def exercise_qualified_activities(main, systems, names):
                 activity.assert_active()
                 for component in inactive:
                     component.assert_power(PowerState.STANDBY)
+                # Standby must not reach the same-named inactive equipment.
+                stopped = activity.standby()
+                for component in active:
+                    component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
                 observation.assert_clear()
-            stopped = activity.standby()
-            for component in active:
-                component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
             for component in components:
                 component.assert_power(PowerState.STANDBY)
 
