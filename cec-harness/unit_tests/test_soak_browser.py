@@ -10,7 +10,7 @@ from amity_harness.soak_browser import SoakBrowser, _activity_fences, _browser_r
 
 class SoakBrowserTests(unittest.TestCase):
     def fixture(self):
-        main = SimpleNamespace(name="amity-dut", _testbed=SimpleNamespace(duts=()))
+        main = SimpleNamespace(name="amity-dut", url="https://amity.local", _testbed=SimpleNamespace(duts=()))
         main._testbed.duts = (main,)
         activity = SimpleNamespace(dut=main, name="Soak activity")
         return SoakBrowser(main, (activity,))
@@ -61,16 +61,16 @@ class SoakBrowserTests(unittest.TestCase):
     def test_network_failure_keeps_sanitized_route_method_code_and_phase_without_retry(self):
         browser = self.fixture()
         browser._phase = "select"
-        request = SimpleNamespace(url="https://private-user:private-password@private.example/api/remotes?token=private-token",
-                                  method="GET", resource_type="fetch", failure="net::ERR_CONNECTION_RESET",
-                                  response=Mock(), headers={"Authorization": "Bearer private-token"})
         with patch("amity_harness.soak_browser.event") as trace:
-            browser._request_failed(request)
+            browser._network_started({"requestId": "private-request", "timestamp": 99, "type": "Fetch", "request": {
+                "method": "GET", "headers": {"Authorization": "Bearer private-token"},
+                "url": "https://private-user:private-password@private.example/api/remotes?token=private-token"}})
+            browser._network_failed({"requestId": "private-request", "timestamp": 100,
+                                     "errorText": "net::ERR_CONNECTION_RESET"})
         self.assertEqual(browser.report["request_failures"], 1)
         self.assertEqual(browser.report["failed_requests"], [{
             "route": "/api/remotes", "method": "GET", "resource_type": "fetch",
             "phase": "select", "net_error": "net::ERR_CONNECTION_RESET"}])
-        request.response.assert_not_called()
         self.assertNotIn("private", json.dumps(browser.report))
         self.assertNotIn("private", str(trace.call_args_list))
         with self.assertRaisesRegex(AssertionError, "page, HTTP or network"):
@@ -91,23 +91,28 @@ class SoakBrowserTests(unittest.TestCase):
                         "net::ERR_FAILED\nprivate-secret", "net::err_failed", "net::ERR_" + "A" * 100):
             with self.subTest(failure=failure):
                 browser = self.fixture()
-                browser._request_failed(SimpleNamespace(url="https://[private-secret", method="private-secret",
-                                                        resource_type="private-secret", failure=failure))
+                browser._network_started({"requestId": "request", "timestamp": 99, "type": "private-secret",
+                                          "request": {"url": "https://[private-secret", "method": "private-secret"}})
+                browser._network_failed({"requestId": "request", "timestamp": 100, "errorText": failure})
                 self.assertEqual(browser.report["failed_requests"], [{"route": "/api/{route}", "phase": "opening"}])
                 self.assertNotIn("private-secret", json.dumps(browser.report))
 
     def test_network_failure_evidence_is_bounded_and_ignores_intentional_close(self):
         browser = self.fixture()
-        request = SimpleNamespace(url="https://private.example/api/system", method="GET",
-                                  resource_type="fetch", failure="net::ERR_ABORTED")
+
+        def fail(identifier):
+            browser._network_started({"requestId": identifier, "timestamp": 99, "type": "Fetch",
+                                      "request": {"method": "GET", "url": "https://private.example/api/system"}})
+            browser._network_failed({"requestId": identifier, "timestamp": 100, "errorText": "net::ERR_ABORTED"})
+
         self.assertNotIn("failed_requests", browser.report)
-        for _ in range(30):
-            browser._request_failed(request)
+        for index in range(30):
+            fail(str(index))
         self.assertEqual(browser.report["request_failures"], 30)
         self.assertEqual(len(browser.report["failed_requests"]), 16)
         self.assertEqual(len(browser._failures), 16)
         browser._closing = True
-        browser._request_failed(request)
+        fail("closing")
         self.assertEqual(browser.report["request_failures"], 30)
         self.assertEqual(len(browser.report["failed_requests"]), 16)
 

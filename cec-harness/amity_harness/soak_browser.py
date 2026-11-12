@@ -145,29 +145,6 @@ class SoakBrowser:
             for owner in self._owners}
         self._owner_names = MappingProxyType(names)
 
-    def _request_failed(self, request):
-        """Record the original browser failure with strictly selected metadata."""
-        if self._closing:
-            return
-        resource = getattr(request, "resource_type", None)
-        self._record_failure("request_failures", resource_type=resource)
-        evidence = {"route": _browser_request_route(getattr(request, "url", None))}
-        method = getattr(request, "method", None)
-        if method in {"GET", "POST"}:
-            evidence["method"] = method
-        if resource in {"document", "script", "stylesheet", "xhr", "fetch"}:
-            evidence["resource_type"] = resource
-        if self._phase in {"opening", "select", "standby", "devices"}:
-            evidence["phase"] = self._phase
-        failure = getattr(request, "failure", None)
-        if (isinstance(failure, str) and len(failure) <= 96
-                and re.fullmatch(r"net::ERR_[A-Z0-9_]+", failure)):
-            evidence["net_error"] = failure
-        failures = self.report.setdefault("failed_requests", [])
-        if len(failures) < 16:
-            failures.append(evidence)
-        event("soak.browser.request_failed", dut=self.main.name, **evidence)
-
     def _network_fault(self, reason, *, observed=None):
         if self._closing or self._network_recovery_error is not None:
             return
