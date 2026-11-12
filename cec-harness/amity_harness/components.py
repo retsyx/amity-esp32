@@ -107,6 +107,8 @@ class _SourceIsolationObservation:
                            ((frame.opcode in (0x82, 0x86, 0x81) and frame.operands == target)
                             or (frame.opcode == 0x80 and len(frame.operands) == 4
                                 and frame.operands[2:] == target)))
+                # A wake to an absent TV is NACKed at its header, so its opcode
+                # never reaches this wire; wakes to present equipment arrive here.
                 wake = frame.opcode in (0x04, 0x0d) and not frame.operands
                 if self._leak is None and (routing or wake):
                     self._leak = {"frame": frame.raw.hex(":"), "source": frame.source,
