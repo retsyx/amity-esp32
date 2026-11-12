@@ -315,7 +315,7 @@ def source_archive():
     with tarfile.open(fileobj=archive, mode="w:gz") as output:
         top_level = {"setup.py", "setup_matter.py", "matter-requirements.txt", "setup_runtime.py",
                      "runtime-requirements.txt", "run", "run.py",
-                     "fw-reset", "README.md", "TEST-HARNESS.md", "DIAGNOSTICS.md"}
+                     "fw-reset", "flash-duts", "README.md", "TEST-HARNESS.md", "DIAGNOSTICS.md"}
         packages = {"amity_harness", "functional_tests", "unit_tests"}
         for path in sorted(HARNESS.rglob("*")):
             relative = path.relative_to(HARNESS)

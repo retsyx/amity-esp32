@@ -91,7 +91,9 @@ class RuntimeSetupTests(unittest.TestCase):
         playwright = SimpleNamespace(sync_playwright=Mock(return_value=context))
         modules = {"serial": serial, "serial.tools": SimpleNamespace(list_ports=ports),
                    "serial.tools.list_ports": ports, "esp_pylib": SimpleNamespace(serial_reset=reset),
-                   "esp_pylib.serial_reset": reset, "dbus_next": SimpleNamespace(),
+                   "esp_pylib.serial_reset": reset,
+                   "esptool": SimpleNamespace(main=Mock(side_effect=AssertionError("No flashing"))),
+                   "dbus_next": SimpleNamespace(),
                    "aiohomekit": SimpleNamespace(), "aiohomekit.controller": SimpleNamespace(),
                    "aiohomekit.controller.ip": SimpleNamespace(),
                    "aiohomekit.controller.ip.controller": SimpleNamespace(IpController=Mock()),

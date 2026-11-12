@@ -44,12 +44,15 @@ def verify_environment():
     from serial import Serial
     from serial.tools.list_ports import comports
     from esp_pylib.serial_reset import hard_reset
+    from esptool import main as esptool_main
     import dbus_next
     from aiohomekit.controller.ip.controller import IpController
     from playwright.sync_api import sync_playwright
 
     if not all(callable(item) for item in (Serial, comports, hard_reset)):
         raise ValueError("USB reboot dependencies are unavailable; rerun setup")
+    if not callable(esptool_main):
+        raise ValueError("USB flashing dependency is unavailable; rerun setup")
     if not callable(IpController):
         raise ValueError("HomeKit controller dependency is unavailable; rerun setup")
     chromium = shutil.which("chromium") or shutil.which("chromium-browser")
@@ -61,7 +64,7 @@ def verify_environment():
             browser.close()
     except Exception as error:
         raise RuntimeError("Headless Chromium verification failed: " + str(error)) from error
-    print("Harness runtime verified: USB reboots, BLE, HomeKit and headless Chromium.")
+    print("Harness runtime verified: USB reboots and flashing, BLE, HomeKit and headless Chromium.")
 
 
 def verify_installed(destination):

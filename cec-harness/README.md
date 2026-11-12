@@ -19,6 +19,33 @@ interface and verify their physical CEC effects. The runner
 first provisions the factory-reset main through its shipping Matter BLE setup.
 Firmware CEC, activity, input, commissioning and membership behavior is unchanged.
 
+## Quick start
+
+After [Pi software setup](#pi-software-setup), build the firmware as described
+in `BUILDING.md` and copy its images to the Pi checkout:
+
+```sh
+ssh pi@test2.local mkdir -p amity/esp32/firmware
+scp build/amity-partition.bin build/amity-update.bin pi@test2.local:amity/esp32/firmware/
+```
+
+Then, from the checkout root on the Pi, flash every DUT over USB and run the
+ordinary functional tests:
+
+```sh
+./cec-harness/flash-duts firmware/amity-partition.bin
+mkdir -p test-results/functional
+./cec-harness/run --test all \
+  --credentials test-results/credentials/amity-dut.json --insecure --url https://amity.local \
+  --output test-results/functional/all.json > test-results/functional/all.log 2>&1
+```
+
+The run needs a factory-reset main and unclaimed members; see
+[Main enrollment](#main-enrollment). Flashing preserves that state. The
+`_main4` variants, the firmware upgrade scenarios and soak are selected
+explicitly; see [Run functional tests](#run-functional-tests) and
+[Firmware upgrade prelude](#firmware-upgrade-prelude).
+
 ## Layout
 
 - `TEST-HARNESS.md`: bench inventory and wiring; the only GPIO mapping source.
@@ -30,6 +57,7 @@ Firmware CEC, activity, input, commissioning and membership behavior is unchange
   Wi-Fi enrollment and verification after the main's final reset.
 - `setup.py`: Pi software installation, deployment, reboot and readiness checks.
 - `run`: launches functional tests with the installed `.harness-python` runtime.
+- `flash-duts`, `amity_harness/flashing.py`: USB-flash one application image onto every DUT.
 - `setup_runtime.py`, `runtime-requirements.txt`: pinned USB and browser dependencies.
 - `setup_matter.py`, `matter-requirements.txt`: installer and pinned dependencies
   for the Pi Matter controller.
@@ -1078,6 +1106,21 @@ which the managed runtime shares for the local BLE fixture.
 The worker releases buttons, unregisters its services and advertisement, restores
 the Pi's pairing setting and removes its new peer bond on exit. It does not
 restart Bluetooth or remove preexisting Pi bonds.
+
+## USB firmware update
+
+`./cec-harness/flash-duts PATH` writes one OTA partition image to every DUT
+listed in `TEST-HARNESS.md`, in parallel, using the managed runtime's pinned
+`esptool`. Pass `build/amity-partition.bin`; the update bundle and raw
+`amity.bin` are rejected. Each board is located by its documented USB serial.
+Only `otadata` and `ota_0` are written, so each board boots the new image
+while NVS, factory provisioning, Matter credentials and saved configuration
+are unchanged. Every board is attempted; a failure prints that board's esptool
+output and the command exits nonzero. Do not flash during a functional run.
+
+Since a flashed board keeps its state, a factory-reset main and unclaimed
+members remain ready for the next run. A `--firmware` upgrade needs a bundle
+that differs from the flashed image, such as one from a later build.
 
 ## Firmware upgrade prelude
 

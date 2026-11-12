@@ -166,7 +166,8 @@ class PiSetupTests(unittest.TestCase):
     def test_archive_contains_only_sources_never_private_or_cached_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "harness"
-            expected = {"setup.py", "setup_matter.py", "setup_runtime.py", "run", "run.py", "fw-reset", "README.md",
+            expected = {"setup.py", "setup_matter.py", "setup_runtime.py", "run", "run.py", "fw-reset",
+                        "flash-duts", "README.md",
                         "TEST-HARNESS.md", "matter-requirements.txt", "runtime-requirements.txt", "amity_harness/__init__.py",
                         "functional_tests/example.py", "unit_tests/test_example.py"}
             excluded = {"credentials/enrollment.txt", "captures/trace.md", ".cache/dependency.py",
@@ -176,6 +177,7 @@ class PiSetupTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("private" if name in excluded else "source")
             (root / "run").chmod(0o755)
+            (root / "flash-duts").chmod(0o755)
             external = Path(directory) / "private.py"
             external.write_text("never deploy")
             (root / "amity_harness/linked.py").symlink_to(external)
@@ -188,6 +190,7 @@ class PiSetupTests(unittest.TestCase):
                 self.assertEqual({item.name for item in members}, {"cec-harness/" + name for name in expected})
                 self.assertTrue(all(contents.extractfile(item).read() == b"source" for item in members))
                 self.assertEqual(contents.getmember("cec-harness/run").mode & 0o777, 0o755)
+                self.assertEqual(contents.getmember("cec-harness/flash-duts").mode & 0o777, 0o755)
 
     def test_access_grants_native_usb_serial_permissions_without_opening_ports(self):
         open_file = setup.os.open
