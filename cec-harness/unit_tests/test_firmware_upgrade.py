@@ -10,6 +10,7 @@ import struct
 import sys
 import tempfile
 from types import SimpleNamespace
+import time
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -18,7 +19,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT
-from amity_harness.firmware import FirmwareBundle, FirmwareUpgrade
+from amity_harness.firmware import FirmwareBundle, FirmwareUpgrade, compare_firmware_versions
 
 
 OLD_IMAGE = 'a1' * 32
@@ -277,6 +278,32 @@ class UpgradeFixture:
             return upgrade.run()
 
 
+class FirmwareVersionTests(unittest.TestCase):
+    def test_comparison_matches_firmware_semantic_precedence(self):
+        for candidate, running, expected in (
+                ('0.1.133', '0.1.132', 1), ('0.1.132', '0.1.133', -1), ('0.1.132', '0.1.132', 0),
+                ('0.1.132+build.7', '0.1.132+other', 0), ('0.10.0', '0.9.9', 1),
+                ('1.0.0-alpha', '1.0.0', -1), ('1.0.0', '1.0.0-rc.1', 1),
+                ('1.0.0-alpha.1', '1.0.0-alpha.beta', -1), ('1.0.0-alpha.beta', '1.0.0-beta', -1),
+                ('1.0.0-beta.2', '1.0.0-beta.11', -1), ('1.0.0-rc.1', '1.0.0-rc.1.1', -1),
+                ('1.0', '1.0.0', None), ('01.0.0', '1.0.0', None), ('1.0.0-01', '1.0.0', None),
+                ('1.0.0-', '1.0.0', None), ('1.0.0+', '1.0.0', None), ('1.0.0-a..b', '1.0.0', None),
+                ('v1.0.0', '1.0.0', None), ('1.0.0', None, None), ('1.0.0-x_y', '1.0.0', None)):
+            with self.subTest(candidate=candidate, running=running):
+                self.assertEqual(compare_firmware_versions(candidate, running), expected)
+
+    def test_upload_confirms_only_older_or_incomparable_versions(self):
+        for running, confirmed in (('0.1.132', False), (VERSION, False), ('0.1.134', True),
+                                   ('dev-build', True)):
+            with self.subTest(running=running):
+                fixture = UpgradeFixture()
+                upgrade = fixture.upgrade()
+                upgrade._upload(running, time.monotonic() + 60)
+                request = fixture.uploads[-1]
+                self.assertEqual(request.get_header('X-amity-confirm-version'),
+                                 running if confirmed else None)
+
+
 class FirmwareUpgradeTests(unittest.TestCase):
     def test_single_authenticated_upload_requires_staging_new_boots_and_exact_image(self):
         fixture = UpgradeFixture()
@@ -287,7 +314,8 @@ class FirmwareUpgradeTests(unittest.TestCase):
         self.assertEqual(request.data, fixture.bundle.data)
         self.assertEqual(request.get_header('Authorization'), 'Bearer ' + SECRET_TOKEN)
         self.assertEqual(request.get_header('Content-type'), 'application/octet-stream')
-        self.assertEqual(request.get_header('X-amity-confirm-version'), '0.1.132')
+        # An upgrade is not confirmed: the firmware must accept it unaided.
+        self.assertIsNone(request.get_header('X-amity-confirm-version'))
         self.assertEqual(upgrade.after_system['boot_id'], NEW_MAIN_BOOT)
         self.assertTrue(fixture.logins, 'new boot must refresh the old authenticated session')
         checks = [row['check'] for row in upgrade.report['checks']]

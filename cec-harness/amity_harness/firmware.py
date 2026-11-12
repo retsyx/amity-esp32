@@ -23,6 +23,7 @@ from .trace import event
 
 
 _HEADER = struct.Struct(">16sIIQ")
+_IDENTIFIER = re.compile(r"[0-9A-Za-z-]+")
 _MAX_IMAGE = 0x3cd000
 _TRANSIENT = (OSError, URLError, http.client.HTTPException)
 _READ_ERRORS = (*_TRANSIENT, AmityHTTPError)
@@ -39,6 +40,59 @@ def _unique(pairs):
             raise ValueError("Duplicate firmware manifest field")
         result[key] = value
     return result
+
+
+def _version_identifiers(text, *, prerelease):
+    parts = text.split(".")
+    if any(not part or _IDENTIFIER.fullmatch(part) is None
+           or prerelease and part.isdigit() and len(part) > 1 and part[0] == "0" for part in parts):
+        return None
+    return parts
+
+
+def _parse_version(text):
+    if not isinstance(text, str):
+        return None
+    text, plus, build = text.partition("+")
+    if plus and _version_identifiers(build, prerelease=False) is None:
+        return None
+    text, dash, pre = text.partition("-")
+    pre = _version_identifiers(pre, prerelease=True) if dash else []
+    core = text.split(".")
+    if (pre is None or len(core) != 3
+            or any(not part.isdigit() or not part.isascii() or len(part) > 1 and part[0] == "0"
+                   for part in core)):
+        return None
+    return core, pre
+
+
+def _compare_part(left, right, digits):
+    if digits and len(left) != len(right):
+        return -1 if len(left) < len(right) else 1
+    return 0 if left == right else -1 if left < right else 1
+
+
+def compare_firmware_versions(candidate, running):
+    """Match firmware_version.hpp: semantic precedence ignoring build metadata.
+
+    Returns None when either version cannot be compared.
+    """
+    left, right = _parse_version(candidate), _parse_version(running)
+    if left is None or right is None:
+        return None
+    for a, b in zip(left[0], right[0]):
+        if result := _compare_part(a, b, True):
+            return result
+    left_pre, right_pre = left[1], right[1]
+    if not left_pre or not right_pre:
+        return 0 if not left_pre and not right_pre else 1 if not left_pre else -1
+    for a, b in zip(left_pre, right_pre):
+        a_digits, b_digits = a.isdigit(), b.isdigit()
+        if a_digits != b_digits:
+            return -1 if a_digits else 1
+        if result := _compare_part(a, b, a_digits):
+            return result
+    return 0 if len(left_pre) == len(right_pre) else -1 if len(left_pre) < len(right_pre) else 1
 
 
 @dataclass(frozen=True)
@@ -191,14 +245,19 @@ class FirmwareUpgrade:
                 time.sleep(min(self.poll_interval, self._remaining(deadline)))
         return result
 
-    def _upload(self, version, deadline):
+    def _upload(self, running, deadline):
         self.main.authenticate()
-        request = Request(self.main.url + "/api/firmware", data=self.bundle.data,
-            headers={"Accept": "application/json", "Content-Type": "application/octet-stream",
-                     "Authorization": "Bearer " + self.main._token, "X-Amity-Confirm-Version": version})
+        headers = {"Accept": "application/json", "Content-Type": "application/octet-stream",
+                   "Authorization": "Bearer " + self.main._token}
+        # Like the UI, confirm only an older or incomparable version. A
+        # firmware that misjudges an upgrade as a downgrade must reject it.
+        comparison = compare_firmware_versions(self.bundle.version, running)
+        if comparison is None or comparison < 0:
+            headers["X-Amity-Confirm-Version"] = running
+        request = Request(self.main.url + "/api/firmware", data=self.bundle.data, headers=headers)
         self._attempted = True
         self._note("upload_once", image_elf_sha256=self.bundle.image_elf_sha256,
-                   image_bytes=self.bundle.image_bytes)
+                   image_bytes=self.bundle.image_bytes, version_comparison=comparison)
         try:
             with self.main._opener.open(request, timeout=min(180, self._remaining(deadline))) as response:
                 acknowledgement = json.load(response)
