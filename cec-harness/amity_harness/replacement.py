@@ -201,14 +201,20 @@ class ReplacementReview:
                     raise AssertionError("Replacement operation did not apply successfully")
                 time.sleep(min(.25, self.previous._remaining(self.deadline)))
                 operation = self._request("/api/operations/" + self.request_id)
+            # Once applied, Replace has removed the old member and moved its
+            # equipment. Record both before verifying, so even after a failed
+            # check cleanup neither runs Remove again, cascade-deleting the
+            # preserved activities, nor prunes by the old equipment records.
+            self.previous._closed = True
+            self.bed._member_proofs.pop(self.previous.device_id)
+            record.update(inventory_removed=True, retained_member=False, reset=operation.get("reset"))
+            records = {row["component_id"]: row for row in self.expected["components"]}
+            for activity in self.activities:
+                activity._new_equipment = {identity: deepcopy(records[identity])
+                                           for identity in activity._new_equipment}
             self._assert_saved()
             if operation.get("reset") not in {"scheduled", "offline"}:
                 raise AssertionError("Replacement did not resolve the old member's removal")
-            # The old member was removed by Replace, so ordinary Remove must
-            # not run again or cascade-delete the activities we just preserved.
-            self.previous._closed = True
-            self.bed._member_proofs.pop(self.previous.device_id)
-            record.update(inventory_removed=True, retained_member=False, reset=operation["reset"])
             scan = self.main.scan_hdmi()
             replacements = dict(self.pairs)
             selections = []
@@ -219,13 +225,10 @@ class ReplacementReview:
                     if component is not None:
                         scan.assert_on(component, component.endpoint)
                 selections.append((activity, selected))
-            records = {row["component_id"]: row for row in self.expected["components"]}
             for activity, selected in selections:
                 activity.components = selected
                 activity.scan = scan
                 activity.refresh_scan(scan)
-                activity._new_equipment = {identity: deepcopy(records[identity])
-                                           for identity in activity._new_equipment}
             self._applied = True
             self.proof.update(operation_stage="applied", reset=operation["reset"], removed=True,
                               affected_activity_ids=self.affected)

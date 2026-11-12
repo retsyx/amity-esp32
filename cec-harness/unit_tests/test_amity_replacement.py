@@ -214,6 +214,22 @@ class ReplacementTests(unittest.TestCase):
                     if phase == "preview":
                         self.assertEqual(fixture.posts("apply"), [])
 
+    def test_applied_replacement_that_fails_verification_is_recorded_for_cleanup(self):
+        fixture = ReplacementFixture()
+        fixture.apply_mutation = corruptions()["home slot"]
+        review = fixture.review()
+        review.preview()
+        with self.assertRaisesRegex(AssertionError, "exact saved activity configuration"):
+            review.apply()
+        self.assertTrue(fixture.member._closed)
+        self.assertEqual(set(fixture.bed._member_proofs), {fixture.replacement.device_id})
+        # Every member's membership checks no longer expect the old member.
+        self.assertIn(fixture.member.device_id, fixture.replacement._removed_owners())
+        for activity in fixture.resources:
+            for identity, record in activity._new_equipment.items():
+                self.assertEqual(record, next(row for row in review.expected["components"]
+                                             if row["component_id"] == identity))
+
     def test_preview_must_not_mutate_configuration_or_membership(self):
         for effect in (lambda f: f.config["external_slots"][-1].update(hidden=False),
                        lambda f: f.system["membership"].update(membership_revision="999")):
@@ -279,9 +295,13 @@ class ReplacementTests(unittest.TestCase):
             review.apply()
         self.assertIn(fixture.new[2], fixture.action_scan.locations)
         self.assertEqual([activity.components for activity in fixture.resources], original)
-        self.assertEqual([activity._new_equipment for activity in fixture.resources], equipment)
         self.assertEqual([activity.scan for activity in fixture.resources], scans)
         self.assertFalse(review._applied)
+        # The verified apply already moved the saved records; cleanup prunes
+        # by those, while physical recipients stay unbound.
+        records = {row["component_id"]: row for row in review.expected["components"]}
+        self.assertEqual([activity._new_equipment for activity in fixture.resources],
+                         [{identity: records[identity] for identity in before} for before in equipment])
 
 
 if __name__ == "__main__":
