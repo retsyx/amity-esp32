@@ -359,6 +359,21 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue((await owner.status())["ready"])
                 self.assertEqual([event[0] for event in events], ["RemoveDevice"])
 
+    def test_advertisement_requests_hid_fast_connection_interval(self):
+        dbus, service = ModuleType("dbus_next"), ModuleType("dbus_next.service")
+        dbus.DBusError = RuntimeError
+        dbus.PropertyAccess = SimpleNamespace(READ=1)
+        dbus.Variant = lambda signature, value: SimpleNamespace(value=value)
+        service.ServiceInterface = type("Interface", (), {"__init__": lambda self, name: None})
+        service.dbus_property = lambda **kwargs: property
+        service.method = lambda **kwargs: lambda function: function
+        owner, _ = self.fixture()
+        owner._exports = []
+        with patch.dict(sys.modules, {"dbus_next": dbus, "dbus_next.service": service}):
+            _interfaces(owner)
+        advertisement = dict(owner._exports)[owner.path + "/advertisement"]
+        self.assertEqual((advertisement.MinInterval, advertisement.MaxInterval), (20, 30))
+
     async def test_forget_rejects_live_foreign_preexisting_or_unadvertised_peer(self):
         for changed in ("connected", "adapter", "bonded", "before_connected", "advertisement"):
             with self.subTest(changed=changed):

@@ -37,6 +37,8 @@ REBOOT_REQUIRED = 2
 OVERLAY_RECORD = Path("/var/lib/amity-harness/overlay.json")
 REBOOT_RECORD = Path("/var/lib/amity-harness/reboot-required")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
+BLUETOOTHD = "/usr/libexec/bluetooth/bluetoothd"
+BLUETOOTH_DROPIN = "/etc/systemd/system/bluetooth.service.d/amity-harness.conf"
 
 
 def run(command, **kwargs):
@@ -209,6 +211,12 @@ def install(account, wiring):
                "# Matter commissioning requires IPv6.\n"
                "net.ipv6.conf.all.disable_ipv6=0\nnet.ipv6.conf.default.disable_ipv6=0\n")
     run(["sysctl", "-w", "net.ipv6.conf.all.disable_ipv6=0", "net.ipv6.conf.default.disable_ipv6=0"])
+    # BlueZ honours the keyboard fixture's advertising interval only in
+    # experimental mode.
+    dropin = f"[Service]\nExecStart=\nExecStart={BLUETOOTHD} --experimental\n"
+    if write_file(BLUETOOTH_DROPIN, dropin) or not bluetooth_experimental():
+        run(["systemctl", "daemon-reload"])
+        run(["systemctl", "restart", "bluetooth.service"])
     run(["systemctl", "enable", "--now", "bluetooth.service", "avahi-daemon.service", "ssh.service"])
     run(["rfkill", "unblock", "bluetooth"])
     run(["bluetoothctl", "--timeout", "15", "power", "on"], timeout=20)
@@ -251,6 +259,15 @@ def check_cec(wiring):
             os.close(fd)
     if found != expected:
         raise ValueError("CEC adapters missing; reboot after setup: " + ", ".join(sorted(expected - found)))
+
+
+def bluetooth_experimental():
+    pid = run(["systemctl", "show", "--property", "MainPID", "--value", "bluetooth.service"],
+              capture_output=True).stdout.strip()
+    try:
+        return "--experimental" in Path(f"/proc/{int(pid)}/cmdline").read_bytes().decode().split("\0")
+    except (ValueError, OSError):
+        return False
 
 
 async def check_bluetooth():
@@ -300,6 +317,8 @@ def check_ready(wiring):
     if not memories or not all(os.access(path, os.R_OK | os.W_OK) for path in memories):
         raise ValueError("Harness account cannot access GPIO memory; rerun setup or reconnect SSH")
     asyncio.run(asyncio.wait_for(check_bluetooth(), timeout=15))
+    if not bluetooth_experimental():
+        raise ValueError("bluetoothd must run with --experimental for keyboard advertising; rerun setup")
     run([sys.executable, "-B", str(HARNESS / "setup_matter.py"), "--verify-installed"])
     ctypes.CDLL(str(HARNESS.parent / ".matter-python/chip/_ChipDeviceCtrl.so"))
     run(["sudo", "-n", "unshare", "--mount", "--propagation", "private", "true"], capture_output=True)

@@ -163,7 +163,8 @@ This deploys the harness, installs system Chromium and the pinned USB and
 Playwright dependencies in `.harness-python/` at the repository root, prepares
 Bluetooth and Matter, builds the CEC kernel modules with DKMS if needed, and
 configures CEC adapters from `TEST-HARNESS.md`. Building a missing driver supports
-kernel series 6.12 and 6.18. Setup also grants the harness
+kernel series 6.12 and 6.18. BlueZ runs with `--experimental` so the test keyboard
+can advertise at the HID fast-connection interval. Setup also grants the harness
 account access to CEC, GPIO, DUT USB and the required privileged helpers, and
 disables old `amity-cec@` followers. It reboots the Pi when needed, reconnects and checks
 readiness, including all documented USB identities and device permissions without

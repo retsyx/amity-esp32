@@ -294,6 +294,95 @@ class PiSetupTests(unittest.TestCase):
             self.assertIn(runtime, invocations)
             self.assertLess(invocations.index(runtime), invocations.index(readiness))
 
+    def test_install_restarts_bluez_in_experimental_mode_only_when_needed(self):
+        for changed, experimental, restarted in ((True, True, True), (False, False, True),
+                                                 (False, True, False)):
+            with self.subTest(changed=changed, experimental=experimental), \
+                    tempfile.TemporaryDirectory() as directory:
+                boot = Path(directory)
+                (boot / "config.txt").write_text("[all]\n")
+                commands, written = [], {}
+
+                def run(command, **kwargs):
+                    commands.append(command)
+                    if command[0] == "dtc":
+                        Path(command[command.index("-o") + 1]).write_bytes(b"compiled overlay")
+                    return SimpleNamespace(returncode=0, stdout="")
+
+                def write(path, content, **kwargs):
+                    written[str(path)] = content
+                    return changed and str(path) == setup.BLUETOOTH_DROPIN
+
+                with patch.object(setup, "BOOT", boot), patch.object(setup, "run", side_effect=run), \
+                        patch.object(setup, "write_file", side_effect=write), \
+                        patch.object(setup, "bluetooth_experimental", return_value=experimental), \
+                        patch.object(setup, "retire_followers"), patch.object(setup, "configure_access"), \
+                        patch("amity_harness.pi_cec_driver.ensure_driver", return_value=False), \
+                        patch.object(setup, "awaiting_reboot", return_value=False), \
+                        patch.object(setup.Path, "unlink"), \
+                        patch.object(setup, "as_user", return_value=SimpleNamespace(returncode=0)), \
+                        redirect_stdout(io.StringIO()):
+                    self.assertEqual(setup.install(self.account, self.wiring), 0)
+                self.assertEqual(written[setup.BLUETOOTH_DROPIN],
+                                 "[Service]\nExecStart=\n"
+                                 "ExecStart=/usr/libexec/bluetooth/bluetoothd --experimental\n")
+                restart = ["systemctl", "restart", "bluetooth.service"]
+                self.assertIs(restart in commands, restarted)
+                if restarted:
+                    self.assertLess(commands.index(["systemctl", "daemon-reload"]), commands.index(restart))
+                    self.assertLess(commands.index(restart),
+                                    commands.index(["bluetoothctl", "--timeout", "15", "power", "on"]))
+
+    def test_bluetooth_experimental_reads_the_running_daemon_arguments(self):
+        paths = []
+
+        def read(path):
+            paths.append(path)
+            return cmdline
+
+        for cmdline, expected in ((b"/usr/libexec/bluetooth/bluetoothd\0--experimental\0", True),
+                                  (b"/usr/libexec/bluetooth/bluetoothd\0", False)):
+            with patch.object(setup, "run", return_value=SimpleNamespace(stdout="321\n")), \
+                    patch.object(setup.Path, "read_bytes", autospec=True, side_effect=read):
+                self.assertIs(setup.bluetooth_experimental(), expected)
+        self.assertEqual(paths, [Path("/proc/321/cmdline")] * 2)
+        for pid in ("0\n", "\n"):
+            with patch.object(setup, "run", return_value=SimpleNamespace(stdout=pid)), \
+                    patch.object(setup.Path, "read_bytes", side_effect=FileNotFoundError):
+                self.assertFalse(setup.bluetooth_experimental())
+
+    def test_readiness_rejects_bluez_without_experimental_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            boot, record = root / "boot", root / "overlay.json"
+            (boot / "overlays").mkdir(parents=True)
+            (boot / "config.txt").write_text(setup.boot_config("", self.wiring))
+            binary = boot / "overlays/amity-harness.dtbo"
+            binary.write_bytes(b"compiled overlay")
+            record.write_text(json.dumps({
+                "source": hashlib.sha256(setup.overlay_source(self.wiring).encode()).hexdigest(),
+                "binary": hashlib.sha256(binary.read_bytes()).hexdigest()}))
+            commands = []
+
+            def run(command, **kwargs):
+                commands.append(command)
+                return SimpleNamespace(returncode=0, stdout="ip pn")
+
+            async def bluetooth():
+                pass
+
+            with patch.object(setup, "BOOT", boot), patch.object(setup, "OVERLAY_RECORD", record), \
+                    patch.object(setup, "awaiting_reboot", return_value=False), \
+                    patch.object(setup.os, "geteuid", return_value=self.account.pw_uid), \
+                    patch.object(setup, "check_cec"), patch.object(setup, "run", side_effect=run), \
+                    patch.object(setup.glob, "glob", return_value=["/dev/gpiomem0"]), \
+                    patch.object(setup.os, "access", return_value=True), \
+                    patch.object(setup, "check_bluetooth", side_effect=bluetooth), \
+                    patch.object(setup, "bluetooth_experimental", return_value=False):
+                with self.assertRaisesRegex(ValueError, "--experimental"):
+                    setup.check_ready(self.wiring)
+            self.assertFalse(any("setup_matter.py" in str(part) for command in commands for part in command))
+
     def test_readiness_checks_runtime_and_usb_inventory_before_button_controls(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -20,6 +20,7 @@ import time
 
 PROTOCOL_VERSION = 1
 NAME = "Amity Test Keyboard"
+ADVERTISING_INTERVAL_MS = (20, 30)
 def _keyboard_slots(value):
     if type(value) is not int or value not in (6, 10):
         raise ValueError("Choose six or ten keyboard slots")
@@ -514,6 +515,17 @@ def _interfaces(owner):
         @dbus_property(access=PropertyAccess.READ)
         def Appearance(self) -> 'q':
             return 0x03c1
+
+        # A HID keyboard awaiting a connection advertises at the HOGP
+        # fast-connection rate, not the adapter's 1.28 s default. BlueZ applies
+        # these only when bluetoothd runs with --experimental (see setup.py).
+        @dbus_property(access=PropertyAccess.READ)
+        def MinInterval(self) -> 'u':
+            return ADVERTISING_INTERVAL_MS[0]
+
+        @dbus_property(access=PropertyAccess.READ)
+        def MaxInterval(self) -> 'u':
+            return ADVERTISING_INTERVAL_MS[1]
 
         @method()
         def Release(self):
