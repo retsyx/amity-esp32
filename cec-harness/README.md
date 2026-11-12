@@ -1033,7 +1033,7 @@ activity is recreated to make the replacement work.
 
 ## Default physical address changes
 
-`--test default_physical_address` runs four cases on adapter 1 of `amity-dut`
+`--test default_physical_address` runs four cases on adapter 0 of `amity-dut`
 and an added `amity-dut-2`. A front TV alone establishes no scannable back
 address; adding a back AVR and its player establishes the detected address
 `1.0.0.0`. After an explicit scan, each case changes the default from
