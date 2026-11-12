@@ -160,6 +160,8 @@ struct RuntimePeerStatus {
     uint8_t supported_tentacles=1,configured_tentacles_mask=1;
     std::string firmware_identity,hostname;
     bool management_ready=false,ready=false,enrolled=false,provisional=false,hardware_profile=false;
+    // The member's latest report over its current connection.
+    bool wifi_known=false;int8_t wifi_rssi=0;uint8_t wifi_channel=0;
 };
 std::vector<RuntimePeerStatus> runtime_peers();
 // Bounded public metadata retained while offline, erased on explicit removal.

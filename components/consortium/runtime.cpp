@@ -12,6 +12,7 @@
 #include "production_storage.hpp"
 #include "tcp_ack_trace.hpp"
 #include "network_diagnostics.hpp"
+#include "wifi_signal.hpp"
 #include "amity/consortium/bootstrap.hpp"
 #include "amity/consortium/enrollment.hpp"
 #include "amity/consortium/transfer.hpp"
@@ -113,6 +114,10 @@ struct Active {
     uint64_t release_ack_generation=0;
     uint8_t release_ack_key=0,release_ack_edges=0;
     bool release_ack_down=false;
+    // Link-task owned: a member's last Wi-Fi signal report to the main.
+    std::optional<LinkScope> wifi_scope;
+    uint64_t wifi_reported_at=0;
+    network_diagnostics::WifiSignal wifi_reported;
     std::atomic_bool cancelled{false},retiring{false},ready{false},management_ready{false},context_ready{false},context_requested{false},refreshing{false};
     std::atomic_bool execution_fenced{false};
     std::atomic_bool restart_requested{false};
@@ -671,7 +676,7 @@ bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* dia
         if(phase=="reject"&&round.id==active.synchronization.id&&round.revision==active.synchronization.revision)return trace.fail("synchronization_peer_rejected");
         return trace.fail("hostname_synchronization_phase",Error::invalid_message);
     }
-    if(response.kind!=Kind::device_status)return trace.fail("hostname_kind",Error::invalid_message);
+    if(response.kind!=Kind::device_status||!response.payload.get("hostname"))return trace.fail("hostname_kind",Error::invalid_message);
     const auto& name=response.payload.get("hostname")->string;
     if(!expected.empty()&&name!=expected)return trace.fail("hostname_identity",Error::identity_conflict);
     std::lock_guard<std::mutex> persistence(persistence_lock);
@@ -691,11 +696,29 @@ bool refresh_local_hostname(Active& active){
     if(!send(active,Kind::device_status,"{\"hostname\":\""+name+"\"}",1000))return false;
     active.advertised_hostname=name;return true;
 }
-bool receive_live_hostname(Active& active,const Envelope& envelope,uint64_t received){
+// Members report their station signal for the main's diagnostics. Samples
+// vary constantly: report a change at most every ten seconds, and promptly in
+// a new scope, whose start may discard an old-scope report.
+bool report_wifi_signal(Active& active){
+    const auto scope=active.session.scope();
+    if(!active.ready||active.management_ready||active.lifecycle_only||scope.peer_id!=scope.coordinator_id)return true;
+    const auto signal=network_diagnostics::wifi_signal();if(!signal.known)return true;
+    const auto now=now_ms();
+    if(active.wifi_scope&&*active.wifi_scope==scope&&(now-active.wifi_reported_at<10000||
+       (signal.rssi==active.wifi_reported.rssi&&signal.channel==active.wifi_reported.channel)))return true;
+    if(!send(active,Kind::device_status,wifi_signal_json({signal.rssi,signal.channel}),1000))return false;
+    active.wifi_scope=scope;active.wifi_reported_at=now;active.wifi_reported=signal;return true;
+}
+bool receive_live_device_status(Active& active,const Envelope& envelope,uint64_t received){
     if(envelope.kind!=Kind::device_status||active.session.admit(envelope,received,received)!=Error::none)return false;
-    const auto* name=envelope.payload.get("hostname");if(!name||name->type!=Json::Type::string||!valid_hostname(name->string))return false;
+    const auto* name=envelope.payload.get("hostname");if(name&&(name->type!=Json::Type::string||!valid_hostname(name->string)))return false;
     {std::lock_guard<std::mutex> guard(lock);if(!current_peer_credential(active,group))return false;}
-    remember_live_hostname(active,name->string);return true;
+    if(const auto signal=parse_wifi_signal(envelope.payload)){
+        std::lock_guard<std::mutex> snapshot(active.mutex);
+        active.status.wifi_known=true;active.status.wifi_rssi=signal->rssi;active.status.wifi_channel=signal->channel;
+    }
+    if(name)remember_live_hostname(active,name->string);
+    return true;
 }
 bool notify_link_closed(Active& active){
     std::lock_guard<std::mutex> once(active.close_mutex);
@@ -1070,6 +1093,7 @@ void active_loop_work(void *arg){
         }
         trace.phase="operational";trace.has_kind=trace.has_queue=false;
         if(server&&!active->retiring&&active->ready&&!receive_until&&!initialize_context(*active)){trace.fail("initial_context");break;}
+        if(!active->retiring&&!report_wifi_signal(*active)){trace.fail("wifi_signal_send");break;}
         if(!active->retiring&&!refresh_local_hostname(*active)){trace.fail("hostname_send");break;}
         Queued queued;std::string payload;bool have=false,invalid=false;if(!active->retiring){std::lock_guard<std::mutex> guard(active->mutex);
             while(!active->queue.empty()&&active->queue.front().revision<active->session.scope().config_revision)active->queue.pop_front();
@@ -1155,7 +1179,7 @@ void active_loop_work(void *arg){
         if(!server&&envelope.kind==Kind::membership_event){const auto admitted=active->session.admit(envelope,received,received);if(admitted!=Error::none){trace.fail("retirement_admit",admitted);break;}trace.phase="retirement";if(!retire_member(*active,envelope,received))trace.fail("retirement");else trace.reason="retired";break;}
 
         if(envelope.kind==Kind::device_status){
-            if(!receive_live_hostname(*active,envelope,received)){trace.fail("hostname_admission");break;}
+            if(!receive_live_device_status(*active,envelope,received)){trace.fail("device_status_admission");break;}
             continue;
         }
         if(is_log_kind(envelope.kind)){

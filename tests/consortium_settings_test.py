@@ -10,11 +10,13 @@ PREFIX=r'''
 #include "controller_policy.hpp"
 #include "hostname_registry.hpp"
 #include "runtime_persistence.hpp"
+#include "wifi_signal.hpp"
 #include <cassert>
 #include <deque>
 #include <iostream>
 #include <memory>
 #include <mutex>
+namespace amity::network_diagnostics {WifiSignal fake_signal;WifiSignal wifi_signal(){return fake_signal;}}
 namespace amity::consortium {
 using namespace platform;
 uint64_t clock_ms=100;uint64_t now_ms(){return clock_ms;}
@@ -22,7 +24,7 @@ template<class T>T ident(unsigned n){char v[33];snprintf(v,sizeof(v),"%032x",n);
 template<class T>T random_id(){static unsigned next=1000;return ident<T>(next++);}
 struct Queued{Kind kind;std::string payload;uint32_t ttl;uint64_t created;uint64_t revision=0;std::shared_ptr<const model::OwnedIntent> owned;};
 struct FakeTls{model::OctopusId authenticated;};
-struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,restart_requested=false,execution_fenced=false;RuntimePeerStatus status;std::string advertised_hostname;};
+struct Active{Session session;model::OctopusId peer;std::shared_ptr<FakeTls> tls=std::make_shared<FakeTls>();std::mutex mutex;std::deque<Queued> queue;bool cancelled=false,retiring=false,ready=true,management_ready=false,restart_requested=false,execution_fenced=false;RuntimePeerStatus status;std::string advertised_hostname;bool lifecycle_only=false;std::optional<LinkScope> wifi_scope;uint64_t wifi_reported_at=0;network_diagnostics::WifiSignal wifi_reported;};
 std::mutex lock,persistence_lock;Group group;Identity identity;RuntimeStatus status;HostnameRegistry hostnames;RuntimeNetworkHooks network;struct{bool submitted=false;std::string hostname;RuntimeAdmissionStatus view;}admission;std::string local_hostname="main-name";bool registry_failure=false;model::BootId boot=ident<model::BootId>(6);uint64_t configuration=1;std::vector<std::shared_ptr<Active>> links;
 unsigned saves=0,restarts=0;uint64_t revision=2,hostname_revision=10;bool send_success=true,applied_sent=false,http_sent=false;unsigned effect_fault=0;
 std::shared_ptr<Active> current_link;std::vector<std::string> sent;
@@ -96,6 +98,40 @@ void hostname_tests(){
  assert(settings_dispatch(active,write_message(active,43,&adapter_update),clock_ms)&&revision==4&&hostname_revision==11&&saves==3);
  std::cout<<"PASS hostname codec/receiver: normalized rename-only write, closed current snapshot, durable same-boot change on the same authenticated TLS stream\n";
 }
+void wifi_signal_tests(){
+ for(auto valid:{"{\"hostname\":\"amity-member\"}","{\"wifi_rssi_negated\":62,\"wifi_channel\":1}","{\"hostname\":\"amity-member\",\"wifi_rssi_negated\":0,\"wifi_channel\":196}"})
+  assert(valid_envelope_payload(Kind::device_status,parsed(valid)));
+ for(auto invalid:{"{}","{\"wifi_rssi_negated\":62}","{\"wifi_channel\":1}","{\"wifi_rssi_negated\":128,\"wifi_channel\":1}","{\"wifi_rssi_negated\":62,\"wifi_channel\":0}",
+                   "{\"wifi_rssi_negated\":62,\"wifi_channel\":1,\"other\":1}","{\"hostname\":\"Bad Name\",\"wifi_rssi_negated\":62,\"wifi_channel\":1}"})
+  assert(!valid_envelope_payload(Kind::device_status,parsed(invalid)));
+ assert(wifi_signal_json({-62,6})=="{\"wifi_rssi_negated\":62,\"wifi_channel\":6}");
+ assert(wifi_signal_json({5,1})=="{\"wifi_rssi_negated\":0,\"wifi_channel\":1}"&&wifi_signal_json({-128,1})=="{\"wifi_rssi_negated\":127,\"wifi_channel\":1}");
+ const auto decoded=parse_wifi_signal(parsed(wifi_signal_json({-62,6})));assert(decoded&&decoded->rssi==-62&&decoded->channel==6);
+ assert(!parse_wifi_signal(parsed("{\"hostname\":\"amity-member\"}")));
+ reset(true);auto active=connection(false);const auto original=active->session.scope();
+ auto report=message(active,Kind::device_status,parsed("{\"wifi_rssi_negated\":71,\"wifi_channel\":11}"));
+ assert(receive_live_device_status(*active,report,clock_ms)&&active->status.wifi_known&&active->status.wifi_rssi==-71&&active->status.wifi_channel==11);
+ assert(active->status.hostname.empty()&&hostnames.entries().empty());
+ auto both=message(active,Kind::device_status,parsed("{\"hostname\":\"amity-member\",\"wifi_rssi_negated\":55,\"wifi_channel\":1}"));
+ assert(receive_live_device_status(*active,both,clock_ms)&&active->status.wifi_rssi==-55&&active->status.wifi_channel==1&&active->status.hostname=="amity-member");
+ report.destination_boot_id=ident<model::BootId>(99);assert(!receive_live_device_status(*active,report,clock_ms)&&active->status.wifi_rssi==-55);
+ assert(active->session.scope()==original&&!active->cancelled&&!restarts);
+ reset(false);auto member=connection(true);
+ network_diagnostics::fake_signal={};assert(report_wifi_signal(*member)&&sent.empty());
+ network_diagnostics::fake_signal={true,-62,6};assert(report_wifi_signal(*member)&&sent.size()==1&&sent.back()=="{\"wifi_rssi_negated\":62,\"wifi_channel\":6}");
+ assert(report_wifi_signal(*member)&&sent.size()==1);
+ network_diagnostics::fake_signal.rssi=-64;clock_ms+=9999;assert(report_wifi_signal(*member)&&sent.size()==1);
+ clock_ms+=1;assert(report_wifi_signal(*member)&&sent.size()==2&&parse_wifi_signal(parsed(sent.back()))->rssi==-64);
+ clock_ms+=60000;assert(report_wifi_signal(*member)&&sent.size()==2);
+ // A new configuration scope may have discarded the previous report.
+ assert(member->session.advance_configuration(2)==Error::none&&report_wifi_signal(*member)&&sent.size()==3);
+ network_diagnostics::fake_signal.rssi=-80;clock_ms+=10000;
+ member->ready=false;assert(report_wifi_signal(*member)&&sent.size()==3);member->ready=true;
+ member->management_ready=true;assert(report_wifi_signal(*member)&&sent.size()==3);member->management_ready=false;
+ send_success=false;assert(!report_wifi_signal(*member)&&sent.size()==4);send_success=true;
+ reset(true);auto main_link=connection(false);network_diagnostics::fake_signal={true,-50,1};assert(report_wifi_signal(*main_link)&&sent.empty());
+ std::cout<<"PASS Wi-Fi signal: closed codec, member-to-main reports of changes at most every ten seconds and again in a new scope, main keeps the latest report on the same connection\n";
+}
 void live_hostname_tests(){
  reset(true);auto active=connection(false);const auto original=active->session.scope();const auto tls=active->tls;
  active->management_ready=true;active->ready=false;assert(refresh_local_hostname(*active)&&sent.empty());active->management_ready=false;active->ready=true;
@@ -103,10 +139,10 @@ void live_hostname_tests(){
  local_hostname="renamed-main";assert(refresh_local_hostname(*active)&&sent.size()==1&&parsed(sent.back()).get("hostname")->string==local_hostname);
  assert(refresh_local_hostname(*active)&&sent.size()==1);
  auto update=message(active,Kind::device_status,parsed("{\"hostname\":\"renamed-member\"}"));
- assert(receive_live_hostname(*active,update,clock_ms)&&active->status.hostname=="renamed-member"&&hostnames.lookup(active->peer)=="renamed-member");
+ assert(receive_live_device_status(*active,update,clock_ms)&&active->status.hostname=="renamed-member"&&hostnames.lookup(active->peer)=="renamed-member");
  registry_failure=true;update.payload.get("hostname")->string="live-member";
- assert(receive_live_hostname(*active,update,clock_ms)&&active->status.hostname=="live-member"&&hostnames.lookup(active->peer)=="renamed-member"&&!status.last_error.empty());
- update.destination_boot_id=ident<model::BootId>(99);assert(!receive_live_hostname(*active,update,clock_ms));
+ assert(receive_live_device_status(*active,update,clock_ms)&&active->status.hostname=="live-member"&&hostnames.lookup(active->peer)=="renamed-member"&&!status.last_error.empty());
+ update.destination_boot_id=ident<model::BootId>(99);assert(!receive_live_device_status(*active,update,clock_ms));
  assert(active->session.scope()==original&&active->tls==tls&&active->ready&&!active->cancelled&&!restarts);
  std::cout<<"PASS live hostname metadata: one update per changed name, same TLS/session/boot, authenticated admission, metadata storage failure keeps the healthy connection\n";
 }
@@ -203,7 +239,7 @@ void sender_tests(){
  std::cout<<"PASS actual main client: coalescedreadonlyGET, authenticatedfreshcache, offline/unsupporteduneditable, preservedoriginalTTL, disconnectunknown and noautomaticresend\n";
 }
 }
-int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){const auto at=line.find('\t');Json value;JsonError detail;bool valid=false;if(at!=std::string::npos&&parse_json(line.substr(at+1),value,detail)){const auto name=line.substr(0,at);if(name=="DeviceSettingsSnapshot")valid=valid_settings_snapshot(value);else if(name=="DeviceSettingsWrite"){DeviceSettingsWrite write;valid=parse_device_settings_write(value,write)==Error::none;}else if(name=="SettingsRead")valid=valid_settings_payload(Kind::settings_read,value);else if(name=="SettingsWrite")valid=valid_settings_payload(Kind::settings_write,value);else if(name=="SettingsResult")valid=valid_settings_payload(Kind::settings_result,value);}std::cout<<(valid?'1':'0')<<'\n';}return 0;}amity::consortium::codec_tests();amity::consortium::hostname_tests();amity::consortium::live_hostname_tests();amity::consortium::rename_sender_tests();amity::consortium::receiver_tests();amity::consortium::logical_session_authorization_tests();amity::consortium::local_tests();amity::consortium::sender_tests();}
+int main(int argc,char** argv){if(argc==2&&std::string(argv[1])=="--vectors"){using namespace amity::consortium;std::string line;while(std::getline(std::cin,line)){const auto at=line.find('\t');Json value;JsonError detail;bool valid=false;if(at!=std::string::npos&&parse_json(line.substr(at+1),value,detail)){const auto name=line.substr(0,at);if(name=="DeviceSettingsSnapshot")valid=valid_settings_snapshot(value);else if(name=="DeviceSettingsWrite"){DeviceSettingsWrite write;valid=parse_device_settings_write(value,write)==Error::none;}else if(name=="SettingsRead")valid=valid_settings_payload(Kind::settings_read,value);else if(name=="SettingsWrite")valid=valid_settings_payload(Kind::settings_write,value);else if(name=="SettingsResult")valid=valid_settings_payload(Kind::settings_result,value);}std::cout<<(valid?'1':'0')<<'\n';}return 0;}amity::consortium::codec_tests();amity::consortium::hostname_tests();amity::consortium::live_hostname_tests();amity::consortium::wifi_signal_tests();amity::consortium::rename_sender_tests();amity::consortium::receiver_tests();amity::consortium::logical_session_authorization_tests();amity::consortium::local_tests();amity::consortium::sender_tests();}
 '''
 def parser_vectors(binary):
  # These are protocol boundary expectations, independent of a second schema.
@@ -277,12 +313,12 @@ def parser_vectors(binary):
  print('PASS actual settings parser boundaries:',{'vectors':len(vectors),'accepted':positives,'rejected':negatives})
 
 def main():
- source=(ROOT/'components/consortium/runtime.cpp').read_text();private=''.join(function(source,name) for name in ['void remember_live_hostname(','bool refresh_local_hostname(','bool receive_live_hostname('])+(ROOT/'components/consortium/settings_runtime.inc').read_text()
+ source=(ROOT/'components/consortium/runtime.cpp').read_text();private=''.join(function(source,name) for name in ['void remember_live_hostname(','bool refresh_local_hostname(','bool report_wifi_signal(','bool receive_live_device_status('])+(ROOT/'components/consortium/settings_runtime.inc').read_text()
  public=''.join(function(source,name) for name in ['void runtime_settings_hooks(','bool runtime_device_settings_authorized(','std::string runtime_device_settings(','esp_err_t runtime_write_device_settings(','std::string runtime_device_settings_operation('])
  with tempfile.TemporaryDirectory(prefix='amity-settings-') as directory:
   directory=Path(directory);(directory/'esp_err.h').write_text('#pragma once\nusing esp_err_t=int;constexpr int ESP_OK=0,ESP_ERR_INVALID_ARG=1,ESP_ERR_INVALID_STATE=2,ESP_ERR_NO_MEM=3,ESP_ERR_TIMEOUT=4,ESP_FAIL=5;\n');cpp=directory/'test.cpp';binary=directory/'test';cpp.write_text(PREFIX+'namespace amity::consortium {\n'+private+public+'\n}\n'+HELPERS)
   sources=[ROOT/'components/consortium'/name for name in ['json.cpp','wire.cpp','session.cpp','owned_intent.cpp','settings.cpp','update.cpp','transfer.cpp']]+[ROOT/'components/amity_system/model.cpp']
-  subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(directory)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include']]+[str(cpp)]+list(map(str,sources))+['-o',str(binary)],check=True)
+  subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined','-I'+str(directory)]+['-I'+str(ROOT/path) for path in ['components/consortium','components/consortium/include','components/amity_system/include','components/network_diagnostics/include']]+[str(cpp)]+list(map(str,sources))+['-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)
   parser_vectors(binary)
 if __name__=='__main__':main()

@@ -36,6 +36,11 @@ struct Envelope {
 // Supported kinds all have closed payload validators. Retired numeric slots reject.
 Error parse_envelope(std::string_view body, Envelope &out, JsonError *detail = nullptr);
 bool valid_envelope_payload(Kind, const Json&);
+// A member's station signal in device_status. Protocol integers are unsigned,
+// so the dBm value travels negated.
+struct WifiSignalReport { int8_t rssi = 0; uint8_t channel = 0; };
+std::string wifi_signal_json(const WifiSignalReport &);
+std::optional<WifiSignalReport> parse_wifi_signal(const Json &device_status);
 Error parse_synchronization(const Json &,model::MessageId& round,std::string& phase,uint64_t& revision);
 std::string synchronization_json(model::MessageId round,std::string_view phase,uint64_t revision);
 bool decimal(const Json *, uint64_t &);

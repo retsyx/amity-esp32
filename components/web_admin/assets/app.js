@@ -18,6 +18,7 @@ let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
 let matterState={fabrics:[]};
+let peerSignals=[];
 let messageRevision=0,networkMessageRevision=null;
 const transportErrors=new WeakSet();
 const firmwareUpdateKey='amityFirmwareUpdate',firmwareResultKey='amityFirmwareUpdateResult';
@@ -99,7 +100,7 @@ function deviceField(text,value,onChange,list){
  root.addEventListener('devicechoiceschange',()=>{if(!options.hidden)render();});
  l.append(i);root.append(l,options);return root;
 }
-function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===id;b.classList.toggle('selected',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(id==='homekit')refreshHomekit().catch(reportError);if(id==='amityDevices')window.amityInterface?.refresh().catch(reportError);}
+function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===id;b.classList.toggle('selected',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(id==='homekit')refreshHomekit().catch(reportError);if(id==='amityDevices')window.amityInterface?.refresh().catch(reportError);if(id==='advanced')refreshPeerSignals().then(()=>{if(state.version)renderDiagnostics();});}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 function activityFields(a,changed=markDirty){
  const field=(text,value,set,list)=>label(text,value,v=>{set(v);changed();},list);
@@ -367,9 +368,20 @@ function renderHostname(name){
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
  const detail=r.connected?`${r.name?' · '+r.name:''}${r.battery>=0?' · '+r.battery+'% battery':''}${r.charging===true?' · Charging':''}`:r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'';
- const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?'signal '+state.wifi_rssi+' dBm · channel '+state.wifi_channel:'disconnected'],['Remote: ',connection+detail]],diagnostics=$('diagnostics');
- if(!diagnostics.children.length)for(const [label] of rows){const term=document.createElement('dt'),value=document.createElement('dd');term.textContent=label;diagnostics.append(term,value);}
+ const signal=(rssi,channel)=>'signal '+rssi+' dBm · channel '+channel;
+ const peers=peerSignals.map(peer=>[peer.name+' Wi-Fi ',peer.rssi===undefined?'unavailable':signal(peer.rssi,peer.channel)]);
+ const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?signal(state.wifi_rssi,state.wifi_channel):'disconnected'],...peers,['Remote: ',connection+detail]],diagnostics=$('diagnostics');
+ const labels=rows.map(([label])=>label).join('\n');
+ if(diagnostics.dataset.labels!==labels){diagnostics.replaceChildren();for(const [label] of rows){const term=document.createElement('dt'),value=document.createElement('dd');term.textContent=label;diagnostics.append(term,value);}diagnostics.dataset.labels=labels;}
  rows.forEach(([,value],index)=>{const entry=diagnostics.children[index*2+1];if(entry.textContent!==value)entry.textContent=value;});
+}
+// Other Amity devices' signals, read only while Diagnostics is visible.
+async function refreshPeerSignals(){
+ if(!window.amityInterface?.enabled||$('advanced').hidden){peerSignals=[];return;}
+ try{
+  const system=await request('system');
+  peerSignals=(system.membership?.peers||[]).filter(peer=>peer.enrolled).map(peer=>({name:peer.hostname||'Amity device',rssi:peer.wifi_rssi,channel:peer.wifi_channel}));
+ }catch{peerSignals=[];}
 }
 function renderRemotes(r){
  remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,busy=!!remotePending||unpairing||(!paired&&(!!r.pairing||!!r.connecting||!!r.scanning));
@@ -439,6 +451,7 @@ async function refreshHomekit(){
 async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
  const latest=await request('status');if(firmwareUpdating||hostnameReconnect)return;
  state=latest;if(state.activity_error)message(state.activity_error,true);renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);$('connection').textContent=state.discovering?'Scanning HDMI…':'';
+ await refreshPeerSignals();if(firmwareUpdating||hostnameReconnect)return;
  renderDiagnostics();
  renderDeviceNames();
  if(scanAfter!==null){

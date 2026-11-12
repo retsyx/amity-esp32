@@ -36,7 +36,13 @@ bool payload(Kind kind,const Json &v) {
     switch(kind) {
     case Kind::log_request:case Kind::log_result:return valid_log_payload(kind,v);
     case Kind::settings_read:case Kind::settings_write:case Kind::settings_result:return valid_settings_payload(kind,v);
-    case Kind::device_status:return closed(v,{"hostname"})&&v.get("hostname")->type==Json::Type::string&&valid_hostname(v.get("hostname")->string);
+    case Kind::device_status:{
+        // A hostname, a Wi-Fi signal, or both.
+        if(v.type!=Json::Type::object||v.object.empty()||!closed(v,{},{"hostname","wifi_rssi_negated","wifi_channel"}))return false;
+        const auto* name=v.get("hostname");if(name&&(name->type!=Json::Type::string||!valid_hostname(name->string)))return false;
+        const bool rssi=v.get("wifi_rssi_negated"),channel=v.get("wifi_channel");
+        return rssi==channel&&(!rssi||(uint_field(v,"wifi_rssi_negated",0,127)&&uint_field(v,"wifi_channel",1,196)));
+    }
     case Kind::synchronization:{model::MessageId round;std::string phase;uint64_t revision=0;return parse_synchronization(v,round,phase,revision)==Error::none;}
     case Kind::scoped_intent:{model::OwnedIntent out;return parse_owned_intent(v,out)==Error::none;}
     case Kind::scoped_result:return valid_owned_result(v);
@@ -54,6 +60,15 @@ bool payload(Kind kind,const Json &v) {
 }
 }
 bool valid_envelope_payload(Kind kind,const Json& value){return payload(kind,value);}
+std::string wifi_signal_json(const WifiSignalReport& signal){
+    const int negated=-static_cast<int>(signal.rssi);
+    return "{\"wifi_rssi_negated\":"+std::to_string(std::clamp(negated,0,127))+",\"wifi_channel\":"+std::to_string(signal.channel)+"}";
+}
+std::optional<WifiSignalReport> parse_wifi_signal(const Json& device_status){
+    uint64_t negated=0,channel=0;
+    if(!json_uint(device_status.get("wifi_rssi_negated"),negated,0,127)||!json_uint(device_status.get("wifi_channel"),channel,1,196))return std::nullopt;
+    return WifiSignalReport{static_cast<int8_t>(-static_cast<int>(negated)),static_cast<uint8_t>(channel)};
+}
 Error parse_synchronization(const Json& value,model::MessageId& round,std::string& phase,uint64_t& revision){
     model::MessageId parsed_round;std::string parsed_phase;uint64_t parsed_revision=0;
     if(!closed(value,{"round_id","phase","config_revision"})||!id(value.get("round_id"),parsed_round)||

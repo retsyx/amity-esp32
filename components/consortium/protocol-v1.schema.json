@@ -2004,11 +2004,28 @@
           "minLength": 1,
           "maxLength": 32,
           "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+        },
+        "wifi_rssi_negated": {
+          "description": "A member's station RSSI in dBm, negated.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "wifi_channel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 196
         }
       },
-      "required": [
-        "hostname"
-      ],
+      "minProperties": 1,
+      "dependentRequired": {
+        "wifi_rssi_negated": [
+          "wifi_channel"
+        ],
+        "wifi_channel": [
+          "wifi_rssi_negated"
+        ]
+      },
       "additionalProperties": false
     },
     "DeviceSettingsSnapshot": {

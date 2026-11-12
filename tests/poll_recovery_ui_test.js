@@ -234,5 +234,19 @@ function fixture({adapter=false}={}){
  const lostPost=await operationFixture();lostPost.fail('activity-editor/activity');const lostPostAction=select(lostPost);
  await flush();await lostPostAction;onePost(lostPost);assert.equal(receiptCalls(lostPost).length,0);
  const uncertain=lostPost.message();assert.equal(uncertain.error,true);await lostPost.tick();assert.deepEqual(lostPost.message(),uncertain,'A lost mutation response remains an action error');
- console.log('PASS shipped polling recovery UI: full-cycle recovery; bounded same-receipt GET recovery with cancelled timeout and no POST replay; HTTP/auth/schema/terminal errors and message ownership');
+
+ // Diagnostics read other Amity devices' Wi-Fi signals only while visible.
+ const signals=fixture();await signals.initialize();Object.assign(signals.window.amityInterface,{enabled:true,deviceNames:()=>[]});signals.get('advanced').hidden=true;
+ Object.assign(signals.status,{version:'1.0',wifi_rssi:-50,wifi_channel:6});
+ signals.values.system={membership:{peers:[{octopus_id:'1'.repeat(32),enrolled:true,hostname:'den',wifi_rssi:-72,wifi_channel:1},
+  {octopus_id:'2'.repeat(32),enrolled:true,hostname:'kitchen'},{octopus_id:'3'.repeat(32),enrolled:false,hostname:'pending'}]}};
+ await signals.tick();assert.ok(!signals.calls.some(call=>call.route==='system'),'Hidden diagnostics must not read other devices');
+ const rows=()=>signals.get('diagnostics').children.map(child=>child.textContent);
+ assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote: ']);
+ signals.get('advanced').hidden=false;await signals.tick();
+ assert.deepEqual(rows().slice(0,8),['Firmware ','1.0','Wi-Fi ','signal -50 dBm · channel 6','den Wi-Fi ','signal -72 dBm · channel 1','kitchen Wi-Fi ','unavailable']);
+ signals.values.system.membership.peers[0].wifi_rssi=-58;await signals.tick();assert.equal(rows()[5],'signal -58 dBm · channel 1');
+ signals.fail('system');await signals.tick();assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote: ']);
+ assert.deepEqual(signals.message(),{text:'',error:false},'A diagnostics read failure is not a polling failure');
+ console.log('PASS shipped polling recovery UI:full-cycle recovery; bounded same-receipt GET recovery with cancelled timeout and no POST replay; HTTP/auth/schema/terminal errors and message ownership');
 })().catch(error=>{console.error(error);process.exitCode=1;});

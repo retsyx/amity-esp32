@@ -29,6 +29,7 @@
 #include "member_removal.hpp"
 #include "system_services.hpp"
 #include "network_diagnostics.hpp"
+#include "wifi_signal.hpp"
 #include "firmware_update.hpp"
 #include "group_firmware_update.hpp"
 #include "web_admin.hpp"
@@ -248,6 +249,7 @@ void remote_battery_task(void *) {
         amity_matter_flush_state();
         system_services::log_memory_if_due();
         amity::network_diagnostics::poll();
+        amity::network_diagnostics::poll_wifi_signal();
         system_services::updates::poll_peer_timeout();
         ble_remote_status_t remote{};
         ble_remote_get_status(&remote);

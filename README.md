@@ -282,6 +282,7 @@ If you cannot access the administration page, you can also reinstall the saved U
 * **The browser cannot find Amity:** use the address on the setup card from the same network, or use the IP address shown by your router.
 * **Equipment is missing or on the wrong input:** check HDMI connections and HDMI-CEC settings, scan again, and review the activity's device selections. If the activity is already running, try 'Repair'.
 * **The paired remote does not respond:** wake it, move it closer to Amity, and check 'Advanced' → 'Diagnostics'.
+* **Equipment on an added Amity device responds slowly:** check each Amity's Wi-Fi signal in 'Advanced' → 'Diagnostics'. A signal weaker than -70 dBm can delay commands; move that Amity or the Wi-Fi access point.
 
 To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'. The download includes available logs from added Amity devices and identifies any devices that could not be reached.
 
