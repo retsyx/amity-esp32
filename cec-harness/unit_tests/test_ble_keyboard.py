@@ -839,6 +839,32 @@ for line in sys.stdin:
                     worker.close()
                 self.assertIsNone(worker._process)
 
+    def test_worker_rejection_names_only_its_exception_type(self):
+        for error, detail in (("TimeoutError: not subscribed to private/dbus/path", " (TimeoutError)"),
+                              ("dbus_fast.errors.DBusError: private detail", " (dbus_fast.errors.DBusError)"),
+                              ("KeyError", " (KeyError)"), ("not a type: private", ""), (None, "")):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
+                script = Path(directory) / "worker.py"
+                script.write_text("""import json,sys
+for line in sys.stdin:
+ r=json.loads(line)
+ if r['operation']=='open':
+  print(json.dumps({'id':r['id'],'ok':True,'result':{'protocol_version':1,'address':'12:34:56:78:9a:bc','type':0,'name':'Unit Keyboard'}}),flush=True)
+ else:
+  print(json.dumps({'id':r['id'],'ok':False,'error':ERROR}),flush=True)
+  break
+""".replace("ERROR", repr(error)))
+                worker = LocalKeyboard(timeout=.5)
+                worker._command = lambda: [sys.executable, "-u", str(script)]
+                worker.open()
+                try:
+                    with self.assertRaises(RuntimeError) as raised:
+                        worker.status()
+                finally:
+                    worker._shutdown()
+                self.assertEqual(str(raised.exception), "BLE keyboard worker rejected status" + detail)
+                self.assertNotIn("private", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

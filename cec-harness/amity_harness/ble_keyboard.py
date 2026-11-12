@@ -110,8 +110,11 @@ class LocalKeyboard:
                     or type(reply.get("ok")) is not bool):
                 raise RuntimeError("BLE keyboard worker returned an invalid reply identity")
             if reply["ok"] is not True:
+                # The worker reports "Type: message"; keep only the exception
+                # type, never arbitrary message text.
                 error = reply.get("error")
-                detail = " (" + error + ")" if isinstance(error, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,127}", error) else ""
+                kind = re.match(r"([A-Za-z_][A-Za-z0-9_.]{0,127})(?::|$)", error) if isinstance(error, str) else None
+                detail = " (" + kind[1] + ")" if kind else ""
                 raise RuntimeError("BLE keyboard worker rejected " + operation + detail)
             if not isinstance(reply.get("result"), dict):
                 raise RuntimeError("BLE keyboard worker returned an invalid result")
