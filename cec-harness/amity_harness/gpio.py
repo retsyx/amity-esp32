@@ -26,8 +26,19 @@ def _duration(seconds):
     return float(seconds)
 
 
+# A bounded release takes at most one second (the pinctrl timeout). Measured
+# from the low edge, this keeps an Add hold under the ten-second reset gesture.
+_ADD_SAFETY_SECONDS = 8.5
+
+
+def _safety_seconds(seconds):
+    # Add is bounded independently of the caller. Explicit factory-reset
+    # holds retain their requested duration and a small bound.
+    return min(seconds + 0.5, _ADD_SAFETY_SECONDS) if seconds < 10 else seconds + 2
+
+
 @contextmanager
-def _signals(seconds):
+def _signals():
     if threading.current_thread() is not threading.main_thread():
         raise RuntimeError("Physical GPIO holds need a main-thread worker for signal cleanup")
     if any(signal.getitimer(signal.ITIMER_REAL)):
@@ -42,9 +53,6 @@ def _signals(seconds):
     try:
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGALRM):
             previous[signum] = signal.signal(signum, stop)
-        # Add is bounded independently of the caller. Explicit
-        # factory-reset holds retain their requested duration and a small bound.
-        signal.setitimer(signal.ITIMER_REAL, min(seconds + 2, 8) if seconds < 10 else seconds + 2)
         yield
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -55,18 +63,23 @@ def _signals(seconds):
 def hold_low(backend, gpio, seconds):
     """Drive low, time the hold in this process, and always release the input.
 
-    Add-range operations have an eight-second safety deadline. Durations of
-    ten seconds or longer explicitly retain the existing factory-reset gesture.
-    GPIO subprocess operations must themselves be bounded (PinctrlGPIO is).
+    Add-range operations have an 8.5-second safety deadline from the low
+    edge, so a bounded release still ends the press before ten seconds.
+    Durations of ten seconds or longer explicitly retain the existing
+    factory-reset gesture. GPIO subprocess operations must themselves be
+    bounded (PinctrlGPIO is).
     """
     gpio, seconds = _pin(gpio), _duration(seconds)
     lock_path = Path(tempfile.gettempdir()) / f"amity-reset-gpio-{gpio}.lock"
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with _signals(seconds):
+        with _signals():
             try:
                 backend.low(gpio)
+                # Time the safety deadline from the low edge, not from before
+                # the bounded pinctrl calls that create it.
+                signal.setitimer(signal.ITIMER_REAL, _safety_seconds(seconds))
                 time.sleep(seconds)
             finally:
                 previous_mask = signal.pthread_sigmask(

@@ -43,6 +43,24 @@ class GPIOTransportTests(unittest.TestCase):
                 self.assertEqual(previous, {signum: signal.getsignal(signum) for signum in previous})
                 self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
 
+    def test_safety_deadline_starts_at_the_low_edge_and_admits_an_eight_second_hold(self):
+        for duration, deadline in ((3.5, 4.0), (8, 8.5), (10, 12)):
+            with self.subTest(duration=duration):
+                gpio = GPIO()
+                armed = []
+                original = signal.setitimer
+
+                def setitimer(which, seconds, *args):
+                    if seconds:
+                        armed.append((tuple(gpio.calls), seconds))
+                    return original(which, seconds, *args)
+
+                with patch("amity_harness.gpio.time.sleep"), \
+                        patch("amity_harness.gpio.signal.setitimer", side_effect=setitimer):
+                    hold_low(gpio, self.pin, duration)
+                self.assertEqual(armed, [((("low", self.pin),), deadline)])
+                self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
+
     def test_interruption_or_safety_deadline_still_releases_and_restores_handlers(self):
         for signum, error in ((signal.SIGHUP, InterruptedError), (signal.SIGTERM, InterruptedError),
                               (signal.SIGALRM, TimeoutError)):
