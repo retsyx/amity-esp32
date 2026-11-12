@@ -140,10 +140,15 @@ def verify_installed(entries, directory, destination):
 
 def install(entries, directory, destination):
     if destination.exists():
-        verify_installed(entries, directory, destination)
-        return
+        try:
+            verify_installed(entries, directory, destination)
+            return
+        except ValueError as error:
+            # A changed pin replaces the whole SDK, never patching stale files.
+            print("Replacing the installed Matter SDK: " + str(error))
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".matter-install-", dir=destination.parent))
+    retired = None
     try:
         for entry in entries:
             with zipfile.ZipFile(directory / entry.filename) as archive:
@@ -154,10 +159,21 @@ def install(entries, directory, destination):
         native = staging / _NATIVE
         native.write_bytes(_relocated_native(native.read_bytes()))
         verify_installed(entries, directory, staging)
-        os.rename(staging, destination)
+        if destination.exists():
+            retired = Path(tempfile.mkdtemp(prefix=".matter-retired-", dir=destination.parent)) / "sdk"
+            os.rename(destination, retired)
+        try:
+            os.rename(staging, destination)
+        except BaseException:
+            if retired is not None:
+                os.rename(retired, destination)
+                retired = None
+            raise
     finally:
         if staging.exists():
             shutil.rmtree(staging)
+        if retired is not None:
+            shutil.rmtree(retired.parent)
 
 
 def trust_store(directory, *, offline=False):
