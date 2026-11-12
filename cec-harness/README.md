@@ -84,6 +84,10 @@ explicitly; see [Run functional tests](#run-functional-tests) and
   The switch-input case rejects active activity edits/deletion, edits and reorders
   an inactive activity during member playback without CEC disruption or discovery,
   then proves the saved input change through fresh physical commands.
+  The silent-status case withholds the equipment's power, audio, active-source
+  and system-audio reports. Setup must still power and route every device, with
+  no gap between consecutive Amity frames longer than the CEC timeout, and the
+  audio query must precede the next Standby.
 - `functional_tests/source_theft.py`: adds a second playback device on AVR
   input 2 and verifies that Amity restores the first player after source theft.
   Its isolated-source case places the thief behind another tentacle and
