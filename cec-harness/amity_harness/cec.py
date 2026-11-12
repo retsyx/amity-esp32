@@ -457,6 +457,11 @@ class CecSession:
                         self._wire_idle_since_ns[gpio] = polled_ns
                     continue
                 with self._lock:
+                    # close() sets the stop flag under this lock. A frame read
+                    # after that point arrived during teardown: components
+                    # can no longer reply, so it is not delivered.
+                    if self._stop.is_set():
+                        break
                     for component in self.components:
                         if component.gpio == gpio:
                             component.receive(frame)
@@ -574,7 +579,9 @@ class CecSession:
 
     def close(self):
         event("cec.session.close", wires=sorted(self._backends))
-        self._stop.set()
+        with self._lock:
+            # Wait for any frame a worker is handling, including its reply.
+            self._stop.set()
         for thread in self._threads:
             # Remote configuration/TX has a bounded 20-second RPC plus process
             # shutdown. Let admitted I/O finish before closing its descriptor.

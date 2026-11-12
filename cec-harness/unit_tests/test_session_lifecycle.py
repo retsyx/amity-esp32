@@ -130,6 +130,60 @@ class SessionLifecycleTests(unittest.TestCase):
             self.assertFalse(any(record["direction"] == "rx" and not record.get("dropped")
                                  for record in session.records))
 
+    def test_query_arriving_during_close_does_not_fail_a_passing_session(self):
+        tv = TvComponent(self.dut, "Test TV", power=PowerState.ON)
+        sessions = []
+
+        class LateQueryBackend(Backend):
+            late_query_sent = False
+
+            def receive(self, timeout):
+                # Like select(), a DUT query completes while the poll waits.
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    if sessions and sessions[0]._stop.is_set() and not self.late_query_sent:
+                        self.late_query_sent = True
+                        return Frame(4, 0, 0x46, timestamp_ns=time.monotonic_ns())
+                    time.sleep(.001)
+                return None
+
+        backends = []
+
+        def factory(gpio):
+            backends.append(LateQueryBackend(gpio))
+            return backends[-1]
+
+        session = CecSession([tv], backend_factory=factory)
+        sessions.append(session)
+        with session:
+            pass
+        self.assertTrue(backends[0].late_query_sent)
+        self.assertFalse(any(frame.opcode == 0x47 for frame in backends[0].sent))
+
+    def test_close_waits_for_a_query_already_being_handled(self):
+        tv = TvComponent(self.dut, "Test TV", power=PowerState.ON)
+        handling, release = threading.Event(), threading.Event()
+
+        def hold(component, frame):
+            handling.set()
+            release.wait(2)
+            return frame
+
+        tv.hooks = Hooks(before_rx=hold)
+        session = CecSession([tv], backend_factory=self.backend)
+        session.__enter__()
+        self.backends[tv.gpio].frames.put(Frame(4, 0, 0x46, timestamp_ns=time.monotonic_ns()))
+        self.assertTrue(handling.wait(1))
+        closer = threading.Thread(target=session.__exit__, args=(None, None, None))
+        closer.start()
+        time.sleep(.05)
+        self.assertFalse(session._stop.is_set())
+        release.set()
+        closer.join(2)
+        self.assertFalse(closer.is_alive())
+        self.assertTrue(any(frame.opcode == 0x47 for frame in self.backends[tv.gpio].sent))
+        session.assert_healthy()
+
     def test_power_off_is_atomic_with_an_inflight_reply(self):
         tv = TvComponent(self.dut, "Test TV", power=PowerState.ON)
         in_reply, release_reply = threading.Event(), threading.Event()
