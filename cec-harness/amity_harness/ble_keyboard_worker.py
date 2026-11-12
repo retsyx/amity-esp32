@@ -20,7 +20,11 @@ import time
 
 PROTOCOL_VERSION = 1
 NAME = "Amity Test Keyboard"
-ADVERTISING_INTERVAL_MS = (20, 30)
+# A HID keyboard awaiting a connection advertises at the HOGP fast-connection
+# rate. BlueZ keeps advertising after a connection; a connected keyboard uses
+# the adapter's 1.28 s default instead.
+FAST_ADVERTISING_MS = (20, 30)
+CONNECTED_ADVERTISING_MS = (1280, 1280)
 def _keyboard_slots(value):
     if type(value) is not int or value not in (6, 10):
         raise ValueError("Choose six or ten keyboard slots")
@@ -180,6 +184,7 @@ class BlueZKeyboard:
         self.path = "/org/amity/keyboard/worker" + str(os.getpid())
         self.bus = self._lock = None
         self._application = self._advertising = self._agent = self._pairable_changed = False
+        self._connected_advertising = False
         self._exports, self.characteristics = [], {}
         self.peer = None
         self._before_devices = {}
@@ -295,6 +300,8 @@ class BlueZKeyboard:
                 await self.claim_peer(candidates[0])
         peer = objects.get(self.peer, {}).get("org.bluez.Device1", {}) if self.peer else {}
         connected = peer.get("Connected") is True
+        if self._advertising and connected != self._connected_advertising:
+            await self._readvertise(connected)
         bonded = peer.get("Bonded", peer.get("Paired", False)) is True
         previous = self._before_devices.get(self.peer, {})
         owned = (self.peer is not None and peer.get("Adapter") == self.adapter
@@ -319,6 +326,14 @@ class BlueZKeyboard:
             await self._call(self.adapter, "org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement",
                              "o", [self.path + "/advertisement"])
             self._advertising = False
+
+    async def _readvertise(self, connected):
+        # BlueZ reads an advertisement's interval only when it is registered.
+        await self._stop_advertising()
+        self._connected_advertising = connected
+        await self._call(self.adapter, "org.bluez.LEAdvertisingManager1", "RegisterAdvertisement", "oa{sv}",
+                         [self.path + "/advertisement", {}])
+        self._advertising = True
 
     async def disconnect(self):
         await self._stop_advertising()
@@ -516,16 +531,15 @@ def _interfaces(owner):
         def Appearance(self) -> 'q':
             return 0x03c1
 
-        # A HID keyboard awaiting a connection advertises at the HOGP
-        # fast-connection rate, not the adapter's 1.28 s default. BlueZ applies
-        # these only when bluetoothd runs with --experimental (see setup.py).
+        # BlueZ applies these only when bluetoothd runs with --experimental
+        # (see setup.py).
         @dbus_property(access=PropertyAccess.READ)
         def MinInterval(self) -> 'u':
-            return ADVERTISING_INTERVAL_MS[0]
+            return (CONNECTED_ADVERTISING_MS if owner._connected_advertising else FAST_ADVERTISING_MS)[0]
 
         @dbus_property(access=PropertyAccess.READ)
         def MaxInterval(self) -> 'u':
-            return ADVERTISING_INTERVAL_MS[1]
+            return (CONNECTED_ADVERTISING_MS if owner._connected_advertising else FAST_ADVERTISING_MS)[1]
 
         @method()
         def Release(self):

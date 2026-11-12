@@ -357,7 +357,9 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse((await owner.status())["ready"])
                 for characteristic in owner.characteristics.values(): characteristic.StartNotify()
                 self.assertTrue((await owner.status())["ready"])
-                self.assertEqual([event[0] for event in events], ["RemoveDevice"])
+                # Reconnection returns the advertisement to the connected interval.
+                self.assertEqual([event[0] for event in events],
+                                 ["RemoveDevice", "UnregisterAdvertisement", "RegisterAdvertisement"])
 
     def test_advertisement_requests_hid_fast_connection_interval(self):
         dbus, service = ModuleType("dbus_next"), ModuleType("dbus_next.service")
@@ -373,6 +375,29 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
             _interfaces(owner)
         advertisement = dict(owner._exports)[owner.path + "/advertisement"]
         self.assertEqual((advertisement.MinInterval, advertisement.MaxInterval), (20, 30))
+        owner._connected_advertising = True
+        self.assertEqual((advertisement.MinInterval, advertisement.MaxInterval), (1280, 1280))
+
+    async def test_advertising_interval_follows_the_keyboard_link(self):
+        owner, events = self.fixture()
+        connected = True
+        async def objects():
+            return {owner.peer: {"org.bluez.Device1": {"Connected": connected, "Adapter": owner.adapter,
+                                                      "Paired": True}}}
+        owner._objects = objects
+        advertisement = ("RegisterAdvertisement", owner.adapter, [owner.path + "/advertisement", {}])
+        for connected in (True, True, False, False, True):
+            events.clear()
+            changed = owner._connected_advertising != connected
+            self.assertIs((await owner.status())["advertisement_registered"], True)
+            self.assertIs(owner._connected_advertising, connected)
+            self.assertEqual(events, [("UnregisterAdvertisement", owner.adapter, [owner.path + "/advertisement"]),
+                                      advertisement] if changed else [])
+        await owner.disconnect()
+        events.clear()
+        connected = False
+        self.assertIs((await owner.status())["advertisement_registered"], False)
+        self.assertEqual(events, [])
 
     async def test_forget_rejects_live_foreign_preexisting_or_unadvertised_peer(self):
         for changed in ("connected", "adapter", "bonded", "before_connected", "advertisement"):
