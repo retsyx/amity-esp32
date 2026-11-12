@@ -1,6 +1,6 @@
 """Stdio traces remain useful during failures and across scenario workers."""
 
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from contextvars import copy_context
 import io
 import json
@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from amity_harness.config import RunConfig
 from amity_harness.runner import main, run_test
@@ -16,6 +17,12 @@ from amity_harness.trace import event, failure_fields, owner_assertion, stdio_lo
 
 
 class TraceTests(unittest.TestCase):
+    def setUp(self):
+        # Hardware-free: never start the Pi's real status LED helper.
+        led = patch("amity_harness.runner.run_status_led", side_effect=lambda: nullcontext(False))
+        led.start()
+        self.addCleanup(led.stop)
+
     def test_cli_streams_steps_and_results_before_next_test_and_reports_json_last(self):
         output, errors = io.StringIO(), io.StringIO()
 

@@ -1,6 +1,6 @@
 """Generic functional runner configuration, cleanup and private evidence."""
 
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -17,6 +17,12 @@ from amity_harness.trace import owner_assertion
 
 
 class RunnerTests(unittest.TestCase):
+    def setUp(self):
+        # Hardware-free: never start the Pi's real status LED helper.
+        led = patch("amity_harness.runner.run_status_led", side_effect=lambda: nullcontext(False))
+        led.start()
+        self.addCleanup(led.stop)
+
     def execute(self, fail=False):
         observed = {}
 
