@@ -269,6 +269,25 @@ class MembershipTests(unittest.TestCase):
         sleeper.start()
         self.addCleanup(sleeper.stop)
 
+    def test_earlier_member_checks_accept_a_later_proven_member_with_its_own_fences(self):
+        f = Fixture()
+        member = f.added(timeout=0.2).create()
+        member.assert_connected()
+        later_id = "9" * 32
+        later = SimpleNamespace(name="amity-later", member_boot="8" * 32, _closed=False)
+        f.system["membership"]["peers"].append(f.peer(later_id, later.name, later.member_boot))
+        system = deepcopy(f.system)
+        with self.assertRaisesRegex(MembershipConflict, "changed unexpectedly"):
+            member._preserved_members(system, added=True)
+        f.main._testbed._member_proofs[later_id] = later
+        self.assertIn(later_id, member._preserved_members(system, added=True))
+        for change in ({"boot_id": "7" * 32}, {"hostname": "renamed"}, {"enrolled": False, "provisional": True}):
+            with self.subTest(change=change):
+                changed = deepcopy(system)
+                next(peer for peer in changed["membership"]["peers"] if peer["octopus_id"] == later_id).update(change)
+                with self.assertRaisesRegex(MembershipConflict, "later added Amity changed"):
+                    member._preserved_members(changed, added=True)
+
     def test_add_verifies_existing_ui_evidence_and_removal_resets_only_the_owned_member(self):
         f = Fixture()
         with f.main.add_amity(f.candidate, name="amity-dut2", timeout=0.2) as member:

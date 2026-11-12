@@ -190,7 +190,7 @@ class RemovalReview:
 
     def _preserved_members(self, system, *, added):
         if not self.preserved:
-            return self.member._preserved_members(system, added=added)
+            return self.member._preserved_members(system, added=added, later=False)
         active = self.member._active(system)
         removed = self.member._removed_owners()
         expected = {identity: peer for identity, peer in self.member._active(self.member._initial_system).items()

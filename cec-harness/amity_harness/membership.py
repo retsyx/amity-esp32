@@ -220,17 +220,28 @@ class AddedAmity:
                         and slot.get("tombstone") is True and slot.get("hidden") is False
                         and slot.get("alias") == "" for index, slot in enumerate(extras)))
 
-    def _preserved_members(self, system, *, added):
+    def _preserved_members(self, system, *, added, later=True):
         active = self._active(system)
         removed = self._removed_owners()
         previous = {identity: peer for identity, peer in self._active(self._initial_system).items()
                     if identity not in removed}
-        if set(active) != set(previous) | ({self.device_id} if added else set()):
+        # Members added later in this bed are proven by their own Add flow;
+        # this member's older initial snapshot cannot list them. A removal
+        # review names its survivors explicitly instead.
+        proofs = getattr(self.main._testbed, "_member_proofs", {}) if later else {}
+        later = {identity: member for identity, member in proofs.items()
+                 if identity != self.device_id and identity not in previous and identity not in removed}
+        if set(active) != set(previous) | set(later) | ({self.device_id} if added else set()):
             raise MembershipConflict("The set of added Amity devices changed unexpectedly")
         for identity, old in previous.items():
             current = active[identity]
             if any(current.get(k) != old.get(k) for k in ("hostname", "boot_id", "enrolled")):
                 raise MembershipConflict("A pre-existing Amity changed during the test")
+        for identity, member in later.items():
+            current = active[identity]
+            if (current.get("hostname") != member.name or current.get("boot_id") != member.member_boot
+                    or current.get("enrolled") is not True):
+                raise MembershipConflict("A later added Amity changed during the test")
         return active
 
     def _admission(self, *, deadline):
