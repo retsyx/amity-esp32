@@ -211,6 +211,10 @@ class PiSetupTests(unittest.TestCase):
         tty_rules = [line for line in rules.splitlines() if 'SUBSYSTEM=="tty"' in line]
         self.assertEqual(tty_rules, [
             'SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", GROUP="dialout", MODE="0660"'])
+        sudoers = next(call.args[1] for call in write.call_args_list
+                       if call.args[0] == "/etc/sudoers.d/amity-harness")
+        python, monitor = setup.monitor_helper()
+        self.assertIn(f"{python} -u {monitor} --device /dev/cec* --gpio * --socket *, ", sudoers)
         reload_index = commands.index(["udevadm", "control", "--reload-rules"])
         trigger_index = commands.index(["udevadm", "trigger", "--subsystem-match=tty"])
         self.assertLess(reload_index, trigger_index)

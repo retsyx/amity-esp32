@@ -129,6 +129,14 @@ def retire_followers():
                 run(["systemctl", "disable", unit])
 
 
+def monitor_helper():
+    """The runtime Python and CEC pin-monitor helper sudo runs for scenarios."""
+    command = (HARNESS.parent / ".harness-python/bin/python", HARNESS / "amity_harness/cec_monitor.py")
+    if any(re.fullmatch(r"[A-Za-z0-9/._-]+", str(path)) is None for path in command):
+        raise ValueError("Use a harness directory path without spaces or sudoers special characters")
+    return tuple(str(path) for path in command)
+
+
 def configure_access(account):
     for group in ("video", "gpio", "bluetooth", "dialout"):
         run(["groupadd", "--force", group])
@@ -139,8 +147,11 @@ def configure_access(account):
                'KERNEL=="gpiomem*", GROUP="gpio", MODE="0660"\n'
                'SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", '
                'GROUP="dialout", MODE="0660"\n')
-    # These are the existing enrollment worker and optional status LED operations.
+    # These are the existing enrollment worker, CEC pin monitor and optional
+    # status LED operations.
+    python, monitor = monitor_helper()
     sudoers = (f"{account.pw_name} ALL=(root) NOPASSWD: /usr/bin/unshare, /usr/bin/kill, "
+               f"{python} -u {monitor} --device /dev/cec* --gpio * --socket *, "
                "/usr/bin/tee /sys/class/leds/ACT/trigger, "
                "/usr/bin/tee /sys/class/leds/ACT/brightness, "
                "/usr/bin/tee /sys/class/leds/ACT/delay_on, "
@@ -292,6 +303,9 @@ def check_ready(wiring):
     run([sys.executable, "-B", str(HARNESS / "setup_matter.py"), "--verify-installed"])
     ctypes.CDLL(str(HARNESS.parent / ".matter-python/chip/_ChipDeviceCtrl.so"))
     run(["sudo", "-n", "unshare", "--mount", "--propagation", "private", "true"], capture_output=True)
+    python, monitor = monitor_helper()
+    run(["sudo", "-n", "-l", python, "-u", monitor, "--device", "/dev/cec0", "--gpio", "0",
+         "--socket", "/tmp/amity-cec-monitor.sock"], capture_output=True)
     for service in ("bluetooth", "avahi-daemon", "ssh"):
         run(["systemctl", "is-active", "--quiet", service])
     if not any(line.split()[-1] != "lo" for line in Path("/proc/net/if_inet6").read_text().splitlines() if line.strip()):
