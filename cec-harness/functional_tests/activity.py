@@ -14,6 +14,15 @@ from amity_harness.transitions import ActivityDisplayStandby, observe_no_standby
 from amity_harness.qualified_names import observe_no_control
 
 
+def setup_step_gap(records, initiators, wires, *, since, through):
+    """Return Amity's received frame count and largest gap between them."""
+    sent = sorted(row["wire_timestamp_ns"] for row in records
+                  if row["direction"] == "rx" and row["transport"] == "wire"
+                  and row["gpio"] in wires and row["source"] == initiators.get(row["gpio"])
+                  and since <= row["wire_timestamp_ns"] <= through)
+    return len(sent), max((later - earlier for earlier, later in zip(sent, sent[1:])), default=0)
+
+
 def test_activity_without_status_replies():
     """Successful CEC commands advance setup without power/audio/source reports."""
     withheld = []
@@ -50,6 +59,18 @@ def test_activity_without_status_replies():
                 avr.wait_for_input(player, since=started)
                 player.wait_for_source_request(since=started)
                 activity.assert_active()
+                # Each step waits only for its own transmission. With every
+                # report withheld, waiting for a reply shows up as a gap
+                # between consecutive Amity frames during setup.
+                setup_end = max(row["wire_timestamp_ns"] for component in components
+                                for row in (component.power_assertions[-1], component.routing_assertions[-1]))
+                frames, step_gap_ns = setup_step_gap(bed.session.records, scan.initiators,
+                                                     {component.gpio for component in components},
+                                                     since=started.started_ns, through=setup_end)
+                proof.update(setup_frames=frames, setup_end_wire_timestamp_ns=setup_end,
+                             max_step_gap_ms=round(step_gap_ns / 1e6, 3))
+                if step_gap_ns > dut._runtime.cec_timeout * 1e9:
+                    raise AssertionError("Activity setup paused between steps while status reports were withheld")
                 # Replies remain suppressed through the next physical action.
                 # Standby also closes the final audio query's pin ACK slot.
                 stopped = activity.standby()
