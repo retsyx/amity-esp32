@@ -237,6 +237,44 @@ class AdapterSettingsTests(unittest.TestCase):
         self.assertEqual(fixture.defaults[2], "1.0.0.0")
         self.assertNotEqual(fixture.writes[0]["request_id"], fixture.writes[1]["request_id"])
 
+    def test_applied_change_that_fails_verification_is_still_restored(self):
+        for fault in ("other_default", "selected_address"):
+            with self.subTest(fault=fault):
+                fixture, member = self.fixture()
+                setting = FrontPhysicalAddress(member, 2, "1.2.0.0")
+                if fault == "other_default":
+                    fixture.change_other_default = True
+                else:
+                    fixture.effective_override = "4.0.0.0"
+                with self.assertRaises(MembershipConflict):
+                    setting.apply()
+                self.assertEqual(fixture.defaults[2], "1.2.0.0")
+                if fault == "other_default":
+                    fixture.change_other_default = False
+                    setting.close()
+                else:
+                    # A persistent fault also fails the restore's own
+                    # verification, but the restore write is still made.
+                    with self.assertRaisesRegex(MembershipConflict, "scanned address or default"):
+                        setting.close()
+                self.assertEqual(len(fixture.writes), 2)
+                self.assertEqual(fixture.writes[1]["changes"],
+                                 [{"tentacle_id": 2, "default_front_physical_address": "1.0.0.0"}])
+                self.assertEqual(fixture.defaults[2], "1.0.0.0")
+
+    def test_unverified_restore_is_verified_again_without_another_write(self):
+        fixture, member = self.fixture()
+        setting = member.front_physical_address(2, "1.2.0.0")
+        fixture.effective_override = "4.0.0.0"
+        with self.assertRaisesRegex(MembershipConflict, "scanned address or default"):
+            setting.close()
+        with self.assertRaisesRegex(MembershipConflict, "scanned address or default"):
+            setting.close()
+        fixture.effective_override = None
+        setting.close()
+        self.assertEqual(len(fixture.writes), 2)
+        self.assertEqual(fixture.defaults[2], "1.0.0.0")
+
     def test_cleanup_rejects_changed_settings_instead_of_overwriting_them(self):
         fixture, member = self.fixture()
         setting = member.front_physical_address(2, "1.2.0.0")

@@ -213,7 +213,13 @@ class FrontPhysicalAddress:
 
     def _finish(self, deadline):
         pending = self._pending
-        self._operation(pending.get("operation"), pending, deadline)
+        if not pending.get("applied"):
+            self._operation(pending.get("operation"), pending, deadline)
+            pending["applied"] = True
+            if pending["phase"] != "restore":
+                # The firmware saved this fixture change. Cleanup must restore
+                # it even if the following verification fails.
+                self._changed = True
         while True:
             _, peer, ready = self.member._connected_snapshot(deadline=deadline)
             if peer.get("boot_id") != pending["owner_boot"]:
@@ -318,7 +324,12 @@ class FrontPhysicalAddress:
             return
         deadline = time.monotonic() + self.timeout
         if self._pending is not None:
-            self._finish(deadline)
+            if self._pending.get("applied") and self._pending["phase"] != "restore":
+                # Its verification already failed and was reported. Restore
+                # the saved change instead of verifying it again.
+                self._pending = None
+            else:
+                self._finish(deadline)
         if self._changed:
             self.member.assert_connected(timeout=self._remaining(deadline))
             self._idle()
