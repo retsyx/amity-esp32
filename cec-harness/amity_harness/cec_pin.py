@@ -167,7 +167,7 @@ class PinDecoder:
 
     def feed(self, event, timestamp_ns, *, flags=0):
         # This history contains only kernel event kind/time/flags. It never
-        # includes RPC payloads, credentials or arbitrary exception strings.
+        # includes frame payloads, credentials or arbitrary exception strings.
         if (type(event) is int and 0 <= event <= 8 and type(timestamp_ns) is int
                 and 0 <= timestamp_ns < 2**64 and type(flags) is int and 0 <= flags < 2**32):
             self._recent.append((event, timestamp_ns, flags))
@@ -255,10 +255,10 @@ class PinDecoder:
 
 
 class PinMonitor:
-    """Continuously drain a nonblocking monitor-pin FD independently of RPC.
+    """Continuously drain a nonblocking monitor-pin FD independently of the responder.
 
-    The worker must keep collecting edges while the responder's serialized RPC
-    is configuring addresses or transmitting. Its bounded decoded-frame queue
+    The worker must keep collecting edges while the responder is configuring
+    addresses or transmitting. Its bounded decoded-frame queue
     fails on overflow; a missing edge can never silently become an idle period.
     """
 

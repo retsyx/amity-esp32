@@ -839,8 +839,7 @@ the session routes component-to-component messages on the virtual bus. No fixed
 follower processes are needed. The bench's GPIO adapters support four logical
 addresses. Compatible fixtures keep CEC 2.0; larger or differently paired
 fixtures explicitly use CEC 1.4. Components advertise that selected version and
-omit CEC 2.0 feature reports in 1.4 mode. Remote workers report the same version;
-update both ends together when changing the harness RPC protocol.
+omit CEC 2.0 feature reports in 1.4 mode.
 
 `PlaybackComponent(..., address_type="tuner")` selects the tuner address pool
 while retaining playback identity and behavior. The default is `"playback"`;

@@ -605,9 +605,10 @@ class CecSession:
             # Wait for any frame a worker is handling, including its reply.
             self._stop.set()
         for thread in self._threads:
-            # Remote configuration/TX has a bounded 20-second RPC plus process
-            # shutdown. Let admitted I/O finish before closing its descriptor.
-            thread.join(30)
+            # Frame handling finished under the lock above; a worker now only
+            # completes its 50 ms receive poll. The bound catches a wedged
+            # kernel call before its descriptor would be closed underneath it.
+            thread.join(5)
             if thread.is_alive():
                 event("cec.worker.stop_failed", level=logging.ERROR, worker=thread.name)
                 raise CecError("CEC worker did not stop; adapter is still in use")
