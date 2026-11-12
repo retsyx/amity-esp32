@@ -97,6 +97,9 @@ class _Message(ctypes.Structure):
                 ("tx_low_drive_cnt", ctypes.c_uint8), ("tx_error_cnt", ctypes.c_uint8)]
 
 
+_CEC_EVENT_LOST_MSGS = 2  # linux/cec.h
+
+
 class _Event(ctypes.Structure):
     _fields_ = [("timestamp_ns", ctypes.c_uint64), ("event", ctypes.c_uint32),
                 ("flags", ctypes.c_uint32), ("raw", ctypes.c_uint32 * 16)]
@@ -289,8 +292,21 @@ class LinuxCecBackend:
         result = _ioctl(self.fd, 3, 5, message)
         return TxResult(frame, result.tx_status, result.tx_ts)
 
+    def _events(self):
+        """Drain pending core events; a lost-message event voids RX coverage.
+
+        The responder descriptor blocks, so dequeue only while the kernel
+        reports a pending event (POLLPRI, select's exceptional condition).
+        """
+        while select.select([], [], [self.fd], 0)[2]:
+            notice = _ioctl(self.fd, 3, 7, _Event())
+            if notice.event == _CEC_EVENT_LOST_MSGS:
+                raise CecError(f"cec@{self.gpio} receive queue overflowed and lost messages")
+
     def receive(self, timeout=0.05):
-        ready, _, _ = select.select([self.fd], [], [], timeout)
+        ready, _, pending = select.select([self.fd], [], [self.fd], timeout)
+        if pending:
+            self._events()
         if not ready:
             return None
         message = _Message()

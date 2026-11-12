@@ -137,6 +137,28 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertIsNone(self.backend.fd)
         self.assertIsNone(self.backend._monitor_fd)
 
+    def test_receive_ignores_state_events_and_fails_on_lost_messages(self):
+        for events, lost in (([1], False), ([1, 2], True)):
+            with self.subTest(events=events):
+                pending = list(events)
+
+                def selected(read, write, exceptional, timeout):
+                    return ([], [], exceptional if pending else [])
+
+                def ioctl(fd, direction, number, value):
+                    self.assertEqual((fd, direction, number), (123, 3, 7))
+                    value.event = pending.pop(0)
+                    return value
+
+                with patch("amity_harness.cec.select.select", side_effect=selected), \
+                        patch("amity_harness.cec._ioctl", side_effect=ioctl):
+                    if lost:
+                        with self.assertRaisesRegex(CecError, "lost messages"):
+                            self.backend.receive(0)
+                    else:
+                        self.assertIsNone(self.backend.receive(0))
+                self.assertEqual(pending, [])
+
     def test_existing_one_address_and_audio_playback_pair_keep_cec_20(self):
         for components in ([device(4, 3)], [device(5, 4, 5), device(4, 3)],
                            [device(0, 0, 0, 0), device(4, 3)]):
