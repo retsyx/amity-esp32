@@ -23,6 +23,12 @@ import time
 from .trace import event
 
 
+def rc_profile(device_type):
+    """CEC 2.0 Report Features RC Profile: TVs use the TV profile (None),
+    every other device a source profile (bit 6) with no listed menus."""
+    return 0x00 if device_type == 0 else 0x40
+
+
 class CecError(RuntimeError):
     pass
 
@@ -272,8 +278,8 @@ class LinuxCecBackend:
             addresses.primary_device_type[index] = component.device_type
             addresses.log_addr_type[index] = component.logical_address_type
             addresses.all_device_types[index] = component.all_device_types
-            # RC profile 0 followed by device features 0, both end bits clear.
-            addresses.features[index][0] = 0
+            # RC profile followed by device features 0, both end bits clear.
+            addresses.features[index][0] = rc_profile(component.device_type)
             addresses.features[index][1] = 0
         actual = _ioctl(self.fd, 3, 4, addresses)
         wanted = [component.address.logical for component in components]

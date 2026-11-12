@@ -9,7 +9,7 @@ import math
 import threading
 import time
 
-from .cec import CecError, Frame, TxResult
+from .cec import CecError, Frame, TxResult, rc_profile
 from .config import current_config
 from .connections import TentacleEndpoint, hdmi_port
 from .topology import CecAddress
@@ -804,7 +804,7 @@ class Component:
         if self.power == PowerState.OFF:
             return
         if self.cec_version >= 6:
-            self.send(15, 0xa6, [self.cec_version, self.all_device_types, 0, 0])
+            self.send(15, 0xa6, [self.cec_version, self.all_device_types, rc_profile(self.device_type), 0])
         self.send(15, 0x84, self.address.physical.to_bytes(2, "big") + bytes([self.device_type]))
         self.send(15, 0x87, self.vendor_id.to_bytes(3, "big"))
 
@@ -959,7 +959,8 @@ class Component:
                 return
             if opcode == 0xa5 and not operands:
                 if self.cec_version >= 6:
-                    self.send(15, 0xa6, [self.cec_version, self.all_device_types, 0, 0])
+                    self.send(15, 0xa6, [self.cec_version, self.all_device_types,
+                                         rc_profile(self.device_type), 0])
                 elif frame.source != 15:
                     self.send(frame.source, 0x00, [opcode, 0])
                 return

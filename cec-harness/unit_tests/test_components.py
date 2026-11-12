@@ -106,6 +106,19 @@ class FrameworkComponentTests(unittest.TestCase):
                 b"\x50\x47Unit AVR", b"\x40\x47Unit Player"])
             self.assertTrue(all(record["ok"] for record in session.records if record["direction"] == "tx"))
 
+    def test_cec20_report_features_use_tv_and_source_rc_profiles(self):
+        tv, avr, playback = topology()
+        with CecSession([tv, avr, playback], backend_factory=FakeBackend) as session:
+            for component, initiator, profile in ((tv, 4, 0x00), (avr, 0, 0x40), (playback, 0, 0x40)):
+                if component.cec_version < 6:
+                    continue
+                backend = session._backends[component.gpio]
+                backend.messages.clear()
+                component.receive(Frame(initiator, component.address.logical, 0xa5))
+                self.assertEqual([message.raw for message in backend.messages],
+                                 [bytes([(component.address.logical << 4) | 15, 0xa6, component.cec_version,
+                                         component.all_device_types, profile, 0])])
+
     def test_replies_and_feature_abort_get_no_feature_abort(self):
         tv, avr, playback = topology()
         with CecSession([tv, avr, playback], backend_factory=FakeBackend) as session:
