@@ -14,6 +14,7 @@ import sys
 HARNESS = Path(__file__).resolve().parent
 DESTINATION = HARNESS.parent / ".harness-python"
 REQUIREMENTS = HARNESS / "runtime-requirements.txt"
+CONSTRAINTS = HARNESS / "runtime-constraints.txt"
 
 
 def validate_platform():
@@ -36,11 +37,20 @@ def pinned_requirements(path):
     return entries
 
 
+def pinned_constraints():
+    """Every runtime requirement must be pinned identically in the full closure."""
+    requirements, constraints = pinned_requirements(REQUIREMENTS), pinned_requirements(CONSTRAINTS)
+    closure = {name.lower().replace("_", "-"): version for name, version in constraints}
+    if any(closure.get(name.lower().replace("_", "-")) != version for name, version in requirements):
+        raise ValueError("runtime-constraints.txt must pin every runtime requirement at the same version")
+    return constraints
+
+
 def verify_environment():
     """Check imports and a blank browser; never open or operate DUT devices."""
-    for package, expected in pinned_requirements(REQUIREMENTS):
+    for package, expected in pinned_constraints():
         if metadata.version(package) != expected:
-            raise ValueError(f"Installed {package} differs from runtime-requirements.txt; rerun setup")
+            raise ValueError(f"Installed {package} differs from runtime-constraints.txt; rerun setup")
     from serial import Serial
     from serial.tools.list_ports import comports
     from esp_pylib.serial_reset import hard_reset
@@ -80,10 +90,12 @@ def verify_installed(destination):
 
 
 def install(destination):
-    pinned_requirements(REQUIREMENTS)
+    pinned_constraints()
     subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(destination)], check=True)
+    # Constraints also pin transitive packages, overriding system versions.
     subprocess.run([str(destination / "bin/python"), "-m", "pip", "install",
-                    "--disable-pip-version-check", "--requirement", str(REQUIREMENTS)], check=True)
+                    "--disable-pip-version-check", "--requirement", str(REQUIREMENTS),
+                    "--constraint", str(CONSTRAINTS)], check=True)
     verify_installed(destination)
 
 

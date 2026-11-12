@@ -1,0 +1,42 @@
+# Exact versions for runtime-requirements.txt and every transitive dependency,
+# resolved for Linux aarch64 and Python 3.13 with releases at least two weeks
+# old, e.g.: uv pip compile runtime-requirements.txt --python-version 3.13
+#   --python-platform aarch64-manylinux_2_36 --exclude-newer YYYY-MM-DD
+aiocoap==0.4.17
+aiohappyeyeballs==2.7.1
+aiohomekit==4.0.1
+aiooui==0.1.11
+async-interrupt==1.2.2
+bitstring==5.0.0
+bleak==3.0.2
+bleak-retry-connector==4.7.1
+bluetooth-adapters==2.4.0
+cffi==2.1.1
+chacha20poly1305==0.0.3
+chacha20poly1305-reuseable==0.13.2
+click==8.5.0
+cryptography==50.0.2
+dbus-fast==5.2.0
+esp-pylib==1.1.5
+esptool==5.4.0
+greenlet==3.5.6
+ifaddr==0.2.0
+intelhex==2.3.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+orjson==3.13.0
+playwright==1.64.1
+pycparser==3.12
+pyee==14.0.0
+pygments==2.21.0
+pyserial==3.5
+pyyaml==6.0.3
+reedsolo==1.7.0
+rich==15.0.0
+rich-click==1.9.9
+tibs==2.0.2
+typing-extensions==4.16.0
+uart-devices==0.1.1
+usb-devices==0.5.1
+websockets==17.3
+zeroconf==0.151.5

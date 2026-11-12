@@ -58,7 +58,8 @@ explicitly; see [Run functional tests](#run-functional-tests) and
 - `setup.py`: Pi software installation, deployment, reboot and readiness checks.
 - `run`: launches functional tests with the installed `.harness-python` runtime.
 - `flash-duts`, `amity_harness/flashing.py`: USB-flash one application image onto every DUT.
-- `setup_runtime.py`, `runtime-requirements.txt`: pinned USB and browser dependencies.
+- `setup_runtime.py`, `runtime-requirements.txt`, `runtime-constraints.txt`: pinned USB,
+  browser and HomeKit dependencies, with every transitive version fixed.
 - `setup_matter.py`, `matter-requirements.txt`: installer and pinned dependencies
   for the Pi Matter controller.
 - `functional_tests/hdmi_scan.py`: exact HDMI scan checks and the reusable scanned fixture.

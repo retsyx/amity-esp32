@@ -37,8 +37,22 @@ class RuntimeSetupTests(unittest.TestCase):
                          [sys.executable, "-m", "venv", "--system-site-packages", str(destination)])
         self.assertEqual(run.call_args_list[1].args[0],
                          [str(destination / "bin/python"), "-m", "pip", "install",
-                          "--disable-pip-version-check", "--requirement", str(setup.REQUIREMENTS)])
+                          "--disable-pip-version-check", "--requirement", str(setup.REQUIREMENTS),
+                          "--constraint", str(setup.CONSTRAINTS)])
         verify.assert_called_once_with(destination)
+
+    def test_constraints_must_pin_each_requirement_identically(self):
+        requirements = dict(setup.pinned_requirements(setup.REQUIREMENTS))
+        closure = {name.lower(): version for name, version in setup.pinned_constraints()}
+        self.assertTrue(all(closure[name.lower()] == version for name, version in requirements.items()))
+        for content in ("pyserial==3.4\n", "esptool==5.4.0\n"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                constraints = Path(directory) / "constraints.txt"
+                constraints.write_text(content)
+                with patch.object(setup, "CONSTRAINTS", constraints), patch.object(setup.subprocess, "run") as run:
+                    with self.assertRaisesRegex(ValueError, "every runtime requirement"):
+                        setup.install(Path(directory) / "runtime")
+                run.assert_not_called()
 
     def test_check_mode_never_installs(self):
         with patch.object(setup, "validate_platform"), patch.object(setup, "verify_installed") as verify, \
@@ -98,7 +112,7 @@ class RuntimeSetupTests(unittest.TestCase):
                    "aiohomekit.controller.ip": SimpleNamespace(),
                    "aiohomekit.controller.ip.controller": SimpleNamespace(IpController=Mock()),
                    "playwright": SimpleNamespace(sync_api=playwright), "playwright.sync_api": playwright}
-        versions = dict(setup.pinned_requirements(setup.REQUIREMENTS))
+        versions = dict(setup.pinned_constraints())
         with patch.dict(sys.modules, modules), patch.object(setup.metadata, "version", side_effect=versions.__getitem__), \
                 patch.object(setup.shutil, "which", return_value="/usr/bin/chromium"), redirect_stdout(io.StringIO()):
             setup.verify_environment()
