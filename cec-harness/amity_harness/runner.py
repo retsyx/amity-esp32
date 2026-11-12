@@ -315,8 +315,11 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
                         if not execute(prepare, config)["passed"]:
                             break
                     result = execute(scenario, config)
-                    if not result["passed"] and (required or any(bed.get("dut_state_retained") is True
-                                                               for bed in result.get("testbeds", []))):
+                    # Retained state or failed cleanup leaves a board dirty;
+                    # later scenarios would fail for unrelated reasons.
+                    if not result["passed"] and (required or any(
+                            bed.get("dut_state_retained") is True or bed.get("cleanup_errors")
+                            for bed in result.get("testbeds", []))):
                         break
                 if finish is not None and all(result["passed"] for result in reports):
                     execute(finish, config)

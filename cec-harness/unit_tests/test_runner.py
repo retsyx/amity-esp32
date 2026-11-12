@@ -183,6 +183,34 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(called, ["prepare", "failing"])
 
+    def test_failed_bed_cleanup_stops_later_scenarios_and_final_reset(self):
+        called = []
+
+        def prepare():
+            pass
+
+        def leaking():
+            pass
+
+        def later():
+            pass
+
+        def finish():
+            pass
+
+        def execute(test, config):
+            called.append(test.__name__)
+            return {"test": test.__name__, "passed": test is not leaking,
+                    "testbeds": [{"cleanup_errors": ["MembershipConflict"]}] if test is leaking else []}
+
+        with patch("amity_harness.runner.run_test", side_effect=execute), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main({"scan": leaking, "activity": later},
+                        ["--credentials", "/private/main.json", "--no-status-led", "--test", "all"],
+                        prepare=prepare, finish=finish)
+        self.assertEqual(code, 1)
+        self.assertEqual(called, ["prepare", "leaking"])
+
     def test_opt_in_scenarios_require_explicit_selection_and_keep_run_lifecycle(self):
         called = []
 

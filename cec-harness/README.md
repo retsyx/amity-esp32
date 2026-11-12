@@ -222,7 +222,8 @@ A successful run requests the main's reset through the authenticated UI API,
 then verifies over Matter BLE that no fabrics or Wi-Fi networks remain. A reset
 verification failure fails the run. If preparation or a scenario fails or is
 interrupted, the runner skips this final reset and retains the state reached
-for debugging; ordinary scenario fixture cleanup still runs. Reset the main
+for debugging; ordinary scenario fixture cleanup still runs. A scenario whose
+fixture cleanup fails also stops the remaining scenarios. Reset the main
 explicitly before the next invocation. If final reset verification fails, inspect
 its log before recovery: the reset may already have taken place.
 
