@@ -24,6 +24,8 @@ class PowerState(str, Enum):
 
 _POWER_COMMANDS = frozenset(("standby", "image_view_on", "text_view_on",
                              "power_on_function", "power_off_function", "power_toggle"))
+# Feature Abort and the replies to fixture queries are never Feature Aborted.
+_NO_FEATURE_ABORT = frozenset((0x00, 0x47, 0x7a, 0x7e, 0x90, 0x9e))
 
 
 @dataclass
@@ -982,7 +984,7 @@ class Component:
             self.on_key(operands[0])
         elif opcode == 0x45 and frame.destination != 15 and not operands:
             self.pressed_key = None
-        elif frame.destination != 15 and frame.source != 15:
+        elif frame.destination != 15 and frame.source != 15 and opcode not in _NO_FEATURE_ABORT:
             # Feature Abort: unrecognized opcode. Invalid operands on known
             # opcodes use reason 3 so test devices behave predictably.
             known = {0x83, 0x8c, 0xa5, 0x46, 0x9f, 0x8f, 0x36, 0x44, 0x45}

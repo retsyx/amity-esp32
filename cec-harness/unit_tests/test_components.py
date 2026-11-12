@@ -106,6 +106,18 @@ class FrameworkComponentTests(unittest.TestCase):
                 b"\x50\x47Unit AVR", b"\x40\x47Unit Player"])
             self.assertTrue(all(record["ok"] for record in session.records if record["direction"] == "tx"))
 
+    def test_replies_and_feature_abort_get_no_feature_abort(self):
+        tv, avr, playback = topology()
+        with CecSession([tv, avr, playback], backend_factory=FakeBackend) as session:
+            back = session._backends[avr.gpio]
+            back.messages.clear()
+            for raw in ("05" + "9e05", "05" + "47416d697479", "05" + "9000", "05" + "7a20",
+                        "05" + "7e01", "05" + "009f00"):
+                avr.receive(Frame.from_bytes(bytes.fromhex(raw)))
+            self.assertEqual(back.messages, [])
+            avr.receive(Frame.from_bytes(bytes.fromhex("058a")))
+            self.assertEqual([message.raw for message in back.messages], [bytes.fromhex("50008a00")])
+
     def test_off_removes_address_and_blocks_all_component_io(self):
         tv, avr, playback = topology()
         observed = []
