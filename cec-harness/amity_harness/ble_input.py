@@ -280,8 +280,8 @@ class BLEInputEvidence:
         Exactly one keyboard or consumer usage is sent. A report group performs
         its HTTP preflight before the first HID change; held input is released
         at its requested down-relative boundary without waiting for a CEC frame.
-        A fresh all-up report clears the accepted activity's input gate before
-        the down report. The group's existing cleanup releases HID on failure.
+        The firmware clears the input gate when activity setup ends with no
+        keys held. The group's existing cleanup releases HID on failure.
         """
         if component not in self.components:
             raise ValueError("The BLE key recipient is outside this scan")
@@ -296,11 +296,10 @@ class BLEInputEvidence:
         record.update(component=component.name, key=key, keyboard_usage=keyboard_usage,
                       consumer_usage=consumer_usage, duration_ms=duration_ms)
         with keyboard.reports() as reports:
-            gate_up, _ = self._change(reports.all_up, record, "gate_all_up")
             started, press_deadline = self._change(lambda: reports.report(
                 keyboard=() if keyboard_usage is None else (keyboard_usage,),
                 consumer=0 if consumer_usage is None else consumer_usage), record, "key_down")
-            record.update(gate_all_up_monotonic_ns=gate_up, down_monotonic_ns=started)
+            record.update(down_monotonic_ns=started)
             if duration_ms:
                 hold_until = started + duration_ms * 1_000_000
                 while True:

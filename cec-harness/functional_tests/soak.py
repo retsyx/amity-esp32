@@ -84,10 +84,7 @@ def _released(components):
 
 
 def _keys(main, activity, selected, components, browser, keyboard, scan, matter, homekit, proof, activity_index):
-    # Each accepted selection arms the input gate. Deliver a real all-up HID
-    # state after setup, before any transport starts this activity's keys.
-    with keyboard.reports() as reports:
-        reports.all_up()
+    # The firmware clears the input gate when setup ends with no keys held.
     _, avr, player = selected
     with BLEInputEvidence(main, scan, *components) as evidence:
         deadline = time.monotonic() + ACTIVITY_SECONDS

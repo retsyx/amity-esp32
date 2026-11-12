@@ -67,7 +67,7 @@ class SoakFixture:
         self.events, self.activities, self.key_calls = [], [], []
         self.api_key_calls, self.ble_key_calls, self.matter_key_calls = [], [], []
         self.homekit_key_calls = []
-        self.keyboard = self.gate_cleared_for = None
+        self.keyboard = None
         self.accessory = None
         self.homekit_accessory = None
         self.homekit_rejected_activity = None
@@ -177,7 +177,6 @@ class SoakFixture:
             raise TimeoutError("HomeKit selection failed")
         previous = () if self.current is None else self.current.selected
         self.current = activity
-        self.gate_cleared_for = None
         for component in self.components:
             component._power = PowerState.ON if component in activity.selected else PowerState.STANDBY
             if component not in activity.selected and hasattr(component, "playing"):
@@ -226,8 +225,6 @@ class SoakFixture:
         yield Observation()
 
     def record_key(self, transport, key, duration_ms):
-        if self.gate_cleared_for is not self.current:
-            raise AssertionError("Accepted activity selections need a fresh physical all-up before keys")
         call = (self.current.name, key, duration_ms, self.clock.now, transport)
         self.key_calls.append(call)
         calls = {"ble": self.ble_key_calls, "api": self.api_key_calls,
@@ -547,7 +544,6 @@ class SoakFixture:
 
             def all_up(self):
                 self.held = False
-                fixture.gate_cleared_for = fixture.current
                 fixture.events.append(("ble.all_up", fixture.current.name, fixture.clock.now))
 
         self.keyboard = Keyboard()
@@ -758,7 +754,8 @@ class SoakScenarioTests(unittest.TestCase):
                 self.assertEqual(fixture.proof["homekit_rejection_checks"], 4)
                 self.assertEqual(fixture.proof["matter_standbys"], 1)
                 self.assertEqual(fixture.proof["homekit_standbys"], 1)
-                self.assertEqual(sum(row[0] == "ble.all_up" for row in fixture.events), 32)
+                # Setup completion clears the input gate; no redundant all-up.
+                self.assertFalse(any(row[0] == "ble.all_up" for row in fixture.events))
                 self.assertEqual([row[1] for row in fixture.events if row[0] == "matter.open"], [names[0]])
                 self.assertEqual(sum(row[0] == "matter.inputs" for row in fixture.events), 1)
                 self.assertEqual([row[1] for row in fixture.events if row[0] == "homekit.open"], [names[0]])
