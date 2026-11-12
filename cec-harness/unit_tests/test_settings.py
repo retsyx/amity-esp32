@@ -31,6 +31,7 @@ class SettingsFixture(Fixture):
         self.pending_address_reads = 0
         self.observed_address = None
         self.effective_override = None
+        self.capacity_reply = self.failed_write = False
 
     @property
     def settings_path(self):
@@ -62,6 +63,12 @@ class SettingsFixture(Fixture):
         self.writes.append(deepcopy(data))
         if self.reject_settings:
             raise AmityHTTPError(409, "Changed settings review")
+        if self.capacity_reply:
+            # Rejected before admission: the operation ledger has no record.
+            raise AmityHTTPError(503, "capacity")
+        if self.failed_write:
+            self.operations[data["request_id"]] = self.operation(data["request_id"], "failed")
+            return self.operation(data["request_id"], "admitted")
         if (data["expected_boot_id"] != self.settings_boot
                 or data["expected_settings_revision"] != str(self.revision)):
             raise AssertionError("A settings write must use its fresh reviewed boot and revision")
@@ -274,6 +281,21 @@ class AdapterSettingsTests(unittest.TestCase):
         setting.close()
         self.assertEqual(len(fixture.writes), 2)
         self.assertEqual(fixture.defaults[2], "1.0.0.0")
+
+    def test_unadmitted_or_failed_write_needs_no_cleanup(self):
+        for fault in ("capacity_reply", "failed_write"):
+            with self.subTest(fault=fault):
+                fixture, member = self.fixture()
+                setattr(fixture, fault, True)
+                setting = FrontPhysicalAddress(member, 2, "1.2.0.0")
+                with self.assertRaises((AmityHTTPError, MembershipConflict)):
+                    setting.apply()
+                setting.close()
+                setting.close()
+                self.assertEqual(len(fixture.writes), 1)
+                self.assertEqual(fixture.defaults[2], "1.0.0.0")
+                stage = "not_admitted" if fault == "capacity_reply" else "failed"
+                self.assertEqual(fixture.main.adapter_settings_operations[-1]["stage"], stage)
 
     def test_cleanup_rejects_changed_settings_instead_of_overwriting_them(self):
         fixture, member = self.fixture()

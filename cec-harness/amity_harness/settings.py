@@ -197,15 +197,27 @@ class FrontPhysicalAddress:
                 for row in snapshot["adapters"]}
 
     def _operation(self, operation, pending, deadline):
+        """Return True once applied, or False if the write was never admitted."""
         while True:
             if operation is None:
-                operation = self._request("/api/operations/" + pending["request_id"], deadline=deadline)
+                try:
+                    operation = self._request("/api/operations/" + pending["request_id"], deadline=deadline)
+                except AmityHTTPError as error:
+                    if error.status != 404:
+                        raise
+                    # The main's operation ledger lives for one boot. Absence
+                    # on the proven boot means the write was never admitted.
+                    self.member._system()
+                    pending["record"]["stage"] = "not_admitted"
+                    return False
             if (not isinstance(operation, dict) or operation.get("operation_id") != pending["request_id"]
                     or operation.get("boot_id") != self.member.boot):
                 raise MembershipConflict("The adapter settings operation changed identity or main boot")
             pending["record"]["stage"] = operation.get("stage")
             if operation.get("stage") == "applied" and operation.get("rebooting") is False:
-                return
+                return True
+            if operation.get("stage") == "failed":
+                pending["failed"] = True
             if operation.get("stage") != "admitted":
                 raise MembershipConflict("The adapter settings write was not confirmed applied without restart")
             self._pause(deadline)
@@ -214,7 +226,16 @@ class FrontPhysicalAddress:
     def _finish(self, deadline):
         pending = self._pending
         if not pending.get("applied"):
-            self._operation(pending.get("operation"), pending, deadline)
+            try:
+                admitted = self._operation(pending.get("operation"), pending, deadline)
+            except MembershipConflict:
+                if pending.get("failed"):
+                    # The firmware rejected this write; nothing changed.
+                    self._pending = None
+                raise
+            if not admitted:
+                self._pending = None
+                return
             pending["applied"] = True
             if pending["phase"] != "restore":
                 # The firmware saved this fixture change. Cleanup must restore
