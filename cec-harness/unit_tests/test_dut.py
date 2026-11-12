@@ -240,16 +240,21 @@ class DUTTests(unittest.TestCase):
                         {"operation_id": "a" * 32, "stage": "applied"})
         dut = DUT("amity-dut", wiring=self.wiring, url="https://amity.local",
                   password="secret", opener=opener)
+        row = {"activity_id": "6" * 32, "name": "Watch", "display": "native:tv", "source": "",
+               "audio": "", "switch": None, "status": "read-only"}
         configuration = {"version": 1, "expected_config_revision": "12",
-                         "expected_presentation_revision": "4", "activities": [],
-                         "device_choices": [{"title": "TV"}]}
+                         "expected_presentation_revision": "4", "activities": [row],
+                         "device_choices": [{"title": "TV"}], "component_owners": [{"owner": "main"}]}
         with patch("amity_harness.dut.time.sleep"):
             result = dut.set_configuration(configuration)
         self.assertEqual(result["stage"], "applied")
         payload = json.loads(opener.requests[1].data)
+        # Exactly the UI's submission fields, as accepted by the firmware.
+        self.assertEqual(set(payload), {"version", "request_id", "expected_config_revision",
+                                        "expected_presentation_revision", "activities"})
         self.assertEqual(payload["expected_config_revision"], "12")
         self.assertEqual(payload["expected_presentation_revision"], "4")
-        self.assertNotIn("device_choices", payload)
+        self.assertEqual(payload["activities"], [{key: row[key] for key in row if key != "status"}])
         self.assertIn("device_choices", configuration)
 
     def test_http_error_preserves_typed_code_without_logging_response_or_credentials(self):

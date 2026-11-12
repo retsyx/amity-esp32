@@ -417,13 +417,18 @@ class DUT:
     def set_configuration(self, configuration, *, timeout=40):
         """Save an activity editor document using its existing revision checks.
 
-        Supply the existing UI document, including its expected revisions and
-        scoped device selections. No extra fixture configuration is persisted.
+        Supply the existing UI document. Like the UI, submit only its version,
+        expected revisions and activity rows; the read-only fields it also
+        returns, such as device choices and component owners, are not sent.
+        No extra fixture configuration is persisted.
         """
         _positive_seconds(timeout, "Operation timeout")
-        payload = dict(configuration)
-        payload.pop("device_choices", None)
-        payload["request_id"] = uuid4().hex
+        rows = ("activity_id", "name", "display", "source", "audio", "switch")
+        payload = {"version": configuration["version"], "request_id": uuid4().hex,
+                   "expected_config_revision": configuration["expected_config_revision"],
+                   "expected_presentation_revision": configuration["expected_presentation_revision"],
+                   "activities": [{key: row[key] for key in rows if key in row}
+                                  for row in configuration["activities"]]}
         response = self.request("/api/activity-editor", payload)
         return self.wait_operation(response, timeout=timeout)
 
