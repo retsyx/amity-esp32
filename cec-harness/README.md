@@ -466,15 +466,18 @@ The fixture power/input setters above create a disturbance only. Repair must
 deliver fresh physical power-on and routing commands; final model state alone
 cannot pass. An original-frame observation rejects any Standby, power-off or
 toggle command during the repair, including commands hidden by responder hooks.
-The separate `test_activity_switch_input()` sub-test configures the AVR as the
-switch with `switch_device=avr, switch_input=4` and `source=None`, representing
-a non-CEC source on that input. It verifies the selected activity, TV/AVR power
-and `avr.wait_for_switch_input(4, since=started)`. That assertion requires a
-fresh, directed DUT Select AV Input Function (`44:69:04`) and the AVR's applied
-numeric `selected_input`; cached state, virtual traffic or Set Stream Path
-cannot satisfy it. The scanned CEC player remains in Standby. A discovered CEC
-source uses its physical address instead, preserving Amity's original input
-selection behavior.
+The separate `test_activity_switch_input()` sub-test saves a main-owned row
+with the AVR as the switch (`switch_device=avr, switch_input=4`, `source=None`),
+representing a non-CEC source on that input, and a playback activity on an
+added member. While the member's activity plays, editing or deleting the
+active row is rejected, and the inactive row's input changes to 3 with a
+reorder; member playback continues without CEC disruption or discovery.
+Starting the edited row then requires `avr.wait_for_switch_input(3,
+since=started)`: a fresh, directed DUT Select AV Input Function (`44:69:03`)
+and the AVR's applied numeric `selected_input`. Cached state, virtual traffic
+or Set Stream Path cannot satisfy it. The main's CEC player remains in
+Standby. A discovered CEC source uses its physical address instead,
+preserving Amity's original input selection behavior.
 The activity context attempts to remove its test-owned activity on exit,
 including after an assertion fails, before the component responders and HTTP
 session close. A DUT restart or conflicting user activity can prevent safe
