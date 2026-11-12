@@ -368,6 +368,13 @@ class ActivityScenarioTests(unittest.TestCase):
         self.assertTrue(any(row[0] == "announcement.standby" for row in fixture.events))
         self.assert_cleanup(fixture)
 
+    def test_standby_completion_publication_is_bounded_by_the_cec_timeout(self):
+        fixture = ActivityScenario(standby_settling=True)
+        with patch("amity_harness.dut.time.monotonic", side_effect=(0, 1.5)):
+            with self.assertRaisesRegex(TimeoutError, "Amity UI state"):
+                fixture.run()
+        self.assert_cleanup(fixture)
+
     def test_missing_repair_power_fails_even_when_final_model_power_is_on(self):
         for recipient in range(3):
             with self.subTest(recipient=recipient):

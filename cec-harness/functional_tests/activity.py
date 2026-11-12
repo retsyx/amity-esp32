@@ -144,11 +144,12 @@ def test_activity():
                 component.assert_power(PowerState.STANDBY)
             def standby_preserved(state):
                 # The received frame can precede TX-completion publication.
-                # Suppression must retain Standby throughout that completion.
+                # Suppression must retain Standby throughout that completion,
+                # which finishes within the CEC budget of the received frame.
                 assert state["current_activity"] == -1
                 return state["activity_settling"] is False
 
-            dut.wait_for(standby_preserved, timeout=dut._runtime.timeout)
+            dut.wait_for(standby_preserved, timeout=dut._runtime.cec_timeout)
 
 
 def test_activity_no_display():
