@@ -445,7 +445,10 @@ class DUT:
                       operation_id=operation.get("operation_id"), stage=operation.get("stage"))
                 raise TimeoutError("Amity UI operation did not complete")
             time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
-            operation = self.request("/api/operations/" + operation["operation_id"])
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                continue
+            operation = self.request("/api/operations/" + operation["operation_id"], timeout=min(15, remaining))
             if operation.get("stage") != stage:
                 stage = operation.get("stage")
                 event("operation.stage", dut=self.name, operation_id=operation.get("operation_id"), stage=stage)
@@ -453,6 +456,11 @@ class DUT:
             event("operation.failed", level=logging.ERROR, dut=self.name,
                   operation_id=operation.get("operation_id"), stage=operation.get("stage"))
             raise RuntimeError(operation.get("message") or "Amity UI operation failed")
+        if operation.get("stage") not in {"complete", "applied"}:
+            # Like the UI, only these stages confirm success.
+            event("operation.unconfirmed", level=logging.ERROR, dut=self.name,
+                  operation_id=operation.get("operation_id"), stage=operation.get("stage"))
+            raise RuntimeError("Amity could not confirm the UI operation")
         return operation
 
     def start_hdmi_scan(self):

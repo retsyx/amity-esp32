@@ -257,6 +257,23 @@ class DUTTests(unittest.TestCase):
         self.assertEqual(payload["activities"], [{key: row[key] for key in row if key != "status"}])
         self.assertIn("device_choices", configuration)
 
+    def test_operation_success_requires_a_confirmed_ui_stage(self):
+        for stage in (None, "", "done", "scheduled"):
+            with self.subTest(stage=stage):
+                opener = Opener({"token": "session"})
+                dut = DUT("amity-dut", wiring=self.wiring, url="https://amity.local",
+                          password="secret", opener=opener)
+                operation = {"operation_id": "a" * 32}
+                if stage is not None:
+                    operation["stage"] = stage
+                with self.assertRaisesRegex(RuntimeError, "could not confirm"):
+                    dut.wait_operation(operation)
+        for stage in ("complete", "applied"):
+            with self.subTest(stage=stage):
+                dut = DUT("amity-dut", wiring=self.wiring, url="https://amity.local",
+                          password="secret", opener=Opener({"token": "session"}))
+                self.assertEqual(dut.wait_operation({"operation_id": "a" * 32, "stage": stage})["stage"], stage)
+
     def test_http_error_preserves_typed_code_without_logging_response_or_credentials(self):
         for code in ("stale_removal", None, {"unexpected": "PRIVATE_BODY"}):
             with self.subTest(code_type=type(code).__name__):
