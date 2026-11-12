@@ -748,7 +748,12 @@ select a different wire. Each component has a logical and physical `CecAddress`,
 a name, a device type, and `PowerState.ON`,
 `PowerState.STANDBY` or `PowerState.OFF`. Standby remains CEC responsive; Off
 removes the logical address and suppresses CEC TX/RX, including ACKs. Power can
-be changed explicitly with `set_power()`.
+be changed explicitly with `set_power()`. Linux claims an adapter's addresses
+only as one set, so a change between Off and a powered state clears and
+reclaims every address on that wire. During the reclaim the siblings NACK and
+the adapter receives nothing, and the kernel and the session re-announce every
+sibling. Negative observations spanning such a change cannot cover that
+interval.
 
 `TvComponent`, `AvrComponent` and `PlaybackComponent` provide role-specific
 identity, discovery, power and control handling. They are configurable test
