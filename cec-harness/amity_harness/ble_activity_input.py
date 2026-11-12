@@ -162,6 +162,10 @@ class BLEActivityEvidence(BLEInputEvidence):
                                     operands=b"\x6d")
             if powered.timestamp_ns >= route.timestamp_ns:
                 raise AssertionError("The selected BLE source was not powered before routing")
+            # One owner sends old-only Standby before new-only power-on.
+            # Different owners run their sequences independently.
+            if not repairing and initializer.dut is source.dut and initialized.timestamp_ns >= powered.timestamp_ns:
+                raise AssertionError("The BLE handoff powered the new source before the old source's Standby")
             if setup_sent >= route.timestamp_ns:
                 raise AssertionError("The coalesced BLE selection and setup report missed initialization")
             if all_up:

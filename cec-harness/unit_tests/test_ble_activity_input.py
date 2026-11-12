@@ -121,6 +121,9 @@ class TransitionKeyboard:
         if self.f.old_source is not self.f.next_player:
             if self.fault != "front_before_back_release":
                 self.emit(self.f.tv, 0x36)
+            if self.fault == "power_before_standby":
+                self.emit(self.f.next_player, 0x44, b"\x6d")
+                self.emit(self.f.next_player, 0x45)
             self.emit(self.f.old_source, 0x36)
             self.emit(self.f.avr, 0x36)
         if self.fault == "late_volume_cancel":
@@ -767,6 +770,13 @@ class BLEActivityEvidenceTests(unittest.TestCase):
                 self.assertFalse(fixture.bed.control_observations[-1]["checks"][-1]["passed"])
                 self.assertEqual(fixture.keyboard.commands[-1], ((), 0))
                 self.assertTrue(all(not component._wire_observers for component in fixture.components))
+
+    def test_new_source_power_before_old_source_standby_fails(self):
+        with self.fixture(fault="power_before_standby") as fixture:
+            with self.assertRaisesRegex(AssertionError, "before the old source's Standby"):
+                self.transition(fixture, all_up=False)
+            self.assertFalse(fixture.bed.control_observations[-1]["checks"][-1]["passed"])
+            self.assertEqual(fixture.keyboard.commands[-1], ((), 0))
 
 
 if __name__ == "__main__":
