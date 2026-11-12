@@ -4,6 +4,7 @@ import http.client
 import io
 import logging
 import math
+import select
 import socket
 import threading
 import time
@@ -89,6 +90,8 @@ class HTTPSOpener:
     Complete bodies are buffered before releasing the transport lock. Healthy
     sockets remain reusable across idle periods; a server close or any I/O
     failure drops them. A later explicit request can connect, with its own budget.
+    An idle socket the server already closed is detected before sending, so
+    the request is sent once, on a fresh connection.
     """
 
     def __init__(self, origin, context, *, dut=None, connection_factory=None, clock=None):
@@ -111,6 +114,35 @@ class HTTPSOpener:
                 connection.close()
             finally:
                 event("http.connection.closed", level=logging.DEBUG, dut=self._dut, reason=reason)
+
+    def _idle_closed(self):
+        # A readable idle socket holds EOF, a TLS close alert or unexpected
+        # data; none can answer a request this connection has not sent.
+        sock = getattr(self._connection.sock, "_socket", self._connection.sock)
+        if sock is None:
+            return True
+        pending = getattr(sock, "pending", None)
+        if callable(pending) and pending():
+            return True
+        fileno = getattr(sock, "fileno", None)
+        if not callable(fileno):
+            return False
+        try:
+            descriptor = fileno()
+            return descriptor < 0 or bool(select.select([descriptor], [], [], 0)[0])
+        except (OSError, ValueError):
+            return True
+
+    def _connect(self, deadline):
+        if self._connection is not None and self._idle_closed():
+            self._drop("idle_server_close")
+        if self._connection is None:
+            remaining = self._budget(deadline)
+            self._connection = self._factory(self._host, self._port, timeout=remaining, context=self._context)
+            self._connection.connect()
+            self._connection.sock = _DeadlineSocket(self._connection.sock, self._clock, deadline)
+            self._budget(deadline)
+            event("http.connection.opened", level=logging.DEBUG, dut=self._dut)
 
     def close(self):
         """Release an idle connection; a later explicit request can reopen it."""
@@ -143,13 +175,7 @@ class HTTPSOpener:
         response = None
         try:
             self._budget(deadline)
-            if self._connection is None:
-                remaining = self._budget(deadline)
-                self._connection = self._factory(self._host, self._port, timeout=remaining, context=self._context)
-                self._connection.connect()
-                self._connection.sock = _DeadlineSocket(self._connection.sock, self._clock, deadline)
-                self._budget(deadline)
-                event("http.connection.opened", level=logging.DEBUG, dut=self._dut)
+            self._connect(deadline)
             headers = dict(request.header_items())
             target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
             self._budget(deadline)
@@ -218,13 +244,7 @@ class HTTPSOpener:
             raise TimeoutError("HTTP transport deadline expired")
         try:
             self._budget(deadline)
-            if self._connection is None:
-                remaining = self._budget(deadline)
-                self._connection = self._factory(self._host, self._port, timeout=remaining, context=self._context)
-                self._connection.connect()
-                self._connection.sock = _DeadlineSocket(self._connection.sock, self._clock, deadline)
-                self._budget(deadline)
-                event("http.connection.opened", level=logging.DEBUG, dut=self._dut)
+            self._connect(deadline)
             headers = dict(request.header_items())
             target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
             self._connection.request(request.get_method(), target, body=request.data, headers=headers)

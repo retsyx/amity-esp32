@@ -228,6 +228,26 @@ class TransportTests(unittest.TestCase):
                     self.assertEqual(len(factory.connections[1].requests), 1)
                     opener.close()
 
+    def test_server_closed_idle_connection_is_replaced_before_sending(self):
+        for closed in (False, True):
+            for payload in (None, b'{"request_id":"once"}'):
+                with self.subTest(closed=closed, payload=payload):
+                    factory = Factory(body({}), body({"later": True}))
+                    opener = factory.opener()
+                    opener.open(request()).close()
+                    local, server = socket.socketpair()
+                    self.addCleanup(local.close)
+                    self.addCleanup(server.close)
+                    factory.sockets[0].fileno = local.fileno
+                    if closed:
+                        server.close()  # The firmware purged this idle socket.
+                    opener.open(request(payload)).close()
+                    self.assertEqual(len(factory.connections), 2 if closed else 1)
+                    self.assertEqual(sum(len(connection.requests) for connection in factory.connections), 2)
+                    self.assertEqual(factory.connections[-1].requests[-1][2], payload)
+                    self.assertEqual(factory.sockets[0].closed, closed)
+                    opener.close()
+
     def test_idle_connection_is_reused_before_explicit_client_disconnect(self):
         factory = Factory(body({}), body({"unused": "hold response"}), body({"later": True}))
         opener = factory.opener()
