@@ -321,9 +321,10 @@ def main(argv=None):
             rows = page.locator('#managedAmityList > article')
             expect(rows).to_have_count(2)
             expect(rows.nth(0)).to_contain_text('amity-living-room')
-            expect(rows.nth(0).locator('h3')).to_have_text('amity-living-room (this device)')
-            expect(rows.nth(1)).to_contain_text('amity-bedroom')
-            expect(rows.nth(1).locator('h3')).not_to_contain_text('(this device)')
+            expect(rows.nth(0).locator('h3')).to_have_text('amity-living-room')
+            expect(rows.nth(0).locator('.amity-device-status')).to_have_text('This device')
+            expect(rows.nth(1).locator('h3')).to_have_text('amity-bedroom')
+            expect(rows.nth(1).locator('.amity-device-status')).to_have_text('Connected')
             for action in ('Remove', 'Replace', 'Update firmware'):
                 expect(rows.nth(0).get_by_role('button', name=action, exact=True)).to_have_count(0)
             expect(rows.nth(1).get_by_role('button', name='Remove', exact=True)).to_be_visible()
@@ -331,21 +332,38 @@ def main(argv=None):
                 page.set_viewport_size(dict(width=width, height=1000))
                 for index, names in ((0, ('Settings',)), (1, ('Remove', 'Replace', 'Settings'))):
                     row = rows.nth(index)
-                    # Read one DOM snapshot so the normal polling refresh
-                    # cannot replace the card between rectangle reads.
-                    boxes = row.evaluate('''(row,names)=>{
-                        const rect=node=>{const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
-                        const controls=[...row.querySelectorAll('button')];
-                        return {heading:rect(row.querySelector('h3')),header:rect(row.querySelector('.amity-device-header')),
-                            buttons:names.map(name=>rect(controls.find(button=>button.textContent===name)))};
-                    }''', list(names))
-                    heading, buttons, header = boxes['heading'], boxes['buttons'], boxes['header']
-                    assert heading['x'] + heading['width'] <= buttons[0]['x']
-                    assert all(abs((b['y'] + b['height']/2) - (heading['y'] + heading['height']/2)) < 1 for b in buttons)
-                    assert abs(buttons[-1]['x'] + buttons[-1]['width'] - header['x'] - header['width']) < 1
+                    # Read one snapshot of the live card: the normal polling refresh can
+                    # replace a card between resolving a handle and measuring it.
+                    boxes = page.evaluate('''([index,names])=>{
+                        const row=document.querySelectorAll('#managedAmityList > article')[index];
+                        const box=r=>({x:r.x,y:r.y,width:r.width,height:r.height}),rect=node=>box(node.getBoundingClientRect());
+                        const controls=[...row.querySelectorAll('button')],heading=row.querySelector('h3'),text=document.createRange();
+                        text.selectNodeContents(heading);
+                        return {heading:rect(heading),line:box(text.getClientRects()[0]),label:rect(row.querySelector('.amity-device-status')),
+                            header:rect(row.querySelector('.amity-device-header')),buttons:names.map(name=>rect(controls.find(button=>button.textContent===name)))};
+                    }''', [index, list(names)])
+                    # `label`, not `status`: the fixture serves the `status` dict above.
+                    heading, line, label, buttons, header = (boxes[k] for k in ('heading', 'line', 'label', 'buttons', 'header'))
+                    right, left, top = header['x'] + header['width'], min(b['x'] for b in buttons), min(buttons, key=lambda b: b['y'])
+                    # The status label sits directly below the name, both left of the actions, and
+                    # the name's first line is level with the top button.
+                    assert heading['x'] + heading['width'] <= left and label['x'] + label['width'] <= left
+                    assert abs(label['x'] - heading['x']) < 1 and 0 <= label['y'] - heading['y'] - heading['height'] < 4
+                    assert abs(top['y'] - header['y']) < 1
+                    assert abs((line['y'] + line['height']/2) - (top['y'] + top['height']/2)) < 2
+                    if width <= 650:
+                        # Phones stack the actions at one shared width, Settings on top and Remove at the bottom.
+                        assert top is buttons[-1]
+                        assert all(abs(b['x'] + b['width'] - right) < 1 and abs(b['width'] - buttons[0]['width']) < 1 for b in buttons)
+                        assert all(lower['y'] >= upper['y'] + upper['height'] for lower, upper in zip(buttons, buttons[1:]))
+                    else:
+                        # Wider screens keep one row ordered Remove, Replace, Settings.
+                        assert all(abs(b['y'] - top['y']) < 1 for b in buttons)
+                        assert all(a['x'] + a['width'] <= b['x'] for a, b in zip(buttons, buttons[1:]))
+                        assert abs(buttons[-1]['x'] + buttons[-1]['width'] - right) < 1
                     assert row.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
             page.set_viewport_size(dict(width=430, height=1000))
-            passed('inline headings and device actions remain aligned at 320, 430 and 1280 pixels')
+            passed('device rows show the status under the name; actions sit in one row on desktop and stack at one width on phones with Settings on top (320, 430, 1280 px)')
             expect(page.locator('#managedAmityList')).not_to_contain_text('Controlled by the original Amity')
             expect(page.locator('#managedAmityList')).not_to_contain_text('HDMI adapters')
             expect(page.get_by_text('Manage added devices from this original Amity. They have no separate interface or remote.', exact=True)).to_have_count(0)
@@ -379,7 +397,7 @@ def main(argv=None):
                 page.evaluate('amityInterface.refresh()')
                 expect(rows).to_have_count(1)
                 expect(rows.first).to_contain_text('amity-living-room')
-                expect(rows.first.locator('h3')).to_have_text('amity-living-room (this device)')
+                expect(rows.first.locator('h3')).to_have_text('amity-living-room')
                 for action in ('Remove', 'Replace', 'Update firmware'):
                     expect(rows.first.get_by_role('button', name=action, exact=True)).to_have_count(0)
                 passed('a system with no added devices still lists this main by its actual hostname')
@@ -524,7 +542,7 @@ def main(argv=None):
             system['membership']['peers'] = deepcopy(saved_peers)
             system['membership']['membership_revision'] = '1'
             page.evaluate('amityInterface.refresh()')
-            expect(rows.first.locator('h3')).to_have_text('amity-living-room (this device)')
+            expect(rows.first.locator('h3')).to_have_text('amity-living-room')
             expect(rows.first.get_by_role('button', name='Remove', exact=True)).to_have_count(0)
             # Successful device changes reload the saved activity projection.
             # A concurrent server deletion cannot silently erase a local draft.

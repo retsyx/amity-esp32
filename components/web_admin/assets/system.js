@@ -170,10 +170,12 @@ window.amityInterface=(()=>{
   if(board.octopus_id===snapshot?.octopus_id)return snapshot.hostname||'Name unavailable';
   return snapshot?.named_devices?.find(device=>device.octopus_id===board.octopus_id)?.hostname||snapshot?.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id)?.hostname||'Name unavailable';
  }
- function deviceHeader(row,title){
-  const header=document.createElement('div'),heading=document.createElement('h3'),actions=document.createElement('div');
-  header.className='amity-device-header';actions.className='amity-device-actions';heading.textContent=title;
-  header.append(heading,actions);row.append(header);return actions;
+ // The status sits directly below the name; the actions are beside both.
+ function deviceHeader(row,title,status){
+  const header=document.createElement('div'),about=document.createElement('div'),heading=document.createElement('h3'),state=text(status),actions=document.createElement('div');
+  header.className='amity-device-header';about.className='amity-device-title';actions.className='amity-device-actions';heading.textContent=title;
+  state.className=status==='Not responding'?'amity-device-status not-responding':'amity-device-status';
+  about.append(heading,state);header.append(about,actions);row.append(header);return actions;
  }
  async function refresh(){
   if(!enabled||!token)return;
@@ -181,7 +183,7 @@ window.amityInterface=(()=>{
   const update=(system.membership?.peers||[]).some(peer=>peer.management_ready)?await request('updates/cohort').catch(()=>null):null;
   const root=$('managedAmityList');root.replaceChildren();
   const original=configuration.controller_octopus_id||system.octopus_id;
-  const localRow=document.createElement('article'),localActions=deviceHeader(localRow,(system.hostname||'Name unavailable')+' (this device)');
+  const localRow=document.createElement('article'),localActions=deviceHeader(localRow,system.hostname||'Name unavailable','This device');
   localActions.append(button('Settings',()=>deviceSettings({octopus_id:system.octopus_id})));
   root.append(localRow);
   const boards=[...(configuration.octopuses||[])];
@@ -189,10 +191,9 @@ window.amityInterface=(()=>{
   for(const known of system.named_devices||[])if(!boards.some(board=>board.octopus_id===known.octopus_id))boards.push({octopus_id:known.octopus_id});
   for(const board of boards){
    if(board.octopus_id===original)continue;
-   const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));
+   const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article');
    const target=update?.targets?.find(target=>target.octopus_id===board.octopus_id)||update?.automatic_failures?.find(target=>target.octopus_id===board.octopus_id);
-   const label=text(peer?.ready?'Connected':peer?.management_ready?(target?firmwareTargetText(target,update.image_bytes):'Updating firmware automatically'):peer?.enrolled?'Not responding':'Not added');
-   if(label.textContent==='Not responding')label.className='not-responding';row.append(label);
+   const actions=deviceHeader(row,boardName(board),peer?.ready?'Connected':peer?.management_ready?(target?firmwareTargetText(target,update.image_bytes):'Updating firmware automatically'):peer?.enrolled?'Not responding':'Not added');
    actions.append(Object.assign(button('Remove',()=>remove(board)),{className:'primary danger'}),button('Replace',()=>replace(board)),button('Settings',()=>deviceSettings(board)));
    root.append(row);
   }

@@ -656,12 +656,11 @@ class SoakBrowser:
         self._expect(root.locator("article")).to_have_count(len(self._owners))
         for owner in self._owners:
             hostname = self._owner_names[owner.identity.device_id]
-            heading = hostname + " (this device)" if owner is self.main else hostname
             row = root.locator("article").filter(
-                has=self.page.get_by_role("heading", name=heading, exact=True))
+                has=self.page.get_by_role("heading", name=hostname, exact=True))
             self._expect(row).to_be_visible()
-            if owner is not self.main:
-                self._expect(row.get_by_text("Connected", exact=True)).to_be_visible()
+            status = "This device" if owner is self.main else "Connected"
+            self._expect(row.get_by_text(status, exact=True)).to_be_visible()
         self.page.get_by_role("button", name="Activities", exact=True).click()
         self.assert_ready()
         self.report["device_inspections"] += 1
