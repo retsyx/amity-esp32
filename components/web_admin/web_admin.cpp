@@ -256,7 +256,7 @@ esp_err_t api(httpd_req_t *req) {
         if(path=="/api/firmware")return system_services::upload_firmware(req);
 
         bool supported=false;
-        for(const auto* command:{"/api/key","/api/remotes/scan","/api/remotes/pair","/api/remotes/unpair",
+        for(const auto* command:{"/api/key","/api/remotes/scan","/api/remotes/pair","/api/remotes/unpair","/api/remotes/stop",
             "/api/matter/open","/api/matter/close","/api/matter/remove","/api/homekit/open","/api/homekit/close",
             "/api/homekit/remove","/api/factory-reset","/api/password","/api/logout","/api/reboot"})supported|=path==command;
         if(!supported)return web::error(req,"Unknown endpoint","404 Not Found");
@@ -273,6 +273,8 @@ esp_err_t api(httpd_req_t *req) {
             key_timing.submitted(e);
         }
         else if(path=="/api/remotes/scan")e=ble_remote_scan(20);
+        // TIMEOUT: the abandoned connection is still closing; status reports it.
+        else if(path=="/api/remotes/stop"){e=ble_remote_stop_pairing();if(e==ESP_ERR_TIMEOUT)e=ESP_OK;}
         else if(path=="/api/remotes/unpair"||path=="/api/remotes/pair") {
             LocalRemoteRequest approval;
             if(!parse_local_remote_request(root.get(),path=="/api/remotes/pair",approval))return web::error(req,"Review the remote's current pairing state before continuing","400 Bad Request");

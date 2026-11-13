@@ -18,7 +18,7 @@ for scenario in actuator-startup actuator-input actuator-reconnect actuator-conn
   pairing-cleanup-privacy pairing-cleanup-privacy-error pairing-disconnected-privacy pairing-resolved-identity-error pairing-resolved-random-error \
   absence success unpair unpair-delete-error unpair-storage-error unpair-before-completion scan scan-unpair unpair-scan \
   cancel-error unpair-cancel-error connect-error async-error discovery-error \
-  disconnect-before-setup host-reset pairing; do
+  disconnect-before-setup host-reset pairing stop-pairing-search stop-pairing-connect stop-pairing-security; do
   "$out/ble_transport_test" "$scenario"
 done
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \

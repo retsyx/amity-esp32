@@ -33,7 +33,7 @@ int64_t now;
 unsigned steps, blocking_waits, cancellations, scans, security_calls, discovery_calls,
     persisted, removed_bonds;
 bool synced = true, storage_peer = true, connecting, scanning, immediate_connect,
-    disconnect_during_discovery;
+    disconnect_during_discovery, stop_during_connect, stop_during_security;
 int connect_error, cancel_error, discovery_error, bond_delete_error, peer_erase_error;
 int privacy_remove_error;
 bool host_bond, controller_irk;
@@ -213,6 +213,11 @@ int ble_gap_connect(uint8_t own, const ble_addr_t *peer, int32_t duration,
     fake::connects.push_back({duration, params != nullptr, params ? *params : ble_gap_conn_params{}, callback, token});
     if (fake::connect_error) return fake::connect_error;
     fake::connecting = true;
+    if (fake::stop_during_connect) {
+        // Stop arrives from the web task while the worker waits for this link.
+        assert(ble_remote_stop_pairing() == ESP_ERR_TIMEOUT); // The link is still closing.
+        assert(ble_remote_pause_background(false) == ESP_OK); // Radio control resumes once idle.
+    }
     if (fake::immediate_connect) fake::complete_connect();
     return 0;
 }
@@ -245,6 +250,11 @@ int ble_gap_security_initiate(uint16_t handle) {
     fake::host_bond = true;
     fake::controller_irk = MYNEWT_VAL(BLE_HS_PVCY);
     fake::descriptor.sec_state.encrypted = true;
+    if (fake::stop_during_security) {
+        // Stop arrives from the web task while the worker waits for bonding.
+        assert(ble_remote_stop_pairing() == ESP_ERR_TIMEOUT); // The link is still closing.
+        assert(ble_remote_pause_background(false) == ESP_OK); // Radio control resumes once idle.
+    }
     ble_gap_event event{};
     event.type = BLE_GAP_EVENT_ENC_CHANGE;
     event.enc_change.conn_handle = handle;
@@ -324,7 +334,8 @@ int main(int argc, char **argv) {
     if (scenario == "pairing" || scenario == "pairing-cleanup-privacy" ||
         scenario == "pairing-cleanup-privacy-error" || scenario == "pairing-disconnected-privacy" ||
         scenario == "pairing-resolved-identity-error" ||
-        scenario == "pairing-resolved-random-error") fake::storage_peer = false;
+        scenario == "pairing-resolved-random-error" ||
+        scenario.rfind("stop-pairing", 0) == 0) fake::storage_peer = false;
     if (scenario == "pairing-resolved-random-error") fake::peer.type=1;
     fake::host_bond = fake::storage_peer;
     fake::controller_irk = fake::storage_peer && MYNEWT_VAL(BLE_HS_PVCY);
@@ -630,6 +641,40 @@ int main(int argc, char **argv) {
         fake::synced = true;
         fake::run_steps(1);
         assert(fake::status().ready && fake::status().waiting && fake::connects.size() == 2);
+    } else if (scenario == "stop-pairing-search") {
+        fake::run_steps(1);
+        assert(ble_remote_start_pairing(20) == ESP_OK);
+        fake::run_steps(1);
+        assert(fake::scans == 1 && fake::scanning && fake::status().pairing && fake::status().scanning);
+        assert(ble_remote_stop_pairing() == ESP_OK);
+        assert(!fake::scanning && !fake::status().pairing && !fake::status().scanning && !fake::status().last_error);
+        fake::run_steps(60); // The search deadline passes without a timeout error or another scan.
+        assert(fake::scans == 1 && !fake::status().pairing && !fake::status().last_error && fake::connects.empty());
+        assert(ble_remote_stop_pairing() == ESP_OK); // Nothing left to stop.
+        assert(ble_remote_start_pairing(20) == ESP_OK);
+        fake::run_steps(1);
+        assert(fake::scans == 2 && fake::status().pairing && fake::status().scanning);
+    } else if (scenario == "stop-pairing-connect") {
+        fake::stop_during_connect = true;
+        open_peer(fake::peer);
+        assert(fake::connects.size() == 1 && fake::cancellations >= 1);
+        assert(!fake::status().connecting && !fake::status().bonded && !fake::status().last_error);
+        assert(!fake::security_calls && !fake::persisted);
+        fake::complete_connect(BLE_HS_EPREEMPTED);
+        fake::run_steps(10);
+        assert(fake::connects.size() == 1 && !fake::status().connecting && !fake::status().bonded);
+        assert(!fake::status().last_error && !fake::persisted);
+    } else if (scenario == "stop-pairing-security") {
+        fake::immediate_connect = true;
+        fake::stop_during_security = true;
+        open_peer(fake::peer);
+        assert(fake::security_calls == 1 && !fake::discovery_calls && !fake::persisted);
+        assert(!fake::status().connecting && !fake::status().connected && !fake::status().bonded);
+        assert(!fake::status().last_error); // A stopped setup is not reported as a failure.
+        assert(!fake::host_bond && fake::removed_bonds == 1); // The half-made bond is not kept.
+        fake::disconnect();
+        fake::run_steps(10);
+        assert(fake::connects.size() == 1 && !fake::status().bonded && !fake::status().last_error && !fake::persisted);
     } else if (scenario == "pairing") {
         fake::immediate_connect = true;
         open_peer(fake::peer);

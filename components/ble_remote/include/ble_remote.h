@@ -82,6 +82,9 @@ esp_err_t ble_remote_pause_background(bool paused);
 // External Matter commissioning has priority over an uncommitted remote setup.
 // Cancel only the attempted setup link; preserve a previously bonded remote.
 esp_err_t ble_remote_cancel_setup(void);
+// User Stop for a search or connection that has not saved a bond. Releases the
+// radio without pausing background work. TIMEOUT: the abandoned link is closing.
+esp_err_t ble_remote_stop_pairing(void);
 
 #ifdef __cplusplus
 }

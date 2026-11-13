@@ -388,12 +388,13 @@ async function refreshPeerSignals(){
  }catch{peerSignals=[];}
 }
 function renderRemotes(r){
- remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,busy=!!remotePending||unpairing||(!paired&&(!!r.pairing||!!r.connecting||!!r.scanning));
+ remoteState=r;const paired=!!r.bonded,unpairing=remotePending==='unpair'||!!r.unpairing,searching=!paired&&(!!r.pairing||!!r.connecting||!!r.scanning),busy=!!remotePending||unpairing||searching;
  // A saved bond displays Paired outside unpairing; live connection state belongs in Diagnostics.
  // Keep this tab text-only: do not add a connection or pairing progress indicator.
- $('remoteStatus').textContent=unpairing?'Unpairing...':paired?'Paired':r.connecting?'Pairing with remote…':r.pairing&&r.too_far?'Remote detected. Bring it closer to Amity.':r.pairing||r.scanning||remotePending?'Looking for a nearby remote… Bring it close and put it in pairing mode.':r.last_error===13?'No nearby remote found. Bring it closer and try again.':r.last_error?'Pairing failed. Reset the remote’s pairing and try again.':'Not paired';renderDiagnostics();
+ $('remoteStatus').textContent=unpairing?'Unpairing...':paired?'Paired':r.connecting?'Pairing with remote…':r.pairing&&r.too_far?'Remote detected. Bring it closer to Amity.':r.pairing||r.scanning||remotePending===true?'Looking for a nearby remote… Bring it close and put it in pairing mode.':r.last_error===13?'No nearby remote found. Bring it closer and try again.':r.last_error?'Pairing failed. Reset the remote’s pairing and try again.':'Not paired';renderDiagnostics();
  $('toggleRemote').setAttribute('aria-busy',String(busy));
- $('toggleRemote').textContent=unpairing?'Unpairing...':busy?(paired?'Unpair remote':'Pairing…'):paired?'Unpair remote':'Pair remote';$('toggleRemote').disabled=busy;
+ // Like Matter and HomeKit: the label follows the remote's state, and a pending request only disables it.
+ $('toggleRemote').textContent=unpairing?'Unpairing...':paired?'Unpair remote':searching?'Stop pairing':'Pair remote';$('toggleRemote').disabled=!!remotePending||unpairing;
  $('toggleRemote').className=paired||unpairing?'primary danger':'';
 }
 // Apple Keychain is hidden; firmware handles cleanup after the last Home is removed.
@@ -541,7 +542,8 @@ $('toggleRemote').addEventListener('click',run(async()=>{
   if(current.unpairing)return;
   const approval=current.remote_generation===undefined?{}:{request_id:crypto.randomUUID().replaceAll('-',''),expected_boot_id:current.boot_id,expected_remote_generation:current.remote_generation};
   if(current.bonded||current.connected){if(!confirm('Unpair the remote?'))return;remotePending='unpair';renderRemotes(current);await request('remotes/unpair',approval);}
-  else if(!current.scanning&&!current.connecting&&!current.pairing)await request('remotes/pair',approval);
+  else if(current.scanning||current.connecting||current.pairing){remotePending='stop';renderRemotes(current);await request('remotes/stop',{});}
+  else await request('remotes/pair',approval);
   renderRemotes(await request('remotes'));
  }finally{remotePending=false;renderRemotes(remoteState);}
 }));

@@ -120,6 +120,8 @@ std::atomic_bool controller_enabled{true};
 bool controller_cancel_pending=false;
 std::atomic_bool radio_paused{false};
 std::atomic_bool setup_cancelled{false};
+// A user stopped the search; the abandoned setup must not report a failure.
+std::atomic_bool pairing_stopped{false};
 ble_remote_radio_admit_t radio_admit=nullptr;
 ble_remote_radio_done_t radio_done=nullptr;
 void *radio_context=nullptr;
@@ -665,7 +667,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
     {
         Guard lock;
         state.waiting = false;
-        if (!controller_enabled.load() || setup_cancelled.load() || forgetting || (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE)) {
+        if (!controller_enabled.load() || setup_cancelled.load() || pairing_stopped.load() || forgetting || (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE)) {
             state.connecting = false;
             return;
         }
@@ -682,7 +684,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         ble_gap_conn_desc desc{};
         err = ble_gap_conn_find(connection_handle, &desc);
         if (!err && (!desc.sec_state.bonded || !desc.sec_state.encrypted)) err = BLE_HS_EAUTHEN;
-        if (!err && (!controller_enabled.load()||setup_cancelled.load()||forgetting)) err = BLE_HS_EAPP;
+        if (!err && (!controller_enabled.load()||setup_cancelled.load()||pairing_stopped.load()||forgetting)) err = BLE_HS_EAPP;
         if (!err) err = persist_peer(&desc.peer_id_addr);
         if (!err) {
             saved = desc.peer_id_addr;
@@ -699,7 +701,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         uint16_t handle;
         {
             Guard lock;
-            state.last_error = err;
+            state.last_error = pairing_stopped.load() ? 0 : err;
             handle = connection_handle;
             // A device that bonded but failed remote setup must not consume a
             // bond slot forever or leave an identity inaccessible to Unpair.
@@ -717,7 +719,7 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
     }
     Guard lock;
     state.connecting = false;
-    state.last_error = err;
+    state.last_error = pairing_stopped.load() ? 0 : err;
     next_reconnect = esp_timer_get_time() + 5000000;
 }
 
@@ -1005,6 +1007,7 @@ extern "C" esp_err_t ble_remote_scan(uint32_t seconds) {
     forgetting = false; // A new operation may start after Unpair has completed.
     state.scanning = true;
     setup_cancelled.store(false);
+    pairing_stopped.store(false);
     admission.commit();
     return ESP_OK;
 }
@@ -1024,6 +1027,7 @@ extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
     state.pairing = state.scanning = true;
     state.last_error = 0;
     setup_cancelled.store(false);
+    pairing_stopped.store(false);
     admission.commit();
     return ESP_OK;
 }
@@ -1077,6 +1081,7 @@ extern "C" esp_err_t ble_remote_pair(const uint8_t address[6], uint8_t address_t
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
     state.connecting = true;
     setup_cancelled.store(false);
+    pairing_stopped.store(false);
     admission.commit();
     return ESP_OK;
 }
@@ -1128,23 +1133,42 @@ extern "C" esp_err_t ble_remote_pause_background(bool paused) {
     cancel_reconnect();
     return ble_gap_conn_active()?ESP_ERR_TIMEOUT:ESP_OK;
 }
+// Caller holds the remote mutex. Abandons an uncommitted setup attempt, keeps
+// a saved bond, and returns whether the radio must be released after unlocking.
+static bool abandon_setup_locked(bool &waiting) {
+    setup_cancelled.store(true);
+    state.pairing=false;state.scanning=false;pending_scan_seconds=0;
+    ble_gap_disc_cancel();cancel_reconnect();
+    waiting=false;
+    if(!have_saved){
+        if(procedure_pending)finish_procedure(BLE_HS_EAPP);
+        if(ble_gap_conn_active())ble_gap_conn_cancel();
+        const auto handle=connection_handle.load();
+        if(handle!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(handle,BLE_ERR_REM_USER_CONN_TERM);
+        waiting=ble_gap_conn_active()||handle!=BLE_HS_CONN_HANDLE_NONE;
+        if(!waiting)state.connecting=false;
+    }
+    return radio_owned.exchange(false);
+}
 extern "C" esp_err_t ble_remote_cancel_setup(void) {
     if(!mutex)return ESP_OK;
     bool owned=false,waiting=false;
     {
         Guard lock;
-        radio_paused.store(true);setup_cancelled.store(true);
-        state.pairing=false;state.scanning=false;pending_scan_seconds=0;
-        ble_gap_disc_cancel();cancel_reconnect();
-        if(!have_saved){
-            if(procedure_pending)finish_procedure(BLE_HS_EAPP);
-            if(ble_gap_conn_active())ble_gap_conn_cancel();
-            const auto handle=connection_handle.load();
-            if(handle!=BLE_HS_CONN_HANDLE_NONE)ble_gap_terminate(handle,BLE_ERR_REM_USER_CONN_TERM);
-            waiting=ble_gap_conn_active()||handle!=BLE_HS_CONN_HANDLE_NONE;
-            if(!waiting)state.connecting=false;
-        }
-        owned=radio_owned.exchange(false);
+        radio_paused.store(true);
+        owned=abandon_setup_locked(waiting);
+    }
+    if(owned&&radio_done)radio_done(radio_context);
+    return waiting?ESP_ERR_TIMEOUT:ESP_OK;
+}
+extern "C" esp_err_t ble_remote_stop_pairing(void) {
+    if(!mutex)return ESP_ERR_INVALID_STATE;
+    bool owned=false,waiting=false;
+    {
+        Guard lock;
+        if(have_saved||!(state.pairing||state.scanning||state.connecting))return ESP_OK;
+        pairing_stopped.store(true);state.last_error=0;
+        owned=abandon_setup_locked(waiting);
     }
     if(owned&&radio_done)radio_done(radio_context);
     return waiting?ESP_ERR_TIMEOUT:ESP_OK;

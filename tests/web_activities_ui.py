@@ -213,6 +213,9 @@ def main():
                 if fixture['remote_pair_gate']:
                     assert fixture['remote_pair_gate'].wait(20)
                 fixture['remotes'] = {'devices': [], 'bonded': False, 'pairing': True, 'scanning': True}
+            if self.path == '/api/remotes/stop':
+                assert body == {}
+                fixture['remotes'] = {'devices': [], 'bonded': False}
             if self.path == '/api/remotes/unpair':
                 if fixture['remote_unpair_gate']:
                     assert fixture['remote_unpair_gate'].wait(20)
@@ -722,24 +725,27 @@ def main():
                 page.locator('#toggleRemote').click()
                 expect(page.locator('#remoteStatus')).to_contain_text('Looking for a nearby remote')
                 expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
-                expect(page.locator('#toggleRemote')).to_have_text('Pairing…')
+                expect(page.locator('#toggleRemote')).to_have_text('Pair remote')
                 expect(page.locator('#toggleRemote')).to_be_disabled()
                 pair_gate.set()
                 page.wait_for_function('() => !remotePending')
                 assert fixture['remote_calls'] == ['/api/remotes/pair']
-                passed('automatic pairing shows text feedback while the start request is pending, without progress')
+                expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('automatic pairing shows text feedback while the start request is pending, then offers Stop pairing, without progress')
                 fixture['remotes']['devices'] = [{'name': 'Test Remote', 'address': '01:02:03:04:05:06', 'type': 0, 'rssi': -40}]
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remotes button')).to_have_count(1)
                 expect(page.locator('#remoteStatus')).to_contain_text('Looking for a nearby remote')
                 expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
-                expect(page.locator('#toggleRemote')).to_be_disabled()
-                passed('nearby devices are not listed and automatic search prevents duplicate requests')
+                expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
+                expect(page.locator('#toggleRemote')).to_be_enabled()
+                passed('nearby devices are not listed and the search offers Stop pairing instead of another pair request')
                 fixture['remotes']['too_far'] = True
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remoteStatus')).to_have_text('Remote detected. Bring it closer to Amity.')
                 expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
-                expect(page.locator('#toggleRemote')).to_be_disabled()
+                expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
                 assert page.locator('#remotes').get_attribute('aria-busy') is None
                 passed('weak remote displays a bring-closer prompt while search continues, without progress')
                 fixture['remotes']['too_far'] = False
@@ -757,6 +763,18 @@ def main():
                 expect(page.locator('#remotes progress, #remoteProgress')).to_have_count(0)
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 passed('search timeout provides a retry instruction without progress')
+                for searching in ({'scanning': True}, {'connecting': True}):
+                    fixture['remotes'] = {'devices': [], 'bonded': False, 'pairing': True, **searching}
+                    page.evaluate('() => refresh()')
+                    expect(page.locator('#toggleRemote')).to_have_text('Stop pairing')
+                    expect(page.locator('#toggleRemote')).to_be_enabled()
+                    stops = fixture['remote_calls'].count('/api/remotes/stop')
+                    page.locator('#toggleRemote').click()
+                    expect(page.locator('#remoteStatus')).to_have_text('Not paired')
+                    expect(page.locator('#toggleRemote')).to_have_text('Pair remote')
+                    expect(page.locator('#toggleRemote')).to_be_enabled()
+                    assert fixture['remote_calls'].count('/api/remotes/stop') == stops + 1 and fixture['remote_calls'][-1] == '/api/remotes/stop'
+                passed('Stop pairing ends a search or a pending connection and returns to Pair remote')
                 fixture['remotes'].update(bonded=True, connected=True, last_error=0)
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remoteStatus')).to_have_text('Paired')
