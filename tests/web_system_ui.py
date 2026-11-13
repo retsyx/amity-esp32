@@ -23,8 +23,9 @@ def main(argv=None):
     # with HDMI-CEC and hostname controls moved to per-device settings. Firmware
     # upload/progress now covers the whole system and has its own browser tests.
     # The activity editor's save-before-start hint was explicitly removed.
+    # Recommendations are edited in the activity editor; their separate dialog was removed.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = '429791583d8daf53a2e369d2f7a65a7b648faaf7d8c1cacc45e066e9c71e4c07'
+    baseline_sha256 = 'b0cb49b6833b530fbcef640e144e5bab6883e5b6ca37822c919aabf272b32faa'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)

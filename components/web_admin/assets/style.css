@@ -178,14 +178,14 @@ dialog { border: 1px solid var(--border); border-radius: 16px; max-width: calc(1
 dialog::backdrop { background: #162b2466; }
 dialog form { max-width: 800px; }
 dialog h3 { margin-bottom: 20px; font-size: 1.25rem; }
-#activityEditor, #recommendationEditor { width: 380px; max-height: calc(100dvh - 32px); overflow: auto; }
+#activityEditor { width: 380px; max-height: calc(100dvh - 32px); overflow: auto; }
 #activityEditorError { color: var(--danger); }
 #activityEditorError:empty { display: none; }
-#activityEditor .actions, #recommendationEditor .actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); justify-content: flex-end; gap: 8px; }
-#activityEditor .actions button, #recommendationEditor .actions button { padding: 10px 12px; }
+#activityEditor .actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); justify-content: flex-end; gap: 8px; }
+#activityEditor .actions button { padding: 10px 12px; }
 #activityEditor .actions button[type=submit], #cancelActivity { min-width: 5rem; }
 #editorStart { margin-right: auto; }
-#activityEditor input[data-switch-input], #recommendationEditor input[data-switch-input] { width: calc(6ch + 26px); }
+#activityEditor input[data-switch-input] { width: calc(6ch + 26px); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 #advanced input { max-width: 100%; }

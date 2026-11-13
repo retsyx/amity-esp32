@@ -572,11 +572,13 @@ def main():
                 passed('Scan HDMI is at the top and Standby is hidden while inactive')
                 before = page.locator('#activityList article').count()
                 page.locator('[data-recommendation]:visible').first.get_by_role('button', name='Edit', exact=True).click()
-                expect(page.locator('#recommendationEditor')).to_be_visible()
-                assert page.locator('#recommendationFields input[data-device-list]').evaluate_all('(inputs) => inputs.map(input => input.getAttribute("data-device-list"))') == ['displayDeviceNames', 'sourceDeviceNames', 'audioDeviceNames', 'switchDeviceNames']
-                passed('recommendation editor uses the same category-specific device lists')
-                page.locator('#recommendationFields input').first.fill('My player')
-                page.locator('#recommendationForm').get_by_role('button', name='OK', exact=True).click()
+                expect(page.locator('#activityEditor')).to_be_visible()
+                expect(page.locator('#activityEditorTitle')).to_have_text('Edit activity')
+                expect(page.locator('#editorStart')).to_have_text('Save and start')
+                assert page.locator('#activityFields input[data-device-list]').evaluate_all('(inputs) => inputs.map(input => input.getAttribute("data-device-list"))') == ['displayDeviceNames', 'sourceDeviceNames', 'audioDeviceNames', 'switchDeviceNames']
+                passed('recommendations open in the activity editor with the same category-specific device lists')
+                page.locator('#activityFields input').first.fill('My player')
+                page.locator('#activityForm').get_by_role('button', name='OK', exact=True).click()
                 expect(page.locator('[data-recommendation]:visible').first).to_contain_text('My player')
                 expect(save).to_be_hidden()
                 page.locator('[data-recommendation]:visible').first.get_by_role('button', name='Add', exact=True).click()
@@ -647,6 +649,18 @@ def main():
                 expect(page.locator('[data-recommendation]')).to_have_count(1)
                 assert page.locator('.recommendation-name').evaluate('(el) => getComputedStyle(el).fontWeight') == '400'
                 passed('different audio remains recommended and recommendation names are not bold')
+                previous_activity, calls = fixture['status']['current_activity'], len(fixture['activity_calls'])
+                page.locator('[data-recommendation]:visible').first.get_by_role('button', name='Edit', exact=True).click()
+                page.locator('#activityFields input').first.fill('Suggested player')
+                page.locator('#editorStart').click()
+                expect(page.locator('#activityList article')).to_have_count(2)
+                expect(page.locator('#activityList article').last.locator('.activity-badge')).to_be_visible()
+                expect(page.locator('#editorStart')).to_have_text('Repair')
+                expect(page.locator('#recommendations')).to_be_hidden()
+                assert fixture['activity_calls'][calls:] == [1] and fixture['config']['activities'][1]['name'] == 'Suggested player'
+                page.locator('#cancelActivity').click()
+                fixture['status']['current_activity'] = previous_activity
+                passed('Save and start on an edited recommendation adds, saves and starts it')
                 fixture['config'] = saved_config
                 fixture['status']['devices'].append({'name': 'Nintendo Switch', 'bus': 'back', 'type': 4, 'address': 8, 'physical_address': 12288})
                 page.evaluate('() => { dirty=false; }')

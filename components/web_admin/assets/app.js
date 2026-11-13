@@ -13,7 +13,7 @@ window.amityTerms=Object.freeze({device:'Amity device',devices:'Amity devices',a
 function customerText(value){return String(value??'').replace(/\boctopuses\b/gi,window.amityTerms.devices).replace(/\boctopus\b/gi,window.amityTerms.device).replace(/\btentacles\b/gi,window.amityTerms.adapters).replace(/\btentacle\b/gi,window.amityTerms.adapter).replace(/\bconsortiums\b/gi,window.amityTerms.systems).replace(/\bconsortium\b/gi,window.amityTerms.system);}
 
 const $=id=>document.getElementById(id);
-let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,editingRecommendation=null,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false;
+let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false;
 let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
@@ -26,7 +26,7 @@ function message(text,error=false){++messageRevision;networkMessageRevision=null
 function activitySnapshot(activities){return JSON.stringify(activities.map(a=>[a.name??'',a.display??'',a.source??'',a.audio??'',a.switch?.device??'',a.switch?.device?(a.switch.input??0):null,a.activity_id??'']));}
 function updateActivityButtons(){
  const locked=activityLocked();
- document.querySelectorAll('#activities button, #recommendationEditor button').forEach(b=>{
+ document.querySelectorAll('#activities button').forEach(b=>{
   b.disabled=locked||(b.hasAttribute('data-add-recommendation')&&config.activities.length>=16)||(b.id==='addActivity'&&config.activities.length>=16);
  });
  $('saveActivities').disabled=locked||!currentActivityUnchanged(config.activities);
@@ -35,7 +35,7 @@ function updateActivityButtons(){
 }
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
 function reportError(error){if(!firmwareUpdating&&!hostnameReconnect&&!error.silent)message(error.message,true);}
-function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();if($('recommendationEditor').open)$('recommendationEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
+function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
 async function readResponseJSON(response){
  // A fresh body can lose its transport after headers arrive. Keep parsing
  // and application decoding outside that read boundary.
@@ -141,10 +141,10 @@ function renderDeviceNames(){
 }
 function relabelActivityEquipment(resolve){
  const update=activity=>{if(!activity)return;for(const role of ['display','source','audio','switch']){const value=role==='switch'?activity.switch?.device:activity[role];if(!value)continue;const next=resolve(role,value,activity.activity_id);if(role==='switch')activity.switch.device=next;else activity[role]=next;}};
- config.activities.forEach(update);savedActivities.forEach(update);recommendations.forEach(update);update(editingActivity?.activity);update(editingRecommendation?.activity);
+ config.activities.forEach(update);savedActivities.forEach(update);recommendations.forEach(update);update(editingActivity?.activity);
  for(const saved of savedActivityEntries.values())if(savedActivities[saved.index])saved.snapshot=activitySnapshot([savedActivities[saved.index]]);
  persistedActivities=activitySnapshot(savedActivities);
- for(const [id,activity] of [['activityFields',editingActivity?.activity],['recommendationFields',editingRecommendation?.activity]])if(activity)for(const i of $(id).querySelectorAll('[data-device-role]')){const role=i.dataset.deviceRole;i.value=role==='switch'?activity.switch?.device||'':activity[role]||'';}
+ const editing=editingActivity?.activity;if(editing)for(const i of $('activityFields').querySelectorAll('[data-device-role]')){const role=i.dataset.deviceRole;i.value=role==='switch'?editing.switch?.device||'':editing[role]||'';}
  markDirty();
 }
 function rememberSaved(activities=config.activities){
@@ -184,13 +184,15 @@ function validateActivity(a,others){
   if(value&&(!window.amityInterface?.isDeviceChoice(value)&&(new TextEncoder().encode(value).length>63)||/[\x00-\x1f]/.test(value)))throw Error('Activity fields must be at most 63 bytes and contain no control characters.');
  if(a.switch&&(!Number.isInteger(a.switch.input)||a.switch.input<0||a.switch.input>255))throw Error('Switch input must be between 0 and 255.');
 }
-function openActivityEditor(target=null){
+// A recommendation index edits that suggestion in place; Save and start adds it.
+function openActivityEditor(target=null,recommendation=null){
  if(activityLocked())return;
  if(activityActive(target))return message(activeActivityMessage,true);
- if(!target&&config.activities.length>=16)return message('Up to 16 activities are supported.',true);
- editingActivity={target,activity:structuredClone(target||{name:'New activity',display:'',source:'',audio:''})};
- $('activityEditorTitle').textContent=target?'Edit activity':'Add activity';$('activityEditorError').textContent='';
- $('activityForm').querySelector('button[type=submit]').textContent=target?'OK':'Add';
+ const suggested=recommendation!==null;
+ if(!target&&!suggested&&config.activities.length>=16)return message('Up to 16 activities are supported.',true);
+ editingActivity={target,recommendation,activity:structuredClone(target||(suggested?recommendations[recommendation]:{name:'New activity',display:'',source:'',audio:''}))};
+ $('activityEditorTitle').textContent=target||suggested?'Edit activity':'Add activity';$('activityEditorError').textContent='';
+ $('activityForm').querySelector('button[type=submit]').textContent=target||suggested?'OK':'Add';
  $('activityFields').replaceChildren(activityFields(editingActivity.activity,()=>{$('activityEditorError').textContent='';updateActivityEditor();}));
  updateActivityEditor();$('activityEditor').showModal();$('activityFields').querySelector('input').focus();
 }
@@ -208,7 +210,8 @@ function updateActivityEditor(){
  else if($('activityEditorError').textContent===activeActivityMessage)$('activityEditorError').textContent='';
 }
 function applyActivityDraft(){
- const {target,activity}=editingActivity;
+ const {target,activity,recommendation}=editingActivity;
+ if(recommendation!==null){if(!activity.name)throw Error('Activity name is required.');recommendations[recommendation]=structuredClone(activity);renderRecommendations();return null;}
  if(activityActive(target))throw Error(activeActivityMessage);
  validateActivity(activity,config.activities.filter(a=>a!==target));
  if(target){Object.keys(target).forEach(key=>delete target[key]);Object.assign(target,structuredClone(activity));}
@@ -267,7 +270,10 @@ $('activityEditor').addEventListener('cancel',e=>{if(activityLocked())e.preventD
 $('activityEditor').addEventListener('close',()=>{editingActivity=null;});
 $('editorStart').addEventListener('click',modalAction(async()=>{
  let activity=editingActivity.target;
- if(!matchesSaved(editingActivity.activity,activity)){await persistActivities(editingActivity);activity=editingActivity.target;}
+ if(!matchesSaved(editingActivity.activity,activity)){
+  const editor=editingActivity;await persistActivities(editor);activity=editor.target;
+  if(editor.recommendation!==null){recommendations[editor.recommendation]=structuredClone(editor.activity);editor.recommendation=null;renderRecommendations();}
+ }
  await startActivity(activity,editingActivity.activity);
 }));
 function moveActivity(from,to){
@@ -337,7 +343,7 @@ function addRecommendation(a){
 function renderRecommendations(){
  $('recommendationList').replaceChildren();
  recommendations.forEach((a,index)=>{if(config.activities.some(existing=>is_equivalent(a,existing)))return;const row=document.createElement('div');row.className='recommendation actions';row.dataset.recommendation=index;const name=document.createElement('span');name.className='recommendation-name';name.textContent=a.name;
- const edit=button('Edit',()=>{editingRecommendation={index,activity:structuredClone(a)};$('recommendationFields').replaceChildren(activityFields(editingRecommendation.activity));$('recommendationEditor').showModal();});
+ const edit=button('Edit',()=>openActivityEditor(null,index));
  const add=button('Add',()=>addRecommendation(a));add.dataset.addRecommendation='';add.disabled=config.activities.length>=16;row.append(name,edit,add);$('recommendationList').append(row);});$('recommendations').hidden=!$('recommendationList').childElementCount;updateActivityButtons();
 }
 function recommendActivities(devices){
@@ -346,8 +352,6 @@ function recommendActivities(devices){
  if(autoRecommend&&recommendations.length){autoRecommend=false;for(const a of recommendations.slice(0,16))addRecommendation(a);}
  renderRecommendations();
 }
-$('recommendationForm').addEventListener('submit',run(async e=>{e.preventDefault();const {index,activity}=editingRecommendation;if(!activity.name)throw Error('Activity name is required.');recommendations[index]=activity;$('recommendationEditor').close();renderRecommendations();}));
-$('cancelRecommendation').addEventListener('click',()=>$('recommendationEditor').close());
 function deviceIcon(device){
  const sourceAddresses=[1,2,3,4,6,7,8,9,10,11];
  const role=device.type===0||device.address===0?'TV':device.type===5||device.address===5?'Audio':device.type===6?'HDMI switch':[1,3,4].includes(device.type)||sourceAddresses.includes(device.address)?'Source':'Device';
