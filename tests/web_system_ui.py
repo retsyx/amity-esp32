@@ -671,10 +671,13 @@ def main(argv=None):
                 retained_row.get_by_role('button', name='Replace', exact=True).click()
                 replacement_dialog = page.locator('dialog:visible')
                 expect(replacement_dialog).not_to_contain_text('The remote stays on the original Amity.')
-                replacement_dialog.get_by_label('Replacement Amity', exact=True).select_option(replacement)
-                expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True)).to_have_count(1)
-                expect(replacement_dialog.get_by_label('Replacement connection for Stored TV', exact=True).locator('option')).to_have_count(2)
-                expect(replacement_dialog.get_by_label('Previous adapter 1 · Display', exact=True)).to_have_count(1)
+                expect(replacement_dialog.get_by_role('combobox', name='Added Amity', exact=True)).to_have_value(replacement)
+                replacement_dialog.get_by_role('button', name='Replace', exact=True).click()
+                expect(replacement_dialog).to_contain_text('Replacement: amity-replacement')
+                equipment_rows = replacement_dialog.locator('.equipment-row')
+                expect(equipment_rows).to_have_count(1)
+                for shown in ('Stored TV', 'Adapter 1 · Display', 'Found'):
+                    expect(equipment_rows.first).to_contain_text(shown)
                 replacement_dialog.get_by_role('button', name='Cancel', exact=True).click()
                 passed('management loads canonical saved owners and components while the activity editor keeps its projection')
             finally:

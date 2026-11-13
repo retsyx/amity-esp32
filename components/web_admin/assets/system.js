@@ -2,7 +2,7 @@
 // Preserve the original interface. This adapter carries scoped identities and
 // revisions privately; only friendly attachment locations enter the controls.
 window.amityInterface=(()=>{
- let enabled=false,choices=[],componentOwners=[],componentDialogUpdate=null,componentPending=false,configuration=null,system=null,openDialog=null,originalSelections=new Map();
+ let enabled=false,choices=[],componentOwners=[],componentDialogUpdate=null,replaceUpdate=null,componentPending=false,configuration=null,system=null,openDialog=null,originalSelections=new Map();
  const roles=['display','source','audio','switch'];
  const identifier=()=>crypto.randomUUID().replaceAll('-','');
  const baseAttachment=c=>[c.title,c.location].filter(Boolean).join(' · ');
@@ -107,7 +107,7 @@ window.amityInterface=(()=>{
   }
   return {path,data};
  }
- function close(){enabled=false;configuration=null;system=null;choices=[];componentOwners=[];originalSelections.clear();openDialog?.close();openDialog?.remove();openDialog=null;componentDialogUpdate=null;componentPending=false;}
+ function close(){enabled=false;configuration=null;system=null;choices=[];componentOwners=[];originalSelections.clear();openDialog?.close();openDialog?.remove();openDialog=null;componentDialogUpdate=null;replaceUpdate=null;componentPending=false;}
  function dialog(title){
   openDialog?.close();openDialog?.remove();const d=document.createElement('dialog');openDialog=d;const heading=document.createElement('h3');heading.textContent=title;d.append(heading);document.body.append(d);d.showModal();d.addEventListener('close',()=>{if(openDialog===d)openDialog=null;d.remove();});return d;
  }
@@ -197,6 +197,7 @@ window.amityInterface=(()=>{
    actions.append(Object.assign(button('Remove',()=>remove(board)),{className:'primary danger'}),button('Replace',()=>replace(board)),button('Settings',()=>deviceSettings(board)));
    root.append(row);
   }
+  replaceUpdate?.();
  }
  function physicalAddress(value){
   value=value.trim().toUpperCase();if(!value)return '1.0.0.0';
@@ -353,12 +354,15 @@ window.amityInterface=(()=>{
    status.textContent='';remove.disabled=false;
   }catch(error){if(d.isConnected)status.textContent=customerText(error.message);}
  }
- function add(){
+ // Replace opens Add with a note on where to connect the new Amity, and
+ // continues with the added Amity once it is confirmed.
+ function add(options={}){
   const d=dialog('Add Amity'),scanId=identifier(),name=field('Name'),code=field('Matter setup code'),status=text('Searching for Amity devices…');
   const selection=document.createElement('label'),select=document.createElement('select'),found=text('');selection.textContent='Amity device';selection.append(select);selection.hidden=true;
   name.input.required=true;name.input.maxLength=32;name.input.pattern='[A-Za-z0-9]((?:[A-Za-z0-9]|-){0,30}[A-Za-z0-9])?';name.input.title='Use 1–32 letters, digits or hyphens, beginning and ending with a letter or digit.';name.input.autocomplete='off';name.input.spellcheck=false;
   code.input.type='password';code.input.maxLength=256;code.input.autocomplete='off';code.input.spellcheck=false;code.input.placeholder='Printed Matter setup code';code.input.title='Enter the printed Matter setup code or the text from its Matter QR code.';
   name.label.hidden=code.label.hidden=true;found.hidden=true;
+  if(options.note)d.append(text(options.note));
   d.append(text('Hold the Reset button on the new Amity for 3 seconds. Keep it powered on and nearby.'),status,found,selection,name.label,code.label);
   let closed=false,timer=null,polling=false,candidates=[],selected='',requiresCode=false,adding=false,admitted=false,finished=false,ended=false,operationId=null,phase='scanning';
   const live=()=>!closed&&openDialog===d&&d.isConnected;
@@ -394,7 +398,7 @@ window.amityInterface=(()=>{
      const operation=await request('operations/'+operationId);if(!live())return;
      if(['failed','rejected','cancelled','unknown'].includes(operation.stage)){ended=true;adding=false;status.textContent=customerText(operation.message||'The result could not be confirmed. Check the Amity devices list before trying again.');controls();return;}
      if(operation.stage==='complete'){
-      finished=true;ended=true;code.input.value='';await refresh();if(live()){d.close();message('Amity added.');}return;
+      finished=true;ended=true;code.input.value='';await refresh();if(live()){d.close();message('Amity added.');if(options.added&&state.candidate_id)options.added(state.candidate_id);}return;
      }
     }
     if(state.scan_id!==scanId){ended=true;status.textContent='The search changed. Check the Amity devices list before trying again.';controls();return;}
@@ -427,32 +431,144 @@ window.amityInterface=(()=>{
   actions.className='actions';actions.append(closeButton,start);d.className='add-amity';d.append(actions);controls();
   void (async()=>{try{await request('membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
  }
+ const sideName=side=>side==='back'?'Source':'Display';
+ const portName=port=>`Adapter ${port.tentacle_id+1} · ${sideName(port.side)}`;
+ const samePort=(a,b)=>a.tentacle_id===b.tentacle_id&&a.side===b.side;
+ const portOnly=n=>({consortium_id:n.consortium_id,octopus_id:n.octopus_id,tentacle_id:n.tentacle_id,side:n.side});
+ const listNames=names=>names.length<2?names.join(''):names.slice(0,-1).join(', ')+' and '+names.at(-1);
+ const node=(tag,className,value)=>{const e=document.createElement(tag);if(className)e.className=className;if(value!==undefined)e.textContent=value;return e;};
+ // Replace asks what takes over the failed Amity's equipment: an Amity that's
+ // already added, or a new one. With nothing else added it opens Add directly.
  function replace(board){
-  const snapshot=structuredClone(configuration),current=structuredClone(system),previousPeer=current.membership?.peers?.find(peer=>peer.octopus_id===board.octopus_id);
-  const d=dialog('Replace '+boardName(board)),select=document.createElement('select'),mapping=document.createElement('div'),preview=document.createElement('div');select.setAttribute('aria-label','Replacement Amity');
-  const blank=document.createElement('option');blank.textContent='Choose an added Amity';blank.value='';select.append(blank);
-  for(const peer of current.membership?.peers||[])if(peer.enrolled&&peer.ready&&peer.octopus_id!==board.octopus_id){const target=snapshot.octopuses.find(b=>b.octopus_id===peer.octopus_id),option=document.createElement('option');option.value=peer.octopus_id;option.textContent=boardName(target,current);select.append(option);}
-  d.append(text('Add the replacement Amity first. Disconnect the old device from HDMI, then confirm its cable and equipment mappings.'),select,mapping,preview);
-  const isolated=field('Old Amity is disconnected or electrically isolated');isolated.input.type='checkbox';d.append(isolated.label);
-  const portOnly=n=>({consortium_id:n.consortium_id,octopus_id:n.octopus_id,tentacle_id:n.tentacle_id,side:n.side}),key=p=>JSON.stringify(portOnly(p)),ports=new Map();
-  for(const component of snapshot.components||[])for(const n of component.qualified_names||[])if(n.octopus_id===board.octopus_id)ports.set(key(n),portOnly(n));
-  let portFields=[],equipmentFields=[],approved=null;
-  const addSelect=(title,items)=>{const label=document.createElement('label');label.textContent=title;const control=document.createElement('select');control.setAttribute('aria-label',title);const empty=document.createElement('option');empty.value='';empty.textContent='Choose a connection';control.append(empty);for(const [value,title] of items){const option=document.createElement('option');option.value=value;option.textContent=title;control.append(option);}label.append(control);mapping.append(label);return control;};
-  const apply=button('Apply confirmed replacement',async()=>{if(!approved)throw Error('Preview the mappings first.');await completed('replacements/apply',approved);d.close();await refresh();if(await refreshActivityConfiguration())message('Replacement saved. Choose an activity when its equipment is ready.');});apply.disabled=true;
-  select.onchange=()=>{mapping.replaceChildren();preview.replaceChildren();approved=null;apply.disabled=true;portFields=[];equipmentFields=[];if(!select.value)return;
-   const peer=current.membership.peers.find(p=>p.octopus_id===select.value),connectors=[];
-   for(let i=0;i<(peer?.supported_tentacles||1);i++)if((peer?.configured_tentacles_mask??1)&(1<<i))for(const side of ['front','back'])connectors.push([i+':'+side,`Adapter ${i+1} · ${side==='back'?'Source':'Display'}`]);
-   for(const old of ports.values()){const control=addSelect(`Previous adapter ${old.tentacle_id+1} · ${old.side==='back'?'Source':'Display'}`,connectors);portFields.push({old,control});}
-   const observed=(current.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===select.value);
-   for(const component of snapshot.components||[])for(const old of component.qualified_names||[])if(old.octopus_id===board.octopus_id){const control=addSelect('Replacement connection for '+(component.label||component.generated_label||old.osd_name),observed.map(o=>[JSON.stringify(o.qualified_name),`${o.title} · Adapter ${o.qualified_name.tentacle_id+1} · ${o.qualified_name.side==='back'?'Source':'Display'}`])),confirmed=field('Same physical equipment');confirmed.input.type='checkbox';mapping.append(confirmed.label);equipmentFields.push({component_id:component.component_id,old,control,confirmed:confirmed.input});}
-  };
-  d.append(button('Preview replacement',async()=>{
-   if(!isolated.input.checked||!select.value||portFields.some(f=>!f.control.value)||equipmentFields.some(f=>!f.control.value||!f.confirmed.checked))throw Error('Confirm old-device isolation and every cable and equipment mapping.');
-   const proposal={expected_config_revision:snapshot.config_revision,expected_presentation_revision:snapshot.presentation_revision,expected_membership_revision:current.membership?.membership_revision,expected_target_boot_id:previousPeer?.boot_id||null,previous_octopus_id:board.octopus_id,replacement_octopus_id:select.value,old_hardware_isolated:true,
-    ports:portFields.map(f=>{const [id,side]=f.control.value.split(':');return {previous:f.old,replacement:{...f.old,octopus_id:select.value,tentacle_id:Number(id),side}};}),equipment:equipmentFields.map(f=>({component_id:f.component_id,previous:f.old,replacement:JSON.parse(f.control.value),same_equipment_confirmed:true}))};
-   const result=await mutation('replacements/preview',proposal);approved=proposal;preview.replaceChildren(text('Review the confirmed mappings. Equipment, activity and home-selector identities stay stable.'));for(const task of result.blockers||[])preview.append(text(customerText(typeof task==='string'?task:JSON.stringify(task))));apply.disabled=false;
-  }),apply,button('Cancel',()=>d.close()));
+  const candidates=(system?.membership?.peers||[]).filter(peer=>peer.enrolled&&peer.ready&&peer.octopus_id!==board.octopus_id);
+  if(!candidates.length)return addReplacement(board);
+  const old=boardName(board),d=dialog('Replace '+old),select=node('select'),existing=node('input'),fresh=node('input'),label=node('label'),about=node('span');d.className='replace-amity';
+  select.setAttribute('aria-label','Added Amity');
+  for(const peer of candidates){const option=node('option',null,boardName(peer));option.value=peer.octopus_id;select.append(option);}
+  select.value=candidates[0].octopus_id;
+  for(const radio of [existing,fresh]){radio.type='radio';radio.name='replace-with';radio.addEventListener('change',update);}
+  existing.checked=true;existing.setAttribute('aria-label','An Amity that’s already added');fresh.setAttribute('aria-label','A new Amity');
+  const inline=node('div','choice-inline'),first=node('div'),second=node('div'),choices=node('div','replace-choices');
+  inline.append(existing,select);first.append(inline);
+  about.append(node('strong',null,'A new Amity'),node('small',null,`Unplug ${old} from HDMI and connect the new Amity in its place, using the same HDMI cables. Then add it.`));
+  label.append(fresh,about);second.append(label);choices.append(first,second);
+  for(const type of ['focus','change'])select.addEventListener(type,()=>{existing.checked=true;fresh.checked=false;update();});
+  const go=button('Replace',()=>existing.checked?review(board,select.value):addReplacement(board)),cancel=button('Cancel',()=>d.close()),actions=node('div','actions');
+  go.className='primary';cancel.className='quiet';actions.append(cancel,go);
+  function update(){first.className='replace-choice'+(existing.checked?' selected':'');second.className='replace-choice'+(fresh.checked?' selected':'');go.textContent=existing.checked?'Replace':'Add';}
+  d.append(text(`Replace ${old} with:`),choices,actions);update();
  }
- $('addAmity').addEventListener('click',run(add));
+ function addReplacement(board){
+  const old=boardName(board);
+  add({note:`Unplug ${old} from HDMI and connect the new Amity in its place, using the same HDMI cables.`,added:id=>review(board,id)});
+ }
+ // Check where the replacement sees the failed Amity's equipment, then replace
+ // it. Equipment is matched by name; the HDMI connection mappings the firmware
+ // cross-checks are derived from the equipment rather than asked for.
+ function review(board,replacementId){
+  const old=boardName(board),d=dialog('Replace '+old),named=node('p','replacement'),strong=node('strong'),title=node('div','equipment-title'),list=node('div','equipment-list'),notes=node('div'),summary=node('div','summary'),status=node('p'),check=node('label','check'),unplugged=node('input');
+  d.className='replace-amity';status.setAttribute('role','alert');list.setAttribute('role','table');list.setAttribute('aria-label','Equipment');
+  named.append(node('span',null,'Replacement: '),strong);
+  unplugged.type='checkbox';unplugged.addEventListener('change',()=>controls());check.append(unplugged,node('span',null,`${old} is unplugged from HDMI`));
+  const overrides=new Map();let shown=null,busy=false,scanning=false,selects=[];
+  const scan=button('Scan HDMI',async()=>{
+   if(scanning)return;scanning=true;scan.textContent='Scanning…';controls();
+   try{
+    const before=await request('status');await request('discover',{});
+    for(let n=0;n<120&&d.isConnected;n++){await new Promise(resolve=>setTimeout(resolve,500));const now=await request('status');if(now.discovery_generation!==before.discovery_generation&&!now.discovering)break;}
+    await refresh();
+   }catch(error){if(d.isConnected)status.textContent=customerText(error.message);}
+   finally{scanning=false;scan.textContent='Scan HDMI';controls();}
+  });
+  title.append(node('h4',null,'Equipment'),scan);
+  const back=button('Back',()=>replace(board)),cancel=button('Cancel',()=>d.close()),go=button('Replace',apply),actions=node('div','actions');
+  back.className='back';cancel.className='quiet';go.className='primary';actions.append(back,cancel,go);
+  d.append(named,title,list,notes,check,summary,status,actions);
+  function plan(){
+   const snapshot=configuration,current=system;if(!snapshot||!current)return null;
+   const peer=(current.membership?.peers||[]).find(p=>p.octopus_id===replacementId),name=boardName({octopus_id:replacementId},current);
+   const connectors=[];for(let t=0;t<(peer?.supported_tentacles||1);t++)if((peer?.configured_tentacles_mask??1)&(1<<t))for(const side of ['front','back'])connectors.push({tentacle_id:t,side});
+   const available=port=>connectors.some(c=>samePort(c,port));
+   const seen=(current.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===replacementId).map(o=>o.qualified_name);
+   const rows=[];
+   for(const component of snapshot.components||[])for(const previous of component.qualified_names||[])if(previous.octopus_id===board.octopus_id){
+    const matches=seen.filter(n=>n.osd_name===previous.osd_name);
+    rows.push({key:component.component_id+'|'+JSON.stringify(previous),component_id:component.component_id,name:component.label||component.generated_label||previous.osd_name,previous,found:matches.find(n=>samePort(n,previous))||matches[0]||null});
+   }
+   // Unseen equipment moves with seen equipment from its old connection, or keeps that connection.
+   for(const row of rows){
+    if(row.found){row.port=row.found;row.status=samePort(row.found,row.previous)?'found':'moved';continue;}
+    row.status='missing';row.mate=rows.find(other=>other.found&&samePort(other.previous,row.previous))||null;
+    row.reason=row.mate?'mate':'same';row.port=row.mate?.found||row.previous;
+    if(!available(row.port)){row.reason='choose';row.port=connectors.find(c=>c.side===row.previous.side)||connectors[0];}
+    const chosen=overrides.get(row.key);if(chosen&&available(chosen)){row.reason='chosen';row.port=chosen;}
+   }
+   const ports=[],targets=new Set(),groups=new Map();
+   for(const row of rows){const key=JSON.stringify(portOnly(row.previous));if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
+   for(const group of groups.values()){
+    const target=group[0].port,key=target.tentacle_id+':'+target.side;
+    if(group.some(row=>!samePort(row.port,target))||targets.has(key))continue;
+    targets.add(key);ports.push({previous:portOnly(group[0].previous),replacement:{...portOnly(group[0].previous),octopus_id:replacementId,tentacle_id:target.tentacle_id,side:target.side}});
+   }
+   const equipment=new Set(rows.map(row=>row.component_id));
+   const activities=(snapshot.activities||[]).filter(activity=>['display','source','audio','switch_device'].some(role=>equipment.has(activity[role]))).map(activity=>activity.label||activity.generated_label||'Unnamed activity');
+   const ready=!!peer?.enrolled&&!!peer?.ready;
+   const proposal={expected_config_revision:snapshot.config_revision,expected_presentation_revision:snapshot.presentation_revision,expected_membership_revision:current.membership?.membership_revision,
+    expected_target_boot_id:(current.membership?.peers||[]).find(p=>p.octopus_id===board.octopus_id)?.boot_id||null,previous_octopus_id:board.octopus_id,replacement_octopus_id:replacementId,old_hardware_isolated:true,ports,
+    equipment:rows.map(row=>({component_id:row.component_id,previous:row.previous,replacement:row.found||{...row.previous,octopus_id:replacementId,tentacle_id:row.port.tentacle_id,side:row.port.side},same_equipment_confirmed:true}))};
+   const signature=JSON.stringify([ready,name,connectors,activities,rows.map(row=>[row.key,row.name,row.status,row.port.tentacle_id,row.port.side,row.reason]),ports.length]);
+   return {ready,name,connectors,rows,ports,activities,proposal,signature};
+  }
+  function show(next){
+   if(!next||next.signature===shown?.signature){shown=next||shown;controls();return;}
+   shown=next;strong.textContent=next.name;list.replaceChildren();notes.replaceChildren();summary.replaceChildren();selects=[];
+   for(const row of next.rows){
+    const line=node('div','equipment-row'),where=node('span','equipment-connection'),state=node('span','equipment-status');
+    line.setAttribute('role','row');where.setAttribute('role','cell');state.setAttribute('role','cell');
+    const name=node('span','equipment-name',row.name);name.setAttribute('role','rowheader');
+    if(row.found){where.append(node('span',null,portName(row.found)));if(row.status==='moved')where.append(node('small',null,'was '+portName(row.previous)));}
+    else{
+     const select=node('select');select.setAttribute('aria-label',row.name+' connection');
+     for(const port of next.connectors){const option=node('option',null,portName(port));option.value=port.tentacle_id+':'+port.side;select.append(option);}
+     select.value=row.port.tentacle_id+':'+row.port.side;
+     select.addEventListener('change',()=>{const [t,side]=select.value.split(':');overrides.set(row.key,{tentacle_id:Number(t),side});show(plan());});
+     where.append(select);selects.push(select);
+    }
+    state.append(node('span',row.status,{found:'Found',moved:'Moved',missing:'Not found'}[row.status]));
+    line.append(name,where,state);list.append(line);
+   }
+   const moved=next.rows.filter(row=>row.status==='moved').map(row=>row.name);
+   if(!next.ready)notes.append(node('p','warning',`${next.name} is not connected. Check that it is powered on and wait for it to reconnect.`));
+   if(!next.rows.length)notes.append(node('p','warning',`${old} has no saved equipment to move. Use Remove instead.`));
+   if(moved.length)notes.append(node('p','warning',`${listNames(moved)} ${moved.length>1?'are on different connections than they were':'is on a different connection than it was'} on ${old}. If that’s a mistake, fix the HDMI cables and press Scan HDMI.`));
+   if(next.rows.length&&!next.ports.length)notes.append(node('p','warning',`Equipment that shared a connection on ${old} is on different connections now. Check the HDMI cables, then press Scan HDMI.`));
+   for(const row of next.rows.filter(row=>row.status==='missing'&&row.reason!=='chosen'))notes.append(node('p','note',row.reason==='mate'?`${row.name} wasn’t found. It moves with ${row.mate.name}, which shared its connection.`:row.reason==='same'?`${row.name} wasn’t found. It keeps the connection it had on ${old}. Change it if it’s connected somewhere else.`:`${row.name} wasn’t found. Choose its connection on ${next.name}.`));
+   if(next.activities.length){const items=node('ul');for(const activity of next.activities)items.append(node('li',null,activity));summary.append(node('p',null,`These activities will use ${next.name}:`),items);}
+   summary.append(node('p',null,`${old} will be removed from this system.`));
+   controls();
+  }
+  function controls(){
+   const ready=!!shown?.ready&&!!shown.rows.length&&!!shown.ports.length;
+   go.disabled=busy||!ready||!unplugged.checked;scan.disabled=busy||scanning;back.disabled=busy;unplugged.disabled=busy;
+   for(const select of selects)select.disabled=busy;
+  }
+  async function apply(){
+   const next=plan();
+   if(!next||next.signature!==shown?.signature){show(next);status.textContent='The equipment changed while this dialog was open. Check it, then press Replace again.';return;}
+   busy=true;status.textContent='';go.textContent='Replacing…';controls();
+   try{
+    await completed('replacements/apply',next.proposal);
+    d.close();await refresh();
+    if(await refreshActivityConfiguration())message(`${next.name} replaced ${old}.`);
+   }catch(error){
+    if(d.isConnected)status.textContent=customerText(error.message);
+    await refresh().catch(()=>{});
+   }finally{busy=false;go.textContent='Replace';if(d.isConnected)controls();}
+  }
+  const update=()=>{if(d.isConnected)show(plan());};
+  replaceUpdate=update;d.addEventListener('close',()=>{if(replaceUpdate===update)replaceUpdate=null;});
+  update();
+ }
+ $('addAmity').addEventListener('click',run(()=>add()));
  return {get enabled(){return enabled;},get componentPending(){return componentPending;},route,close,refresh,open:refresh,addComponent,deviceNames:role=>choices.filter(c=>(c.roles||[]).includes(role)).map(c=>attachment(c)),isDeviceChoice:value=>choices.some(c=>attachment(c)===value)};
 })();
