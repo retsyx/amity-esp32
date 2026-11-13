@@ -24,8 +24,9 @@ def main(argv=None):
     # upload/progress now covers the whole system and has its own browser tests.
     # The activity editor's save-before-start hint was explicitly removed.
     # Recommendations are edited in the activity editor; their separate dialog was removed.
+    # Outlined destructive buttons share the filled danger style.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = 'b0cb49b6833b530fbcef640e144e5bab6883e5b6ca37822c919aabf272b32faa'
+    baseline_sha256 = '3a69235ca0bc87d8a6677897022e4acfc5b3f1ec5cabb8bdfdc5bd8b42f25f5f'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
@@ -328,7 +329,7 @@ def main(argv=None):
             expect(rows.nth(1).get_by_role('button', name='Remove', exact=True)).to_be_visible()
             for width in (320, 430, 1280):
                 page.set_viewport_size(dict(width=width, height=1000))
-                for index, names in ((0, ('Settings',)), (1, ('Settings', 'Remove', 'Replace'))):
+                for index, names in ((0, ('Settings',)), (1, ('Remove', 'Replace', 'Settings'))):
                     row = rows.nth(index)
                     # Read one DOM snapshot so the normal polling refresh
                     # cannot replace the card between rectangle reads.

@@ -137,7 +137,7 @@ def main():
             def open_settings(index=1):
                 manage();page.locator('#managedAmityList > article').nth(index).get_by_role('button',name='Settings',exact=True).click()
                 d=page.locator('dialog.adapter-settings:visible');expect(d.get_by_role('table')).to_have_count(1);expect(d.locator('tbody tr')).to_have_count(1 if index==0 else 4);return d
-            def close(d):d.get_by_role('button',name='Close',exact=True).click();expect(d).to_have_count(0)
+            def close(d):d.get_by_role('button',name='Cancel',exact=True).click();expect(d).to_have_count(0)
             def input_for(d,slot):return d.get_by_role('textbox',name=f'Default address for adapter {slot+1}',exact=True)
             def settings_posts():return [(path,body) for path,body in fixture['calls'] if path.endswith('/settings')]
             page.goto(f'http://127.0.0.1:{server.server_port}/')

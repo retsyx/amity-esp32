@@ -394,6 +394,7 @@ function renderRemotes(r){
  $('remoteStatus').textContent=unpairing?'Unpairing...':paired?'Paired':r.connecting?'Pairing with remote…':r.pairing&&r.too_far?'Remote detected. Bring it closer to Amity.':r.pairing||r.scanning||remotePending?'Looking for a nearby remote… Bring it close and put it in pairing mode.':r.last_error===13?'No nearby remote found. Bring it closer and try again.':r.last_error?'Pairing failed. Reset the remote’s pairing and try again.':'Not paired';renderDiagnostics();
  $('toggleRemote').setAttribute('aria-busy',String(busy));
  $('toggleRemote').textContent=unpairing?'Unpairing...':busy?(paired?'Unpair remote':'Pairing…'):paired?'Unpair remote':'Pair remote';$('toggleRemote').disabled=busy;
+ $('toggleRemote').className=paired||unpairing?'primary danger':'';
 }
 // Apple Keychain is hidden; firmware handles cleanup after the last Home is removed.
 function matterConnections(fabrics){
@@ -427,7 +428,7 @@ function renderMatter(m){
   background.setAttribute('x','-4');background.setAttribute('y','-4');background.setAttribute('width',rows.length+8);background.setAttribute('height',rows.length+8);background.setAttribute('fill','white');
   let pixels='';rows.forEach((row,y)=>{for(let x=0;x<row.length;x++)if(row[x]==='1')pixels+=`M${x},${y}h1v1h-1z`;});path.setAttribute('d',pixels);path.setAttribute('fill','black');svg.append(background,path);$('matterQr').append(svg);
  }
- $('fabricList').replaceChildren();for(const connection of connections){const remove=button(`Remove ${connection.name}`,()=>removeMatterConnection(connection));remove.disabled=matterRemovalPending;$('fabricList').append(remove);}
+ $('fabricList').replaceChildren();for(const connection of connections){const remove=button(`Remove ${connection.name}`,()=>removeMatterConnection(connection));remove.className='primary danger';remove.disabled=matterRemovalPending;$('fabricList').append(remove);}
 }
 function renderHomekit(s){
  homekitState=s;

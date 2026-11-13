@@ -191,9 +191,9 @@ window.amityInterface=(()=>{
    if(board.octopus_id===original)continue;
    const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article'),actions=deviceHeader(row,boardName(board));
    const target=update?.targets?.find(target=>target.octopus_id===board.octopus_id)||update?.automatic_failures?.find(target=>target.octopus_id===board.octopus_id);
-   row.append(text(peer?.ready?'Connected':peer?.management_ready?(target?firmwareTargetText(target,update.image_bytes):'Updating firmware automatically'):peer?.enrolled?'Not responding':'Not added'));
-   actions.append(button('Settings',()=>deviceSettings(board)));
-   actions.append(button('Remove',()=>remove(board)),button('Replace',()=>replace(board)));
+   const label=text(peer?.ready?'Connected':peer?.management_ready?(target?firmwareTargetText(target,update.image_bytes):'Updating firmware automatically'):peer?.enrolled?'Not responding':'Not added');
+   if(label.textContent==='Not responding')label.className='not-responding';row.append(label);
+   actions.append(Object.assign(button('Remove',()=>remove(board)),{className:'primary danger'}),button('Replace',()=>replace(board)),button('Settings',()=>deviceSettings(board)));
    root.append(row);
   }
  }
@@ -203,11 +203,12 @@ window.amityInterface=(()=>{
   let zero=false;for(const digit of value.split('.')){if(digit==='0')zero=true;else if(zero)return null;}return value;
  }
  async function deviceSettings(board){
-  const name=boardName(board),d=dialog(name+' settings'),status=text('Reading settings…'),rows=document.createElement('div'),hostname=field('Hostname',name==='Name unavailable'?'':name);
+  const name=boardName(board),d=dialog(name+' settings'),status=text('Reading settings…'),addressesTitle=document.createElement('div'),rows=document.createElement('div'),hostname=field('Hostname',name==='Name unavailable'?'':name);
   d.classList.add('adapter-settings');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  addressesTitle.id='adapterAddressesTitle';addressesTitle.className='adapter-addresses-title';addressesTitle.textContent='Adapter physical addresses';
   hostname.input.maxLength=32;hostname.input.required=true;hostname.input.pattern='[A-Za-z0-9]([A-Za-z0-9-]{0,30}[A-Za-z0-9])?';hostname.input.autocomplete='off';hostname.input.spellcheck=false;hostname.input.dataset.hostname='';hostname.input.disabled=true;
   hostname.input.addEventListener('input',()=>hostname.input.setCustomValidity(''));
-  d.append(hostname.label,text('Leave adapter addresses blank to use 1.0.0.0.'),rows,status);
+  d.append(hostname.label,addressesTitle,rows,text('Leave adapter addresses blank to use 1.0.0.0.'),status);
   let snapshot=null,inputs=[],busy=false,loading=false,needsReview=false;
   const path='devices/'+board.octopus_id+'/settings';
   const save=button('Save',async()=>{
@@ -266,8 +267,8 @@ window.amityInterface=(()=>{
    }
    finally{busy=false;reload.disabled=false;hostname.input.disabled=!snapshot||hostname.input.dataset.editable!=='true';save.disabled=needsReview||hostname.input.disabled;inputs.forEach(({input,editable})=>input.disabled=!editable);}
   });
-  const reload=button('Refresh',()=>load()),cancel=button('Close',()=>d.close());save.disabled=true;
-  d.append(save,reload,cancel);
+  const reload=button('Refresh',()=>load()),cancel=button('Cancel',()=>d.close()),actions=document.createElement('div');save.disabled=true;save.className='primary';cancel.className='quiet';
+  actions.className='actions';actions.append(reload,cancel,save);d.append(actions);
   d.addEventListener('click',event=>{
    if(event.target!==d)return;
    const bounds=d.getBoundingClientRect();
@@ -289,7 +290,7 @@ window.amityInterface=(()=>{
     status.textContent=fresh?'':result.status==='unsupported'?'Update this Amity to edit its settings.':result.status==='offline'?'This Amity is offline. Saved information is read only.':'Current settings are unavailable. Refresh after reconnecting the Amity.';
     if(snapshot?.adapters?.length){
      const table=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody'),headRow=document.createElement('tr');
-     table.setAttribute('aria-label','Adapter addresses');
+     table.setAttribute('aria-labelledby','adapterAddressesTitle');
      for(const title of ['Adapter','Default','Detected Address','Selected Address']){const cell=document.createElement('th');cell.scope='col';cell.textContent=title;headRow.append(cell);}
      head.append(headRow);table.append(head,body);rows.append(table);
      for(const row of snapshot.adapters){
@@ -331,7 +332,8 @@ window.amityInterface=(()=>{
     // and boot identity. Never replay the original destructive request.
     remove.hidden=true;
    }
-  });remove.disabled=true;d.append(remove,close);
+  });remove.disabled=true;remove.className='primary danger';close.className='primary';
+  const actions=document.createElement('div');actions.className='actions';actions.append(remove,close);d.className='remove-amity';d.append(actions);
   try{
    const [snapshot,current]=await Promise.all([request('backup'),request('system')]);
    if(!d.isConnected||openDialog!==d)return;
@@ -420,7 +422,8 @@ window.amityInterface=(()=>{
    }catch(error){secret='';if(live()){adding=false;ended=!error.status||error.status>=500;status.textContent=ended?'The result could not be confirmed. Check the Amity devices list before trying again.':customerText(error.message);controls();}throw error;}
    finally{secret='';}
   });
-  const closeButton=button('Cancel',()=>d.close());d.append(start,closeButton);controls();
+  const closeButton=button('Cancel',()=>d.close()),actions=document.createElement('div');start.className='primary';closeButton.className='quiet';
+  actions.className='actions';actions.append(closeButton,start);d.className='add-amity';d.append(actions);controls();
   void (async()=>{try{await request('membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
  }
  function replace(board){
