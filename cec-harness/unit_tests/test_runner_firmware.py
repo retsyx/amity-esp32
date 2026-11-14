@@ -38,7 +38,7 @@ class FirmwareRunnerTests(unittest.TestCase):
                     self.assertEqual(config.firmware, self.firmware)
                     self.assertEqual(config.firmware_timeout, 2700)
                     self.assertEqual(config.timeout, 180)
-                    self.assertEqual(config.cec_timeout, 1)
+                    self.assertEqual(config.cec_timeout, 0.5)
 
                 def activity():
                     calls.append("activity")
@@ -159,7 +159,7 @@ class FirmwareRunnerTests(unittest.TestCase):
     def test_config_normalizes_image_path_and_validates_firmware_timeout(self):
         config = RunConfig(firmware=str(self.firmware), firmware_timeout=3600)
         self.assertEqual(config.firmware, self.firmware)
-        self.assertEqual((config.timeout, config.cec_timeout), (180, 1))
+        self.assertEqual((config.timeout, config.cec_timeout), (180, 0.5))
         for value in (True, False, 0, -1, math.inf, -math.inf, math.nan, "3600"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 RunConfig(firmware_timeout=value)

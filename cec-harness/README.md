@@ -1366,7 +1366,7 @@ separate from the ordinary hardware-free unit suite.
 
 `--timeout` defaults to 180 seconds for HDMI scans, membership and activity
 operations.
-`--cec-timeout` independently defaults to one second for ordinary fresh power
+`--cec-timeout` independently defaults to half a second for ordinary fresh power
 and routing assertions. Main preparation/reset use the separate 240-second
 `--enrollment-timeout`. Source-theft remediation has the stricter 250 ms physical
 window described above,

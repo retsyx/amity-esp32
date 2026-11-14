@@ -28,7 +28,7 @@ class RunConfig:
     admin_origins: dict[str, str] = field(default_factory=dict, init=False, repr=False, compare=False)
     enrollment_timeout: float = 240
     timeout: float = 180
-    cec_timeout: float = 1
+    cec_timeout: float = 0.5
     firmware: Path | None = None
     firmware_timeout: float = 2700
 

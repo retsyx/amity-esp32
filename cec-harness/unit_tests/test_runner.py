@@ -278,7 +278,7 @@ class RunnerTests(unittest.TestCase):
         def scenario():
             pass
 
-        for options, operation_timeout, expected in (([], 180, 1), (["--timeout", "300"], 300, 1),
+        for options, operation_timeout, expected in (([], 180, 0.5), (["--timeout", "300"], 300, 0.5),
                 (["--cec-timeout", "0.25"], 180, 0.25), (["--timeout", "300", "--cec-timeout", "0.25"], 300, 0.25)):
             with self.subTest(options=options):
                 def capture(test, config):

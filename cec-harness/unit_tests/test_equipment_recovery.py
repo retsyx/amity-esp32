@@ -477,17 +477,18 @@ class EquipmentRecoveryTests(unittest.TestCase):
         since = time.monotonic_ns()
         self.return_records(fixture, fixture.player, since)
         announced = since + 2_000_000_000
+        window = int(fixture.dut._runtime.cec_timeout * 1e9)
         # Linux announced its shared PA while reclaiming addresses. The DUT
         # queried promptly, before the harness corrected the player's PA.
         fixture.session.records[-3]["wire_timestamp_ns"] = announced
         fixture.session.records[-2]["wire_timestamp_ns"] = announced - 500_000_000
-        fixture.session.records[-1]["wire_timestamp_ns"] = announced + 800_000_000
-        with patch("amity_harness.recovery.time.monotonic_ns", return_value=announced + 900_000_000):
+        fixture.session.records[-1]["wire_timestamp_ns"] = announced + window * 4 // 5
+        with patch("amity_harness.recovery.time.monotonic_ns", return_value=announced + window * 9 // 10):
             assert_returned(scan, fixture.player, since=since)
         proof = fixture.bed.control_observations[-1]
         self.assertEqual(proof["since_monotonic_ns"], since)
         self.assertEqual(proof["announcement_wire_timestamp_ns"], announced)
-        self.assertEqual(proof["deadline_monotonic_ns"], announced + 1_000_000_000)
+        self.assertEqual(proof["deadline_monotonic_ns"], announced + window)
         self.assertIn(fixture.player, scan.expected)
 
     def test_reannouncement_cannot_extend_an_incomplete_first_return_window(self):

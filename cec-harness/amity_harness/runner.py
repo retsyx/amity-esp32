@@ -202,8 +202,8 @@ def main(test, argv=None, *, firmware_upgrade=None, prepare=None, finish=None, o
     tls.add_argument("--insecure", action="store_true", help="accept the bench's self-signed TLS certificate")
     parser.add_argument("--timeout", type=float, default=180,
                         help="scan, membership and activity operation timeout in seconds (default: 180)")
-    parser.add_argument("--cec-timeout", type=float, default=1,
-                        help="fresh CEC power/routing assertion wait in seconds (default: 1); independent of --timeout")
+    parser.add_argument("--cec-timeout", type=float, default=0.5,
+                        help="fresh CEC power/routing assertion wait in seconds (default: 0.5); independent of --timeout")
     parser.add_argument("--firmware", type=Path, metavar="PATH",
                         help="upgrade the Amity system from this update file before running selected tests")
     parser.add_argument("--firmware-timeout", type=float, default=2700,
