@@ -270,8 +270,10 @@ Store the bench's factory enrollment credentials on the Pi in
 ```
 
 Use exactly these four fields, replacing the examples with the bench network
-and main's factory values. The numeric PIN differs from the longer printed
-manual pairing code. The factory PIN and full discriminator can be read from
+and main's factory values. `wifi_password` must be the network's passphrase
+(8-63 printable ASCII characters). A 64-digit raw key cannot join a WPA3
+network. Setup and `--check` reject a missing or invalid file. The numeric PIN
+differs from the longer printed manual pairing code. The factory PIN and full discriminator can be read from
 the original `amity-factory.bin` provisioning data or decoded from the Matter QR
 payload in `amity-pairing.txt`; retain these private provisioning files.
 `--enrollment-credentials PATH` optionally selects another private file on the Pi.

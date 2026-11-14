@@ -58,11 +58,14 @@ class _WorkerInterrupted(EnrollmentError):
 def _credentials(value):
     if not isinstance(value, dict) or set(value) != _CREDENTIAL_FIELDS:
         raise ValueError("Enrollment credentials require Wi-Fi SSID/password and Matter PIN/discriminator")
-    for field, maximum, empty in (("wifi_ssid", 32, False), ("wifi_password", 64, True)):
-        item = value[field]
-        if (not isinstance(item, str) or "\x00" in item or len(item.encode("utf-8")) > maximum
-                or (not empty and not item)):
-            raise ValueError("Invalid enrollment Wi-Fi credentials")
+    ssid, passphrase = value["wifi_ssid"], value["wifi_password"]
+    if not isinstance(ssid, str) or "\x00" in ssid or not 1 <= len(ssid.encode("utf-8")) <= 32:
+        raise ValueError("Invalid enrollment Wi-Fi credentials")
+    # A 64-digit raw key works for WPA2 only; WPA3 (SAE) needs the passphrase.
+    if (not isinstance(passphrase, str) or not 8 <= len(passphrase) <= 63
+            or any(not " " <= character <= "~" for character in passphrase)):
+        raise ValueError("The enrollment Wi-Fi password must be the network passphrase "
+                         "(8-63 printable ASCII characters), not a raw 64-digit key")
     pin, discriminator = value["matter_pin_code"], value["matter_discriminator"]
     if (type(pin) is not int or not 1 <= pin <= 99999998
             or pin in (11111111, 22222222, 33333333, 44444444, 55555555,

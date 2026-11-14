@@ -414,6 +414,28 @@ class PiSetupTests(unittest.TestCase):
                 [str(setup.HARNESS.parent / ".harness-python/bin/python"), "-B", "-m", "amity_harness.usb",
                  "--check", "--wiring", str(self.wiring.source)]])
 
+    def test_readiness_requires_a_private_wifi_passphrase_without_printing_it(self):
+        valid = {"wifi_ssid": "bench", "wifi_password": "secret passphrase",
+                 "matter_pin_code": 20202021, "matter_discriminator": 3840}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "enrollment.json"
+            with patch("amity_harness.enrollment.DEFAULT_CREDENTIALS", str(path)):
+                with self.assertRaisesRegex(ValueError, "passphrase"):
+                    setup.check_enrollment_credentials()
+                for password in ("5ec4e7" * 10 + "abcd", "", "secret"):
+                    with self.subTest(password=password):
+                        path.write_text(json.dumps({**valid, "wifi_password": password}))
+                        path.chmod(0o600)
+                        with self.assertRaisesRegex(ValueError, "passphrase") as failure:
+                            setup.check_enrollment_credentials()
+                        self.assertNotIn("secret", str(failure.exception))
+                path.write_text(json.dumps(valid))
+                path.chmod(0o644)
+                with self.assertRaisesRegex(ValueError, "0600"):
+                    setup.check_enrollment_credentials()
+                path.chmod(0o600)
+                setup.check_enrollment_credentials()
+
     def test_as_user_refreshes_groups_and_sets_the_harness_environment(self):
         with patch.object(setup.os, "geteuid", return_value=0), patch.object(setup, "run") as run:
             setup.as_user(self.account, ["pinctrl", "get", "4"], capture_output=True)

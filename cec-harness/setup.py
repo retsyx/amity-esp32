@@ -290,6 +290,16 @@ async def check_bluetooth():
         bus.disconnect()
 
 
+def check_enrollment_credentials():
+    """Validate the saved Wi-Fi/Matter enrollment settings without printing them."""
+    from amity_harness.enrollment import DEFAULT_CREDENTIALS, _read_credentials
+    path = Path(DEFAULT_CREDENTIALS).expanduser()
+    if not path.is_file():
+        raise ValueError(f"Store the bench Wi-Fi passphrase and main's Matter values in {DEFAULT_CREDENTIALS}"
+                         " (mode 0600); see README.md")
+    _read_credentials(path)
+
+
 def check_ready(wiring):
     """Read hardware/software state without transmitting, pairing or pressing GPIOs."""
     if os.geteuid() == 0:
@@ -329,6 +339,7 @@ def check_ready(wiring):
         run(["systemctl", "is-active", "--quiet", service])
     if not any(line.split()[-1] != "lo" for line in Path("/proc/net/if_inet6").read_text().splitlines() if line.strip()):
         raise ValueError("A network interface needs IPv6 for Matter commissioning")
+    check_enrollment_credentials()
     print(f"Harness ready: {len(wiring.cec)} CEC wires, {len(wiring.reset)} reset inputs, "
           f"{len(wiring.identities)} USB DUTs, BLE, Matter and browser verified.")
 

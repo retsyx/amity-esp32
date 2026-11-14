@@ -185,10 +185,17 @@ class EnrollmentTests(unittest.TestCase):
             _read_credentials(path)
         for change in ({"matter_pin_code": True}, {"matter_pin_code": 11111111},
                        {"matter_discriminator": 4096}, {"wifi_ssid": ""},
-                       {"wifi_password": "secret\x00"}, {"unexpected": "secret"}):
+                       {"wifi_password": "secret\x00secret"}, {"unexpected": "secret"},
+                       {"wifi_password": ""}, {"wifi_password": "secret"}, {"wifi_password": "secret" * 11},
+                       {"wifi_password": "secretésecret"}, {"wifi_password": "5ec4e7" * 10 + "abcd"},
+                       {"wifi_password": None}):
             with self.subTest(change=change), self.assertRaises(ValueError) as failure:
                 _credentials({**CREDENTIALS, **change})
             self.assertNotIn("secret", str(failure.exception))
+        for passphrase in ("8 chars!", "~" * 63):
+            with self.subTest(passphrase=passphrase):
+                self.assertEqual(_credentials({**CREDENTIALS, "wifi_password": passphrase})["wifi_password"],
+                                 passphrase)
 
     def run_response(self, calls, mutate=None, failure=None):
         def runner(command, **options):
