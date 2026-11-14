@@ -590,7 +590,6 @@ class SoakBrowser:
         self.assert_healthy()
         self._expect(self.page.locator("#admin")).to_be_visible()
         self._expect(self.page.locator("#login")).to_be_hidden()
-        self._expect(self.page.locator("#connection")).to_have_text("")
         self._expect(self.page.locator("#activityList [data-start]").first).to_be_enabled()
         self._expect(self.page.locator("#message")).not_to_have_class(re.compile(r"\berror\b"))
         self.assert_healthy()

@@ -8,7 +8,7 @@ License, or (at your option) any later version.
 -->
 
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amity</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script><script src="/system.js" defer></script></head>
-<body><header><div><h1 id="deviceName">amity</h1></div><span id="connection" aria-live="polite"></span><button id="logout" class="quiet" hidden>Log out</button></header>
+<body><header><div><h1 id="deviceName">amity</h1></div><button id="logout" class="quiet" hidden>Log out</button></header>
 <main><div id="message" role="status" aria-live="polite"></div><a id="hostnameLink" hidden></a>
 <section id="firmwareUpdate" hidden><h2>Updating your Amity devices</h2><p id="firmwareUpdateStatus" role="status" aria-live="polite"></p><progress id="uploadProgress" max="100" value="0" aria-label="Firmware update progress" hidden></progress><ul id="firmwareUpdateTargets" aria-label="Amity device update progress"></ul><div class="actions"><button id="retryFirmwareWait" hidden>Try reconnecting</button><button id="firmwareUpdateLogin" hidden>Log in</button></div></section>
 <section id="onboarding" hidden><h2>Welcome to Amity</h2><form id="setupForm"><label>Create a password<input id="setupPassword" type="password" maxlength="128" autocomplete="new-password" required></label><label>Confirm password<input id="confirmPassword" type="password" maxlength="128" autocomplete="new-password" required></label><button class="primary">Set password</button></form></section>

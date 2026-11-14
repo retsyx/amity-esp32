@@ -35,7 +35,7 @@ function updateActivityButtons(){
 }
 function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
 function reportError(error){if(!firmwareUpdating&&!hostnameReconnect&&!error.silent)message(error.message,true);}
-function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('connection').textContent='';$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
+function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
 async function readResponseJSON(response){
  // A fresh body can lose its transport after headers arrive. Keep parsing
  // and application decoding outside that read boundary.
@@ -456,7 +456,7 @@ async function refreshHomekit(){
 }
 async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
  const latest=await request('status');if(firmwareUpdating||hostnameReconnect)return;
- state=latest;if(state.activity_error)message(state.activity_error,true);renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);$('connection').textContent=state.discovering?'Scanning HDMI…':'';
+ state=latest;if(state.activity_error)message(state.activity_error,true);renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
  await refreshPeerSignals();if(firmwareUpdating||hostnameReconnect)return;
  renderDiagnostics();
  renderDeviceNames();
@@ -603,7 +603,7 @@ function saveFirmwareUpdate(){sessionStorage.setItem(firmwareUpdateKey,JSON.stri
 function validFirmwareHealth(health){return !!health&&typeof health.boot_id==='string'&&health.boot_id.length>0&&typeof health.version==='string'&&health.version.length>0&&typeof health.ready==='boolean';}
 function showFirmwareUpdate(record,text){
  firmwareUpdating=true;firmwareUpdateRecord=record;saveFirmwareUpdate();message('');
- $('admin').hidden=true;$('login').hidden=true;$('onboarding').hidden=true;$('logout').hidden=true;$('connection').textContent='';
+ $('admin').hidden=true;$('login').hidden=true;$('onboarding').hidden=true;$('logout').hidden=true;
  $('firmwareUpdate').hidden=false;$('firmwareUpdateStatus').textContent=text;
  $('retryFirmwareWait').hidden=true;$('firmwareUpdateLogin').hidden=true;$('uploadProgress').hidden=false;
  $('firmwareUpdateTargets').replaceChildren();
@@ -803,4 +803,4 @@ async function initialize(){
  const setup=await request('setup');renderHostname(setup.hostname);if(setup.required){showLogin();$('login').hidden=true;$('onboarding').hidden=false;}else if(token)await enter();else showLogin();
  const result=sessionStorage.getItem(firmwareResultKey);if(result){sessionStorage.removeItem(firmwareResultKey);message(result);}
 }
-initialize().catch(e=>{if(e.silent)return;$('connection').textContent='';message(e.message+' Reload to try again.',true);});
+initialize().catch(e=>{if(e.silent)return;message(e.message+' Reload to try again.',true);});

@@ -265,19 +265,12 @@ def main():
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(f'http://127.0.0.1:{server.server_port}/')
                 expect(page.locator('#login')).to_be_visible()
-                expect(page.locator('#connection')).to_have_text('')
                 page.locator('#password').fill('fixture-password')
                 page.locator('#password').press('Enter')
                 expect(page.locator('#admin')).to_be_visible()
                 page.wait_for_function('() => !polling && !activityActionPending')
                 assert fixture['logins'] == 1
                 passed('Enter submits login once')
-                expect(page.locator('#connection')).to_have_text('')
-                fixture['status']['ready'] = False
-                page.evaluate('() => refresh()')
-                expect(page.locator('#connection')).to_have_text('')
-                fixture['status']['ready'] = True
-                passed('header is blank on login and while idle or not yet ready')
                 fixture['status']['activity_error'] = 'Some equipment is not responding. Scan HDMI and try again.'
                 page.wait_for_function('() => !polling')
                 page.evaluate('() => refresh()')
@@ -542,7 +535,7 @@ def main():
                 expect(page.locator('#devices')).to_be_visible()
                 expect(page.locator('#deviceList .device')).to_have_count(0)
                 expect(page.locator('#recommendations')).to_be_hidden()
-                expect(page.locator('#connection')).to_have_text('Scanning HDMI…')
+                expect(page.locator('#discoveryStatus')).to_have_text('Scanning HDMI…')
                 assert page.locator('#activities button:enabled').count() == 0
                 passed('manual scan reveals progress with every activity button disabled')
                 fixture['status']['discovering'] = False
@@ -550,7 +543,7 @@ def main():
                 page.wait_for_function('() => !polling && !activityActionPending')
                 page.evaluate('() => refresh()')
                 expect(page.locator('#deviceList .device')).to_have_count(3)
-                expect(page.locator('#connection')).to_have_text('')
+                expect(page.locator('#discoveryStatus')).to_have_text('')
                 assert page.locator('#deviceList .device').all_text_contents() == ['Player', 'Receiver', 'TV']
                 assert page.locator('#deviceList svg').evaluate_all('(icons) => icons.map(icon => icon.getAttribute("aria-label"))') == ['Source', 'Audio', 'TV']
                 passed('device rows show only sorted OSD names with role icons')
@@ -1109,14 +1102,12 @@ def main():
                 page.evaluate('() => refresh().catch(reportError)')
                 expect(page.locator('#login')).to_be_visible()
                 expect(page.locator('#message')).to_have_text('')
-                expect(page.locator('#connection')).to_have_text('')
                 expect(page.locator('#activityEditor')).to_be_hidden()
                 passed('expired session closes the modal and returns to login without a prompt')
                 fixture['setup_error'] = True
                 page.reload()
                 expect(page.locator('#message')).to_contain_text('Fixture startup failed')
-                expect(page.locator('#connection')).to_have_text('')
-                passed('startup failure leaves header blank')
+                passed('startup failure reports its error')
                 assert not errors, errors
                 passed('no browser script exceptions')
             finally:

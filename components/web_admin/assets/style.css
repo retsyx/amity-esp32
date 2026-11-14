@@ -139,8 +139,6 @@ input::file-selector-button:hover { background: #d8d6f1; }
 #message { padding: 0 0 16px; font-size: .9375rem; color: var(--primary); }
 #message:empty { padding: 0; }
 #message.error { color: var(--danger); }
-#connection { color: var(--muted); font-size: .875rem; }
-#connection:empty { display: none; }
 #login { max-width: 400px; margin: 16px auto; }
 #login label { margin-top: 0; }
 #hostnameLink { display: inline-block; margin-bottom: 16px; overflow-wrap: anywhere; }
@@ -201,7 +199,6 @@ dialog h3 { margin-bottom: 20px; font-size: 1.25rem; }
   header, main { padding: 16px; }
   header { gap: 12px; }
   h1 { font-size: 1.75rem; }
-  header #connection { max-width: 110px; font-size: .8rem; }
   #logout { padding: 10px 8px; flex: none; }
   section { padding: 18px; }
   nav { gap: 2px; }
