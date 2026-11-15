@@ -318,6 +318,8 @@ extern const uint8_t css_start[] asm("_binary_style_css_start");
 extern const uint8_t css_end[] asm("_binary_style_css_end");
 extern const uint8_t system_js_start[] asm("_binary_system_js_start");
 extern const uint8_t system_js_end[] asm("_binary_system_js_end");
+extern const uint8_t favicon_start[] asm("_binary_favicon_svg_start");
+extern const uint8_t favicon_end[] asm("_binary_favicon_svg_end");
 esp_err_t asset(httpd_req_t *req) {
     if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
     if(req->content_len)return web::error(req,"GET requests cannot have a body");
@@ -325,6 +327,7 @@ esp_err_t asset(httpd_req_t *req) {
     if(!strcmp(req->uri,"/app.js")){begin=js_start;end=js_end;mime="text/javascript";}
     if(!strcmp(req->uri,"/style.css")){begin=css_start;end=css_end;mime="text/css";}
     if(!strcmp(req->uri,"/system.js")){begin=system_js_start;end=system_js_end;mime="text/javascript";}
+    if(!strcmp(req->uri,"/favicon.svg")){begin=favicon_start;end=favicon_end;mime="image/svg+xml";}
     httpd_resp_set_type(req,mime);httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
     httpd_resp_set_hdr(req,"Cache-Control","no-cache");
     httpd_resp_set_hdr(req,"Content-Security-Policy","default-src 'self'; connect-src 'self' https://*.local; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
@@ -342,7 +345,7 @@ esp_err_t start(amity::SystemControl &service,const char *hostname,const char *i
     const auto role=amity::consortium::runtime_status();
     if(!role.coordinator || !role.authority_ready || role.member || role.phase=="retired" || role.phase=="recovery_required") return ESP_ERR_INVALID_STATE;
     hub=&service;auto e=web::start(server,std::string(hostname)+".local",initial_auth);if(e!=ESP_OK)return e;
-    for(auto *path:{"/","/app.js","/system.js","/style.css"}) {e=web::route(server,path,HTTP_GET,asset);if(e!=ESP_OK)return e;}
+    for(auto *path:{"/","/app.js","/system.js","/style.css","/favicon.svg"}) {e=web::route(server,path,HTTP_GET,asset);if(e!=ESP_OK)return e;}
     e=web::route(server,"/api/*",HTTP_GET,api);if(e!=ESP_OK)return e;
     e=web::route(server,"/api/*",HTTP_POST,api);
     if(e==ESP_OK)ui_enabled.store(true);

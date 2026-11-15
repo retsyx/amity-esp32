@@ -26,8 +26,9 @@ def main(argv=None):
     # Recommendations are edited in the activity editor; their separate dialog was removed.
     # Outlined destructive buttons share the filled danger style.
     # The header's HDMI scan status was removed.
+    # The page links its favicon.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = '39961ef8e073fe19cc654988bd557319ac7f150ffc4bb15a552531d44e1fe9e7'
+    baseline_sha256 = '37ab202f5fac37b42377a97344f0e7ffca76b8ab3037644c6e90f17110795d7f'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
