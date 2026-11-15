@@ -383,12 +383,13 @@ void log_link_down(int reason) {
     if (have_rssi) snprintf(rssi, sizeof(rssi), "%d dBm %lld ms earlier", last_rssi,
                             static_cast<long long>((now - rssi_sampled_us) / 1000));
     const int code = hci ? reason - BLE_HS_ERR_HCI_BASE : reason;
-    const long long up_ms = link_up_us ? static_cast<long long>((now - link_up_us) / 1000) : 0;
+    char up[32] = "never reported up";
+    if (link_up_us) snprintf(up, sizeof(up), "up %lld ms", static_cast<long long>((now - link_up_us) / 1000));
     // Intentional closure is routine; anything else is a dropped link.
     if (reason == BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM) || reason == BLE_HS_HCI_ERR(BLE_ERR_CONN_TERM_LOCAL))
-        ESP_LOGI(kTag, "Remote link down: %s (%s 0x%02x), up %lld ms, RSSI %s", name, hci ? "HCI" : "status", code, up_ms, rssi);
+        ESP_LOGI(kTag, "Remote link down: %s (%s 0x%02x), %s, RSSI %s", name, hci ? "HCI" : "status", code, up, rssi);
     else
-        ESP_LOGW(kTag, "Remote link down: %s (%s 0x%02x), up %lld ms, RSSI %s", name, hci ? "HCI" : "status", code, up_ms, rssi);
+        ESP_LOGW(kTag, "Remote link down: %s (%s 0x%02x), %s, RSSI %s", name, hci ? "HCI" : "status", code, up, rssi);
     link_up_us = 0;
     have_rssi = false;
 }
@@ -439,6 +440,19 @@ int on_gap_event(ble_gap_event *event, void *token) {
         break;
     }
     case BLE_GAP_EVENT_DISCONNECT:
+        if (connection_handle == BLE_HS_CONN_HANDLE_NONE && procedure_pending &&
+            procedure_kind == Procedure::Connect && reinterpret_cast<uintptr_t>(token) == generation) {
+            // NimBLE reports a central link only after reading the remote's
+            // features and version. A link lost before then ends the attempt.
+            log_link_down(event->disconnect.reason);
+            if (reconnect_pending) state.waiting = false;
+            finish_procedure(event->disconnect.reason);
+            if (reconnect_pending) {
+                const Command wake{CommandType::Wake, 0, {}};
+                xQueueSend(commands, &wake, 0);
+            }
+            break;
+        }
         if (event->disconnect.conn.conn_handle != connection_handle) break;
         log_link_down(event->disconnect.reason);
         if (!have_saved) selected = event->disconnect.conn.peer_id_addr;

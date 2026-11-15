@@ -93,6 +93,18 @@ void disconnect(int reason = BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM)) {
     connects.back().callback(&event, connects.back().token);
 }
 
+// NimBLE reports a central link only after reading the remote's features and
+// version. A link lost before then produces a disconnect without a connect.
+void lose_unreported_link(int reason) {
+    connecting = false;
+    ble_gap_event event{};
+    event.type = BLE_GAP_EVENT_DISCONNECT;
+    event.disconnect.reason = reason;
+    event.disconnect.conn.conn_handle = 43;
+    event.disconnect.conn.peer_id_addr = peer;
+    connects.back().callback(&event, connects.back().token);
+}
+
 void notify(uint16_t attribute, std::initializer_list<uint8_t> bytes) {
     const std::vector<uint8_t> data(bytes);
     os_mbuf mbuf{data.data(), uint16_t(data.size())};
@@ -695,6 +707,20 @@ int main(int argc, char **argv) {
         fake::run_steps(1);
         assert(!fake::security_calls && !fake::discovery_calls);
         assert(fake::status().waiting && fake::connects.size() == 2);
+    } else if (scenario == "unreported-link-lost") {
+        fake::run_steps(1);
+        fake::lose_unreported_link(BLE_HS_HCI_ERR(BLE_ERR_CONN_ESTABLISHMENT));
+        assert(!fake::warnings.empty() && fake::warnings[0].find("failed to establish") != std::string::npos);
+        fake::run_steps(1);
+        assert(!fake::status().waiting && !fake::status().connecting && !fake::security_calls);
+        fake::run_steps(9);
+        assert(fake::connects.size() == 1);
+        fake::run_steps(1);
+        // The ended attempt does not leave the remote unattended.
+        assert(fake::connects.size() == 2 && fake::status().waiting);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected);
     } else if (scenario == "host-reset") {
         fake::run_steps(1);
         fake::synced = false;
