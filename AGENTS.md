@@ -16,6 +16,8 @@
 
 - Do not byline commits with co-authorship claims.
 
+- When asked to make a change, make the change in a new temporary workspace, and commit the change to the current branch when done.
+
 ## Adapters
 
 - There are no separate inputs that detect whether an HDMI adapter is attached. The absence of an adapter
