@@ -14,6 +14,7 @@ import test_discovery as discovery_fixture
 import test_membership as membership_fixture
 import test_scan_assertions as scan_fixture
 from amity_harness.discovery import scan_hdmi
+from unit_tests.virtual_time import use_virtual_time
 
 
 def events(mock):
@@ -21,6 +22,9 @@ def events(mock):
 
 
 class HelperLoggingTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_activity_reports_each_action_and_cleanup_with_identity(self):
         fixture = activity_fixture.Fixture()
         with patch("amity_harness.activity.event") as emit:
@@ -80,8 +84,7 @@ class HelperLoggingTests(unittest.TestCase):
     def test_membership_logs_steps_and_reset_cleanup_without_admission_secrets(self):
         fixture = membership_fixture.Fixture()
         fixture.requires_code = True
-        with patch("amity_harness.membership.event") as emit, \
-                patch("amity_harness.membership.time.sleep"):
+        with patch("amity_harness.membership.event") as emit:
             member = fixture.added(setup_code=fixture.setup_code).create()
             member.close()
         captured = events(emit)

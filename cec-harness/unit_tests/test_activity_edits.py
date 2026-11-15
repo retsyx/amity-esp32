@@ -16,6 +16,7 @@ from amity_harness.activity_edits import ActiveActivityEdits, ActivityEditObserv
 from amity_harness.dut import AmityHTTPError
 from test_activity import Fixture
 from test_activity_handoff import IdleWire
+from unit_tests.virtual_time import use_virtual_time
 
 
 class EditingFixture(Fixture):
@@ -65,6 +66,9 @@ class EditingFixture(Fixture):
 
 
 class ActivityEditsTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_rejects_current_edit_delete_then_saves_inactive_input_without_reselection(self):
         fixture = EditingFixture()
         before = deepcopy(fixture.full)
@@ -181,6 +185,9 @@ class ActivityEditsTests(unittest.TestCase):
 
 
 class ActivityEditWireTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         dut = DUT("amity-dut")

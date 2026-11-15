@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.ble_keyboard_worker import BlueZKeyboard, KeyboardWorker, _interfaces, encode_reports, report_map, REPORT_MAP, serve
 from amity_harness.ble_keyboard_worker import LINK_DROP_HELPER, LINK_DROP_TIMEOUT
+from unit_tests.virtual_time import use_virtual_time
 
 
 class FakeBackend:
@@ -93,6 +94,9 @@ class KeyboardReportTests(unittest.TestCase):
 
 
 class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     async def opened(self):
         backend = FakeBackend()
         worker = KeyboardWorker(backend)
@@ -178,19 +182,21 @@ class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disconnect_status_read_cannot_extend_the_cec_deadline(self):
         worker, backend = await self.opened()
-        clock = [1_000_000_000]
-        original_status = backend.status
+        original_status, status_read = backend.status, []
         async def delayed_status():
-            clock[0] += 2_000_000_000
+            status_read.append(self.clock.now_ns)
+            self.clock.advance(2)
             return await original_status()
         backend.status = delayed_status
-        with patch("amity_harness.ble_keyboard_worker.time.monotonic_ns", side_effect=lambda: clock[0]):
-            receipt = await worker.dispatch("disconnect", {})
+        started = self.clock.now_ns
+        receipt = await worker.dispatch("disconnect", {})
         self.assertFalse(receipt["connected"])
-        self.assertEqual(receipt["disconnected_monotonic_ns"], 1_000_000_000)
+        # Link teardown is timestamped before the slow status read starts.
+        self.assertLess(started, receipt["disconnected_monotonic_ns"])
+        self.assertLessEqual(receipt["disconnected_monotonic_ns"], status_read[0])
         # The normal one-second CEC deadline has already expired while the
         # read was pending; receiving its reply cannot create a new budget.
-        self.assertLess(receipt["disconnected_monotonic_ns"] + 1_000_000_000, clock[0])
+        self.assertLess(receipt["disconnected_monotonic_ns"] + 1_000_000_000, self.clock.now_ns)
         await worker.close()
 
     async def test_link_drops_need_released_keys_a_subscribed_link_and_a_bounded_count(self):

@@ -16,9 +16,13 @@ from amity_harness import (AvrAttachment, AvrComponent, CecAddress, CecSession,
                            DUT, Frame, PlaybackComponent, TvComponent, TxResult)
 from unit_tests.test_virtual_bus import Backend
 from test_component_power_assertions import distributed_activity_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SourceIsolationAssertionTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         dut = DUT("amity-dut-4")
@@ -160,7 +164,7 @@ class SourceIsolationAssertionTests(unittest.TestCase):
             self.receive(upstream, thief.address.physical, timestamp=started.started_ns - 1)
             self.receive(upstream, thief.address.physical, source=8)
             with self.assertRaises(TimeoutError):
-                upstream.wait_for_active_source(thief, since=started, timeout=0.001)
+                upstream.wait_for_active_source(thief, since=started)
             self.receive(upstream, thief.address.physical)
             self.assertIs(upstream.wait_for_active_source(thief, since=started, timeout=0.05), upstream)
             self.assertEqual(avr.active_input, thief.address.physical)

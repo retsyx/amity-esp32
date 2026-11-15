@@ -11,9 +11,23 @@ from unittest.mock import patch
 from amity_harness.cec import CecError, _Event
 from amity_harness.cec_pin import PinMonitor
 from unit_tests.test_cec_pin import edge, waveform
+from unit_tests.virtual_time import use_virtual_time
 
 
 class PinMonitorTests(unittest.TestCase):
+    def setUp(self):
+        # The reader thread and receive deadlines run on one virtual clock.
+        self.clock = use_virtual_time(self)
+
+    def idle_select(self, pending):
+        """A select that, like the kernel, waits out its timeout while no pin event is pending."""
+        def select(rlist, wlist, xlist, timeout):
+            if pending.empty():
+                self.clock.sleep(timeout)
+                return [], [], []
+            return [], [], list(xlist)
+        return select
+
     def wait(self, predicate):
         deadline = time.monotonic() + 1
         while not predicate():
@@ -37,7 +51,7 @@ class PinMonitorTests(unittest.TestCase):
                 raise OSError(errno.EAGAIN, "drained")
         # select is only the edge-reader wakeup; responder configuration and
         # receive RPCs never participate in this independent drain loop.
-        with patch("amity_harness.cec_pin.select.select", side_effect=lambda *args: ([], [], [])), \
+        with patch("amity_harness.cec_pin.select.select", side_effect=self.idle_select(queue)), \
              patch("amity_harness.cec_pin._ioctl", side_effect=ioctl):
             monitor = PinMonitor(123)
             try:
@@ -71,10 +85,9 @@ class PinMonitorTests(unittest.TestCase):
         monitor._frames = deque()
         monitor._error = None
         monitor._stop = threading.Event()
-        started = time.monotonic()
+        started = self.clock.now
         self.assertIsNone(monitor.receive(.01))
-        self.assertGreaterEqual(time.monotonic() - started, .009)
-        self.assertLess(time.monotonic() - started, .2)
+        self.assertAlmostEqual(self.clock.now - started, .01, delta=1e-6)
         self.assertFalse(hasattr(monitor, "_through_ns"))
 
     def test_kernel_eagain_before_delayed_timestamped_high_cannot_invent_missing_edge(self):
@@ -91,7 +104,7 @@ class PinMonitorTests(unittest.TestCase):
             except Empty:
                 raise OSError(errno.EAGAIN, "upstream worker has not delivered more pin events")
         add(edges[:3])  # A real data LOW; its timely HIGH is not delivered yet.
-        with patch("amity_harness.cec_pin.select.select", side_effect=lambda *args: ([], [], [])), \
+        with patch("amity_harness.cec_pin.select.select", side_effect=self.idle_select(queue)), \
              patch("amity_harness.cec_pin._ioctl", side_effect=ioctl):
             monitor = PinMonitor(123)
             try:

@@ -12,6 +12,7 @@ from amity_harness import Frame, Key
 from amity_harness.ble_fifo import BLEFIFOEvidence, _HELD_USAGES, _KEYS, _USAGES
 from amity_harness.diagnostics import LogCapture
 import test_ble_input as input_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SaturatingKeyboard(input_fixture.Keyboard):
@@ -98,6 +99,9 @@ class SaturatingKeyboard(input_fixture.Keyboard):
 
 
 class FIFOTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self, *, fault=None, log_fault=None, status_drop=False):
         base = input_fixture.BLEInputEvidenceTests()

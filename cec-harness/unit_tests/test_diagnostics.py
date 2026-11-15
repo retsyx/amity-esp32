@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT
 from amity_harness.dut import AmityHTTPError
+from unit_tests.virtual_time import use_virtual_time
 
 
 class Response(io.BytesIO):
@@ -38,6 +39,19 @@ class Opener:
 
 class DiagnosticsTests(unittest.TestCase):
     boot = "b" * 32
+
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
+    def slow_requests(self, opener, *seconds):
+        """Make the opener's successive requests take the given virtual times."""
+        original, durations = opener.open, list(seconds)
+
+        def open(request, timeout):
+            self.clock.advance(durations.pop(0))
+            return original(request, timeout)
+
+        opener.open = open
 
     def fixture(self, *, after_boot=None, expected_id=None, after_id=None, log_response=None):
         dut = DUT("amity-dut")
@@ -134,9 +148,11 @@ class DiagnosticsTests(unittest.TestCase):
 
     def test_one_total_deadline_is_passed_through_each_http_request(self):
         dut, opener, _ = self.fixture()
-        with patch("amity_harness.diagnostics.time.monotonic", side_effect=(10, 11, 12, 13, 14)):
-            dut.capture_logs(timeout=10)
-        self.assertEqual(opener.timeouts, [9, 8, 7])
+        self.slow_requests(opener, 1, 1, 1)
+        dut.capture_logs(timeout=10)
+        self.assertEqual(len(opener.timeouts), 3)
+        for timeout, expected in zip(opener.timeouts, (10, 9, 8)):
+            self.assertAlmostEqual(timeout, expected, places=6)
 
     def test_no_serial_device_or_output_file_is_opened(self):
         dut, _, _ = self.fixture()
@@ -146,9 +162,9 @@ class DiagnosticsTests(unittest.TestCase):
 
     def test_deadline_expiry_does_not_try_another_endpoint_or_transport(self):
         dut, opener, _ = self.fixture()
-        with patch("amity_harness.diagnostics.time.monotonic", side_effect=(10, 11, 20)):
-            with self.assertRaises(TimeoutError):
-                dut.capture_logs(timeout=5)
+        self.slow_requests(opener, 9)  # The identity read outlasts the five-second budget.
+        with self.assertRaises(TimeoutError):
+            dut.capture_logs(timeout=5)
         self.assertEqual(len(opener.requests), 1)
 
 

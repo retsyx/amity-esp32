@@ -4,7 +4,6 @@ from copy import deepcopy
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -12,6 +11,7 @@ from amity_harness import AvrComponent, DUT, PlaybackComponent, PowerState, TvCo
 from amity_harness.membership import AddedAmity, MembershipConflict
 from amity_harness.replacement import ReplacementReview
 from test_removal_cascade import CascadeFixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SavedActivity:
@@ -167,9 +167,7 @@ def corruptions():
 
 class ReplacementTests(unittest.TestCase):
     def setUp(self):
-        sleeper = patch("amity_harness.membership.time.sleep")
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.clock = use_virtual_time(self)
 
     def test_exact_saved_intent_survives_and_cleanup_tracks_only_remapped_equipment(self):
         fixture = ReplacementFixture()

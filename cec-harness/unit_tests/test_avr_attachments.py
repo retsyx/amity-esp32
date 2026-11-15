@@ -10,10 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrAttachment, AvrComponent, CecAddress, CecSession,
                            DUT, Frame, PlaybackComponent, PowerState, TvComponent)
 from unit_tests.test_virtual_bus import Backend
+from unit_tests.virtual_time import use_virtual_time
 
 
 class AvrAttachmentTests(unittest.TestCase):
     def setUp(self):
+        self.clock = use_virtual_time(self)
         self.dut = DUT("amity-dut-4")
         self.tv = TvComponent(self.dut.tentacle(1).front, "Attached TV")
         self.avr = AvrComponent(self.dut.tentacle(1).back, "Attached AVR")

@@ -21,6 +21,7 @@ from amity_harness.dut import AmityHTTPError
 from functional_tests import ble_keyboard
 from unit_tests.test_ble_input import KeyWire
 from unit_tests.test_ble_keyboard import Fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class LifecycleFixture(Fixture):
@@ -32,7 +33,7 @@ class LifecycleFixture(Fixture):
         self.main.authenticate = Mock()
         self.main.press_fw_reset = Mock(side_effect=AssertionError("No pairing reboot workaround"))
         self.main.capture_logs = Mock(side_effect=AssertionError("Pairing uses only UI state"))
-        self.main._runtime = replace(self.main._runtime, cec_timeout=.04,
+        self.main._runtime = replace(self.main._runtime,
                                     session_factory=lambda components: CecSession(components, backend_factory=KeyWire))
         self.main.scan_hdmi = self.scan_hdmi
         self.main.create_activity = self.create_activity
@@ -148,11 +149,13 @@ class LifecycleFixture(Fixture):
 
 
 class BLEKeyboardLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def run_lifecycle(self, fixture):
         with use_config(fixture.main._runtime), track_testbeds() as beds:
             self.beds = beds
-            with patch.object(ble_keyboard, "DUT", return_value=fixture.main), \
-                 patch("amity_harness.ble_keyboard.time.sleep"):
+            with patch.object(ble_keyboard, "DUT", return_value=fixture.main):
                 ble_keyboard.test_ble_keyboard_lifecycle()
 
     def checks(self):

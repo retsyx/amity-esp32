@@ -6,17 +6,22 @@ from types import SimpleNamespace
 import sys
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT, Frame, TestBed
-from amity_harness.recovery import LookupScans, _fresh_return, assert_returned, assert_switch_commands
+from amity_harness.recovery import (LOOKUP_COOLDOWN_SECONDS, LookupScans, _fresh_return, assert_returned,
+                                    assert_switch_commands)
 from test_activity import Fixture
 import test_keys as key_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SavedEquipmentTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def activity(self):
         fixture = Fixture()
         activity = fixture.dut.create_activity("Missing equipment", display=fixture.tv,
@@ -58,6 +63,14 @@ class SavedEquipmentTests(unittest.TestCase):
 
 
 class EquipmentRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # Wire stamps, return windows and the lookup cooldown share one clock.
+        self.clock = use_virtual_time(self)
+
+    def advance_to(self, monotonic_ns):
+        """Let virtual time reach a wire-clock instant (it never moves backwards)."""
+        self.clock.advance(max(0, monotonic_ns - self.clock.now_ns) / 1e9)
+
     def fixture(self):
         fixture = key_fixture.KeyTests().fixture()
         scan = fixture.dut.last_scan
@@ -315,9 +328,11 @@ class EquipmentRecoveryTests(unittest.TestCase):
 
     def test_expiry_alone_is_observed_without_issuing_an_operation(self):
         fixture, scan = self.fixture()
-        with patch("amity_harness.recovery.LOOKUP_COOLDOWN_SECONDS", 0):
-            with LookupScans(scan, fixture.tv, fixture.avr) as observer:
-                observer.wait_for_cooldown()
+        entered = self.clock.now_ns
+        with LookupScans(scan, fixture.tv, fixture.avr) as observer:
+            observer.wait_for_cooldown()
+            # The silence covers the whole cooldown and the window after expiry.
+            self.assertGreaterEqual(self.clock.now_ns - entered, round((LOOKUP_COOLDOWN_SECONDS + .25) * 1e9))
         self.assertFalse(fixture.calls)
 
     def test_back_scan_requires_fresh_requests_replies_and_preserved_front_cache(self):
@@ -425,29 +440,27 @@ class EquipmentRecoveryTests(unittest.TestCase):
                 with LookupScans(scan, fixture.tv, fixture.avr) as observer:
                     since = time.monotonic_ns()
                     self.return_records(fixture, fixture.player, since)
-                    clock = {"now": since}
                     deadline = since + 1 + int(fixture.dut._runtime.cec_timeout * 1e9)
                     validate = scan.validate_owners
 
                     def slow_owner(*args, **kwargs):
                         result = validate(*args, **kwargs)
-                        clock["now"] = max(clock["now"], deadline + 1_000_000_000)
+                        self.advance_to(deadline + 1_000_000_000)
                         return result
 
                     state = fixture.dut.get_state
 
                     def late_ui():
-                        clock["now"] = deadline + 3_000_000_000
+                        self.advance_to(deadline + 3_000_000_000)
                         return {**state(), "discovering": scoped}
 
                     scan.validate_owners = slow_owner
                     fixture.dut.get_state = late_ui
                     fixture.dut.wait_for = Mock(wraps=DUT.wait_for.__get__(fixture.dut))
-                    with patch("amity_harness.recovery.time.monotonic_ns", side_effect=lambda: clock["now"]):
-                        if scoped:
-                            observer.assert_passive_return(fixture.player, since=since)
-                        else:
-                            assert_returned(scan, fixture.player, since=since)
+                    if scoped:
+                        observer.assert_passive_return(fixture.player, since=since)
+                    else:
+                        assert_returned(scan, fixture.player, since=since)
                     self.assertIn(fixture.player, scan.expected)
                     self.assertEqual(fixture.dut.wait_for.call_args.kwargs["timeout"], fixture.dut._runtime.timeout)
                     proof = fixture.bed.control_observations[-1]
@@ -465,9 +478,9 @@ class EquipmentRecoveryTests(unittest.TestCase):
                     self.return_records(fixture, fixture.player, deadline + 1)
                     fixture.session.records[-3]["wire_timestamp_ns"] = since + 1
                 fixture.dut.wait_for = Mock(side_effect=AssertionError("An expired wire window must not poll UI"))
-                with patch("amity_harness.recovery.time.monotonic_ns", return_value=deadline + 1_000_000_000):
-                    with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
-                        assert_returned(scan, fixture.player, since=since)
+                self.advance_to(deadline + 1_000_000_000)
+                with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
+                    assert_returned(scan, fixture.player, since=since)
                 fixture.dut.wait_for.assert_not_called()
                 self.assertNotIn(fixture.player, scan.expected)
 
@@ -483,8 +496,8 @@ class EquipmentRecoveryTests(unittest.TestCase):
         fixture.session.records[-3]["wire_timestamp_ns"] = announced
         fixture.session.records[-2]["wire_timestamp_ns"] = announced - 500_000_000
         fixture.session.records[-1]["wire_timestamp_ns"] = announced + window * 4 // 5
-        with patch("amity_harness.recovery.time.monotonic_ns", return_value=announced + window * 9 // 10):
-            assert_returned(scan, fixture.player, since=since)
+        self.advance_to(announced + window * 9 // 10)
+        assert_returned(scan, fixture.player, since=since)
         proof = fixture.bed.control_observations[-1]
         self.assertEqual(proof["since_monotonic_ns"], since)
         self.assertEqual(proof["announcement_wire_timestamp_ns"], announced)
@@ -501,9 +514,9 @@ class EquipmentRecoveryTests(unittest.TestCase):
         # it is too late for the first physical identity announcement.
         self.return_records(fixture, fixture.player, deadline + 1)
         fixture.dut.wait_for = Mock(side_effect=AssertionError("An expired wire window must not poll UI"))
-        with patch("amity_harness.recovery.time.monotonic_ns", return_value=deadline + 100):
-            with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
-                assert_returned(scan, fixture.player, since=since)
+        self.advance_to(deadline + 100)
+        with self.assertRaisesRegex(TimeoutError, "physical CEC deadline"):
+            assert_returned(scan, fixture.player, since=since)
         fixture.dut.wait_for.assert_not_called()
         self.assertNotIn(fixture.player, scan.expected)
 

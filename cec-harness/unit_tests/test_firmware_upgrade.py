@@ -12,7 +12,6 @@ import tempfile
 from types import SimpleNamespace
 import time
 import unittest
-from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
@@ -20,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT
 from amity_harness.firmware import FirmwareBundle, FirmwareUpgrade, compare_firmware_versions
+from unit_tests.virtual_time import use_virtual_time
 
 
 OLD_IMAGE = 'a1' * 32
@@ -96,17 +96,6 @@ class FirmwareBundleTests(unittest.TestCase):
             self.load(bundle_bytes(image=oversized))
 
 
-class Clock:
-    def __init__(self):
-        self.now = 100.0
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.now += seconds
-
-
 class UpgradeFixture:
     """Model only shipping endpoint replies and raw upload responses."""
 
@@ -124,7 +113,6 @@ class UpgradeFixture:
                           waiting_old_peer=waiting_old_peer, restart_read_503=restart_read_503,
                           control_unready=control_unready, final_config_503=final_config_503,
                           final_settings_503=final_settings_503)
-        self.clock = Clock()
         self.main = DUT('amity-dut')
         self.main._token = SECRET_TOKEN
         self.requests, self.uploads, self.callbacks, self.logins = [], [], [], []
@@ -273,12 +261,13 @@ class UpgradeFixture:
         return FirmwareUpgrade(self.main, self.members, self.bundle, timeout=2, poll_interval=.1, **kwargs)
 
     def run(self, upgrade):
-        with patch('amity_harness.firmware.time.monotonic', self.clock.monotonic), \
-             patch('amity_harness.firmware.time.sleep', self.clock.sleep):
-            return upgrade.run()
+        return upgrade.run()
 
 
 class FirmwareVersionTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_comparison_matches_firmware_semantic_precedence(self):
         for candidate, running, expected in (
                 ('0.1.133', '0.1.132', 1), ('0.1.132', '0.1.133', -1), ('0.1.132', '0.1.132', 0),
@@ -305,6 +294,9 @@ class FirmwareVersionTests(unittest.TestCase):
 
 
 class FirmwareUpgradeTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_single_authenticated_upload_requires_staging_new_boots_and_exact_image(self):
         fixture = UpgradeFixture()
         upgrade = fixture.upgrade()
@@ -419,21 +411,20 @@ class FirmwareUpgradeTests(unittest.TestCase):
             with self.subTest(read=flag):
                 fixture = UpgradeFixture(**{flag: True})
                 upgrade = fixture.upgrade()
+                started = self.clock.now
                 fixture.run(upgrade)
                 self.assertFalse(fixture.flags[flag], 'the final verification read must encounter the injected failure')
                 self.assertEqual(len(fixture.uploads), 1)
                 self.assertEqual(upgrade.after_system['boot_id'], NEW_MAIN_BOOT)
                 self.assertIn('all_targets_healthy', [row['check'] for row in upgrade.report['checks']])
-                self.assertLess(fixture.clock.now, 102.0, 'read recovery must retain the original upgrade deadline')
+                self.assertLess(self.clock.now - started, 2.0, 'read recovery must retain the original upgrade deadline')
 
     def test_firmware_cleanup_callback_retries_503_before_refreshing_owned_boot_proofs(self):
         fixture = UpgradeFixture()
         upgrade = fixture.upgrade()
         fixture.run(upgrade)
         fixture.flags['restart_read_503'] = True
-        with patch('amity_harness.firmware.time.monotonic', fixture.clock.monotonic), \
-             patch('amity_harness.firmware.time.sleep', fixture.clock.sleep):
-            upgrade.close()
+        upgrade.close()
         self.assertFalse(fixture.flags['restart_read_503'])
         self.assertEqual(len(fixture.uploads), 1)
         self.assertTrue(all(member.boot == NEW_MAIN_BOOT for member in fixture.members))
@@ -485,10 +476,8 @@ class FirmwareUpgradeTests(unittest.TestCase):
         upgrade = fixture.upgrade(activities=activities)
         with self.assertRaisesRegex(AssertionError, 'changed saved') as primary:
             fixture.run(upgrade)
-        with patch('amity_harness.firmware.time.monotonic', fixture.clock.monotonic), \
-             patch('amity_harness.firmware.time.sleep', fixture.clock.sleep):
-            with self.assertRaisesRegex(AssertionError, 'edited|changed'):
-                upgrade.close()
+        with self.assertRaisesRegex(AssertionError, 'edited|changed'):
+            upgrade.close()
         self.assertEqual(activities[0].boot, MAIN_BOOT, 'cleanup must not adopt the edited activity')
         self.assertEqual(activities[1].boot, NEW_MAIN_BOOT, 'an earlier cleanup error must not strand unchanged owned resources')
         self.assertIn('changed saved', str(primary.exception))

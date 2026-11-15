@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import (AvrComponent, CecSession, DUT, Frame,
                            PlaybackComponent, TvComponent, TxResult, assign_addresses)
+from unit_tests.virtual_time import use_virtual_time
 
 
 class IdleWire:
@@ -38,6 +39,9 @@ class IdleWire:
 
 
 class TransportLoggingTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def topology(self):
         dut = DUT("amity-dut")
         tv = TvComponent(dut.tentacle(0).front, "Trace TV")

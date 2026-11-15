@@ -11,13 +11,14 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import ANY, AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock
 
 from amity_harness.dut import AmityHTTPError
 from amity_harness.enrollment import (EnrollmentError, MatterEnrollment, _credentials,
                                       _commission_factory, _read_credentials, _request, _verify_factory,
                                       _verify_factory_and_release,
                                       _worker, ensure_enrolled)
+from unit_tests.virtual_time import use_virtual_time
 
 
 CREDENTIALS = {"wifi_ssid": "private ssid $(literal)", "wifi_password": "private wifi password",
@@ -57,6 +58,7 @@ class DUT:
 
 class EnrollmentTests(unittest.TestCase):
     def setUp(self):
+        self.clock = use_virtual_time(self)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -83,8 +85,7 @@ class EnrollmentTests(unittest.TestCase):
     def test_expired_initial_window_is_reopened_then_commissioned_once_and_http_verified(self):
         dut = self.dut(ConnectionRefusedError(), ConnectionRefusedError(), {"token": "fresh"}, self.system)
         commissioner = Mock()
-        with patch("amity_harness.enrollment.time.sleep"):
-            result = ensure_enrolled(dut, commissioner)
+        result = ensure_enrolled(dut, commissioner)
         self.assertEqual(dut.presses, [0.5])
         commissioner.commission.assert_called_once_with(dut, timeout=ANY)
         self.assertTrue(result["enrolled"])
@@ -165,8 +166,14 @@ class EnrollmentTests(unittest.TestCase):
 
     def test_readiness_timeout_does_not_recommission(self):
         dut, commissioner = self.dut(ConnectionRefusedError(), ConnectionRefusedError()), Mock()
-        with patch("amity_harness.enrollment.time.monotonic", side_effect=[0, 0, 0, 0, 2, 2]), \
-                patch("amity_harness.enrollment.time.sleep"), self.assertRaises(TimeoutError):
+        request = dut.request
+
+        def unreachable_login(path, data=None, **options):
+            self.clock.advance(2)  # The failed login outlasts the one-second readiness budget.
+            return request(path, data, **options)
+
+        dut.request = unreachable_login
+        with self.assertRaises(TimeoutError):
             ensure_enrolled(dut, commissioner, timeout=1)
         commissioner.commission.assert_called_once()
         self.assertEqual(dut.presses, [0.5])
@@ -384,18 +391,16 @@ class EnrollmentTests(unittest.TestCase):
 
     def test_factory_failsafe_cleanup_shares_the_verification_deadline(self):
         controller, clusters, calls = self.factory_controller()
-        now = [0]
         read = controller.ReadAttribute
 
         async def slow_read(*args):
             result = await read(*args)
-            now[0] = 31
+            self.clock.advance(31)
             return result
 
         controller.ReadAttribute = slow_read
-        with patch("amity_harness.enrollment.time.monotonic", side_effect=lambda: now[0]):
-            with self.assertRaisesRegex(TimeoutError, "deadline expired"):
-                asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
+        with self.assertRaisesRegex(TimeoutError, "deadline expired"):
+            asyncio.run(_verify_factory_and_release(controller, clusters, CREDENTIALS, timeout=30))
         self.assertEqual([call[0] for call in calls], ["pase", "read"])
 
     def test_native_rejects_saved_fabric_or_network_before_provisioning(self):

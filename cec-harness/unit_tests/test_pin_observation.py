@@ -12,9 +12,15 @@ from amity_harness.cec import CecError, Frame
 from amity_harness.cec_pin import PinDecoder, PinFrame
 from amity_harness.pin_observation import PinObservation
 from unit_tests import test_nack
+from unit_tests.virtual_time import use_virtual_time
 
 
 class PinObservationTests(unittest.TestCase):
+    def setUp(self):
+        # The monitor thread, session workers and cec_timeout windows share
+        # one virtual clock, so frame delivery never races a real deadline.
+        self.clock = use_virtual_time(self)
+
     def fixture(self):
         return test_nack.MissingRecipientTests().fixture()
 

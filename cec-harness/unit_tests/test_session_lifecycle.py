@@ -15,6 +15,7 @@ from amity_harness import (
     AvrComponent, CecError, CecSession, DUT, Frame, Hooks, LinuxCecBackend,
     PlaybackComponent, PowerState, TvComponent, TxResult, assign_addresses,
 )
+from unit_tests.virtual_time import use_virtual_time
 
 
 class Backend:
@@ -73,6 +74,7 @@ class ObservedLock:
 
 class SessionLifecycleTests(unittest.TestCase):
     def setUp(self):
+        self.clock = use_virtual_time(self)
         self.dut = DUT("amity-dut")
         self.backends = {}
 
@@ -176,7 +178,8 @@ class SessionLifecycleTests(unittest.TestCase):
         self.assertTrue(handling.wait(1))
         closer = threading.Thread(target=session.__exit__, args=(None, None, None))
         closer.start()
-        time.sleep(.05)
+        # Wait until the closer is blocked behind the query handler's lock.
+        self.clock.settle()
         self.assertFalse(session._stop.is_set())
         release.set()
         closer.join(2)

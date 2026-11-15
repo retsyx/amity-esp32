@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import sys
 import threading
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -17,10 +16,16 @@ from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, TvCompone
 from amity_harness.discovery import _native_selector, scan_hdmi
 from amity_harness.testbed import _scan_report
 from amity_harness.trace import failure_fields, stdio_logging
+from unit_tests.virtual_time import use_virtual_time
 
 
 class DistributedScanTests(unittest.TestCase):
     def setUp(self):
+        # Scans start at 10 s of virtual time, before the scripted wire
+        # exchanges at 11-12 s. Subtests rebuild the fixture through setUp
+        # and keep the test's one clock.
+        if not hasattr(self, "clock"):
+            self.clock = use_virtual_time(self, start=10.0)
         self.main, self.member = DUT("amity-dut"), DUT("amity-dut-2")
         self.boot, self.member_boot, self.group = "b" * 32, "d" * 32, "c" * 32
         self.components = []
@@ -93,8 +98,7 @@ class DistributedScanTests(unittest.TestCase):
         raise TimeoutError("The scripted evidence does not satisfy the scan assertion")
 
     def scan(self):
-        with patch("amity_harness.discovery.time.monotonic_ns", return_value=10_000_000_000):
-            return scan_hdmi(self.main, self.session)
+        return scan_hdmi(self.main, self.session)
 
     def test_six_identical_named_devices_resolve_to_each_actual_owner_and_wire(self):
         result = self.scan().assert_contains_only(*self.components)

@@ -21,6 +21,7 @@ from amity_harness.http_transport import HTTPSOpener
 from amity_harness.testbed import TestBed
 import test_keys as key_fixture
 import test_testbed as bed_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SocketPairFactory:
@@ -118,14 +119,7 @@ class DisconnectTransportTests(unittest.TestCase):
 
 class DisconnectedHoldTests(unittest.TestCase):
     def setUp(self):
-        # Advance the simulated duration without sleeping for every positive
-        # hold. All frame and key-helper clocks share the same monotonic offset.
-        real_monotonic_ns = time.monotonic_ns
-        self.clock_offset_ns = 0
-        clock = patch("amity_harness.keys.time.monotonic_ns",
-                      lambda: real_monotonic_ns() + self.clock_offset_ns)
-        clock.start()
-        self.addCleanup(clock.stop)
+        self.clock = use_virtual_time(self)
 
     def fixture(self, *, remote=False):
         helper = key_fixture.KeyTests()
@@ -155,9 +149,8 @@ class DisconnectedHoldTests(unittest.TestCase):
             def finish():
                 time.sleep(.003)  # Must be after the simulated client close.
                 if tail != "early_release":
-                    self.clock_offset_ns += data["duration_ms"] * 1_000_000
-                    if tail == "uncertain_release":
-                        self.clock_offset_ns -= 20_000_000
+                    # The bounded hold elapses; an uncertain release lands 20 ms early.
+                    self.clock.advance(data["duration_ms"] / 1000 - (.02 if tail == "uncertain_release" else 0))
                 f.receive_key(release=tail != "missing")
                 if tail in ("late_press", "late_released"):
                     time.sleep(.015)

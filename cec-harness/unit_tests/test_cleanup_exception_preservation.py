@@ -17,9 +17,13 @@ from amity_harness.membership import AddedAmity
 from amity_harness.testbed import TestBedCleanupError
 from test_activity import Fixture as ActivityFixture
 from test_membership import Fixture as MembershipFixture, UnitSession
+from unit_tests.virtual_time import use_virtual_time
 
 
 class CleanupExceptionTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def activities(self):
         fixture = ActivityFixture()

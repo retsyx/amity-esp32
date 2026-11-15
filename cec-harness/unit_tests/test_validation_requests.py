@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import AvrComponent, DUT, Frame, Key, PlaybackComponent, TvComponent, assign_addresses
 from amity_harness.ble_input import BLEInputEvidence
 from amity_harness.discovery import ScanResult
+from unit_tests.virtual_time import use_virtual_time
 
 
 class FourOwners:
@@ -87,6 +88,10 @@ class FourOwners:
 
 
 class ValidationRequestTests(unittest.TestCase):
+    def setUp(self):
+        # Key-response windows and wire stamps share one virtual clock.
+        self.clock = use_virtual_time(self)
+
     def evidence(self, fixture):
         evidence = BLEInputEvidence(fixture.main, fixture.scan, *fixture.components)
         evidence.__enter__()

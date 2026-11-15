@@ -21,6 +21,7 @@ from amity_harness.ble_keyboard_worker import LINK_DROP_TIMEOUT
 from amity_harness.config import RunConfig
 from amity_harness.dut import AmityHTTPError
 from amity_harness.runner import main as run_main
+from unit_tests.virtual_time import use_virtual_time
 
 
 class Fixture:
@@ -41,7 +42,7 @@ class Fixture:
                                    control_only=(), session=self.session, add_cleanup=self.cleanups.append)
         self.main._testbed = self.bed
         self.worker = Worker(self)
-        self.main._runtime = RunConfig(timeout=.1, keyboard_factory=lambda: self.worker)
+        self.main._runtime = RunConfig(timeout=30, keyboard_factory=lambda: self.worker)
         self.main.get_system = lambda: deepcopy(self.system)
         self.main.get_state = lambda: deepcopy(self.activity)
         self.main.request = self.request
@@ -167,9 +168,7 @@ class Worker:
 
 class PairedKeyboardTests(unittest.TestCase):
     def setUp(self):
-        sleeper = patch("amity_harness.ble_keyboard.time.sleep")
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.clock = use_virtual_time(self)
 
     def test_exact_target_pair_and_owned_cleanup_use_fresh_shipping_ui_reviews(self):
         fixture = Fixture()
@@ -195,7 +194,7 @@ class PairedKeyboardTests(unittest.TestCase):
         def factory(*, keyboard_slots):
             slots_seen.append(keyboard_slots)
             return fixture.worker
-        fixture.main._runtime = RunConfig(timeout=.1, keyboard_factory=factory)
+        fixture.main._runtime = RunConfig(timeout=30, keyboard_factory=factory)
         original_open = fixture.worker.open
         fixture.worker.open = lambda: {**original_open(), "keyboard_slots": 10}
         original_report = fixture.worker.report

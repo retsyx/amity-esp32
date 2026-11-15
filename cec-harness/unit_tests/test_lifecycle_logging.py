@@ -9,9 +9,14 @@ from amity_harness.dut import AmityHTTPError, DUT
 from amity_harness.testbed import TestBed, TestBedCleanupError
 from unit_tests.test_dut import Opener
 from unit_tests.test_testbed import UnitDUT, UnitSession
+from unit_tests.virtual_time import use_virtual_time
 
 
 class LifecycleLoggingTests(unittest.TestCase):
+    def setUp(self):
+        # Request durations and operation polling read the virtual clock.
+        self.clock = use_virtual_time(self)
+
     def test_http_trace_excludes_credentials_contents_and_dynamic_route_values(self):
         secrets = ("private-password", "private-session-token", "private-origin.example",
                    "private-device-token", "private-request-token", "private-setup-code",
@@ -45,8 +50,7 @@ class LifecycleLoggingTests(unittest.TestCase):
         dut = DUT("amity-dut")
         pending = {"operation_id": identity, "stage": "admitted"}
         replies = [pending, {**pending, "stage": "configuring"}, {**pending, "stage": "applied"}]
-        with patch.object(dut, "request", side_effect=replies), \
-                patch("amity_harness.dut.time.sleep"), patch("amity_harness.dut.event") as logged:
+        with patch.object(dut, "request", side_effect=replies), patch("amity_harness.dut.event") as logged:
             result = dut.wait_operation(pending)
         stages = [call.kwargs["stage"] for call in logged.call_args_list if call.args[0] == "operation.stage"]
         self.assertEqual(stages, ["admitted", "configuring", "applied"])

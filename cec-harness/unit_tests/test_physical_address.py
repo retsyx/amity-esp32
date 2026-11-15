@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, CecSession, DUT, Frame, Hooks, TestBed, TvComponent, TxResult
 from amity_harness.physical_address import AdapterAddressEvidence
+from unit_tests.virtual_time import use_virtual_time
 
 
 class IdentityWire:
@@ -42,6 +43,9 @@ class IdentityWire:
 
 
 class AdapterAddressEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self, *, remote=False, back=False):
         main = DUT("amity-dut")

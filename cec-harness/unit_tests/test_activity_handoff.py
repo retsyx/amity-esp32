@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, CecSession, DUT, Frame, Hooks, PlaybackComponent, TestBed, TvComponent, TxResult
 from amity_harness.transitions import ActivityDisplayStandby, ActivityHandoff, observe_no_standby
+from unit_tests.virtual_time import use_virtual_time
 
 
 class IdleWire:
@@ -37,6 +38,9 @@ class IdleWire:
 
 
 class ActivityHandoffTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         dut = DUT("amity-dut-4")
@@ -284,6 +288,9 @@ class ActivityHandoffTests(unittest.TestCase):
 
 
 class ActivityDisplayStandbyTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         dut = DUT("amity-dut")

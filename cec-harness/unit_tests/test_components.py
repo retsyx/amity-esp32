@@ -1,6 +1,7 @@
 """Framework unit checks; no DUT, radio, network or GPIO operation."""
 
 import ctypes
+import time
 import unittest
 
 from amity_harness import DUT
@@ -10,6 +11,7 @@ from amity_harness.components import (AvrComponent, Component, Hooks,
                                      PlaybackComponent, PowerState, TvComponent)
 from amity_harness.topology import (CecAddress, assign_addresses, child_address,
                                    physical_address)
+from unit_tests.virtual_time import use_virtual_time
 
 
 def topology():
@@ -39,7 +41,6 @@ class FakeBackend:
 
     def receive(self, timeout):
         # No mock event source: protocol tests inject received frames directly.
-        import time
         time.sleep(min(timeout, 0.001))
         return None
 
@@ -48,6 +49,9 @@ class FakeBackend:
 
 
 class FrameworkComponentTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_explicit_mute_commands_set_state_without_toggling_on_repetition(self):
         tv, avr, player = topology()
         with CecSession([tv, avr, player], backend_factory=FakeBackend):

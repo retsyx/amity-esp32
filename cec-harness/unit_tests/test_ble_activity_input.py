@@ -18,6 +18,7 @@ from amity_harness.ble_activity_input import BLEActivityEvidence
 from amity_harness.cec_pin import PinFrame
 from amity_harness.keys import Key
 from unit_tests.test_ble_input import KeyWire
+from unit_tests.virtual_time import use_virtual_time
 
 
 class TransitionKeyboard:
@@ -243,6 +244,9 @@ class TransitionKeyboard:
 
 
 class BLEActivityEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self, *, repair=False, fault=None, remote=False):
         main = DUT("amity-dut")
@@ -774,14 +778,22 @@ class BLEActivityEvidenceTests(unittest.TestCase):
     def test_readiness_polling_is_paced(self):
         states = [{"current_activity": 0, "activity_settling": True, "activity_error": ""}] * 2 + [
             {"current_activity": 1, "activity_settling": False, "activity_error": ""}]
+        reads = []
+
+        def request(path, **kwargs):
+            reads.append(self.clock.now_ns)
+            return dict(states.pop(0))
+
         evidence = BLEActivityEvidence.__new__(BLEActivityEvidence)
-        evidence.dut = SimpleNamespace(request=lambda path, **kwargs: dict(states.pop(0)))
+        evidence.dut = SimpleNamespace(request=request)
         evidence._live = lambda: None
-        with patch("amity_harness.ble_activity_input.time.sleep") as sleep:
-            evidence._settled(1, time.monotonic_ns() + 5_000_000_000)
+        evidence._settled(1, time.monotonic_ns() + 5_000_000_000)
         self.assertEqual(states, [])
-        self.assertEqual(sleep.call_count, 2)
-        self.assertTrue(all(call.args[0] == 0.05 for call in sleep.call_args_list))
+        # Each unready read is followed by one full 50 ms pause.
+        gaps = [later - earlier for earlier, later in zip(reads, reads[1:])]
+        self.assertEqual(len(gaps), 2)
+        for gap in gaps:
+            self.assertAlmostEqual(gap / 1e9, 0.05, places=6)
 
     def test_new_source_power_before_old_source_standby_fails(self):
         with self.fixture(fault="power_before_standby") as fixture:

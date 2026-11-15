@@ -16,6 +16,7 @@ from amity_harness.dut import AmityHTTPError, DUT, PinctrlGPIO
 from amity_harness.config import RunConfig, use_config
 from amity_harness.wiring import DEFAULT_WIRING, Wiring
 from unit_tests.harness_pins import cec_gpio, reset_gpio, wiring
+from unit_tests.virtual_time import use_virtual_time
 
 
 def single_dut_document():
@@ -124,6 +125,8 @@ class WiringTests(unittest.TestCase):
 
 class DUTTests(unittest.TestCase):
     def setUp(self):
+        # Operation polling, holds and request timing read the virtual clock.
+        self.clock = use_virtual_time(self)
         self.wiring = WiringTests().parse()
 
     def test_ui_login_state_and_scan_use_existing_routes(self):
@@ -245,8 +248,7 @@ class DUTTests(unittest.TestCase):
         configuration = {"version": 1, "expected_config_revision": "12",
                          "expected_presentation_revision": "4", "activities": [row],
                          "device_choices": [{"title": "TV"}], "component_owners": [{"owner": "main"}]}
-        with patch("amity_harness.dut.time.sleep"):
-            result = dut.set_configuration(configuration)
+        result = dut.set_configuration(configuration)
         self.assertEqual(result["stage"], "applied")
         payload = json.loads(opener.requests[1].data)
         # Exactly the UI's submission fields, as accepted by the firmware.

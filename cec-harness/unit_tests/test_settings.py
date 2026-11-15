@@ -13,6 +13,7 @@ from amity_harness.membership import MembershipConflict
 from amity_harness.settings import FrontPhysicalAddress
 from amity_harness.testbed import TestBed
 from unit_tests.test_membership import Fixture, UnitSession
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SettingsFixture(Fixture):
@@ -103,13 +104,11 @@ class SettingsFixture(Fixture):
 
 class AdapterSettingsTests(unittest.TestCase):
     def setUp(self):
-        sleeper = patch("amity_harness.settings.time.sleep")
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.clock = use_virtual_time(self)
 
     def fixture(self):
         fixture = SettingsFixture()
-        member = fixture.added(timeout=0.2).create()
+        member = fixture.added().create()
         return fixture, member
 
     def test_ui_write_and_restore_preserve_boot_and_keep_other_defaults(self):
@@ -227,7 +226,7 @@ class AdapterSettingsTests(unittest.TestCase):
         fixture, member = self.fixture()
         fixture.restart_during_save = True
         with self.assertRaisesRegex(MembershipConflict, "restarted"):
-            member.front_physical_address(2, "1.2.0.0", timeout=0.01)
+            member.front_physical_address(2, "1.2.0.0", timeout=30)
         fixture, member = self.fixture()
         fixture.change_other_default = True
         with self.assertRaisesRegex(MembershipConflict, "exactly the reviewed"):
@@ -324,7 +323,7 @@ class AdapterSettingsTests(unittest.TestCase):
         fixture, member = self.fixture()
         del fixture.defaults[2]
         with self.assertRaises((MembershipConflict, TimeoutError)):
-            member.front_physical_address(2, "1.2.0.0", timeout=0.01)
+            member.front_physical_address(2, "1.2.0.0", timeout=30)
         self.assertEqual(fixture.writes, [])
 
     def test_configured_quiet_adapter_needs_no_presence_sensor(self):
@@ -379,14 +378,12 @@ class LocalSettingsFixture(SettingsFixture):
 
 class LocalAdapterSettingsTests(unittest.TestCase):
     def setUp(self):
-        sleeper = patch("amity_harness.settings.time.sleep")
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.clock = use_virtual_time(self)
 
     def test_local_ui_write_restore_and_three_independent_address_fields(self):
         fixture = LocalSettingsFixture()
         original = deepcopy(fixture.config)
-        with fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2) as setting:
+        with fixture.main.front_physical_address(2, "2.0.0.0", timeout=30) as setting:
             setting.assert_address(detected=None, selected="2.0.0.0")
             self.assertEqual(setting.read()["configured"], True)
             self.assertEqual(fixture.defaults[2], "2.0.0.0")
@@ -405,7 +402,7 @@ class LocalAdapterSettingsTests(unittest.TestCase):
     def test_local_scan_equal_to_old_default_retains_priority_on_edit(self):
         fixture = LocalSettingsFixture()
         fixture.observed_address = "1.0.0.0"
-        with fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2) as setting:
+        with fixture.main.front_physical_address(2, "2.0.0.0", timeout=30) as setting:
             setting.assert_address(detected="1.0.0.0", selected="1.0.0.0")
             with self.assertRaisesRegex(AssertionError, "observed_front"):
                 setting.assert_address(detected=None, selected="1.0.0.0")
@@ -420,7 +417,7 @@ class LocalAdapterSettingsTests(unittest.TestCase):
         for mutation in ("boot", "identity", "authority", "member", "bed"):
             with self.subTest(mutation=mutation):
                 fixture = LocalSettingsFixture()
-                setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.02)
+                setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=30)
                 if mutation == "boot":
                     fixture.system["boot_id"] = "9" * 32
                 elif mutation == "identity":
@@ -445,7 +442,7 @@ class LocalAdapterSettingsTests(unittest.TestCase):
     def test_local_restart_during_save_fails_without_rebinding_boot(self):
         fixture = LocalSettingsFixture()
         fixture.restart_main_after_save = True
-        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.02)
+        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=30)
         with self.assertRaisesRegex(MembershipConflict, "restarted"):
             setting.apply()
         self.assertEqual(setting.member.member_boot, fixture.boot)
@@ -454,7 +451,7 @@ class LocalAdapterSettingsTests(unittest.TestCase):
     def test_local_uncertain_write_is_reconciled_without_retry_then_restored(self):
         fixture = LocalSettingsFixture()
         fixture.lose_settings_reply = True
-        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.2)
+        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=30)
         with self.assertRaises(OSError):
             setting.apply()
         setting.close()
@@ -464,7 +461,7 @@ class LocalAdapterSettingsTests(unittest.TestCase):
 
     def test_local_cleanup_refuses_overwriting_external_edit(self):
         fixture = LocalSettingsFixture()
-        setting = fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2)
+        setting = fixture.main.front_physical_address(2, "2.0.0.0", timeout=30)
         fixture.defaults[2] = "3.0.0.0"
         with self.assertRaisesRegex(MembershipConflict, "changed before fixture cleanup"):
             setting.close()
@@ -481,13 +478,13 @@ class LocalAdapterSettingsTests(unittest.TestCase):
                 else:
                     del fixture.defaults[3]
                 with self.assertRaises((MembershipConflict, TimeoutError)):
-                    fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.01)
+                    fixture.main.front_physical_address(2, "2.0.0.0", timeout=30)
                 self.assertEqual(fixture.writes, [])
 
     def test_local_stale_review_rejection_does_not_retry_or_restore(self):
         fixture = LocalSettingsFixture()
         fixture.reject_settings = True
-        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=0.2)
+        setting = FrontPhysicalAddress.local(fixture.main, 2, "2.0.0.0", timeout=30)
         with self.assertRaises(AmityHTTPError):
             setting.apply()
         setting.close()
@@ -500,7 +497,7 @@ class LocalAdapterSettingsTests(unittest.TestCase):
         fixture.main.adapter_settings_operations = [{"phase": "prior", "address": "3.0.0.0"}]
         bed = TestBed(fixture.main, session_factory=UnitSession)
         with bed:
-            with fixture.main.front_physical_address(2, "2.0.0.0", timeout=0.2) as setting:
+            with fixture.main.front_physical_address(2, "2.0.0.0", timeout=30) as setting:
                 setting.assert_address(detected=None, selected="2.0.0.0")
                 fixture.main.adapter_settings_operations[-1].update(
                     password="PRIVATE_PASSWORD", Authorization="PRIVATE_TOKEN",

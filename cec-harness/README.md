@@ -1519,3 +1519,30 @@ PYTHONPATH=cec-harness .harness-python/bin/python -m unittest discover -s cec-ha
 ```
 
 These validate the framework, not DUT behavior.
+
+Unit tests run on virtual time. A test calls
+`self.clock = use_virtual_time(self)` from `unit_tests/virtual_time.py` in
+`setUp`, before it creates fixtures, sessions or threads. The clock replaces the
+`time`, `threading`, `queue` and `ThreadPoolExecutor` names inside the harness,
+functional-test and unit-test modules. Sleeps, timed waits, lock and queue
+timeouts, joins and timers then wait for virtual deadlines. Virtual time moves
+only when every thread started through those modules is blocked, so results do
+not depend on runner speed and no test waits in real time. `clock.advance()`
+simulates elapsed time, and `clock.settle()` lets background threads reach their
+next wait. A deadlock, a thread stuck in a real call, or a loop that reads the
+clock without waiting fails with a stack dump instead of hanging.
+
+These tests keep real time because a real process, signal, pipe or tool is what
+they test:
+
+- `test_enrollment_cancellation` and `test_matter_cancellation`
+- `test_matter`: `MatterPipeTests` and `MatterNativeSessionTests`
+- `test_ble_keyboard`: `KeyboardTransportTests`
+- `test_status_led`: the helper-process pipe-EOF test
+- `test_gpio_transport`: the signal-interruption tests
+- `test_runtime_setup`, `test_flashing`, `test_pi_cec_driver` and `test_pi_boot`
+
+Asyncio code runs on the event loop's own clock, which virtual time does not
+replace. `test_soak_browser` uses the browser's performance timestamps.
+The firmware host tests under `tests/` are C++ and JavaScript and simulate time
+with their own fakes.

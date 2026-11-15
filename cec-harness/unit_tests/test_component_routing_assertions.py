@@ -10,7 +10,6 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -18,6 +17,7 @@ from amity_harness import (AvrComponent, CecSession, DUT, Frame, Hooks,
                            PlaybackComponent, PowerState, RunConfig, TvComponent,
                            TestBed, TxResult, use_config)
 from test_component_power_assertions import distributed_activity_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class IdleWire:
@@ -55,6 +55,9 @@ class QueuedWire(IdleWire):
 
 
 class ComponentRoutingAssertionTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self, *, backend_factory=IdleWire, tv_input=1):
         dut = DUT("amity-dut")
@@ -80,11 +83,11 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
 
     def missing(self, component, physical, boundary):
         with self.assertRaises(TimeoutError):
-            component.wait_for_input(physical, since=boundary, timeout=0.005)
+            component.wait_for_input(physical, since=boundary)
 
     def missing_amity_input(self, tv, boundary):
         with self.assertRaises(TimeoutError):
-            tv.wait_for_amity_input(since=boundary, timeout=0.005)
+            tv.wait_for_amity_input(since=boundary)
 
     def test_source_request_proves_fresh_back_routing_and_activation_without_a_router_role(self):
         with self.fixture(tv_input=3) as (dut, tv, avr, player, session):
@@ -115,7 +118,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
                              destination=4 if fault == "destination" else 15,
                              opcode=0x82 if fault == "opcode" else 0x86)
                 with self.assertRaises(TimeoutError):
-                    player.wait_for_source_request(since=start, timeout=0.005)
+                    player.wait_for_source_request(since=start)
 
     def test_source_request_needs_applied_unmodified_handler_and_current_active_state(self):
         for fault in ("local", "drop", "rewrite", "ignore", "inactive"):
@@ -135,7 +138,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
                         player.hooks.after_rx = lambda component, frame: setattr(component, "active", False)
                     self.receive(player, 0, player.address.physical)
                 with self.assertRaises(TimeoutError):
-                    player.wait_for_source_request(since=start, timeout=0.005)
+                    player.wait_for_source_request(since=start)
 
     def test_standby_invalidates_source_request_evidence(self):
         with self.fixture() as (dut, tv, avr, player, session):
@@ -145,7 +148,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
             player.standby()
             player.active_input, player.active = player.address.physical, True
             with self.assertRaises(TimeoutError):
-                player.wait_for_source_request(since=start, timeout=0.005)
+                player.wait_for_source_request(since=start)
             self.receive(player, 0, player.address.physical)
             player.wait_for_source_request(since=start)
 
@@ -271,14 +274,14 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
                 target = f.member_player.address.physical
                 self.receive(f.member_avr, 0, target)
                 wire_time = f.member_avr.routing_events[-1]["wire_timestamp_ns"]
-                clock, calls = [time.monotonic()], []
+                calls = []
 
                 def snapshot():
                     self.assertFalse(f.session._lock._is_owned())
                     self.assertFalse(f.member_avr._power_condition._is_owned())
                     calls.append(None)
                     if len(calls) == 2:
-                        clock[0] += 6
+                        self.clock.advance(6)
                         if change == "repeat":
                             self.receive(f.member_avr, 0, target, timestamp=wire_time + 6_000_000_000)
                         elif change is not None:
@@ -288,14 +291,13 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
                     return deepcopy(f.source.system)
 
                 f.dut.get_system = snapshot
-                with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
-                    if change in (None, "repeat"):
-                        self.assertIs(f.member_avr.wait_for_input(target, since=action, timeout=5), f.member_avr)
-                        self.assertEqual(f.member_avr.routing_assertions[-1]["wire_timestamp_ns"], wire_time)
-                    else:
-                        with self.assertRaises(TimeoutError):
-                            f.member_avr.wait_for_input(target, since=action, timeout=5)
-                        self.assertEqual(f.member_avr.routing_assertions, ())
+                if change in (None, "repeat"):
+                    self.assertIs(f.member_avr.wait_for_input(target, since=action, timeout=5), f.member_avr)
+                    self.assertEqual(f.member_avr.routing_assertions[-1]["wire_timestamp_ns"], wire_time)
+                else:
+                    with self.assertRaises(TimeoutError):
+                        f.member_avr.wait_for_input(target, since=action, timeout=5)
+                    self.assertEqual(f.member_avr.routing_assertions, ())
                 self.assertEqual(len(calls), 2)
 
     def test_slow_owner_proof_does_not_extend_wait_for_routing_delivery_lock(self):
@@ -303,7 +305,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
         action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
         target = f.member_player.address.physical
         self.receive(f.member_avr, 0, target)
-        clock, calls = [time.monotonic()], []
+        calls = []
         holding, release = threading.Event(), threading.Event()
 
         def hold_delivery():
@@ -316,16 +318,15 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
         def snapshot():
             calls.append(None)
             if len(calls) == 2:
-                clock[0] += 6
+                self.clock.advance(6)
                 worker.start()
                 self.assertTrue(holding.wait(0.5))
             return deepcopy(f.source.system)
 
         f.dut.get_system = snapshot
         try:
-            with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
-                with self.assertRaises(TimeoutError):
-                    f.member_avr.wait_for_input(target, since=action, timeout=5)
+            with self.assertRaises(TimeoutError):
+                f.member_avr.wait_for_input(target, since=action, timeout=5)
             self.assertTrue(worker.is_alive())
             self.assertEqual(f.member_avr.routing_assertions, ())
         finally:
@@ -401,7 +402,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
 
     def missing_switch(self, component, boundary, number=4):
         with self.assertRaises(TimeoutError):
-            component.wait_for_switch_input(number, since=boundary, timeout=0.005)
+            component.wait_for_switch_input(number, since=boundary)
 
     def test_switch_input_requires_applied_directed_command_and_remains_distinct_from_physical_route(self):
         with self.fixture() as (dut, tv, avr, player, session):
@@ -627,7 +628,7 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
             self.assertEqual(avr.power, PowerState.STANDBY)
             avr.wait_for_power("standby", since=start, command="standby")
             with self.assertRaises(TimeoutError):
-                avr.wait_for_power("standby", since=start, command="standby", directed=True, timeout=0.005)
+                avr.wait_for_power("standby", since=start, command="standby", directed=True)
             avr.receive(Frame(0, avr.address.logical, 0x36, timestamp_ns=time.monotonic_ns()))
             self.assertIs(avr.wait_for_power("standby", since=start, command="standby", directed=True), avr)
             self.assertEqual(avr.power_events[-1]["destination"], avr.address.logical)
@@ -772,10 +773,13 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
             avr.wait_for_input(player.address.physical, since=start)
 
     def test_checkpoint_and_managed_timeout_need_no_user_polling(self):
-        with use_config(RunConfig(cec_timeout=0.01)), self.fixture() as (dut, tv, avr, player, session):
+        with use_config(RunConfig(cec_timeout=2)), self.fixture() as (dut, tv, avr, player, session):
             marker = avr.checkpoint()
+            started = self.clock.now
             with self.assertRaises(TimeoutError):
                 avr.wait_for_input(player, since=marker)
+            self.assertGreaterEqual(self.clock.now - started, 2)
+            self.assertLess(self.clock.now - started, 2.1)
             marker = avr.checkpoint()
             self.receive(avr, 0, player.address.physical)
             avr.wait_for_input(player, since=marker)
@@ -783,18 +787,12 @@ class ComponentRoutingAssertionTests(unittest.TestCase):
     def test_long_operation_timeout_keeps_missing_cec_route_wait_at_one_second(self):
         with use_config(RunConfig(timeout=180)), self.fixture() as (dut, tv, avr, player, session):
             marker = avr.checkpoint()
-            clock = [10.0]
-
-            def wait(seconds):
-                clock[0] += seconds
-
-            with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
-                    patch.object(avr._power_condition, "wait", side_effect=wait):
-                with self.assertRaises(TimeoutError):
-                    avr.wait_for_input(player, since=marker)
+            started = self.clock.now
+            with self.assertRaises(TimeoutError):
+                avr.wait_for_input(player, since=marker)
             self.assertEqual(dut._runtime.timeout, 180)
-            self.assertGreaterEqual(clock[0] - 10, 1)
-            self.assertLess(clock[0] - 10, 1.1)
+            self.assertGreaterEqual(self.clock.now - started, 1)
+            self.assertLess(self.clock.now - started, 1.1)
 
     def test_background_delivery_and_bounded_immutable_evidence_snapshots(self):
         with self.fixture() as (dut, tv, avr, player, session):

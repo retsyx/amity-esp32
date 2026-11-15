@@ -4,9 +4,9 @@ from copy import deepcopy
 from pathlib import Path
 import sys
 import threading
+import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -14,26 +14,12 @@ from amity_harness import AvrComponent, CecAddress, DUT, Frame, Hooks, PlaybackC
 from amity_harness.components import PowerState
 from amity_harness.config import RunConfig, use_config
 from amity_harness.reboot import ActiveMemberReboot
-
-
-class Clock:
-    def __init__(self):
-        self.now = 100.0
-
-    def monotonic(self):
-        return self.now
-
-    def monotonic_ns(self):
-        return int(self.now * 1e9)
-
-    def sleep(self, seconds):
-        self.now += seconds
+from unit_tests.virtual_time import use_virtual_time
 
 
 class RebootFixture:
     def __init__(self):
-        self.clock = Clock()
-        with use_config(RunConfig(insecure=True, timeout=1, cec_timeout=0.01)):
+        with use_config(RunConfig(insecure=True)):
             self.main, self.secondary, self.other = (DUT(name) for name in
                 ("amity-dut", "amity-dut-2", "amity-dut-3"))
         self.owners = (self.main, self.secondary, self.other)
@@ -156,7 +142,7 @@ class RebootFixture:
                 self._boot = fixture.boots[fixture.main.identity.device_id]
                 self._group = fixture.group
                 self.expected = fixture.components
-                self.started = fixture.clock.monotonic_ns()
+                self.started = time.monotonic_ns()
                 self.owner_duts = {dut.identity.device_id: dut for dut in fixture.owners}
                 self.owner_boots = dict(fixture.boots)
                 self.initiators = {fixture.tv.gpio: 4, fixture.avr.gpio: 0}
@@ -187,26 +173,26 @@ class RebootFixture:
 
     def usb_reboot(self):
         self.events.append(("usb_reboot",))
-        self.clock.sleep(0.01)
+        time.sleep(0.01)
         if not self.skip_reboot:
             self.boots[self.secondary.identity.device_id] = "b" * 32
         self.on_usb()
         return "/dev/ttyACM-test"
 
     def receive(self, component, opcode, operands=b"", *, source=8, destination=None, transport="wire"):
-        self.clock.sleep(0.001)
+        time.sleep(0.001)
         frame = Frame(source, component.address.logical if destination is None else destination,
-            opcode, operands, timestamp_ns=self.clock.monotonic_ns())
+            opcode, operands, timestamp_ns=time.monotonic_ns())
         component.receive(frame, transport=transport)
 
 
 class ActiveMemberRebootTests(unittest.TestCase):
+    def setUp(self):
+        # The reboot worker, its polling and drain waits share one virtual clock.
+        self.clock = use_virtual_time(self)
+
     def fixture(self):
-        fixture = RebootFixture()
-        timer = patch("amity_harness.reboot.time", fixture.clock)
-        timer.start()
-        self.addCleanup(timer.stop)
-        return fixture
+        return RebootFixture()
 
     def test_reboot_once_preserves_activity_and_refreshes_only_the_proven_member_boot(self):
         fixture = self.fixture()
@@ -340,8 +326,7 @@ class ActiveMemberRebootTests(unittest.TestCase):
         original = fixture.member_proof.member_boot
         with self.assertRaises(TimeoutError):
             with ActiveMemberReboot(fixture.activity, fixture.member_proof) as reboot:
-                with patch.object(reboot._condition, "wait", side_effect=fixture.clock.sleep):
-                    reboot.reboot()
+                reboot.reboot()
         self.assertEqual(fixture.member_proof.member_boot, original)
         self.assertNotIn(("scan",), fixture.events)
         self.assertTrue(all(not component._wire_observers for component in fixture.components))

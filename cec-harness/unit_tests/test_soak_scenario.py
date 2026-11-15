@@ -13,25 +13,11 @@ from amity_harness import Component, DUT, Key, PowerState, TvComponent, assign_a
 from amity_harness.cec import LinuxCecBackend
 from functional_tests import soak
 from unit_tests.test_linux_backend import Kernel
-
-
-class VirtualClock:
-    def __init__(self):
-        self.now = 100.0
-        self.sleeps = []
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        if not 0 < seconds <= 1:
-            raise AssertionError("The soak must bound idle health-check intervals to one second")
-        self.sleeps.append(seconds)
-        self.now += seconds
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SoakFixture:
-    def __init__(self, *, setup_delay=0, failed_key=None, failed_ble=None,
+    def __init__(self, clock, *, setup_delay=0, failed_key=None, failed_ble=None,
                  failed_pair=False, failed_ui=False, stuck_key=False,
                  failed_matter=None, failed_matter_select=False,
                  failed_matter_open=False, failed_matter_slots=False,
@@ -42,7 +28,10 @@ class SoakFixture:
                  failed_homekit_rejected=False, failed_homekit_standby=False,
                  failed_homekit_status=None, failed_homekit_readback=None,
                  failed_homekit_close=False, homekit_delay=0):
-        self.clock = VirtualClock()
+        self.clock, self.created, self.sleeps = clock, clock.now, []
+        # The soak sees the shared virtual clock; every idle wait and key hold
+        # it performs must stay within one health-check interval.
+        self.time = SimpleNamespace(monotonic=clock.monotonic, sleep=self.sleep)
         self.setup_delay = setup_delay
         self.failed_key, self.failed_ui, self.stuck_key = failed_key, failed_ui, stuck_key
         self.failed_ble, self.failed_pair = failed_ble, failed_pair
@@ -76,6 +65,12 @@ class SoakFixture:
         self.setup_finished = None
         self.control_observations = []
 
+    def sleep(self, seconds):
+        if not 0 < seconds <= 1:
+            raise AssertionError("The soak must bound idle health-check intervals to one second")
+        self.sleeps.append(seconds)
+        self.clock.sleep(seconds)
+
     def health(self):
         self.events.append(("healthy", self.clock.now))
 
@@ -106,14 +101,14 @@ class SoakFixture:
     def add(self, main, member):
         if main is not self.duts[0] or member not in self.members:
             raise AssertionError("Only the original main can add the three owned members")
-        self.clock.now += self.setup_delay
+        self.clock.advance(self.setup_delay)
         self.events.append(("member.add", member.name))
         return SimpleNamespace(assert_connected=lambda: self.events.append(("member.connected", member.name)))
 
     def scan(self, main):
         if [row[1] for row in self.events if row[0] == "member.add"] != [dut.name for dut in self.members]:
             raise AssertionError("The scan must follow all three additions")
-        self.clock.now += self.setup_delay
+        self.clock.advance(self.setup_delay)
         self.events.append(("scan",))
         fixture = self
 
@@ -142,7 +137,7 @@ class SoakFixture:
     def activity(self, main, name, *, display, audio, source):
         if main is not self.duts[0]:
             raise AssertionError("Activities belong to the original main")
-        self.clock.now += self.setup_delay
+        self.clock.advance(self.setup_delay)
         fixture = self
 
         class Activity:
@@ -239,7 +234,7 @@ class SoakFixture:
         if transport == "homekit" and len(calls) == self.failed_homekit:
             raise TimeoutError("HomeKit key failed")
         if duration_ms:
-            self.clock.sleep(duration_ms / 1000)
+            self.sleep(duration_ms / 1000)
 
     def press(self, main, key, *, duration_ms):
         self.record_key("api", key, duration_ms)
@@ -266,7 +261,7 @@ class SoakFixture:
                 fixture.events.append(("matter.open", main.name))
                 if fixture.failed_matter_open:
                     raise RuntimeError("Matter open failed")
-                fixture.clock.now += fixture.setup_delay
+                fixture.clock.advance(fixture.setup_delay)
                 self.open = True
                 return self
 
@@ -278,7 +273,7 @@ class SoakFixture:
                 if not self.open:
                     raise AssertionError("Matter commands need an open owned controller")
                 fixture.events.append(("matter.command", name, value))
-                fixture.clock.now += fixture.matter_delay
+                fixture.clock.advance(fixture.matter_delay)
                 return 1 if fixture.failed_matter_status == name else 0
 
             def select_input(self, index):
@@ -306,7 +301,7 @@ class SoakFixture:
         if matter is not self.accessory or main is not self.duts[0] or list(activities) != self.activities:
             raise AssertionError("The Matter input list must cover all saved activities on the current main")
         self.events.append(("matter.inputs", main.name))
-        self.clock.now += self.setup_delay
+        self.clock.advance(self.setup_delay)
         if self.failed_matter_slots:
             raise AssertionError("Matter input list mismatch")
         self.setup_finished = self.clock.now
@@ -361,7 +356,7 @@ class SoakFixture:
                 fixture.events.append(("homekit.open", main.name))
                 if fixture.failed_homekit_open:
                     raise RuntimeError("HomeKit pairing failed")
-                fixture.clock.now += fixture.setup_delay
+                fixture.clock.advance(fixture.setup_delay)
                 self.open = True
                 return self
 
@@ -377,7 +372,7 @@ class SoakFixture:
                 if not self.open:
                     raise AssertionError("HomeKit commands need an open owned pairing")
                 fixture.events.append(("homekit.command", name, value))
-                fixture.clock.now += fixture.homekit_delay
+                fixture.clock.advance(fixture.homekit_delay)
                 return -70410 if fixture.failed_homekit_status == name else 0
 
             def select_input(self, index):
@@ -400,7 +395,7 @@ class SoakFixture:
                     raise AssertionError("HomeKit state needs an open owned pairing")
                 current = fixture.current
                 fixture.events.append(("homekit.state", None if current is None else current.name))
-                fixture.clock.now += fixture.homekit_delay
+                fixture.clock.advance(fixture.homekit_delay)
                 state = {"active": current is not None,
                          "current_input": 0 if current is None else current.slot + 1,
                          "speaker_active": current is not None}
@@ -421,7 +416,7 @@ class SoakFixture:
                 or list(activities) != self.activities):
             raise AssertionError("HomeKit inputs must cover all saved activities on the current main")
         self.events.append(("homekit.inputs", main.name))
-        self.clock.now += self.setup_delay
+        self.clock.advance(self.setup_delay)
         if self.failed_homekit_slots:
             raise AssertionError("HomeKit input list mismatch")
         self.setup_finished = self.clock.now
@@ -514,7 +509,7 @@ class SoakFixture:
         if main is not self.duts[0] or added != [dut.name for dut in self.members]:
             raise AssertionError("BLE pairing must follow all direct member additions")
         self.events.append(("keyboard.pair",))
-        self.clock.now += self.setup_delay
+        self.clock.advance(self.setup_delay)
         if self.failed_pair:
             raise RuntimeError("BLE pairing failed")
         fixture = self
@@ -586,7 +581,7 @@ class SoakFixture:
             report = {"selections": 0, "standbys": 0, "device_inspections": 0}
 
             def __enter__(self):
-                fixture.clock.now += fixture.setup_delay
+                fixture.clock.advance(fixture.setup_delay)
                 fixture.events.append(("browser.open",))
                 return self
 
@@ -597,7 +592,7 @@ class SoakFixture:
                 self.report["device_inspections"] += 1
                 fixture.events.append(("browser.devices",))
                 if fixture.setup_finished is None:
-                    fixture.clock.now += fixture.setup_delay
+                    fixture.clock.advance(fixture.setup_delay)
                     fixture.setup_finished = fixture.clock.now
 
             def select(self, activity):
@@ -641,7 +636,7 @@ class SoakFixture:
                                 ("homekit_standby", self.homekit_standby),
                                 ("observe_no_standby", self.preserve_shared), ("event", lambda *args, **kwargs: None)):
                 patches.enter_context(patch.object(soak, name, value))
-            patches.enter_context(patch.object(soak, "time", self.clock))
+            patches.enter_context(patch.object(soak, "time", self.time))
             if duration is not None:
                 patches.enter_context(patch.object(soak, "DURATION_SECONDS", duration))
             for cls, name, implementation in (
@@ -659,6 +654,9 @@ class SoakFixture:
 
 
 class SoakScenarioTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_all_four_systems_fit_linux_allocation_rules_on_each_documented_wire(self):
         owners = tuple(DUT(name) for name in
                        ("amity-dut", "amity-dut-2", "amity-dut-3", "amity-dut-4"))
@@ -685,11 +683,11 @@ class SoakScenarioTests(unittest.TestCase):
                 self.assertEqual(kernel.requests[0]["types"], types)
 
     def test_two_hour_workload_starts_after_setup_and_completes_every_sweep(self):
-        fixture = SoakFixture(setup_delay=1000)
+        fixture = SoakFixture(self.clock, setup_delay=1000)
         fixture.run()
         self.assertEqual(soak.DURATION_SECONDS, 7200)
-        self.assertGreater(fixture.setup_finished, 7200)
-        self.assertEqual(fixture.clock.now - fixture.setup_finished, 7200)
+        self.assertGreater(fixture.setup_finished - fixture.created, 7200)
+        self.assertAlmostEqual(self.clock.now - fixture.setup_finished, 7200, places=3)
         self.assertEqual(fixture.proof["elapsed_seconds"], 7200)
         self.assertTrue(fixture.proof["completed"])
         self.assertEqual(fixture.proof["sweeps"], 45)
@@ -709,7 +707,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.proof["homekit_standbys"], 15)
         self.assertEqual({row[1] for row in fixture.homekit_key_calls if row[1] in (Key.PLAY, Key.PAUSE)},
                          {Key.PLAY, Key.PAUSE})
-        self.assertAlmostEqual(sum(fixture.clock.sleeps), 7200, places=6)
+        self.assertAlmostEqual(sum(fixture.sleeps), 7200, places=3)
         self.assertEqual(sum(row[0] == "standby" for row in fixture.events), 45)
         self.assertEqual(sum(row[0] == "owners.validated" for row in fixture.events), 45)
         self.assertTrue(fixture.preserve_dut_on_failure)
@@ -728,7 +726,7 @@ class SoakScenarioTests(unittest.TestCase):
         )
         for test, names in cases:
             with self.subTest(test=test.__name__):
-                fixture = SoakFixture()
+                fixture = SoakFixture(self.clock)
                 fixture.run(test, duration=481)
                 self.assertEqual(tuple(dut.name for dut in fixture.duts), names)
                 self.assertEqual(tuple(dut.name for dut in fixture.members), names[1:])
@@ -803,20 +801,20 @@ class SoakScenarioTests(unittest.TestCase):
                 self.assertIsNone(fixture.current)
 
     def test_periodic_keys_keep_five_second_spacing_within_each_activity(self):
-        fixture = SoakFixture()
+        fixture = SoakFixture(self.clock)
         fixture.run(duration=1)
         for activity in fixture.activities:
             calls = [row for row in fixture.key_calls if row[0] == activity.name
                      and row[1] in (Key.RIGHT, Key.LEFT, Key.VOLUME_UP, Key.VOLUME_DOWN)]
             self.assertEqual(len(calls), 4)
-            self.assertEqual([row[3] - calls[0][3] for row in calls], [0, 5, 10, 15])
+            self.assertEqual([round(row[3] - calls[0][3], 6) for row in calls], [0, 5, 10, 15])
 
     def test_accessory_media_controls_and_rejection_checks_eventually_reach_every_activity(self):
         media_keys = {Key.PLAY, Key.PAUSE, Key.STOP, 0x4C, 0x4B, 0x65, 0x66}
         homekit_keys = {0x48, 0x49, 0x4B, 0x4C, 0x35, 0x65, 0x66}
         for test in (soak.test_soak, soak.test_soak_main4):
             with self.subTest(test=test.__name__):
-                fixture = SoakFixture()
+                fixture = SoakFixture(self.clock)
                 fixture.run(test, duration=1121)
                 self.assertEqual(fixture.proof["sweeps"], 8)
                 self.assertEqual(fixture.proof["elapsed_seconds"], 1280)
@@ -853,7 +851,7 @@ class SoakScenarioTests(unittest.TestCase):
                 self.assertTrue(fixture.proof["completed"])
 
     def test_failed_key_is_not_retried_or_hidden_and_retains_incomplete_proof(self):
-        fixture = SoakFixture(failed_key=1)
+        fixture = SoakFixture(self.clock, failed_key=1)
         with self.assertRaisesRegex(TimeoutError, "Key request failed"):
             fixture.run(duration=1)
         self.assertEqual(len(fixture.key_calls), 2)
@@ -869,7 +867,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_ble_failure_never_falls_back_to_http_and_always_closes_owned_keyboard(self):
-        fixture = SoakFixture(failed_ble=1)
+        fixture = SoakFixture(self.clock, failed_ble=1)
         with self.assertRaisesRegex(TimeoutError, "BLE input failed"):
             fixture.run(duration=1)
         self.assertEqual(len(fixture.ble_key_calls), 1)
@@ -883,7 +881,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_pairing_failure_prevents_workload_instead_of_using_api_only(self):
-        fixture = SoakFixture(failed_pair=True)
+        fixture = SoakFixture(self.clock, failed_pair=True)
         with self.assertRaisesRegex(RuntimeError, "BLE pairing failed"):
             fixture.run(duration=1)
         self.assertEqual(fixture.key_calls, [])
@@ -891,7 +889,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
 
     def test_failed_ui_selection_does_not_fall_back_to_api(self):
-        fixture = SoakFixture(failed_ui=True)
+        fixture = SoakFixture(self.clock, failed_ui=True)
         with self.assertRaisesRegex(TimeoutError, "UI selection failed"):
             fixture.run(duration=1)
         self.assertEqual([row[2] for row in fixture.events if row[0] == "select"], ["ui"])
@@ -900,7 +898,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
 
     def test_stuck_key_fails_immediately_instead_of_changing_activity(self):
-        fixture = SoakFixture(stuck_key=True)
+        fixture = SoakFixture(self.clock, stuck_key=True)
         with self.assertRaisesRegex(AssertionError, "retained a pressed key"):
             fixture.run(duration=1)
         self.assertEqual(len(fixture.key_calls), 1)
@@ -908,7 +906,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
 
     def test_matter_selection_failure_never_falls_back_to_ui_or_api(self):
-        fixture = SoakFixture(failed_matter_select=True)
+        fixture = SoakFixture(self.clock, failed_matter_select=True)
         with self.assertRaisesRegex(TimeoutError, "Matter selection failed"):
             fixture.run(duration=1)
         self.assertEqual([row[2] for row in fixture.events if row[0] == "select"], ["ui", "api", "matter"])
@@ -918,7 +916,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_matter_key_failure_never_retries_or_uses_another_transport(self):
-        fixture = SoakFixture(failed_matter=1)
+        fixture = SoakFixture(self.clock, failed_matter=1)
         with self.assertRaisesRegex(TimeoutError, "Matter key failed"):
             fixture.run(duration=1)
         self.assertEqual([row[4] for row in fixture.key_calls], ["ble", "api", "matter"])
@@ -930,7 +928,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.keyboard.paired)
 
     def test_extra_matter_command_failure_does_not_advance_activity(self):
-        fixture = SoakFixture(failed_matter=2)
+        fixture = SoakFixture(self.clock, failed_matter=2)
         with self.assertRaisesRegex(TimeoutError, "Matter key failed"):
             fixture.run(duration=1)
         self.assertEqual(fixture.matter_key_calls[-1][1], Key.PLAY)
@@ -943,7 +941,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
 
     def test_rejected_matter_command_failure_retains_incomplete_evidence(self):
-        fixture = SoakFixture(failed_matter_rejected=True)
+        fixture = SoakFixture(self.clock, failed_matter_rejected=True)
         with self.assertRaisesRegex(AssertionError, "rejected-command evidence failed"):
             fixture.run(duration=1)
         self.assertEqual(fixture.proof["key_presses"], 6)
@@ -953,7 +951,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.proof["completed"])
 
     def test_matter_standby_failure_does_not_fall_back_to_browser(self):
-        fixture = SoakFixture(failed_matter_standby=True)
+        fixture = SoakFixture(self.clock, failed_matter_standby=True)
         with self.assertRaisesRegex(TimeoutError, "Matter standby failed"):
             fixture.run(duration=161)
         self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"], ["ui", "matter"])
@@ -965,7 +963,7 @@ class SoakScenarioTests(unittest.TestCase):
     def test_nonzero_matter_status_is_never_counted_or_retried(self):
         for operation in ("select_input", "send_key", "playback", "set_power"):
             with self.subTest(operation=operation):
-                fixture = SoakFixture(failed_matter_status=operation)
+                fixture = SoakFixture(self.clock, failed_matter_status=operation)
                 with self.assertRaisesRegex(AssertionError, "Matter rejected"):
                     fixture.run(duration=161)
                 self.assertEqual(sum(row[0:2] == ("matter.command", operation) for row in fixture.events), 1)
@@ -976,7 +974,7 @@ class SoakScenarioTests(unittest.TestCase):
         for options, error, message in (({"failed_matter_open": True}, RuntimeError, "Matter open failed"),
                                         ({"failed_matter_slots": True}, AssertionError, "input list mismatch")):
             with self.subTest(options=options):
-                fixture = SoakFixture(**options)
+                fixture = SoakFixture(self.clock, **options)
                 with self.assertRaisesRegex(error, message):
                     fixture.run(duration=1)
                 self.assertEqual(fixture.key_calls, [])
@@ -984,17 +982,17 @@ class SoakScenarioTests(unittest.TestCase):
                 self.assertFalse(fixture.proof["completed"])
 
     def test_slow_matter_operations_count_toward_elapsed_time_and_complete_sweep(self):
-        fixture = SoakFixture(matter_delay=8)
+        fixture = SoakFixture(self.clock, matter_delay=8)
         fixture.run(duration=161)
         self.assertGreater(fixture.proof["elapsed_seconds"], 160)
-        self.assertEqual(fixture.proof["elapsed_seconds"], fixture.clock.now - fixture.setup_finished)
+        self.assertEqual(fixture.proof["elapsed_seconds"], round(self.clock.now - fixture.setup_finished, 3))
         self.assertEqual(fixture.proof["sweeps"], 1)
         self.assertEqual(fixture.proof["activity_changes"], 8)
         self.assertTrue(fixture.proof["completed"])
         self.assertIsNone(fixture.current)
 
     def test_homekit_selection_failure_never_falls_back_to_another_transport(self):
-        fixture = SoakFixture(failed_homekit_select=True)
+        fixture = SoakFixture(self.clock, failed_homekit_select=True)
         with self.assertRaisesRegex(TimeoutError, "HomeKit selection failed"):
             fixture.run(duration=1)
         self.assertEqual([row[2] for row in fixture.events if row[0] == "select"],
@@ -1006,7 +1004,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_homekit_key_failure_never_retries_or_uses_another_transport(self):
-        fixture = SoakFixture(failed_homekit=1)
+        fixture = SoakFixture(self.clock, failed_homekit=1)
         with self.assertRaisesRegex(TimeoutError, "HomeKit key failed"):
             fixture.run(duration=1)
         self.assertEqual([row[4] for row in fixture.key_calls], ["ble", "api", "matter", "homekit"])
@@ -1019,7 +1017,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.keyboard.paired)
 
     def test_extra_homekit_command_failure_does_not_advance_activity(self):
-        fixture = SoakFixture(failed_homekit=2)
+        fixture = SoakFixture(self.clock, failed_homekit=2)
         with self.assertRaisesRegex(TimeoutError, "HomeKit key failed"):
             fixture.run(duration=1)
         self.assertEqual(fixture.homekit_key_calls[-1][1], 0x48)
@@ -1033,7 +1031,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.homekit_accessory.open)
 
     def test_rejected_homekit_command_failure_retains_incomplete_evidence(self):
-        fixture = SoakFixture(failed_homekit_rejected=True)
+        fixture = SoakFixture(self.clock, failed_homekit_rejected=True)
         with self.assertRaisesRegex(AssertionError, "HomeKit rejected-command evidence failed"):
             fixture.run(duration=1)
         self.assertEqual(fixture.proof["key_presses"], 31)
@@ -1044,7 +1042,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.homekit_accessory.open)
 
     def test_homekit_standby_failure_does_not_fall_back_to_browser_or_matter(self):
-        fixture = SoakFixture(failed_homekit_standby=True)
+        fixture = SoakFixture(self.clock, failed_homekit_standby=True)
         with self.assertRaisesRegex(TimeoutError, "HomeKit standby failed"):
             fixture.run(duration=321)
         self.assertEqual([row[2] for row in fixture.events if row[0] == "standby"],
@@ -1058,7 +1056,7 @@ class SoakScenarioTests(unittest.TestCase):
     def test_nonzero_homekit_status_is_never_counted_or_retried(self):
         for operation in ("select_input", "send_key", "step_volume", "set_mute", "set_power"):
             with self.subTest(operation=operation):
-                fixture = SoakFixture(failed_homekit_status=operation)
+                fixture = SoakFixture(self.clock, failed_homekit_status=operation)
                 with self.assertRaisesRegex(AssertionError, "HomeKit rejected"):
                     fixture.run(duration=321)
                 self.assertEqual(sum(row[0:2] == ("homekit.command", operation)
@@ -1072,7 +1070,7 @@ class SoakScenarioTests(unittest.TestCase):
             for options, error, message in (({"failed_homekit_open": True}, RuntimeError, "HomeKit pairing failed"),
                                             ({"failed_homekit_slots": True}, AssertionError, "HomeKit input list mismatch")):
                 with self.subTest(test=test.__name__, options=options):
-                    fixture = SoakFixture(**options)
+                    fixture = SoakFixture(self.clock, **options)
                     with self.assertRaisesRegex(error, message):
                         fixture.run(test, duration=1)
                     self.assertEqual(fixture.key_calls, [])
@@ -1090,7 +1088,7 @@ class SoakScenarioTests(unittest.TestCase):
         for phase in ("active", "standby"):
             for field in ("active", "current_input", "speaker_active"):
                 with self.subTest(phase=phase, field=field):
-                    fixture = SoakFixture(failed_homekit_readback=(phase, field))
+                    fixture = SoakFixture(self.clock, failed_homekit_readback=(phase, field))
                     with self.assertRaisesRegex(AssertionError, "HomeKit power and input"):
                         fixture.run(duration=1)
                     self.assertEqual(fixture.proof["activity_changes"], 0 if phase == "active" else 8)
@@ -1101,7 +1099,7 @@ class SoakScenarioTests(unittest.TestCase):
                                      1 if phase == "active" else 17)
 
     def test_homekit_readback_rejects_changed_input_before_next_activity_can_overwrite_it(self):
-        fixture = SoakFixture(failed_homekit_readback=("rejected", "current_input"))
+        fixture = SoakFixture(self.clock, failed_homekit_readback=("rejected", "current_input"))
         with self.assertRaisesRegex(AssertionError, "HomeKit power and input"):
             fixture.run(duration=1)
         self.assertEqual([row[1] for row in fixture.events if row[0] == "select"],
@@ -1119,10 +1117,10 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertEqual(fixture.events[-2:], [("bed.failed",), ("bed.close",)])
 
     def test_slow_homekit_operations_count_toward_elapsed_time_and_complete_sweep(self):
-        fixture = SoakFixture(homekit_delay=8)
+        fixture = SoakFixture(self.clock, homekit_delay=8)
         fixture.run(duration=161)
         self.assertGreater(fixture.proof["elapsed_seconds"], 160)
-        self.assertEqual(fixture.proof["elapsed_seconds"], fixture.clock.now - fixture.setup_finished)
+        self.assertEqual(fixture.proof["elapsed_seconds"], round(self.clock.now - fixture.setup_finished, 3))
         self.assertEqual(fixture.proof["sweeps"], 1)
         self.assertEqual(fixture.proof["activity_changes"], 8)
         self.assertTrue(fixture.proof["completed"])
@@ -1130,7 +1128,7 @@ class SoakScenarioTests(unittest.TestCase):
         self.assertFalse(fixture.homekit_accessory.open)
 
     def test_homekit_cleanup_failure_fails_the_bed_after_completed_workload(self):
-        fixture = SoakFixture(failed_homekit_close=True)
+        fixture = SoakFixture(self.clock, failed_homekit_close=True)
         with self.assertRaisesRegex(RuntimeError, "HomeKit pairing cleanup failed"):
             fixture.run(duration=1)
         self.assertTrue(fixture.proof["completed"])
@@ -1140,7 +1138,7 @@ class SoakScenarioTests(unittest.TestCase):
             self.assertEqual(sum(row[0] == event for row in fixture.events), 1)
 
     def test_homekit_cleanup_failure_preserves_original_input_failure(self):
-        fixture = SoakFixture(failed_homekit=1, failed_homekit_close=True)
+        fixture = SoakFixture(self.clock, failed_homekit=1, failed_homekit_close=True)
         with self.assertRaisesRegex(TimeoutError, "HomeKit key failed"):
             fixture.run(duration=1)
         self.assertFalse(fixture.proof["completed"])

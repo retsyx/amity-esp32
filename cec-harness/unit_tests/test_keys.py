@@ -6,16 +6,19 @@ import sys
 import threading
 import time
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT, Frame, Hooks, Key, PowerState
 from amity_harness.keys import HOLD_REPEAT_MIN_MS
 from test_activity import Fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class KeyTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def fixture(self, *, remote=False):
         f = Fixture()
         if remote:
@@ -215,40 +218,46 @@ class KeyTests(unittest.TestCase):
             for duration_ms in (0, 750):
                 with self.subTest(physical=physical, duration_ms=duration_ms):
                     f = self.fixture()
-                    clock = [time.monotonic_ns()]
-                    started = clock[0]
-                    completed = started + duration_ms * 1_000_000 + 2_000_000_000
+                    request_window = []
 
                     def request(path, data=None, **kwargs):
                         f.calls.append((path, data))
                         self.assertEqual(path, "/api/key")
                         self.assertEqual(kwargs, {})  # Keep the shipping HTTP helper's own deadline.
+                        request_window.append(self.clock.now_ns)
                         if physical == "during_request":
+                            started = f.dut.key_operations[-1]["started_monotonic_ns"]
                             self.receive(f, f.player, Key.RIGHT, timestamp=started + 50_000_000,
                                          presses=2 if duration_ms else 1)
-                        clock[0] = completed
+                        # The response arrives after the bounded hold and two more seconds.
+                        self.clock.advance(duration_ms / 1000 + 2)
+                        request_window.append(self.clock.now_ns)
                         return {"ok": True}
 
                     f.dut.request = request
-                    with patch("amity_harness.keys.time.monotonic_ns", side_effect=lambda: clock[0]):
-                        action = f.dut.press_key(Key.RIGHT, duration_ms=duration_ms)
-                        if physical != "during_request":
-                            stamp = {"after_response": completed + 100_000_000,
-                                     "stale": started - 2,
-                                     "late": completed + 1_000_000_001}[physical]
-                            self.receive(f, f.player, Key.RIGHT, timestamp=stamp,
-                                         presses=2 if duration_ms else 1)
-                        clock[0] = completed + 2_000_000_000
-                        if physical in ("stale", "late"):
-                            with self.assertRaises(TimeoutError):
-                                action.assert_received_by(f.player, timeout=1)
-                        else:
+                    before = self.clock.now_ns
+                    action = f.dut.press_key(Key.RIGHT, duration_ms=duration_ms)
+                    after = self.clock.now_ns
+                    started, completed = action.started_ns, action.response_completed_ns
+                    # Freshness starts before the request; the CEC budget starts after its response.
+                    self.assertTrue(before < started <= request_window[0])
+                    self.assertTrue(request_window[1] < completed <= after)
+                    if physical != "during_request":
+                        stamp = {"after_response": completed + 100_000_000,
+                                 "stale": started - 2,
+                                 "late": completed + 1_000_000_001}[physical]
+                        self.receive(f, f.player, Key.RIGHT, timestamp=stamp,
+                                     presses=2 if duration_ms else 1)
+                    self.clock.advance(2)
+                    if physical in ("stale", "late"):
+                        with self.assertRaises(TimeoutError):
                             action.assert_received_by(f.player, timeout=1)
-                            self.assertEqual(action.trace["deadline_monotonic_ns"], completed + 1_000_000_000)
-                        self.assertEqual(action.started_ns, started)
-                        self.assertEqual(action.response_completed_ns, completed)
-                        self.assertEqual(action.trace["response_completed_monotonic_ns"], completed)
-                        self.assertEqual(len(f.calls), 1)
+                    else:
+                        action.assert_received_by(f.player, timeout=1)
+                        self.assertEqual(action.trace["deadline_monotonic_ns"], completed + 1_000_000_000)
+                    self.assertEqual(action.trace["started_monotonic_ns"], started)
+                    self.assertEqual(action.trace["response_completed_monotonic_ns"], completed)
+                    self.assertEqual(len(f.calls), 1)
 
     def test_http_failure_or_invalid_admission_never_replays_a_key(self):
         for response in ({"ok": False}, {}, TimeoutError("HTTP request deadline expired")):

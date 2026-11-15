@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.homekit import HomeKitAccessory, HomeKitError, _Layout, _Session, _Worker, _uuid
 from amity_harness.trace import stdio_logging
+from unit_tests.virtual_time import use_virtual_time
 
 
 def accessory_graph(serial="68EE8F502B44"):
@@ -265,6 +266,9 @@ class HomeKitGraphTests(unittest.TestCase):
 
 
 class HomeKitWorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def worker(self):
         worker = _Worker(timeout=1)
         worker.process = Mock()
@@ -292,10 +296,17 @@ class HomeKitWorkerTests(unittest.TestCase):
 
     def test_hung_worker_has_bounded_ipc_and_is_not_sent_another_key(self):
         worker = self.worker()
-        with patch("amity_harness.homekit.time.monotonic", side_effect=[0, 0, 2]), \
+
+        def hung(reads, writes, errors, timeout):
+            self.clock.advance(timeout)  # The worker never accepts the request.
+            return [], [], []
+
+        started = self.clock.now
+        with patch("amity_harness.homekit.select.select", side_effect=hung), \
                 patch("amity_harness.homekit.os.write") as write:
             with self.assertRaises(HomeKitError):
                 worker.rpc("send_key", {"value": 4})
+        self.assertAlmostEqual(self.clock.now - started, worker.timeout, places=6)
         write.assert_not_called()
         self.assertEqual(worker.sequence, 1)
         self.assertFalse(worker.lock.locked())

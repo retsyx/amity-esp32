@@ -9,7 +9,6 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -17,6 +16,7 @@ from amity_harness import (AvrComponent, CecError, CecSession, DUT, Frame, Hooks
                            PlaybackComponent, PowerState, RunConfig, TvComponent,
                            TxResult, use_config)
 from test_activity import Fixture as ActivityFixture, fresh_rescan
+from unit_tests.virtual_time import use_virtual_time
 
 
 def distributed_activity_fixture():
@@ -53,6 +53,9 @@ class IdleWire:
 
 
 class ComponentPowerAssertionTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         dut = DUT("amity-dut")
@@ -76,7 +79,7 @@ class ComponentPowerAssertionTests(unittest.TestCase):
 
     def missing(self, component, state, boundary):
         with self.assertRaises(TimeoutError):
-            component.wait_for_power(state, since=boundary, timeout=0.005)
+            component.wait_for_power(state, since=boundary)
 
     def test_main_action_authorizes_only_proven_member_wire_power_and_checkpoint(self):
         f = distributed_activity_fixture()
@@ -157,14 +160,14 @@ class ComponentPowerAssertionTests(unittest.TestCase):
                 action = f.activity(display=f.member_tv, source=f.member_player, audio=f.member_avr).start()
                 self.receive(f.member_tv, 4, 0x04)
                 wire_time = f.member_tv.power_events[-1]["wire_timestamp_ns"]
-                clock, calls = [time.monotonic()], []
+                calls = []
 
                 def snapshot():
                     self.assertFalse(f.session._lock._is_owned())
                     self.assertFalse(f.member_tv._power_condition._is_owned())
                     calls.append(None)
                     if len(calls) == 2:
-                        clock[0] += 6
+                        self.clock.advance(6)
                         if change == "repeat":
                             self.receive(f.member_tv, 4, 0x04, timestamp=wire_time + 6_000_000_000)
                         elif change is not None:
@@ -174,14 +177,13 @@ class ComponentPowerAssertionTests(unittest.TestCase):
                     return deepcopy(f.source.system)
 
                 f.dut.get_system = snapshot
-                with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
-                    if change in (None, "repeat"):
-                        self.assertIs(f.member_tv.wait_for_power("on", since=action, timeout=5), f.member_tv)
-                        self.assertEqual(f.member_tv.power_assertions[-1]["wire_timestamp_ns"], wire_time)
-                    else:
-                        with self.assertRaises(TimeoutError):
-                            f.member_tv.wait_for_power("on", since=action, timeout=5)
-                        self.assertEqual(f.member_tv.power_assertions, ())
+                if change in (None, "repeat"):
+                    self.assertIs(f.member_tv.wait_for_power("on", since=action, timeout=5), f.member_tv)
+                    self.assertEqual(f.member_tv.power_assertions[-1]["wire_timestamp_ns"], wire_time)
+                else:
+                    with self.assertRaises(TimeoutError):
+                        f.member_tv.wait_for_power("on", since=action, timeout=5)
+                    self.assertEqual(f.member_tv.power_assertions, ())
                 self.assertEqual(len(calls), 2)
 
     def test_initial_assertions_and_physical_activity_start_and_standby_commands(self):
@@ -222,7 +224,7 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             avr.wait_for_power("standby", since=stop)  # Existing generic behavior is retained.
             self.assertEqual(avr.power, PowerState.STANDBY)
             with self.assertRaises(TimeoutError):
-                avr.wait_for_power("standby", since=stop, command="standby", timeout=0.005)
+                avr.wait_for_power("standby", since=stop, command="standby")
             self.receive(avr, 0, 0x36)
             avr.wait_for_power("standby", since=stop, command="standby")
             self.assertEqual(avr.power_assertions[-1]["command"], "standby")
@@ -242,7 +244,7 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             player.wait_for_power("standby", since=directed, command="standby", directed=True)
             player.wait_for_power("standby", since=directed, command="standby")
             with self.assertRaises(TimeoutError):
-                player.wait_for_power("standby", since=directed, command="standby", broadcast=True, timeout=0.005)
+                player.wait_for_power("standby", since=directed, command="standby", broadcast=True)
 
             broadcast = player.checkpoint()
             self.receive(player, 0, 0x36, destination=15)
@@ -250,7 +252,7 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             self.assertEqual(player.power_assertions[-1]["destination"], 15)
             player.wait_for_power("standby", since=broadcast, command="standby")
             with self.assertRaises(TimeoutError):
-                player.wait_for_power("standby", since=broadcast, command="standby", directed=True, timeout=0.005)
+                player.wait_for_power("standby", since=broadcast, command="standby", directed=True)
 
     def test_broadcast_standby_rejects_stale_virtual_and_rewritten_wire_evidence(self):
         for evidence in ("stale", "virtual", "rewritten_directed", "rewritten_broadcast"):
@@ -273,7 +275,7 @@ class ComponentPowerAssertionTests(unittest.TestCase):
                 self.receive(player, 0, 0x36, destination=destination, timestamp=timestamp, transport=transport)
                 player.assert_power(PowerState.STANDBY)
                 with self.assertRaises(TimeoutError):
-                    player.wait_for_power("standby", since=marker, command="standby", broadcast=True, timeout=0.005)
+                    player.wait_for_power("standby", since=marker, command="standby", broadcast=True)
 
     def test_power_destination_filters_reject_conflicting_or_non_boolean_options(self):
         with self.fixture() as (dut, tv, avr, player, session):
@@ -411,10 +413,13 @@ class ComponentPowerAssertionTests(unittest.TestCase):
             tv.wait_for_power("on", since=start)
 
     def test_checkpoint_and_managed_timeout_work_without_user_polling_or_hooks(self):
-        with use_config(RunConfig(cec_timeout=0.01)), self.fixture() as (dut, tv, avr, player, session):
+        with use_config(RunConfig(cec_timeout=2)), self.fixture() as (dut, tv, avr, player, session):
             marker = tv.checkpoint()
+            started = self.clock.now
             with self.assertRaises(TimeoutError):
                 tv.wait_for_power("on", since=marker)
+            self.assertGreaterEqual(self.clock.now - started, 2)
+            self.assertLess(self.clock.now - started, 2.1)
             marker = tv.checkpoint()
             self.receive(tv, 4, 0x04)
             tv.wait_for_power("on", since=marker)
@@ -422,18 +427,12 @@ class ComponentPowerAssertionTests(unittest.TestCase):
     def test_long_operation_timeout_keeps_missing_cec_power_wait_at_one_second(self):
         with use_config(RunConfig(timeout=180)), self.fixture() as (dut, tv, avr, player, session):
             marker = tv.checkpoint()
-            clock = [10.0]
-
-            def wait(seconds):
-                clock[0] += seconds
-
-            with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
-                    patch.object(tv._power_condition, "wait", side_effect=wait):
-                with self.assertRaises(TimeoutError):
-                    tv.wait_for_power("on", since=marker)
+            started = self.clock.now
+            with self.assertRaises(TimeoutError):
+                tv.wait_for_power("on", since=marker)
             self.assertEqual(dut._runtime.timeout, 180)
-            self.assertGreaterEqual(clock[0] - 10, 1)
-            self.assertLess(clock[0] - 10, 1.1)
+            self.assertGreaterEqual(self.clock.now - started, 1)
+            self.assertLess(self.clock.now - started, 1.1)
 
     def test_wait_wakes_for_background_wire_delivery_and_keeps_bounded_snapshot_evidence(self):
         with self.fixture() as (dut, tv, avr, player, session):

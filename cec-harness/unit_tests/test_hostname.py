@@ -13,22 +13,11 @@ from amity_harness import DUT
 from amity_harness.config import RunConfig, use_config
 from amity_harness.dut import AmityHTTPError
 from amity_harness.hostname import HostnameChanges
-
-
-class Clock:
-    def __init__(self):
-        self.now = 100.0
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.now += seconds
+from unit_tests.virtual_time import use_virtual_time
 
 
 class HostnameFixture:
     def __init__(self, *, member=True):
-        self.clock = Clock()
         self.runtime = RunConfig(insecure=True, timeout=1)
         with use_config(self.runtime):
             self.main = DUT("amity-dut")
@@ -195,11 +184,11 @@ class HostnameFixture:
 
 
 class HostnameTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def fixture(self, **kwargs):
         fixture = HostnameFixture(**kwargs)
-        timer = patch("amity_harness.hostname.time", fixture.clock)
-        timer.start()
-        self.addCleanup(timer.stop)
         opener = patch("amity_harness.dut.HTTPSOpener", return_value=SimpleNamespace(close=lambda: None))
         opener.start()
         self.addCleanup(opener.stop)

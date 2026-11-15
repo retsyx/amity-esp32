@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import DUT, TestBed
 from amity_harness.dut import AmityHTTPError
 from amity_harness.membership import AddedAmity, MembershipCleanupError, MembershipConflict
+from unit_tests.virtual_time import use_virtual_time
 
 
 class FakeGPIO:
@@ -115,8 +116,7 @@ class Fixture:
 
         def press(seconds):
             self.presses.append(seconds)
-            with patch("amity_harness.dut.time.sleep"):
-                original_press(seconds)
+            original_press(seconds)
             self.admission.update(phase="found", candidates=deepcopy(self.candidates))
             if self.foreign_scan:
                 self.admission["scan_id"] = "9" * 32
@@ -254,7 +254,7 @@ class Fixture:
         self.operations[request_id] = result
         return deepcopy(result)
 
-    def added(self, *, name=None, timeout=0.1, setup_code=None):
+    def added(self, *, name=None, timeout=30, setup_code=None):
         return AddedAmity(self.main, self.candidate, name=name, timeout=timeout, setup_code=setup_code)
 
     def posts(self, suffix):
@@ -263,15 +263,11 @@ class Fixture:
 
 class MembershipTests(unittest.TestCase):
     def setUp(self):
-        # Polling is driven by deterministic fixture replies; no real radio,
-        # GPIO hold or UI polling delay belongs in these unit checks.
-        sleeper = patch("amity_harness.membership.time.sleep")
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.clock = use_virtual_time(self)
 
     def test_earlier_member_checks_accept_a_later_proven_member_with_its_own_fences(self):
         f = Fixture()
-        member = f.added(timeout=0.2).create()
+        member = f.added().create()
         member.assert_connected()
         later_id = "9" * 32
         later = SimpleNamespace(name="amity-later", member_boot="8" * 32, _closed=False)
@@ -290,7 +286,7 @@ class MembershipTests(unittest.TestCase):
 
     def test_add_verifies_existing_ui_evidence_and_removal_resets_only_the_owned_member(self):
         f = Fixture()
-        with f.main.add_amity(f.candidate, name="amity-dut2", timeout=0.2) as member:
+        with f.main.add_amity(f.candidate, name="amity-dut2", timeout=30) as member:
             self.assertIs(member.assert_connected(), member)
             self.assertEqual(len(f.posts("scan")), 1)
             self.assertEqual(len(f.posts("add")), 1)
@@ -489,7 +485,7 @@ class MembershipTests(unittest.TestCase):
             return response
 
         f.request = f.main.request = request
-        with f.added(timeout=1).create():
+        with f.added().create():
             self.assertEqual(remaining, 0)
             scan_index = next(index for index, (path, data) in enumerate(f.calls)
                               if path == "/api/membership/scan" and data is not None)
@@ -693,7 +689,7 @@ class MembershipTests(unittest.TestCase):
         f = Fixture()
         f.main._testbed = f.candidate._testbed = None
         with TestBed(f.main, f.candidate, control_only=(f.candidate,), session_factory=UnitSession) as bed:
-            f.main.add_amity(f.candidate, timeout=0.2).assert_connected()
+            f.main.add_amity(f.candidate, timeout=30).assert_connected()
             self.assertEqual(bed.control_only, (f.candidate,))
         self.assertEqual(len(f.posts("remove")), 1)
         self.assertIsNone(f.main._token)
@@ -793,7 +789,7 @@ class MembershipTests(unittest.TestCase):
                 f = Fixture()
                 f.candidates = [{**row, "label": f.expected_label if row["label"] == "expected" else row["label"]}
                                 for row in candidates]
-                member = f.added(timeout=0.02)
+                member = f.added()
                 with self.assertRaises((AssertionError, MembershipConflict, TimeoutError)):
                     member.create()
                 member.close()
@@ -877,7 +873,7 @@ class MembershipTests(unittest.TestCase):
     def test_unknown_add_result_never_retries_or_removes_an_unproven_member(self):
         f = Fixture()
         f.unknown_add = True
-        member = f.added(timeout=5)
+        member = f.added()
         with self.assertRaisesRegex(OSError, "Add result is unknown"):
             member.create()
         try:
@@ -929,26 +925,24 @@ class MembershipTests(unittest.TestCase):
         member = f.added().create()
         f.calls.clear()
         original_request = f.request
-        clock, cache_received, polls = [0.0], [None], []
+        cache_received, polls = [None], []
         settings_path = "/api/devices/" + f.candidate.identity.device_id + "/settings"
 
         def request(path, data=None, **kwargs):
             # Each TLS connection takes a second. A shipping settings GET
             # queues an asynchronous reply, then exposes it for two seconds.
-            clock[0] += 1
+            self.clock.advance(1)
+            now = time.monotonic()
             response = original_request(path, data, **kwargs)
             if path == settings_path:
-                polls.append(clock[0])
-                if cache_received[0] is None or clock[0] - cache_received[0] >= 2:
-                    cache_received[0] = clock[0] + 0.1
+                polls.append(now)
+                if cache_received[0] is None or now - cache_received[0] >= 2:
+                    cache_received[0] = now + 0.1
                     response.update(status="reading", error="")
             return response
 
         f.request = f.main.request = request
-        with patch("amity_harness.membership.time.monotonic", side_effect=lambda: clock[0]), \
-                patch("amity_harness.membership.time.monotonic_ns", side_effect=lambda: int(clock[0] * 1e9)), \
-                patch("amity_harness.membership.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
-            self.assertIs(member.assert_connected(timeout=20), member)
+        self.assertIs(member.assert_connected(timeout=20), member)
         # The original system/config/settings loop always missed the reply's
         # freshness window; direct settings polling reads it and then fences
         # the main, full configuration and member identity again.
@@ -992,7 +986,7 @@ class MembershipTests(unittest.TestCase):
                        "settings_offline", "settings_boot", "settings_boolean_id", "settings_duplicate_ids"):
             with self.subTest(change=change):
                 f = Fixture()
-                member = f.added(timeout=0.02).create()
+                member = f.added().create()
                 target = next(p for p in f.system["membership"]["peers"] if p["octopus_id"] == f.candidate.identity.device_id)
                 if change == "hostname":
                     target["hostname"] = "another-name"

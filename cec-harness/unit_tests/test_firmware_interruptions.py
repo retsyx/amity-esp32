@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -14,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_firmware_upgrade import (
     UpgradeFixture, MAIN_BOOT, NEW_MAIN_BOOT, NEW_IMAGE, OLD_IMAGE, VERSION,
 )
+from unit_tests.virtual_time import use_virtual_time
 
 
 INTERRUPTED_MAIN_BOOT = 'c' * 32
@@ -158,14 +158,15 @@ class InterruptedTransferFixture(UpgradeFixture):
         return io.BytesIO(json.dumps(value).encode())
 
     def invoke(self, upgrade):
-        with patch('amity_harness.firmware.time.monotonic', self.clock.monotonic), \
-             patch('amity_harness.firmware.time.sleep', self.clock.sleep):
-            if self.kind == 'main':
-                return upgrade.interrupt_main_transfer()
-            return upgrade.run(interrupt_secondary=self.members[0])
+        if self.kind == 'main':
+            return upgrade.interrupt_main_transfer()
+        return upgrade.run(interrupt_secondary=self.members[0])
 
 
 class FirmwareInterruptionTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_main_abort_requires_observed_partial_transfer_new_boot_and_old_firmware(self):
         fixture = InterruptedTransferFixture('main')
         upgrade = fixture.upgrade()

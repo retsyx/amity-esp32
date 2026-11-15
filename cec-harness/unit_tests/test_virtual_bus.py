@@ -12,6 +12,7 @@ from amity_harness import (
     AvrComponent, CecAddress, CecError, CecSession, DUT, Frame, Hooks,
     PlaybackComponent, PowerState, TvComponent, TxResult,
 )
+from unit_tests.virtual_time import use_virtual_time
 
 
 class Backend:
@@ -44,6 +45,7 @@ class Backend:
 
 class VirtualBusTests(unittest.TestCase):
     def setUp(self):
+        self.clock = use_virtual_time(self)
         self.dut = DUT("amity-dut")
         self.backends = {}
 

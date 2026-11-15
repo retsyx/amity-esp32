@@ -10,6 +10,7 @@ from unittest.mock import patch
 from amity_harness.ble_input import BLEInputEvidence
 from amity_harness.keys import Key
 from unit_tests import test_ble_input as input_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class ReportKeyboard(input_fixture.Keyboard):
@@ -99,6 +100,9 @@ class ReportKeyboard(input_fixture.Keyboard):
 
 class BLEKeyTests(unittest.TestCase):
     fixture = input_fixture.BLEInputEvidenceTests.fixture
+
+    def setUp(self):
+        self.clock = use_virtual_time(self)
 
     @contextmanager
     def reports(self):

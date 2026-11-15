@@ -12,9 +12,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import Key
 from amity_harness import matter_input as scenario
+from unit_tests.virtual_time import use_virtual_time
 
 
 class MatterScenarioTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
+    def advance_to(self, ns):
+        """Move virtual time so the next clock read returns exactly ns."""
+        self.clock.advance((ns - self.clock.tick_ns - self.clock.now_ns) / 1e9)
+
     def fixture(self):
         state = {"expected_boot_id": "boot", "expected_config_revision": "config",
                  "expected_presentation_revision": "presentation", "current_activity": 1,
@@ -193,7 +201,11 @@ class MatterScenarioTests(unittest.TestCase):
     def rejected(self, records=(), *, recovery=True, statuses=None, input_status=1, drained=True,
                  recovery_presses=1):
         main, activity, _, _, scan, player = self.fixture()
-        scan._session.records = list(records)
+        # Wire stamps are offsets from origin. The check's boundary is read at
+        # offset 100 and its observation cutoff at offset 300.
+        origin = self.origin_ns = self.clock.now_ns
+        scan._session.records = [dict(record, wire_timestamp_ns=origin + record["wire_timestamp_ns"])
+                                 for record in records]
         matter = Mock()
         matter.send_key.side_effect = (lambda key: 0 if key == Key.SELECT else 1)
         matter.select_input.return_value = input_status
@@ -207,11 +219,13 @@ class MatterScenarioTests(unittest.TestCase):
             self.assertEqual(command(), 0)
             if not recovery:
                 raise TimeoutError("No physical recovery key")
-            return SimpleNamespace(started_ns=200, trace={"presses": recovery_presses,
-                                   "press_wire_timestamp_ns": 220, "release_wire_timestamp_ns": 260})
+            self.advance_to(origin + 300)
+            return SimpleNamespace(started_ns=origin + 200, trace={"presses": recovery_presses,
+                                   "press_wire_timestamp_ns": origin + 220,
+                                   "release_wire_timestamp_ns": origin + 260})
 
-        with patch.object(scenario, "_key", side_effect=receive), \
-                patch.object(scenario.time, "monotonic_ns", side_effect=[100, 300]):
+        self.advance_to(origin + 100)
+        with patch.object(scenario, "_key", side_effect=receive):
             scenario._rejected(matter, main, scan, activity, player)
         return main, matter, activity
 
@@ -257,7 +271,7 @@ class MatterScenarioTests(unittest.TestCase):
         matter.select_input.assert_called_once_with(255)
         activity.assert_active.assert_called()
         observation = main._testbed.control_observations[-1]
-        self.assertEqual(observation["observation_end_monotonic_ns"], 300)
+        self.assertEqual(observation["observation_end_monotonic_ns"], self.origin_ns + 300)
         self.assertEqual(observation["checks"][-2:], [
             {"kind": "invalid_input", "index": 255, "status": 1, "passed": True},
             {"kind": "recovery", "key": int(Key.SELECT), "passed": True}])
@@ -271,9 +285,8 @@ class MatterScenarioTests(unittest.TestCase):
             self.rejected(input_status=0)
 
     def test_rejected_commands_require_wire_observation_through_recovery(self):
-        with patch.object(scenario.time, "monotonic", side_effect=[0, 2]):
-            with self.assertRaisesRegex(TimeoutError, "observations did not drain"):
-                self.rejected(drained=False)
+        with self.assertRaisesRegex(TimeoutError, "observations did not drain"):
+            self.rejected(drained=False)
 
 
 if __name__ == "__main__":

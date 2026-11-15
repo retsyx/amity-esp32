@@ -11,6 +11,7 @@ from amity_harness.activity import ActivityConflict
 from amity_harness.discovery import _fresh_discovery
 from amity_harness.dut import AmityHTTPError
 from test_activity import Fixture, fresh_rescan
+from unit_tests.virtual_time import use_virtual_time
 
 
 class PendingFixture(Fixture):
@@ -66,6 +67,10 @@ class PendingFixture(Fixture):
 
 
 class PendingActivityTests(unittest.TestCase):
+    def setUp(self):
+        # Activity deadlines and action boundaries read the shared virtual clock.
+        self.clock = use_virtual_time(self)
+
     def test_submit_does_not_wait_or_claim_in_flight_activity_current(self):
         f = PendingFixture()
         activity = f.activity()

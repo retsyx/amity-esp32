@@ -5,13 +5,13 @@ from types import SimpleNamespace
 import sys
 import threading
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import CecAddress, Frame, PowerState
 from amity_harness.discovery import ScanResult, scan_hdmi
 from unit_tests.harness_pins import cec_gpio
+from unit_tests.virtual_time import use_virtual_time
 
 
 def component(dut, *, name="A TV", direction="front", logical=0, physical=0, power=PowerState.STANDBY):
@@ -88,6 +88,9 @@ class Device:
 
 class DiscoveryTests(unittest.TestCase):
     def setUp(self):
+        # The scan starts at 10 s of virtual time, before the scripted wire
+        # exchanges at 11-12 s; its deadline runs on the same clock.
+        self.clock = use_virtual_time(self, start=10.0)
         self.dut = Device()
         self.tv = component(self.dut)
         self.dut.session.components = [self.tv]
@@ -96,13 +99,14 @@ class DiscoveryTests(unittest.TestCase):
                            "expected_boot_id": "boot", "devices": [identity_row(self.tv)]}]
 
     def scan(self):
-        with patch("amity_harness.discovery.time.monotonic_ns", return_value=10_000_000_000):
-            return scan_hdmi(self.dut, self.dut.session)
+        return scan_hdmi(self.dut, self.dut.session)
 
     def test_arbitrary_named_dut_scans_only_its_powered_attached_components(self):
         off = component(self.dut, name="Off TV", direction="back", power=PowerState.OFF)
         foreign = component(Device("amity-dut-2"), name="Other DUT TV", direction="back")
         self.dut.session.components.extend([off, foreign])
+        submitted, submit = [], self.dut.start_hdmi_scan
+        self.dut.start_hdmi_scan = lambda: (submitted.append(self.clock.now_ns), submit())[1]
         result = self.scan()
         self.assertIsInstance(result, ScanResult)
         self.assertIs(result, self.dut.last_scan)
@@ -110,7 +114,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIs(result.assert_contains(self.tv), result)
         self.assertEqual(result.devices, [identity_row(self.tv)])
         self.assertEqual(result.initiators, {self.tv.gpio: 4})
-        self.assertEqual(result.started, 10_000_000_000)
+        self.assertEqual(result.started, submitted[0])  # The monotonic boundary read at submission.
         self.assertEqual(self.dut.calls, ["get_system", "wait_for", "start_hdmi_scan", "wait_for"])
         for absent in (off, foreign):
             with self.assertRaises(AssertionError):
@@ -194,9 +198,9 @@ class DiscoveryTests(unittest.TestCase):
         self.dut.after = [{**final, "discovering": True}, final]
         result = self.scan()
         calls_before = list(self.dut.calls)
-        with patch("amity_harness.discovery.time.monotonic", return_value=result._deadline + 1):
-            with self.assertRaises(TimeoutError):
-                result.assert_contains(self.tv)
+        self.clock.advance(result._deadline + 1 - self.clock.now)
+        with self.assertRaises(TimeoutError):
+            result.assert_contains(self.tv)
         self.assertEqual(self.dut.calls, calls_before)
 
     def test_assertion_cannot_poll_after_session_has_ended(self):

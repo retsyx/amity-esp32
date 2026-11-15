@@ -13,6 +13,7 @@ from amity_harness.activity import Activity, ActivityCleanupError, ActivityConfl
 from amity_harness import AvrComponent, DUT, Frame, PlaybackComponent, PowerState, TvComponent, assign_addresses
 from amity_harness.dut import AmityHTTPError
 import test_scan_assertions as scan_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 def fresh_rescan(fixture):
@@ -362,6 +363,8 @@ class ActivityTests(unittest.TestCase):
                              for path, data in fixture.calls if data is not None))
 
     def setUp(self):
+        # Activity deadlines and action boundaries read the shared virtual clock.
+        self.clock = use_virtual_time(self)
         self.fixture = Fixture()
 
     def test_create_start_standby_and_remove_preserve_original_state(self):

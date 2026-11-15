@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -12,9 +13,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import Key
 from amity_harness import homekit_input as scenario
+from unit_tests.virtual_time import use_virtual_time
 
 
 class HomeKitInputTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
+    def advance_to(self, ns):
+        """Move virtual time so the next clock read returns exactly ns."""
+        self.clock.advance((ns - self.clock.tick_ns - self.clock.now_ns) / 1e9)
+
     def fixture(self):
         state = {"expected_boot_id": "boot", "expected_config_revision": "config",
                  "expected_presentation_revision": "presentation", "current_activity": 1,
@@ -102,13 +111,16 @@ class HomeKitInputTests(unittest.TestCase):
             scenario._select(homekit, activity, 7)
         homekit.select_input.assert_not_called()
 
+    def accessory_command(self, action):
+        """An accepted accessory command that returns one second after the key boundary."""
+        return Mock(side_effect=lambda: (self.advance_to(action.started_ns + 1_000_000_000), 0)[1])
+
     def test_key_submits_once_and_requires_its_original_single_physical_press(self):
         main, _, _, _, _, player = self.fixture()
-        action = SimpleNamespace(started_ns=1_000_000_000, trace={"presses": 1},
+        action = SimpleNamespace(started_ns=time.monotonic_ns(), trace={"presses": 1},
                                  assert_received_by=Mock())
-        command = Mock(return_value=0)
-        with patch.object(scenario, "_prepare_key", return_value=action) as prepare, \
-                patch.object(scenario.time, "monotonic_ns", return_value=2_000_000_000):
+        command = self.accessory_command(action)
+        with patch.object(scenario, "_prepare_key", return_value=action) as prepare:
             self.assertIs(scenario._key(Mock(), main, player, Key.RIGHT, command), action)
         prepare.assert_called_once_with(main, Key.RIGHT, 0)
         command.assert_called_once_with()
@@ -130,22 +142,20 @@ class HomeKitInputTests(unittest.TestCase):
 
     def test_key_cannot_pass_with_an_acknowledgement_but_missing_wire_evidence(self):
         main, _, _, _, _, player = self.fixture()
-        action = SimpleNamespace(started_ns=1_000_000_000, trace={},
+        action = SimpleNamespace(started_ns=time.monotonic_ns(), trace={},
                                  assert_received_by=Mock(side_effect=TimeoutError("No physical key")))
-        command = Mock(return_value=0)
-        with patch.object(scenario, "_prepare_key", return_value=action), \
-                patch.object(scenario.time, "monotonic_ns", return_value=2_000_000_000):
+        command = self.accessory_command(action)
+        with patch.object(scenario, "_prepare_key", return_value=action):
             with self.assertRaisesRegex(TimeoutError, "No physical key"):
                 scenario._key(Mock(), main, player, Key.RIGHT, command)
         command.assert_called_once_with()
 
     def test_momentary_key_repetition_is_a_failure(self):
         main, _, _, _, _, player = self.fixture()
-        action = SimpleNamespace(started_ns=1_000_000_000, trace={"presses": 2},
+        action = SimpleNamespace(started_ns=time.monotonic_ns(), trace={"presses": 2},
                                  assert_received_by=Mock())
-        command = Mock(return_value=0)
-        with patch.object(scenario, "_prepare_key", return_value=action), \
-                patch.object(scenario.time, "monotonic_ns", return_value=2_000_000_000):
+        command = self.accessory_command(action)
+        with patch.object(scenario, "_prepare_key", return_value=action):
             with self.assertRaisesRegex(AssertionError, "single key press"):
                 scenario._key(Mock(), main, player, Key.RIGHT, command)
         command.assert_called_once_with()
@@ -261,7 +271,11 @@ class HomeKitInputTests(unittest.TestCase):
     def rejected(self, records=(), *, recovery=True, statuses=None, input_status=-70410, drained=True,
                  recovery_presses=1):
         main, activity, _, _, scan, player = self.fixture()
-        scan._session.records = list(records)
+        # Wire stamps are offsets from origin. The check's boundary is read at
+        # offset 100 and its observation cutoff at offset 300.
+        origin = self.origin_ns = self.clock.now_ns
+        scan._session.records = [dict(record, wire_timestamp_ns=origin + record["wire_timestamp_ns"])
+                                 for record in records]
         homekit = Mock()
         homekit.send_key.side_effect = (lambda key: 0 if key == 8 else -70410)
         homekit.select_input.return_value = input_status
@@ -275,11 +289,13 @@ class HomeKitInputTests(unittest.TestCase):
             self.assertEqual(command(), 0)
             if not recovery:
                 raise TimeoutError("No physical recovery key")
-            return SimpleNamespace(started_ns=200, trace={"presses": recovery_presses,
-                                   "press_wire_timestamp_ns": 220, "release_wire_timestamp_ns": 260})
+            self.advance_to(origin + 300)
+            return SimpleNamespace(started_ns=origin + 200, trace={"presses": recovery_presses,
+                                   "press_wire_timestamp_ns": origin + 220,
+                                   "release_wire_timestamp_ns": origin + 260})
 
-        with patch.object(scenario, "_key", side_effect=receive), \
-                patch.object(scenario.time, "monotonic_ns", side_effect=[100, 300]):
+        self.advance_to(origin + 100)
+        with patch.object(scenario, "_key", side_effect=receive):
             scenario._rejected(homekit, main, scan, activity, player)
         return main, homekit, activity
 
@@ -327,7 +343,7 @@ class HomeKitInputTests(unittest.TestCase):
         homekit.select_input.assert_called_once_with(17)
         activity.assert_active.assert_called()
         observation = main._testbed.control_observations[-1]
-        self.assertEqual(observation["observation_end_monotonic_ns"], 300)
+        self.assertEqual(observation["observation_end_monotonic_ns"], self.origin_ns + 300)
         self.assertEqual(observation["checks"][-2:], [
             {"kind": "invalid_input", "index": 17, "status": -70410, "passed": True},
             {"kind": "recovery", "key": 8, "passed": True}])
@@ -367,9 +383,8 @@ class HomeKitInputTests(unittest.TestCase):
                     self.rejected(input_status=status)
 
     def test_rejected_commands_require_wire_observation_through_recovery(self):
-        with patch.object(scenario.time, "monotonic", side_effect=[0, 2]):
-            with self.assertRaisesRegex(TimeoutError, "observations did not drain"):
-                self.rejected(drained=False)
+        with self.assertRaisesRegex(TimeoutError, "observations did not drain"):
+            self.rejected(drained=False)
 
 
 if __name__ == "__main__":

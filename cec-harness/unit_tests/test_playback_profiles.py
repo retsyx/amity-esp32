@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import (AvrComponent, CecAddress, CecSession, DUT, Frame,
                            PlaybackComponent, TvComponent, assign_addresses)
 from test_component_routing_assertions import IdleWire
+from unit_tests.virtual_time import use_virtual_time
 
 
 class Cec14Wire(IdleWire):
@@ -17,6 +18,9 @@ class Cec14Wire(IdleWire):
 
 
 class PlaybackProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def test_two_players_have_distinct_avr_inputs_and_allocation_slots(self):
         dut = DUT("amity-dut")
         tentacle = dut.tentacle(0)

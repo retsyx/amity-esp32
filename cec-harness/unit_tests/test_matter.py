@@ -18,12 +18,16 @@ from amity_harness.keys import Key
 from amity_harness.config import RunConfig
 from amity_harness.matter import MatterAccessory, MatterError, _operate, _validate_request, _worker
 from amity_harness.matter import _Worker, _check_reply, _native_session, _reply, _store_reply
+from unit_tests.virtual_time import use_virtual_time
 
 
 DEVICE = "0123456789abcdef0123456789abcdef"
 
 
 class MatterAccessoryTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def accessory(self, mutate=None):
         self.calls = []
         self.worker = Mock()

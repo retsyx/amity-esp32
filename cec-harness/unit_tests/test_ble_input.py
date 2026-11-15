@@ -18,6 +18,7 @@ from amity_harness import (AvrComponent, CecSession, DUT, Frame, Hooks, Playback
 from amity_harness.ble_input import BLEInputEvidence
 from amity_harness.diagnostics import LogCapture
 from amity_harness.cec_pin import PinFrame
+from unit_tests.virtual_time import use_virtual_time
 
 
 class KeyWire:
@@ -36,7 +37,7 @@ class KeyWire:
 
     def receive(self, timeout):
         # This fake has no queued RX; publish idle polls within the fixture's
-        # short CEC deadline instead of racing its 50 ms production poll.
+        # short CEC deadline, which a 50 ms production poll would outlast.
         self.closed.wait(min(timeout, .001))
         return None
 
@@ -209,6 +210,9 @@ class Keyboard:
 
 
 class BLEInputEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         main = DUT("amity-dut")
@@ -552,18 +556,18 @@ class BLEInputEvidenceTests(unittest.TestCase):
     def test_disconnect_wait_precedes_cec_budget_but_late_release_still_fails(self):
         for late in (False, True):
             with self.subTest(late=late), self.fixture() as f:
-                real_clock, offset = time.monotonic_ns, [0]
-                advance = lambda: offset.__setitem__(0, offset[0] + 1_000_000_000)
+                # BlueZ takes a second to confirm link loss; a late release
+                # arrives another second after that confirmation.
+                advance = lambda: self.clock.advance(1)
                 f.keyboard.disconnect_pending = advance
                 f.keyboard.disconnect_complete = advance if late else None
-                with patch("amity_harness.ble_input.time.monotonic_ns", side_effect=lambda: real_clock() + offset[0]):
-                    if late:
-                        with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key release"):
-                            with BLEInputEvidence(f.main, f.scan) as evidence:
-                                evidence.assert_disconnect_cleanup(f.keyboard, f.avr)
-                    else:
+                if late:
+                    with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key release"):
                         with BLEInputEvidence(f.main, f.scan) as evidence:
                             evidence.assert_disconnect_cleanup(f.keyboard, f.avr)
+                else:
+                    with BLEInputEvidence(f.main, f.scan) as evidence:
+                        evidence.assert_disconnect_cleanup(f.keyboard, f.avr)
                 change = f.bed.control_observations[-1]["checks"][-1]["input_changes"][-1]
                 self.assertGreater(change["disconnected_monotonic_ns"] - change["started_monotonic_ns"], 12_000_000)
                 self.assertEqual(change["deadline_monotonic_ns"] - change["disconnected_monotonic_ns"], 12_000_000)
@@ -584,16 +588,13 @@ class BLEInputEvidenceTests(unittest.TestCase):
                 self.assertEqual(f.keyboard.commands[-1], ((), 0))
 
     def test_slow_ui_preflight_does_not_consume_each_input_changes_cec_budget(self):
-        # Advance only the monotonic clock: each UI preflight takes six seconds
-        # without making this host regression wait on a real network or clock.
-        real_clock, offset = time.monotonic_ns, [0]
+        # Each UI preflight takes six seconds.
         with self.fixture() as f:
             f.main._runtime.cec_timeout = 5
-            f.keyboard.preflight = lambda: offset.__setitem__(0, offset[0] + 6_000_000_000)
-            with patch("amity_harness.ble_input.time.monotonic_ns", side_effect=lambda: real_clock() + offset[0]):
-                with BLEInputEvidence(f.main, f.scan) as evidence:
-                    evidence.assert_tap(f.keyboard, f.player)
-                    evidence.assert_overlapping_buttons(f.keyboard, volume=f.avr, navigation=f.player)
+            f.keyboard.preflight = lambda: self.clock.advance(6)
+            with BLEInputEvidence(f.main, f.scan) as evidence:
+                evidence.assert_tap(f.keyboard, f.player)
+                evidence.assert_overlapping_buttons(f.keyboard, volume=f.avr, navigation=f.player)
             tap, overlap = f.bed.control_observations[-1]["checks"]
             self.assertTrue(tap["passed"] and overlap["passed"])
             self.assertGreater(tap["input_changes"][0]["started_monotonic_ns"] - tap["started_monotonic_ns"], 5_000_000_000)
@@ -604,14 +605,13 @@ class BLEInputEvidenceTests(unittest.TestCase):
                                     for change in check["input_changes"]))
 
     def test_cec_response_after_five_seconds_from_actual_report_still_fails(self):
-        real_clock, offset = time.monotonic_ns, [0]
         with self.fixture() as f:
             f.main._runtime.cec_timeout = 5
-            f.keyboard.delivery = lambda: offset.__setitem__(0, offset[0] + 6_000_000_000)
-            with patch("amity_harness.ble_input.time.monotonic_ns", side_effect=lambda: real_clock() + offset[0]):
-                with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key press"):
-                    with BLEInputEvidence(f.main, f.scan) as evidence:
-                        evidence.assert_tap(f.keyboard, f.player)
+            # The BLE report reaches the owner six seconds after its action boundary.
+            f.keyboard.delivery = lambda: self.clock.advance(6)
+            with self.assertRaisesRegex(TimeoutError, "fresh physical BLE key press"):
+                with BLEInputEvidence(f.main, f.scan) as evidence:
+                    evidence.assert_tap(f.keyboard, f.player)
             self.assertFalse(f.bed.control_observations[-1]["checks"][-1]["passed"])
             self.assertEqual(f.keyboard.commands[-1], ((), 0))
 

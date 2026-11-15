@@ -7,15 +7,18 @@ import sys
 import threading
 import time
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import Frame, TxResult
 from test_component_power_assertions import distributed_activity_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class SourceTheftDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def fixture(self):
         fixture = distributed_activity_fixture()
         fixture.activity(display=fixture.member_tv, source=fixture.member_player, audio=fixture.member_avr).start()
@@ -38,8 +41,8 @@ class SourceTheftDeadlineTests(unittest.TestCase):
     def test_late_standby_already_in_history_cannot_satisfy_the_250_ms_bound(self):
         fixture, announcement = self.fixture()
         self.standby(fixture, announcement, 250_000_001)
-        clock = announcement.timestamp_ns / 1_000_000_000 + 3
-        with patch("amity_harness.components.time.monotonic", return_value=clock), self.assertRaises(TimeoutError):
+        self.clock.advance(3)
+        with self.assertRaises(TimeoutError):
             fixture.member_player.wait_for_standby_after(announcement)
         self.assertEqual(fixture.member_player.power.value, "standby")
         self.assertEqual(fixture.member_player.power_assertions, ())
@@ -49,24 +52,21 @@ class SourceTheftDeadlineTests(unittest.TestCase):
             with self.subTest(elapsed_ns=elapsed_ns):
                 fixture, announcement = self.fixture()
                 self.standby(fixture, announcement, elapsed_ns)
-                clock = announcement.timestamp_ns / 1_000_000_000 + 3
-                with patch("amity_harness.components.time.monotonic", return_value=clock):
-                    fixture.member_player.wait_for_standby_after(announcement)
+                self.clock.advance(3)
+                fixture.member_player.wait_for_standby_after(announcement)
                 self.assertEqual(fixture.member_player.power_assertions[-1]["response_latency_ns"], elapsed_ns)
 
     def test_timely_standby_remains_valid_after_slow_real_owner_proof(self):
         fixture, announcement = self.fixture()
         self.standby(fixture, announcement, 125_000_000)
-        clock = [announcement.timestamp_ns / 1_000_000_000]
 
         def slow_system():
-            clock[0] += 3
+            self.clock.advance(3)
             return deepcopy(fixture.source.system)
 
         fixture.dut.get_system = slow_system
-        with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
-            self.assertIs(fixture.member_player.wait_for_standby_after(announcement), fixture.member_player)
-        self.assertGreater(clock[0] - announcement.timestamp_ns / 1_000_000_000, 2)
+        self.assertIs(fixture.member_player.wait_for_standby_after(announcement), fixture.member_player)
+        self.assertGreater(self.clock.now - announcement.timestamp_ns / 1_000_000_000, 2)
         assertion = fixture.member_player.power_assertions[-1]
         self.assertEqual(assertion["trigger_wire_timestamp_ns"], announcement.timestamp_ns)
         self.assertEqual(assertion["response_latency_ns"], 125_000_000)
@@ -81,8 +81,8 @@ class SourceTheftDeadlineTests(unittest.TestCase):
                     fixture.member_player.standby()
                 else:
                     self.standby(fixture, announcement, 100_000_000, transport=transport)
-                clock = announcement.timestamp_ns / 1_000_000_000 + 3
-                with patch("amity_harness.components.time.monotonic", return_value=clock), self.assertRaises(TimeoutError):
+                self.clock.advance(3)
+                with self.assertRaises(TimeoutError):
                     fixture.member_player.wait_for_standby_after(announcement)
 
     def test_trigger_requires_exact_component_session_wire_and_successful_active_source(self):
@@ -102,17 +102,11 @@ class SourceTheftDeadlineTests(unittest.TestCase):
 
     def test_missing_response_ends_at_absolute_wire_deadline(self):
         fixture, announcement = self.fixture()
-        clock = [announcement.timestamp_ns / 1_000_000_000]
-        beginning = clock[0]
-
-        def wait(seconds):
-            clock[0] += seconds
-
-        with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
-                patch.object(fixture.member_player._power_condition, "wait", side_effect=wait), self.assertRaises(TimeoutError):
+        beginning = announcement.timestamp_ns / 1_000_000_000
+        with self.assertRaises(TimeoutError):
             fixture.member_player.wait_for_standby_after(announcement)
-        self.assertGreaterEqual(clock[0] - beginning, 0.249)
-        self.assertLessEqual(clock[0] - beginning, 0.251)
+        self.assertGreaterEqual(self.clock.now - beginning, 0.249)
+        self.assertLessEqual(self.clock.now - beginning, 0.251)
 
     def test_route_restoration_uses_the_same_original_250_ms_window(self):
         for elapsed_ns, expected_success in ((125_000_000, True), (249_999_999, True),
@@ -123,21 +117,20 @@ class SourceTheftDeadlineTests(unittest.TestCase):
                 avr, player = fixture.member_avr, fixture.member_player
                 avr.receive(Frame(0, 15, 0x86, player.address.physical.to_bytes(2, "big"),
                                   timestamp_ns=announcement.timestamp_ns + elapsed_ns))
-                clock = [announcement.timestamp_ns / 1_000_000_000 + 3]
+                self.clock.advance(3)
 
                 def slow_system():
-                    clock[0] += 3
+                    self.clock.advance(3)
                     return deepcopy(fixture.source.system)
 
                 fixture.dut.get_system = slow_system
-                with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
-                    if expected_success:
+                if expected_success:
+                    avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=0.250)
+                    self.assertEqual(avr.routing_assertions[-1]["response_latency_ns"], elapsed_ns)
+                    self.assertEqual(avr.routing_assertions[-1]["max_elapsed_ns"], 250_000_000)
+                else:
+                    with self.assertRaises(TimeoutError):
                         avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=0.250)
-                        self.assertEqual(avr.routing_assertions[-1]["response_latency_ns"], elapsed_ns)
-                        self.assertEqual(avr.routing_assertions[-1]["max_elapsed_ns"], 250_000_000)
-                    else:
-                        with self.assertRaises(TimeoutError):
-                            avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement, within=0.250)
 
     def locked_route(self, *, elapsed=0.125, transport="wire", timeout=0.8, expected_success=True):
         """Dispatch a route, retaining the real session lock past the wire window."""
@@ -205,18 +198,12 @@ class SourceTheftDeadlineTests(unittest.TestCase):
 
     def test_missing_route_ends_at_absolute_wire_deadline_with_uncontended_lock(self):
         fixture, announcement = self.fixture()
-        clock = [announcement.timestamp_ns / 1_000_000_000]
-        beginning = clock[0]
-
-        def wait(seconds):
-            clock[0] += seconds
-
-        with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]), \
-                patch.object(fixture.member_avr._power_condition, "wait", side_effect=wait), self.assertRaises(TimeoutError):
+        beginning = announcement.timestamp_ns / 1_000_000_000
+        with self.assertRaises(TimeoutError):
             fixture.member_avr.wait_for_input(fixture.member_player, since=announcement.timestamp_ns,
                                               after=announcement, within=0.250)
-        self.assertGreaterEqual(clock[0] - beginning, 0.249)
-        self.assertLessEqual(clock[0] - beginning, 0.251)
+        self.assertGreaterEqual(self.clock.now - beginning, 0.249)
+        self.assertLessEqual(self.clock.now - beginning, 0.251)
         self.assertEqual(fixture.member_avr.routing_assertions, ())
 
     def test_timely_route_can_be_inspected_after_owner_proof_exceeds_wait_budget(self):
@@ -226,28 +213,26 @@ class SourceTheftDeadlineTests(unittest.TestCase):
                 avr, player = fixture.member_avr, fixture.member_player
                 avr.receive(Frame(0, 15, 0x86, player.address.physical.to_bytes(2, "big"),
                                   timestamp_ns=announcement.timestamp_ns + elapsed_ns))
-                clock = [announcement.timestamp_ns / 1_000_000_000]
                 proofs = []
 
                 def slow_system():
-                    proofs.append(clock[0])
-                    clock[0] += 6
+                    proofs.append(self.clock.now)
+                    self.clock.advance(6)
                     return deepcopy(fixture.source.system)
 
                 fixture.dut.get_system = slow_system
-                with patch("amity_harness.components.time.monotonic", side_effect=lambda: clock[0]):
-                    if expected_success:
+                if expected_success:
+                    avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement,
+                                       within=0.250, timeout=5)
+                    self.assertEqual(avr.routing_assertions[-1]["response_latency_ns"], elapsed_ns)
+                    self.assertEqual(avr.routing_assertions[-1]["max_elapsed_ns"], 250_000_000)
+                    self.assertGreaterEqual(len(proofs), 2)
+                    self.assertGreaterEqual(self.clock.now - proofs[1], 6)
+                else:
+                    with self.assertRaises(TimeoutError):
                         avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement,
                                            within=0.250, timeout=5)
-                        self.assertEqual(avr.routing_assertions[-1]["response_latency_ns"], elapsed_ns)
-                        self.assertEqual(avr.routing_assertions[-1]["max_elapsed_ns"], 250_000_000)
-                        self.assertGreaterEqual(len(proofs), 2)
-                        self.assertGreaterEqual(clock[0] - proofs[1], 6)
-                    else:
-                        with self.assertRaises(TimeoutError):
-                            avr.wait_for_input(player, since=announcement.timestamp_ns, after=announcement,
-                                               within=0.250, timeout=5)
-                        self.assertEqual(avr.routing_assertions, ())
+                    self.assertEqual(avr.routing_assertions, ())
 
     def test_source_deadline_cannot_be_extended_above_250_ms(self):
         fixture, announcement = self.fixture()

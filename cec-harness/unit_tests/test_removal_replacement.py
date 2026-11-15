@@ -6,20 +6,18 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 import unittest
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.membership import MembershipConflict
 from amity_harness.removal import MembershipContinuity
 from test_removal_cascade import CascadeFixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class ReplacementTests(unittest.TestCase):
     def setUp(self):
-        sleeper = patch("amity_harness.membership.time.sleep")
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.clock = use_virtual_time(self)
 
     def later_member(self, fixture):
         identity = fixture.main.wiring.identities["amity-dut-3"].device_id

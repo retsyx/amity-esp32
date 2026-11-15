@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import AvrComponent, CecAddress, CecSession, DUT, Frame, Hooks, TxResult
 from amity_harness.discovery import _fresh_discovery
+from unit_tests.virtual_time import use_virtual_time
 
 
 class IdleBackend:
@@ -37,6 +38,9 @@ class IdleBackend:
 
 
 class ReceiveProvenanceTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = use_virtual_time(self)
+
     def component(self):
         return AvrComponent(DUT("amity-dut"), "Provenance AVR",
                             address=CecAddress(5, "1.0.0.0"))

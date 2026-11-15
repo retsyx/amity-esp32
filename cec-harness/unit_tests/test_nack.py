@@ -13,6 +13,7 @@ from amity_harness.cec_pin import PinFrame
 from amity_harness.cec_pin import PinDecoder
 from amity_harness.nack import MissingCECRecipient, nack_attempts
 from amity_harness.topology import CecAddress
+from unit_tests.virtual_time import use_virtual_time
 
 
 class MonitorBackend:
@@ -92,6 +93,11 @@ class MonitorBackend:
 
 
 class MissingRecipientTests(unittest.TestCase):
+    def setUp(self):
+        # Session workers, the monitor thread and the 80 ms drain window all
+        # run on one virtual clock, so a slow runner cannot expire the window.
+        self.clock = use_virtual_time(self)
+
     @contextmanager
     def fixture(self):
         dut = DUT("amity-dut")

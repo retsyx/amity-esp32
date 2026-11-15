@@ -15,6 +15,7 @@ from amity_harness.activity import ActivityAction
 from amity_harness.split_theater import LookupNameGate
 from amity_harness.testbed import _CONTROL_OBSERVATION_FIELDS
 from test_component_power_assertions import distributed_activity_fixture
+from unit_tests.virtual_time import use_virtual_time
 
 
 class GateFixture:
@@ -86,6 +87,11 @@ class GateFixture:
 
 
 class LookupNameGateTests(unittest.TestCase):
+    def setUp(self):
+        # Wire stamps and progress deadlines read one virtual clock; an absent
+        # proof waits out a realistic CEC window without real delay.
+        self.clock = use_virtual_time(self)
+
     def test_local_and_member_pending_original_queries_release_real_name_and_report(self):
         for member in (False, True):
             with self.subTest(member=member):
@@ -147,7 +153,7 @@ class LookupNameGateTests(unittest.TestCase):
                 with f.gate as gate:
                     f.missing().pending().b_progress(changed=changed)
                     with self.assertRaises(TimeoutError):
-                        gate.wait_for_progress(since=f.action, timeout=.002)
+                        gate.wait_for_progress(since=f.action, timeout=1)
 
     def test_progress_cannot_pass_after_scan_ends_or_name_returns_or_owner_changes(self):
         for change in ("generation", "finished", "name", "owner"):
@@ -189,7 +195,7 @@ class LookupNameGateTests(unittest.TestCase):
                     f.query(0x83)
                     f.query(0x46, **changed)
                     with self.assertRaises(TimeoutError):
-                        gate.wait_for_progress(since=f.action, timeout=.002)
+                        gate.wait_for_progress(since=f.action, timeout=1)
 
     def test_physical_name_query_alone_is_not_enumeration(self):
         f = GateFixture()
@@ -199,7 +205,7 @@ class LookupNameGateTests(unittest.TestCase):
             f.b_progress()
             f.query(0x46)
             with self.assertRaises(TimeoutError):
-                gate.wait_for_progress(since=f.action, timeout=.002)
+                gate.wait_for_progress(since=f.action, timeout=1)
 
     def test_completed_scan_or_activity_cannot_claim_pending(self):
         for changed in (dict(discovering=False), dict(activity_settling=False),

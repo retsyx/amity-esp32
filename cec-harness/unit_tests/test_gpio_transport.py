@@ -9,6 +9,7 @@ from amity_harness.config import RunConfig, use_config
 from amity_harness.dut import DUT, PinctrlGPIO
 from amity_harness.gpio import hold_low
 from unit_tests.harness_pins import reset_gpio
+from unit_tests.virtual_time import use_virtual_time
 
 
 class GPIO:
@@ -30,20 +31,22 @@ class GPIOTransportTests(unittest.TestCase):
         self.pin = reset_gpio("amity-dut-2")
 
     def test_local_hold_times_and_releases_in_same_process_and_preserves_factory_gesture(self):
+        clock = use_virtual_time(self)
         for duration in (3.5, 10):
             with self.subTest(duration=duration):
                 gpio = GPIO()
                 previous = {signum: signal.getsignal(signum)
                             for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGALRM)}
-                with patch("amity_harness.gpio.time.sleep") as sleep:
-                    result = hold_low(gpio, self.pin, duration)
-                sleep.assert_called_once_with(float(duration))
+                started = clock.now_ns
+                result = hold_low(gpio, self.pin, duration)
+                self.assertEqual(clock.now_ns - started, round(duration * 1e9))
                 self.assertEqual(gpio.calls, [("low", self.pin), ("release", self.pin)])
                 self.assertEqual(result, {"gpio": self.pin, "seconds": float(duration), "released": True})
                 self.assertEqual(previous, {signum: signal.getsignal(signum) for signum in previous})
                 self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
 
     def test_safety_deadline_starts_at_the_low_edge_and_admits_an_eight_second_hold(self):
+        use_virtual_time(self)
         for duration, deadline in ((3.5, 4.0), (8, 8.5), (10, 12)):
             with self.subTest(duration=duration):
                 gpio = GPIO()
@@ -55,8 +58,7 @@ class GPIOTransportTests(unittest.TestCase):
                         armed.append((tuple(gpio.calls), seconds))
                     return original(which, seconds, *args)
 
-                with patch("amity_harness.gpio.time.sleep"), \
-                        patch("amity_harness.gpio.signal.setitimer", side_effect=setitimer):
+                with patch("amity_harness.gpio.signal.setitimer", side_effect=setitimer):
                     hold_low(gpio, self.pin, duration)
                 self.assertEqual(armed, [((("low", self.pin),), deadline)])
                 self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))

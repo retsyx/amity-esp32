@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ from amity_harness.qualified_names import observe_no_control
 from functional_tests import qualified_names
 from functional_tests import activity as activity_scenarios
 from unit_tests.test_consortium_scenarios import Scenario
+from unit_tests.virtual_time import use_virtual_time
 
 
 class QualifiedNamesScenario(Scenario):
@@ -294,6 +296,8 @@ class AdapterQualifiedNamesScenarioTests(unittest.TestCase):
 
 class NegativeControlEvidenceTests(unittest.TestCase):
     def setUp(self):
+        # Wire stamps and the observation window and drain tail share one virtual clock.
+        self.clock = use_virtual_time(self)
         self.dut = DUT("amity-dut")
         self.component = TvComponent(self.dut.tentacle(0).front, "Same TV",
                                      hooks=Hooks(before_rx=lambda component, frame: None))
@@ -311,30 +315,23 @@ class NegativeControlEvidenceTests(unittest.TestCase):
                                     validate_owners=lambda components: None)
         self.dut.last_scan = self.scan
         self.component._wire_context = lambda since: (self.session, since, 4, None)
-        self.ticks = 1_000_000
-        self.clock = patch("amity_harness.qualified_names.time.monotonic_ns", self.now)
-        self.clock.start()
-        self.addCleanup(self.clock.stop)
-
-    def now(self):
-        self.ticks += 10_000
-        return self.ticks
 
     def receive(self, opcode, *, source=4, transport="wire", timestamp=None):
-        self.component.receive(Frame(source, 0, opcode, timestamp_ns=self.now() if timestamp is None else timestamp),
+        self.component.receive(Frame(source, 0, opcode,
+                                     timestamp_ns=time.monotonic_ns() if timestamp is None else timestamp),
                                transport=transport)
 
     def test_control_on_inactive_wire_fails_even_when_responder_hook_drops_it(self):
         for opcode in (0x04, 0x0d, 0x36, 0x44, 0x45, 0x80, 0x81, 0x82, 0x86, 0x9d):
             with self.subTest(opcode=opcode):
                 with self.assertRaisesRegex(AssertionError, "inactive owner's wire"):
-                    with observe_no_control(self.scan, self.component, duration=0.000001) as observation:
+                    with observe_no_control(self.scan, self.component, duration=1) as observation:
                         self.receive(opcode)
                         observation.assert_clear()
                 self.assertFalse(self.component._wire_observers)
 
     def test_virtual_stale_and_peer_control_cannot_become_dut_wire_evidence(self):
-        with observe_no_control(self.scan, self.component, duration=0.000001) as observation:
+        with observe_no_control(self.scan, self.component, duration=1) as observation:
             self.receive(0x44, transport="virtual")
             self.receive(0x44, timestamp=1)
             self.receive(0x44, source=8)
@@ -349,27 +346,27 @@ class NegativeControlEvidenceTests(unittest.TestCase):
 
     def test_missing_wire_clock_cannot_pass(self):
         with self.assertRaisesRegex(AssertionError, "without a wire timestamp"):
-            with observe_no_control(self.scan, self.component, duration=0.000001) as observation:
+            with observe_no_control(self.scan, self.component, duration=1) as observation:
                 self.receive(0x83, timestamp=0)
                 observation.assert_clear()
 
     def test_missing_receive_coverage_and_changed_owner_proof_fail(self):
         self.session._wire_idle_since_ns.clear()
         with self.assertRaisesRegex(TimeoutError, "did not drain"):
-            with observe_no_control(self.scan, self.component, duration=0.000001) as observation:
+            with observe_no_control(self.scan, self.component, duration=1) as observation:
                 observation.assert_clear()
         self.session._wire_idle_since_ns[self.component.gpio] = 10**30
         with self.assertRaisesRegex(AssertionError, "different active TestBed"):
-            with observe_no_control(self.scan, self.component, duration=0.000001) as observation:
+            with observe_no_control(self.scan, self.component, duration=1) as observation:
                 self.dut.last_scan = None
                 observation.assert_clear()
 
     def test_unasserted_observation_fails_but_does_not_hide_an_existing_failure(self):
         with self.assertRaisesRegex(RuntimeError, "not asserted"):
-            with observe_no_control(self.scan, self.component, duration=0.000001):
+            with observe_no_control(self.scan, self.component, duration=1):
                 pass
         with self.assertRaisesRegex(ValueError, "original failure"):
-            with observe_no_control(self.scan, self.component, duration=0.000001):
+            with observe_no_control(self.scan, self.component, duration=1):
                 raise ValueError("original failure")
         self.assertFalse(self.component._wire_observers)
 

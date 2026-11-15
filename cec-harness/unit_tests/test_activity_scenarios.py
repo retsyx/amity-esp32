@@ -14,6 +14,7 @@ from amity_harness import (AvrComponent, Component, DUT, Key, PlaybackComponent,
                            PowerState, TvComponent)
 from functional_tests import activity as scenarios
 from unit_tests.test_consortium_scenarios import Scenario
+from unit_tests.virtual_time import use_virtual_time
 
 
 class ActivityScenario(Scenario):
@@ -283,6 +284,10 @@ def fixture_owner(current, actions):
 
 
 class ActivityScenarioTests(unittest.TestCase):
+    def setUp(self):
+        # UI polling and the CEC-timeout completion window run in virtual time.
+        self.clock = use_virtual_time(self)
+
     def assert_cleanup(self, fixture):
         self.assertFalse(fixture.activities)
         self.assertFalse(fixture.members)
@@ -362,17 +367,21 @@ class ActivityScenarioTests(unittest.TestCase):
 
     def test_standby_completion_that_never_publishes_still_times_out(self):
         fixture = ActivityScenario(standby_settling=True)
-        with patch("amity_harness.dut.time.monotonic", side_effect=(0, 1_000_000_000)):
-            with self.assertRaisesRegex(TimeoutError, "Amity UI state"):
-                fixture.run()
+        with self.assertRaisesRegex(TimeoutError, "Amity UI state"):
+            fixture.run()
         self.assertTrue(any(row[0] == "announcement.standby" for row in fixture.events))
         self.assert_cleanup(fixture)
 
     def test_standby_completion_publication_is_bounded_by_the_cec_timeout(self):
         fixture = ActivityScenario(standby_settling=True)
-        with patch("amity_harness.dut.time.monotonic", side_effect=(0, 1.5)):
-            with self.assertRaisesRegex(TimeoutError, "Amity UI state"):
-                fixture.run()
+        started = self.clock.now
+        with self.assertRaisesRegex(TimeoutError, "Amity UI state"):
+            fixture.run()
+        # Scripted steps take no time; only the completion wait does, and it
+        # ends once the CEC budget is spent, never at the run timeout.
+        cec_timeout = fixture.duts[0]._runtime.cec_timeout
+        self.assertGreaterEqual(self.clock.now - started, cec_timeout)
+        self.assertLess(self.clock.now - started, cec_timeout + .001)
         self.assert_cleanup(fixture)
 
     def test_missing_repair_power_fails_even_when_final_model_power_is_on(self):
