@@ -11,10 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "system_configuration.hpp"
 #include "amity/hub.hpp"
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdio>
 #include <memory>
+#include <string>
+#include <vector>
 template<class T>T id(unsigned n){char text[33];std::snprintf(text,sizeof(text),"%032x",n);return T::parse(text).value();}
 unsigned saved_reads=0,input_updates=0,playback_reads=0,battery_reads=0;
 namespace config_store {
@@ -39,6 +42,21 @@ void refresh_remote_battery(){++battery_reads;}
 hap_char_t active_value,speaker_value,selected_value,mute_value;
 hap_char_t *active=&active_value,*speaker_active=&speaker_value,*active_input=&selected_value,*mute_char=&mute_value;
 bool audio_known=false;
+struct hap_val_t {struct {uint8_t* buf;uint32_t buflen;} t;};
+unsigned order_updates=0;std::vector<unsigned> displayed;
+hap_char_t order_value;hap_char_t* display_order=&order_value;
+void hap_char_update_val(hap_char_t* value,hap_val_t* v){
+    // Decode the TLV8 list: one-byte Identifier items separated by empty items.
+    assert(value==display_order);++order_updates;displayed.clear();
+    for(uint32_t n=0;n<v->t.buflen;n+=3){
+        if(n){assert(v->t.buf[n]==0&&v->t.buf[n+1]==0);n+=2;}
+        assert(n+3<=v->t.buflen&&v->t.buf[n]==1&&v->t.buf[n+1]==1);displayed.push_back(v->t.buf[n+2]);
+    }
+}
+std::vector<unsigned> order(std::vector<unsigned> first){
+    for(unsigned n=1;n<=16;++n)if(std::find(first.begin(),first.end(),n)==first.end())first.push_back(n);
+    return first;
+}
 '''
 SUITE = r'''
 int main(){
@@ -64,7 +82,25 @@ int main(){
     ++config.config_revision;config.external_slots[0].tombstone=true;refresh_values();
     assert(chars[0][2].number==0&&chars[0][3].number==1);
     const auto updates=input_updates;refresh_values();assert(input_updates==updates);
-    std::puts("PASS HomeKit refresh: repeated reads allocate no input projections, live playback remains current, revisions/aliases/visibility/replacement/tombstones refresh correctly");
+    // Display Order follows the saved activity order, not identifier allocation
+    // order, and notifies only when that order changes.
+    assert(order_updates==1&&displayed==order({}));
+    ++config.config_revision;config.activities.clear();config.external_slots.clear();
+    for(unsigned n=0;n<3;++n){
+        config_store::ConfiguredActivity value;value.activity_id=id<amity::system::ActivityId>(10+n);value.zone_id=config.primary_zone_id;
+        value.label=value.generated_label="Activity "+std::to_string(n);config.activities.push_back(value);
+        config.external_slots.push_back({static_cast<uint16_t>(n),value.activity_id,false,false,{}});
+    }
+    const auto activity_id=[](unsigned n){return id<amity::system::ActivityId>(n);};
+    config.activity_order={activity_id(12),activity_id(10),activity_id(11)};refresh_values();
+    assert(order_updates==2&&displayed==order({3,1,2}));
+    ++config.presentation_revision;config.activity_order={activity_id(11),activity_id(12),activity_id(10)};refresh_values();
+    assert(order_updates==3&&displayed==order({2,3,1}));
+    ++config.presentation_revision;refresh_values();assert(order_updates==3);
+    ++config.config_revision;config.external_slots[2].tombstone=true;config.activities.pop_back();
+    config.activity_order={activity_id(11),activity_id(10)};refresh_values();
+    assert(order_updates==4&&displayed==order({2,1}));
+    std::puts("PASS HomeKit refresh: repeated reads allocate no input projections, live playback remains current, revisions/aliases/visibility/replacement/tombstones/display order refresh correctly");
 }
 '''
 
@@ -73,8 +109,10 @@ def main():
     source = (ROOT / 'components/amity_homekit/homekit.cpp').read_text()
     configuration = (ROOT / 'components/config_store/system_configuration.cpp').read_text()
     declarations = re.search(r'struct Input \{.*?bool inputs_dirty=true;', source, re.S).group()
-    code = PREFIX + '\nnamespace config_store {\n' + function(configuration, 'const ConfiguredActivity* activity_for_slot(') + '\n}\n'
-    code += declarations + function(source, 'void refresh_inputs()') + function(source, 'void refresh_values()') + SUITE
+    code = PREFIX + '\nnamespace config_store {\n' + function(configuration, 'const ConfiguredActivity* activity_for_slot(')
+    code += function(configuration, 'std::vector<model::ActivityId> ordered_activities(') + '\n}\n'
+    code += declarations + function(source, 'void refresh_display_order(') + function(source, 'void refresh_inputs()')
+    code += function(source, 'void refresh_values()') + SUITE
     with tempfile.TemporaryDirectory(prefix='amity-homekit-refresh-') as directory:
         path, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
         path.write_text(code)

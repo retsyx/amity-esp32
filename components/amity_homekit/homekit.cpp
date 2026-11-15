@@ -55,7 +55,7 @@ std::atomic<bool> disabled{false};
 std::mutex lifecycle_mutex;
 int64_t deadline=0;
 int64_t published_deadline=0;
-hap_char_t *active, *active_input, *tv_name, *remote_key, *speaker_active, *mute_char, *volume_selector;
+hap_char_t *active, *active_input, *tv_name, *remote_key, *speaker_active, *mute_char, *volume_selector, *display_order;
 hap_char_t *battery_level, *battery_low, *battery_charging;
 struct Input {
     hap_char_t *name=nullptr,*label=nullptr,*configured=nullptr,*visible=nullptr,*target_visible=nullptr;
@@ -63,6 +63,8 @@ struct Input {
     bool hidden=false;
 };
 std::array<Input,16> inputs;
+// TLV8 list of every input Identifier (type 1, one byte), separated by empty type-0 items.
+std::array<uint8_t,inputs.size()*5-2> display_order_value{};
 uint64_t input_config_revision=0,input_presentation_revision=0;
 bool inputs_dirty=true;
 bool battery_known=false, charging_known=false, audio_known=false;
@@ -88,11 +90,29 @@ void refresh_remote_battery(){
     if(battery_known){const int percent=remote.bonded?std::clamp(remote.battery_percent,0,100):100;update(battery_level,percent);update(battery_low,percent<=20);}
     if(charging_known)update(battery_charging,remote.bonded?remote.charging:0);
 }
+void refresh_display_order(const std::array<size_t,inputs.size()> &rank){
+    std::array<unsigned,inputs.size()> slots;
+    for(unsigned i=0;i<slots.size();++i)slots[i]=i;
+    std::sort(slots.begin(),slots.end(),[&](unsigned a,unsigned b){return rank[a]<rank[b];});
+    decltype(display_order_value) value{};size_t length=0;
+    for(const auto slot:slots){
+        if(length){value[length++]=0;value[length++]=0;}
+        value[length++]=1;value[length++]=1;value[length++]=static_cast<uint8_t>(slot+1);
+    }
+    if(value==display_order_value)return;
+    display_order_value=value;
+    // HAP keeps this pointer and serializes it under the same lock as refreshes.
+    hap_val_t v{};v.t.buf=display_order_value.data();v.t.buflen=display_order_value.size();hap_char_update_val(display_order,&v);
+}
 void refresh_inputs(){
     const auto configuration=hub->active_configuration();
     const auto revision=configuration?configuration->config_revision:0;
     const auto presentation=configuration?configuration->presentation_revision:0;
     if(!inputs_dirty&&revision==input_config_revision&&presentation==input_presentation_revision)return;
+    std::vector<amity::system::ActivityId> order;
+    if(configuration)order=config_store::ordered_activities(*configuration);
+    // Inputs follow the activity order; unused identifiers follow in ascending order.
+    std::array<size_t,inputs.size()> rank{};
     for(unsigned i=0;i<inputs.size();++i){
         const auto* activity=configuration?config_store::activity_for_slot(*configuration,i):nullptr;
         if(activity&&activity->zone_id!=configuration->primary_zone_id)activity=nullptr;
@@ -117,7 +137,9 @@ void refresh_inputs(){
         update_string(in.label,in.alias.empty()?name:in.alias);
         update(in.configured,exists?1:0);update(in.visible,(!exists||in.hidden)?1:0);
         update(in.target_visible,(!exists||in.hidden)?1:0);
+        rank[i]=exists?static_cast<size_t>(std::find(order.begin(),order.end(),activity->activity_id)-order.begin()):order.size()+i;
     }
+    refresh_display_order(rank);
     input_config_revision=revision;input_presentation_revision=presentation;inputs_dirty=false;
 }
 void refresh_values(){
@@ -224,6 +246,10 @@ esp_err_t create_accessory(){
         hap_serv_set_bulk_read_cb(service,read);hap_serv_set_write_cb(service,write);
         hap_acc_add_serv(accessory,service);hap_serv_link_serv(tv,service);
     }
+    // Added last so it takes a new instance ID without renumbering existing ones.
+    hap_tlv8_val_t order{display_order_value.data(),display_order_value.size()};
+    display_order=hap_char_tlv8_create(text("136"),read_notify,&order);
+    if(!display_order||hap_serv_add_char(tv,display_order)!=HAP_SUCCESS)return ESP_ERR_NO_MEM;
     hap_add_accessory(accessory);return ESP_OK;
 }
 esp_err_t prepare_setup(char code[11],std::string &record){
