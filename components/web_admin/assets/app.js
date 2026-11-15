@@ -395,14 +395,15 @@ function renderHostname(name){
 }
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
- const strength=rssi=>'RSSI '+rssi+' dBm';
- const remote=r.connected?[connection,r.name,r.rssi!=null&&strength(r.rssi),r.battery>=0&&r.battery+'% battery',r.charging===true&&'Charging'].filter(Boolean).join(' · '):connection+(r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'');
- const signal=(rssi,channel,network)=>[network,strength(rssi),'channel '+channel].filter(Boolean).join(' · ');
+ // Name, RSSI and detail cells share columns so RSSI values line up across rows.
+ const fields=(name,rssi,...details)=>{const cells=[name||'',rssi==null?'':'RSSI '+rssi+' dBm',details.filter(Boolean).join(' · ')];return cells.map((cell,index)=>cell&&cells.slice(index+1).some(Boolean)?cell+' · ':cell);};
+ const remote=r.connected?fields(r.name,r.rssi,r.battery>=0&&r.battery+'% battery',r.charging===true&&'Charging',connection):connection+(r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'');
+ const signal=(rssi,channel,network)=>fields(network,rssi,'channel '+channel);
  const peers=peerSignals.map(peer=>[peer.name+' Wi-Fi ',peer.rssi===undefined?'unavailable':signal(peer.rssi,peer.channel)]);
  const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?signal(state.wifi_rssi,state.wifi_channel,state.wifi_ssid):'disconnected'],...peers,['Remote ',remote]],diagnostics=$('diagnostics');
- const labels=rows.map(([label])=>label).join('\n');
- if(diagnostics.dataset.labels!==labels){diagnostics.replaceChildren();for(const [label] of rows){const term=document.createElement('dt'),value=document.createElement('dd');term.textContent=label;diagnostics.append(term,value);}diagnostics.dataset.labels=labels;}
- rows.forEach(([,value],index)=>{const entry=diagnostics.children[index*2+1];if(entry.textContent!==value)entry.textContent=value;});
+ const layout=rows.map(([label,value])=>label+(Array.isArray(value)?'\t':'')).join('\n');
+ if(diagnostics.dataset.layout!==layout){diagnostics.replaceChildren();for(const [label,value] of rows){const term=document.createElement('dt'),entry=document.createElement('dd');term.textContent=label;if(Array.isArray(value)){entry.className='diagnostic-fields';entry.append(...value.map(()=>document.createElement('span')));}diagnostics.append(term,entry);}diagnostics.dataset.layout=layout;}
+ rows.forEach(([,value],index)=>{const entry=diagnostics.children[index*2+1];for(const [target,text] of Array.isArray(value)?value.map((text,cell)=>[entry.children[cell],text]):[[entry,value]])if(target.textContent!==text)target.textContent=text;});
 }
 // Other Amity devices' signals, read only while Diagnostics is visible.
 async function refreshPeerSignals(){

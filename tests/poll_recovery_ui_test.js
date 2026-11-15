@@ -256,15 +256,17 @@ function fixture({adapter=false}={}){
  signals.values.system={membership:{peers:[{octopus_id:'1'.repeat(32),enrolled:true,hostname:'den',wifi_rssi:-72,wifi_channel:1},
   {octopus_id:'2'.repeat(32),enrolled:true,hostname:'kitchen'},{octopus_id:'3'.repeat(32),enrolled:false,hostname:'pending'}]}};
  await signals.tick();assert.ok(!signals.calls.some(call=>call.route==='system'),'Hidden diagnostics must not read other devices');
- const rows=()=>signals.get('diagnostics').children.map(child=>child.textContent);
+ const rows=()=>signals.get('diagnostics').children.map(child=>child.className==='diagnostic-fields'?child.children.map(cell=>cell.textContent):child.textContent);
  assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote ']);
  signals.get('advanced').hidden=false;await signals.tick();
- assert.deepEqual(rows().slice(0,8),['Firmware ','1.0','Wi-Fi ','Home · RSSI -50 dBm · channel 6','den Wi-Fi ','RSSI -72 dBm · channel 1','kitchen Wi-Fi ','unavailable']);
- signals.values.system.membership.peers[0].wifi_rssi=-58;await signals.tick();assert.equal(rows()[5],'RSSI -58 dBm · channel 1');
+ assert.deepEqual(rows().slice(0,8),['Firmware ','1.0','Wi-Fi ',['Home · ','RSSI -50 dBm · ','channel 6'],'den Wi-Fi ',['','RSSI -72 dBm · ','channel 1'],'kitchen Wi-Fi ','unavailable']);
+ const peerRssi=signals.get('diagnostics').children[5].children[1];
+ signals.values.system.membership.peers[0].wifi_rssi=-58;await signals.tick();assert.deepEqual(rows()[5],['','RSSI -58 dBm · ','channel 1']);
+ assert.equal(signals.get('diagnostics').children[5].children[1],peerRssi,'A changed value updates its existing cell');
  assert.equal(rows()[9],'Disconnected');
  signals.values.remotes={devices:[],connected:true,bonded:true,rssi:-61,name:'Siri Remote, Gen 3',battery:80,charging:null};await signals.tick();
- assert.equal(rows()[9],'Siri Remote, Gen 3 · RSSI -61 dBm · 80% battery','A connected remote shows its signal, name and battery');
- signals.values.remotes.rssi=null;await signals.tick();assert.equal(rows()[9],'Siri Remote, Gen 3 · 80% battery');
+ assert.deepEqual(rows()[9],['Siri Remote, Gen 3 · ','RSSI -61 dBm · ','80% battery'],'A connected remote shows its name, signal and battery');
+ signals.values.remotes.rssi=null;await signals.tick();assert.deepEqual(rows()[9],['Siri Remote, Gen 3 · ','','80% battery']);
  signals.fail('system');await signals.tick();assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote ']);
  assert.deepEqual(signals.message(),{text:'',error:false},'A diagnostics read failure is not a polling failure');
  console.log('PASS shipped polling recovery UI:full-cycle recovery; bounded same-receipt GET recovery with cancelled timeout and no POST replay; HTTP/auth/schema/terminal errors and message ownership');
