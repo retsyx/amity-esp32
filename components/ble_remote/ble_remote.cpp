@@ -120,6 +120,8 @@ bool reconnect_pending;
 bool reconnect_cancel_pending;
 int64_t next_cancel_attempt;
 int64_t next_reconnect;
+// Failed remote connections since the last ready link; sets the retry backoff.
+unsigned reconnect_failures;
 int64_t pairing_deadline;
 uint32_t pending_scan_seconds;
 bool pending_scan_clear_error;
@@ -362,6 +364,19 @@ void log_link_up() {
              static_cast<long long>((link_up_us - connect_started_us) / 1000), rssi);
 }
 
+// Caller holds the remote mutex. The first retry after a failure starts at
+// once; later ones wait 0.5, 1, 2 and 4 s, then 5 s. The worker checks every
+// 500 ms, so shorter waits would not take effect.
+int64_t reconnect_backoff_us() {
+    if (reconnect_failures <= 1) return 0;
+    return std::min<int64_t>(500000LL << std::min(reconnect_failures - 2, 4u), 5000000);
+}
+
+// Caller holds the remote mutex.
+void count_reconnect_failure() {
+    if (reconnect_failures < 16) ++reconnect_failures;
+}
+
 // Caller holds the remote mutex.
 void log_link_down(int reason) {
     const int64_t now = esp_timer_get_time();
@@ -474,11 +489,14 @@ int on_gap_event(ble_gap_event *event, void *token) {
         siri_connected = false;
         input_reports.clear();
         battery_characteristics.clear();
+        // A ready link that failed counts here; a failed setup was already
+        // counted when the worker finished it.
+        if (state.last_error && state.connected) count_reconnect_failure();
         state.connected = state.connecting = state.waiting = false;
         state.battery_percent = -1;
         state.charging = -1;
         if (!unpair_cleanup_pending && !ble_gap_conn_active()) state.unpairing = false;
-        next_reconnect = esp_timer_get_time() + (state.last_error ? 5000000 : 0);
+        next_reconnect = esp_timer_get_time() + (state.last_error ? reconnect_backoff_us() : 0);
         break;
     case BLE_GAP_EVENT_NOTIFY_RX: {
         if (!controller_enabled.load() || event->notify_rx.conn_handle != connection_handle || !encrypted || forgetting) break;
@@ -997,7 +1015,9 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         Guard lock;
         state.connecting = false;
         state.last_error = pairing_stopped.load() ? 0 : err;
-        next_reconnect = esp_timer_get_time() + 5000000;
+        if (err) count_reconnect_failure();
+        else reconnect_failures = 0;
+        next_reconnect = esp_timer_get_time() + reconnect_backoff_us();
     }
     if (err || !reused) return;
     const int setup = complete_restore(restored);
@@ -1108,6 +1128,7 @@ void forget_peer() {
         unpair_delete_bond = have_saved || have_selected;
         unpair_cleanup_started = true;
         have_saved = have_selected = false;
+        reconnect_failures = 0;
         state.bonded = false;
         state.battery_percent = state.charging = -1;
         state.connecting = state.waiting = false;

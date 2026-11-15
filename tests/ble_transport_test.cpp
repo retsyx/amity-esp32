@@ -29,6 +29,7 @@ struct Connect {
     ble_gap_conn_params params;
     ble_gap_event_fn *callback;
     void *token;
+    int64_t at;
 };
 int64_t now;
 unsigned steps, blocking_waits, cancellations, scans, security_calls, discovery_calls,
@@ -264,7 +265,8 @@ int ble_gap_connect(uint8_t own, const ble_addr_t *peer, int32_t duration,
     assert(own == BLE_OWN_ADDR_PUBLIC && (peer->type & 1)==fake::peer.type &&
            !memcmp(peer->val, fake::peer.val, sizeof(peer->val)));
     assert(!fake::connecting && !fake::scanning);
-    fake::connects.push_back({duration, params != nullptr, params ? *params : ble_gap_conn_params{}, callback, token});
+    fake::connects.push_back({duration, params != nullptr, params ? *params : ble_gap_conn_params{}, callback, token,
+                              fake::now});
     if (fake::connect_error) return fake::connect_error;
     fake::connecting = true;
     if (fake::stop_during_connect) {
@@ -667,24 +669,46 @@ int main(int argc, char **argv) {
         assert(fake::warnings.empty());
     } else if (scenario == "connect-error") {
         fake::connect_error = BLE_HS_EBUSY;
-        fake::run_steps(2); // Worker consumes the start error on its next turn.
-        assert(fake::connects.size() == 1 && fake::status().last_error == BLE_HS_EBUSY);
+        fake::run_steps(2); // The worker consumes the start error on its next turn and retries at once.
+        assert(fake::connects.size() == 2);
+        fake::run_steps(1); // The second failure waits half a second.
+        assert(fake::connects.size() == 2 && fake::status().last_error == BLE_HS_EBUSY);
         assert(!fake::status().waiting && !fake::status().connecting);
         fake::connect_error = 0;
-        fake::run_steps(9);
-        assert(fake::connects.size() == 1);
         fake::run_steps(1);
-        assert(fake::connects.size() == 2 && fake::status().waiting);
+        assert(fake::connects.size() == 3 && fake::status().waiting);
     } else if (scenario == "async-error") {
         fake::run_steps(1);
         fake::complete_connect(BLE_HS_EAUTHEN);
-        fake::run_steps(1);
-        assert(fake::status().last_error == BLE_HS_EAUTHEN && !fake::status().waiting);
-        assert(!fake::security_calls && !fake::discovery_calls);
-        fake::run_steps(9);
-        assert(fake::connects.size() == 1);
-        fake::run_steps(1);
+        fake::run_steps(1); // The first failure is retried at once.
         assert(fake::connects.size() == 2 && fake::status().waiting);
+        assert(!fake::security_calls && !fake::discovery_calls);
+        fake::complete_connect(BLE_HS_EAUTHEN);
+        fake::run_steps(1);
+        assert(fake::connects.size() == 2 && fake::status().last_error == BLE_HS_EAUTHEN && !fake::status().waiting);
+        fake::run_steps(1);
+        assert(fake::connects.size() == 3 && fake::status().waiting);
+    } else if (scenario == "reconnect-backoff") {
+        fake::connect_error = BLE_HS_EBUSY;
+        fake::run_steps(80); // Forty seconds of refused attempts.
+        // Each failure is seen on the worker's next half-second turn. Its retry
+        // then waits 0, 0.5, 1, 2 and 4 s, and never more than 5 s.
+        const std::vector<int64_t> expected{500000, 1000000, 1500000, 2500000, 4500000, 5500000, 5500000};
+        assert(fake::connects.size() > expected.size());
+        for (size_t i = 1; i < fake::connects.size(); ++i) {
+            const auto gap = fake::connects[i].at - fake::connects[i - 1].at;
+            assert(gap == (i <= expected.size() ? expected[i - 1] : 5500000));
+        }
+        // A ready link resets the backoff, so its next failure is retried at once.
+        fake::connect_error = 0;
+        fake::run_steps(12);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected);
+        const auto attempts = fake::connects.size();
+        fake::disconnect(BLE_HS_HCI_ERR(BLE_ERR_CONN_TERM_MIC));
+        fake::run_steps(1);
+        assert(fake::connects.size() == attempts + 1 && fake::status().waiting);
     } else if (scenario == "discovery-error") {
         fake::discovery_error = BLE_HS_ENOTSUP;
         fake::run_steps(1);
@@ -696,9 +720,7 @@ int main(int argc, char **argv) {
         fake::disconnect();
         assert(fake::status().last_error == BLE_HS_ENOTSUP); // Cleanup must preserve setup error.
         fake::discovery_error = 0;
-        fake::run_steps(9);
-        assert(fake::connects.size() == 1);
-        fake::run_steps(1);
+        fake::run_steps(1); // The first failure is retried once the link is gone.
         assert(fake::status().waiting && fake::connects.size() == 2);
     } else if (scenario == "disconnect-before-setup") {
         fake::run_steps(1);
@@ -712,12 +734,8 @@ int main(int argc, char **argv) {
         fake::lose_unreported_link(BLE_HS_HCI_ERR(BLE_ERR_CONN_ESTABLISHMENT));
         assert(!fake::warnings.empty() && fake::warnings[0].find("failed to establish") != std::string::npos);
         fake::run_steps(1);
-        assert(!fake::status().waiting && !fake::status().connecting && !fake::security_calls);
-        fake::run_steps(9);
-        assert(fake::connects.size() == 1);
-        fake::run_steps(1);
-        // The ended attempt does not leave the remote unattended.
-        assert(fake::connects.size() == 2 && fake::status().waiting);
+        // The ended attempt does not leave the remote unattended: it is retried at once.
+        assert(fake::connects.size() == 2 && fake::status().waiting && !fake::security_calls);
         fake::complete_connect();
         fake::run_steps(1);
         assert(fake::status().connected);
