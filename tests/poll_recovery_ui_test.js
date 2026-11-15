@@ -8,6 +8,8 @@ class Element {
  }
  append(...items){this.children.push(...items);}
  replaceChildren(...items){this.children=[];this.append(...items);}
+ get childNodes(){return this.children;}
+ isEqualNode(other){return JSON.stringify([this.tag,this.textContent,this.className,this.hidden,this.disabled,this.value,this.dataset,this.attributes])===JSON.stringify([other.tag,other.textContent,other.className,other.hidden,other.disabled,other.value,other.dataset,other.attributes])&&this.children.length===other.children.length&&this.children.every((child,index)=>child.isEqualNode(other.children[index]));}
  addEventListener(name,callback){(this.listeners[name]??=[]).push(callback);}
  querySelector(){return null;}
  querySelectorAll(){return [];}

@@ -84,6 +84,17 @@ def main():
                 expect(page.locator('#homekitPairingCode')).to_have_text('Pairing code: 234-56-789')
                 expect(page.locator('#toggleHomekit')).to_have_text('Stop pairing')
                 passed('starting pairing displays an inline QR and pairing code')
+                # Polling must not replace unchanged text or markup; replacing it clears the user's selection.
+                kept=page.evaluate('''async () => {
+                    const range=document.createRange();range.selectNodeContents(document.getElementById('homekitPairingCode'));
+                    getSelection().removeAllRanges();getSelection().addRange(range);
+                    const records=[],observer=new MutationObserver(found=>records.push(...found));
+                    observer.observe(document.getElementById('homekit'),{subtree:true,childList:true,characterData:true});
+                    renderHomekit(await request('homekit'));records.push(...observer.takeRecords());observer.disconnect();
+                    return {selected:getSelection().toString(),mutations:records.map(record=>record.type+' '+(record.target.id||record.target.parentNode?.id))};
+                }''')
+                assert kept=={'selected':'Pairing code: 234-56-789','mutations':[]},kept
+                passed('refreshing unchanged pairing state keeps a selected pairing code')
                 page.locator('#toggleHomekit').click(); expect(page.locator('#homekitQr')).to_be_hidden()
                 expect(page.locator('#homekitStatus')).to_have_text('Not paired')
                 expect(page.locator('#homekitPairingHint')).to_be_hidden()

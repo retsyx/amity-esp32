@@ -9,6 +9,8 @@ class Element {
  get textContent(){return this._text+this.children.map(child=>child.textContent).join('');}
  append(...items){this.children.push(...items);}
  replaceChildren(...items){this.children=[];this.append(...items);}
+ get childNodes(){return this.children;}
+ isEqualNode(other){return JSON.stringify([this.tag,this._text,this.className,this.hidden,this.disabled,this.value,this.dataset,this.attributes])===JSON.stringify([other.tag,other._text,other.className,other.hidden,other.disabled,other.value,other.dataset,other.attributes])&&this.children.length===other.children.length&&this.children.every((child,index)=>child.isEqualNode(other.children[index]));}
  addEventListener(type,listener){(this.listeners[type]??=[]).push(listener);}
  fire(type){const event={target:this,preventDefault(){this.prevented=true;}};return Promise.all((this.listeners[type]||[]).map(listener=>listener(event)));}
  querySelector(selector){if(selector==='button'){let button=this.children.find(child=>child.tag==='button');if(!button){button=new Element('button');this.children.push(button);}return button;}return null;}

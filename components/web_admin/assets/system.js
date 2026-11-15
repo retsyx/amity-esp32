@@ -181,11 +181,11 @@ window.amityInterface=(()=>{
   if(!enabled||!token)return;
   [configuration,system]=await Promise.all([request('backup'),request('system')]);
   const update=(system.membership?.peers||[]).some(peer=>peer.management_ready)?await request('updates/cohort').catch(()=>null):null;
-  const root=$('managedAmityList');root.replaceChildren();
+  const rows=[];
   const original=configuration.controller_octopus_id||system.octopus_id;
   const localRow=document.createElement('article'),localActions=deviceHeader(localRow,system.hostname||'Name unavailable','This device');
-  localActions.append(button('Settings',()=>deviceSettings({octopus_id:system.octopus_id})));
-  root.append(localRow);
+  localRow.dataset.octopusId=system.octopus_id;localActions.append(button('Settings',()=>deviceSettings({octopus_id:system.octopus_id})));
+  rows.push(localRow);
   const boards=[...(configuration.octopuses||[])];
   for(const peer of system.membership?.peers||[])if((peer.enrolled||peer.provisional)&&!boards.some(board=>board.octopus_id===peer.octopus_id))boards.push({octopus_id:peer.octopus_id,supported_tentacles:peer.supported_tentacles||1});
   for(const known of system.named_devices||[])if(!boards.some(board=>board.octopus_id===known.octopus_id))boards.push({octopus_id:known.octopus_id});
@@ -194,9 +194,10 @@ window.amityInterface=(()=>{
    const peer=system.membership?.peers?.find(p=>p.octopus_id===board.octopus_id),row=document.createElement('article');
    const target=update?.targets?.find(target=>target.octopus_id===board.octopus_id)||update?.automatic_failures?.find(target=>target.octopus_id===board.octopus_id);
    const actions=deviceHeader(row,boardName(board),peer?.ready?'Connected':peer?.management_ready?(target?firmwareTargetText(target,update.image_bytes):'Updating firmware automatically'):peer?.enrolled?'Not responding':'Not added');
-   actions.append(Object.assign(button('Remove',()=>remove(board)),{className:'primary danger'}),button('Replace',()=>replace(board)),button('Settings',()=>deviceSettings(board)));
-   root.append(row);
+   row.dataset.octopusId=board.octopus_id;actions.append(Object.assign(button('Remove',()=>remove(board)),{className:'primary danger'}),button('Replace',()=>replace(board)),button('Settings',()=>deviceSettings(board)));
+   rows.push(row);
   }
+  replaceChanged($('managedAmityList'),...rows);
   replaceUpdate?.();
  }
  function physicalAddress(value){
@@ -379,7 +380,7 @@ window.amityInterface=(()=>{
     for(const candidate of candidates){const option=document.createElement('option');option.value=candidate.token;option.textContent=candidate.label;select.append(option);}
    }
    if(phase==='found'&&candidates.length===1)selected=candidates[0].token;
-   select.value=selected;selection.hidden=candidates.length<2;found.hidden=candidates.length!==1;found.textContent=candidates.length===1?candidates[0].label:'';
+   select.value=selected;selection.hidden=candidates.length<2;found.hidden=candidates.length!==1;setText(found,candidates.length===1?candidates[0].label:'');
   };
   const cancelSearch=async()=>{
    try{await mutation('membership/cancel',{scan_id:scanId});}
@@ -405,10 +406,7 @@ window.amityInterface=(()=>{
     phase=state.phase;requiresCode=state.requires_setup_code===true;if(!requiresCode)code.input.value='';
     showCandidates(state);
     if(['failed','cancelled'].includes(state.phase)){ended=true;adding=false;status.textContent=customerText(state.error||'The search ended. Close this window and try again.');controls();return;}
-    if(state.phase==='found')status.textContent=candidates.length>1?'Choose the Amity you want to add, then give it a name.':candidates.length===1?'Give this Amity a name.':'No Amity was found. Close this window and try again.';
-    else if(state.phase==='connecting')status.textContent='Connecting to Amity…';
-    else if(state.phase==='finishing'||state.phase==='complete')status.textContent='Finishing setup…';
-    else status.textContent='Searching for Amity devices…';
+    setText(status,state.phase==='found'?(candidates.length>1?'Choose the Amity you want to add, then give it a name.':candidates.length===1?'Give this Amity a name.':'No Amity was found. Close this window and try again.'):state.phase==='connecting'?'Connecting to Amity…':state.phase==='finishing'||state.phase==='complete'?'Finishing setup…':'Searching for Amity devices…');
 
     controls();
    }catch(error){if(live()){ended=true;status.textContent=customerText(error.message||'The search status is unavailable. Close this window and try again.');controls();}}

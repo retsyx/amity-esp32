@@ -3,11 +3,13 @@
 // No Bluetooth, network interface, device or credential store is touched.
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto');
 class Element {
- constructor(tag,document){this.tag=tag;this.document=document;this.children=[];this.parent=null;this.listeners={};this.attributes={};this._text='';this.value='';this.hidden=false;this.disabled=false;this.open=false;}
+ constructor(tag,document){this.tag=tag;this.document=document;this.children=[];this.parent=null;this.listeners={};this.dataset={};this.attributes={};this._text='';this.value='';this.hidden=false;this.disabled=false;this.open=false;}
  set textContent(value){this._text=String(value);this.children=[];}
  get textContent(){return this._text+this.children.map(child=>child.textContent).join('');}
  append(...items){for(const child of items){child.parent=this;this.children.push(child);}}
  replaceChildren(...items){for(const child of this.children)child.parent=null;this.children=[];this._text='';this.append(...items);}
+ get childNodes(){return this.children;}
+ isEqualNode(other){return JSON.stringify([this.tag,this._text,this.className,this.hidden,this.disabled,this.value,this.dataset,this.attributes])===JSON.stringify([other.tag,other._text,other.className,other.hidden,other.disabled,other.value,other.dataset,other.attributes])&&this.children.length===other.children.length&&this.children.every((child,index)=>child.isEqualNode(other.children[index]));}
  addEventListener(type,listener){(this.listeners[type]??=[]).push(listener);}
  async dispatch(type){for(const listener of this.listeners[type]||[])await listener({target:this});}
  setAttribute(name,value){this.attributes[name]=String(value);}
@@ -19,6 +21,8 @@ class Element {
  reportValidity(){return (!this.required||!!this.value)&&(!this.maxLength||this.value.length<=this.maxLength)&&(!this.pattern||new RegExp('^(?:'+this.pattern+')$').test(this.value));}
 }
 const walk=node=>[node,...node.children.flatMap(walk)];
+// system.js renders through these app.js helpers; run the shipped definitions.
+const app=fs.readFileSync(require.resolve('../components/web_admin/assets/app.js'),'utf8'),appHelpers=['setText','replaceChanged'].map(name=>{const start=app.indexOf('function '+name+'(');assert.ok(start>=0,name+' not found');return app.slice(start,app.indexOf('\n',start));}).join('\n');
 const flush=async()=>{for(let n=0;n<8;n++)await new Promise(resolve=>setImmediate(resolve));};
 function fixture(options={}){
  const main='1'.repeat(32),member='2'.repeat(32),other='3'.repeat(32),a='a'.repeat(32),b='b'.repeat(32);
@@ -82,7 +86,7 @@ function fixture(options={}){
   run:action=>async event=>{try{await action(event);}catch(error){errors.push(error.message);}},
  };
  context.button=(title,action)=>{const button=document.createElement('button');button.textContent=title;button.addEventListener('click',context.run(action));return button;};
- vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/system.js'),'utf8'),context);
+ vm.createContext(context);vm.runInContext(appHelpers,context);vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/system.js'),'utf8'),context);
  const click=async node=>{assert.ok(node);if(!node.disabled&&!node.hidden)await node.dispatch('click');await flush();};
  const dialog=()=>walk(document.body).find(node=>node.tag==='dialog'&&node.open);
  const button=(title,root=dialog())=>walk(root).find(node=>node.tag==='button'&&node.textContent===title);
