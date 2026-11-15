@@ -42,6 +42,27 @@ if(CONFIG_SOC_AES_SUPPORT_DMA)
     set_property(TARGET tfpsacrypto PROPERTY SOURCES "${AMITY_CRYPTO_SOURCES}")
 endif()
 
+# A renamed Amity withdraws its previous hostname's address records. Compile a
+# checked generated copy of the managed mDNS responder without modifying it.
+idf_component_get_property(AMITY_MDNS_LIB espressif__mdns COMPONENT_LIB)
+idf_component_get_property(AMITY_MDNS_DIR espressif__mdns COMPONENT_DIR)
+set(AMITY_MDNS_SOURCE "${AMITY_MDNS_DIR}/mdns_responder.c")
+set(AMITY_MDNS_PATCH "${CMAKE_SOURCE_DIR}/tools/patch_mdns_delegate_remove.py")
+set(AMITY_MDNS_FIXED "${CMAKE_BINARY_DIR}/sdk-fixes/mdns_responder.c")
+get_target_property(AMITY_MDNS_SOURCES ${AMITY_MDNS_LIB} SOURCES)
+list(FIND AMITY_MDNS_SOURCES "${AMITY_MDNS_SOURCE}" AMITY_MDNS_INDEX)
+if(AMITY_MDNS_INDEX LESS 0)
+    message(FATAL_ERROR "The mDNS responder source changed; review its delegated-host goodbye")
+endif()
+execute_process(COMMAND ${PYTHON} "${AMITY_MDNS_PATCH}"
+    --input "${AMITY_MDNS_SOURCE}" --output "${AMITY_MDNS_FIXED}"
+    COMMAND_ERROR_IS_FATAL ANY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${AMITY_MDNS_SOURCE}" "${AMITY_MDNS_PATCH}")
+list(REMOVE_AT AMITY_MDNS_SOURCES ${AMITY_MDNS_INDEX})
+list(APPEND AMITY_MDNS_SOURCES "${AMITY_MDNS_FIXED}")
+set_property(TARGET ${AMITY_MDNS_LIB} PROPERTY SOURCES "${AMITY_MDNS_SOURCES}")
+
 add_custom_target(check-firmware-layouts ALL
     COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_firmware_layouts.py
         --elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.elf
