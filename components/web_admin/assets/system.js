@@ -121,7 +121,7 @@ window.amityInterface=(()=>{
   if(!origin?.isConnected||!origin.closest('dialog')?.open)return;
   const d=dialog('Add component');d.id='componentEditor';d.setAttribute('aria-labelledby','componentEditorTitle');d.querySelector('h3').id='componentEditorTitle';
   cancelOnBackdrop(d,()=>{if(!componentPending)d.close();});
-  const form=document.createElement('form'),fields=document.createElement('div'),error=document.createElement('p'),actions=document.createElement('div');fields.className='fields';error.id='componentEditorError';error.setAttribute('role','alert');actions.className='actions';
+  const form=document.createElement('form'),fields=document.createElement('div'),actions=document.createElement('div');fields.className='fields';actions.className='actions';
   const selectField=(title,id)=>{const label=document.createElement('label'),input=document.createElement('select');label.textContent=title;input.id=id;label.append(input);fields.append(label);return {label,input};};
   const owner=selectField('Amity','componentOwner'),adapter=selectField('Adapter','componentAdapter'),side=selectField('Side','componentSide'),name=field('OSD name',osdName);
   name.input.id='componentOsdName';name.input.required=true;name.input.maxLength=14;name.input.autocomplete='off';fields.append(name.label);
@@ -136,14 +136,14 @@ window.amityInterface=(()=>{
   };
   const cancel=button('Cancel',()=>d.close());cancel.type='button';cancel.className='quiet';
   const add=document.createElement('button');add.type='submit';add.textContent='Add';add.className='primary';actions.append(cancel,add);
-  form.append(fields,error,actions);d.append(form);componentDialogUpdate=update;
+  form.append(fields,actions);d.append(form);componentDialogUpdate=update;
   owner.input.addEventListener('change',update);
-  name.input.addEventListener('input',()=>{error.textContent='';name.input.setCustomValidity('');});
+  name.input.addEventListener('input',()=>{dismissError(d);name.input.setCustomValidity('');});
   d.addEventListener('cancel',e=>{if(componentPending)e.preventDefault();});
   d.addEventListener('close',()=>{if(componentDialogUpdate===update)componentDialogUpdate=null;});
   form.addEventListener('submit',async e=>{
-   e.preventDefault();if(componentPending)return;error.textContent='';
-   if(!name.input.value.trim()||new TextEncoder().encode(name.input.value).length>14||/[\x00-\x1f\x7f]/.test(name.input.value)){error.textContent='Enter an OSD name of 1–14 bytes with no control characters.';return;}
+   e.preventDefault();if(componentPending)return;dismissError(d);
+   if(!name.input.value.trim()||new TextEncoder().encode(name.input.value).length>14||/[\x00-\x1f\x7f]/.test(name.input.value)){message('Enter an OSD name of 1–14 bytes with no control characters.',true);return;}
    const chosen={octopus_id:owner.input.value,tentacle_id:Number(adapter.input.value),osd_name:name.input.value,side:side.input.value,role};
    componentPending=true;updateActivityButtons();form.querySelectorAll('input,select,button').forEach(c=>c.disabled=true);
    try{
@@ -154,7 +154,7 @@ window.amityInterface=(()=>{
     const choice=choices.find(c=>c.value==='component:'+result.component_id)||choices.find(c=>(c.roles||[]).includes(role)&&c.qualified_name&&c.qualified_name.octopus_id===chosen.octopus_id&&c.qualified_name.tentacle_id===chosen.tentacle_id&&c.qualified_name.side===chosen.side&&c.qualified_name.osd_name===chosen.osd_name);
     if(!choice)throw Error('The component was saved. Reload the equipment list before selecting it.');
     selected(attachment(choice));renderDeviceNames();d.close();message('Component saved.');
-   }catch(e){if(!e.silent&&d.open)error.textContent=e.message;}
+   }catch(e){if(!e.silent&&d.open)message(e.message,true);}
    finally{componentPending=false;updateActivityButtons();if(d.open){form.querySelectorAll('input,select,button').forEach(c=>c.disabled=false);update();}}
   });
   update();name.input.focus();
@@ -230,7 +230,7 @@ window.amityInterface=(()=>{
    }
    if(!changes.length&&!renamed){status.textContent='No settings changed.';return;}
    const reviewed=snapshot;let adaptersSaved=false,completed=false;
-   busy=true;save.disabled=true;reload.disabled=true;hostname.input.disabled=true;inputs.forEach(({input})=>input.disabled=true);
+   dismissError(d);busy=true;save.disabled=true;reload.disabled=true;hostname.input.disabled=true;inputs.forEach(({input})=>input.disabled=true);
    async function apply(data){
     let result=await request(path,{request_id:identifier(),expected_boot_id:reviewed.boot_id,...data});
     for(let n=0;result.stage==='admitted'&&n<80;n++){
@@ -261,12 +261,11 @@ window.amityInterface=(()=>{
     if(renamed){await refresh().catch(reportError);await refreshActivityConfiguration().catch(reportError);}
    }catch(error){
     const uncertain=error.settingsUncertain||!error.settingsResult&&(!error.status||error.status>=500);
-    needsReview=completed||adaptersSaved||uncertain;
-    if(completed)status.textContent='Settings saved. Refresh to read the latest values.';
-    else if(adaptersSaved)status.textContent=uncertain?'Adapter addresses saved. The hostname save outcome is unknown. Refresh and check the saved values before trying again.':'Adapter addresses saved. Hostname was not saved. '+customerText(error.message)+' Refresh before trying again.';
-    else if(uncertain)status.textContent='The save outcome is unknown. Reconnect, refresh and check the saved values before trying again.'+(renamed&&changes.length?' Hostname was not changed.':'');
-    else status.textContent=customerText(error.message)+(renamed&&changes.length?' Hostname was not changed.':'');
-    throw Error(status.textContent);
+    needsReview=completed||adaptersSaved||uncertain;status.textContent='';
+    throw Error(completed?'Settings saved. Refresh to read the latest values.':
+     adaptersSaved?(uncertain?'Adapter addresses saved. The hostname save outcome is unknown. Refresh and check the saved values before trying again.':'Adapter addresses saved. Hostname was not saved. '+customerText(error.message)+' Refresh before trying again.'):
+     uncertain?'The save outcome is unknown. Reconnect, refresh and check the saved values before trying again.'+(renamed&&changes.length?' Hostname was not changed.':''):
+     customerText(error.message)+(renamed&&changes.length?' Hostname was not changed.':''));
    }
    finally{busy=false;reload.disabled=false;hostname.input.disabled=!snapshot||hostname.input.dataset.editable!=='true';save.disabled=needsReview||hostname.input.disabled;inputs.forEach(({input,editable})=>input.disabled=!editable);}
   });
@@ -278,7 +277,7 @@ window.amityInterface=(()=>{
    if(event.clientX<bounds.left||event.clientX>=bounds.right||event.clientY<bounds.top||event.clientY>=bounds.bottom)cancel.click();
   });
   async function load(afterSave=false){
-   if(loading||(busy&&!afterSave))return;loading=true;reload.disabled=true;save.disabled=true;
+   if(loading||(busy&&!afterSave))return;loading=true;reload.disabled=true;save.disabled=true;if(!afterSave)dismissError(d);
    try{
     let result;
     for(let n=0;n<24;n++){
@@ -309,7 +308,7 @@ window.amityInterface=(()=>{
     if(!inputs.length)rows.append(text('No adapter settings are available.'));
     save.disabled=hostname.input.disabled;
     return fresh;
-   }catch(error){status.textContent=customerText(error.message);throw error;}
+   }catch(error){status.textContent='';throw error;}
    finally{loading=false;reload.disabled=false;}
   }
   await load();
@@ -330,7 +329,8 @@ window.amityInterface=(()=>{
     status.textContent=result.reset==='scheduled'?name+' removed. Factory reset accepted; it will restart and forget its Wi-Fi and settings.':result.reset==='not_needed'?name+' removed from this system.':name+' removed. '+(result.reset==='offline'?'It did not respond. ':'Factory reset was not confirmed. ')+'Hold its physical button for at least 10 seconds to factory reset it before adding it again.';
     remove.hidden=true;await refresh();await refreshActivityConfiguration();
    }catch(error){
-    status.textContent=admitted||!error.status||error.status>=500?'Removal could not be confirmed. Refresh the device list. If this Amity was removed and reset was not confirmed, factory reset it using its physical button before adding it again.':customerText(error.message);
+    status.textContent='';
+    message(admitted||!error.status||error.status>=500?'Removal could not be confirmed. Refresh the device list. If this Amity was removed and reset was not confirmed, factory reset it using its physical button before adding it again.':error.message,true);
     // A rejected review must be reopened against fresh activities, revisions
     // and boot identity. Never replay the original destructive request.
     remove.hidden=true;
@@ -353,7 +353,7 @@ window.amityInterface=(()=>{
     expected_target_boot_id:peer?.boot_id||null,expected_config_revision:snapshot.config_revision,
     expected_presentation_revision:snapshot.presentation_revision,affected_activity_ids:affected.map(activity=>activity.activity_id)};
    status.textContent='';remove.disabled=false;
-  }catch(error){if(d.isConnected)status.textContent=customerText(error.message);}
+  }catch(error){if(d.isConnected){status.textContent='';message(error.message,true);}}
  }
  // Replace opens Add with a note on where to connect the new Amity, and
  // continues with the added Amity once it is confirmed.
@@ -367,6 +367,7 @@ window.amityInterface=(()=>{
   d.append(text('Hold the Reset button on the new Amity for 3 seconds. Keep it powered on and nearby.'),status,found,selection,name.label,code.label);
   let closed=false,timer=null,polling=false,candidates=[],selected='',requiresCode=false,adding=false,admitted=false,finished=false,ended=false,operationId=null,phase='scanning';
   const live=()=>!closed&&openDialog===d&&d.isConnected;
+  const fail=text=>{status.textContent='';message(text,true);};
   const controls=()=>{
    const choose=phase==='found'&&!!selected&&!adding&&!ended;name.label.hidden=!selected;name.input.disabled=!choose;
    code.label.hidden=!selected||!requiresCode;code.input.disabled=!choose;code.input.required=requiresCode;
@@ -397,19 +398,19 @@ window.amityInterface=(()=>{
     const state=await request('membership/admission');if(!live())return;
     if(operationId){
      const operation=await request('operations/'+operationId);if(!live())return;
-     if(['failed','rejected','cancelled','unknown'].includes(operation.stage)){ended=true;adding=false;status.textContent=customerText(operation.message||'The result could not be confirmed. Check the Amity devices list before trying again.');controls();return;}
+     if(['failed','rejected','cancelled','unknown'].includes(operation.stage)){ended=true;adding=false;fail(operation.message||'The result could not be confirmed. Check the Amity devices list before trying again.');controls();return;}
      if(operation.stage==='complete'){
       finished=true;ended=true;code.input.value='';await refresh();if(live()){d.close();message('Amity added.');if(options.added&&state.candidate_id)options.added(state.candidate_id);}return;
      }
     }
-    if(state.scan_id!==scanId){ended=true;status.textContent='The search changed. Check the Amity devices list before trying again.';controls();return;}
+    if(state.scan_id!==scanId){ended=true;fail('The search changed. Check the Amity devices list before trying again.');controls();return;}
     phase=state.phase;requiresCode=state.requires_setup_code===true;if(!requiresCode)code.input.value='';
     showCandidates(state);
-    if(['failed','cancelled'].includes(state.phase)){ended=true;adding=false;status.textContent=customerText(state.error||'The search ended. Close this window and try again.');controls();return;}
+    if(['failed','cancelled'].includes(state.phase)){ended=true;adding=false;fail(state.error||'The search ended. Close this window and try again.');controls();return;}
     setText(status,state.phase==='found'?(candidates.length>1?'Choose the Amity you want to add, then give it a name.':candidates.length===1?'Give this Amity a name.':'No Amity was found. Close this window and try again.'):state.phase==='connecting'?'Connecting to Amity…':state.phase==='finishing'||state.phase==='complete'?'Finishing setup…':'Searching for Amity devices…');
 
     controls();
-   }catch(error){if(live()){ended=true;status.textContent=customerText(error.message||'The search status is unavailable. Close this window and try again.');controls();}}
+   }catch(error){if(live()){ended=true;fail(error.message||'The search status is unavailable. Close this window and try again.');controls();}}
    finally{polling=false;if(live()&&!ended)timer=setTimeout(poll,400);}
   }
   select.addEventListener('change',()=>{selected=select.value;controls();if(selected)name.input.focus();});code.input.addEventListener('input',controls);
@@ -422,12 +423,12 @@ window.amityInterface=(()=>{
     const body={scan_id:scanId,candidate_token:selected,name:hostname};if(requiresCode)body.setup_code=secret;
     const result=await mutation('membership/add',body);secret='';admitted=true;operationId=result.operation_id;
     if(live()){closeButton.textContent='Close';status.textContent='Connecting to Amity…';if(timer!==null)clearTimeout(timer);void poll();}
-   }catch(error){secret='';if(live()){adding=false;ended=!error.status||error.status>=500;status.textContent=ended?'The result could not be confirmed. Check the Amity devices list before trying again.':customerText(error.message);controls();}throw error;}
+   }catch(error){secret='';if(!live())throw error;adding=false;ended=!error.status||error.status>=500;fail(ended?'The result could not be confirmed. Check the Amity devices list before trying again.':error.message);controls();}
    finally{secret='';}
   });
   const closeButton=button('Cancel',()=>d.close()),actions=document.createElement('div');start.className='primary';closeButton.className='quiet';
   actions.className='actions';actions.append(closeButton,start);d.className='add-amity';d.append(actions);controls();
-  void (async()=>{try{await request('membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;status.textContent=customerText(error.message);controls();}}})();
+  void (async()=>{try{await request('membership/scan',{request_id:scanId});if(live())await poll();else await cancelSearch();}catch(error){if(live()){ended=true;fail(error.message);controls();}}})();
  }
  const sideName=side=>side==='back'?'Source':'Display';
  const portName=port=>`Adapter ${port.tentacle_id+1} · ${sideName(port.side)}`;
@@ -464,24 +465,24 @@ window.amityInterface=(()=>{
  // it. Equipment is matched by name; the HDMI connection mappings the firmware
  // cross-checks are derived from the equipment rather than asked for.
  function review(board,replacementId){
-  const old=boardName(board),d=dialog('Replace '+old),named=node('p','replacement'),strong=node('strong'),title=node('div','equipment-title'),list=node('div','equipment-list'),notes=node('div'),summary=node('div','summary'),status=node('p'),check=node('label','check'),unplugged=node('input');
-  d.className='replace-amity';status.setAttribute('role','alert');list.setAttribute('role','table');list.setAttribute('aria-label','Equipment');
+  const old=boardName(board),d=dialog('Replace '+old),named=node('p','replacement'),strong=node('strong'),title=node('div','equipment-title'),list=node('div','equipment-list'),notes=node('div'),summary=node('div','summary'),check=node('label','check'),unplugged=node('input');
+  d.className='replace-amity';list.setAttribute('role','table');list.setAttribute('aria-label','Equipment');
   named.append(node('span',null,'Replacement: '),strong);
   unplugged.type='checkbox';unplugged.addEventListener('change',()=>controls());check.append(unplugged,node('span',null,`${old} is unplugged from HDMI`));
   const overrides=new Map();let shown=null,busy=false,scanning=false,selects=[];
   const scan=button('Scan HDMI',async()=>{
-   if(scanning)return;scanning=true;scan.textContent='Scanning…';controls();
+   if(scanning)return;scanning=true;scan.textContent='Scanning…';controls();dismissError(d);
    try{
     const before=await request('status');await request('discover',{});
     for(let n=0;n<120&&d.isConnected;n++){await new Promise(resolve=>setTimeout(resolve,500));const now=await request('status');if(now.discovery_generation!==before.discovery_generation&&!now.discovering)break;}
     await refresh();
-   }catch(error){if(d.isConnected)status.textContent=customerText(error.message);}
+   }catch(error){if(d.isConnected)message(error.message,true);}
    finally{scanning=false;scan.textContent='Scan HDMI';controls();}
   });
   title.append(node('h4',null,'Equipment'),scan);
   const back=button('Back',()=>replace(board)),cancel=button('Cancel',()=>d.close()),go=button('Replace',apply),actions=node('div','actions');
   back.className='back';cancel.className='quiet';go.className='primary';actions.append(back,cancel,go);
-  d.append(named,title,list,notes,check,summary,status,actions);
+  d.append(named,title,list,notes,check,summary,actions);
   function plan(){
    const snapshot=configuration,current=system;if(!snapshot||!current)return null;
    const peer=(current.membership?.peers||[]).find(p=>p.octopus_id===replacementId),name=boardName({octopus_id:replacementId},current);
@@ -552,14 +553,14 @@ window.amityInterface=(()=>{
   }
   async function apply(){
    const next=plan();
-   if(!next||next.signature!==shown?.signature){show(next);status.textContent='The equipment changed while this dialog was open. Check it, then press Replace again.';return;}
-   busy=true;status.textContent='';go.textContent='Replacing…';controls();
+   if(!next||next.signature!==shown?.signature){show(next);message('The equipment changed while this dialog was open. Check it, then press Replace again.',true);return;}
+   busy=true;dismissError(d);go.textContent='Replacing…';controls();
    try{
     await completed('replacements/apply',next.proposal);
     d.close();await refresh();
     if(await refreshActivityConfiguration())message(`${next.name} replaced ${old}.`);
    }catch(error){
-    if(d.isConnected)status.textContent=customerText(error.message);
+    if(d.isConnected)message(error.message,true);
     await refresh().catch(()=>{});
    }finally{busy=false;go.textContent='Replace';if(d.isConnected)controls();}
   }

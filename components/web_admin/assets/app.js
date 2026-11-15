@@ -25,9 +25,24 @@ let homekitPending=false,homekitPolling=false,homekitState={};
 let matterState={fabrics:[]};
 let peerSignals=[];
 let messageRevision=0,networkMessageRevision=null;
+let reportedActivityError,pollFailure=null;const transportFailure={};
 const transportErrors=new WeakSet();
 const firmwareUpdateKey='amityFirmwareUpdate',firmwareResultKey='amityFirmwareUpdateResult';
-function message(text,error=false){++messageRevision;networkMessageRevision=null;setText($('message'),customerText(text));$('message').classList.toggle('error',error);}
+const notice=$('notice'),noticeText=$('message'),noticeClose=$('dismissMessage'),noticeHome=notice.parentNode;
+// Errors appear in a popup below the top of the window until closed. An open
+// dialog hosts it so it shows above the dialog. Other messages stay inline.
+function message(text,error=false){
+ ++messageRevision;networkMessageRevision=null;
+ const value=customerText(text),popup=error&&!!value;
+ const host=popup&&[...document.querySelectorAll('dialog[open]')].filter(d=>d.matches(':modal')).at(-1)||noticeHome;
+ if(notice.parentNode!==host){if(host===noticeHome)noticeHome.prepend(notice);else host.append(notice);}
+ setText(noticeText,value);noticeText.classList.toggle('error',error);notice.classList.toggle('popup',popup);noticeClose.hidden=!popup;
+}
+function errorShown(){return notice.classList.contains('popup')&&notice.isConnected;}
+function dismissError(scope=document){if(errorShown()&&scope.contains(notice))message('');}
+noticeClose.addEventListener('click',()=>message(''));
+// A closing dialog returns the error it hosts to the page.
+document.addEventListener('close',event=>{if(event.target.contains(notice))noticeHome.prepend(notice);},true);
 function activitySnapshot(activities){return JSON.stringify(activities.map(a=>[a.name??'',a.display??'',a.source??'',a.audio??'',a.switch?.device??'',a.switch?.device?(a.switch.input??0):null,a.activity_id??'']));}
 function updateActivityButtons(){
  const locked=activityLocked();
@@ -197,9 +212,9 @@ function openActivityEditor(target=null,recommendation=null){
  const suggested=recommendation!==null;
  if(!target&&!suggested&&config.activities.length>=16)return message('Up to 16 activities are supported.',true);
  editingActivity={target,recommendation,activity:structuredClone(target||(suggested?recommendations[recommendation]:{name:'New activity',display:'',source:'',audio:''}))};
- $('activityEditorTitle').textContent=target||suggested?'Edit activity':'Add activity';$('activityEditorError').textContent='';
+ $('activityEditorTitle').textContent=target||suggested?'Edit activity':'Add activity';
  $('activityForm').querySelector('button[type=submit]').textContent=target||suggested?'OK':'Add';
- $('activityFields').replaceChildren(activityFields(editingActivity.activity,()=>{$('activityEditorError').textContent='';updateActivityEditor();}));
+ $('activityFields').replaceChildren(activityFields(editingActivity.activity,()=>{dismissError($('activityEditor'));updateActivityEditor();}));
  updateActivityEditor();$('activityEditor').showModal();$('activityFields').querySelector('input').focus();
 }
 function updateActivityEditor(){
@@ -212,8 +227,11 @@ function updateActivityEditor(){
  $('activityFields').querySelectorAll('button').forEach(b=>b.disabled=activityLocked()||active);
  $('activityEditor').querySelectorAll('input').forEach(i=>i.disabled=activityLocked()||active||(i.hasAttribute('data-switch-input')&&!activity.switch));
  $('activityFields').querySelectorAll('.device-field').forEach(field=>{if(field.querySelector('input').disabled)field.dispatchEvent(new Event('devicechoiceschange'));});
- if(active)setText($('activityEditorError'),activeActivityMessage);
- else if($('activityEditorError').textContent===activeActivityMessage)$('activityEditorError').textContent='';
+ // Report the activity starting once, so a closed error stays closed.
+ if(active!==!!editingActivity.activeReported){
+  editingActivity.activeReported=active;
+  if(active)message(activeActivityMessage,true);else if(noticeText.textContent===activeActivityMessage)dismissError();
+ }
 }
 function applyActivityDraft(){
  const {target,activity,recommendation}=editingActivity;
@@ -266,8 +284,8 @@ async function startActivity(activity,draft=activity){
 }
 function modalAction(action){return async event=>{
  event.preventDefault();if(activityLocked())return;
- try{$('activityEditorError').textContent='';await action();}
- catch(error){if(!error.silent)$('activityEditorError').textContent=error.message;}
+ try{dismissError($('activityEditor'));await action();}
+ catch(error){if(!error.silent)message(error.message,true);}
 };}
 $('activityForm').addEventListener('submit',modalAction(()=>{applyActivityDraft();$('activityEditor').close();}));
 $('cancelActivity').addEventListener('click',()=>{if(!activityLocked())$('activityEditor').close();});
@@ -419,13 +437,20 @@ async function removeMatterConnection(connection){
  try{for(const f of connection.fabrics)await request('matter/remove',{index:f.index});}
  finally{matterRemovalPending=false;renderMatter(await request('matter'));}
 }
-function pairingStatus({error,busy,pairing,connected}){
- return error?'Pairing operation failed. Please try again.':busy?'Updating pairing…':pairing?'Ready to pair':connected?'Connected':'Not paired';
+function pairingStatus({busy,pairing,connected}){
+ return busy?'Updating pairing…':pairing?'Ready to pair':connected?'Connected':'Not paired';
+}
+// Polled failures are reported when they begin, so a closed error stays closed.
+const pairingFailures={};
+function reportPairingFailure(kind,error){
+ if(!!error===!!pairingFailures[kind])return;
+ pairingFailures[kind]=!!error;if(error)message('Pairing operation failed. Please try again.',true);
 }
 function renderMatter(m){
  matterState=m;
  const connections=matterConnections(m.fabrics);
- setText($('matterStatus'),pairingStatus({error:m.error,busy:pairingPending||matterRemovalPending,pairing:m.commissioning,connected:connections.length>0}));
+ reportPairingFailure('matter',m.error);
+ setText($('matterStatus'),pairingStatus({busy:pairingPending||matterRemovalPending,pairing:m.commissioning,connected:connections.length>0}));
  setText($('toggleMatter'),m.commissioning?'Stop pairing':'Start pairing');$('toggleMatter').disabled=pairingPending||matterRemovalPending;
  setText($('pairingCode'),m.commissioning&&m.manual_code?`Pairing code: ${m.manual_code.replace(/^(\d{4})(\d{3})(\d{4})$/,'$1-$2-$3')}`:'');
  const rows=m.commissioning?m.qr_modules:null,qr=[];$('matterQr').hidden=!rows?.length;
@@ -440,7 +465,8 @@ function renderMatter(m){
 }
 function renderHomekit(s){
  homekitState=s;
- setText($('homekitStatus'),pairingStatus({error:s.error,busy:s.busy||homekitPending,pairing:s.pairing,connected:s.paired}));
+ reportPairingFailure('homekit',s.error);
+ setText($('homekitStatus'),pairingStatus({busy:s.busy||homekitPending,pairing:s.pairing,connected:s.paired}));
  setText($('toggleHomekit'),s.pairing?'Stop pairing':'Start pairing');
  $('toggleHomekit').disabled=homekitPending||s.busy||!s.available||s.paired;
  $('toggleHomekit').hidden=!!s.paired;
@@ -464,7 +490,7 @@ async function refreshHomekit(){
 }
 async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
  const latest=await request('status');if(firmwareUpdating||hostnameReconnect)return;
- state=latest;if(state.activity_error)message(state.activity_error,true);renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
+ state=latest;if(state.activity_error!==reportedActivityError){reportedActivityError=state.activity_error;if(state.activity_error)message(state.activity_error,true);}renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
  await refreshPeerSignals();if(firmwareUpdating||hostnameReconnect)return;
  renderDiagnostics();
  renderDeviceNames();
@@ -482,13 +508,15 @@ async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect
  if(!$('amityDevices').hidden)await window.amityInterface?.refresh();
  return true;
  }finally{polling=false;updateActivityButtons();}}
+// Each polling failure is reported once until a poll succeeds, so a closed
+// error stays closed while the failure continues.
 async function poll(){
  const revision=messageRevision;
- try{if(await refresh()&&networkMessageRevision===messageRevision)message('');}
+ try{if(await refresh()){pollFailure=null;if(networkMessageRevision===messageRevision)message('');}}
  catch(error){
-  if(!transportErrors.has(error))return reportError(error);
-  if(firmwareUpdating||hostnameReconnect||error.silent||messageRevision!==revision||($('message').classList.contains('error')&&networkMessageRevision!==messageRevision))return;
-  message('Connection interrupted. Reconnecting…',true);networkMessageRevision=messageRevision;
+  if(!transportErrors.has(error)){if(error.message!==pollFailure){pollFailure=error.message;reportError(error);}return;}
+  if(pollFailure===transportFailure||firmwareUpdating||hostnameReconnect||error.silent||messageRevision!==revision||(errorShown()&&networkMessageRevision!==messageRevision))return;
+  pollFailure=transportFailure;message('Connection interrupted. Reconnecting…',true);networkMessageRevision=messageRevision;
  }
 }
 async function enter(){state={};const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
@@ -514,7 +542,7 @@ $('loginForm').addEventListener('submit',run(async e=>{
   if(firmwareUpdating&&firmwareUpdateRecord?.authRequired){firmwareUpdateRecord.authRequired=false;firmwareUpdateRecord.startedAt=Date.now();$('login').hidden=true;saveFirmwareUpdate();await waitForFirmware();}
   else await enter();
  }
- catch(error){if(firmwareUpdating&&firmwareUpdateRecord?.authRequired)firmwareWaitMessage(error.message||'Could not log in. Try again.');else reportError(error);if(error.retryAfter){submit.textContent=`Try again in ${error.retryAfter}s`;await new Promise(resolve=>setTimeout(resolve,error.retryAfter*1000));}}
+ catch(error){if(firmwareUpdating&&firmwareUpdateRecord?.authRequired)message(error.message||'Could not log in. Try again.',true);else reportError(error);if(error.retryAfter){submit.textContent=`Try again in ${error.retryAfter}s`;await new Promise(resolve=>setTimeout(resolve,error.retryAfter*1000));}}
  finally{submit.disabled=false;submit.textContent='Log in';}
 }));
 $('logout').addEventListener('click',run(async()=>{await request('logout',{});showLogin();}));
@@ -650,19 +678,20 @@ function renderFirmwareDistribution(job,record){
   if(record.updatePhase!=='activating'){record.startedAt=Date.now();record.updatePhase='activating';}
   firmwareWaitMessage('Firmware is ready. Restarting your Amity devices…');
  }else if(job.phase==='failed'){
-  firmwareWaitMessage(customerText(job.error||'The firmware update could not complete. Upload the update again to retry.'));
+  firmwareFailed(job.error||'The firmware update could not complete. Upload the update again to retry.');
   $('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;saveFirmwareUpdate();return true;
  }
  saveFirmwareUpdate();return false;
 }
 function firmwareWaitMessage(text){setText($('firmwareUpdateStatus'),text);$('uploadProgress').removeAttribute('value');}
+function firmwareFailed(text){firmwareWaitMessage('');message(text,true);}
 function requireFirmwareLogin(record){
  token='';sessionStorage.removeItem('amityToken');record.authRequired=true;saveFirmwareUpdate();
  firmwareWaitMessage('Your session ended. Log in to view update progress. The update continues on Amity.');
  $('login').hidden=false;$('retryFirmwareWait').hidden=true;$('firmwareUpdateLogin').hidden=true;$('password').focus();
 }
-function finishFirmwareUpdate(text){
- sessionStorage.removeItem(firmwareUpdateKey);sessionStorage.setItem(firmwareResultKey,text);
+function finishFirmwareUpdate(text,error=false){
+ sessionStorage.removeItem(firmwareUpdateKey);sessionStorage.setItem(firmwareResultKey,JSON.stringify({text,error}));
  token='';sessionStorage.removeItem('amityToken');
  dirty=false;location.reload();
 }
@@ -684,8 +713,8 @@ async function waitForFirmware(){
        const skipped=(record.targets||[]).filter(target=>target.phase==='skipped'||target.phase==='failed').length;
        return finishFirmwareUpdate(`Firmware update complete. Amity is running version ${health.version}. ${skipped?'Unavailable devices will update automatically when they reconnect. ':''}Please log in.`);
       }
-      if(health.version===record.version){firmwareWaitMessage('The restarted Amity did not report the expected firmware image. Upload the update again to retry.');$('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;}
-      firmwareWaitMessage(`Update did not complete. Amity is running version ${health.version} instead of ${record.version}.`);
+      if(health.version===record.version){firmwareFailed('The restarted Amity did not report the expected firmware image. Upload the update again to retry.');$('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;}
+      firmwareFailed(`Update did not complete. Amity is running version ${health.version} instead of ${record.version}.`);
       $('uploadProgress').hidden=true;$('firmwareUpdateLogin').hidden=false;return;
      }
      firmwareWaitMessage('Amity is starting. Waiting for it to be ready…');
@@ -704,7 +733,7 @@ async function waitForFirmware(){
    }finally{clearTimeout(timeout);}
    await new Promise(resolve=>setTimeout(resolve,2000));
   }
-  firmwareWaitMessage('Could not confirm the update. Check Amity’s power and Wi-Fi connection, then try reconnecting.');
+  firmwareFailed('Could not confirm the update. Check Amity’s power and Wi-Fi connection, then try reconnecting.');
   $('uploadProgress').hidden=true;$('retryFirmwareWait').hidden=false;
   $('firmwareUpdateLogin').hidden=lastHealth?.ready!==true;
  }finally{firmwareWaitRunning=false;}
@@ -713,7 +742,7 @@ $('retryFirmwareWait').addEventListener('click',run(async()=>{
  if(firmwareWaitRunning)return;
  firmwareUpdateRecord.startedAt=Date.now();showFirmwareUpdate(firmwareUpdateRecord,'Reconnecting to Amity…');await waitForFirmware();
 }));
-$('firmwareUpdateLogin').addEventListener('click',()=>finishFirmwareUpdate($('firmwareUpdateStatus').textContent));
+$('firmwareUpdateLogin').addEventListener('click',()=>errorShown()?finishFirmwareUpdate(noticeText.textContent,true):finishFirmwareUpdate($('firmwareUpdateStatus').textContent));
 $('firmware').addEventListener('change',run(async e=>{
  const input=e.target,file=input.files[0];if(!file)return;
  const progress=$('uploadProgress');input.disabled=true;progress.hidden=true;progress.value=0;
@@ -809,6 +838,6 @@ async function initialize(){
   showFirmwareUpdate(pending,'Waiting for the firmware update…');await waitForFirmware();return;
  }
  const setup=await request('setup');renderHostname(setup.hostname);if(setup.required){showLogin();$('login').hidden=true;$('onboarding').hidden=false;}else if(token)await enter();else showLogin();
- const result=sessionStorage.getItem(firmwareResultKey);if(result){sessionStorage.removeItem(firmwareResultKey);message(result);}
+ const result=sessionStorage.getItem(firmwareResultKey);if(result){sessionStorage.removeItem(firmwareResultKey);try{const {text,error}=JSON.parse(result);message(text,error===true);}catch{}}
 }
 initialize().catch(e=>{if(e.silent)return;message(e.message+' Reload to try again.',true);});

@@ -27,8 +27,9 @@ def main(argv=None):
     # Outlined destructive buttons share the filled danger style.
     # The header's HDMI scan status was removed.
     # The page links its favicon.
+    # Errors appear in one closable popup; the activity editor's error line was removed.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = '37ab202f5fac37b42377a97344f0e7ffca76b8ab3037644c6e90f17110795d7f'
+    baseline_sha256 = '73af64fb862aa4679f0799bb3958fcacbf3ac3f8b4f3544878d7b00a005a32c9'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
@@ -494,15 +495,15 @@ def main(argv=None):
                     page.evaluate('amityInterface.refresh()')
                 with page.expect_response(lambda r: r.url.endswith('/api/membership/remove')):
                     dialog.get_by_role('button', name='Remove Amity', exact=True).click()
-                result = dialog.get_by_role('status')
+                progress, failure = dialog.locator('p[role=status]'), dialog.locator('#message')
                 if mode.startswith('stale_'):
-                    expect(result).to_contain_text('The Amity changed. Reopen Remove')
+                    expect(failure).to_contain_text('The Amity changed. Reopen Remove')
                     expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_hidden()
                     assert system['membership']['peers']
                     dialog.get_by_role('button', name='Close', exact=True).click()
                     passed(mode+' retains reviewed confirmation tokens and rejects without drop or replay')
                 elif mode == 'unsupported':
-                    expect(result).to_contain_text('Update this Amity before removing it')
+                    expect(failure).to_contain_text('Update this Amity before removing it')
                     expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_hidden()
                     assert system['membership']['peers'] == saved_peers
                     dialog.get_by_role('button', name='Close', exact=True).click()
@@ -510,23 +511,23 @@ def main(argv=None):
                 else:
                     if mode not in ('post_error', 'poll_error'):
                         expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_disabled()
-                        expect(result).to_contain_text('Removing amity-bedroom')
+                        expect(progress).to_contain_text('Removing amity-bedroom')
                         assert system['membership']['peers']
-                        expect(result).not_to_contain_text('Factory reset accepted')
+                        expect(progress).not_to_contain_text('Factory reset accepted')
                         fixture['remove_release'] = True
                     if mode == 'scheduled':
-                        expect(result).to_contain_text('Factory reset accepted; it will restart and forget its Wi-Fi and settings.')
-                        expect(result).not_to_contain_text('Factory reset completed')
+                        expect(progress).to_contain_text('Factory reset accepted; it will restart and forget its Wi-Fi and settings.')
+                        expect(progress).not_to_contain_text('Factory reset completed')
                         passed('responsive removal waits for configuration cleanup and acknowledged reset scheduling')
                     elif mode in ('offline', 'unconfirmed'):
-                        expect(result).to_contain_text('amity-bedroom removed.')
-                        expect(result).to_contain_text('at least 10 seconds')
-                        expect(result).not_to_contain_text('Factory reset accepted')
+                        expect(progress).to_contain_text('amity-bedroom removed.')
+                        expect(progress).to_contain_text('at least 10 seconds')
+                        expect(progress).not_to_contain_text('Factory reset accepted')
                         passed(mode+' removes saved data but requires physical reset without a reset-success claim')
                     else:
-                        expect(result).to_contain_text('Removal could not be confirmed')
-                        expect(result).to_contain_text('physical button before adding it again')
-                        expect(result).not_to_contain_text('Factory reset accepted')
+                        expect(failure).to_contain_text('Removal could not be confirmed')
+                        expect(failure).to_contain_text('physical button before adding it again')
+                        expect(progress).to_have_text('')
                         passed(mode+' remains unknown without destructive replay')
                     expect(dialog).to_be_visible()
                     expect(dialog.get_by_role('button', name='Remove Amity', exact=True)).to_be_hidden()

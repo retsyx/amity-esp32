@@ -148,7 +148,7 @@ def main():
             start=len(settings_posts())
             for invalid in ('', '-leading', 'trailing-', 'invalid.name'):
                 hostname.fill(invalid);save.click();assert len(settings_posts())==start
-            hostname.fill('Living-Room');fixture['settings_fail']=True;save.click();expect(d.get_by_role('status')).to_contain_text('Stop activities before saving');expect(hostname).to_have_value('Living-Room');expect(save).to_be_enabled();passed('invalid hostname blocked and failed save stays editable')
+            hostname.fill('Living-Room');fixture['settings_fail']=True;save.click();expect(d.locator('#message')).to_contain_text('Stop activities before saving');expect(hostname).to_have_value('Living-Room');expect(save).to_be_enabled();passed('invalid hostname blocked and failed save stays editable')
             fixture['settings_fail']=False;save.click();expect(page.locator('#hostnameLink')).to_be_visible();expect(page.locator('#hostnameLink')).to_have_attribute('href','https://living-room.local');expect(page.locator('h1')).to_have_text('living-room');expect(page.locator('#admin')).to_be_hidden()
             expect(page).to_have_url('https://living-room.local/',timeout=20000)
             assert fixture['hostname_probes']>=5 and fixture['hostname_ready'] and not fixture['early_navigation']
@@ -180,9 +180,9 @@ def main():
                 input_for(d,3).fill(invalid);save.click();assert len(settings_posts())==start
             passed('invalid topology and reserved unknown address blocked before request')
             input_for(d,3).fill('b.c.0.0');page.wait_for_function('() => !polling');page.evaluate('() => refresh()');expect(input_for(d,3)).to_have_value('b.c.0.0')
-            fixture['settings_fail']=True;save.click();expect(d.get_by_role('status')).to_contain_text('Stop activities before saving');expect(input_for(d,3)).to_have_value('b.c.0.0');expect(save).to_be_enabled();assert len(settings_posts())==start+1
+            fixture['settings_fail']=True;save.click();expect(d.locator('#message')).to_contain_text('Stop activities before saving');expect(input_for(d,3)).to_have_value('b.c.0.0');expect(save).to_be_enabled();assert len(settings_posts())==start+1
             passed('failed quiescence/save preserves edit and controls without automatic retry')
-            fixture['settings_fail']=False;captured=deepcopy(settings[MEMBER]);save.click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            fixture['settings_fail']=False;captured=deepcopy(settings[MEMBER]);save.click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.');expect(d.locator('#message')).to_have_count(0)
             path,body=settings_posts()[-1];assert path==f'/api/devices/{MEMBER}/settings'
             assert body['expected_boot_id']==captured['boot_id'] and body['expected_settings_revision']==captured['settings_revision']
             assert 'expected_hostname_revision' not in body and 'hostname' not in body and settings[MEMBER]['hostname_revision']==captured['hostname_revision']
@@ -193,42 +193,42 @@ def main():
             expect(input_for(d,3)).to_have_value('B.C.0.0');expect(d.locator('[data-adapter-id="3"] td').nth(2)).to_have_text('B.C.0.0');expect(save).to_be_enabled()
             passed('captured decimal CAS and exact slot sent; admission polled to applied; fallback selection updates in the open table without restarting either device')
             # Change again without reopening: the dialog must use the applied revision.
-            applied_revision=settings[MEMBER]['settings_revision'];input_for(d,3).fill('A.C.0.0');save.click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            applied_revision=settings[MEMBER]['settings_revision'];input_for(d,3).fill('A.C.0.0');save.click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['expected_settings_revision']==applied_revision
             expect(d.locator('[data-adapter-id="3"] td').nth(2)).to_have_text('A.C.0.0')
             # A stored scanned address wins over both equal and different defaults.
             for address in ('3.0.0.0','5.0.0.0'):
-                input_for(d,0).fill(address);save.click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+                input_for(d,0).fill(address);save.click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
                 expect(input_for(d,0)).to_have_value(address)
                 expect(d.locator('[data-adapter-id="0"] td').nth(1)).to_have_text('3.0.0.0');expect(d.locator('[data-adapter-id="0"] td').nth(2)).to_have_text('3.0.0.0')
             assert settings[MEMBER]['boot_id']==captured['boot_id'] and settings[MAIN]['settings_revision']=='1'
             passed('success refreshes reviewed revision for another save; detected selection survives both equal and different defaults');close(d)
-            d=open_settings();input_for(d,3).fill('');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            d=open_settings();input_for(d,3).fill('');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['changes'][0]['default_front_physical_address']=='1.0.0.0';passed('blank resets only the selected stable slot to default');close(d)
             # The target may save before its reply disappears. Both an explicit
             # unknown operation and an HTTP failure must require a fresh read,
             # rather than granting a second attempt from the old dialog.
             fixture['settings_outcome']='unknown';d=open_settings();start=len(settings_posts());input_for(d,3).fill('8.0.0.0')
             save=d.get_by_role('button',name='Save',exact=True);save.click()
-            expect(d.get_by_role('status')).to_contain_text('save outcome is unknown');expect(save).to_be_disabled()
+            expect(d.locator('#message')).to_contain_text('save outcome is unknown');expect(save).to_be_disabled()
             input_for(d,3).fill('9.0.0.0');expect(save).to_be_disabled();page.wait_for_timeout(400);assert len(settings_posts())==start+1
             d.get_by_role('button',name='Refresh',exact=True).click();expect(input_for(d,3)).to_have_value('8.0.0.0');expect(save).to_be_enabled()
             assert len(settings_posts())==start+1;close(d);fixture['settings_outcome']='applied'
             fixture['settings_http500']=True;d=open_settings();start=len(settings_posts());input_for(d,3).fill('9.0.0.0')
             save=d.get_by_role('button',name='Save',exact=True);save.click()
-            expect(d.get_by_role('status')).to_contain_text('save outcome is unknown');expect(save).to_be_disabled()
+            expect(d.locator('#message')).to_contain_text('save outcome is unknown');expect(save).to_be_disabled()
             page.wait_for_timeout(400);assert len(settings_posts())==start+1
             fixture['settings_http500']=False;d.get_by_role('button',name='Refresh',exact=True).click();expect(input_for(d,3)).to_have_value('9.0.0.0');expect(save).to_be_enabled()
             assert len(settings_posts())==start+1;passed('unknown or HTTP500 after durable save disables Save until Refresh reviews saved values; neither outcome replays the POST');close(d)
-            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['settings_revision']=str(int(settings[MEMBER]['settings_revision'])+1);input_for(d,3).fill('6.0.0.0');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_contain_text('Settings changed')
+            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['settings_revision']=str(int(settings[MEMBER]['settings_revision'])+1);input_for(d,3).fill('6.0.0.0');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('#message')).to_contain_text('Settings changed')
             assert settings_posts()[-1][1]['expected_settings_revision']==captured['settings_revision'];expect(input_for(d,3)).to_have_value('6.0.0.0');passed('dialog keeps reviewed settings revision and reports stale-save rejection');close(d)
-            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['boot_id']='d'*32;input_for(d,3).fill('7.0.0.0');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_contain_text('Settings changed')
+            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['boot_id']='d'*32;input_for(d,3).fill('7.0.0.0');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('#message')).to_contain_text('Settings changed')
             assert settings_posts()[-1][1]['expected_boot_id']==captured['boot_id'];passed('member restart rejects the captured boot and never silently retries');close(d)
-            fixture['remote_status']='offline';d=open_settings();expect(d.get_by_role('status')).to_contain_text('offline');expect(d.get_by_role('button',name='Save',exact=True)).to_be_disabled()
+            fixture['remote_status']='offline';d=open_settings();expect(d.locator('p[role=status]')).to_contain_text('offline');expect(d.get_by_role('button',name='Save',exact=True)).to_be_disabled()
             for slot in range(4):expect(input_for(d,slot)).to_be_disabled()
             passed('offline cached settings remain visible read only');close(d)
             fixture['remote_status']='ready';fixture['named']=False;d=open_settings();expect(d.locator('h3')).to_have_text('amity-bedroom settings');expect(d.get_by_role('textbox',name='Hostname',exact=True)).to_have_value('amity-bedroom');expect(d.get_by_role('button',name='Save',exact=True)).to_be_enabled();passed('fresh settings supply the actual hostname when cached name metadata is unavailable');close(d)
-            fixture['named']=True;fixture['remote_status']='unsupported';manage();page.locator('#managedAmityList > article').nth(1).get_by_role('button',name='Settings',exact=True).click();d=page.locator('dialog.adapter-settings:visible');expect(d.get_by_role('status')).to_contain_text('Update this Amity');expect(d.get_by_role('button',name='Save',exact=True)).to_be_disabled();passed('older peer without settings support asks for update without a write');close(d)
+            fixture['named']=True;fixture['remote_status']='unsupported';manage();page.locator('#managedAmityList > article').nth(1).get_by_role('button',name='Settings',exact=True).click();d=page.locator('dialog.adapter-settings:visible');expect(d.locator('p[role=status]')).to_contain_text('Update this Amity');expect(d.get_by_role('button',name='Save',exact=True)).to_be_disabled();passed('older peer without settings support asks for update without a write');close(d)
             fixture['remote_status']='ready';d=open_settings();assert d.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
             for width in (320,430,816):
                 page.set_viewport_size(dict(width=width,height=900));assert d.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
@@ -242,21 +242,21 @@ def main():
                 expect(d.get_by_role('columnheader')).to_have_text(['Adapter','Default','Detected Address','Selected Address'])
                 for slot in range(4):expect(input_for(d,slot)).to_be_enabled()
             page.set_viewport_size(dict(width=430,height=900));page.screenshot(path=str(OUTPUT/'adapter-settings.png'),full_page=True);passed('single accessible address table fits 320px, 430px and desktop viewports');close(d)
-            d=open_settings();hostname=d.get_by_role('textbox',name='Hostname',exact=True);hostname.fill('Amity-Cinema');captured=deepcopy(settings[MEMBER]);d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            d=open_settings();hostname=d.get_by_role('textbox',name='Hostname',exact=True);hostname.fill('Amity-Cinema');captured=deepcopy(settings[MEMBER]);d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['hostname']=='amity-cinema' and settings_posts()[-1][1]['changes']==[]
             assert settings[MEMBER]['boot_id']==captured['boot_id'] and settings[MAIN]['boot_id']==BOOT
             assert settings[MEMBER]['settings_revision']==captured['settings_revision'] and settings_posts()[-1][1]['expected_hostname_revision']==captured['hostname_revision']
             assert 'expected_settings_revision' not in settings_posts()[-1][1]
             expect(d.locator('h3')).to_have_text('amity-cinema settings');expect(page.locator('#managedAmityList > article').nth(1)).to_contain_text('amity-cinema');expect(page.locator('#admin')).to_be_visible();passed('member rename refreshes names without restarting either device or ending the main session');close(d)
-            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['hostname']='amity-concurrent';settings[MEMBER]['hostname_revision']=str(int(captured['hostname_revision'])+1);input_for(d,3).fill('4.0.0.0');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['hostname']='amity-concurrent';settings[MEMBER]['hostname_revision']=str(int(captured['hostname_revision'])+1);input_for(d,3).fill('4.0.0.0');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['expected_settings_revision']==captured['settings_revision'] and 'hostname' not in settings_posts()[-1][1]
             assert settings[MEMBER]['hostname']=='amity-concurrent' and settings[MEMBER]['hostname_revision']==str(int(captured['hostname_revision'])+1)
             expect(d.get_by_role('textbox',name='Hostname',exact=True)).to_have_value('amity-concurrent');passed('concurrent hostname change neither conflicts with adapter save nor gets overwritten');close(d)
-            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['adapters'][3]['default_front_physical_address']='5.0.0.0';settings[MEMBER]['settings_revision']=str(int(captured['settings_revision'])+1);d.get_by_role('textbox',name='Hostname',exact=True).fill('amity-cinema-renamed');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            d=open_settings();captured=deepcopy(settings[MEMBER]);settings[MEMBER]['adapters'][3]['default_front_physical_address']='5.0.0.0';settings[MEMBER]['settings_revision']=str(int(captured['settings_revision'])+1);d.get_by_role('textbox',name='Hostname',exact=True).fill('amity-cinema-renamed');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['expected_hostname_revision']==captured['hostname_revision'] and 'expected_settings_revision' not in settings_posts()[-1][1]
             assert settings[MEMBER]['adapters'][3]['default_front_physical_address']=='5.0.0.0' and settings[MEMBER]['settings_revision']==str(int(captured['settings_revision'])+1)
             passed('concurrent adapter change neither conflicts with hostname save nor gets overwritten');close(d)
-            d=open_settings();captured=deepcopy(settings[MEMBER]);start=len(settings_posts());input_for(d,3).fill('6.0.0.0');d.get_by_role('textbox',name='Hostname',exact=True).fill('amity-cinema-dual');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            d=open_settings();captured=deepcopy(settings[MEMBER]);start=len(settings_posts());input_for(d,3).fill('6.0.0.0');d.get_by_role('textbox',name='Hostname',exact=True).fill('amity-cinema-dual');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             posts=settings_posts()[start:];assert len(posts)==2
             assert posts[0][1]['changes']==[dict(tentacle_id=3,default_front_physical_address='6.0.0.0')] and posts[0][1]['expected_settings_revision']==captured['settings_revision'] and 'hostname' not in posts[0][1]
             assert posts[1][1]['hostname']=='amity-cinema-dual' and posts[1][1]['changes']==[] and posts[1][1]['expected_hostname_revision']==captured['hostname_revision'] and 'expected_settings_revision' not in posts[1][1]
@@ -264,25 +264,25 @@ def main():
             assert settings[MEMBER]['settings_revision']==str(int(captured['settings_revision'])+1) and settings[MEMBER]['hostname_revision']==str(int(captured['hostname_revision'])+1)
             passed('one Save uses separate guarded adapter and hostname operations against the reviewed independent revisions and stable device identity');close(d)
             fixture['hostname_fail']=True;d=open_settings();captured=deepcopy(settings[MEMBER]);start=len(settings_posts());input_for(d,3).fill('7.0.0.0');hostname=d.get_by_role('textbox',name='Hostname',exact=True);hostname.fill('not-saved');save=d.get_by_role('button',name='Save',exact=True);save.click()
-            expect(d.get_by_role('status')).to_contain_text('Adapter addresses saved. Hostname was not saved.');expect(save).to_be_disabled();expect(hostname).to_have_value('not-saved')
+            expect(d.locator('#message')).to_contain_text('Adapter addresses saved. Hostname was not saved.');expect(save).to_be_disabled();expect(hostname).to_have_value('not-saved')
             assert settings[MEMBER]['adapters'][3]['default_front_physical_address']=='7.0.0.0' and settings[MEMBER]['hostname']==captured['hostname'] and settings[MEMBER]['hostname_revision']==captured['hostname_revision']
             page.wait_for_timeout(400);assert len(settings_posts())==start+2
             d.get_by_role('button',name='Refresh',exact=True).click();expect(hostname).to_have_value(captured['hostname']);expect(input_for(d,3)).to_have_value('7.0.0.0');expect(save).to_be_enabled();assert len(settings_posts())==start+2
             passed('failed second save clearly reports partial success and requires a fresh read without replaying the adapter write');close(d);fixture['hostname_fail']=False
             d=open_settings();captured=deepcopy(settings[MEMBER]);start=len(settings_posts());fixture['hostname_after_adapter']='amity-other-session';input_for(d,3).fill('6.0.0.0');hostname=d.get_by_role('textbox',name='Hostname',exact=True);hostname.fill('do-not-overwrite');save=d.get_by_role('button',name='Save',exact=True);save.click()
-            expect(d.get_by_role('status')).to_contain_text('Adapter addresses saved. Hostname was not saved.');expect(save).to_be_disabled()
+            expect(d.locator('#message')).to_contain_text('Adapter addresses saved. Hostname was not saved.');expect(save).to_be_disabled()
             assert len(settings_posts())==start+2 and settings_posts()[-1][1]['expected_hostname_revision']==captured['hostname_revision']
             assert settings[MEMBER]['hostname']=='amity-other-session' and settings[MEMBER]['adapters'][3]['default_front_physical_address']=='6.0.0.0'
             passed('second save keeps the originally reviewed hostname revision and rejects a concurrent rename after adapter success');close(d)
             fixture['hostname_http500']=True;d=open_settings();start=len(settings_posts());input_for(d,3).fill('8.0.0.0');d.get_by_role('textbox',name='Hostname',exact=True).fill('amity-uncertain');save=d.get_by_role('button',name='Save',exact=True);save.click()
-            expect(d.get_by_role('status')).to_contain_text('Adapter addresses saved. The hostname save outcome is unknown.');expect(save).to_be_disabled();assert len(settings_posts())==start+2
+            expect(d.locator('#message')).to_contain_text('Adapter addresses saved. The hostname save outcome is unknown.');expect(save).to_be_disabled();assert len(settings_posts())==start+2
             fixture['hostname_http500']=False;d.get_by_role('button',name='Refresh',exact=True).click();expect(d.get_by_role('textbox',name='Hostname',exact=True)).to_have_value('amity-uncertain');expect(input_for(d,3)).to_have_value('8.0.0.0');expect(save).to_be_enabled();assert len(settings_posts())==start+2
             passed('lost second-save response preserves known adapter success and requires review of hostname outcome without replay');close(d)
-            fixture['settings_fail']=True;d=open_settings();start=len(settings_posts());input_for(d,3).fill('9.0.0.0');d.get_by_role('textbox',name='Hostname',exact=True).fill('not-attempted');save=d.get_by_role('button',name='Save',exact=True);save.click();expect(d.get_by_role('status')).to_contain_text('Hostname was not changed.');expect(save).to_be_enabled()
+            fixture['settings_fail']=True;d=open_settings();start=len(settings_posts());input_for(d,3).fill('9.0.0.0');d.get_by_role('textbox',name='Hostname',exact=True).fill('not-attempted');save=d.get_by_role('button',name='Save',exact=True);save.click();expect(d.locator('#message')).to_contain_text('Hostname was not changed.');expect(save).to_be_enabled()
             assert len(settings_posts())==start+1 and 'hostname' not in settings_posts()[-1][1] and settings[MEMBER]['hostname']=='amity-uncertain'
             passed('failed first save leaves hostname unattempted and both edits available');close(d);fixture['settings_fail']=False
             adapters=deepcopy(settings[MEMBER]['adapters']);settings[MEMBER]['adapters']=[]
-            manage();page.locator('#managedAmityList > article').nth(1).get_by_role('button',name='Settings',exact=True).click();d=page.locator('dialog.adapter-settings:visible');hostname=d.get_by_role('textbox',name='Hostname',exact=True);expect(hostname).to_be_enabled();hostname.fill('amity-empty');d.get_by_role('button',name='Save',exact=True).click();expect(d.get_by_role('status')).to_have_text('Settings saved.')
+            manage();page.locator('#managedAmityList > article').nth(1).get_by_role('button',name='Settings',exact=True).click();d=page.locator('dialog.adapter-settings:visible');hostname=d.get_by_role('textbox',name='Hostname',exact=True);expect(hostname).to_be_enabled();hostname.fill('amity-empty');d.get_by_role('button',name='Save',exact=True).click();expect(d.locator('p[role=status]')).to_have_text('Settings saved.')
             assert settings_posts()[-1][1]['hostname']=='amity-empty' and settings_posts()[-1][1]['changes']==[]
             passed('Amity with no configured adapters can still be renamed');close(d);settings[MEMBER]['adapters']=adapters
             page.locator('[data-tab=advanced]').click();fixture['calls'].clear()

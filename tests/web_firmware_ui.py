@@ -152,6 +152,24 @@ def main():
             expect(page.locator('#firmware')).to_have_value('')
             assert len(fixture['uploads']) == before
             checks.append('invalid file rejected before confirmation or upload')
+            page.locator('#dismissMessage').click()
+            page.set_viewport_size({'width': 390, 'height': 480})
+            page.locator('#firmware').scroll_into_view_if_needed()
+            assert page.evaluate('scrollY') > 0, 'the firmware control should require scrolling'
+            page.locator('#firmware').set_input_files(
+                {'name': 'wrong.bin', 'mimeType': 'application/octet-stream', 'buffer': b'not firmware'})
+            expect(page.locator('#message')).to_have_text('Select an Amity application firmware binary.')
+            expect(page.locator('#notice')).to_be_in_viewport()
+            page.evaluate('scrollTo(0, 0)')
+            expect(page.locator('#notice')).to_be_in_viewport()
+            page.evaluate('scrollTo(0, document.body.scrollHeight)')
+            expect(page.locator('#notice')).to_be_in_viewport()
+            assert page.locator('#notice').bounding_box()['y'] >= 0
+            page.locator('#dismissMessage').click()
+            expect(page.locator('#message')).to_have_text('')
+            expect(page.locator('#dismissMessage')).to_be_hidden()
+            page.set_viewport_size({'width': 1280, 'height': 720})
+            checks.append('errors stay visible below the top of a scrolled window until closed')
 
             fixture.update(current='0.1.41', fail=False, auto_restart=False)
             enter()
@@ -189,7 +207,7 @@ def main():
             enter()
             select('0.1.43', True, 'Install firmware', wait=False)
             fixture.update(current='0.1.42', boot='rollback-boot')
-            expect(page.locator('#firmwareUpdateStatus')).to_have_text(
+            expect(page.locator('#message')).to_have_text(
                 'Update did not complete. Amity is running version 0.1.42 instead of 0.1.43.')
             expect(page.locator('#uploadProgress')).to_be_hidden()
             expect(page.locator('#firmwareUpdateLogin')).to_be_visible()
@@ -204,7 +222,7 @@ def main():
             expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Waiting for Amity to reconnect')
             page.evaluate("firmwareUpdateRecord.startedAt = Date.now() - 121000")
             expect(page.locator('#retryFirmwareWait')).to_be_visible()
-            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Could not confirm the update')
+            expect(page.locator('#message')).to_contain_text('Could not confirm the update')
             expect(page.locator('#login')).to_be_hidden()
             expect(page.locator('#uploadProgress')).to_be_hidden()
             fixture.update(current='0.1.43', boot='recovered-boot', stage='ready')
@@ -221,7 +239,7 @@ def main():
             expect(page.locator('#login')).to_be_hidden()
             page.evaluate("firmwareUpdateRecord.startedAt = Date.now() - 121000")
             expect(page.locator('#retryFirmwareWait')).to_be_visible()
-            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Could not confirm the update')
+            expect(page.locator('#message')).to_contain_text('Could not confirm the update')
             expect(page.locator('#firmwareUpdateLogin')).to_be_hidden()
             checks.append('responses without boot health metadata cannot confirm restart or offer login')
             fixture.update(missing_health=False, boot='healthy-after-missing-metadata')

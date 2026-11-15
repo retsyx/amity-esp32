@@ -365,7 +365,7 @@ def main():
                 assert page.locator('#activityFields button:enabled').count()==0
                 expect(page.locator('#activityForm button[type=submit]')).to_be_disabled()
                 expect(page.locator('#editorStart')).to_be_disabled()
-                expect(page.locator('#activityEditorError')).to_have_text('Stop this activity before editing or deleting it.')
+                expect(page.locator('#activityEditor #message')).to_have_text('Stop this activity before editing or deleting it.')
                 page.evaluate("() => window.pendingEquipmentChoice('Changed source')")
                 expect(page.locator('#activityFields input[data-device-role=source]')).to_have_value('Player')
                 assert page.evaluate('() => editingActivity.activity.source')=='Player'
@@ -448,7 +448,7 @@ def main():
                 page.reload();expect(page.locator('#admin')).to_be_visible();page.wait_for_function('() => !polling && !activityActionPending')
                 passed('deleting an earlier draft row never shifts the index sent to the device')
                 fixture['fail_save']=True;edit();page.locator('#activityFields input').first.fill('Changed');before_calls=len(fixture['activity_calls']);page.locator('#editorStart').click()
-                expect(page.locator('#activityEditorError')).to_have_text('Could not save configuration');expect(page.locator('#editorStart')).to_be_enabled()
+                expect(page.locator('#activityEditor #message')).to_have_text('Could not save configuration');expect(page.locator('#editorStart')).to_be_enabled()
                 assert len(fixture['activity_calls'])==before_calls and fixture['config']['activities'][0]['name']=='TV'
                 expect(page.locator('#activityList .activity-name').first).to_have_text('TV')
                 passed('failed Save and start retains modal draft without changing the list or starting stale settings')
@@ -469,7 +469,7 @@ def main():
                 expect(save).to_have_text('Save activities')
                 passed('saving shows Saving... and locks editing, starting and drag order until persisted indices are known')
                 edit();page.locator('#activityFields input').first.fill('Music');page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click()
-                expect(page.locator('#activityEditorError')).to_have_text('Activity names must be unique.');page.locator('#cancelActivity').click();expect(save).to_be_hidden()
+                expect(page.locator('#activityEditor #message')).to_have_text('Activity names must be unique.');page.locator('#cancelActivity').click();expect(save).to_be_hidden()
                 passed('duplicate activity names stay in the modal for correction')
                 baseline=deepcopy(fixture['config']);before_calls=len(fixture['activity_calls'])
                 fixture['config']['activities'].reverse();starts.first.click()

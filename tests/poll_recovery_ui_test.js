@@ -9,6 +9,7 @@ class Element {
  append(...items){this.children.push(...items);}
  replaceChildren(...items){this.children=[];this.append(...items);}
  get childNodes(){return this.children;}
+ get isConnected(){return true;}
  isEqualNode(other){return JSON.stringify([this.tag,this.textContent,this.className,this.hidden,this.disabled,this.value,this.dataset,this.attributes])===JSON.stringify([other.tag,other.textContent,other.className,other.hidden,other.disabled,other.value,other.dataset,other.attributes])&&this.children.length===other.children.length&&this.children.every((child,index)=>child.isEqualNode(other.children[index]));}
  addEventListener(name,callback){(this.listeners[name]??=[]).push(callback);}
  querySelector(){return null;}
@@ -100,6 +101,18 @@ function fixture({adapter=false}={}){
  const activity=fixture();await activity.initialize();activity.fail('status');await activity.tick();activity.status.activity_error='Activity could not start';
  await activity.tick();assert.deepEqual(activity.message(),{text:'Activity could not start',error:true});
  activity.status.activity_error='';await activity.tick();assert.equal(activity.message().text,'Activity could not start');
+
+ // Closing a polling error keeps it closed while that failure continues.
+ const close=ui=>ui.get('dismissMessage').listeners.click[0]();
+ activity.status.activity_error='Activity could not start';await activity.tick();assert.equal(activity.message().error,true);
+ close(activity);await activity.tick();assert.deepEqual(activity.message(),{text:'',error:false},'A closed activity error stays closed');
+ const closed=fixture();await closed.initialize();
+ for(const kind of ['transport','http']){
+  closed.fail('status',kind);await closed.tick();const reported=closed.message();assert.equal(reported.error,true);
+  close(closed);closed.fail('status',kind);await closed.tick();assert.deepEqual(closed.message(),{text:'',error:false},'A closed polling error stays closed');
+  await closed.tick();closed.fail('status',kind);await closed.tick();assert.deepEqual(closed.message(),reported,'A failure after recovery is reported again');
+  close(closed);await closed.tick();
+ }
 
  for(const replacement of ["message('Saved.');","reportError(Error('New action failed'));","message('Reconnecting to the new address…');hostnameReconnect={};","message('Waiting for firmware…');firmwareUpdating=true;","message('Signed out.');token='';"]){
   const newer=fixture();await newer.initialize();newer.fail('status');await newer.tick();

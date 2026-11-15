@@ -253,7 +253,7 @@ def main():
                 d = add_dialog('OfflineBox')
                 fixture['fail_add'] = True
                 d.get_by_role('button', name='Add', exact=True).click()
-                expect(d.locator('#componentEditorError')).to_have_text('Could not add component')
+                expect(d.locator('#message')).to_have_text('Could not add component')
                 expect(d.locator('#componentOsdName')).to_have_value('OfflineBox')
                 expect(d.get_by_role('button', name='Add', exact=True)).to_be_enabled()
                 fixture['fail_add'] = False

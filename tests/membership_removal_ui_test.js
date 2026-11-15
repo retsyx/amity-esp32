@@ -80,7 +80,7 @@ function fixture(options={}){
   throw Error('Unexpected request '+path);
  };
  const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,readResponseJSON:response=>response.json(),token:'fixture-session',console,
-  $:id=>walk(document.body).find(node=>node.id===id),request,customerText:value=>String(value??''),message:(...args)=>messages.push(args),
+  $:id=>walk(document.body).find(node=>node.id===id),request,customerText:value=>String(value??''),message:(...args)=>messages.push(args),dismissError(){},
   refreshActivityConfiguration:async()=>{refreshed++;return true;},
   setTimeout:callback=>{timers.push(callback);return timers.length;},clearTimeout(){},
   run:action=>async event=>{try{await action(event);}catch(error){errors.push(error.message);}},
@@ -107,13 +107,13 @@ function fixture(options={}){
  assert.match(normal.dialog().textContent,/Factory reset accepted/);assert.equal(normal.management.children.length,1);assert.equal(normal.refreshed,1);
  assert.deepEqual(normal.configuration.activities.map(row=>row.label),['Unrelated local activity']);
  const stale=fixture();await stale.open();stale.configuration.config_revision='8';stale.configuration.activities.push({activity_id:'f'.repeat(32),label:'New unreviewed activity',source:'a'.repeat(32)});await stale.context.window.amityInterface.refresh();await stale.click(stale.button('Remove Amity'));
- assert.match(stale.dialog().textContent,/Activities changed/);assert.equal(stale.button('Remove Amity').hidden,true);assert.equal(stale.posts.length,1);assert.equal(stale.configuration.activities.length,6);
- const relabelled=fixture();await relabelled.open();relabelled.configuration.presentation_revision='4';await relabelled.click(relabelled.button('Remove Amity'));assert.match(relabelled.dialog().textContent,/Activities changed/);assert.equal(relabelled.posts.length,1);
- const wrongSet=fixture();await wrongSet.open();wrongSet.configuration.activities[0].source='b'.repeat(32);wrongSet.configuration.activities[0].display=null;await wrongSet.click(wrongSet.button('Remove Amity'));assert.match(wrongSet.dialog().textContent,/Activities changed/);assert.equal(wrongSet.configuration.octopuses.length,2);
+ assert.match(stale.messages.at(-1)[0],/Activities changed/);assert.equal(stale.messages.at(-1)[1],true);assert.equal(stale.button('Remove Amity').hidden,true);assert.equal(stale.posts.length,1);assert.equal(stale.configuration.activities.length,6);
+ const relabelled=fixture();await relabelled.open();relabelled.configuration.presentation_revision='4';await relabelled.click(relabelled.button('Remove Amity'));assert.match(relabelled.messages.at(-1)[0],/Activities changed/);assert.equal(relabelled.messages.at(-1)[1],true);assert.equal(relabelled.posts.length,1);
+ const wrongSet=fixture();await wrongSet.open();wrongSet.configuration.activities[0].source='b'.repeat(32);wrongSet.configuration.activities[0].display=null;await wrongSet.click(wrongSet.button('Remove Amity'));assert.match(wrongSet.messages.at(-1)[0],/Activities changed/);assert.equal(wrongSet.messages.at(-1)[1],true);assert.equal(wrongSet.configuration.octopuses.length,2);
  const saved=fixture({savedOnly:true});await saved.open();assert.ok(saved.button('Remove Amity'));await saved.click(saved.button('Remove Amity'));assert.match(saved.dialog().textContent,/removed from this system/);assert.doesNotMatch(saved.dialog().textContent,/at least 10 seconds/);assert.equal(saved.management.children.length,1);
  const metadata=fixture({savedOnly:true,metadataOnly:true});await metadata.open();assert.match(metadata.dialog().textContent,/No saved activities reference/);await metadata.click(metadata.button('Remove Amity'));assert.deepEqual(metadata.posts[0][1].affected_activity_ids,[]);assert.equal(metadata.management.children.length,1);
  const actions=fixture();await actions.open();await actions.click(actions.button('Cancel'));const memberRow=actions.management.children[1];assert.ok(actions.button('Replace',memberRow));assert.equal(actions.button('Remove',actions.management.children[0]),undefined);assert.equal(actions.button('Replace',actions.management.children[0]),undefined);assert.doesNotMatch(actions.management.textContent,/Controlled by the original Amity|HDMI adapters/);
- const heading=root=>walk(root).find(node=>node.tag==='h3').textContent,alert=root=>walk(root).find(node=>node.attributes.role==='alert').textContent;
+ const heading=root=>walk(root).find(node=>node.tag==='h3').textContent;
  const unplug=async f=>{const box=walk(f.dialog()).find(node=>node.tag==='input'&&node.type==='checkbox');box.checked=true;await box.dispatch('change');};
  const reviewing=async options=>{const f=fixture(options);await f.open();await f.click(f.button('Cancel'));await f.click(f.button('Replace',f.management.children[1]));await f.click(f.button('Replace'));return f;};
  // With no other Amity added, Replace opens Add directly and continues with the Amity it adds.
@@ -163,9 +163,9 @@ function fixture(options={}){
  changing.configuration.components.push({component_id:'f'.repeat(32),label:'Speaker',qualified_names:[{...changing.previous,side:'back',osd_name:'Speaker'}]});
  await changing.context.window.amityInterface.refresh();
  assert.match(changing.dialog().textContent,/Speaker wasn’t found\. It keeps the connection it had on amity-member\./);assert.equal(walk(changing.dialog()).find(node=>node.tag==='select').value,'0:back');
- // A rejected replacement reports its reason inside the dialog and changes nothing.
+ // A rejected replacement reports its reason as an error and changes nothing.
  const failing=await reviewing({replacement:true,applyError:true});await unplug(failing);await failing.click(failing.button('Replace'));
- assert.match(alert(failing.dialog()),/Equipment or configuration changed/);assert.equal(failing.button('Replace').disabled,false);
+ assert.match(failing.messages.at(-1)[0],/Equipment or configuration changed/);assert.equal(failing.messages.at(-1)[1],true);assert.equal(failing.button('Replace').disabled,false);
  assert.equal(failing.configuration.octopuses.length,3);assert.ok(!failing.messages.some(([text])=>/replaced/.test(text)));
  assert.deepEqual([...cancelled.errors,...normal.errors,...stale.errors,...relabelled.errors,...wrongSet.errors,...saved.errors,...metadata.errors,...actions.errors,...joining.errors,...chosen.errors,...moved.errors,...late.errors,...changing.errors,...failing.errors],[]);
  console.log('PASS removal UI: fresh exact activity review across all roles, inert cancel, stale review rejection, complete disappearance, saved-only purge, and Replace through an added or new Amity with derived connections');

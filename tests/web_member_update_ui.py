@@ -198,7 +198,7 @@ def main():
             upload(page)
             expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
             fixture.update(boot='different-boot', version=VERSION, identity='ef'*32)
-            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('did not report the expected firmware image')
+            expect(page.locator('#message')).to_contain_text('did not report the expected firmware image')
             expect(page.locator('#firmwareUpdateLogin')).to_be_visible()
             expect(page.locator('#login')).to_be_hidden()
             passed('same version with another image never passes reboot verification')
@@ -218,11 +218,13 @@ def main():
             fixture['login_fail'] = True
             page.locator('#password').fill('wrong')
             page.locator('#password').press('Enter')
-            expect(page.locator('#firmwareUpdateStatus')).to_have_text('Incorrect password.')
+            expect(page.locator('#message')).to_have_text('Incorrect password.')
+            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Your session ended')
             fixture['login_fail'] = False
             page.locator('#password').fill('test-password')
             page.locator('#password').press('Enter')
             expect(page.locator('#login')).to_be_hidden()
+            expect(page.locator('#message')).to_have_text('')
             expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
             assert fixture['login_calls'] == 2 and fixture['posts'] == [('firmware', BUNDLE)]
             passed('revoked authorization preserves progress across reload and resumes after login without another upload')
@@ -230,7 +232,7 @@ def main():
 
             page = open_page(upload_abort=True)
             upload(page)
-            expect(page.locator('#firmwareUpdateStatus')).to_have_text('Firmware validation failed.')
+            expect(page.locator('#message')).to_have_text('Firmware validation failed.')
             expect(page.locator('#firmwareUpdateLogin')).to_be_visible()
             expect(page.locator('#firmwareUpdateTargets')).to_contain_text('Firmware update failed')
             assert fixture['posts'] == [('firmware', BUNDLE)]
@@ -242,7 +244,7 @@ def main():
             expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Uploading firmware to your Amity devices')
             page.evaluate('firmwareUpdateRecord.startedAt = Date.now() - 46 * 60000')
             expect(page.locator('#retryFirmwareWait')).to_be_visible()
-            expect(page.locator('#firmwareUpdateStatus')).to_contain_text('Could not confirm the update')
+            expect(page.locator('#message')).to_contain_text('Could not confirm the update')
             assert fixture['posts'] == [('firmware', BUNDLE)]
             passed('distribution timeout offers reconnection without replaying the firmware upload')
             page.close()
