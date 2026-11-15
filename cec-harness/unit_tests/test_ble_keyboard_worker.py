@@ -471,11 +471,11 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
                                    "--count", "2", "--timeout", str(LINK_DROP_TIMEOUT)))
         self.assertIs(options["stdout"], asyncio.subprocess.PIPE)
         names = [event[0] for event in events]
-        disconnect = names.index("Disconnect")
-        # The helper is armed before the link drops, and the advertisement is
-        # replaced at the unconnected rate rather than withdrawn.
-        self.assertEqual(names[:disconnect], ["helper_record"])
-        self.assertEqual(names[disconnect + 1:disconnect + 3], ["UnregisterAdvertisement", "RegisterAdvertisement"])
+        # The helper is armed, then the advertisement is replaced at the
+        # unconnected rate rather than withdrawn, all before the link drops.
+        self.assertEqual(names[:names.index("Disconnect") + 1],
+                         ["helper_record", "UnregisterAdvertisement", "RegisterAdvertisement", "Disconnect"])
+        self.assertEqual(names.count("RegisterAdvertisement"), 1)
         self.assertTrue(owner._advertising)
         self.assertFalse(owner._connected_advertising)
         self.assertNotIn("kill", names)

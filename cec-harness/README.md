@@ -1105,9 +1105,11 @@ ends the link and each of the main's next three reconnections as soon as the
 Pi's controller reports them. The main's Bluetooth host reports a link only
 after exchanging features and version with the peer, so these links end before
 the main sees them. The main must reconnect by itself, without another pairing,
-and a fresh tap must reach the source. Each drop must be sent within 20 ms of
-the connection, before the main starts encryption; a later drop fails the case
-as a fixture fault, since it would only test an ordinary disconnect. A raw HCI
+and a fresh tap must reach the source. A main that stops reconnecting fails
+whatever the drops' timing. A pass also needs at least one drop sent within
+20 ms of its connection and none after the main started encryption; otherwise
+the case fails as a fixture fault, since it would not prove that a link ended
+before the main reported it. A raw HCI
 helper sends the drops, run by `.harness-python/bin/python-hci`: a copy of the
 runtime interpreter that setup grants only `CAP_NET_RAW`. Readiness checks that
 the copy matches the runtime and holds exactly that capability.

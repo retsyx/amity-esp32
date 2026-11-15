@@ -480,39 +480,55 @@ class PairedKeyboardTests(unittest.TestCase):
         self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/pair"), 1)
 
     def test_unreported_link_drops_fail_when_the_main_stops_reconnecting(self):
-        for stalled, message in (("helper", "stopped reconnecting after 1 of 3"), ("ui", "did not reconnect")):
-            with self.subTest(stalled=stalled):
+        # A main that stops reconnecting fails whatever the drops' timing.
+        for stalled, drop, message in (("helper", link_drop(1), "stopped reconnecting after 1 of 3"),
+                                       ("helper", link_drop(1, reaction_ns=45_000_000, encrypted=True),
+                                        "stopped reconnecting after 1 of 3"),
+                                       ("ui", None, "did not reconnect")):
+            with self.subTest(stalled=stalled, drop=drop):
                 fixture = Fixture()
                 fixture.reconnect_after_drops = False
                 if stalled == "helper":
-                    fixture.drop_receipt = {"disconnected_monotonic_ns": 1, "completed": False,
-                                            "drops": [link_drop(1)]}
+                    fixture.drop_receipt = {"disconnected_monotonic_ns": 1, "completed": False, "drops": [drop]}
                 with fixture.main.pair_ble_keyboard() as keyboard, self.assertRaisesRegex(AssertionError, message):
                     keyboard.drop_unreported_links(3)
                 self.assertFalse(fixture.state["bonded"])
 
-    def test_late_or_unrecorded_link_drops_are_fixture_failures_not_main_failures(self):
-        late = ({"encrypted": True}, {"reaction_ns": 20_000_001})
-        invalid = ({"drops": [link_drop(1), {**link_drop(2), "encrypted": 0}, link_drop(3)]},
-                   {"drops": [link_drop(1), link_drop(2)]}, {"completed": "yes"},
-                   {"drops": [{key: value for key, value in link_drop(1).items() if key != "reason"},
-                              link_drop(2), link_drop(3)]})
-        for changes, expected in ((*((change, RuntimeError) for change in late),
-                                   *((change, KeyboardConflict) for change in invalid))):
+    def test_one_prompt_drop_suffices_but_late_or_unrecorded_drops_are_fixture_failures(self):
+        slow = 20_000_001
+        cases = (
+            ({1: {"reaction_ns": 45_000_000}, 3: {"reaction_ns": slow}}, None, None),
+            ({2: {"encrypted": True}}, RuntimeError, "link 2 after the main started encryption"),
+            ({number: {"reaction_ns": slow} for number in (1, 2, 3)}, RuntimeError, "No link was dropped within 20 ms"),
+            ({"drops": [link_drop(1), {**link_drop(2), "encrypted": 0}, link_drop(3)]}, KeyboardConflict, None),
+            ({"drops": [link_drop(1), link_drop(2)]}, KeyboardConflict, None),
+            ({"completed": "yes"}, KeyboardConflict, None),
+            ({"drops": [{key: value for key, value in link_drop(1).items() if key != "reason"},
+                        link_drop(2), link_drop(3)]}, KeyboardConflict, None))
+        for changes, expected, message in cases:
             with self.subTest(changes=changes):
                 fixture = Fixture()
                 receipt = {"disconnected_monotonic_ns": 1, "completed": True,
                            "drops": [link_drop(number) for number in (1, 2, 3)]}
-                if expected is RuntimeError:
-                    receipt["drops"][1].update(changes)
-                else:
-                    receipt.update(changes)
+                for key, change in changes.items():
+                    if isinstance(key, int):
+                        receipt["drops"][key - 1].update(change)
+                    else:
+                        receipt[key] = change
                 fixture.drop_receipt = receipt
-                with fixture.main.pair_ble_keyboard() as keyboard, self.assertRaises(RuntimeError) as raised:
-                    keyboard.drop_unreported_links(3)
+                with fixture.main.pair_ble_keyboard() as keyboard:
+                    if expected is None:
+                        keyboard.drop_unreported_links(3)
+                        keyboard.assert_paired()
+                        continue
+                    with self.assertRaises(RuntimeError) as raised:
+                        keyboard.drop_unreported_links(3)
                 self.assertIs(type(raised.exception), expected)
-                if expected is RuntimeError:
-                    self.assertIn("link 2 after the main could have reported it", str(raised.exception))
+                if message is not None:
+                    self.assertIn(message, str(raised.exception))
+                    # Timing is judged only after the main has reconnected.
+                    phases = [row["phase"] for row in fixture.bed.control_observations[0]["checks"]]
+                    self.assertIn("reconnected", phases)
 
     def test_link_drops_need_a_connected_keyboard_and_a_bounded_count(self):
         fixture = Fixture()

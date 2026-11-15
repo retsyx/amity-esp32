@@ -376,11 +376,12 @@ class BlueZKeyboard:
         try:
             if await record(5) != {"armed": True}:
                 raise RuntimeError("The link-drop helper did not arm")
+            # Switch to the unconnected advertising rate first: the peer
+            # reconnects at once, and advertising changes then would delay the
+            # helper's view of the new link.
+            await self._readvertise(False)
             await self._call(self.peer, "org.bluez.Device1", "Disconnect")
             disconnected = time.monotonic_ns()
-            # The peer may already be reconnecting into the helper, so read no
-            # link state here; advertise at the unconnected rate meanwhile.
-            await self._readvertise(False)
             while len(drops) < count:
                 value = await record(LINK_DROP_TIMEOUT + 5)
                 if set(value) == {"error", "drops"}:

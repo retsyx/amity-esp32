@@ -26,7 +26,8 @@ from .trace import event
 
 # A DUT reports a new BLE link only after exchanging features and then its
 # version with the peer, at least one 30 ms connection interval each. A drop
-# sent within this bound of the connection lands before that report.
+# sent within this bound of the connection provably lands before that report;
+# later drops may too, but prove nothing.
 MAX_LINK_DROP_REACTION_NS = 20_000_000
 
 
@@ -530,14 +531,11 @@ class PairedKeyboard:
             raise KeyboardConflict("The keyboard link drops have no valid helper record")
         self._note("early_link_loss", started_monotonic_ns=action.started_ns, count=count,
                    completed=receipt["completed"], drops=drops)
-        for drop in drops:
-            # Late drops would test an ordinary disconnect instead.
-            if drop["encrypted"] or drop["reaction_ns"] > MAX_LINK_DROP_REACTION_NS:
-                raise RuntimeError("The Pi dropped link " + str(drop["number"])
-                                   + " after the main could have reported it")
+        # Recovery is required whenever a drop landed; timing only decides
+        # whether a pass proves anything.
         if not receipt["completed"]:
             raise AssertionError("The main stopped reconnecting after " + str(len(drops)) + " of "
-                                 + str(count) + " links dropped before it reported them")
+                                 + str(count) + " early link drops")
         deadline = time.monotonic() + self.timeout
         try:
             while True:
@@ -550,6 +548,13 @@ class PairedKeyboard:
         except TimeoutError as error:
             raise AssertionError("The main did not reconnect after its links were dropped early") from error
         self._note("reconnected", main_boot=self.boot, remote_generation=self._pair_generation)
+        for drop in drops:
+            if drop["encrypted"]:
+                raise RuntimeError("The Pi dropped link " + str(drop["number"])
+                                   + " after the main started encryption")
+        if not any(drop["reaction_ns"] <= MAX_LINK_DROP_REACTION_NS for drop in drops):
+            raise RuntimeError("No link was dropped within 20 ms of its connection, "
+                               "so none provably ended before the main reported it")
         return action
 
     def _release_before_unpair(self):
