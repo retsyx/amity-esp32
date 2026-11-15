@@ -95,6 +95,9 @@ esp_err_t status(httpd_req_t *req) {
     if(wifi_connected) {
         cJSON_AddNumberToObject(root.get(),"wifi_rssi",access_point.rssi);
         cJSON_AddNumberToObject(root.get(),"wifi_channel",access_point.primary);
+        const auto *ssid=reinterpret_cast<const char*>(access_point.ssid);
+        const std::string network(ssid,strnlen(ssid,sizeof(access_point.ssid)));
+        if(!network.empty())cJSON_AddStringToObject(root.get(),"wifi_ssid",network.c_str());
     }
     cJSON_AddBoolToObject(root.get(),"ready",s.ready);
     cJSON_AddBoolToObject(root.get(),"discovering",s.discovering);
