@@ -31,7 +31,7 @@ constexpr int ESP_OK=0,ESP_FAIL=-1,ESP_ERR_NO_MEM=1,ESP_ERR_TIMEOUT=2,ESP_ERR_IN
 constexpr unsigned MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2,portMAX_DELAY=~0u;
 constexpr int pdTRUE=1,pdPASS=1;
 #define ESP_LOGW(...) do {} while(0)
-struct httpd_req_t {std::string body;unsigned chunks=0,ended=0,fail_at=0;bool busy=false;httpd_req_t* original=nullptr;};
+struct httpd_req_t {std::string body,disposition;const char* pending_disposition=nullptr;unsigned chunks=0,ended=0,fail_at=0;bool busy=false;httpd_req_t* original=nullptr;};
 struct FakeQueue {std::mutex mutex;std::condition_variable changed;std::vector<char> bytes;bool occupied=false;};
 using QueueHandle_t=FakeQueue*;using TaskHandle_t=void*;
 QueueHandle_t xQueueCreate(unsigned,size_t);
@@ -44,7 +44,8 @@ int httpd_req_async_handler_begin(httpd_req_t*,httpd_req_t**);
 int httpd_req_async_handler_complete(httpd_req_t*);
 int httpd_req_to_sockfd(httpd_req_t*){return 42;}
 int httpd_resp_set_type(httpd_req_t*,const char*){return ESP_OK;}
-int httpd_resp_set_hdr(httpd_req_t*,const char*,const char*){return ESP_OK;}
+// Like HTTPD, retain only the pointer; headers are read on the first chunk.
+int httpd_resp_set_hdr(httpd_req_t* req,const char* field,const char* value){if(!std::strcmp(field,"Content-Disposition"))req->pending_disposition=value;return ESP_OK;}
 int httpd_resp_send_chunk(httpd_req_t*,const char*,size_t);
 namespace amity::system {
 struct OctopusId {unsigned value=0;std::string str()const{return "device-"+std::to_string(value);}explicit operator bool()const{return value!=0;}};
@@ -119,7 +120,9 @@ int httpd_req_async_handler_complete(httpd_req_t* req){
 extern "C" int shutdown(int fd,int how){assert(fd==42&&how==SHUT_RDWR);++shutdowns;return 0;}
 void drain(){std::unique_lock<std::mutex> lock(system_services::download_mutex);system_services::download_finished.wait(lock,[]{return !system_services::active_request;});}
 int httpd_resp_send_chunk(httpd_req_t* req,const char* bytes,size_t size){
- assert(req->original);req=req->original;
+ assert(req->original);
+ if(req->pending_disposition){req->original->disposition=req->pending_disposition;req->pending_disposition=nullptr;}
+ req=req->original;
  if(!size){++req->ended;return ESP_OK;}
  ++req->chunks;
  if(nested){nested=false;httpd_req_t other;assert(system_services::download_logs(&other,{1})==ESP_FAIL&&other.busy&&other.body.empty());}
@@ -155,6 +158,7 @@ int main(){
  assert(psram_live==0);allocation_fails=true;assert(!system_services::log_snapshot());allocation_fails=false;
  reset();const std::string local(3000,'L');system_services::fill(local);nested=mutate=true;
  httpd_req_t all;assert(system_services::download_logs(&all,{1})==ESP_OK);drain();assert(all.ended==1);
+ assert(all.disposition=="attachment; filename=living-room.log");
  assert(all.body.find(local)!=std::string::npos&&all.body.find("changed ring")==std::string::npos);
  assert(all.body.find(std::string(24576,'A'))!=std::string::npos);
  assert(all.body.find("bedroom")!=std::string::npos&&all.body.find("device-2")!=std::string::npos&&all.body.find("device-12")!=std::string::npos);
@@ -168,6 +172,7 @@ int main(){
  assert(system_services::download_logs(&member_failure,{1})==ESP_OK);drain();assert(member_failure.ended==0&&pulls==1);
  reset();main_device=false;httpd_req_t empty;
  assert(system_services::download_logs(&empty,{1})==ESP_OK);drain();assert(empty.ended==1&&pulls==0&&peer_lists==0&&empty.body.find("No logs captured")!=std::string::npos);
+ assert(empty.disposition=="attachment; filename=living-room.log");
  reset();allocation_fails=true;httpd_req_t no_memory;
  assert(system_services::download_logs(&no_memory,{1})==ESP_OK);drain();assert(no_memory.ended==1&&no_memory.body.find("Local logs unavailable")!=std::string::npos&&pulls==3);
  assert(allocations==frees&&psram_live==0);
@@ -185,7 +190,7 @@ int main(){
  stop.join();worker.join();assert(stopped&&task_deletes==1&&pulls==1&&slow.ended==0);
  assert(async_begins==async_completes&&queues==queue_deletes&&psram_live==0);
  system_services::stop_log_downloads();
- std::cout<<"PASS async log downloads: HTTP handler returns during blocked member collection; one PSRAM worker; exact async ownership, failure/retry, stop/drain; bounded stable snapshots and existing streaming behavior\n";
+ std::cout<<"PASS async log downloads: HTTP handler returns during blocked member collection; one PSRAM worker; exact async ownership, failure/retry, stop/drain; bounded stable snapshots, hostname filename and existing streaming behavior\n";
 }
 '''
 

@@ -547,7 +547,7 @@ $('toggleRemote').addEventListener('click',run(async()=>{
   renderRemotes(await request('remotes'));
  }finally{remotePending=false;renderRemotes(remoteState);}
 }));
-async function download(path,name){const r=await request(path,undefined,true),url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+async function download(path,name){const r=await request(path,undefined,true),url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=/filename=([^;]+)/.exec(r.headers.get('Content-Disposition')||'')?.[1]||name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('backup').addEventListener('click',run(()=>download('backup','amity-config.json')));$('logs').addEventListener('click',run(()=>download('logs','amity.log')));
 $('restore').addEventListener('change',run(async e=>{
  const file=e.target.files[0];if(!file)return;

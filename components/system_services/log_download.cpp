@@ -41,8 +41,11 @@ const char* unavailable(esp_err_t error,bool partial){
 }
 esp_err_t stream_logs(httpd_req_t* req,amity::system::OctopusId local){
     if(stopping.load())return ESP_FAIL;
+    // HTTPD keeps the header pointer until the first chunk sends the headers.
+    const std::string hostname=device_settings::hostname();
+    const std::string disposition="attachment; filename="+hostname+".log";
     httpd_resp_set_type(req,"text/plain; charset=utf-8");
-    httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=amity.log");
+    httpd_resp_set_hdr(req,"Content-Disposition",disposition.c_str());
     httpd_resp_set_hdr(req,"Cache-Control","no-store");
     bool connected=true;
     const auto stream=[&](std::string_view bytes){
@@ -51,7 +54,7 @@ esp_err_t stream_logs(httpd_req_t* req,amity::system::OctopusId local){
         return connected;
     };
     const bool main=c::runtime_status().coordinator;
-    if(!stream(section(main?"Main Amity":"Amity",device_settings::hostname(),local,boot_id())))return ESP_FAIL;
+    if(!stream(section(main?"Main Amity":"Amity",hostname,local,boot_id())))return ESP_FAIL;
     {
         // Free the local snapshot before fetching any secondary. The main
         // retains only the current transport chunk while members are read.
