@@ -45,6 +45,7 @@ typedef struct {
     bool bonded;
     int charging;        // -1 unknown, 0 not charging, 1 charging.
     int battery_percent; // -1 means unknown.
+    int rssi;            // Connected link RSSI in dBm; 127 means unknown.
     int last_error;      // ESP-IDF or NimBLE error, zero after a successful connection.
     ble_remote_peer_t peer;
 } ble_remote_status_t;

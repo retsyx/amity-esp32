@@ -394,11 +394,12 @@ function renderHostname(name){
  if(!name)return;setText($('deviceName'),name);document.title=name;
 }
 function renderDiagnostics(){
- const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'Connected':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
- const detail=r.connected?`${r.name?' · '+r.name:''}${r.battery>=0?' · '+r.battery+'% battery':''}${r.charging===true?' · Charging':''}`:r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'';
- const signal=(rssi,channel)=>'signal '+rssi+' dBm · channel '+channel;
+ const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
+ const strength=rssi=>'RSSI '+rssi+' dBm';
+ const remote=r.connected?[connection,r.rssi!=null&&strength(r.rssi),r.name,r.battery>=0&&r.battery+'% battery',r.charging===true&&'Charging'].filter(Boolean).join(' · '):connection+(r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'');
+ const signal=(rssi,channel)=>strength(rssi)+' · channel '+channel;
  const peers=peerSignals.map(peer=>[peer.name+' Wi-Fi ',peer.rssi===undefined?'unavailable':signal(peer.rssi,peer.channel)]);
- const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?signal(state.wifi_rssi,state.wifi_channel):'disconnected'],...peers,['Remote: ',connection+detail]],diagnostics=$('diagnostics');
+ const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?signal(state.wifi_rssi,state.wifi_channel):'disconnected'],...peers,['Remote: ',remote]],diagnostics=$('diagnostics');
  const labels=rows.map(([label])=>label).join('\n');
  if(diagnostics.dataset.labels!==labels){diagnostics.replaceChildren();for(const [label] of rows){const term=document.createElement('dt'),value=document.createElement('dd');term.textContent=label;diagnostics.append(term,value);}diagnostics.dataset.labels=labels;}
  rows.forEach(([,value],index)=>{const entry=diagnostics.children[index*2+1];if(entry.textContent!==value)entry.textContent=value;});

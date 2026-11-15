@@ -128,6 +128,7 @@ esp_err_t remotes(httpd_req_t *req) {
     cJSON_AddBoolToObject(root.get(),"unpairing",s.unpairing);
     cJSON_AddBoolToObject(root.get(),"too_far",s.too_far);
     cJSON_AddNumberToObject(root.get(),"battery",s.battery_percent);if(s.charging<0)cJSON_AddNullToObject(root.get(),"charging");else cJSON_AddBoolToObject(root.get(),"charging",s.charging==1);cJSON_AddNumberToObject(root.get(),"last_error",s.last_error);cJSON_AddStringToObject(root.get(),"name",s.peer.name);
+    if(s.rssi==127)cJSON_AddNullToObject(root.get(),"rssi");else cJSON_AddNumberToObject(root.get(),"rssi",s.rssi);
     auto *list=cJSON_AddArrayToObject(root.get(),"devices");ble_remote_peer_t peers[16]{};
     auto n=ble_remote_scan_results(peers,16);
     for(size_t i=0;i<n;++i) {

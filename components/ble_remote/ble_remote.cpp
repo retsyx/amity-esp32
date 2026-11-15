@@ -110,7 +110,7 @@ ble_addr_t unpair_target{};
 bool bond_cleanup_failed;
 // Filled by full discovery and saved once the remote is ready.
 ble::GattLayout discovered_layout;
-// Link timing and signal strength for the link up/down log lines.
+// Link timing and signal strength for the link up/down log lines and status.
 int64_t connect_started_us, link_up_us, next_rssi_sample, rssi_sampled_us;
 int8_t last_rssi;
 bool have_rssi;
@@ -1268,7 +1268,7 @@ void worker(void *) {
         bool setup_done=false;
         {Guard lock;setup_done=!state.scanning&&!state.connecting&&!state.pairing&&!pending_scan_seconds;}
         if(setup_done&&radio_owned.exchange(false)&&radio_done)radio_done(radio_context);
-        // Keep a recent signal strength for the link-down log.
+        // Keep a recent signal strength for the link-down log and status.
         bool rssi_due = false;
         {
             Guard lock;
@@ -1437,7 +1437,7 @@ extern "C" esp_err_t ble_remote_unpair(void) {
 
 extern "C" void ble_remote_get_status(ble_remote_status_t *out) {
     if (!out) return;
-    if (!mutex) { *out = {}; out->battery_percent = 100; return; }
+    if (!mutex) { *out = {}; out->battery_percent = 100; out->rssi = 127; return; }
     Guard lock;
     *out = state;
     // Derive the hint from current scan RSSI so moving a remote closer clears
@@ -1455,6 +1455,7 @@ extern "C" void ble_remote_get_status(ble_remote_status_t *out) {
     const auto battery = ble::reported_battery(out->bonded, out->connected, {out->battery_percent, out->charging});
     out->battery_percent = battery.percent;
     out->charging = battery.charging;
+    out->rssi = state.connected && have_rssi ? last_rssi : 127;
 }
 
 extern "C" void ble_remote_set_radio_hooks(ble_remote_radio_admit_t admit,ble_remote_radio_done_t done,void *context) {
