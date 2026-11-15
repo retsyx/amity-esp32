@@ -48,7 +48,7 @@ int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];ami
  }else if(mode=="stop-before-start"){
   assert(stop()==ESP_OK&&starts==0);assert(start(control,"test","private")==ESP_ERR_INVALID_STATE&&starts==0);
  }else{
-  assert(start(control,"test","private")==ESP_OK&&starts==1&&routes==6&&server&&ui_enabled);
+  assert(start(control,"test","private")==ESP_OK&&starts==1&&routes==7&&server&&ui_enabled);
   assert(api(&request)==ESP_OK&&asset(&request)==ESP_OK&&effects==2);
   if(mode=="stop-error")stop_error=77;
   assert(stop()==stop_error&&!ui_enabled&&ui_revoked);
