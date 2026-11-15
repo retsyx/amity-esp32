@@ -197,7 +197,7 @@ BaseType_t xQueueSend(QueueHandle_t queue, const void *item, TickType_t ticks) {
     return pdTRUE;
 }
 BaseType_t xQueueReceive(QueueHandle_t queue, void *item, TickType_t ticks) {
-    assert(queue && (ticks == 500 || ticks == 0));
+    assert(queue && ticks <= 500); // One tick is one millisecond here.
     if(ticks){if (!fake::steps) throw fake::Stopped{};--fake::steps;}
     else if(queue->items.empty())return pdFALSE;
     if (queue->items.empty()) { fake::now += int64_t(ticks) * 1000; return pdFALSE; }
@@ -551,7 +551,9 @@ int main(int argc, char **argv) {
         fake::run_steps(60);
         assert(fake::connects.size() == 1 && fake::warnings.empty());
         fake::disconnect();
+        const auto lost_time = fake::now;
         fake::run_steps(1);
+        assert(fake::now == lost_time); // Link loss wakes the worker promptly.
         assert(fake::connects.size() == 2 && fake::status().waiting && !fake::status().last_error);
     } else if (scenario == "unpair-delete-error") {
         fake::run_steps(1);fake::bond_delete_error=77;
@@ -671,7 +673,7 @@ int main(int argc, char **argv) {
         fake::connect_error = BLE_HS_EBUSY;
         fake::run_steps(2); // The worker consumes the start error on its next turn and retries at once.
         assert(fake::connects.size() == 2);
-        fake::run_steps(1); // The second failure waits half a second.
+        fake::run_steps(1); // The second failure waits a tenth of a second.
         assert(fake::connects.size() == 2 && fake::status().last_error == BLE_HS_EBUSY);
         assert(!fake::status().waiting && !fake::status().connecting);
         fake::connect_error = 0;
@@ -690,10 +692,10 @@ int main(int argc, char **argv) {
         assert(fake::connects.size() == 3 && fake::status().waiting);
     } else if (scenario == "reconnect-backoff") {
         fake::connect_error = BLE_HS_EBUSY;
-        fake::run_steps(80); // Forty seconds of refused attempts.
-        // Each failure is seen on the worker's next half-second turn. Its retry
-        // then waits 0, 0.5, 1, 2 and 4 s, and never more than 5 s.
-        const std::vector<int64_t> expected{500000, 1000000, 1500000, 2500000, 4500000, 5500000, 5500000};
+        fake::run_steps(80); // Eighty worker turns of refused attempts.
+        // A start error is seen on the worker's next half-second turn. Its
+        // retry then waits 0, 0.1, 0.2, 0.4, 0.8, 1.6 and 3.2 s, then 5 s.
+        const std::vector<int64_t> expected{500000, 600000, 700000, 900000, 1300000, 2100000, 3700000, 5500000};
         assert(fake::connects.size() > expected.size());
         for (size_t i = 1; i < fake::connects.size(); ++i) {
             const auto gap = fake::connects[i].at - fake::connects[i - 1].at;

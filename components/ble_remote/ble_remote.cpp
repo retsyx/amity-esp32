@@ -365,11 +365,18 @@ void log_link_up() {
 }
 
 // Caller holds the remote mutex. The first retry after a failure starts at
-// once; later ones wait 0.5, 1, 2 and 4 s, then 5 s. The worker checks every
-// 500 ms, so shorter waits would not take effect.
+// once; later ones wait 0.1 s, doubling to at most 5 s.
 int64_t reconnect_backoff_us() {
     if (reconnect_failures <= 1) return 0;
-    return std::min<int64_t>(500000LL << std::min(reconnect_failures - 2, 4u), 5000000);
+    return std::min<int64_t>(100000LL << std::min(reconnect_failures - 2, 6u), 5000000);
+}
+
+// Caller holds the remote mutex. Everything but the backoff time that allows
+// listening for the saved remote again.
+bool reconnect_allowed() {
+    return controller_enabled.load() && state.ready && have_saved && connection_handle == BLE_HS_CONN_HANDLE_NONE &&
+           !reconnect_pending && !ble_gap_conn_active() && !state.connecting && !state.scanning &&
+           !state.pairing && !forgetting;
 }
 
 // Caller holds the remote mutex.
@@ -497,6 +504,11 @@ int on_gap_event(ble_gap_event *event, void *token) {
         state.charging = -1;
         if (!unpair_cleanup_pending && !ble_gap_conn_active()) state.unpairing = false;
         next_reconnect = esp_timer_get_time() + (state.last_error ? reconnect_backoff_us() : 0);
+        if (have_saved) {
+            // Listen for the remote again without waiting for the worker's next turn.
+            const Command wake{CommandType::Wake, 0, {}};
+            xQueueSend(commands, &wake, 0);
+        }
         break;
     case BLE_GAP_EVENT_NOTIFY_RX: {
         if (!controller_enabled.load() || event->notify_rx.conn_handle != connection_handle || !encrypted || forgetting) break;
@@ -1147,7 +1159,15 @@ void forget_peer() {
 void worker(void *) {
     for (;;) {
         Command command{};
-        if (xQueueReceive(commands, &command, pdMS_TO_TICKS(500)) == pdTRUE) {
+        // Wake when a backed-off reconnect is due, and at least every 500 ms.
+        TickType_t wait = pdMS_TO_TICKS(500);
+        {
+            Guard lock;
+            const int64_t until = next_reconnect - esp_timer_get_time();
+            if (reconnect_allowed() && until < 500000)
+                wait = std::max<TickType_t>(1, pdMS_TO_TICKS((std::max<int64_t>(until, 0) + 999) / 1000));
+        }
+        if (xQueueReceive(commands, &command, wait) == pdTRUE) {
             switch (command.type) {
             case CommandType::Scan: start_scan(command.seconds); break;
             case CommandType::Pair: open_peer(command.address); break;
@@ -1242,11 +1262,7 @@ void worker(void *) {
         bool reconnect_now = false;
         {
             Guard lock;
-            if (controller_enabled.load() && state.ready && have_saved && connection_handle == BLE_HS_CONN_HANDLE_NONE &&
-                !reconnect_pending && !ble_gap_conn_active() && !state.connecting && !state.scanning &&
-                !state.pairing && !forgetting && esp_timer_get_time() >= next_reconnect) {
-                reconnect_now = true;
-            }
+            reconnect_now = reconnect_allowed() && esp_timer_get_time() >= next_reconnect;
         }
         if (reconnect_now) start_reconnect();
         bool setup_done=false;
