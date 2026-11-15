@@ -396,8 +396,8 @@ function renderHostname(name){
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
  const strength=rssi=>'RSSI '+rssi+' dBm';
- const remote=r.connected?[connection,r.rssi!=null&&strength(r.rssi),r.name,r.battery>=0&&r.battery+'% battery',r.charging===true&&'Charging'].filter(Boolean).join(' · '):connection+(r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'');
- const signal=(rssi,channel,network)=>[strength(rssi),network,'channel '+channel].filter(Boolean).join(' · ');
+ const remote=r.connected?[connection,r.name,r.rssi!=null&&strength(r.rssi),r.battery>=0&&r.battery+'% battery',r.charging===true&&'Charging'].filter(Boolean).join(' · '):connection+(r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'');
+ const signal=(rssi,channel,network)=>[network,strength(rssi),'channel '+channel].filter(Boolean).join(' · ');
  const peers=peerSignals.map(peer=>[peer.name+' Wi-Fi ',peer.rssi===undefined?'unavailable':signal(peer.rssi,peer.channel)]);
  const rows=[['Firmware ',String(state.version)],['Wi-Fi ',state.wifi_connected?signal(state.wifi_rssi,state.wifi_channel,state.wifi_ssid):'disconnected'],...peers,['Remote ',remote]],diagnostics=$('diagnostics');
  const labels=rows.map(([label])=>label).join('\n');

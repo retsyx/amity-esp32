@@ -259,11 +259,11 @@ function fixture({adapter=false}={}){
  const rows=()=>signals.get('diagnostics').children.map(child=>child.textContent);
  assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote ']);
  signals.get('advanced').hidden=false;await signals.tick();
- assert.deepEqual(rows().slice(0,8),['Firmware ','1.0','Wi-Fi ','RSSI -50 dBm · Home · channel 6','den Wi-Fi ','RSSI -72 dBm · channel 1','kitchen Wi-Fi ','unavailable']);
+ assert.deepEqual(rows().slice(0,8),['Firmware ','1.0','Wi-Fi ','Home · RSSI -50 dBm · channel 6','den Wi-Fi ','RSSI -72 dBm · channel 1','kitchen Wi-Fi ','unavailable']);
  signals.values.system.membership.peers[0].wifi_rssi=-58;await signals.tick();assert.equal(rows()[5],'RSSI -58 dBm · channel 1');
  assert.equal(rows()[9],'Disconnected');
  signals.values.remotes={devices:[],connected:true,bonded:true,rssi:-61,name:'Siri Remote, Gen 3',battery:80,charging:null};await signals.tick();
- assert.equal(rows()[9],'RSSI -61 dBm · Siri Remote, Gen 3 · 80% battery','A connected remote shows its signal, name and battery');
+ assert.equal(rows()[9],'Siri Remote, Gen 3 · RSSI -61 dBm · 80% battery','A connected remote shows its signal, name and battery');
  signals.values.remotes.rssi=null;await signals.tick();assert.equal(rows()[9],'Siri Remote, Gen 3 · 80% battery');
  signals.fail('system');await signals.tick();assert.deepEqual(rows().filter((_,index)=>index%2===0),['Firmware ','Wi-Fi ','Remote ']);
  assert.deepEqual(signals.message(),{text:'',error:false},'A diagnostics read failure is not a polling failure');
