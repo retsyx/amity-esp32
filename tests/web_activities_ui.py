@@ -21,7 +21,7 @@ def main():
         'remote_unpair_gate': None, 'remote_unpair_async': False,
         'config': {'activities': [{'name': 'TV', 'display': 'TV', 'source': 'Player'},
                                                {'name': 'Music', 'display': '', 'source': 'Player', 'audio': 'Receiver'}]},
-        'config_calls': 0, 'remotes': {'devices': [], 'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'expired': False, 'logins': 0,
+        'config_calls': 0, 'remotes': {'devices': [], 'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'defer_standby': False, 'fail_standby': False, 'expired': False, 'logins': 0,
         'status': {'version': 'test', 'hardware': 'Amity Board / Fin', 'free_heap': 200000,
                    'wifi_connected': True, 'wifi_rssi': -45, 'wifi_channel': 6,
                    'ready': True, 'discovering': False, 'discovery_generation': 1,
@@ -174,8 +174,11 @@ def main():
                 assert 'index' not in body
                 index = next((i for i, row in enumerate(fixture['config']['activities']) if row['activity_id'] == body['activity_id']), -1)
                 assert body['activity_id'] is None or index >= 0
+                if index < 0 and fixture['fail_standby']:
+                    return self.reply({'error': 'Could not stop the activity'}, 500)
                 fixture['activity_calls'].append(index)
-                fixture['status']['current_activity'] = index
+                if index >= 0 or not fixture['defer_standby']:
+                    fixture['status']['current_activity'] = index
                 fixture['state_revision'] += 1
                 return self.reply(dict(operation_id=body['request_id'], stage='complete'))
             if self.path == '/api/activity-editor':
@@ -304,6 +307,23 @@ def main():
                 expect(starts.nth(1)).to_have_text('Start')
                 page.wait_for_function('() => !activityActionPending');assert fixture['activity_calls'] == [0, 0, -1]
                 passed('external activity changes update Repair and Standby returns to inactive controls')
+                standby_button=page.locator('#standby')
+                starts.first.click();page.wait_for_function('() => !activityActionPending');expect(standby_button).to_be_enabled()
+                fixture['defer_standby']=True;standby_button.click();expect(standby_button).to_be_disabled()
+                page.wait_for_function('() => !polling');page.evaluate('() => refresh()');page.wait_for_function('() => !polling')
+                expect(standby_button).to_be_visible();expect(standby_button).to_be_disabled()
+                fixture['status']['current_activity']=-1;page.evaluate('() => refresh()');expect(standby_button).to_be_hidden()
+                starts.first.click();page.wait_for_function('() => !activityActionPending');expect(standby_button).to_be_enabled()
+                passed('Standby stays disabled from its press until it disappears')
+                standby_button.click();expect(standby_button).to_be_disabled()
+                fixture['status']['current_activity']=1;page.evaluate('() => refresh()');expect(standby_button).to_be_enabled()
+                standby_button.click();expect(standby_button).to_be_disabled()
+                starts.nth(1).click();page.wait_for_function('() => !activityActionPending');expect(starts.nth(1)).to_have_text('Repair');expect(standby_button).to_be_enabled()
+                fixture['defer_standby']=False;fixture['fail_standby']=True;standby_button.click()
+                expect(page.locator('#message')).to_have_text('Could not stop the activity');expect(standby_button).to_be_enabled()
+                fixture['fail_standby']=False;page.locator('#dismissMessage').click();standby_button.click();expect(standby_button).to_be_hidden()
+                page.wait_for_function('() => !polling && !activityActionPending')
+                passed('another current activity, a later start or a failed request re-enables Standby')
                 def edit(index=0):
                     page.locator('#activityList article').nth(index).get_by_role('button',name='Edit',exact=True).click()
                     expect(page.locator('#activityEditor')).to_be_visible()

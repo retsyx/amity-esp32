@@ -18,7 +18,7 @@ const $=id=>document.getElementById(id);
 // Rebuilt nodes carry the identity their handlers act on, so equal nodes act alike.
 function setText(element,text){if(element.textContent!==text)element.textContent=text;}
 function replaceChanged(container,...nodes){if(nodes.length!==container.childNodes.length||nodes.some((node,index)=>!node.isEqualNode(container.childNodes[index])))container.replaceChildren(...nodes);}
-let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false;
+let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={devices:[]},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false,standbyFrom=null;
 let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
@@ -47,7 +47,7 @@ function activitySnapshot(activities){return JSON.stringify(activities.map(a=>[a
 function updateActivityButtons(){
  const locked=activityLocked();
  document.querySelectorAll('#activities button').forEach(b=>{
-  b.disabled=locked||(b.hasAttribute('data-add-recommendation')&&config.activities.length>=16)||(b.id==='addActivity'&&config.activities.length>=16);
+  b.disabled=locked||(b.hasAttribute('data-add-recommendation')&&config.activities.length>=16)||(b.id==='addActivity'&&config.activities.length>=16)||(b.id==='standby'&&standbyFrom!==null);
  });
  $('saveActivities').disabled=locked||!currentActivityUnchanged(config.activities);
  setText($('saveActivities'),saving?'Saving...':'Save activities');
@@ -279,7 +279,7 @@ async function persistActivities(editor=null){
 }
 async function startActivity(activity,draft=activity){
  if(activityLocked()||!matchesSaved(draft,activity))return;
- const index=savedEntry(activity).index;activityActionPending=true;updateActivityButtons();
+ const index=savedEntry(activity).index;activityActionPending=true;standbyFrom=null;updateActivityButtons();
  try{await currentSavedConfiguration();await request('activity',{index});message('');await refresh();}finally{activityActionPending=false;updateActivityButtons();}
 }
 function modalAction(action){return async event=>{
@@ -490,7 +490,7 @@ async function refreshHomekit(){
 }
 async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
  const latest=await request('status');if(firmwareUpdating||hostnameReconnect)return;
- state=latest;if(state.activity_error!==reportedActivityError){reportedActivityError=state.activity_error;if(state.activity_error)message(state.activity_error,true);}renderHostname(state.hostname);updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
+ state=latest;if(state.activity_error!==reportedActivityError){reportedActivityError=state.activity_error;if(state.activity_error)message(state.activity_error,true);}renderHostname(state.hostname);if(state.current_activity!==standbyFrom)standbyFrom=null;updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
  await refreshPeerSignals();if(firmwareUpdating||hostnameReconnect)return;
  renderDiagnostics();
  renderDeviceNames();
@@ -519,7 +519,7 @@ async function poll(){
   pollFailure=transportFailure;message('Connection interrupted. Reconnecting…',true);networkMessageRevision=messageRevision;
  }
 }
-async function enter(){state={};const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
+async function enter(){state={};standbyFrom=null;const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
  if(firmwareUpdating||hostnameReconnect)return;
  const setup=await request('setup');if(hostnameReconnect)return;renderHostname(setup.hostname);showLogin();
@@ -549,7 +549,14 @@ $('logout').addEventListener('click',run(async()=>{await request('logout',{});sh
 $('addActivity').addEventListener('click',()=>openActivityEditor());
 $('saveActivities').addEventListener('click',run(async()=>{if(!activityLocked())await persistActivities();}));
 $('discardActivities').addEventListener('click',()=>{if(activityLocked())return;config.activities=structuredClone(savedActivities);rememberSaved();renderActivities();message('');});
-$('standby').addEventListener('click',run(async()=>{await request('activity',{index:-1});message('');await refresh();}));
+// Admitted standby can take effect after the request returns. Standby stays
+// disabled until status reports a different current activity, or none, or
+// until the request fails or a start from this page supersedes it.
+$('standby').addEventListener('click',run(async()=>{
+ standbyFrom=state.current_activity;updateActivityButtons();
+ try{await request('activity',{index:-1});}catch(e){standbyFrom=null;updateActivityButtons();throw e;}
+ message('');await refresh();
+}));
 $('discover').addEventListener('click',run(async()=>{
  if(scanPending||state.discovering)return;scanPending=true;updateActivityButtons();
  try{const before=await request('status');await request('discover',{});scanAfter=before.discovery_generation;$('deviceList').replaceChildren();recommendations=[];renderRecommendations();$('deviceHeading').hidden=true;$('discoveryStatus').textContent='Scanning HDMI…';$('devices').hidden=false;await refresh();}
