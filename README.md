@@ -274,41 +274,6 @@ To reset using the board's **FW RESET** button, power on Amity with the button r
 
 If you cannot access the administration page, you can also reinstall the saved USB image. This replaces settings and pairings with the original installation state.
 
-## Troubleshooting
-
-* **The computer does not see Amity:** use a USB data cable, and check that you selected the board's serial port.
-* **The setup tool does not start:** check that you downloaded the archive for your OS and processor. On macOS/Linux, 'Permission denied' may require `chmod +x amity-provision`. These development executables are unsigned, so your OS may require approval to run them.
-* **Initial Matter pairing fails:** check the antenna connection and the phone's Bluetooth setting. A fresh board or original main with no current Matter pairings automatically opens its bounded setup window at boot; restart it if that window expired, and check that the controller accepts development Matter devices. An existing main can also reopen pairing through **Matter → Start pairing**. Added Amity devices stay headless and do not open Matter setup on reboot.
-* **The browser cannot find Amity:** use the address on the setup card from the same network, or use the IP address shown by your router.
-* **Equipment is missing or on the wrong input:** check HDMI connections and HDMI-CEC settings, scan again, and review the activity's device selections. If the activity is already running, try 'Repair'.
-* **The paired remote does not respond:** wake it, move it closer to Amity, and check 'Advanced' → 'Diagnostics'.
-* **Equipment on an added Amity device responds slowly:** check each Amity's Wi-Fi signal in 'Advanced' → 'Diagnostics'. A signal weaker than -70 dBm can delay commands; move that Amity or the Wi-Fi access point.
-
-To download troubleshooting logs, select 'Advanced' → 'Diagnostics' → 'Download logs'. The download includes available logs from added Amity devices and identifies any devices that could not be reached.
-
-Open the **Amity devices** tab and select **Settings** beside the named Amity to change
-an HDMI adapter's default front physical address (`1.0.0.0` initially; blank
-restores it). A usable detected address takes priority. The dialog separates the
-saved default, detected address and selected front address; a selected fallback
-does not confirm the HDMI route or start an activity. Stop the selected device's
-activities before saving. Saving restarts only that Amity, and activities remain
-paused afterward. Opening the dialog does not scan or wake equipment.
-
-HDMI adapters retain socket numbers 1–4 within the device's supported capacity.
-Removing adapter 2 does not rename adapter 3 or copy its settings. Missing and
-unconfigured adapters keep their saved defaults. A detachable adapter can be
-edited only when a configured presence detector confirms it is attached; an
-adapter without a detector has unknown presence and is read only. The original
-fixed one-adapter hardware is present by construction. Detachable four-adapter
-hardware and its presence wiring still require physical qualification.
-
-## Functional tests
-
-The Raspberry Pi functional harness enrolls a factory-reset main through Matter
-BLE before running tests. Successful runs reset the main afterward; failed runs
-preserve it for debugging. See the [harness README](cec-harness/README.md#main-enrollment)
-for Pi setup, private credentials, commands and reset recovery.
-
 ## License
 
 Amity source code is licensed under the [GPLv3](https://github.com/retsyx/amity-esp32/blob/main/LICENSE). See the [third-party notices](https://github.com/retsyx/amity-esp32/blob/main/THIRD_PARTY.md) for dependency licenses.
