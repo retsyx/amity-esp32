@@ -769,11 +769,11 @@ $('firmware').addEventListener('change',run(async e=>{
   if(system?.octopus_id)deviceNames[system.octopus_id]=system.hostname||'Main Amity';
   for(const device of [...(system?.membership?.peers||[]),...(system?.named_devices||[])])if(device.hostname)deviceNames[device.octopus_id]=device.hostname;
   const record={version,imageIdentity:image.imageIdentity,deviceNames,previousBootId:health.boot_id,startedAt:Date.now(),phase:'uploading',updatePhase:'distributing'};
-  showFirmwareUpdate(record,'Uploading firmware… Keep Amity powered on.');progress.value=0;
+  showFirmwareUpdate(record,'Uploading firmware…');progress.value=0;
   const result=await new Promise((resolve,reject)=>{
    const xhr=new XMLHttpRequest();xhr.open('POST','/api/firmware');xhr.setRequestHeader('Authorization','Bearer '+token);xhr.setRequestHeader('Content-Type','application/octet-stream');
    if(comparison===null||comparison<0)xhr.setRequestHeader('X-Amity-Confirm-Version',current);
-   xhr.upload.onprogress=p=>{if(p.lengthComputable){progress.value=p.loaded/p.total*100;$('firmwareUpdateStatus').textContent=`Uploading firmware… ${Math.round(progress.value)}%. Keep Amity powered on.`;}};
+   xhr.upload.onprogress=p=>{if(p.lengthComputable){progress.value=p.loaded/p.total*100;$('firmwareUpdateStatus').textContent=`Uploading firmware… ${Math.round(progress.value)}%.`;}};
    xhr.onload=()=>{if(xhr.status===200)return resolve({});let error=xhr.responseText;try{error=JSON.parse(error).error||error;}catch{}reject(Object.assign(Error(error||'Firmware upload failed.'),{status:xhr.status}));};
    xhr.onerror=xhr.ontimeout=()=>resolve({uncertain:true});xhr.timeout=120000;xhr.send(file);
   });
