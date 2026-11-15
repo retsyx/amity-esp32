@@ -23,7 +23,7 @@ def main():
                                                {'name': 'Music', 'display': '', 'source': 'Player', 'audio': 'Receiver'}]},
         'config_calls': 0, 'remotes': {'devices': [], 'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'defer_standby': False, 'fail_standby': False, 'expired': False, 'logins': 0,
         'status': {'version': 'test', 'hardware': 'Amity Board / Fin', 'free_heap': 200000,
-                   'wifi_connected': True, 'wifi_rssi': -45, 'wifi_channel': 6,
+                   'wifi_connected': True, 'wifi_ssid': 'Home', 'wifi_rssi': -45, 'wifi_channel': 6,
                    'ready': True, 'discovering': False, 'discovery_generation': 1,
                    'current_activity': -1, 'front_address': 4, 'back_address': 0,
                    'tx_errors': 10, 'rx_dropped': 5, 'devices': [
@@ -710,13 +710,18 @@ def main():
                             expect(page.locator('#toggleRemote')).to_be_enabled()
                             expect(page.locator('#toggleRemote')).to_have_attribute('aria-busy', 'false')
                         diagnostic_status = 'Waiting for remote' if bonded and not extra else status
-                        expect(page.locator('#diagnostics')).to_contain_text('Remote: ' + diagnostic_status)
-                fixture['remotes'] = {'devices': [], 'bonded': True, 'connected': True, 'name': 'Atomic', 'battery': 85}
+                        expect(page.locator('#diagnostics')).to_contain_text('Remote ' + diagnostic_status)
+                fixture['remotes'] = {'devices': [], 'bonded': True, 'connected': True, 'name': 'Atomic', 'rssi': -58, 'battery': 85}
                 page.evaluate('() => refresh()')
                 expect(page.locator('#remoteStatus')).to_have_text('Paired')
-                expect(page.locator('#diagnostics')).to_contain_text('Remote: Connected · Atomic · 85% battery')
+                expect(page.locator('#diagnostics')).to_contain_text('Wi-Fi Home · RSSI -45 dBm · channel 6')
+                expect(page.locator('#diagnostics')).to_contain_text('Remote Atomic · RSSI -58 dBm · 85% battery')
                 passed('paired Remote status stays Paired during scanning, reconnecting and errors, without progress')
-                passed('Diagnostics shows live remote state, name and battery')
+                passed('Diagnostics shows live remote name, signal and battery')
+                edges = page.evaluate('''() => [...document.querySelectorAll('#diagnostics .diagnostic-fields')].map(row =>
+                    [...row.children].map(cell => cell.textContent.trim() ? cell.getBoundingClientRect().left : null))''')
+                assert len(edges) == 2 and all(len({round(edge, 1) for edge in column if edge is not None}) == 1 for column in zip(*edges)), edges
+                passed('Diagnostics aligns names, separators and RSSI in columns')
                 for charging in (True, False, None):
                     fixture['remotes']['charging'] = charging
                     page.wait_for_function('() => !polling && !activityActionPending');page.evaluate('() => refresh()')
@@ -802,7 +807,7 @@ def main():
                 expect(page.locator('#toggleRemote')).to_have_text('Unpair remote')
                 expect(page.locator('#toggleRemote')).to_be_enabled()
                 expect(page.locator('#remoteStatus')).to_have_text('Paired')
-                expect(page.locator('#diagnostics')).to_contain_text('Remote: Waiting for remote')
+                expect(page.locator('#diagnostics')).to_contain_text('Remote Waiting for remote')
                 passed('paired but disconnected remote still offers Unpair remote')
                 before = len(fixture['remote_calls'])
                 page.once('dialog', lambda dialog: dialog.dismiss())

@@ -159,7 +159,7 @@ def main():
             assert not any(path=='/api/hostname' for path,_ in fixture['calls'])
             passed('main rename uses device settings without restart, waits for unchanged-boot identity/readiness and opens the new origin without sending old credentials')
             enter();expect(page.locator('#frontPhysicalAddress')).to_have_count(0);expect(page.locator('#changeFrontPhysicalAddress')).to_have_count(0)
-            expect(page.locator('#diagnostics')).to_contain_text('Firmware 0.1.73');expect(page.locator('#diagnostics')).to_contain_text('Remote: Disconnected')
+            expect(page.locator('#diagnostics')).to_contain_text('Firmware 0.1.73');expect(page.locator('#diagnostics')).to_contain_text('Remote Disconnected')
             expect(page.locator('#advanced')).not_to_contain_text('Front physical address');passed('global address control moved out of Advanced; firmware and remote diagnostics retained')
             before=deepcopy(fixture['calls']);d=open_settings(0);expect(d.locator('h3')).to_have_text('living-room settings');expect(input_for(d,0)).to_be_enabled()
             expect(d.get_by_role('columnheader')).to_have_text(['Adapter','Default','Detected Address','Selected Address'])
