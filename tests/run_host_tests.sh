@@ -74,6 +74,10 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/tests/pairing_policy_test.cpp" -o "$out/pairing_policy_test"
 "$out/pairing_policy_test"
+c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+  -I"$root/components/ble_remote/include" "$root/components/ble_remote/gatt_layout.cpp" \
+  "$root/tests/gatt_layout_test.cpp" -o "$out/gatt_layout_test"
+"$out/gatt_layout_test"
 sh "$root/tests/ble_transport_test.sh"
 json="$root/managed_components/espressif__cjson/cJSON"
 test -f "$json/cJSON.c" || json="$root/managed_components/espressif__cjson"

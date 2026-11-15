@@ -13,6 +13,7 @@
 #include <cassert>
 #include <cstdarg>
 #include <deque>
+#include <initializer_list>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -37,6 +38,11 @@ bool synced = true, storage_peer = true, connecting, scanning, immediate_connect
 int connect_error, cancel_error, discovery_error, bond_delete_error, peer_erase_error;
 int privacy_remove_error;
 bool host_bond, controller_irk;
+// A remote with a Database Hash can have its GATT layout saved.
+bool database_hash, disconnect_on_hash_read;
+uint8_t hash[16] = {0xa5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+std::vector<uint8_t> layout;
+unsigned hash_reads, ccc_writes, layouts_saved;
 std::vector<ble_addr_t> privacy_removals, bond_removals;
 unsigned recursive_depth, positive_keys, key_releases;
 uint16_t live_handle = BLE_HS_CONN_HANDLE_NONE;
@@ -85,6 +91,23 @@ void disconnect(int reason = BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM)) {
     event.disconnect.conn = descriptor;
     live_handle = BLE_HS_CONN_HANDLE_NONE;
     connects.back().callback(&event, connects.back().token);
+}
+
+void notify(uint16_t attribute, std::initializer_list<uint8_t> bytes) {
+    const std::vector<uint8_t> data(bytes);
+    os_mbuf mbuf{data.data(), uint16_t(data.size())};
+    ble_gap_event event{};
+    event.type = BLE_GAP_EVENT_NOTIFY_RX;
+    event.notify_rx.conn_handle = live_handle;
+    event.notify_rx.attr_handle = attribute;
+    event.notify_rx.om = &mbuf;
+    connects.back().callback(&event, connects.back().token);
+}
+
+ble::GattLayout saved_layout() {
+    ble::GattLayout result;
+    assert(ble::decode_gatt_layout(layout.data(), layout.size(), result));
+    return result;
 }
 
 void finish_scan() {
@@ -175,17 +198,36 @@ BaseType_t xTaskCreate(TaskFunction_t function, const char *, uint32_t, void *, 
 
 esp_err_t nvs_open(const char *, nvs_open_mode_t, nvs_handle_t *handle) { *handle = 1; return ESP_OK; }
 void nvs_close(nvs_handle_t) {}
-esp_err_t nvs_get_blob(nvs_handle_t, const char *, void *data, size_t *size) {
+esp_err_t nvs_get_blob(nvs_handle_t, const char *key, void *data, size_t *size) {
+    if (!strcmp(key, "layout")) {
+        if (fake::layout.empty()) return ESP_ERR_NVS_NOT_FOUND;
+        if (data) { assert(*size == fake::layout.size()); memcpy(data, fake::layout.data(), *size); }
+        *size = fake::layout.size();
+        return ESP_OK;
+    }
+    assert(!strcmp(key, "peer"));
     if (!fake::storage_peer) return ESP_ERR_NVS_NOT_FOUND;
     assert(*size == sizeof(fake::peer));
     memcpy(data, &fake::peer, *size);
     return ESP_OK;
 }
-esp_err_t nvs_set_blob(nvs_handle_t, const char *, const void *data, size_t size) {
-    assert(size == sizeof(fake::peer) && !memcmp(data, &fake::peer, size));
+esp_err_t nvs_set_blob(nvs_handle_t, const char *key, const void *data, size_t size) {
+    if (!strcmp(key, "layout")) {
+        const auto bytes = static_cast<const uint8_t *>(data);
+        fake::layout.assign(bytes, bytes + size);
+        ++fake::layouts_saved;
+        return ESP_OK;
+    }
+    assert(!strcmp(key, "peer") && size == sizeof(fake::peer) && !memcmp(data, &fake::peer, size));
     fake::storage_peer = true; ++fake::persisted; return ESP_OK;
 }
-esp_err_t nvs_erase_key(nvs_handle_t, const char *) {
+esp_err_t nvs_erase_key(nvs_handle_t, const char *key) {
+    if (!strcmp(key, "layout")) {
+        if (fake::layout.empty()) return ESP_ERR_NVS_NOT_FOUND;
+        fake::layout.clear();
+        return ESP_OK;
+    }
+    assert(!strcmp(key, "peer"));
     if (fake::peer_erase_error) return fake::peer_erase_error;
     fake::storage_peer = false; return ESP_OK;
 }
@@ -232,6 +274,10 @@ int ble_gap_conn_cancel() {
 int ble_gap_conn_find(uint16_t handle, ble_gap_conn_desc *out) {
     if (handle == BLE_HS_CONN_HANDLE_NONE || handle != fake::live_handle) return BLE_HS_ENOTCONN;
     *out = fake::descriptor; return 0;
+}
+int ble_gap_conn_rssi(uint16_t handle, int8_t *rssi) {
+    if (handle == BLE_HS_CONN_HANDLE_NONE || handle != fake::live_handle) return BLE_HS_ENOTCONN;
+    *rssi = -61; return 0;
 }
 int ble_gap_terminate(uint16_t handle, uint8_t) {
     assert(handle != BLE_HS_CONN_HANDLE_NONE);
@@ -285,13 +331,20 @@ int ble_gattc_disc_all_svcs(uint16_t handle, ble_gatt_disc_svc_fn *callback, voi
     if (fake::disconnect_during_discovery) { fake::disconnect(); return 0; }
     if (fake::discovery_error) return fake::discovery_error;
     const ble_gatt_error success{}, done{BLE_HS_EDONE, 0};
-    const ble_gatt_svc service{1, 10, fake::uuid(0x1812)};
+    const ble_gatt_svc service{1, 10, fake::uuid(0x1812)}, gatt{11, 14, fake::uuid(0x1801)};
     callback(handle, &success, &service, token);
+    if (fake::database_hash) callback(handle, &success, &gatt, token);
     callback(handle, &done, nullptr, token); return 0;
 }
 int ble_gattc_disc_all_chrs(uint16_t handle, uint16_t start, uint16_t end, ble_gatt_chr_fn *callback, void *token) {
-    assert(start == 1 && end == 10);
     const ble_gatt_error success{}, done{BLE_HS_EDONE, 0};
+    if (start == 11) {
+        assert(fake::database_hash && end == 14);
+        const ble_gatt_chr hash{12, 13, BLE_GATT_CHR_PROP_READ, fake::uuid(0x2b2a)};
+        callback(handle, &success, &hash, token);
+        callback(handle, &done, nullptr, token); return 0;
+    }
+    assert(start == 1 && end == 10);
     const ble_gatt_chr map{2, 3, BLE_GATT_CHR_PROP_READ, fake::uuid(0x2a4b)};
     const ble_gatt_chr report{4, 5, BLE_GATT_CHR_PROP_NOTIFY, fake::uuid(0x2a4d)};
     callback(handle, &success, &map, token);
@@ -308,9 +361,18 @@ int ble_gattc_disc_all_dscs(uint16_t handle, uint16_t start, uint16_t end, ble_g
 }
 int ble_gattc_read_long(uint16_t handle, uint16_t attr_handle, uint16_t, ble_gatt_attr_fn *callback, void *token) {
     constexpr uint8_t reference[] = {0, 1};
-    assert(attr_handle == 3 || attr_handle == 7);
+    assert(attr_handle == 3 || attr_handle == 7 || (attr_handle == 13 && fake::database_hash));
     os_mbuf mbuf{attr_handle == 3 ? fake::report_map : reference,
                  uint16_t(attr_handle == 3 ? sizeof(fake::report_map) : sizeof(reference))};
+    if (attr_handle == 13) {
+        ++fake::hash_reads;
+        if (fake::disconnect_on_hash_read) {
+            fake::disconnect_on_hash_read = false;
+            fake::disconnect();
+            return BLE_HS_ENOTCONN;
+        }
+        mbuf = {fake::hash, sizeof(fake::hash)};
+    }
     ble_gatt_attr attr{attr_handle, 0, &mbuf};
     const ble_gatt_error success{}, done{BLE_HS_EDONE, 0};
     callback(handle, &success, &attr, token);
@@ -319,6 +381,7 @@ int ble_gattc_read_long(uint16_t handle, uint16_t attr_handle, uint16_t, ble_gat
 int ble_gattc_write_flat(uint16_t handle, uint16_t attr, const void *value, uint16_t length,
                         ble_gatt_attr_fn *callback, void *token) {
     assert(attr == 6 && length == 2 && static_cast<const uint8_t *>(value)[0] == 1);
+    ++fake::ccc_writes;
     const ble_gatt_error success{};
     callback(handle, &success, nullptr, token); return 0;
 }
@@ -675,6 +738,73 @@ int main(int argc, char **argv) {
         fake::disconnect();
         fake::run_steps(10);
         assert(fake::connects.size() == 1 && !fake::status().bonded && !fake::status().last_error && !fake::persisted);
+    } else if (scenario == "saved-layout") {
+        fake::database_hash = true;
+        key_callback=[](uint16_t,uint16_t,bool pressed,void*){if(pressed)++fake::positive_keys;else++fake::key_releases;};
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected && fake::discovery_calls == 1 && fake::layouts_saved == 1);
+        const auto layout = fake::saved_layout();
+        assert(layout.validators.size() == 1 && layout.validators[0].handle == 13);
+        assert(layout.validators[0].value == std::vector<uint8_t>(fake::hash, fake::hash + sizeof(fake::hash)));
+        assert(layout.maps.size() == 1 && layout.reports.size() == 1 && layout.reports[0].ccc == 6);
+        const auto hash_reads = fake::hash_reads, ccc_writes = fake::ccc_writes;
+        // A dropped link is a warning with its reason and the last signal strength.
+        fake::disconnect(BLE_HS_HCI_ERR(BLE_ERR_CONN_SPVN_TMO));
+        assert(fake::warnings.size() == 1 && fake::warnings[0].find("supervision timeout") != std::string::npos);
+        assert(fake::warnings[0].find("-61 dBm") != std::string::npos);
+        fake::run_steps(1);
+        assert(fake::connects.size() == 2 && fake::status().waiting);
+        fake::complete_connect();
+        fake::run_steps(1);
+        // The reconnect reads only the hash, then repeats the subscription.
+        assert(fake::status().connected && fake::security_calls == 2 && fake::discovery_calls == 1);
+        assert(fake::hash_reads == hash_reads + 1 && fake::ccc_writes == ccc_writes + 1 && fake::layouts_saved == 1);
+        fake::notify(5, {0x01});
+        fake::notify(5, {0x00});
+        assert(fake::positive_keys == 1 && fake::key_releases == 1 && fake::warnings.size() == 1);
+        // Unpair forgets the layout together with the remote.
+        assert(ble_remote_unpair() == ESP_OK);
+        fake::run_steps(1);
+        assert(fake::layout.empty() && !fake::storage_peer);
+    } else if (scenario == "changed-layout") {
+        fake::database_hash = true;
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::discovery_calls == 1 && fake::layouts_saved == 1);
+        fake::disconnect();
+        fake::run_steps(1);
+        fake::hash[0] ^= 0xff; // The remote's database changed while it was away.
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected && fake::discovery_calls == 2 && fake::layouts_saved == 2);
+        assert(fake::saved_layout().validators[0].value[0] == fake::hash[0]);
+    } else if (scenario == "lost-layout-validation") {
+        fake::database_hash = true;
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        const auto layout = fake::layout;
+        fake::disconnect();
+        fake::run_steps(1);
+        fake::disconnect_on_hash_read = true;
+        fake::complete_connect();
+        fake::run_steps(1);
+        // Losing the link says nothing about the layout, so it is kept.
+        assert(!fake::status().connected && fake::layout == layout && fake::layouts_saved == 1);
+    } else if (scenario == "layout-without-hash") {
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        assert(fake::status().connected && fake::layout.empty());
+        fake::disconnect();
+        fake::run_steps(1);
+        fake::complete_connect();
+        fake::run_steps(1);
+        // Without a way to check a saved layout, every connection discovers.
+        assert(fake::status().connected && fake::discovery_calls == 2 && fake::layout.empty() && !fake::layouts_saved);
     } else if (scenario == "pairing") {
         fake::immediate_connect = true;
         open_peer(fake::peer);

@@ -29,7 +29,10 @@
 #define BLE_HS_ENOENT 16
 #define BLE_HS_EAUTHEN 23
 #define BLE_HS_EPREEMPTED 29
-#define BLE_HS_HCI_ERR(code) (0x200 + (code))
+#define BLE_HS_ERR_ATT_BASE 0x100
+#define BLE_HS_ATT_ERR(code) (BLE_HS_ERR_ATT_BASE + (code))
+#define BLE_HS_ERR_HCI_BASE 0x200
+#define BLE_HS_HCI_ERR(code) (BLE_HS_ERR_HCI_BASE + (code))
 #define BLE_ADDR_PUBLIC 0
 #define BLE_OWN_ADDR_PUBLIC 0
 #define BLE_ERR_AUTH_FAIL 5
@@ -37,6 +40,11 @@
 #define BLE_ERR_UNK_CONN_ID 2
 #define BLE_ERR_CONN_SPVN_TMO 8
 #define BLE_ERR_CONN_TERM_LOCAL 22
+#define BLE_ERR_RD_CONN_TERM_RESRCS 20
+#define BLE_ERR_RD_CONN_TERM_PWROFF 21
+#define BLE_ERR_LMP_LL_RSP_TMO 34
+#define BLE_ERR_CONN_TERM_MIC 61
+#define BLE_ERR_CONN_ESTABLISHMENT 62
 #define BLE_GAP_INITIAL_CONN_ITVL_MIN 24
 #define BLE_GAP_INITIAL_CONN_ITVL_MAX 40
 #define BLE_GAP_INITIAL_CONN_LATENCY 0
@@ -128,6 +136,7 @@ int ble_gap_connect(uint8_t, const ble_addr_t *, int32_t, const struct ble_gap_c
 int ble_gap_conn_active(void);
 int ble_gap_conn_cancel(void);
 int ble_gap_conn_find(uint16_t, struct ble_gap_conn_desc *);
+int ble_gap_conn_rssi(uint16_t, int8_t *);
 int ble_gap_terminate(uint16_t, uint8_t);
 int ble_gap_disc(uint8_t, int32_t, const struct ble_gap_disc_params *, ble_gap_event_fn *, void *);
 int ble_gap_disc_cancel(void);

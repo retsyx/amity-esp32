@@ -9,6 +9,7 @@
 #include "ble_remote.h"
 #include "hid_keyboard.hpp"
 #include "battery_status.hpp"
+#include "gatt_layout.hpp"
 #include "pairing_policy.hpp"
 #include "siri_remote.hpp"
 
@@ -107,6 +108,12 @@ bool unpair_cleanup_pending;
 bool unpair_cleanup_started, unpair_delete_bond;
 ble_addr_t unpair_target{};
 bool bond_cleanup_failed;
+// Filled by full discovery and saved once the remote is ready.
+ble::GattLayout discovered_layout;
+// Link timing and signal strength for the link up/down log lines.
+int64_t connect_started_us, link_up_us, next_rssi_sample, rssi_sampled_us;
+int8_t last_rssi;
+bool have_rssi;
 
 std::atomic<uint16_t> connection_handle{BLE_HS_CONN_HANDLE_NONE};
 bool reconnect_pending;
@@ -158,18 +165,66 @@ bool same_address(const ble_addr_t &a, const ble_addr_t &b) {
     return (a.type & 1) == (b.type & 1) && !memcmp(a.val, b.val, 6);
 }
 
+constexpr char kLayoutKey[] = "layout";
+
+esp_err_t erase_key(nvs_handle_t handle, const char *key) {
+    const esp_err_t err = nvs_erase_key(handle, key);
+    return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
+}
+
 esp_err_t persist_peer(const ble_addr_t *address) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open("ble_remote", NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
     if (address) err = nvs_set_blob(handle, "peer", address, sizeof(*address));
     else {
-        err = nvs_erase_key(handle, "peer");
-        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        err = erase_key(handle, "peer");
+        // The saved layout belongs to the forgotten remote.
+        if (err == ESP_OK) err = erase_key(handle, kLayoutKey);
     }
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
     return err;
+}
+
+esp_err_t erase_layout() {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("ble_remote", NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = erase_key(handle, kLayoutKey);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+// A layout without validators cannot be checked later, so that remote is
+// always discovered in full.
+esp_err_t store_layout(const ble::GattLayout &layout) {
+    const auto data = ble::encode_gatt_layout(layout);
+    if (data.empty()) return erase_layout();
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("ble_remote", NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(handle, kLayoutKey, data.data(), data.size());
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+bool load_layout(ble::GattLayout &layout) {
+    nvs_handle_t handle;
+    if (nvs_open("ble_remote", NVS_READONLY, &handle) != ESP_OK) return false;
+    size_t size = 0;
+    std::vector<uint8_t> data;
+    bool loaded = nvs_get_blob(handle, kLayoutKey, nullptr, &size) == ESP_OK && size &&
+                  size <= ble::max_gatt_layout_size;
+    if (loaded) {
+        data.resize(size);
+        loaded = nvs_get_blob(handle, kLayoutKey, data.data(), &size) == ESP_OK &&
+                 ble::decode_gatt_layout(data.data(), size, layout);
+    }
+    nvs_close(handle);
+    return loaded;
 }
 
 int remove_peer(ble_addr_t address) {
@@ -283,6 +338,61 @@ int write_attribute(uint16_t attribute, const void *value, size_t length) {
     void *token = begin_procedure();
     return wait_procedure(ble_gattc_write_flat(connection_handle, attribute, value, length, on_write, token));
 }
+bool att_error(int err) { return err > BLE_HS_ERR_ATT_BASE && err < BLE_HS_ERR_ATT_BASE + 0x100; }
+
+void sample_rssi() {
+    const uint16_t handle = connection_handle.load();
+    int8_t rssi;
+    // 127 means the controller has no measurement.
+    if (handle == BLE_HS_CONN_HANDLE_NONE || ble_gap_conn_rssi(handle, &rssi) || rssi == 127) return;
+    Guard lock;
+    if (connection_handle != handle) return;
+    last_rssi = rssi;
+    rssi_sampled_us = esp_timer_get_time();
+    have_rssi = true;
+}
+
+void log_link_up() {
+    sample_rssi();
+    Guard lock;
+    if (!link_up_us) return; // Already down and logged.
+    char rssi[16] = "unknown";
+    if (have_rssi) snprintf(rssi, sizeof(rssi), "%d dBm", last_rssi);
+    ESP_LOGI(kTag, "Remote link up after %lld ms, RSSI %s",
+             static_cast<long long>((link_up_us - connect_started_us) / 1000), rssi);
+}
+
+// Caller holds the remote mutex.
+void log_link_down(int reason) {
+    const int64_t now = esp_timer_get_time();
+    const bool hci = reason > BLE_HS_ERR_HCI_BASE && reason < BLE_HS_ERR_HCI_BASE + 0x100;
+    const char *name = "host error";
+    if (hci) switch (reason - BLE_HS_ERR_HCI_BASE) {
+    case BLE_ERR_CONN_SPVN_TMO: name = "supervision timeout"; break;
+    case BLE_ERR_REM_USER_CONN_TERM: name = "closed by remote"; break;
+    case BLE_ERR_RD_CONN_TERM_RESRCS: name = "remote out of resources"; break;
+    case BLE_ERR_RD_CONN_TERM_PWROFF: name = "remote powered off"; break;
+    case BLE_ERR_CONN_TERM_LOCAL: name = "closed locally"; break;
+    case BLE_ERR_LMP_LL_RSP_TMO: name = "link layer response timeout"; break;
+    case BLE_ERR_CONN_TERM_MIC: name = "message integrity failure"; break;
+    case BLE_ERR_CONN_ESTABLISHMENT: name = "failed to establish"; break;
+    case BLE_ERR_AUTH_FAIL: name = "authentication failure"; break;
+    default: name = "controller error"; break;
+    }
+    char rssi[40] = "unknown";
+    if (have_rssi) snprintf(rssi, sizeof(rssi), "%d dBm %lld ms earlier", last_rssi,
+                            static_cast<long long>((now - rssi_sampled_us) / 1000));
+    const int code = hci ? reason - BLE_HS_ERR_HCI_BASE : reason;
+    const long long up_ms = link_up_us ? static_cast<long long>((now - link_up_us) / 1000) : 0;
+    // Intentional closure is routine; anything else is a dropped link.
+    if (reason == BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM) || reason == BLE_HS_HCI_ERR(BLE_ERR_CONN_TERM_LOCAL))
+        ESP_LOGI(kTag, "Remote link down: %s (%s 0x%02x), up %lld ms, RSSI %s", name, hci ? "HCI" : "status", code, up_ms, rssi);
+    else
+        ESP_LOGW(kTag, "Remote link down: %s (%s 0x%02x), up %lld ms, RSSI %s", name, hci ? "HCI" : "status", code, up_ms, rssi);
+    link_up_us = 0;
+    have_rssi = false;
+}
+
 int on_gap_event(ble_gap_event *event, void *token) {
     Guard lock;
     switch (event->type) {
@@ -297,7 +407,12 @@ int on_gap_event(ble_gap_event *event, void *token) {
             finish_procedure(BLE_HS_EAPP);
             break;
         }
-        if (!event->connect.status) connection_handle = event->connect.conn_handle;
+        if (!event->connect.status) {
+            connection_handle = event->connect.conn_handle;
+            link_up_us = esp_timer_get_time();
+            have_rssi = false;
+            next_rssi_sample = 0;
+        }
         if (reconnect_pending) {
             state.waiting = false;
             state.connecting = !event->connect.status;
@@ -325,6 +440,7 @@ int on_gap_event(ble_gap_event *event, void *token) {
     }
     case BLE_GAP_EVENT_DISCONNECT:
         if (event->disconnect.conn.conn_handle != connection_handle) break;
+        log_link_down(event->disconnect.reason);
         if (!have_saved) selected = event->disconnect.conn.peer_id_addr;
         // Preserve a failed pairing's Security Manager error when its cleanup
         // disconnect arrives; it is more useful than "locally terminated".
@@ -416,6 +532,7 @@ int discover_hid(const std::vector<ble_gatt_svc> &found_services, bool siri) {
             if (map == chars.end()) return BLE_HS_ENOENT;
             if ((err = read_attribute(map->val_handle))) return err;
             { Guard lock; if (!keyboard->add_map(map_index, read_value.data(), read_value.size())) return BLE_HS_ENOTSUP; }
+            discovered_layout.maps.push_back(read_value);
         }
         for (size_t c = 0; c < chars.size(); ++c) {
             const auto &chr = chars[c];
@@ -430,17 +547,22 @@ int discover_hid(const std::vector<ble_gatt_svc> &found_services, bool siri) {
             }
             if (uuid == 0x1812 && cuuid == 0x2a4e) {
                 const uint8_t mode = 1; // Report protocol, needed for NKRO and consumer controls.
-                if (chr.properties & BLE_GATT_CHR_PROP_WRITE_NO_RSP)
+                const bool without_response = chr.properties & BLE_GATT_CHR_PROP_WRITE_NO_RSP;
+                if (without_response)
                     err = ble_gattc_write_no_rsp_flat(connection_handle, chr.val_handle, &mode, 1);
                 else if (chr.properties & BLE_GATT_CHR_PROP_WRITE) err = write_attribute(chr.val_handle, &mode, 1);
-                else err = 0;
+                else continue;
                 if (err) return err;
+                discovered_layout.protocol_mode = chr.val_handle;
+                discovered_layout.protocol_mode_without_response = without_response;
                 continue;
             }
             const bool battery = uuid == 0x180f && ble::battery_characteristic(cuuid);
             if (!battery && !(uuid == 0x1812 && cuuid == 0x2a4d && (chr.properties & BLE_GATT_CHR_PROP_NOTIFY))) continue;
             if (battery) {
-                { Guard lock; battery_characteristics.push_back({chr.val_handle, cuuid, bool(chr.properties & BLE_GATT_CHR_PROP_READ)}); }
+                const bool readable = chr.properties & BLE_GATT_CHR_PROP_READ;
+                { Guard lock; battery_characteristics.push_back({chr.val_handle, cuuid, readable}); }
+                discovered_layout.batteries.push_back({chr.val_handle, cuuid, 0, readable, 0});
                 ESP_LOGI(kTag, "Battery characteristic 0x%04x", cuuid);
                 if ((chr.properties & BLE_GATT_CHR_PROP_READ) && !read_attribute(chr.val_handle)) {
                     Guard lock; update_battery(cuuid, read_value.data(), read_value.size());
@@ -463,6 +585,7 @@ int discover_hid(const std::vector<ble_gatt_svc> &found_services, bool siri) {
                 if (duuid == 0x2908) reference = desc.handle;
             }
             if (!ccc || !(chr.properties & (BLE_GATT_CHR_PROP_NOTIFY | BLE_GATT_CHR_PROP_INDICATE))) continue;
+            const uint8_t notify[] = {static_cast<uint8_t>((chr.properties & BLE_GATT_CHR_PROP_NOTIFY) ? 1 : 2), 0};
             if (!battery) {
                 if (!reference) return BLE_HS_ENOENT;
                 if ((err = read_attribute(reference))) return err;
@@ -471,8 +594,11 @@ int discover_hid(const std::vector<ble_gatt_svc> &found_services, bool siri) {
                 Guard lock;
                 if (input_reports.size() == 16) return BLE_HS_ENOMEM;
                 input_reports.push_back(InputReport{chr.val_handle, map_index, read_value[0]});
+                discovered_layout.reports.push_back({chr.val_handle, ccc, map_index, read_value[0], notify[0]});
+            } else {
+                discovered_layout.batteries.back().ccc = ccc;
+                discovered_layout.batteries.back().subscription = notify[0];
             }
-            const uint8_t notify[] = {static_cast<uint8_t>((chr.properties & BLE_GATT_CHR_PROP_NOTIFY) ? 1 : 2), 0};
             if ((err = write_attribute(ccc, notify, sizeof(notify)))) {
                 if (!battery) return err; // Optional telemetry must not prevent HID use.
                 ESP_LOGW(kTag, "Battery subscription failed: %d", err);
@@ -487,6 +613,44 @@ int discover_hid(const std::vector<ble_gatt_svc> &found_services, bool siri) {
     return siri || !input_reports.empty() ? 0 : BLE_HS_ENOENT;
 }
 
+// Python negotiates 527 bytes for these models. This uses the existing
+// shared host; mbuf chains carry reports larger than an ACL fragment.
+int exchange_siri_mtu() {
+    int err = ble_att_set_preferred_mtu(527);
+    if (err) return err;
+    void *token = begin_procedure();
+    err = wait_procedure(ble_gattc_exchange_mtu(connection_handle, on_mtu, token));
+    return err == BLE_HS_EALREADY ? 0 : err;
+}
+
+// Apple's firmware-specific report setup, repeated on every connection.
+int start_siri_reports() {
+    int err;
+    const uint8_t notify[] = {1, 0};
+    for (size_t i = 0; i < siri_profile.notification_count; ++i)
+        if ((err = write_attribute(siri_profile.notification_handles[i], notify, sizeof(notify)))) return err;
+    for (size_t i = 0; i < siri_profile.init_count; ++i)
+        if ((err = write_attribute(siri_profile.init_handle, siri_profile.init_values[i].data(), 2))) return err;
+    return 0;
+}
+
+// The Database Hash identifies this GATT layout on later connections. It is
+// optional; a remote without one is discovered in full every time.
+void discover_database_hash(const std::vector<ble_gatt_svc> &found_services) {
+    for (const auto &service : found_services) {
+        if (ble_uuid_u16(&service.uuid.u) != 0x1801) continue;
+        { Guard lock; characteristics.clear(); }
+        void *token = begin_procedure();
+        if (wait_procedure(ble_gattc_disc_all_chrs(connection_handle, service.start_handle,
+                                                   service.end_handle, on_characteristic, token))) return;
+        const auto chars = characteristics;
+        for (const auto &chr : chars)
+            if (ble_uuid_u16(&chr.uuid.u) == 0x2b2a && !read_attribute(chr.val_handle) && read_value.size() == 16)
+                discovered_layout.validators.push_back({chr.val_handle, read_value});
+        return;
+    }
+}
+
 int discover_remote(ble::SiriGeneration advertised) {
     {
         Guard lock;
@@ -494,12 +658,14 @@ int discover_remote(ble::SiriGeneration advertised) {
         siri_connected = false;
         state.battery_percent = state.charging = -1;
     }
+    discovered_layout = {};
     void *token = begin_procedure();
     int err = wait_procedure(ble_gattc_disc_all_svcs(connection_handle, on_service, token));
     if (err) return err;
     const auto found_services = services;
     uint16_t product = 0, firmware = 0;
     bool have_firmware = false, apple = false;
+    ble::GattLayout::Validator firmware_validator;
     const bool advertised_siri = advertised == ble::SiriGeneration::Gen2 ||
                                  advertised == ble::SiriGeneration::Gen3;
     // Probe Device Information on every connection, including saved identities
@@ -524,7 +690,10 @@ int discover_remote(ble::SiriGeneration advertised) {
                 continue; // Optional information on ordinary HID keyboards.
             }
             if (uuid == 0x2a50) apple = ble::siri_parse_pnp(read_value.data(), read_value.size(), product);
-            else have_firmware = ble::siri_parse_firmware(read_value.data(), read_value.size(), firmware);
+            else {
+                have_firmware = ble::siri_parse_firmware(read_value.data(), read_value.size(), firmware);
+                firmware_validator = {chr.val_handle, read_value};
+            }
         }
     }
     if (apple && (product == 0x0266 || product == 0x026d)) return BLE_HS_ENOTSUP;
@@ -532,12 +701,7 @@ int discover_remote(ble::SiriGeneration advertised) {
     if (advertised_siri && !supported_siri) return BLE_HS_ENOTSUP;
     if (supported_siri) {
         if (!have_firmware) return BLE_HS_EBADDATA;
-        // Python negotiates 527 bytes for these models. This uses the existing
-        // shared host; mbuf chains carry reports larger than an ACL fragment.
-        if ((err = ble_att_set_preferred_mtu(527))) return err;
-        token = begin_procedure();
-        err = wait_procedure(ble_gattc_exchange_mtu(connection_handle, on_mtu, token));
-        if (err && err != BLE_HS_EALREADY) return err;
+        if ((err = exchange_siri_mtu())) return err;
         {
             Guard lock;
             siri_profile = ble::siri_profile(firmware);
@@ -545,21 +709,104 @@ int discover_remote(ble::SiriGeneration advertised) {
             snprintf(state.peer.name, sizeof(state.peer.name), "Siri Remote, Gen %u", product == 0x0314 ? 2 : 3);
         }
         ESP_LOGI(kTag, "Siri Remote product 0x%04x firmware 0x%04x", product, firmware);
+        // Apple's profile depends on the firmware, so an update invalidates the saved layout.
+        discovered_layout.siri = true;
+        discovered_layout.siri_firmware = firmware;
+        discovered_layout.validators.push_back(firmware_validator);
     }
+    discover_database_hash(found_services);
     // Siri uses dynamically discovered battery and name characteristics, while
     // its input service requires Apple's firmware-specific setup, below.
     if ((err = discover_hid(found_services, supported_siri))) return err;
     if (!supported_siri) return 0;
-    const uint8_t notify[] = {1, 0};
-    for (size_t i = 0; i < siri_profile.notification_count; ++i)
-        if ((err = write_attribute(siri_profile.notification_handles[i], notify, sizeof(notify)))) return err;
-    for (size_t i = 0; i < siri_profile.init_count; ++i)
-        if ((err = write_attribute(siri_profile.init_handle, siri_profile.init_values[i].data(), 2))) return err;
+    if ((err = start_siri_reports())) return err;
     // Read telemetry after enabling Apple's reports, matching Python setup.
     std::vector<BatteryCharacteristic> battery_reads;
     { Guard lock; battery_reads = battery_characteristics; }
     for (const auto &entry : battery_reads) if (!read_attribute(entry.handle)) {
         Guard lock; update_battery(entry.uuid, read_value.data(), read_value.size());
+    }
+    return 0;
+}
+
+// Reuses the bonded remote's saved layout once its validators read back
+// unchanged. Returns false to run full discovery on the same link.
+bool restore_remote(ble::GattLayout &layout) {
+    ble_addr_t peer{};
+    {
+        Guard lock;
+        ble_gap_conn_desc desc{};
+        if (!have_saved || ble_gap_conn_find(connection_handle, &desc) || !same_address(desc.peer_id_addr, saved))
+            return false;
+        peer = desc.peer_id_addr;
+    }
+    ble_addr_t cached{};
+    if (!load_layout(layout)) return false;
+    cached.type = layout.peer_type;
+    memcpy(cached.val, layout.peer.data(), sizeof(cached.val));
+    if (!same_address(cached, peer)) return false;
+    for (const auto &validator : layout.validators) {
+        const int err = read_attribute(validator.handle);
+        bool unchanged;
+        { Guard lock; unchanged = !err && read_value == validator.value; }
+        if (unchanged) continue;
+        // A different value or an attribute error means the database changed;
+        // a lost link says nothing about the layout.
+        if (!err || att_error(err)) {
+            ESP_LOGI(kTag, "Remote GATT layout changed; discovering again");
+            erase_layout();
+        }
+        return false;
+    }
+    {
+        Guard lock;
+        services.clear(); input_reports.clear(); battery_characteristics.clear(); keyboard->clear();
+        state.battery_percent = state.charging = -1;
+        for (size_t i = 0; i < layout.maps.size(); ++i)
+            if (!keyboard->add_map(static_cast<uint8_t>(i), layout.maps[i].data(), layout.maps[i].size())) return false;
+        for (const auto &report : layout.reports) input_reports.push_back({report.handle, report.map, report.id});
+        for (const auto &battery : layout.batteries) battery_characteristics.push_back({battery.handle, battery.uuid, battery.readable});
+        const size_t length = std::min(layout.name.size(), sizeof(state.peer.name) - 1);
+        memcpy(state.peer.name, layout.name.data(), length);
+        state.peer.name[length] = 0;
+        siri_connected = layout.siri;
+        if (layout.siri) siri_profile = ble::siri_profile(layout.siri_firmware);
+    }
+    if (!layout.siri) return true;
+    int err = exchange_siri_mtu();
+    if (!err) err = start_siri_reports();
+    if (err && att_error(err)) erase_layout();
+    return !err;
+}
+
+// Repeats the remaining per-connection setup after a restored remote is ready.
+// Bonded remotes keep their subscriptions, so input can arrive before this ends.
+int complete_restore(const ble::GattLayout &layout) {
+    int err;
+    if (layout.protocol_mode) {
+        const uint8_t mode = 1;
+        err = layout.protocol_mode_without_response
+                  ? ble_gattc_write_no_rsp_flat(connection_handle, layout.protocol_mode, &mode, 1)
+                  : write_attribute(layout.protocol_mode, &mode, 1);
+        if (err) return err;
+    }
+    for (const auto &report : layout.reports) {
+        const uint8_t value[] = {report.subscription, 0};
+        if ((err = write_attribute(report.ccc, value, sizeof(value)))) return err;
+    }
+    for (const auto &battery : layout.batteries) {
+        if (battery.ccc) {
+            const uint8_t value[] = {battery.subscription, 0};
+            if ((err = write_attribute(battery.ccc, value, sizeof(value)))) {
+                ESP_LOGW(kTag, "Battery subscription failed: %d", err);
+            } else {
+                Guard lock;
+                for (auto &entry : battery_characteristics) if (entry.handle == battery.handle) entry.poll = false;
+            }
+        }
+        if (battery.readable && !read_attribute(battery.handle)) {
+            Guard lock; update_battery(battery.uuid, read_value.data(), read_value.size());
+        }
     }
     return 0;
 }
@@ -673,12 +920,18 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         }
         state.connecting = !err;
     }
+    if (!err) log_link_up();
     if (!err) {
         begin_procedure(Procedure::Security);
         err = wait_procedure(ble_gap_security_initiate(connection_handle), 30000);
     }
-    if (!err) err = advertised == ble::SiriGeneration::Unsupported ? BLE_HS_ENOTSUP
-                                                                 : discover_remote(advertised);
+    ble::GattLayout restored;
+    bool reused = false;
+    if (!err && advertised == ble::SiriGeneration::Unsupported) err = BLE_HS_ENOTSUP;
+    else if (!err) {
+        reused = restore_remote(restored);
+        if (!reused) err = discover_remote(advertised);
+    }
     if (!err) {
         Guard lock;
         ble_gap_conn_desc desc{};
@@ -691,9 +944,18 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
             have_saved = state.bonded = true;
             descriptors_ready = state.connected = true;
             to_public(state.peer, saved);
-            ESP_LOGI(kTag, "Encrypted remote ready: %s (%u HID report characteristics)", state.peer.name,
-                     static_cast<unsigned>(input_reports.size()));
+            ESP_LOGI(kTag, "Encrypted remote ready: %s (%u HID report characteristics, %s layout)", state.peer.name,
+                     static_cast<unsigned>(input_reports.size()), reused ? "saved" : "discovered");
+            if (!reused) {
+                discovered_layout.peer_type = saved.type;
+                memcpy(discovered_layout.peer.data(), saved.val, discovered_layout.peer.size());
+                discovered_layout.name = state.peer.name;
+            }
         }
+    }
+    if (!err && !reused) {
+        const esp_err_t stored = store_layout(discovered_layout);
+        if (stored != ESP_OK) ESP_LOGW(kTag, "Saving remote layout failed: %s", esp_err_to_name(stored));
     }
     if (err) {
         ESP_LOGW(kTag, "Remote connection/discovery failed: %d", err);
@@ -717,10 +979,20 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
         }
         if (handle != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
     }
-    Guard lock;
-    state.connecting = false;
-    state.last_error = pairing_stopped.load() ? 0 : err;
-    next_reconnect = esp_timer_get_time() + 5000000;
+    {
+        Guard lock;
+        state.connecting = false;
+        state.last_error = pairing_stopped.load() ? 0 : err;
+        next_reconnect = esp_timer_get_time() + 5000000;
+    }
+    if (err || !reused) return;
+    const int setup = complete_restore(restored);
+    const uint16_t handle = connection_handle.load();
+    if (!setup || handle == BLE_HS_CONN_HANDLE_NONE) return;
+    // The link is up but the saved layout did not work; discover it next time.
+    ESP_LOGW(kTag, "Saved remote layout setup failed: %d", setup);
+    erase_layout();
+    ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
 }
 
 void open_peer(const ble_addr_t &address) {
@@ -738,6 +1010,7 @@ void open_peer(const ble_addr_t &address) {
         state.last_error = 0;
         state.peer = {};
         to_public(state.peer, address);
+        connect_started_us = esp_timer_get_time();
         for (const auto &candidate : candidates)
             if (same_address(address, to_nimble(candidate.peer.address, candidate.peer.address_type)))
                 advertised = candidate.siri;
@@ -776,6 +1049,7 @@ void start_reconnect() {
     params.min_ce_len = BLE_GAP_INITIAL_CONN_MIN_CE_LEN;
     params.max_ce_len = BLE_GAP_INITIAL_CONN_MAX_CE_LEN;
     reconnect_pending = true;
+    connect_started_us = esp_timer_get_time();
     void *token = begin_procedure(Procedure::Connect);
     uint8_t public_address[6];
     int err = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, public_address, nullptr);
@@ -943,6 +1217,17 @@ void worker(void *) {
         bool setup_done=false;
         {Guard lock;setup_done=!state.scanning&&!state.connecting&&!state.pairing&&!pending_scan_seconds;}
         if(setup_done&&radio_owned.exchange(false)&&radio_done)radio_done(radio_context);
+        // Keep a recent signal strength for the link-down log.
+        bool rssi_due = false;
+        {
+            Guard lock;
+            const int64_t now = esp_timer_get_time();
+            if (connection_handle != BLE_HS_CONN_HANDLE_NONE && now >= next_rssi_sample) {
+                rssi_due = true;
+                next_rssi_sample = now + 1000000;
+            }
+        }
+        if (rssi_due) sample_rssi();
         // Read-only characteristics (or failed subscriptions) still get refreshed.
         std::vector<BatteryCharacteristic> battery_reads;
         {
