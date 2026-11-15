@@ -56,7 +56,7 @@ int error(httpd_req_t* req,const char*,const char* status="400 Bad Request"){req
 bool authenticated(httpd_req_t* req){++auth_checks;return req->authenticated;}
 }
 const uint8_t asset_bytes[]={'x'};
-const uint8_t *html_start=asset_bytes,*html_end=asset_bytes+1,*js_start=asset_bytes,*js_end=asset_bytes+1,*css_start=asset_bytes,*css_end=asset_bytes+1,*system_js_start=asset_bytes,*system_js_end=asset_bytes+1;
+const uint8_t *html_start=asset_bytes,*html_end=asset_bytes+1,*js_start=asset_bytes,*js_end=asset_bytes+1,*css_start=asset_bytes,*css_end=asset_bytes+1,*system_js_start=asset_bytes,*system_js_end=asset_bytes+1,*favicon_start=asset_bytes,*favicon_end=asset_bytes+1;
 '''
 
 SUITE = r'''
