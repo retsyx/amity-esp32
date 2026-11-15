@@ -877,8 +877,8 @@ class MembershipTests(unittest.TestCase):
     def test_unknown_add_result_never_retries_or_removes_an_unproven_member(self):
         f = Fixture()
         f.unknown_add = True
-        member = f.added(timeout=0.02)
-        with self.assertRaises((OSError, TimeoutError, MembershipConflict, AssertionError, AmityHTTPError)):
+        member = f.added(timeout=5)
+        with self.assertRaisesRegex(OSError, "Add result is unknown"):
             member.create()
         try:
             member.close()
