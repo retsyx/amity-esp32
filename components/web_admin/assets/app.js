@@ -395,8 +395,8 @@ function renderHostname(name){
 }
 function renderDiagnostics(){
  const r=remoteState,connection=r.scanning?'Scanning':r.connecting?'Connecting':r.connected?'':r.last_error?'Connection failed':r.waiting||r.bonded&&!r.unpairing?'Waiting for remote':'Disconnected';
- // Name, RSSI and detail cells share columns so RSSI values line up across rows.
- const fields=(name,rssi,...details)=>{const cells=[name||'',rssi==null?'':'RSSI '+rssi+' dBm',details.filter(Boolean).join(' · ')];return cells.map((cell,index)=>cell&&cells.slice(index+1).some(Boolean)?cell+' · ':cell);};
+ // Name, RSSI and detail cells, with a separator cell after each of the first two, share columns so fields and separators line up across rows.
+ const fields=(name,rssi,...details)=>{const cells=[name||'',rssi==null?'':'RSSI '+rssi+' dBm',details.filter(Boolean).join(' · ')];return cells.flatMap((cell,index)=>index<cells.length-1?[cell,cell&&cells.slice(index+1).some(Boolean)?' · ':'']:[cell]);};
  const remote=r.connected?fields(r.name,r.rssi,r.battery>=0&&r.battery+'% battery',r.charging===true&&'Charging',connection):connection+(r.last_error&&!r.scanning&&!r.connecting?` (error ${r.last_error})`:'');
  const signal=(rssi,channel,network)=>fields(network,rssi,'channel '+channel);
  const peers=peerSignals.map(peer=>[peer.name+' Wi-Fi ',peer.rssi===undefined?'unavailable':signal(peer.rssi,peer.channel)]);
