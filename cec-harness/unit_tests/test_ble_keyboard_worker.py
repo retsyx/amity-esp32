@@ -1,5 +1,6 @@
 """BLE report/RPC ownership and cleanup without a Bluetooth adapter or D-Bus."""
 
+import asyncio
 from io import StringIO
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness.ble_keyboard_worker import BlueZKeyboard, KeyboardWorker, _interfaces, encode_reports, report_map, REPORT_MAP, serve
+from amity_harness.ble_keyboard_worker import LINK_DROP_HELPER, LINK_DROP_TIMEOUT
 
 
 class FakeBackend:
@@ -43,6 +45,10 @@ class FakeBackend:
         if self.ready:
             raise RuntimeError("Peer remains connected")
         self.events.append(("forget_peer",))
+
+    async def drop_links(self, peer_address, count):
+        self.events.append(("drop_links", peer_address, count))
+        return {"disconnected_monotonic_ns": 1, "drops": [], "completed": False}
 
     async def close(self):
         self.events.append(("close",))
@@ -185,6 +191,27 @@ class KeyboardWorkerTests(unittest.IsolatedAsyncioTestCase):
         # The normal one-second CEC deadline has already expired while the
         # read was pending; receiving its reply cannot create a new budget.
         self.assertLess(receipt["disconnected_monotonic_ns"] + 1_000_000_000, clock[0])
+        await worker.close()
+
+    async def test_link_drops_need_released_keys_a_subscribed_link_and_a_bounded_count(self):
+        worker, backend = await self.opened()
+        for count in (0, 6, True, "3"):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                await worker.dispatch("drop_links", {"count": count})
+        with self.assertRaises(ValueError):
+            await worker.dispatch("drop_links", {"count": 3, "timeout": 5})
+        await worker.dispatch("report", {"keyboard": [0x4f], "consumer": 0})
+        with self.assertRaisesRegex(RuntimeError, "Release every key"):
+            await worker.dispatch("drop_links", {"count": 3})
+        await worker.dispatch("report", {"keyboard": [], "consumer": 0})
+        backend.ready = False
+        with self.assertRaisesRegex(RuntimeError, "connected and subscribed"):
+            await worker.dispatch("drop_links", {"count": 3})
+        backend.ready = True
+        receipt = await worker.dispatch("drop_links", {"count": 3})
+        self.assertEqual(receipt["completed"], False)
+        self.assertEqual([event for event in backend.events if event[0] == "drop_links"],
+                         [("drop_links", "22:33:44:55:66:77", 3)])
         await worker.close()
 
     async def test_forget_peer_resets_report_state_only_after_disconnected_backend_cleanup(self):
@@ -398,6 +425,92 @@ class BlueZOwnershipTests(unittest.IsolatedAsyncioTestCase):
         connected = False
         self.assertIs((await owner.status())["advertisement_registered"], False)
         self.assertEqual(events, [])
+
+    def helper(self, events, *records):
+        class Helper:
+            returncode = None
+
+            def __init__(self):
+                self.lines = [json.dumps(record).encode() + b"\n" for record in records]
+                self.stdout = SimpleNamespace(readline=self.readline)
+
+            async def readline(self):
+                if not self.lines:
+                    self.returncode = 1
+                    return b""
+                events.append(("helper_record",))
+                return self.lines.pop(0)
+
+            def kill(self):
+                events.append(("kill",))
+                self.returncode = -9
+
+            async def wait(self):
+                if self.returncode is None:
+                    self.returncode = 0
+                return self.returncode
+
+        return Helper()
+
+    async def test_link_drops_arm_first_keep_advertising_and_return_each_record(self):
+        owner, events = self.fixture()
+        drop = {"number": 1, "handle": 64, "reaction_ns": 1, "link_ns": 2, "command_status": 0,
+                "reason": 19, "encrypted": False}
+        helper = self.helper(events, {"armed": True}, {"drop": drop}, {"drop": {**drop, "number": 2}})
+        launched = []
+
+        async def launch(*command, **options):
+            launched.append((command, options))
+            return helper
+
+        with patch("amity_harness.ble_keyboard_worker.asyncio.create_subprocess_exec", new=launch):
+            receipt = await owner.drop_links("AA:BB:CC:DD:EE:01", 2)
+        command, options = launched[0]
+        self.assertEqual(command, (str(Path(sys.executable).with_name("python-hci")), "-I",
+                                   str(LINK_DROP_HELPER), "--adapter", "hci0", "--peer", "AA:BB:CC:DD:EE:01",
+                                   "--count", "2", "--timeout", str(LINK_DROP_TIMEOUT)))
+        self.assertIs(options["stdout"], asyncio.subprocess.PIPE)
+        names = [event[0] for event in events]
+        disconnect = names.index("Disconnect")
+        # The helper is armed before the link drops, and the advertisement is
+        # replaced at the unconnected rate rather than withdrawn.
+        self.assertEqual(names[:disconnect], ["helper_record"])
+        self.assertEqual(names[disconnect + 1:disconnect + 3], ["UnregisterAdvertisement", "RegisterAdvertisement"])
+        self.assertTrue(owner._advertising)
+        self.assertFalse(owner._connected_advertising)
+        self.assertNotIn("kill", names)
+        self.assertEqual(receipt["drops"], [drop, {**drop, "number": 2}])
+        self.assertIs(receipt["completed"], True)
+        self.assertEqual(helper.returncode, 0)
+
+    async def test_link_drops_report_a_peer_that_stops_reconnecting(self):
+        owner, events = self.fixture()
+        drop = {"number": 1, "handle": 64, "reaction_ns": 1, "link_ns": 2, "command_status": 0,
+                "reason": 19, "encrypted": False}
+        helper = self.helper(events, {"armed": True}, {"drop": drop},
+                             {"error": "no new link from the peer", "drops": 1})
+        async def launch(*command, **options):
+            return helper
+        with patch("amity_harness.ble_keyboard_worker.asyncio.create_subprocess_exec", new=launch):
+            receipt = await owner.drop_links("AA:BB:CC:DD:EE:01", 3)
+        self.assertEqual(receipt["drops"], [drop])
+        self.assertIs(receipt["completed"], False)
+        self.assertNotIn("kill", [event[0] for event in events])
+
+    async def test_an_unarmed_or_garbled_helper_is_killed_before_or_after_the_link_drop(self):
+        for records, disconnects in ((({"error": "no adapter", "drops": 0},), 0),
+                                     (({"armed": True}, {"unexpected": 1}), 1)):
+            with self.subTest(records=records):
+                owner, events = self.fixture()
+                helper = self.helper(events, *records)
+                async def launch(*command, **options):
+                    return helper
+                with patch("amity_harness.ble_keyboard_worker.asyncio.create_subprocess_exec", new=launch), \
+                        self.assertRaises(RuntimeError):
+                    await owner.drop_links("AA:BB:CC:DD:EE:01", 1)
+                names = [event[0] for event in events]
+                self.assertEqual(names.count("Disconnect"), disconnects)
+                self.assertEqual(names[-1], "kill")
 
     async def test_forget_rejects_live_foreign_preexisting_or_unadvertised_peer(self):
         for changed in ("connected", "adapter", "bonded", "before_connected", "advertisement"):

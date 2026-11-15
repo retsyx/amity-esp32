@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import CecError, CecSession, DUT
 from amity_harness.ble_keyboard import KeyboardConflict, LocalKeyboard, PairedKeyboard
+from amity_harness.ble_keyboard_worker import LINK_DROP_TIMEOUT
 from amity_harness.config import RunConfig
 from amity_harness.dut import AmityHTTPError
 from amity_harness.runner import main as run_main
@@ -54,6 +55,8 @@ class Fixture:
         self.completed_scan_generation = None
         self.scan_statuses = []
         self.terminal_pair_error = None
+        self.drop_receipt = None
+        self.reconnect_after_drops = True
 
     def request(self, path, data=None, **kwargs):
         self.calls.append((path, deepcopy(data)))
@@ -109,6 +112,11 @@ class Fixture:
             assert data["address"] == "12:34:56:78:9a:bc" and data["type"] == 0
 
 
+def link_drop(number, **changes):
+    return {"number": number, "handle": 64 + number, "reaction_ns": 400_000, "link_ns": 30_000_000,
+            "command_status": 0, "reason": 0x13, "encrypted": False, **changes}
+
+
 class Worker:
     def __init__(self, fixture):
         self.fixture = fixture
@@ -142,6 +150,15 @@ class Worker:
         self.connected = self.ready = False
         self.fixture.state["connected"] = False
         return {"connected": False, "disconnected_monotonic_ns": time.monotonic_ns()}
+
+    def drop_links(self, count):
+        self.fixture.worker_calls.append(("drop_links", count))
+        self.connected = self.ready = self.fixture.reconnect_after_drops
+        self.fixture.state["connected"] = self.fixture.reconnect_after_drops
+        if self.fixture.drop_receipt is not None:
+            return deepcopy(self.fixture.drop_receipt)
+        return {"disconnected_monotonic_ns": time.monotonic_ns(), "completed": True,
+                "drops": [link_drop(number) for number in range(1, count + 1)]}
 
     def close(self):
         self.fixture.worker_calls.append(("close",))
@@ -447,6 +464,66 @@ class PairedKeyboardTests(unittest.TestCase):
             self.assertFalse(fixture.state["connected"])
         self.assertFalse(fixture.state["bonded"])
         self.assertEqual([row for row in fixture.worker_calls if row[0] == "report"], [("report", (), 0xe9)])
+
+    def test_unreported_link_drops_wait_for_the_main_to_reconnect_by_itself(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            action = keyboard.drop_unreported_links(3)
+            self.assertEqual(action.kind, "ble_early_link_loss")
+            self.assertEqual([drop["number"] for drop in action.operation["drops"]], [1, 2, 3])
+            self.assertIn(("drop_links", 3), fixture.worker_calls)
+            keyboard.assert_paired()
+            keyboard.report(consumer=0xe9)
+        phases = [row["phase"] for row in fixture.bed.control_observations[0]["checks"]]
+        self.assertEqual(phases[phases.index("early_link_loss") + 1], "reconnected")
+        # Recovery is the main's own reconnect, never another pairing.
+        self.assertEqual([path for path, _ in fixture.calls].count("/api/remotes/pair"), 1)
+
+    def test_unreported_link_drops_fail_when_the_main_stops_reconnecting(self):
+        for stalled, message in (("helper", "stopped reconnecting after 1 of 3"), ("ui", "did not reconnect")):
+            with self.subTest(stalled=stalled):
+                fixture = Fixture()
+                fixture.reconnect_after_drops = False
+                if stalled == "helper":
+                    fixture.drop_receipt = {"disconnected_monotonic_ns": 1, "completed": False,
+                                            "drops": [link_drop(1)]}
+                with fixture.main.pair_ble_keyboard() as keyboard, self.assertRaisesRegex(AssertionError, message):
+                    keyboard.drop_unreported_links(3)
+                self.assertFalse(fixture.state["bonded"])
+
+    def test_late_or_unrecorded_link_drops_are_fixture_failures_not_main_failures(self):
+        late = ({"encrypted": True}, {"reaction_ns": 20_000_001})
+        invalid = ({"drops": [link_drop(1), {**link_drop(2), "encrypted": 0}, link_drop(3)]},
+                   {"drops": [link_drop(1), link_drop(2)]}, {"completed": "yes"},
+                   {"drops": [{key: value for key, value in link_drop(1).items() if key != "reason"},
+                              link_drop(2), link_drop(3)]})
+        for changes, expected in ((*((change, RuntimeError) for change in late),
+                                   *((change, KeyboardConflict) for change in invalid))):
+            with self.subTest(changes=changes):
+                fixture = Fixture()
+                receipt = {"disconnected_monotonic_ns": 1, "completed": True,
+                           "drops": [link_drop(number) for number in (1, 2, 3)]}
+                if expected is RuntimeError:
+                    receipt["drops"][1].update(changes)
+                else:
+                    receipt.update(changes)
+                fixture.drop_receipt = receipt
+                with fixture.main.pair_ble_keyboard() as keyboard, self.assertRaises(RuntimeError) as raised:
+                    keyboard.drop_unreported_links(3)
+                self.assertIs(type(raised.exception), expected)
+                if expected is RuntimeError:
+                    self.assertIn("link 2 after the main could have reported it", str(raised.exception))
+
+    def test_link_drops_need_a_connected_keyboard_and_a_bounded_count(self):
+        fixture = Fixture()
+        with fixture.main.pair_ble_keyboard() as keyboard:
+            for count in (0, 6, True):
+                with self.subTest(count=count), self.assertRaises(ValueError):
+                    keyboard.drop_unreported_links(count)
+            keyboard.disconnect()
+            with self.assertRaisesRegex(RuntimeError, "Connect this test keyboard"):
+                keyboard.drop_unreported_links(3)
+        self.assertNotIn("drop_links", [call[0] for call in fixture.worker_calls])
 
     def test_pair_reply_loss_is_read_only_reconciled_then_unpaired_without_duplicate_pair(self):
         fixture = Fixture()
@@ -817,6 +894,12 @@ class KeyboardTransportTests(unittest.TestCase):
         self.assertEqual(captured[0].session_factory, CecSession)
         with self.assertRaises(ValueError):
             RunConfig(keyboard_factory=42)
+
+    def test_link_drop_reply_deadline_covers_every_requested_link(self):
+        worker = LocalKeyboard(timeout=20)
+        with patch.object(worker, "_rpc", return_value={}) as rpc:
+            worker.drop_links(3)
+        rpc.assert_called_once_with("drop_links", {"count": 3}, timeout=20 + 3 * (LINK_DROP_TIMEOUT + 5))
 
     def test_correlated_worker_protocol_rejects_wrong_id_and_is_always_reaped(self):
         for wrong in (False, True):

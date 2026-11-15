@@ -294,6 +294,81 @@ class PiSetupTests(unittest.TestCase):
             self.assertIn(runtime, invocations)
             self.assertLess(invocations.index(runtime), invocations.index(readiness))
 
+    def test_install_grants_the_link_drop_interpreter_once_the_runtime_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            boot = Path(directory)
+            (boot / "config.txt").write_text("[all]\n")
+            order = []
+
+            def run(command, **kwargs):
+                if command[0] == "dtc":
+                    Path(command[command.index("-o") + 1]).write_bytes(b"compiled overlay")
+                return SimpleNamespace(returncode=0, stdout="")
+
+            def as_user(account, command, **kwargs):
+                order.append(Path(command[2]).name)
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(setup, "BOOT", boot), patch.object(setup, "run", side_effect=run), \
+                    patch.object(setup, "write_file", return_value=False), \
+                    patch.object(setup, "retire_followers"), patch.object(setup, "configure_access"), \
+                    patch("amity_harness.pi_cec_driver.ensure_driver", return_value=False), \
+                    patch.object(setup, "awaiting_reboot", return_value=False), \
+                    patch.object(setup.Path, "unlink"), patch.object(setup, "as_user", side_effect=as_user), \
+                    patch.object(setup, "install_hci_python", side_effect=lambda: order.append("hci")), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(setup.install(self.account, self.wiring), 0)
+            self.assertLess(order.index("setup_runtime.py"), order.index("hci"))
+            self.assertLess(order.index("hci"), order.index("setup.py"))
+
+    def test_link_drop_interpreter_is_a_root_owned_copy_granted_only_net_raw(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "python3.13").write_bytes(b"interpreter")
+            runtime, hci = root / "python", root / "python-hci"
+            runtime.symlink_to(root / "python3.13")
+            commands = []
+            with patch.object(setup, "RUNTIME_PYTHON", runtime), patch.object(setup, "HCI_PYTHON", hci), \
+                    patch.object(setup, "run", side_effect=lambda command, **kwargs: commands.append(command)):
+                setup.install_hci_python()
+            staged = str(hci) + ".new"
+            self.assertEqual(commands, [
+                ["install", "-o", "root", "-g", "root", "-m", "0755", setup.os.path.realpath(root / "python3.13"),
+                 staged],
+                ["/usr/sbin/setcap", "cap_net_raw=ep", staged],
+                ["mv", "-f", staged, str(hci)]])
+
+    def test_readiness_requires_a_current_link_drop_interpreter_with_exactly_net_raw(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime, hci = root / "python", root / "python-hci"
+            runtime.write_bytes(b"interpreter")
+            for copy, capabilities, accepted in ((None, "0000000000002000", False),
+                                                 (b"stale", "0000000000002000", False),
+                                                 (b"interpreter", "0000000000000000", False),
+                                                 (b"interpreter", "0000000000003000", False),
+                                                 (b"interpreter", "0000000000002000", True)):
+                with self.subTest(copy=copy, capabilities=capabilities):
+                    hci.unlink(missing_ok=True)
+                    if copy is not None:
+                        hci.write_bytes(copy)
+                    commands = []
+
+                    def run(command, **kwargs):
+                        commands.append(command)
+                        return SimpleNamespace(returncode=0, stdout=capabilities + "\n")
+
+                    with patch.object(setup, "RUNTIME_PYTHON", runtime), patch.object(setup, "HCI_PYTHON", hci), \
+                            patch.object(setup, "run", side_effect=run):
+                        if accepted:
+                            setup.check_hci_python()
+                        else:
+                            with self.assertRaisesRegex(ValueError, "link-drop interpreter"):
+                                setup.check_hci_python()
+                    # Only a current copy is started, isolated, to read its capabilities.
+                    self.assertEqual([command[:2] for command in commands],
+                                     [[str(hci), "-I"]] if copy == b"interpreter" else [])
+
     def test_install_restarts_bluez_in_experimental_mode_only_when_needed(self):
         for changed, experimental, restarted in ((True, True, True), (False, False, True),
                                                  (False, True, False)):
@@ -380,6 +455,20 @@ class PiSetupTests(unittest.TestCase):
                     patch.object(setup, "check_bluetooth", side_effect=bluetooth), \
                     patch.object(setup, "bluetooth_experimental", return_value=False):
                 with self.assertRaisesRegex(ValueError, "--experimental"):
+                    setup.check_ready(self.wiring)
+            self.assertFalse(any("setup_matter.py" in str(part) for command in commands for part in command))
+            # With BlueZ ready, the link-drop interpreter is checked next.
+            commands.clear()
+            with patch.object(setup, "BOOT", boot), patch.object(setup, "OVERLAY_RECORD", record), \
+                    patch.object(setup, "awaiting_reboot", return_value=False), \
+                    patch.object(setup.os, "geteuid", return_value=self.account.pw_uid), \
+                    patch.object(setup, "check_cec"), patch.object(setup, "run", side_effect=run), \
+                    patch.object(setup.glob, "glob", return_value=["/dev/gpiomem0"]), \
+                    patch.object(setup.os, "access", return_value=True), \
+                    patch.object(setup, "check_bluetooth", side_effect=bluetooth), \
+                    patch.object(setup, "bluetooth_experimental", return_value=True), \
+                    patch.object(setup, "check_hci_python", side_effect=ValueError("link-drop interpreter")):
+                with self.assertRaisesRegex(ValueError, "link-drop interpreter"):
                     setup.check_ready(self.wiring)
             self.assertFalse(any("setup_matter.py" in str(part) for command in commands for part in command))
 

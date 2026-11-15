@@ -19,8 +19,15 @@ import time
 from uuid import uuid4
 
 from .activity import ActivityAction
+from .ble_keyboard_worker import LINK_DROP_TIMEOUT, MAX_LINK_DROPS
 from .dut import AmityHTTPError, _positive_seconds
 from .trace import event
+
+
+# A DUT reports a new BLE link only after exchanging features and then its
+# version with the peer, at least one 30 ms connection interval each. A drop
+# sent within this bound of the connection lands before that report.
+MAX_LINK_DROP_REACTION_NS = 20_000_000
 
 
 class KeyboardConflict(RuntimeError):
@@ -80,8 +87,8 @@ class LocalKeyboard:
             raise TimeoutError("BLE keyboard worker deadline expired")
         return remaining
 
-    def _rpc(self, operation, arguments=None):
-        deadline = time.monotonic() + self.timeout
+    def _rpc(self, operation, arguments=None, *, timeout=None):
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         if not self._lock.acquire(timeout=self._remaining(deadline)):
             raise TimeoutError("BLE keyboard worker is busy")
         try:
@@ -156,6 +163,11 @@ class LocalKeyboard:
 
     def forget_peer(self):
         return self._rpc("forget_peer")
+
+    def drop_links(self, count):
+        # Each drop waits for the DUT's next link; the reply follows the last.
+        return self._rpc("drop_links", {"count": count},
+                         timeout=self.timeout + count * (LINK_DROP_TIMEOUT + 5))
 
     def _shutdown(self):
         process, self._process = self._process, None
@@ -491,6 +503,53 @@ class PairedKeyboard:
                 or not action.started_ns <= confirmed <= time.monotonic_ns()):
             raise KeyboardConflict("The keyboard disconnect has no confirmed link-loss timestamp")
         self._note("disconnect", started_monotonic_ns=action.started_ns, **action.operation)
+        return action
+
+    def drop_unreported_links(self, count=3):
+        """Drop the main's next links before its Bluetooth host reports them.
+
+        The Pi ends the current link, then each of the main's next count links
+        as soon as its controller reports the connection. The main must give
+        up each attempt and reconnect by itself afterward.
+        """
+        if type(count) is not int or not 1 <= count <= MAX_LINK_DROPS:
+            raise ValueError("Choose one to five early link drops")
+        if not self._created or self._closed or self._disconnected:
+            raise RuntimeError("Connect this test keyboard before dropping its links")
+        action = self.checkpoint(kind="ble_early_link_loss")
+        action.operation = receipt = self.worker.drop_links(count)
+        drops = receipt.get("drops") if isinstance(receipt, dict) else None
+        fields = {"number": int, "handle": int, "reaction_ns": int, "link_ns": int,
+                  "command_status": int, "reason": int, "encrypted": bool}
+        if (type(receipt.get("completed") if isinstance(receipt, dict) else None) is not bool
+                or not isinstance(drops, list) or len(drops) > count
+                or any(not isinstance(drop, dict) or set(drop) != set(fields)
+                       or any(type(drop[name]) is not kind for name, kind in fields.items())
+                       for drop in drops)
+                or receipt["completed"] is not (len(drops) == count)):
+            raise KeyboardConflict("The keyboard link drops have no valid helper record")
+        self._note("early_link_loss", started_monotonic_ns=action.started_ns, count=count,
+                   completed=receipt["completed"], drops=drops)
+        for drop in drops:
+            # Late drops would test an ordinary disconnect instead.
+            if drop["encrypted"] or drop["reaction_ns"] > MAX_LINK_DROP_REACTION_NS:
+                raise RuntimeError("The Pi dropped link " + str(drop["number"])
+                                   + " after the main could have reported it")
+        if not receipt["completed"]:
+            raise AssertionError("The main stopped reconnecting after " + str(len(drops)) + " of "
+                                 + str(count) + " links dropped before it reported them")
+        deadline = time.monotonic() + self.timeout
+        try:
+            while True:
+                state = self._status(deadline)
+                if state["remote_generation"] != self._pair_generation or state["bonded"] is not True:
+                    raise KeyboardConflict("The keyboard bond changed while its links were dropped")
+                if self._ready(state):
+                    break
+                self._pause(deadline)
+        except TimeoutError as error:
+            raise AssertionError("The main did not reconnect after its links were dropped early") from error
+        self._note("reconnected", main_boot=self.boot, remote_generation=self._pair_generation)
         return action
 
     def _release_before_unpair(self):

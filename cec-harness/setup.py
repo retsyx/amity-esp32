@@ -32,6 +32,7 @@ PACKAGES = (
     "ca-certificates", "device-tree-compiler", "raspi-utils", "python3-dbus-next", "python3-venv", "chromium",
     "bluez", "rfkill", "avahi-daemon", "libnss-mdns", "openssh-server", "sudo",
     "util-linux", "procps", "kmod", "libglib2.0-0t64", "libnl-3-200", "libnl-route-3-200", "libatomic1",
+    "libcap2-bin",
 )
 REBOOT_REQUIRED = 2
 OVERLAY_RECORD = Path("/var/lib/amity-harness/overlay.json")
@@ -39,6 +40,11 @@ REBOOT_RECORD = Path("/var/lib/amity-harness/reboot-required")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 BLUETOOTHD = "/usr/libexec/bluetooth/bluetoothd"
 BLUETOOTH_DROPIN = "/etc/systemd/system/bluetooth.service.d/amity-harness.conf"
+RUNTIME_PYTHON = HARNESS.parent / ".harness-python/bin/python"
+# A copy of the runtime interpreter whose only capability is CAP_NET_RAW, for
+# the BLE keyboard's raw HCI link-drop helper.
+HCI_PYTHON = HARNESS.parent / ".harness-python/bin/python-hci"
+CAP_NET_RAW = 13
 
 
 def run(command, **kwargs):
@@ -139,6 +145,24 @@ def monitor_helper():
     return tuple(str(path) for path in command)
 
 
+def install_hci_python():
+    """Copy the runtime interpreter, then grant the copy only CAP_NET_RAW."""
+    staged = str(HCI_PYTHON) + ".new"
+    run(["install", "-o", "root", "-g", "root", "-m", "0755", os.path.realpath(RUNTIME_PYTHON), staged])
+    run(["/usr/sbin/setcap", "cap_net_raw=ep", staged])
+    # Renaming keeps the capability; writing the file would clear it.
+    run(["mv", "-f", staged, str(HCI_PYTHON)])
+
+
+def check_hci_python():
+    if not HCI_PYTHON.is_file() or HCI_PYTHON.read_bytes() != Path(os.path.realpath(RUNTIME_PYTHON)).read_bytes():
+        raise ValueError("The BLE link-drop interpreter is missing or differs from the runtime; rerun setup")
+    probe = run([str(HCI_PYTHON), "-I", "-c", "print(next(line.split()[1] for line in open('/proc/self/status') "
+                 "if line.startswith('CapEff:')))"], capture_output=True)
+    if int(probe.stdout.strip() or "0", 16) != 1 << CAP_NET_RAW:
+        raise ValueError("The BLE link-drop interpreter needs exactly CAP_NET_RAW; rerun setup")
+
+
 def configure_access(account):
     for group in ("video", "gpio", "bluetooth", "dialout"):
         run(["groupadd", "--force", group])
@@ -225,6 +249,7 @@ def install(account, wiring):
         as_user(account, ["pinctrl", "set", str(gpio), "ip", "pn"])
     print("Installing the standalone functional-test runtime", flush=True)
     as_user(account, [sys.executable, "-B", str(HARNESS / "setup_runtime.py")])
+    install_hci_python()
     print("Installing and verifying the pinned Matter controller", flush=True)
     as_user(account, [sys.executable, "-B", str(HARNESS / "setup_matter.py")])
     if awaiting_reboot():
@@ -329,6 +354,7 @@ def check_ready(wiring):
     asyncio.run(asyncio.wait_for(check_bluetooth(), timeout=15))
     if not bluetooth_experimental():
         raise ValueError("bluetoothd must run with --experimental for keyboard advertising; rerun setup")
+    check_hci_python()
     run([sys.executable, "-B", str(HARNESS / "setup_matter.py"), "--verify-installed"])
     ctypes.CDLL(str(HARNESS.parent / ".matter-python/chip/_ChipDeviceCtrl.so"))
     run(["sudo", "-n", "unshare", "--mount", "--propagation", "private", "true"], capture_output=True)

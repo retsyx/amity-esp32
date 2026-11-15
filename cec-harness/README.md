@@ -116,7 +116,8 @@ explicitly; see [Run functional tests](#run-functional-tests) and
   and key commands, and repeats after rebooting the main, member or both.
   Each successful case restores the canonical bench names; failures retain DUT state.
 - `functional_tests/ble_keyboard.py`: pairs a Pi BLE HID keyboard and verifies
-  taps, overlapping buttons and disconnect cleanup with local/member equipment.
+  taps, overlapping buttons and disconnect cleanup with local/member equipment,
+  and reconnection after links dropped before the main reports them.
 - `functional_tests/matter.py` (`--test matter`): selects published activity
   inputs, checks keypad, playback, volume, mute and standby commands on local
   and member CEC wires, and verifies unsupported keys and an invalid input
@@ -1099,6 +1100,18 @@ Up must then end the remaining AVR stream. No `/api/key` request supplies these 
 HID exercises the keyboard input path; Siri touch gestures and Power macros
 remain separate.
 
+The early link-loss case pairs the keyboard, starts a source-only activity, then
+ends the link and each of the main's next three reconnections as soon as the
+Pi's controller reports them. The main's Bluetooth host reports a link only
+after exchanging features and version with the peer, so these links end before
+the main sees them. The main must reconnect by itself, without another pairing,
+and a fresh tap must reach the source. Each drop must be sent within 20 ms of
+the connection, before the main starts encryption; a later drop fails the case
+as a fixture fault, since it would only test an ordinary disconnect. A raw HCI
+helper sends the drops, run by `.harness-python/bin/python-hci`: a copy of the
+runtime interpreter that setup grants only `CAP_NET_RAW`. Readiness checks that
+the copy matches the runtime and holds exactly that capability.
+
 Failed-press and all-buttons-up checks require `CEC_CAP_MONITOR_PIN`. The
 independent monitor decodes the actual header, end-of-message and acknowledgement bits, including
 NACKed headers omitted by ordinary CEC receive. The monitor starts before a hold;
@@ -1280,7 +1293,7 @@ saved identities, then adding a different board and proving both owners' physica
 configuration and physical control through the replacement adapter,
 `--test default_physical_address` for four local/member scanned/fallback cases,
 `--test hostname` for local and two-board hostname changes across reboots,
-`--test ble_keyboard` for three real BLE keyboard cases (requires an unpaired main),
+`--test ble_keyboard` for four real BLE keyboard cases (requires an unpaired main),
 `--test matter` for Matter accessory controls with local and member equipment,
 `--test homekit` for aiohomekit input, key, audio and power controls on local/member equipment,
 or `--test all` for all ordinary scenarios. The same credentials, TLS and output

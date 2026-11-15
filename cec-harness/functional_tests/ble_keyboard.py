@@ -182,6 +182,29 @@ def _ble_keyboard(*, remote):
                     owner.assert_connected()
 
 
+def test_ble_keyboard_early_link_loss():
+    """Links dropped before the main reports them must not stop it reconnecting."""
+    main = DUT("amity-dut")
+    player = PlaybackComponent(main.tentacle(0).back, "BLE Early Loss", power=PowerState.OFF,
+                               address=CecAddress(4, 0x1000))
+    with TestBed(main, player):
+        with main.pair_ble_keyboard() as keyboard:
+            player.standby()
+            scan = main.scan_hdmi()
+            scan.assert_contains_only(player)
+            scan.assert_on(player, player.endpoint)
+            with main.create_activity("Functional BLE early loss", display=None, source=player) as activity:
+                started = activity.start()
+                player.wait_for_power(PowerState.ON, since=started)
+                activity.assert_active()
+                keyboard.drop_unreported_links(3)
+                keyboard.assert_paired()
+                with BLEInputEvidence(main, scan, player) as evidence:
+                    evidence.assert_tap(keyboard, player)
+                stopped = activity.standby()
+                player.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+
+
 def test_ble_keyboard_local():
     _ble_keyboard(remote=False)
 

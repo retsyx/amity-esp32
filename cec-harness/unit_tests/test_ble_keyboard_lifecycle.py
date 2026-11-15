@@ -301,7 +301,7 @@ class BLEKeyboardLifecycleTests(unittest.TestCase):
             runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
         self.assertEqual(exited.exception.code, 0)
         self.assertEqual(called, ["prepare_main", "test_ble_keyboard_lifecycle", "test_ble_keyboard_local",
-                                  "test_ble_keyboard_remote", "reset_main"])
+                                  "test_ble_keyboard_remote", "test_ble_keyboard_early_link_loss", "reset_main"])
 
 
 if __name__ == "__main__":

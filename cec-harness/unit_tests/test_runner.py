@@ -385,7 +385,8 @@ class RunnerTests(unittest.TestCase):
                     "test_default_physical_address_local",
                     "test_default_physical_address_local_scanned", "test_default_physical_address_remote",
                     "test_default_physical_address_remote_scanned",
-                    "test_ble_keyboard_lifecycle", "test_ble_keyboard_local", "test_ble_keyboard_remote", "reset_main"]
+                    "test_ble_keyboard_lifecycle", "test_ble_keyboard_local", "test_ble_keyboard_remote",
+                    "test_ble_keyboard_early_link_loss", "reset_main"]
         self.assertEqual(called, expected)
         self.assertEqual([result["test"] for result in report["tests"]], expected)
         self.assertTrue(report["passed"])

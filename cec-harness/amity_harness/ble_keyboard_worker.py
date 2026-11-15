@@ -25,6 +25,11 @@ NAME = "Amity Test Keyboard"
 # the adapter's 1.28 s default instead.
 FAST_ADVERTISING_MS = (20, 30)
 CONNECTED_ADVERTISING_MS = (1280, 1280)
+# The CAP_NET_RAW interpreter harness setup installs beside the runtime Python
+# runs the link-drop helper. A DUT retries a failed link after a few seconds.
+LINK_DROP_HELPER = Path(__file__).resolve().with_name("ble_link_drop.py")
+LINK_DROP_TIMEOUT = 20
+MAX_LINK_DROPS = 5
 def _keyboard_slots(value):
     if type(value) is not int or value not in (6, 10):
         raise ValueError("Choose six or ten keyboard slots")
@@ -122,6 +127,17 @@ class KeyboardWorker:
             await self.backend.forget_peer()
             self.reports = encode_reports([], 0, self.keyboard_slots)
             return {"cleared": True}
+        if operation == "drop_links":
+            _keys(arguments, ("count",))
+            count = arguments["count"]
+            if type(count) is not int or not 1 <= count <= MAX_LINK_DROPS:
+                raise ValueError("Choose one to five early link drops")
+            if self.reports != encode_reports([], 0, self.keyboard_slots):
+                raise RuntimeError("Release every key before dropping the keyboard link")
+            status = await self.backend.status()
+            if status.get("ready") is not True or not isinstance(status.get("peer_address"), str):
+                raise RuntimeError("The bonded keyboard must be connected and subscribed")
+            return await self.backend.drop_links(status["peer_address"], count)
         if operation != "report":
             raise ValueError("Unsupported BLE keyboard RPC operation")
         _keys(arguments, ("keyboard", "consumer"))
@@ -334,6 +350,55 @@ class BlueZKeyboard:
         await self._call(self.adapter, "org.bluez.LEAdvertisingManager1", "RegisterAdvertisement", "oa{sv}",
                          [self.path + "/advertisement", {}])
         self._advertising = True
+
+    async def drop_links(self, peer_address, count):
+        """End the connected peer's link, then its next links as soon as they exist.
+
+        The advertisement stays registered so the peer reconnects into the
+        armed helper. The helper never touches the link after its last drop.
+        """
+        if not self._advertising or self.peer is None:
+            raise RuntimeError("An advertised keyboard with an owned peer is required")
+        helper = await asyncio.create_subprocess_exec(
+            str(Path(sys.executable).with_name("python-hci")), "-I", str(LINK_DROP_HELPER),
+            "--adapter", self.adapter.rsplit("/", 1)[-1], "--peer", peer_address,
+            "--count", str(count), "--timeout", str(LINK_DROP_TIMEOUT),
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE)
+
+        async def record(timeout):
+            line = await asyncio.wait_for(helper.stdout.readline(), timeout)
+            value = json.loads(line) if line else None
+            if not isinstance(value, dict):
+                raise RuntimeError("The link-drop helper ended without a record")
+            return value
+
+        drops, finished = [], False
+        try:
+            if await record(5) != {"armed": True}:
+                raise RuntimeError("The link-drop helper did not arm")
+            await self._call(self.peer, "org.bluez.Device1", "Disconnect")
+            disconnected = time.monotonic_ns()
+            # The peer may already be reconnecting into the helper, so read no
+            # link state here; advertise at the unconnected rate meanwhile.
+            await self._readvertise(False)
+            while len(drops) < count:
+                value = await record(LINK_DROP_TIMEOUT + 5)
+                if set(value) == {"error", "drops"}:
+                    break
+                if set(value) != {"drop"} or not isinstance(value["drop"], dict):
+                    raise RuntimeError("The link-drop helper returned an invalid record")
+                drops.append(value["drop"])
+            finished = True
+        finally:
+            # After its final record the helper exits by itself.
+            if helper.returncode is None and not finished:
+                helper.kill()
+            try:
+                await asyncio.wait_for(helper.wait(), 5)
+            except TimeoutError:
+                helper.kill()
+                await helper.wait()
+        return {"disconnected_monotonic_ns": disconnected, "drops": drops, "completed": len(drops) == count}
 
     async def disconnect(self):
         await self._stop_advertising()

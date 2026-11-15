@@ -21,7 +21,7 @@ from functional_tests.default_physical_address import (
     test_default_physical_address_local, test_default_physical_address_local_scanned,
     test_default_physical_address_remote, test_default_physical_address_remote_scanned)
 from functional_tests.ble_keyboard import (test_ble_keyboard_lifecycle, test_ble_keyboard_local,
-                                         test_ble_keyboard_remote)
+                                         test_ble_keyboard_remote, test_ble_keyboard_early_link_loss)
 from functional_tests.matter import test_matter_accessory_local, test_matter_accessory_remote
 from functional_tests.homekit import test_homekit_accessory_local, test_homekit_accessory_remote
 from functional_tests.add_amity import test_add_amity
@@ -71,7 +71,8 @@ if __name__ == "__main__":
                            "default_physical_address": (
                                test_default_physical_address_local, test_default_physical_address_local_scanned,
                                test_default_physical_address_remote, test_default_physical_address_remote_scanned),
-                           "ble_keyboard": (test_ble_keyboard_lifecycle, test_ble_keyboard_local, test_ble_keyboard_remote)},
+                           "ble_keyboard": (test_ble_keyboard_lifecycle, test_ble_keyboard_local, test_ble_keyboard_remote,
+                                            test_ble_keyboard_early_link_loss)},
                           opt_in_tests={"soak": (test_soak, test_soak_main4),
                                         "consortium_four_duts_main4": test_consortium_four_duts_main4},
                           main_duts={"consortium_four_duts_main4": "amity-dut-4",
