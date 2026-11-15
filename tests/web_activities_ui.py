@@ -394,6 +394,7 @@ def main():
                 rename('Unwanted again');discard.click();expect(page.locator('#activityList .activity-name')).to_have_text(['TV','Music'])
                 passed('Discard restores edits, deletions, additions and order without writing or changing the active activity')
                 rename('Failed staged save');fixture['fail_save']=True;save.click();expect(page.locator('#message')).to_have_text('Could not save configuration')
+                expect(save).to_have_text('Save activities');expect(save).to_be_enabled()
                 expect(discard).to_be_enabled();discard.click();expect(save).to_be_hidden();expect(discard).to_be_hidden();expect(page.locator('#message')).to_have_text('')
                 assert fixture['config']==saved_before;fixture['fail_save']=False
                 passed('Discard remains available after a failed save and clears its stale error')
@@ -460,12 +461,13 @@ def main():
                 expect(starts.first).to_have_text('Start');expect(starts.first).to_be_enabled();expect(save).to_be_hidden();expect(discard).to_be_hidden()
                 assert page.evaluate('() => config.activities')==fixture['config']['activities']
                 passed('Discard uses the latest successful save and restores correct Repair mapping')
-                rename('Submitted');gate=Event();fixture['save_gate']=gate;save.click();expect(save).to_be_disabled()
+                rename('Submitted');gate=Event();fixture['save_gate']=gate;save.click();expect(save).to_be_disabled();expect(save).to_have_text('Saving...')
                 assert page.locator('#activities button:enabled').count()==0
                 expect(page.locator('[data-drag]').first).to_have_attribute('aria-disabled','true')
                 page.locator('[data-drag]').first.press('ArrowDown');expect(page.locator('#activityList .activity-name').first).to_have_text('Submitted')
                 gate.set();page.wait_for_function('() => !saving');expect(save).to_be_hidden();fixture['save_gate']=None
-                passed('saving locks editing, starting and drag order until persisted indices are known')
+                expect(save).to_have_text('Save activities')
+                passed('saving shows Saving... and locks editing, starting and drag order until persisted indices are known')
                 edit();page.locator('#activityFields input').first.fill('Music');page.locator('#activityForm').get_by_role('button',name='OK',exact=True).click()
                 expect(page.locator('#activityEditorError')).to_have_text('Activity names must be unique.');page.locator('#cancelActivity').click();expect(save).to_be_hidden()
                 passed('duplicate activity names stay in the modal for correction')

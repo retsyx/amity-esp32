@@ -35,6 +35,7 @@ function updateActivityButtons(){
   b.disabled=locked||(b.hasAttribute('data-add-recommendation')&&config.activities.length>=16)||(b.id==='addActivity'&&config.activities.length>=16);
  });
  $('saveActivities').disabled=locked||!currentActivityUnchanged(config.activities);
+ setText($('saveActivities'),saving?'Saving...':'Save activities');
  $('saveActivities').title=currentActivityUnchanged(config.activities)?'':activeActivityMessage;
  if(locked)endActivityDrag(true);updateActivityState();
 }
