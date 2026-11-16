@@ -837,7 +837,11 @@ $('factoryReset').addEventListener('click',run(async()=>{
  try{await request('factory-reset',{confirm:true});dirty=false;showLogin();$('login').hidden=true;message('Factory reset started. Add the device to your home again using its original Matter code.');}
  finally{button.disabled=false;}
 }));
-$('changePassword').addEventListener('submit',run(async e=>{e.preventDefault();await request('password',{password:$('newPassword').value});$('newPassword').value='';showLogin();message('Password changed.');}));
+$('changePassword').addEventListener('submit',run(async e=>{
+ e.preventDefault();const password=$('newPassword').value;
+ if(password!==$('confirmNewPassword').value)throw Error('Passwords do not match.');
+ await request('password',{password});$('changePassword').reset();showLogin();message('Password changed.');
+}));
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 setInterval(()=>{if(token)poll();},4000);
 async function initialize(){

@@ -192,7 +192,7 @@ dialog h3 { margin-bottom: 20px; font-size: 1.25rem; }
 
 #advanced input { max-width: 100%; }
 #advanced input[type=file] { width: 100%; max-width: 360px; }
-#newPassword { width: calc(24ch + 26px); }
+#newPassword, #confirmNewPassword { width: calc(24ch + 26px); }
 .diagnostics { display: grid; grid-template-columns: minmax(144px, auto) repeat(4, auto) 1fr; gap: 10px 0; margin: 0 0 20px; font-size: .9rem; }
 .diagnostics dt { grid-column: 1; padding-right: 24px; color: var(--muted); }
 .diagnostics dd { grid-column: 2 / -1; margin: 0; min-width: 0; overflow-wrap: anywhere; }

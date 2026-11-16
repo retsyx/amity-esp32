@@ -28,8 +28,9 @@ def main(argv=None):
     # The header's HDMI scan status was removed.
     # The page links its favicon.
     # Errors appear in one closable popup; the activity editor's error line was removed.
+    # Changing the password requires entering the new password twice.
     # Keep the remaining presentation unchanged without requiring that Git object.
-    baseline_sha256 = '73af64fb862aa4679f0799bb3958fcacbf3ac3f8b4f3544878d7b00a005a32c9'
+    baseline_sha256 = 'db59f06873bc3b8b1b55c4392be9bbdbdc59362eb21cb01ce150cd63771caa3c'
     current = (ROOT/'components/web_admin/assets/index.html').read_text()
     current = current.replace('<script src="/system.js" defer></script>', '').replace('<button data-tab="amityDevices">Amity devices</button>', '')
     current = re.sub(r'<section id="amityDevices".*?</section>', '', current)
@@ -125,6 +126,8 @@ def main(argv=None):
             fixture['posts'].append((self.path, deepcopy(body)))
             if self.path == '/api/login':
                 return self.reply(dict(token='fixture-session'))
+            if self.path == '/api/password':
+                return self.reply(dict(ok=True))
             if self.path == '/api/activity-editor':
                 assert body['version'] == 1
                 assert body['expected_config_revision'] == editor['expected_config_revision']
@@ -591,6 +594,38 @@ def main(argv=None):
             assert len(restored) == 1 and restored[0]['configuration'] == backup
             assert not [p for p, _ in fixture['posts'] if p in ('/api/restore', '/api/config')]
             passed('existing Advanced restore confirms old-main isolation and submits guarded portable recovery without playback')
+            account = browser.new_page(viewport=dict(width=430, height=900))
+            try:
+                account.on('pageerror', lambda error: errors.append(str(error)))
+                account.goto(f'http://127.0.0.1:{server.server_port}/')
+                account.locator('#password').fill('fixture')
+                account.locator('#password').press('Enter')
+                expect(account.locator('#admin')).to_be_visible()
+                account.locator('[data-tab=advanced]').click()
+                form = account.locator('#changePassword')
+                new_password = form.get_by_label('New password', exact=True)
+                confirmation = form.get_by_label('Confirm new password', exact=True)
+                expect(new_password).to_have_attribute('type', 'password')
+                expect(confirmation).to_have_attribute('type', 'password')
+                changes = lambda: [b for p, b in fixture['posts'] if p == '/api/password']
+                new_password.fill('replacement')
+                form.get_by_role('button', name='Change password', exact=True).click()
+                assert not changes()
+                confirmation.fill('replacemenT')
+                form.get_by_role('button', name='Change password', exact=True).click()
+                expect(account.locator('#message')).to_have_text('Passwords do not match.')
+                expect(account.locator('#admin')).to_be_visible()
+                assert not changes()
+                confirmation.fill('replacement')
+                form.get_by_role('button', name='Change password', exact=True).click()
+                expect(account.locator('#login')).to_be_visible()
+                expect(account.locator('#message')).to_have_text('Password changed.')
+                assert changes() == [dict(password='replacement')]
+                expect(new_password).to_have_value('')
+                expect(confirmation).to_have_value('')
+            finally:
+                account.close()
+            passed('Advanced password change requires matching entries before submitting')
 
             # Fresh pages cover both compiled adapter capacities on a lone
             # main, including initial hydration, scan and editor choices.
