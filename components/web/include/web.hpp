@@ -17,6 +17,7 @@
 namespace web {
 using Handler = esp_err_t (*)(httpd_req_t *);
 esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::string &initial_auth);
+esp_err_t stop(httpd_handle_t handle);
 esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Handler handler,void *context=nullptr);
 // Plain HTTP. Every request is permanently redirected to the same URL over HTTPS.
 esp_err_t start_redirect(uint16_t port=80);

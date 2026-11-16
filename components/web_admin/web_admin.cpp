@@ -363,7 +363,7 @@ esp_err_t stop() {
     const auto plain=web::stop_redirect();
     if(!server)return plain;
     system_services::stop_log_downloads();
-    const auto result=httpd_ssl_stop(server);
+    const auto result=web::stop(server);
     if(result==ESP_OK)server=nullptr;
     return plain!=ESP_OK?plain:result;
 }

@@ -36,10 +36,10 @@ int route(httpd_handle_t,const char*,int,int(*)(httpd_req_t*)){++routes;return E
 int start_redirect(uint16_t port=80){++redirect_starts;assert(port==80&&server&&routes==7&&ui_enabled);redirect=!redirect_error;return redirect_error;}
 int stop_redirect(){++redirect_stops;assert(ui_revoked&&!ui_enabled);if(!redirect_stop_error)redirect=false;return redirect_stop_error;}
 int error(httpd_req_t*req,const char*,const char*status){req->status=std::atoi(status);return ESP_FAIL;}
+// Each stop closes the redirect first, so it never points at a closing server.
+int stop(httpd_handle_t){assert(redirect_stops>stops);++stops;assert(ui_revoked&&!ui_enabled&&log_stops==stops);return stop_error;}
 }
 int httpd_resp_send_err(httpd_req_t*,int status,const char*){return status;}
-// Each stop closes the redirect first, so it never points at a closing server.
-int httpd_ssl_stop(httpd_handle_t){assert(redirect_stops>stops);++stops;assert(ui_revoked&&!ui_enabled&&log_stops==stops);return stop_error;}
 '''
 SUITE=r'''
 int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];amity::SystemControl control;httpd_req_t request;

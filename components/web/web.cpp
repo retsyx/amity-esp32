@@ -7,6 +7,7 @@
  */
 
 #include "web.hpp"
+#include "stall.hpp"
 #include "config_store.hpp"
 #include "esp_https_server.h"
 #include "esp_log.h"
@@ -84,6 +85,7 @@ esp_err_t tls_identity(const std::string &hostname) {
 esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::string &initial_auth) {
     auto e=credentials_init(initial_auth);if(e!=ESP_OK)return e;
     e=tls_identity(hostname);if(e!=ESP_OK)return e;
+    e=stall::prepare();if(e!=ESP_OK)return e;
     httpd_ssl_config_t cfg=HTTPD_SSL_CONFIG_DEFAULT();
     cfg.httpd.max_uri_handlers=32;
     cfg.httpd.stack_size=12288;
@@ -99,7 +101,14 @@ esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::st
     cfg.servercert_len=certificate.size()+1;
     cfg.prvtkey_pem=reinterpret_cast<const uint8_t *>(private_key.c_str());
     cfg.prvtkey_len=private_key.size()+1;
-    return httpd_ssl_start(&handle,&cfg);
+    e=httpd_ssl_start(&handle,&cfg);
+    if(e==ESP_OK)stall::serve(handle);
+    return e;
+}
+esp_err_t stop(httpd_handle_t handle) {
+    const auto e=httpd_ssl_stop(handle);
+    if(e==ESP_OK)stall::release(handle);
+    return e;
 }
 esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Handler handler,void *context) {
     httpd_uri_t uri{};uri.uri=path;uri.method=method;uri.handler=handler;uri.user_ctx=context;
@@ -110,5 +119,8 @@ esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Han
 extern "C" int __real_esp_tls_server_session_create(esp_tls_cfg_server_t*, int, esp_tls_t*);
 extern "C" int __wrap_esp_tls_server_session_create(esp_tls_cfg_server_t *cfg, int socket, esp_tls_t *tls) {
     web::configure_tcp_socket(socket);
-    return __real_esp_tls_server_session_create(cfg,socket,tls);
+    web::stall::arm(socket,web::stall::handshake_us);
+    const int result=__real_esp_tls_server_session_create(cfg,socket,tls);
+    web::stall::disarm();
+    return result;
 }

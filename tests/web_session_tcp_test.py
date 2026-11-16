@@ -5,6 +5,7 @@ TLS identity and the SDK handshake entry are seams; no endpoint or hardware is
 opened. Socket-option success and failure use the host's real TCP API.
 """
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -56,13 +57,29 @@ void warning(const char *tag,const char *format,int error) {
     warnings.emplace_back(message);
 }
 #define ESP_LOGW(...) warning(__VA_ARGS__)
+// The stall guard seam records its phase order.
+int prepare_result=ESP_OK,stop_result=ESP_OK,armed_socket=-2;
+unsigned prepare_calls=0,stop_calls=0,arms=0,disarms=0;
+uint64_t armed_us=0;
+httpd_handle_t served=nullptr,released=nullptr;
 httpd_ssl_config_t captured;
 int httpd_ssl_start(httpd_handle_t *handle,const httpd_ssl_config_t *config) {
+    // The deadline timer exists before the server can accept a connection.
+    assert(prepare_calls==start_calls+1&&!served);
     ++start_calls;captured=*config;
     if(start_result==ESP_OK)*handle=reinterpret_cast<void*>(1);
     return start_result;
 }
+int httpd_ssl_stop(httpd_handle_t handle){++stop_calls;assert(handle==reinterpret_cast<void*>(1));return stop_result;}
 namespace web {
+namespace stall {
+constexpr uint64_t handshake_us=HANDSHAKE_US;
+int prepare(){++prepare_calls;return prepare_result;}
+void serve(httpd_handle_t server){served=server;}
+void release(httpd_handle_t server){released=server;}
+void arm(int socket,uint64_t timeout_us){assert(armed_socket==-2);armed_socket=socket;armed_us=timeout_us;++arms;}
+void disarm(){armed_socket=-2;++disarms;}
+}
 std::string certificate,private_key;
 int credentials_init(const std::string &authentication) {
     ++credentials_calls;assert(authentication=="fixture-authentication");return credentials_result;
@@ -95,6 +112,8 @@ extern "C" int __real_esp_tls_server_session_create(esp_tls_cfg_server_t *cfg,in
     assert(cfg->marker==37);
     if(socket>=0)assert(nodelay(socket)!=0); // Before any SDK TLS work.
     else assert(warnings.size()==1); // The failed option is reported once.
+    // The whole handshake runs under one deadline for this socket.
+    assert(armed_socket==socket&&armed_us==web::stall::handshake_us&&arms==sdk_calls);
     ++tls->marker;
     return sdk_result;
 }
@@ -105,6 +124,7 @@ int main() {
     httpd_handle_t handle=nullptr;
     assert(web::start(handle,"amity-test","fixture-authentication")==ESP_OK);
     assert(handle&&credentials_calls==1&&identity_calls==1&&start_calls==1);
+    assert(prepare_calls==1&&served==handle);
     assert(!captured.httpd.open_fn&&captured.httpd.uri_match_fn==httpd_uri_match_wildcard);
     assert(captured.httpd.max_uri_handlers==32&&captured.httpd.stack_size==12288);
     assert(captured.httpd.max_open_sockets==8&&captured.httpd.lru_purge_enable);
@@ -134,8 +154,10 @@ int main() {
     assert(warnings.front().find("TCP_NODELAY")!=std::string::npos);
     assert(warnings.front().find(std::to_string(EBADF))!=std::string::npos);
     assert(nodelay(first.fd)!=0&&nodelay(second.fd)!=0&&start_calls==1);
+    // Every handshake result, including failure, ends its deadline.
+    assert(arms==3&&disarms==3&&armed_socket==-2);
     // Neither startup failure nor option failure opens a replacement server.
-    handle=nullptr;credentials_result=37;
+    served=nullptr;handle=nullptr;credentials_result=37;
     assert(web::start(handle,"amity-test","fixture-authentication")==37);
     assert(!handle&&credentials_calls==2&&identity_calls==1&&start_calls==1);
     credentials_result=ESP_OK;identity_result=41;
@@ -143,7 +165,16 @@ int main() {
     assert(!handle&&credentials_calls==3&&identity_calls==2&&start_calls==1);
     identity_result=ESP_OK;start_result=43;
     assert(web::start(handle,"amity-test","fixture-authentication")==43);
-    assert(!handle&&start_calls==2&&warnings.size()==1);
+    assert(!handle&&start_calls==2&&warnings.size()==1&&prepare_calls==2&&!served);
+    // Without the deadline timer, the server does not start.
+    start_result=ESP_OK;prepare_result=45;
+    assert(web::start(handle,"amity-test","fixture-authentication")==45);
+    assert(!handle&&start_calls==2&&prepare_calls==3&&!served);
+    // Stopping releases the guard only once the server has stopped.
+    stop_result=47;
+    assert(web::stop(reinterpret_cast<void*>(1))==47&&stop_calls==1&&!released);
+    stop_result=ESP_OK;
+    assert(web::stop(reinterpret_cast<void*>(1))==ESP_OK&&stop_calls==2&&released==reinterpret_cast<void*>(1));
     std::cout<<"PASS actual HTTPS startup/pre-handshake policy: native TCP_NODELAY before SDK entry; exact cfg/fd/tls and results, one warning on option failure; credentials and connection capacity preserved\n";
 }
 '''
@@ -152,12 +183,14 @@ int main() {
 def main():
     source = (ROOT / 'components/web/web.cpp').read_text()
     actual = ''.join(function(source, name) for name in
-                     ('void configure_tcp_socket(', 'esp_err_t start(httpd_handle_t &handle,'))
+                     ('void configure_tcp_socket(', 'esp_err_t start(httpd_handle_t &handle,',
+                      'esp_err_t stop(httpd_handle_t handle)'))
+    handshake = re.search(r'constexpr uint64_t handshake_us=(\d+),', (ROOT / 'components/web/stall.hpp').read_text())
     wrapper = function(source, 'extern "C" int __wrap_esp_tls_server_session_create(')
     assert '"-Wl,--wrap=esp_tls_server_session_create"' in (ROOT / 'components/web/CMakeLists.txt').read_text()
     with tempfile.TemporaryDirectory(prefix='amity-web-session-') as directory:
         cpp, binary = Path(directory) / 'test.cpp', Path(directory) / 'test'
-        cpp.write_text(PREFIX + actual + SDK + wrapper + SUITE)
+        cpp.write_text(PREFIX.replace('HANDSHAKE_US', handshake.group(1)) + actual + SDK + wrapper + SUITE)
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
             '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
             str(cpp), '-o', str(binary)], check=True)
