@@ -66,8 +66,10 @@ explicitly; see [Run functional tests](#run-functional-tests) and
 - `functional_tests/usb_reboot.py`: verifies a USB chip reboot through `DUT.usb_reboot()`
   using a fresh authenticated boot identity and unchanged saved configuration.
 - `functional_tests/http_redirect.py` (`--test http_redirect`): sends plain HTTP
-  requests to the main's port 80, requires an empty 307 redirect to the same URL
+  requests to the main's port 80, requires an empty 308 redirect to the same URL
   over HTTPS that closes its connection, and follows it to the main's own UI.
+  A client stalled mid-request must neither delay those requests nor receive a
+  response; the main closes it.
 - `functional_tests/member_reboot.py` (`--test activity_member_reboot`): reboots
   a member during playback, checks uninterrupted selection, equipment power and
   routing, then verifies fresh member key commands without restarting the activity.

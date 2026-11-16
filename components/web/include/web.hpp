@@ -10,16 +10,20 @@
 #include "esp_http_server.h"
 #include "esp_timer.h"
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 namespace web {
 using Handler = esp_err_t (*)(httpd_req_t *);
 esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::string &initial_auth);
 esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Handler handler,void *context=nullptr);
-// Plain HTTP on port 80. Every request is redirected to the same URL over HTTPS.
-esp_err_t start_redirect(httpd_handle_t &handle);
-// The requested URL with only its http scheme replaced; empty when it cannot be formed.
-std::string https_location(const std::string &host,const std::string &target);
+// Plain HTTP. Every request is permanently redirected to the same URL over HTTPS.
+esp_err_t start_redirect(uint16_t port=80);
+esp_err_t stop_redirect();
+// The URL a complete request head names, with only its http scheme replaced
+// by https; empty when the head is malformed.
+std::string redirect_location(std::string_view head);
 // A total deadline, including TLS record assembly. Expiry interrupts a blocked receive.
 class BodyReader {
 public:

@@ -11,6 +11,7 @@ from consortium_gatt_callback_test import function
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
 #include <atomic>
+#include <cstdint>
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
@@ -27,18 +28,18 @@ unsigned starts=0,stops=0,routes=0,effects=0,redirect_starts=0,redirect_stops=0;
 unsigned log_stops=0;
 namespace system_services {void stop_log_downloads(){++log_stops;}}
 std::atomic_bool ui_enabled{false},ui_revoked{false};std::mutex server_mutex;
-amity::SystemControl*hub=nullptr;httpd_handle_t server=nullptr,redirect=nullptr;
+amity::SystemControl*hub=nullptr;httpd_handle_t server=nullptr;bool redirect=false;
 namespace web{
 int start(httpd_handle_t&out,const std::string&,const char*){++starts;out=reinterpret_cast<void*>(1);return ESP_OK;}
 int route(httpd_handle_t,const char*,int,int(*)(httpd_req_t*)){++routes;return ESP_OK;}
 // The redirect opens only once the administration server is fully routed.
-int start_redirect(httpd_handle_t&out){++redirect_starts;assert(server&&routes==7&&ui_enabled);if(!redirect_error)out=reinterpret_cast<void*>(2);return redirect_error;}
+int start_redirect(uint16_t port=80){++redirect_starts;assert(port==80&&server&&routes==7&&ui_enabled);redirect=!redirect_error;return redirect_error;}
+int stop_redirect(){++redirect_stops;assert(ui_revoked&&!ui_enabled);if(!redirect_stop_error)redirect=false;return redirect_stop_error;}
 int error(httpd_req_t*req,const char*,const char*status){req->status=std::atoi(status);return ESP_FAIL;}
 }
 int httpd_resp_send_err(httpd_req_t*,int status,const char*){return status;}
-// The redirect closes first, so it never points at a closing server.
-int httpd_stop(httpd_handle_t handle){++redirect_stops;assert(handle==redirect&&ui_revoked&&!ui_enabled&&stops+1==redirect_stops);return redirect_stop_error;}
-int httpd_ssl_stop(httpd_handle_t){++stops;assert(ui_revoked&&!ui_enabled&&log_stops==stops);return stop_error;}
+// Each stop closes the redirect first, so it never points at a closing server.
+int httpd_ssl_stop(httpd_handle_t){assert(redirect_stops>stops);++stops;assert(ui_revoked&&!ui_enabled&&log_stops==stops);return stop_error;}
 '''
 SUITE=r'''
 int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];amity::SystemControl control;httpd_req_t request;
@@ -57,9 +58,8 @@ int main(int argc,char**argv){assert(argc==2);const std::string mode=argv[1];ami
   assert(api(&request)==ESP_OK&&asset(&request)==ESP_OK&&effects==2);
   if(mode=="stop-error")stop_error=77;
   if(mode=="redirect-stop-error")redirect_stop_error=78;
-  const bool had_redirect=redirect;
   assert(stop()==(redirect_stop_error?redirect_stop_error:stop_error)&&!ui_enabled&&ui_revoked);
-  assert(redirect_stops==(had_redirect?1u:0u)&&!redirect==!redirect_stop_error&&stops==1);
+  assert(redirect_stops==1&&redirect==!!redirect_stop_error&&stops==1);
   assert(api(&request)==ESP_FAIL&&request.status==403&&asset(&request)==ESP_FAIL&&request.status==403&&effects==2); // Already accepted handlers must reject too.
   assert(start(control,"test","private")==ESP_ERR_INVALID_STATE&&starts==1);
   stop_error=0;redirect_stop_error=0;assert(stop()==ESP_OK&&!server&&!redirect);assert(stop()==ESP_OK);

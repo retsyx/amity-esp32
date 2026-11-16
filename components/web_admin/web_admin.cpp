@@ -40,7 +40,7 @@ namespace web_admin {
 namespace {
 amity::SystemControl *hub;
 LocalRemoteApprovalBook remote_approvals;
-httpd_handle_t server,redirect;
+httpd_handle_t server;
 std::mutex server_mutex;
 std::atomic_bool ui_enabled{false};
 std::atomic_bool ui_revoked{false};
@@ -353,15 +353,14 @@ esp_err_t start(amity::SystemControl &service,const char *hostname,const char *i
     e=web::route(server,"/api/*",HTTP_GET,api);if(e!=ESP_OK)return e;
     e=web::route(server,"/api/*",HTTP_POST,api);
     if(e==ESP_OK)ui_enabled.store(true);
-    if(e==ESP_OK)e=web::start_redirect(redirect);
+    if(e==ESP_OK)e=web::start_redirect();
     return e;
 }
 esp_err_t stop() {
     // Revoke handlers before closing sockets, including already accepted ones.
     ui_revoked.store(true); ui_enabled.store(false);
     std::lock_guard<std::mutex> guard(server_mutex);
-    const auto plain=redirect?httpd_stop(redirect):ESP_OK;
-    if(plain==ESP_OK)redirect=nullptr;
+    const auto plain=web::stop_redirect();
     if(!server)return plain;
     system_services::stop_log_downloads();
     const auto result=httpd_ssl_stop(server);
