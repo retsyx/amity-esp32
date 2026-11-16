@@ -22,7 +22,7 @@ FAKES = {
 using esp_err_t=int;
 constexpr esp_err_t ESP_OK=0;
 using httpd_handle_t=void*;
-struct httpd_req {int fd;};
+struct httpd_req {void *handle;int fd;};
 using httpd_req_t=httpd_req;
 inline int httpd_req_to_sockfd(httpd_req_t *request){return request->fd;}
 ''',
@@ -55,7 +55,10 @@ inline esp_err_t esp_timer_stop_blocking(esp_timer_handle_t timer,uint32_t){time
 // The esp_timer task runs an armed timer's callback at expiry.
 inline void expire_now(){if(timer_state.armed){timer_state.armed=false;timer_state.callback(nullptr);}}
 ''',
-    'freertos/FreeRTOS.h': '#pragma once\n#define portMAX_DELAY 0xffffffffu\n',
+    'freertos/FreeRTOS.h': '#pragma once\n#define portMAX_DELAY 0xffffffffu\nusing TaskHandle_t=void*;\n',
+    # Each host thread stands in for one FreeRTOS task.
+    'freertos/task.h': '#pragma once\n#include "freertos/FreeRTOS.h"\n'
+                       'inline TaskHandle_t xTaskGetCurrentTaskHandle(){thread_local char task;return &task;}\n',
 }
 
 SUITE = r'''
@@ -63,8 +66,10 @@ SUITE = r'''
 #include "esp_httpd_priv.h"
 #include "esp_timer.h"
 #include <cassert>
+#include <functional>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <sys/socket.h>
 #include <unistd.h>
 extern "C" {
@@ -84,10 +89,13 @@ httpd_data *guarded=&secure_server; // the server the fakes expect deadlines for
 std::string events;
 bool expire_head=false,expire_purge=false;
 int head_socket=-1;
+std::function<void()> handler_work;
 // SDK seams: parse the head, route it, then run the handler.
 extern "C" esp_err_t __real_httpd_uri(httpd_data *server){
     // Handlers run without the head deadline.
-    assert(!timer_state.armed);events+="handler,";(void)server;return ESP_OK;
+    assert(!timer_state.armed);events+="handler,";(void)server;
+    if(handler_work)handler_work();
+    return ESP_OK;
 }
 extern "C" esp_err_t __real_httpd_req_new(httpd_data *server,sock_db *session){
     if(server==guarded)
@@ -99,12 +107,17 @@ extern "C" esp_err_t __real_httpd_req_new(httpd_data *server,sock_db *session){
 }
 extern "C" esp_err_t __real_httpd_req_delete(httpd_data *server){
     const bool purge=server==guarded&&server->hd_req_aux.remaining_len;
-    assert(timer_state.armed==purge&&(!purge||timer_state.timeout==web::stall::purge_us));
+    assert(timer_state.armed==purge&&(!purge||timer_state.timeout==web::stall::transfer_us(server->hd_req_aux.remaining_len)));
     events+=purge?"purge,":"delete,";
     if(expire_purge){expire_now();return -1;}
     return ESP_OK;
 }
+// Transfers of known size get time at the minimum rate on top of the base:
+// the 68 KB UI script about 9.2 s, a 2.5 MB unread upload about 161 s.
+static_assert(web::stall::transfer_us(0)==5000000&&web::stall::transfer_us(16384)==6000000);
+static_assert(web::stall::transfer_us(68696)==9192871&&web::stall::transfer_us(2554212)==160896728);
 int main(){
+    secure_server.hd_req.handle=&secure_server;other_server.hd_req.handle=&other_server;
     // Phases before the timer exists are unguarded rather than failing.
     web::stall::arm(3,1);web::stall::disarm();assert(timer_creates==0);
     create_result=0x101;assert(web::stall::prepare()==0x101);
@@ -130,11 +143,35 @@ int main(){
         expire_purge=false;secure_server.hd_req_aux.remaining_len=0;
     }
     {
+        // A handler's response gets its size allowance, on the server task only.
+        Pair pair;head_socket=pair.fds[0];sock_db session{pair.fds[0]};
+        secure_server.hd_req.fd=pair.fds[0];events.clear();bool responded=false;
+        handler_work=[&]{
+            {
+                web::stall::Response bound(&secure_server.hd_req,68696);
+                assert(timer_state.armed&&timer_state.timeout==web::stall::transfer_us(68696));
+                // A response streamed from another task, as logs are, is not bounded.
+                std::thread([&]{web::stall::Response streamed(&secure_server.hd_req,1);}).join();
+                assert(timer_state.armed&&timer_state.timeout==web::stall::transfer_us(68696));
+            }
+            assert(!timer_state.armed&&!pair.ended());
+            // A client that stops reading is cut off at the deadline.
+            {web::stall::Response bound(&secure_server.hd_req,10);expire_now();assert(pair.ended());}
+            assert(!timer_state.armed);responded=true;
+        };
+        assert(__wrap_httpd_req_new(&secure_server,&session)==ESP_OK&&responded&&events=="head,handler,");
+        handler_work=nullptr;
+        // Outside a handler, nothing is bounded.
+        {web::stall::Response bound(&secure_server.hd_req,10);assert(!timer_state.armed);}
+    }
+    {
         // Another HTTPD server, such as HomeKit's, passes through unchanged.
         Pair pair;sock_db session{pair.fds[0]};other_server.hd_req.fd=pair.fds[0];
         other_server.hd_req_aux.remaining_len=4096;events.clear();
+        handler_work=[&]{web::stall::Response bound(&other_server.hd_req,68696);assert(!timer_state.armed);};
         assert(__wrap_httpd_req_new(&other_server,&session)==ESP_OK&&__wrap_httpd_req_delete(&other_server)==ESP_OK);
         assert(events=="head,handler,delete,"&&!pair.ended());
+        handler_work=nullptr;
         // Releasing another server keeps the HTTPS server guarded; releasing
         // the HTTPS server stops guarding it.
         web::stall::release(&other_server);
@@ -153,7 +190,7 @@ int main(){
         // Expiry after a disarm cannot reach a reused descriptor.
         Pair reused;expire_now();assert(!reused.ended());
     }
-    std::cout<<"PASS actual HTTPS stall deadlines: handshake, request head and unread-body purge bounded on the HTTPS server only; handlers unbounded by them\n";
+    std::cout<<"PASS actual HTTPS stall deadlines: handshake and request head fixed; responses and unread bodies by size at a minimum rate; HTTPS server task only\n";
 }
 '''
 
@@ -192,6 +229,25 @@ def check_sdk():
     assert 'esp_tls_server_session_create(' in function_body(https, 'httpd_ssl_open')
 
 
+def check_transfers():
+    # Firmware uploads read their own bodies under their own deadline. Every
+    # early exit closes without a drain, so no unread upload is purged.
+    system = (ROOT / 'components/system_services/system_services.cpp').read_text()
+    upload = function_body(system, 'upload_firmware')
+    assert 'web::BodyReader reader(req,' in upload and 'web::response(' not in upload and 'web::json(' not in upload
+    returns = re.findall(r'return ([^;]*);', upload)
+    # The read helper's own true/false results aside, every exit before the
+    # final response is a closing error.
+    assert returns[-1].startswith('httpd_resp_sendstr(') and all(
+        value.startswith(('web::error(', 'fail(')) or value in ('true', 'false') for value in returns[:-1]), returns
+    assert re.search(r'auto fail=\[&\]\(const std::string& message\)\{[^}]*return web::error\(', upload)
+    error = function_body((ROOT / 'components/web/request.cpp').read_text(), 'error')
+    assert error.rstrip().endswith('return ESP_FAIL;\n}') or 'return ESP_FAIL;' in error.splitlines()[-2], error
+    # Log downloads stream from their own task, outside the bounded handler.
+    logs = (ROOT / 'components/system_services/log_download.cpp').read_text()
+    assert 'httpd_req_async_handler_begin(' in logs and 'httpd_resp_send_chunk(' in logs and 'web::response(' not in logs
+
+
 def check_handshake_owner():
     callers = []
     for directory in ('components', 'main', 'third_party'):
@@ -204,6 +260,7 @@ def check_handshake_owner():
 def main():
     check_sdk()
     check_handshake_owner()
+    check_transfers()
     cmake = (ROOT / 'components/web/CMakeLists.txt').read_text()
     for name in ('httpd_req_new', 'httpd_uri', 'httpd_req_delete'):
         assert f'"-Wl,--wrap={name}"' in cmake, name
@@ -215,7 +272,7 @@ def main():
         cpp, binary = directory / 'test.cpp', directory / 'test'
         cpp.write_text(SUITE)
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
-            '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
+            '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined', '-pthread',
             '-I', str(directory), '-I', str(ROOT / 'components/web'),
             str(ROOT / 'components/web/stall.cpp'), str(cpp), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=60)

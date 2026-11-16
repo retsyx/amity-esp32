@@ -10,6 +10,7 @@
 #include "esp_httpd_priv.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <atomic>
 #include <sys/socket.h>
 namespace web::stall {
@@ -17,6 +18,8 @@ namespace {
 std::atomic<httpd_data *> secure{nullptr};
 esp_timer_handle_t timer=nullptr;
 std::atomic<int> watched{-1};
+// The HTTPS server task while it runs a handler.
+std::atomic<TaskHandle_t> responder{nullptr};
 void expire(void *) {shutdown(watched.load(),SHUT_RDWR);}
 }
 esp_err_t prepare() {
@@ -41,6 +44,12 @@ void disarm() {
     esp_timer_stop_blocking(timer,portMAX_DELAY);
     watched.store(-1);
 }
+Response::Response(httpd_req_t *request,size_t size) {
+    if(static_cast<httpd_data *>(request->handle)!=secure.load()||responder.load()!=xTaskGetCurrentTaskHandle())return;
+    arm(httpd_req_to_sockfd(request),transfer_us(size));
+    armed_=true;
+}
+Response::~Response() {if(armed_)disarm();}
 }
 
 // The SDK calls each of these across source files, so the linker routes
@@ -57,15 +66,20 @@ esp_err_t __wrap_httpd_req_new(httpd_data *server,sock_db *session) {
     web::stall::disarm();
     return result;
 }
-// Routing ends the head. Handlers bound their own body reads.
+// Routing ends the head. Handlers bound their own body reads; their
+// responses are bounded by web::stall::Response.
 esp_err_t __wrap_httpd_uri(httpd_data *server) {
-    if(server==web::stall::secure.load())web::stall::disarm();
-    return __real_httpd_uri(server);
+    if(server!=web::stall::secure.load())return __real_httpd_uri(server);
+    web::stall::disarm();
+    web::stall::responder.store(xTaskGetCurrentTaskHandle());
+    const auto result=__real_httpd_uri(server);
+    web::stall::responder.store(nullptr);
+    return result;
 }
 // A body the handler left unread is drained before the next request.
 esp_err_t __wrap_httpd_req_delete(httpd_data *server) {
     if(server!=web::stall::secure.load()||!server->hd_req_aux.remaining_len)return __real_httpd_req_delete(server);
-    web::stall::arm(httpd_req_to_sockfd(&server->hd_req),web::stall::purge_us);
+    web::stall::arm(httpd_req_to_sockfd(&server->hd_req),web::stall::transfer_us(server->hd_req_aux.remaining_len));
     const auto result=__real_httpd_req_delete(server);
     web::stall::disarm();
     return result;

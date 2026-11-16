@@ -3,6 +3,7 @@
  * This file is part of Amity-esp32, distributed under GPL-3.0-or-later.
  */
 #include "web.hpp"
+#include "stall.hpp"
 #include "system_services.hpp"
 #include <algorithm>
 #include <cassert>
@@ -18,6 +19,10 @@
 #include <unistd.h>
 
 using Clock=std::chrono::steady_clock;
+// web_stall_test.py exercises the guard; here each response records its bound.
+static std::vector<size_t> bounded;
+web::stall::Response::Response(httpd_req_t*,size_t size) {(void)armed_;bounded.push_back(size);}
+web::stall::Response::~Response() {}
 struct esp_timer {
     esp_timer_create_args_t args;
     std::mutex mutex;
@@ -116,6 +121,7 @@ static void regular_body_tests() {
     assert(web::body(&req,body,512)&&body==req.input&&req.offset==req.content_len);
     assert(last_timeout==15000000&&live_timers==0);
     assert(web::json(&req,"{\"ok\":true}")==ESP_OK&&req.headers.count("Connection")==0);
+    assert(!bounded.empty()&&bounded.back()==req.response.size()&&req.response=="{\"ok\":true}");
     req=request("");assert(web::body(&req,body)&&body.empty()&&live_timers==0);
     req=request("partial",10);assert(!web::body(&req,body));
     assert(req.status=="408 Request Timeout"&&req.headers["Connection"]=="close"&&live_timers==0);

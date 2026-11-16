@@ -94,7 +94,7 @@ def main():
     guard = next(line for line in api.splitlines() if 'if(!web::authenticated(req))' in line)
     public += guard + '\n++downstream;return ESP_OK;\n}\n'
     request = (ROOT / 'components/web/request.cpp').read_text()
-    actual = ('namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
+    actual = ('namespace web::stall {struct Response {Response(httpd_req_t*,size_t){}};} // web_stall_test.py covers it\n' + 'namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
               + function(source, 'esp_err_t send(httpd_req_t *req,cJSON *root)')
               + function(source, 'struct KeyRequestTiming') + ';\n'
               + public + function(source, 'esp_err_t asset(httpd_req_t *req)'))

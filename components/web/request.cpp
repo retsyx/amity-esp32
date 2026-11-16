@@ -7,6 +7,7 @@
  */
 
 #include "web.hpp"
+#include "stall.hpp"
 #include "freertos/FreeRTOS.h"
 #include <sys/socket.h>
 
@@ -55,6 +56,7 @@ bool body(httpd_req_t *request,std::string &out,size_t limit) {
 esp_err_t response(httpd_req_t *req,const char *data,size_t size) {
     // HTTPD retains normal Content-Length framing and handles positive short
     // writes from the bounded TLS application-write seam.
+    stall::Response bound(req,size);
     return httpd_resp_send(req,data,size);
 }
 esp_err_t json(httpd_req_t *req,const std::string &data,const char *status) {
