@@ -16,6 +16,10 @@ namespace web {
 using Handler = esp_err_t (*)(httpd_req_t *);
 esp_err_t start(httpd_handle_t &handle,const std::string &hostname,const std::string &initial_auth);
 esp_err_t route(httpd_handle_t handle,const char *path,httpd_method_t method,Handler handler,void *context=nullptr);
+// Plain HTTP on port 80. Every request is redirected to the same URL over HTTPS.
+esp_err_t start_redirect(httpd_handle_t &handle);
+// The requested URL with only its http scheme replaced; empty when it cannot be formed.
+std::string https_location(const std::string &host,const std::string &target);
 // A total deadline, including TLS record assembly. Expiry interrupts a blocked receive.
 class BodyReader {
 public:

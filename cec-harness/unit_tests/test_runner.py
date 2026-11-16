@@ -365,7 +365,7 @@ class RunnerTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "run.py"), run_name="__main__")
             self.assertEqual(exited.exception.code, 0)
             report = json.loads(evidence.read_text())
-        expected = ["prepare_main", "test_hdmi_scan", "test_usb_reboot",
+        expected = ["prepare_main", "test_hdmi_scan", "test_usb_reboot", "test_http_redirect",
                     "test_matter_accessory_local", "test_matter_accessory_remote",
                     "test_homekit_accessory_local", "test_homekit_accessory_remote",
                     "test_activity_member_reboot", "test_activity", "test_activity_without_status_replies", "test_activity_no_display",

@@ -27,6 +27,7 @@ from functional_tests.homekit import test_homekit_accessory_local, test_homekit_
 from functional_tests.add_amity import test_add_amity
 from functional_tests.hdmi_scan import test_hdmi_scan
 from functional_tests.usb_reboot import test_usb_reboot
+from functional_tests.http_redirect import test_http_redirect
 from functional_tests.member_reboot import test_activity_member_reboot
 from functional_tests.hostname import test_hostname_local, test_hostname_consortium
 from functional_tests.firmware_upgrade import test_firmware_upgrade, test_firmware_upgrade_main4
@@ -41,6 +42,7 @@ from functional_tests.consortium import (
 if __name__ == "__main__":
     raise SystemExit(main({"hdmi_scan": test_hdmi_scan,
                            "usb_reboot": test_usb_reboot,
+                           "http_redirect": test_http_redirect,
                            # Accessory slots are finite and retired by fixture deletion.
                            "matter": (test_matter_accessory_local, test_matter_accessory_remote),
                            "homekit": (test_homekit_accessory_local, test_homekit_accessory_remote),

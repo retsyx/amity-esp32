@@ -232,8 +232,9 @@ CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS=y
 CONFIG_ESP_MM_CACHE_MSYNC_C2M_CHUNKED_OPS_MAX_LEN=0x100
 CONFIG_MBEDTLS_X509_CREATE_C=y
 
-# Room for the browser HTTP pool, authenticated peer links and network services.
-CONFIG_LWIP_MAX_SOCKETS=24
+# Room for the browser HTTP pool, the HTTP-to-HTTPS redirect, authenticated
+# peer links and network services.
+CONFIG_LWIP_MAX_SOCKETS=29
 # Keep service records, query buffers and the mDNS worker stack in PSRAM.
 # Its SDK task control block and the Wi-Fi hardware buffers stay internal.
 CONFIG_MDNS_MEMORY_ALLOC_INTERNAL=n
