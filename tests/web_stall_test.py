@@ -48,7 +48,8 @@ inline esp_err_t esp_timer_create(const esp_timer_create_args_t *args,esp_timer_
     timer_state.callback=args->callback;*out=&timer_state;return 0;
 }
 inline esp_err_t esp_timer_start_once(esp_timer_handle_t timer,uint64_t timeout){
-    if(timer->armed)return 0x103;timer->armed=true;timer->timeout=timeout;return 0;
+    if(timer->armed)return 0x103;
+    timer->armed=true;timer->timeout=timeout;return 0;
 }
 inline esp_err_t esp_timer_stop_blocking(esp_timer_handle_t timer,uint32_t){timer->armed=false;++timer->stops;return 0;}
 // The esp_timer task runs an armed timer's callback at expiry.
