@@ -760,7 +760,7 @@ $('firmware').addEventListener('change',run(async e=>{
   const warning=comparison===null?
    `The selected firmware version (${version||'unknown'}) cannot be compared with the running version (${current}). It may be a downgrade. Downgrading is not supported. Continue at your own risk?`:
    comparison<0?`You are installing version ${version} over version ${current}. Downgrading is not supported. Continue at your own risk?`:
-   `Install firmware ${version}? Current version: ${current}.`;
+   `Install firmware ${version}?\nCurrent version: ${current}.`;
   if(!confirm(warning))return;
   const health=await request('setup');
   if(!validFirmwareHealth(health))throw Error('Could not read Amity’s boot status. Reload and try again.');
