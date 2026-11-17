@@ -2196,7 +2196,7 @@
 		)
 	)
 	(gr_text "SOURCE"
-		(at 145 97 270)
+		(at 145 97.5 270)
 		(layer "F.SilkS")
 		(uuid "69f16e14-0de7-4643-b072-87f2c3fddbef")
 		(effects

@@ -30674,7 +30674,7 @@
 		(layer "User.3")
 		(uuid "60dd4341-afaa-4d4c-841a-9593a36f1ba7")
 	)
-	(gr_text "TV"
+	(gr_text "DISPLAY"
 		(at 167 78 270)
 		(layer "F.SilkS")
 		(uuid "d49dc0f7-313f-42dc-83e6-dd06640cf983")
@@ -30686,8 +30686,8 @@
 			(justify left bottom)
 		)
 	)
-	(gr_text "AVR"
-		(at 167 102 270)
+	(gr_text "SOURCE"
+		(at 167 98.5 270)
 		(layer "F.SilkS")
 		(uuid "69f16e14-0de7-4643-b072-87f2c3fddbef")
 		(effects
