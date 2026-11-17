@@ -105,11 +105,11 @@ The default board profile keeps the existing GPIO1/GPIO2 HDMI adapter mapping an
 | 3 | 7 | D8 | 8 | D9 |
 | 4 | 9 | D10 | 44 | D7 / RX |
 
-GPIO10 is not D10: the standard XIAO's D10 connects to GPIO9. These defaults leave GPIO4 / D3 available for the setup/reset button, avoid strapping GPIO3 / D2, and avoid GPIO43 / D6 / TX because ROM boot output can drive it before the firmware starts. GPIO44 / D7 / RX supports ordinary bidirectional GPIO; keep UART0 unused on that pin. The standard headers provide four adapter pairs under these constraints. [Seeed pinout](https://wiki.seeedstudio.com/xiao_esp32s3_pin_multiplexing/), [ESP32-S3 boot and UART behavior](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
+These defaults leave GPIO4 / D3 available for the setup/reset button, avoid strapping GPIO3 / D2, and avoid GPIO43 / D6 / TX because ROM boot output can drive it before the firmware starts. GPIO44 / D7 / RX supports ordinary bidirectional GPIO; keep UART0 unused on that pin. The standard headers provide four adapter pairs under these constraints. [Seeed pinout](https://wiki.seeedstudio.com/xiao_esp32s3_pin_multiplexing/), [ESP32-S3 boot and UART behavior](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
 
-Override these assignments in menuconfig to match the carrier, or set both GPIOs of an unused adapter to `-1`. Saved assignments, including explicit `-1` values, take precedence over these defaults. Adapter numbers stay fixed when connections are unused. Configure the optional active-low setup/reset button GPIO if the carrier needs the physical setup gesture; it defaults to disabled. There are no separate adapter-presence inputs. Configured CEC wires remain usable; actual CEC responses and command ACKs determine communication results. The CEC wires use external pull-ups with the internal GPIO pulls disabled.
+Override these assignments in menuconfig to match the carrier, or set both GPIOs of an unused adapter to `-1`. Saved assignments, including explicit `-1` values, take precedence over these defaults. Configure the optional active-low setup/reset button GPIO if the carrier needs the physical setup gesture; it defaults to disabled. There are no separate adapter-presence inputs. Configured CEC wires remain usable; actual CEC responses and command ACKs determine communication results. The CEC wires use external pull-ups with the internal GPIO pulls disabled.
 
-The development profile accepts up to four adapters, including a device with none configured. Invalid mappings or allocation failures leave administration available with HDMI control disabled. Its GPIO mapping is included in the firmware identity, so an update for a different profile or mapping is rejected. Use a separate build directory for each carrier mapping and qualify its electrical behavior and simultaneous CEC timing before use.
+GPIO mapping is included in the firmware identity, so an update for a different profile or mapping is rejected. Use a separate build directory for each carrier mapping and qualify its electrical behavior and simultaneous CEC timing before use.
 
 To prepare a fresh device:
 
@@ -118,7 +118,7 @@ To prepare a fresh device:
   --out living-room build/amity-firmware.zip
 ```
 
-Continue with [USB installation and onboarding](README.md#install-over-usb). Flash the generated `living-room/amity-provisioned.bin` at address `0x0`; a plain `idf.py flash` does not prepare a fresh device’s pairing credentials. For later updates, upload `build/amity-update.bin` through **Advanced → Update Firmware**. Its embedded manifest and signature are verified before image installation; a production release must use the authorized signed container.
+Continue with [USB installation and onboarding](README.md#initial-install-over-usb). Flash the generated `living-room/amity-provisioned.bin` at address `0x0`; a plain `idf.py flash` does not prepare a fresh device’s pairing credentials.
 
 In a new Bash session, set `IDF_PATH`, `ESP_MATTER_PATH`, and `IDF_TOOLS_PATH` to the locations used during setup before sourcing `tools/env.sh`. Once an existing build is configured, use `idf.py build provisioning-package` for subsequent builds; `set-target` resets the build configuration.
 
@@ -130,8 +130,6 @@ The source API and HTTP routes have versionless names, including `config_store::
 
 ## Development and release checks
 
-Firmware changes must increment `PROJECT_VER` and `PROJECT_VER_NUMBER` in `CMakeLists.txt`. Before 1.0, compatibility with prior Amity releases, provisioning records, and storage formats is not maintained. Keep the README and release notes clear about any installation requirements.
-
 Run the local checks after SDK setup:
 
 ```sh
@@ -142,20 +140,6 @@ sh tests/provisioning_test.sh
 `python3 amity-provision/build_release.py` builds setup-tool archives for macOS, Windows, and Linux, in both Intel/AMD and ARM64 versions. The GitHub **Build firmware** workflow uses the same SDK pins. A newly pushed `v*` tag triggers **Release firmware**, which verifies that the tag’s version matches `PROJECT_VER` and publishes the firmware, setup-tool archives, installation README, and checksums as GitHub Release assets.
 
 Technical references: [hardware pins](main/board_pins.h), [Matter](components/amity_matter/README.md), [HomeKit](components/amity_homekit/README.md), [remotes](components/ble_remote/README.md), [activity control](components/amity_hub/README.md), [device settings](components/device_settings/README.md), and [implementation and validation status](IMPLEMENTATION_STATUS.json).
-
-## Original-controller application profile
-
-One firmware serves both roles. A fresh unclaimed device with no Matter fabric automatically opens a bounded Matter setup window at boot, including after factory reset; this requires no setup-button GPIO. It has no saved Wi-Fi credentials and hosts no UI. Completing Matter BLE enrollment establishes the original controller; adding a device over the authenticated Amity BLE channel selects its subordinate role. That durable choice survives removing Matter fabrics. The proven original main also opens Matter setup at boot if its current fabric count is zero, while keeping its main role/UI/authority. Saved activities and previous commissioning history do not gate this behavior. Boards with current Matter fabrics and headless/prepared/retired/recovery roles do not open it automatically. The original main retains explicit Matter pairing controls. Added devices retain the shared CHIP Wi-Fi/NimBLE substrate and authenticated peer config/OTA/status only; they host no UI or user-control integration and cannot promote themselves after reset or controller loss. No separate actuator-only build is required.
-
-The 20 October 2026 amendment fixes the original device as sole controller/UI/admin/remote/Matter/HomeKit owner. The saved original controller identity must be proven, never inferred from ordering; ordinary portable import cannot replace it within a live installation. Supported failed-main recovery instead Matter-enrolls replacement hardware as a new main, restores portable configuration through existing Advanced upload/restore, and explicitly re-pairs integrations/remote and re-enrolls members after old-main isolation. Preserve baseline UI commit `d50af8026938797fc0820d0107f4c4e064c2d2bc` with only canonical Amity-hostname context and one Amity management tab. Historical hardware/startup evidence is separate from the current qualified-lookup implementation. Current software checks and remaining physical qualification follow the [original-controller contract](amity-octopus-consortium/21-original-controller-policy.md) and [validation requirements](amity-octopus-consortium/15-validation-and-release-gates.md).
-
-## Firmware distribution
-
-Authenticated TLS hellos compare running ELF identities before configuration synchronization. A mismatch permits firmware, log collection and explicit removal traffic only. The main updates newly added or returning members from its own running partition; no desired-release setting is persisted.
-
-Log downloads stream the main's capture followed by each enrolled member over its existing authenticated connection. Each board keeps at most one 24 KiB PSRAM snapshot for a member pull; the main receives one 1 KiB chunk at a time and releases its local snapshot before collecting members. Member pulls expire after fifteen seconds, with a two-second response budget per chunk; cancellation, completion and connection loss release snapshots. Unavailable or interrupted members are noted in the downloaded file.
-
-A browser upload stages the main's inactive partition, then the main stages members sequentially. Complete-image validation precedes coordinated boot selection and delayed reboot. Each OTA partition carries its release manifest and signature in a reserved trailer, so the running image remains an update source after reboot. Firmware frames use a marked class on the existing TLS stream with longer fixed deadlines; control frames retain their ordinary deadlines, and receivers reject incorrectly marked controls.
 
 ## Adding Amity devices
 

@@ -131,7 +131,6 @@ fabric count is zero and the board is either unclaimed or in factory condition.
   for Siri remotes: activities 0–4 for short selector holds and 5–9 at 500 ms.
   Execute once on either macro button's first release, measure duration from
   the selector press, and consume the macro until all physical buttons are up.
-  These defaults do not require configuration.
 
 ## Functional test framework
 
