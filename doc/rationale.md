@@ -1,0 +1,34 @@
+# Amity Rationale
+
+## Why?
+
+Since the discontinuation of the Logitech Harmony universal remote, there are no good home theater remotes that are easy to setup, reliable, simple to use by everyone in the family, have a long battery life, and are reasonably priced.
+
+Amity came out of a need to replace an aging Logitech Harmony Hub Smart Control system.
+
+## How?
+
+
+
+Remotes like the Siri Remote, the Amazon Fire TV remote, the Samsung SolarCell remote, or the Vizio voice remote are high quality, and readily available. They are simple, robust, last a long time on a charge, are very easy to use by everyone in the family, and there is probably one laying unused in a drawer somewhere. So why not use one to control the home theater?
+
+Raspberry Pis are powerful, flexible, readily available, and cheap enough (especially the Pi Zero 2 W).
+
+Most modern home theater components support HDMI-CEC. HDMI-CEC promises easy home theater control but, due to how it is commonly implemented, fails to deliver on the promise. So let's make HDMI-CEC work the way it should (🤞).
+
+## How Amity Works
+
+### The Problem
+
+The primary problem encountered with HDMI-CEC is that system components can compete to be displayed on the TV. This causes the system to switch back and forth between components in a way that doesn't match the user's intent. This problems stems from HDMI-CEC's protocol design and the inherent ambiguity of discerning the user's intent from disparate parts of the system.
+
+HDMI-CEC allows both the TV to select the component to display, and for any component to request to be displayed. A TV normally selects the component to display based on the user selecting an input with the TV remote. How a component decides to request display is completely up to the component manufacturer. Ideally, when the user picks up a component remote and presses the power button, the component can wake up the system and request to be displayed. This matches user intent. However, some components will request to be displayed when the TV signals over HDMI-CEC that it has powered on. This matches user intent, and saves the user time, if the user turns on the TV with the TV remote and has only one component in the system. However, this logic breaks down if the user has two components. If the user turns on component A with its remote, it powers on the TV, which signals its status, which causes component B to request display, and now the user is presented component B instead of component A.
+
+### Amity
+
+Amity fixes the problem by inserting itself on the HDMI-CEC bus between components and mediating communication with definitive knowledge of the user's intent based on the user's selected activity. Amity can power on and off the entire system, it can select the correct component to display, and it never sends messages that trigger components to request to display themselves. Finally, if a component requests to be displayed when it shouldn't, Amity can catch the request, override it, and send the component a standby message to stop it from continuing the interruptions.
+
+This architecture requires using the custom Amity HDMI boards to be able to passthrough the A/V HDMI signals. Commonly available HDMI breakout boards are not designed to pass through high-speed A/V signals, and break video display in an actual home theater.
+
+
+
