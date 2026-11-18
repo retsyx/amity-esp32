@@ -250,9 +250,10 @@ The backup contains activities and device-specific control settings. It does not
 
 Note: Downgrades are unsupported.
 
-1. Obtain the latest `amity-update.bin` from the latest [Amity Release](https://github.com/retsyx/amity-esp32/releases/latest).
-2. Open the `Advanced` tab and press the `Update firmware` button. Select `amity-update.bin` and confirm the installation.
-3. Keep all Amities powered as the update progresses. Once the update is complete, all Amities will restart together.
+1. Download  `amity-firmware.zip` from the latest [Amity Release](https://github.com/retsyx/amity-esp32/releases/latest).
+2. Unzip `amity-firmware.zip`. The update binary in is `amity-update.bin`.
+3. In the admin page, open the `Advanced` tab and press the `Update firmware` button. Select the downloaded `amity-update.bin` file and confirm the installation.
+4. Keep all Amities powered as the update progresses. Once the update is complete, all Amities will restart together.
 
 ### Factory Reset
 
