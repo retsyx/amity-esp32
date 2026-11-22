@@ -14,8 +14,7 @@ Json *Json::get(std::string_view key) {
     for (auto &entry : object) if (entry.first == key) return &entry.second;
     return nullptr;
 }
-namespace {
-bool utf8(std::string_view s) {
+bool valid_utf8(std::string_view s) {
     for (size_t i = 0; i < s.size();) {
         const auto lead = static_cast<unsigned char>(s[i++]);
         if (!lead) return false;
@@ -31,11 +30,12 @@ bool utf8(std::string_view s) {
     }
     return true;
 }
+namespace {
 class Parser {
 public:
     Parser(std::string_view s, JsonError &e,size_t maximum,size_t values) : s_(s), error_(e),maximum_(maximum),maximum_values_(values) {}
     bool parse(Json &out) {
-        if (s_.empty() || s_.size()>maximum_ || !utf8(s_)) return fail("invalid_size_or_utf8");
+        if (s_.empty() || s_.size()>maximum_ || !valid_utf8(s_)) return fail("invalid_size_or_utf8");
         if (!value(out, 0)) return false;
         ws(); return pos_==s_.size() || fail("trailing_content");
     }

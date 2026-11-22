@@ -50,6 +50,12 @@ bool parse_context(const Json& v,model::OwnedIntent& x,bool activity=false){
     }
     return true;
 }
+// The main admits a device name of 1 to 14 printable UTF-8 bytes. A CEC device
+// can report any other bytes; such a device has no name the consortium can
+// address, so its report carries it unresolved.
+bool addressable_name(std::string_view name){
+    return !name.empty()&&name.size()<=14&&valid_utf8(name)&&std::none_of(name.begin(),name.end(),[](unsigned char c){return c<32||c==127;});
+}
 std::string context_json(const model::OwnedIntent& x,bool activity=false){
     return "{\"selected\":"+std::string(x.selected?"true":"false")+",\"source_changed\":"+(x.source_changed?"true":"false")+",\"source\":"+(x.source?target_json(*x.source):"null")+",\"audio\":"+(x.audio?target_json(*x.audio):"null")+",\"display\":"+(x.display?target_json(*x.display):"null")+",\"switch_device\":"+(x.switch_device?target_json(*x.switch_device):"null")+",\"input\":"+std::to_string(x.input)+(activity?",\"repair\":"+std::string(x.repair?"true":"false")+",\"reselect\":"+(x.reselect?"true":"false"):"")+"}";
 }
@@ -99,7 +105,7 @@ std::string owned_intent_json(const model::OwnedIntent& x) {
 }
 std::string owned_snapshot_json(const model::OwnedAdapterSnapshot& s) {
     std::string out="{\"adapter\":"+std::to_string(s.adapter)+",\"ready\":"+(s.ready?"true":"false")+",\"discovering\":"+(s.discovering?"true":"false")+",\"discovery_generation\":"+std::to_string(s.discovery_generation)+",\"audio_status_known\":"+(s.audio_status_known?"true":"false")+",\"muted\":"+(s.muted?"true":"false")+",\"volume\":"+std::to_string(s.volume)+",\"devices\":[";
-    for(const auto& d:s.devices){if(out.back()!='[')out+=',';out+="{\"side\":\""+std::string(model::side_name(d.side))+"\",\"osd_name\":"+model::json_quote(d.osd_name)+",\"logical_address\":"+std::to_string(d.logical_address)+",\"physical_address\":"+std::to_string(d.physical_address)+",\"device_type\":"+std::to_string(d.device_type)+",\"vendor_id\":"+std::to_string(d.vendor_id)+",\"resolved\":"+(d.resolved?"true":"false")+"}";}
+    for(const auto& d:s.devices){if(out.back()!='[')out+=',';const bool named=addressable_name(d.osd_name);out+="{\"side\":\""+std::string(model::side_name(d.side))+"\",\"osd_name\":"+model::json_quote(named?std::string_view(d.osd_name):std::string_view{})+",\"logical_address\":"+std::to_string(d.logical_address)+",\"physical_address\":"+std::to_string(d.physical_address)+",\"device_type\":"+std::to_string(d.device_type)+",\"vendor_id\":"+std::to_string(d.vendor_id)+",\"resolved\":"+(d.resolved&&named?"true":"false")+"}";}
     return out+"]}";
 }
 bool parse_owned_snapshot(const Json& v,model::OwnedAdapterSnapshot& out) {

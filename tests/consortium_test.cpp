@@ -306,6 +306,21 @@ void adapter_index_tests(){
     assert(parse_json(snapshot,value,detail)&&valid_settings_snapshot(value));
     value.get("adapters")->array[0].get("tentacle_id")->integer=4;assert(!valid_settings_snapshot(value));
 }
+void owned_snapshot_name_tests(){
+    // A member caches whatever non-NUL bytes a CEC device returns in Set OSD
+    // Name. Every report it encodes must pass the main's envelope decoder.
+    const auto decode=[](const std::string& name,bool resolved){
+        m::OwnedAdapterSnapshot report;report.ready=true;report.devices.push_back({m::Side::back,name,4,4,0x1000,1,resolved});
+        Envelope out;assert(parse_envelope(packet(scope(),Kind::scoped_result,"{\"snapshot\":"+owned_snapshot_json(report)+"}"),out)==Error::none);
+        m::OwnedAdapterSnapshot decoded;assert(parse_owned_snapshot(*out.payload.get("snapshot"),decoded)&&decoded.devices.size()==1&&decoded.devices[0].logical_address==4);
+        return decoded.devices[0];
+    };
+    // Control bytes, DEL and bytes that are not UTF-8 name nothing the main can
+    // address; the device travels as unresolved.
+    for(const auto& name:{std::string("Apple\nTV"),std::string("A\tB"),std::string("Apple\x7fTV"),std::string("T\xe9l\xe9"),std::string("AVR\xff\xff"),std::string("\x01")})
+        for(bool resolved:{true,false}){const auto device=decode(name,resolved);assert(!device.resolved&&device.osd_name.empty());}
+    for(const auto& name:{std::string("Apple TV"),std::string("T\xc3\xa9l\xc3\xa9"),std::string("a\"b\\c")}){const auto device=decode(name,true);assert(device.resolved&&device.osd_name==name);}
+}
 void update_tests() {
     const std::string request="\"request_id\":\""+ident<m::MessageId>(40).str()+"\"",base=request+",\"release_id\":\"0.1.56-dev\"";
     const auto chunk="{"+base+",\"offset\":\"0\",\"data_hex\":\"0001\",\"chunk_sha256\":\""+std::string(64,'b')+"\"}";
@@ -430,4 +445,4 @@ void bootstrap_tests(){
     records.disconnect();records.connect(6);assert(records.fragment(5,3,8,0,"abcdefgh")==R::stale);
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();owned_snapshot_name_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
