@@ -228,14 +228,14 @@ void immutable_queue(){
 }
 void expired_presses_are_dropped_without_restart(){
  auto a=start(false);on_send={};const auto scope=a->session.scope();
- std::vector<RuntimeSnapshotRetry> retries;controls.snapshot_retry=[&](const auto& request){retries.push_back(request);};
+ std::vector<uint8_t> retries;controls.report_dropped=[&](uint8_t adapter){retries.push_back(adapter);};
  model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.adapter=0;report.ready=true;
  auto key=std::make_shared<model::OwnedIntent>();key->kind=model::OwnedIntentKind::key_edges;key->generation=1;key->config_revision=scope.config_revision;key->edges[0]={4,true};key->edge_count=1;
  key->target={{scope.consortium_id,scope.peer_id,0,model::Side::back},"Player"};
  const auto observation=Queued{Kind::scoped_result,{},1000,100,scope.config_revision,{},std::make_shared<const model::OwnedAdapterSnapshot>(report)};
  const auto input=Queued{Kind::scoped_intent,{},1000,100,scope.config_revision,key};
  a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled&&diagnostic_logs.empty());
- assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
+ assert(retries==std::vector<uint8_t>{0});
  a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,key)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
  assert(retries.size()==2&&diagnostic_logs.empty()&&a->queue.front().owned==key);
  // A late press is dropped at admission without ending the session.
@@ -276,8 +276,8 @@ def main():
         'Envelope outgoing(', 'bool bind_configuration(', 'bool apply_configuration_advance(', 'bool advance_configuration(', 'bool finish_synchronization(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',
         'void runtime_configuration_changed('))
-    actual = source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')] + function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
-    actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
+    actual = source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')] + function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<uint8_t> dropped_report(')] + actual
+    actual += source[source.index('std::optional<uint8_t> dropped_report('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')
     actual += ''.join(function(source, name) for name in ('bool initialize_context(', 'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned('))
     refresh_start=source.index('        if(server&&active->ready&&')

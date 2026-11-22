@@ -74,7 +74,7 @@ namespace amity::consortium {
 // Owner snapshots are the replaceable, non-causal traffic in the control queue.
 esp_err_t send_snapshot(model::OctopusId owner){
  model::OwnedAdapterSnapshot report;report.owner=ident<model::OctopusId>(2);report.boot=ident<model::BootId>(4);
- return runtime_send_owned_result(owner,{},report);
+ return runtime_send_owned_result(owner,report);
 }
 std::shared_ptr<Active> connection(unsigned link=7,unsigned peer_boot=8,unsigned owner=3){
  auto a=std::make_shared<Active>();a->peer=ident<model::OctopusId>(owner);a->status.id=a->peer;a->status.boot_id=a->claimed_boot=ident<model::BootId>(peer_boot);a->tls->authenticated=a->peer;a->tls->allowed={{a->peer,"leaf","pin",true}};a->status.config_revision=1;
@@ -210,10 +210,9 @@ void queues(){
  reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_OK&&a->queue.size()==2&&!a->restart_requested); // So is a late selection.
  reset();a=connection();links={a};model::OwnedAdapterSnapshot report;report.owner=a->session.scope().local_id;report.boot=a->session.scope().local_boot_id;
  const auto& result=report;
- assert(runtime_send_owned_result(a->peer,ident<model::LinkId>(99),result)==ESP_ERR_INVALID_STATE&&a->queue.empty());
  for(unsigned n=0;n<14;++n)assert(send_snapshot(a->peer)==ESP_OK);
- assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_OK&&a->queue.size()==15);
- assert(runtime_send_owned_result(a->peer,a->session.scope().link_id,result)==ESP_ERR_NO_MEM&&!a->restart_requested&&diagnostic_logs.empty());a->queue.clear();
+ assert(runtime_send_owned_result(a->peer,result)==ESP_OK&&a->queue.size()==15);
+ assert(runtime_send_owned_result(a->peer,result)==ESP_ERR_NO_MEM&&!a->restart_requested&&diagnostic_logs.empty());a->queue.clear();
  reset();a=connection();links={a};assert(send_snapshot(a->peer)==ESP_OK);clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_OK&&a->queue.size()==1);
  // A quiet authenticated stream needs no periodic permission before fresh input.
  reset();a=connection();links={a};
@@ -380,7 +379,7 @@ void restart_flags_gate_front_doors_before_scope_rotation(){
   assert(send_snapshot(a->peer)==ESP_ERR_INVALID_STATE);
   assert(runtime_send_owned(down())==ESP_ERR_INVALID_STATE);
   model::OwnedAdapterSnapshot report;report.owner=original.local_id;report.boot=original.local_boot_id;
-  assert(runtime_send_owned_result(a->peer,original.link_id,report,1)==ESP_ERR_INVALID_STATE);
+  assert(runtime_send_owned_result(a->peer,report)==ESP_ERR_INVALID_STATE);
   unsigned captures=0;a->context_ready=false;controls.ready=[&](auto,auto,auto){++captures;return true;};
   assert(!initialize_context(*a)&&captures==0&&a->queue.empty());
   group.role=Group::member;group.authority=a->peer;boot=original.local_boot_id;
@@ -449,8 +448,8 @@ def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()
  names=['bool connection_available(','bool current_peer_credential(const Active &link,const Group &current){','bool initialize_context(','bool notify_link_closed(','bool fence_replaced_links(','void reap_closed_links(','static esp_err_t queue_control(','esp_err_t runtime_send_owned_result(','void runtime_fence_owned_link(','esp_err_t runtime_send_owned(','bool runtime_owned_authorized(']
  trace=source[source.index('struct LinkTrace {'):source.index('static bool pure_key_release(')]+source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')]
- retries=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
- diagnostics=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
+ retries=source[source.index('std::optional<uint8_t> dropped_report('):source.index('enum class QueuedState')]
+ diagnostics=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<uint8_t> dropped_report(')]
  launch_start=source.index('void launch(');launch_body=source.index('){',launch_start)+1
  actual=trace+function(source,'void request_session_restart(')+diagnostics+retries+''.join(function(source,name) for name in names)+source[launch_start:launch_body]+function(source[launch_body:],'{')
  actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')

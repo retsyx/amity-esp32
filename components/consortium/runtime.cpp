@@ -846,23 +846,23 @@ void context_capture_completed(const LinkScope& scope,model::OwnedContextResult 
         request_session_restart(*active);
     }
 }
-std::optional<RuntimeSnapshotRetry> snapshot_retry(const Active& active,const Queued& queued){
+std::optional<uint8_t> dropped_report(const Active& active,const Queued& queued){
     if(!queued.snapshot||active.cancelled||active.retiring||!active.ready)return {};
     const auto scope=active.session.scope();
     if(scope.peer_id!=scope.coordinator_id||queued.revision!=scope.config_revision)return {};
     const auto& snapshot=*queued.snapshot;
     if(snapshot.owner!=scope.local_id||snapshot.boot!=scope.local_boot_id)return {};
-    return RuntimeSnapshotRetry{scope.peer_id,scope.local_boot_id,scope.peer_boot_id,scope.link_id,scope.config_revision,snapshot.adapter};
+    return snapshot.adapter;
 }
-void notify_snapshot_retry(const RuntimeSnapshotRetry& retry){
+void notify_report_dropped(uint8_t adapter){
     RuntimeControlHooks hooks;{std::lock_guard<std::mutex> guard(lock);hooks=controls;}
-    if(hooks.snapshot_retry)hooks.snapshot_retry(retry);
+    if(hooks.report_dropped)hooks.report_dropped(adapter);
 }
-struct SnapshotRetryBatch {
-    std::vector<RuntimeSnapshotRetry> requests;
-    void dropped(const Active& active,const Queued& queued){if(auto retry=snapshot_retry(active,queued))requests.push_back(*retry);}
+struct ReportDrops {
+    std::vector<uint8_t> adapters;
+    void dropped(const Active& active,const Queued& queued){if(auto adapter=dropped_report(active,queued))adapters.push_back(*adapter);}
     // Declared before queue/global guards, so callbacks execute after unlock.
-    ~SnapshotRetryBatch(){for(const auto& retry:requests)notify_snapshot_retry(retry);}
+    ~ReportDrops(){for(const auto adapter:adapters)notify_report_dropped(adapter);}
 };
 enum class QueuedState {ready,waiting,stale,invalid};
 QueuedState prepare_queued(Active& active,const Queued& queued,std::string& payload){
@@ -919,7 +919,7 @@ void active_loop_work(void *arg){
         const auto now=now_ms();
         if(invalid){trace.fail("queued_invalid",Error::none,LinkTrace::Recovery::recoverable);break;}
         if(have&&queued_expired(queued,now)){
-            if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
+            if(auto adapter=dropped_report(*active,queued))notify_report_dropped(*adapter);
             else log_dropped_intent(queued,now);
         }
         if(have&&!queued_expired(queued,now)){
@@ -1435,14 +1435,6 @@ void runtime_network_hooks(RuntimeNetworkHooks hooks){std::lock_guard<std::mutex
 void runtime_lifecycle_hooks(RuntimeLifecycleHooks hooks){std::lock_guard<std::mutex> guard(lock);if(hooks.retire)lifecycle.retire=std::move(hooks.retire);if(hooks.revoked)lifecycle.revoked=std::move(hooks.revoked);if(hooks.factory_reset)lifecycle.factory_reset=std::move(hooks.factory_reset);if(hooks.after_factory_reset)lifecycle.after_factory_reset=std::move(hooks.after_factory_reset);}
 void runtime_update_hooks(RuntimeUpdateHooks hooks){std::lock_guard<std::mutex> guard(lock);updates=std::move(hooks);}
 void runtime_control_hooks(RuntimeControlHooks hooks){std::lock_guard<std::mutex> guard(lock);controls=std::move(hooks);}
-std::optional<model::LinkId> runtime_link_id(model::OctopusId owner,model::BootId peer_boot){
-    std::lock_guard<std::mutex> guard(lock);
-    for(const auto& active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
-        std::lock_guard<std::mutex> snapshot(active->mutex);
-        if(active->status.boot_id==peer_boot&&current_peer_credential(*active,group))return active->session.scope().link_id;
-    }
-    return {};
-}
 
 esp_err_t runtime_register_gatt(){return gatt_register();}
 esp_err_t runtime_open_enrollment(uint64_t generation){
@@ -1682,7 +1674,7 @@ esp_err_t runtime_stage_update(model::OctopusId owner,std::string payload,uint32
     return queue_update(owner,Kind::update_install,std::move(payload),ttl,true);
 }
 static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std::optional<model::LinkId> expected_link,uint64_t revision=0,std::shared_ptr<const model::OwnedIntent> owned=nullptr,uint64_t created=0,std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot=nullptr){
-    SnapshotRetryBatch retries;DeferredLinkTrace diagnostics;DroppedIntents dropped;
+    ReportDrops retries;DeferredLinkTrace diagnostics;DroppedIntents dropped;
     std::lock_guard<std::mutex> guard(lock);if(!status.authority_ready&&group.role==Group::coordinator)return ESP_ERR_INVALID_STATE;
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
@@ -1707,8 +1699,8 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std
     }
     return ESP_ERR_INVALID_STATE;
 }
-esp_err_t runtime_send_owned_result(model::OctopusId owner,model::LinkId link,const model::OwnedAdapterSnapshot& snapshot,uint64_t revision){
-    return queue_control(owner,Kind::scoped_result,1000,link?std::optional<model::LinkId>(link):std::nullopt,revision,{},0,std::make_shared<const model::OwnedAdapterSnapshot>(snapshot));
+esp_err_t runtime_send_owned_result(model::OctopusId owner,const model::OwnedAdapterSnapshot& snapshot){
+    return queue_control(owner,Kind::scoped_result,1000,std::nullopt,0,{},0,std::make_shared<const model::OwnedAdapterSnapshot>(snapshot));
 }
 void runtime_fence_owned_link(model::OctopusId owner,model::LinkId link){
     if(!link)return;

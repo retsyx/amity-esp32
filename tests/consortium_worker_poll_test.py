@@ -257,9 +257,9 @@ def main():
     update_dispatch=function(source,'        if(is_update_kind(envelope.kind)) {')
     worker='\nbool operational_receive(Active& storage,uint64_t& receive_until,bool server=true,bool dispatch_update=false){uint64_t receive_started=0;auto* active=&storage;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+source[queue_start:receive_start]+source[receive_start:receive_end]+'if(dispatch_update){'+source[receive_end:parse_end]+source[class_start:class_end]+update_dispatch+'}return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
     worker+='\nbool classify_received(Active& storage,Kind kind){auto* active=&storage;Envelope envelope;envelope.kind=kind;LinkTrace trace;while(true){'+source[class_start:class_end]+'return true;}return false;}\n'
-    helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
+    helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<uint8_t> dropped_report(')]
     actual=source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')]+function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(',))
-    actual+=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
+    actual+=source[source.index('std::optional<uint8_t> dropped_report('):source.index('enum class QueuedState')]
     actual+=''.join(function(source,n) for n in ('static esp_err_t queue_update(', 'esp_err_t runtime_send_update(', 'esp_err_t runtime_stage_update(', 'static esp_err_t queue_control('))
     actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')
     actual+=function(source,'bool fence_synchronization_scope(')+function(source,'bool restart_synchronization_scope(')

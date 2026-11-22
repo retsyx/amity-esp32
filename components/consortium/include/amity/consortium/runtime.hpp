@@ -78,14 +78,6 @@ struct RuntimeNetworkHooks {
     std::function<std::string()> get_hostname;
 };
 void runtime_network_hooks(RuntimeNetworkHooks);
-// Volatile recapture request, never an expired payload or queued CEC work.
-struct RuntimeSnapshotRetry {
-    model::OctopusId controller;
-    model::BootId owner_boot,controller_boot;
-    model::LinkId link;
-    uint64_t config_revision=0;
-    uint8_t adapter=0;
-};
 struct RuntimeControlHooks {
     // A member binds its controller's configuration revision. Its device
     // reports then travel as ordinary results.
@@ -98,7 +90,9 @@ struct RuntimeControlHooks {
     std::function<bool(model::OctopusId,uint64_t,std::function<void(model::OwnedContextResult)>)> ready = {};
     // Current locally executing configuration; no owner-task or network wait.
     std::function<uint64_t()> configuration_revision = {};
-    std::function<void(const RuntimeSnapshotRetry&)> snapshot_retry = {};
+    // The current link dropped a queued report of this local adapter; the
+    // member publishes the adapter's latest report again.
+    std::function<void(uint8_t adapter)> report_dropped = {};
     // Fence only the old logical execution session while retaining its healthy
     // TLS transport and independent owner observations.
     std::function<bool(model::OctopusId,model::BootId,model::LinkId)> restart_session = {};
@@ -158,8 +152,7 @@ std::vector<std::pair<model::OctopusId,std::string>> runtime_known_hostnames();
 // Delivery and live authorization for original Amity actions.
 esp_err_t runtime_send_owned(const model::OwnedIntent&);
 // An empty link publishes to the current session; retries name their exact link.
-esp_err_t runtime_send_owned_result(model::OctopusId,model::LinkId,const model::OwnedAdapterSnapshot&,uint64_t config_revision=0);
+esp_err_t runtime_send_owned_result(model::OctopusId,const model::OwnedAdapterSnapshot&);
 void runtime_fence_owned_link(model::OctopusId,model::LinkId);
 bool runtime_owned_authorized(const model::OwnedAuthorization&);
-std::optional<model::LinkId> runtime_link_id(model::OctopusId,model::BootId);
 } // namespace amity::consortium

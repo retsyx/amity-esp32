@@ -98,20 +98,15 @@ std::string owned_intent_json(const model::OwnedIntent& x) {
     return "{\"generation\":\""+std::to_string(x.generation)+"\""+(x.kind==K::key_edges?std::string{}:",\"target\":"+target_json(x.target))+",\"action\":\""+action(x.kind)+"\",\"arguments\":"+args+"}";
 }
 std::string owned_snapshot_json(const model::OwnedAdapterSnapshot& s) {
-    std::string out="{\"owner\":\""+s.owner.str()+"\",\"boot\":\""+s.boot.str()+"\",\"adapter\":"+std::to_string(s.adapter)+",\"front_address\":"+std::to_string(s.front_address)+",\"back_address\":"+std::to_string(s.back_address)+",\"front_physical_address\":"+std::to_string(s.front_physical_address)+",\"ready\":"+(s.ready?"true":"false")+",\"discovering\":"+(s.discovering?"true":"false")+",\"discovery_generation\":"+std::to_string(s.discovery_generation)+",\"audio_status_known\":"+(s.audio_status_known?"true":"false")+",\"muted\":"+(s.muted?"true":"false")+",\"volume\":"+std::to_string(s.volume)+",\"devices\":[";
+    std::string out="{\"adapter\":"+std::to_string(s.adapter)+",\"ready\":"+(s.ready?"true":"false")+",\"discovering\":"+(s.discovering?"true":"false")+",\"discovery_generation\":"+std::to_string(s.discovery_generation)+",\"audio_status_known\":"+(s.audio_status_known?"true":"false")+",\"muted\":"+(s.muted?"true":"false")+",\"volume\":"+std::to_string(s.volume)+",\"devices\":[";
     for(const auto& d:s.devices){if(out.back()!='[')out+=',';out+="{\"side\":\""+std::string(model::side_name(d.side))+"\",\"osd_name\":"+model::json_quote(d.osd_name)+",\"logical_address\":"+std::to_string(d.logical_address)+",\"physical_address\":"+std::to_string(d.physical_address)+",\"device_type\":"+std::to_string(d.device_type)+",\"vendor_id\":"+std::to_string(d.vendor_id)+",\"resolved\":"+(d.resolved?"true":"false")+"}";}
     return out+"]}";
 }
 bool parse_owned_snapshot(const Json& v,model::OwnedAdapterSnapshot& out) {
     model::OwnedAdapterSnapshot x;uint64_t n=0;
-    if(!closed(v,{"owner","boot","adapter","front_address","back_address","front_physical_address","ready","discovering","discovery_generation","audio_status_known","muted","volume","devices"})||!id(v.get("owner"),x.owner)||!id(v.get("boot"),x.boot)||!json_uint(v.get("adapter"),n,0,amity::last_tentacle_id))return false;
+    // The authenticated link identifies the reporting owner and its boot.
+    if(!closed(v,{"adapter","ready","discovering","discovery_generation","audio_status_known","muted","volume","devices"})||!json_uint(v.get("adapter"),n,0,amity::last_tentacle_id))return false;
     x.adapter=static_cast<uint8_t>(n);
-    if(!json_uint(v.get("front_address"),n,0,15))return false;
-    x.front_address=static_cast<uint8_t>(n);
-    if(!json_uint(v.get("back_address"),n,0,15))return false;
-    x.back_address=static_cast<uint8_t>(n);
-    if(!json_uint(v.get("front_physical_address"),n,0,65535))return false;
-    x.front_physical_address=static_cast<uint16_t>(n);
     if(!json_uint(v.get("discovery_generation"),n,0,UINT32_MAX))return false;
     x.discovery_generation=static_cast<uint32_t>(n);
     if(!json_bool(v.get("ready"),x.ready)||!json_bool(v.get("discovering"),x.discovering)||!json_bool(v.get("audio_status_known"),x.audio_status_known)||!json_bool(v.get("muted"),x.muted)||!json_uint(v.get("volume"),n,0,127))return false;

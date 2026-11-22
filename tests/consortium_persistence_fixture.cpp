@@ -38,7 +38,7 @@ struct {bool local=false;std::weak_ptr<Active> link;}settings_authorization;
 // Diagnostic emission is the only non-storage seam omitted from admission.
 struct LinkTrace {enum class Recovery{other,terminal,recoverable};const char* phase="";bool retained=false,has_kind=false;Kind kind{};void queued(const Queued&){}bool fail(const char*,Error=Error::none,Recovery=Recovery::other){return false;}};
 struct DeferredLinkTrace {void capture(const Active&,const LinkTrace&,uint64_t){}};
-struct SnapshotRetryBatch {void dropped(const Active&,const Queued&){}};
+struct ReportDrops {void dropped(const Active&,const Queued&){}};
 template<class... T>void quiet_log(T&&...){}
 #define ESP_LOGI(...) quiet_log(__VA_ARGS__)
 #define ESP_LOGW(...) quiet_log(__VA_ARGS__)
