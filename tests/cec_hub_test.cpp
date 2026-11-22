@@ -8,7 +8,6 @@
 
 #include "cec/engine.hpp"
 #include "amity/hub.hpp"
-#include "volume_sequence.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -301,32 +300,6 @@ static void backpressure_tests(){
     h.tick(25500000);assert(t.count(B,4,{0x71})==1);
     assert(t.count(B,4,{0x44,0x41})==100&&t.count(B,4,{0x45})==100);
 }
-static void volume_sequence_tests() {
-    amity::VolumeSequence volume;
-    std::vector<std::pair<uint8_t, uint32_t>> accepted;
-    bool admit = true;
-    const auto send = [&](uint8_t key, uint32_t generation) {
-        if (admit) accepted.emplace_back(key, generation);
-        return admit;
-    };
-    volume.start({100, 7});
-    volume.tick(250000, 7, send); volume.tick(500000, 7, send);
-    assert(accepted.size() == 2 && !volume.idle());
-    // Changing activity or its configuration cancels the 98 remaining steps.
-    volume.tick(750000, 8, send);
-    assert(accepted.size() == 2 && volume.idle());
-    // Older adjustments already waiting in the application queue are stale,
-    // even when a later activity happens to reuse the same input index.
-    volume.start({50, 7}); volume.tick(1000000, 9, send);
-    assert(accepted.size() == 2 && volume.idle());
-    volume.start({-2, 9});
-    admit = false; volume.tick(1250000, 9, send);
-    assert(!volume.idle() && accepted.size() == 2);
-    admit = true; volume.tick(1499999, 9, send); assert(accepted.size() == 2);
-    volume.tick(1500000, 9, send); assert(!volume.idle());
-    volume.tick(1750000, 9, send); assert(volume.idle());
-    assert(accepted.size() == 4 && accepted[2] == std::make_pair(uint8_t{0x42}, uint32_t{9}) && accepted[3] == accepted[2]);
-}
 static void display_audio_fallback_tests(){
     const auto F=amity::BusSide::Front,B=amity::BusSide::Back;
     Transport wire;amity::Hub hub(wire);hub.set_addresses(4,0);
@@ -346,6 +319,6 @@ static void display_audio_fallback_tests(){
     context(hub,"Player");wire.sent.clear();assert(!press(hub,0x41,"Absent")&&wire.sent.empty());assert(press(hub,0,"Player"));
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); playback_tests(); backpressure_tests(); volume_sequence_tests();display_audio_fallback_tests();
+    wire_tests(); hub_tests(); discovery_tests(); playback_tests(); backpressure_tests(); display_audio_fallback_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }

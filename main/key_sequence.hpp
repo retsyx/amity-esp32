@@ -11,32 +11,36 @@
 #include <cstdint>
 
 namespace amity {
-// Swipe navigation is finite and belongs to the activity that received it.
-// The hub sends each admitted step as a complete press/release and checks the
-// captured generation again when consuming it on its owner task.
-class SwipeSequence {
+// Owner-task pacing for finite key steps: Siri swipe navigation and Matter's
+// relative volume. Steps belong to the activity generation that accepted them,
+// including a later restart of the same activity index. The hub sends each step
+// as a complete press/release and checks the generation again on dequeue.
+class KeySequence {
 public:
+    // Repeated steps of a pending key merge, up to `limit` presses.
+    explicit KeySequence(uint8_t limit) : limit_(limit) {}
     bool idle() const { return size_ == 0; }
     void cancel() { size_ = 0; }
 
     void add(uint8_t key, uint8_t count, uint32_t activity_generation) {
-        if (key < 0x01 || key > 0x04 || !count) return;
+        if (!count) return;
         if (generation_ != activity_generation) cancel();
         generation_ = activity_generation;
-        // Python merges repeat-counted presses of the same key, capped at ten.
         for (uint8_t i = 0; i < size_; ++i) {
             if (pending_[i].key != key) continue;
             const unsigned total = pending_[i].count + count;
-            pending_[i].count = total > 10 ? 10 : total;
+            pending_[i].count = static_cast<uint8_t>(total > limit_ ? limit_ : total);
             return;
         }
-        // There are only four swipe directions, each occupying at most a slot.
-        pending_[size_++] = Step{key, static_cast<uint8_t>(count > 10 ? 10 : count)};
+        if (size_ == pending_.size()) return;
+        pending_[size_++] = Step{key, count > limit_ ? limit_ : count};
     }
 
     template <typename Sender>
     void tick(uint64_t now_us, uint32_t current_generation, Sender send) {
         if (generation_ != current_generation) cancel();
+        // A complete CEC press/release needs about 165 ms of clear bus time.
+        // Leave room for replies.
         if (idle() || now_us - last_attempt_us_ < 250000) return;
         // Keep a rejected admission pending, without building a CEC backlog.
         if (send(pending_[0].key, generation_) && --pending_[0].count == 0) {
@@ -47,8 +51,9 @@ public:
     }
 private:
     struct Step { uint8_t key, count; };
+    // Swipes have four directions; volume uses one key at a time.
     std::array<Step, 4> pending_{};
-    uint8_t size_ = 0;
+    uint8_t size_ = 0, limit_;
     uint32_t generation_ = 0;
     uint64_t last_attempt_us_ = 0;
 };

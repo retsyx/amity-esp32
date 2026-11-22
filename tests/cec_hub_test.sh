@@ -11,7 +11,7 @@ mkdir -p "$root/test-results"
 binary=$(mktemp "$root/test-results/cec-hub.XXXXXX")
 trap 'rm -rf "$binary" "$binary.dSYM"' EXIT HUP INT TERM
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-    -I"$root/components/amity_system/include" -I"$root/components/config_store/include" -I"$root/components/cec/include" -I"$root/components/amity_hub/include" -I"$root/main" \
+    -I"$root/components/amity_system/include" -I"$root/components/config_store/include" -I"$root/components/cec/include" -I"$root/components/amity_hub/include" \
     "$root/components/cec/engine.cpp" "$root/components/amity_hub/hub.cpp" \
     "$root/tests/cec_hub_test.cpp" -o "$binary"
 "$binary"

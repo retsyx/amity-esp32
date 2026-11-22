@@ -31,8 +31,8 @@ mkdir -p "$result_dir"
     "$component_dir/remote_input.cpp" -o "$result_dir/remote_input_test"
 "$result_dir/remote_input_test"
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -I"$project_dir/main" "$test_dir/swipe_sequence_test.cpp" -o "$result_dir/swipe_sequence_test"
-"$result_dir/swipe_sequence_test"
+    -I"$project_dir/main" "$test_dir/key_sequence_test.cpp" -o "$result_dir/key_sequence_test"
+"$result_dir/key_sequence_test"
 "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -I"$component_dir/include" "$test_dir/gatt_layout_test.cpp" \
     "$component_dir/gatt_layout.cpp" -o "$result_dir/gatt_layout_test"

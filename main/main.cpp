@@ -12,8 +12,7 @@
 #include "homekit.hpp"
 #include "atomic_remote.hpp"
 #include "siri_remote.hpp"
-#include "volume_sequence.hpp"
-#include "swipe_sequence.hpp"
+#include "key_sequence.hpp"
 #include <atomic>
 #include <algorithm>
 #include <mutex>
@@ -238,12 +237,17 @@ esp_err_t power(bool on,void *) {
 esp_err_t activity(uint8_t index,void *) {return hub.request_activity(index);}
 esp_err_t key(uint8_t value,void *) {if(hub.snapshot().current_activity<0)return ESP_ERR_INVALID_STATE;return hub.press_key(value)?ESP_OK:ESP_ERR_NO_MEM;}
 esp_err_t mute(bool muted,void *) {return key(muted?0x65:0x66,nullptr);}
+// A Matter relative volume command for the activity that accepted it.
+struct VolumeAdjustment {
+    int16_t steps;
+    uint32_t activity_generation;
+};
 QueueHandle_t volume_queue;
 esp_err_t volume(int16_t steps,void *) {
     const auto state=hub.snapshot();
     if(state.current_activity<0)return ESP_ERR_INVALID_STATE;
     if(steps>100||steps< -100)return ESP_ERR_INVALID_ARG;
-    amity::VolumeAdjustment v{steps,state.activity_generation};
+    VolumeAdjustment v{steps,state.activity_generation};
     return xQueueSend(volume_queue,&v,0)==pdTRUE?ESP_OK:ESP_ERR_NO_MEM;
 }
 void firmware_update_task(void *) {
@@ -305,9 +309,10 @@ bool submit_remote_release(uint8_t key,uint32_t generation) {
     return accepted;
 }
 void input_task(void *) {
-    amity::SwipeSequence swipes;
+    // Python merges repeat-counted swipes of the same direction, capped at ten.
+    amity::KeySequence swipes(10);
     ble::RemoteInputController controller([](ble::RemoteCommand command,void *context) {
-        auto &pending_swipes=*static_cast<amity::SwipeSequence *>(context);
+        auto &pending_swipes=*static_cast<amity::KeySequence *>(context);
         if(command.type==ble::RemoteCommandType::Release) {
             pending_swipes.cancel();
             return submit_remote_release(static_cast<uint8_t>(command.value),command.stamp.generation);
@@ -335,7 +340,7 @@ void input_task(void *) {
     controller.activity_selected(hub.activity_selection(),esp_timer_get_time());
     ble::AtomicInputAdapter atomic(controller);
     ble::SiriInputAdapter siri(controller);
-    amity::VolumeSequence volume_sequence;
+    amity::KeySequence volume_steps(100);
     uint16_t siri_logged_buttons=0;
     ESP_LOGI("remote_input","Key press/release logging enabled");
     auto sync_activity=[&] {
@@ -385,11 +390,10 @@ void input_task(void *) {
         swipes.tick(now,hub.remote_activity_generation(),[](uint8_t key,uint32_t generation) {
             return hub.press_remote_key_for_activity(key,generation);
         });
-        amity::VolumeAdjustment v;
-        if(volume_sequence.idle()&&xQueueReceive(volume_queue,&v,0)==pdTRUE)volume_sequence.start(v);
-        // A complete CEC press/release needs about 165 ms of clear bus time.
-        // Leave room for replies, and retain a step if hub admission is full.
-        if(!volume_sequence.idle())volume_sequence.tick(now,hub.activity_generation(),[](uint8_t key,uint32_t generation) {
+        VolumeAdjustment v;
+        if(volume_steps.idle()&&xQueueReceive(volume_queue,&v,0)==pdTRUE)
+            volume_steps.add(v.steps>0?0x41:0x42,static_cast<uint8_t>(v.steps>0?v.steps:-v.steps),v.activity_generation);
+        if(!volume_steps.idle())volume_steps.tick(now,hub.activity_generation(),[](uint8_t key,uint32_t generation) {
             return hub.press_key_for_activity(key,generation);
         });
     }
@@ -538,7 +542,7 @@ extern "C" void app_main() {
     }
     device_settings::set_setup_button_handler(setup_button);
     if (startup_profile.reset_button >= 0) ESP_ERROR_CHECK(device_settings::start_reset_button(startup_profile.reset_button));
-    input_queue=xQueueCreate(32,sizeof(Input));volume_queue=xQueueCreate(8,sizeof(amity::VolumeAdjustment));
+    input_queue=xQueueCreate(32,sizeof(Input));volume_queue=xQueueCreate(8,sizeof(VolumeAdjustment));
     ESP_ERROR_CHECK(input_queue&&volume_queue?ESP_OK:ESP_ERR_NO_MEM);
     amity::system::OctopusId octopus_id;
     amity::system::ConsortiumId consortium_id;

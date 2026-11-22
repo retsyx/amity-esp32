@@ -70,8 +70,8 @@ c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   "$root/components/ble_remote/remote_input.cpp" -o "$out/remote_input_test"
 "$out/remote_input_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-  -I"$root/main" "$root/tests/swipe_sequence_test.cpp" -o "$out/swipe_sequence_test"
-"$out/swipe_sequence_test"
+  -I"$root/main" "$root/tests/key_sequence_test.cpp" -o "$out/key_sequence_test"
+"$out/key_sequence_test"
 c++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
   -I"$root/components/ble_remote/include" "$root/tests/pairing_policy_test.cpp" -o "$out/pairing_policy_test"
 "$out/pairing_policy_test"

@@ -6,14 +6,14 @@
  * License, or (at your option) any later version.
  */
 
-#include "swipe_sequence.hpp"
+#include "key_sequence.hpp"
 #include <cassert>
 #include <cstdio>
 #include <utility>
 #include <vector>
 
-int main() {
-    amity::SwipeSequence sequence;
+static void swipe_tests() {
+    amity::KeySequence sequence(10);
     std::vector<std::pair<uint8_t,uint32_t>> sent;
     bool admit=true;
     auto send=[&](uint8_t key,uint32_t generation) {
@@ -47,7 +47,39 @@ int main() {
     assert(sent.back().first==0x03&&sent.back().second==8);
     sequence.add(0x04,6,8);sequence.cancel();sequence.tick(7500000,8,send);
     assert(sequence.idle()&&sent.size()==18);
-    sequence.add(0x40,6,8);sequence.add(0x00,6,8);sequence.add(0x04,0,8);
+    sequence.add(0x04,0,8);
     assert(sequence.idle());
-    puts("Finite swipe pacing, coalescing, bounded counts, admission retry and activity cancellation tests passed");
+}
+
+static void volume_tests() {
+    amity::KeySequence volume(100);
+    std::vector<std::pair<uint8_t, uint32_t>> accepted;
+    bool admit = true;
+    const auto send = [&](uint8_t key, uint32_t generation) {
+        if (admit) accepted.emplace_back(key, generation);
+        return admit;
+    };
+    volume.add(0x41, 100, 7);
+    volume.tick(250000, 7, send); volume.tick(500000, 7, send);
+    assert(accepted.size() == 2 && !volume.idle());
+    // Changing activity or its configuration cancels the 98 remaining steps.
+    volume.tick(750000, 8, send);
+    assert(accepted.size() == 2 && volume.idle());
+    // Older adjustments already waiting in the application queue are stale,
+    // even when a later activity happens to reuse the same input index.
+    volume.add(0x41, 50, 7); volume.tick(1000000, 9, send);
+    assert(accepted.size() == 2 && volume.idle());
+    volume.add(0x42, 2, 9);
+    admit = false; volume.tick(1250000, 9, send);
+    assert(!volume.idle() && accepted.size() == 2);
+    admit = true; volume.tick(1499999, 9, send); assert(accepted.size() == 2);
+    volume.tick(1500000, 9, send); assert(!volume.idle());
+    volume.tick(1750000, 9, send); assert(volume.idle());
+    assert(accepted.size() == 4 && accepted[2] == std::make_pair(uint8_t{0x42}, uint32_t{9}) && accepted[3] == accepted[2]);
+}
+
+int main() {
+    swipe_tests();
+    volume_tests();
+    puts("Paced swipe and volume steps: coalescing, bounded counts, admission retry and activity cancellation tests passed");
 }
