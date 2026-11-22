@@ -49,7 +49,6 @@ class UnitSession:
 
 class Fixture:
     token = "PRIVATE_CANDIDATE_TOKEN"
-    setup_code = "PRIVATE_SETUP_CODE"
 
     def __init__(self):
         self.main = DUT("amity-dut")
@@ -62,7 +61,7 @@ class Fixture:
         self.capacity = len({index for name, index, _ in self.candidate.wiring.cec if name == self.candidate.name})
         self.expected_label = "Amity " + self.candidate.identity.device_id[-6:]
         self.candidates = [{"token": self.token, "label": self.expected_label}]
-        self.requires_code = self.lose_add_reply = self.unknown_add = False
+        self.lose_add_reply = self.unknown_add = False
         self.bad_add_identity = self.bad_add_boot = self.wrong_candidate = False
         self.foreign_scan = self.reject_add = self.fail_add_operation = False
         self.change_boot_before_remove = False
@@ -100,7 +99,7 @@ class Fixture:
             "external_slots": [{"slot": 0, "activity_id": "2" * 32, "tombstone": False,
                                 "hidden": False, "alias": "Saved shortcut"}]}
         self.original = deepcopy(self.config)
-        self.admission = {"scan_id": None, "phase": "idle", "error": "", "requires_setup_code": False,
+        self.admission = {"scan_id": None, "phase": "idle", "error": "",
                           "candidates": [], "candidate_id": None}
         self.bed = SimpleNamespace(duts=(self.main, self.candidate), control_only=(self.candidate,),
                                    _entered=True, _closed=False, _closing=False, session=UnitSession(),
@@ -185,7 +184,7 @@ class Fixture:
         request_id = data["request_id"]
         if path == "/api/membership/scan":
             self.admission.update(scan_id=request_id, phase="scanning", error="",
-                                  requires_setup_code=self.requires_code, candidates=[], candidate_id=None)
+                                  candidates=[], candidate_id=None)
             result = self.operation(request_id, "complete")
         elif path == "/api/membership/cancel":
             if data["scan_id"] != self.admission["scan_id"]:
@@ -193,6 +192,8 @@ class Fixture:
             self.admission["phase"] = "cancelled"
             result = self.operation(request_id, "complete")
         elif path == "/api/membership/add":
+            if set(data) != {"request_id", "scan_id", "candidate_token", "name"}:
+                raise AssertionError("Add must send exactly the UI's selection")
             if self.reject_add:
                 raise AmityHTTPError(409, "Addition rejected")
             if self.unknown_add:
@@ -254,8 +255,8 @@ class Fixture:
         self.operations[request_id] = result
         return deepcopy(result)
 
-    def added(self, *, name=None, timeout=30, setup_code=None):
-        return AddedAmity(self.main, self.candidate, name=name, timeout=timeout, setup_code=setup_code)
+    def added(self, *, name=None, timeout=30):
+        return AddedAmity(self.main, self.candidate, name=name, timeout=timeout)
 
     def posts(self, suffix):
         return [data for path, data in self.calls if path == "/api/membership/" + suffix and data is not None]
@@ -540,11 +541,11 @@ class MembershipTests(unittest.TestCase):
             self.assertEqual(f.posts("remove"), [])
             # Report allowlists must apply recursively even if a future caller
             # adds raw diagnostics to an otherwise legitimate trace record.
-            failed_request.update(body={"setup_code": f.setup_code}, response={"candidate_token": f.token},
+            failed_request.update(body={"password": "PRIVATE_ADMIN_PASSWORD"}, response={"candidate_token": f.token},
                                   Authorization="PRIVATE_LOGIN_TOKEN")
             trace["candidate_token"] = f.token
         report = bed.report
-        self.assertNotIn(f.setup_code, json.dumps(report))
+        self.assertNotIn("PRIVATE_ADMIN_PASSWORD", json.dumps(report))
         self.assertNotIn(f.token, json.dumps(report))
         self.assertNotIn("PRIVATE_LOGIN_TOKEN", json.dumps(report))
         recorded = next(row for row in report["memberships"] if row["phase"] == "add")["requests"][-1]
@@ -812,27 +813,14 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(f.posts("remove"), [])
         self.assertFalse(any(p["scan_id"] == "9" * 32 for p in f.posts("cancel")))
 
-    def test_strict_setup_code_is_required_only_for_strict_ui_and_is_never_reported(self):
+    def test_add_submits_only_the_ui_selection_and_never_reports_its_token(self):
         f = Fixture()
-        f.requires_code = True
-        with f.added(setup_code=f.setup_code).create() as member:
-            self.assertEqual(f.posts("add")[0]["setup_code"], f.setup_code)
+        with f.added().create() as member:
+            post, = f.posts("add")
+            self.assertEqual(post, {"request_id": member.request_id, "scan_id": member.scan_id,
+                                    "candidate_token": f.token, "name": member.name})
             member.assert_connected()
-        serialized = json.dumps(f.main.membership_operations)
-        self.assertNotIn(f.setup_code, serialized)
-        self.assertNotIn(f.token, serialized)
-        normal = Fixture()
-        resource = normal.added(setup_code=normal.setup_code)
-        with resource.create():
-            self.assertNotIn("setup_code", normal.posts("add")[0])
-        self.assertNotIn(normal.setup_code, json.dumps(normal.main.membership_operations))
-        strict = Fixture()
-        strict.requires_code = True
-        resource = strict.added()
-        with self.assertRaises((ValueError, AssertionError, MembershipConflict)):
-            resource.create()
-        resource.close()
-        self.assertEqual(strict.posts("add"), [])
+        self.assertNotIn(f.token, json.dumps(f.main.membership_operations))
 
     def test_wrong_full_candidate_identity_is_not_removed_as_test_owned(self):
         f = Fixture()

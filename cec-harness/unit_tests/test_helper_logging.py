@@ -83,9 +83,8 @@ class HelperLoggingTests(unittest.TestCase):
 
     def test_membership_logs_steps_and_reset_cleanup_without_admission_secrets(self):
         fixture = membership_fixture.Fixture()
-        fixture.requires_code = True
         with patch("amity_harness.membership.event") as emit:
-            member = fixture.added(setup_code=fixture.setup_code).create()
+            member = fixture.added().create()
             member.close()
         captured = events(emit)
         names = [name for name, _ in captured]
@@ -98,7 +97,6 @@ class HelperLoggingTests(unittest.TestCase):
                           "confirm_main", "submit_add", "confirm_add"])
         serialized = json.dumps(captured)
         self.assertNotIn(fixture.token, serialized)
-        self.assertNotIn(fixture.setup_code, serialized)
         self.assertNotIn("candidate_token", serialized)
 
     def test_membership_repeated_polling_logs_only_changed_admission_phase(self):

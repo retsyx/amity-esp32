@@ -19,7 +19,7 @@ class LifecycleLoggingTests(unittest.TestCase):
 
     def test_http_trace_excludes_credentials_contents_and_dynamic_route_values(self):
         secrets = ("private-password", "private-session-token", "private-origin.example",
-                   "private-device-token", "private-request-token", "private-setup-code",
+                   "private-device-token", "private-request-token", "private-hostname",
                    "private-discovery-token", "private-server-error", "private-response-value")
         error = HTTPError("https://private-origin.example/api/membership/add", 409, "Conflict", {},
                           io.BytesIO(b'{"error":"private-server-error"}'))
@@ -30,7 +30,7 @@ class LifecycleLoggingTests(unittest.TestCase):
                       password="private-password", opener=opener)
             dut.get_state()
             dut.request("/api/devices/private-device-token/settings",
-                        {"request_id": "private-request-token", "setup_code": "private-setup-code"})
+                        {"request_id": "private-request-token", "hostname": "private-hostname"})
             with self.assertRaises(AmityHTTPError):
                 dut.request("/api/membership/add", {"token": "private-discovery-token"})
         captured = repr(logged.call_args_list)

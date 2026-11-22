@@ -307,14 +307,14 @@ class DUT:
                         switch_device=switch_device, switch_input=switch_input,
                         add_components=add_components, timeout=timeout).create()
 
-    def add_amity(self, candidate, *, name=None, timeout=None, setup_code=None):
+    def add_amity(self, candidate, *, name=None, timeout=None):
         """Temporarily add a control-only DUT using the existing Add Amity UI.
 
         Closing the returned context removes that test-owned member and requires
         its acknowledgement of the UI's scheduled factory reset.
         """
         from .membership import AddedAmity
-        return AddedAmity(self, candidate, name=name, timeout=timeout, setup_code=setup_code).create()
+        return AddedAmity(self, candidate, name=name, timeout=timeout).create()
 
     def logout(self):
         event("auth.logout.start", dut=self.name, authenticated=bool(self._token))

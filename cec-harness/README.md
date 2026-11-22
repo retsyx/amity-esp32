@@ -567,8 +567,7 @@ The shared helper scans through the existing UI Add flow and holds the
 candidate's FW RESET for 3.5 seconds, then releases it. The GPIO assignment is
 resolved from the setup/reset table parsed from `TEST-HARNESS.md`, never a
 hardcoded bench pin in the framework or tests. The Pi owns the bounded hold
-and releases the pin when it ends or the worker exits. The normal admission
-profile uses no setup code.
+and releases the pin when it ends or the worker exits.
 
 `member.assert_connected()` verifies the candidate's full inventory device ID,
 assigned name, ready membership, configuration entry and device settings. It

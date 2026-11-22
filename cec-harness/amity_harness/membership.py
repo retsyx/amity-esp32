@@ -2,7 +2,7 @@
 
 The candidate is control-only or a headless member with CEC components,
 never an HTTP client. Remove revokes it and schedules its factory reset.
-No setup codes, bearer tokens or opaque discovery tokens enter reports.
+No bearer tokens or opaque discovery tokens enter reports.
 """
 
 from copy import deepcopy
@@ -28,7 +28,7 @@ class AddedAmity:
     _cleanup_priority = 2
     _cleanup_retryable = True
 
-    def __init__(self, main, candidate, *, name=None, timeout=None, setup_code=None):
+    def __init__(self, main, candidate, *, name=None, timeout=None):
         bed = getattr(main, "_testbed", None)
         if (bed is None or not bed._entered or bed._closed or candidate._testbed is not bed
                 or candidate not in (*bed.control_only, *getattr(bed, "members", ()))
@@ -42,14 +42,11 @@ class AddedAmity:
         name = name.strip().lower()
         if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", name):
             raise ValueError("An Amity name needs 1-32 letters, digits or hyphens")
-        if setup_code is not None and (not isinstance(setup_code, str) or not setup_code or len(setup_code) > 256):
-            raise ValueError("Use the candidate's existing printed Matter setup code")
         self.main, self.candidate, self.name, self.session = main, candidate, name, bed.session
         self.timeout = main._runtime.timeout if timeout is None else timeout
         _positive_seconds(self.timeout, "Membership timeout")
         self.device_id = candidate.identity.device_id
         self.scan_id, self.request_id = uuid4().hex, uuid4().hex
-        self._setup_code = setup_code
         self._baseline = self._initial_system = None
         self.boot = self.group = self.member_boot = None
         self._scan_attempted = self._add_attempted = self._created = self._closed = False
@@ -331,13 +328,8 @@ class AddedAmity:
                 time.sleep(min(0.4, self._remaining(deadline)))
             self._step(record, "confirm_main")
             self._system()
-            required = found.get("requires_setup_code")
-            if type(required) is not bool or required and not self._setup_code:
-                raise MembershipConflict("This candidate requires its existing printed Matter setup code")
             payload = {"request_id": self.request_id, "scan_id": self.scan_id,
                        "candidate_token": matches[0]["token"], "name": self.name}
-            if required:
-                payload["setup_code"] = self._setup_code
             self._add_attempted = True
             self._step(record, "submit_add")
             try:
@@ -345,15 +337,11 @@ class AddedAmity:
             except AmityHTTPError as error:
                 self._add_rejected = error.status < 500
                 raise
-            finally:
-                self._setup_code = None
-                payload.clear()
             self._finish_add(deadline=deadline, record=record)
             result = self.assert_connected(timeout=self._remaining(deadline))
             self._log("membership.add.complete")
             return result
         except BaseException as error:
-            self._setup_code = None
             record["error_type"] = type(error).__name__
             self._log("membership.add.failed", level=logging.ERROR, step=record.get("step"),
                       error_type=type(error).__name__)
