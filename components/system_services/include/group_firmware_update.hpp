@@ -5,8 +5,6 @@
 namespace system_services::updates {
 struct CohortHooks {
     std::function<void(amity::system::OctopusId,bool)> owner_maintenance;
-    std::function<uint64_t()> applied_config_revision;
-    std::function<std::string()> applied_policy_hash;
 };
 void start_group_updates(amity::system::OctopusId,CohortHooks);
 // One authenticated browser upload stages the primary. Distribution and

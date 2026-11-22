@@ -306,20 +306,23 @@ void adapter_index_tests(){
     value.get("adapters")->array[0].get("tentacle_id")->integer=4;assert(!valid_settings_snapshot(value));
 }
 void update_tests() {
-    const std::string base="\"request_id\":\""+ident<m::MessageId>(40).str()+"\",\"release_id\":\"0.1.56-dev\",\"image_sha256\":\""+std::string(64,'a')+"\"";
+    const std::string request="\"request_id\":\""+ident<m::MessageId>(40).str()+"\"",base=request+",\"release_id\":\"0.1.56-dev\"";
     const auto chunk="{"+base+",\"offset\":\"0\",\"data_hex\":\"0001\",\"chunk_sha256\":\""+std::string(64,'b')+"\"}";
     const auto valid=[&](Kind kind,const std::string& body){Json j;JsonError e;return parse_json(body,j,e)&&valid_update(kind,j);};
     assert(!valid(Kind::update_chunk,chunk));
     Envelope rejected;assert(parse_envelope(packet(scope(),Kind::update_chunk,chunk),rejected)==Error::invalid_message);
-    const auto begin="{"+base+",\"canonical_manifest\":\"{}\",\"signature_hex\":\"\"}";
+    // The manifest names the release; begin carries nothing else beside it.
+    const auto begin="{"+request+",\"canonical_manifest\":\"{}\",\"signature_hex\":\"\"}";
     assert(valid(Kind::update_begin,begin));
     assert(!valid(Kind::update_begin,begin.substr(0,begin.size()-1)+",\"validate_only\":true}"));
+    assert(!valid(Kind::update_begin,begin.substr(0,begin.size()-1)+",\"release_id\":\"0.1.56-dev\"}"));
     {Json document;JsonError detail;assert(parse_json(begin,document,detail));
      document.get("canonical_manifest")->string=std::string(4096,'a');assert(valid_update(Kind::update_begin,document));
      document.get("canonical_manifest")->string.push_back('a');assert(!valid_update(Kind::update_begin,document));}
     assert(!valid(Kind::update_begin,replace(begin,"\"signature_hex\":\"\"","\"signature_hex\":\"ff\"")));
     const auto stage="{"+base+",\"phase\":\"stage\"}";
-    assert(valid(Kind::update_install,stage)&&!valid(Kind::update_install,"{"+base+"}"));
+    assert(valid(Kind::update_install,stage)&&!valid(Kind::update_install,"{"+base+"}")&&!valid(Kind::update_install,"{"+request+",\"phase\":\"stage\"}"));
+    assert(!valid(Kind::update_install,stage.substr(0,stage.size()-1)+",\"image_sha256\":\""+std::string(64,'a')+"\"}"));
     assert(!valid(Kind::update_install,replace(stage,"stage","install")));
     assert(!valid(Kind::update_install,stage.substr(0,stage.size()-1)+",\"reboot_delay_ms\":\"0\"}"));
     const auto activate=replace(stage,"stage","activate");
@@ -327,11 +330,12 @@ void update_tests() {
     for(const auto delay:{"0","1","9999","10000","14999","15000"})assert(valid(Kind::update_install,activate.substr(0,activate.size()-1)+",\"reboot_delay_ms\":\""+delay+"\"}"));
     for(const auto delay:{"","00","01","15001","99999","-1","1.0","18446744073709551616"})assert(!valid(Kind::update_install,activate.substr(0,activate.size()-1)+",\"reboot_delay_ms\":\""+delay+"\"}"));
     assert(!valid(Kind::update_install,activate.substr(0,activate.size()-1)+",\"reboot_delay_ms\":0}"));
-    const auto result="{"+base+",\"offset\":\"2048\",\"stage\":\"progress\",\"error\":\"\"}";
-    assert(valid(Kind::update_result,result));
-    assert(valid(Kind::update_result,replace(result,"progress","staged")));
-    assert(valid(Kind::update_result,result.substr(0,result.size()-1)+",\"update_phase\":\"staged_image\"}"));
-    assert(!valid(Kind::update_result,replace(result,"\"error\":\"\"","\"error\":\"arbitrary text\"")));
+    assert(valid(Kind::update_abort,"{"+base+"}")&&!valid(Kind::update_abort,"{"+base+",\"reason\":\"timeout\"}")&&!valid(Kind::update_abort,"{"+request+"}"));
+    const auto result="{"+request+",\"stage\":\"staged\"}";
+    for(const auto* stage:{"ready","staged","installing","aborted","rejected"})assert(valid(Kind::update_result,replace(result,"staged",stage)));
+    for(const auto* stage:{"progress","status",""})assert(!valid(Kind::update_result,replace(result,"staged",stage)));
+    assert(!valid(Kind::update_result,result.substr(0,result.size()-1)+",\"offset\":\"2048\"}"));
+    assert(!valid(Kind::update_result,result.substr(0,result.size()-1)+",\"error\":\"\"}"));
     for(auto role:{PeerRole::coordinator,PeerRole::actuator,PeerRole::provisional_candidate}) {
         auto sc=scope();Session session;auto h=hello(sc);assert(session.authenticate(sc,sc.peer_id,role,true)==Error::none);
         assert(session.hello(h)==Error::none);

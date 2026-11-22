@@ -94,7 +94,7 @@ esp_err_t runtime_send_update(m::OctopusId to,Kind kind,std::string body,uint32_
     if(kind==Kind::update_install&&field(value,"phase")=="stage"){
         ++stage_attempts;if(full_stage_attempts){--full_stage_attempts;return ESP_ERR_NO_MEM;}
     }
-    assert(kind==Kind::update_begin||kind==Kind::update_chunk||kind==Kind::update_install||kind==Kind::update_status||kind==Kind::update_abort);
+    assert(kind==Kind::update_begin||kind==Kind::update_chunk||kind==Kind::update_install||kind==Kind::update_abort);
     const auto old=destination;destination=to;
     Envelope envelope;envelope.kind=kind;envelope.payload=value;
     envelope.config_revision=7;
@@ -137,7 +137,7 @@ void setup(){
     runtime_role.initialized=runtime_role.coordinator=runtime_role.authority_ready=true;
     u::start_group_updates(local,{[](m::OctopusId owner,bool active){maintenance_fences.emplace_back(owner,active);
         if(release_allows_sync&&owner==one&&!active){assert(field(parse(u::cohort_status_json()),"phase")=="activating");peers.front().ready=true;release_allows_sync=false;}
-    },{},{}});assert(phase()=="idle");
+    }});assert(phase()=="idle");
 }
 void upload_once(){
     std::string error;assert(u::begin_system_upload(uploaded_release,error)==ESP_OK&&phase()=="uploading");

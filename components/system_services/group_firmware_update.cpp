@@ -39,20 +39,21 @@ bool wake_pending=false;
 void wake_worker(){{std::lock_guard<std::mutex> lock(wake_gate);wake_pending=true;}woken.notify_all();}
 Cohort cohort;CohortHooks hooks;m::OctopusId local;
 std::string last_failed_upload="null";
-struct Pending {m::OctopusId owner;m::MessageId request;std::string release_id,image_hash;std::optional<c::Json> result;};
+struct Pending {m::OctopusId owner;m::MessageId request;std::optional<c::Json> result;};
 std::optional<Pending> pending;
 struct Retry {m::BootId boot;std::string image,source;unsigned attempts=0;uint64_t after=0;};
 std::map<m::OctopusId,Retry> retries;
 std::mutex incoming_gate;
 m::OctopusId incoming_owner;
 m::MessageId incoming_begin;
-std::string incoming_release,incoming_hash;
+std::string incoming_release;
 uint64_t now(){return uint64_t(esp_timer_get_time()/1000);}
 std::string quote(std::string_view value){return m::json_quote(value);}
 std::string string(const c::Json& value,const char* field){const auto* p=value.get(field);return p&&p->type==c::Json::Type::string?p->string:"";}
 uint64_t decimal(const c::Json& value,const char* field){uint64_t n=0;c::decimal(value.get(field),n);return n;}
 m::MessageId fresh(){return m::MessageId::generate([](uint8_t* bytes,size_t count){esp_fill_random(bytes,count);return true;}).value_or(m::MessageId{});}
-std::string base(m::MessageId id,const ReleaseManifest& release){return "\"request_id\":"+quote(id.str())+",\"release_id\":"+quote(release.release_id)+",\"image_sha256\":"+quote(release.image_sha256);}
+// Requests after update_begin name the release they act on.
+std::string release_request(m::MessageId id,const ReleaseManifest& release,std::string_view fields={}){return "{\"request_id\":"+quote(id.str())+",\"release_id\":"+quote(release.release_id)+std::string(fields)+"}";}
 bool busy(){return cohort.phase=="uploading"||cohort.phase=="distributing"||cohort.phase=="activating";}
 std::string report_job(const Cohort& value);
 void fail_job(const std::string& error){
@@ -75,8 +76,8 @@ std::string report_job(const Cohort& value){
     for(const auto& target:value.targets){if(out.back()!='[')out+=',';out+="{\"octopus_id\":"+quote(target.owner.str())+",\"offset\":\""+std::to_string(target.offset)+"\",\"phase\":"+quote(target.phase)+",\"error\":"+quote(target.error)+"}";}
     return out+"]}";
 }
-bool exchange(m::OctopusId owner,c::Kind kind,std::string payload,m::MessageId request,const ReleaseManifest& release,c::Json& response,uint32_t timeout=65000){
-    {std::lock_guard<std::mutex> lock(ack_gate);pending=Pending{owner,request,release.release_id,release.image_sha256,{}};}
+bool exchange(m::OctopusId owner,c::Kind kind,std::string payload,m::MessageId request,c::Json& response,uint32_t timeout=65000){
+    {std::lock_guard<std::mutex> lock(ack_gate);pending=Pending{owner,request,{}};}
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(timeout);
     bool admitted=false;
     while(std::chrono::steady_clock::now()<deadline){
@@ -105,14 +106,11 @@ bool exchange(m::OctopusId owner,c::Kind kind,std::string payload,m::MessageId r
 }
 c::Error result(m::OctopusId owner,const c::Json& value){
     std::lock_guard<std::mutex> lock(ack_gate);m::MessageId id;
-    if(!pending||pending->owner!=owner||!c::id(value.get("request_id"),id)||pending->request!=id||string(value,"release_id")!=pending->release_id||string(value,"image_sha256")!=pending->image_hash)return c::Error::transaction_conflict;
+    if(!pending||pending->owner!=owner||!c::id(value.get("request_id"),id)||pending->request!=id)return c::Error::transaction_conflict;
     pending->result=value;changed.notify_all();return c::Error::none;
 }
-std::string receiver_result(const c::Envelope& envelope,const char* stage,const char* error){
-    c::Json report;c::JsonError detail;c::parse_json(status_json(),report,detail);
-    ReleaseManifest release;release.release_id=string(envelope.payload,"release_id");release.image_sha256=string(envelope.payload,"image_sha256");
-    return "{"+base(*m::MessageId::parse(string(envelope.payload,"request_id")),release)+
-        ",\"offset\":"+quote(string(report,"received_bytes").empty()?"0":string(report,"received_bytes"))+",\"stage\":"+quote(stage)+",\"error\":"+quote(error)+"}";
+std::string receiver_result(const c::Envelope& envelope,const char* stage){
+    return "{\"request_id\":"+quote(string(envelope.payload,"request_id"))+",\"stage\":"+quote(stage)+"}";
 }
 c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
     if(envelope.kind==c::Kind::update_chunk){
@@ -125,32 +123,35 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
         peer_abort("Firmware stream rejected; current firmware retained");incoming_begin={};
         return applied==ESP_ERR_INVALID_ARG?c::Error::transaction_conflict:c::Error::storage_failure;
     }
-    std::string error;esp_err_t applied=ESP_ERR_INVALID_ARG;const char* stage="rejected";const char* code="INVALID_MESSAGE";
-    const auto& request=envelope.payload;const auto release_id=string(request,"release_id"),image_hash=string(request,"image_sha256");
-    bool matching=false;{std::lock_guard<std::mutex> lock(incoming_gate);matching=incoming_begin&&incoming_owner==owner&&incoming_release==release_id&&incoming_hash==image_hash;}
-    // Durable staged images may be activated on a fresh authenticated stream.
-    if(envelope.kind==c::Kind::update_install&&string(request,"phase")=="activate"&&!matching){ReleaseManifest staged;std::string signature;matching=partition_release(false,staged,signature,error)==ESP_OK&&staged.release_id==release_id&&staged.image_sha256==image_hash;}
-    if(envelope.kind!=c::Kind::update_begin&&envelope.kind!=c::Kind::update_status&&!matching){c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,"rejected","CONFLICT"),5000);return c::Error::transaction_conflict;}
+    std::string error;esp_err_t applied=ESP_ERR_INVALID_ARG;const char* stage="rejected";
+    const auto& request=envelope.payload;
     if(envelope.kind==c::Kind::update_begin){ReleaseManifest manifest;
-        if(parse_release_manifest(string(request,"canonical_manifest"),manifest,error)&&manifest.release_id==release_id&&manifest.image_sha256==image_hash){
+        if(parse_release_manifest(string(request,"canonical_manifest"),manifest,error)){
+            const auto begin=*m::MessageId::parse(string(request,"request_id"));
             {
                 std::lock_guard<std::mutex> lock(incoming_gate);
-                if(incoming_begin&&incoming_owner==owner&&incoming_begin!=*m::MessageId::parse(string(request,"request_id"))){
+                if(incoming_begin&&incoming_owner==owner&&incoming_begin!=begin){
                     peer_abort("A new firmware transfer replaced the incomplete upload");incoming_begin={};
                 }
             }
-            applied=peer_begin(manifest.canonical,string(request,"signature_hex"),error);code=applied==ESP_ERR_INVALID_ARG?"INVALID_MANIFEST":"NOT_READY";
-            if(applied==ESP_OK){stage="ready";std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=*m::MessageId::parse(string(request,"request_id"));incoming_release=release_id;incoming_hash=image_hash;}
+            applied=peer_begin(manifest.canonical,string(request,"signature_hex"),error);
+            if(applied==ESP_OK){stage="ready";std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=begin;incoming_release=manifest.release_id;}
         }
-    }else if(envelope.kind==c::Kind::update_install){
-        const bool staging=string(request,"phase")=="stage";
-        applied=staging?peer_stage(release_id,error):peer_install(release_id,error,uint32_t(decimal(request,"reboot_delay_ms")));
-        if(staging&&applied!=ESP_OK)peer_abort("Firmware staging failed; current firmware retained");
-        code="HASH_MISMATCH";if(applied==ESP_OK)stage=staging?"staged":"installing";
-    }else if(envelope.kind==c::Kind::update_abort){peer_abort("Main Amity cancelled the update");applied=ESP_OK;stage="aborted";}
-    else if(envelope.kind==c::Kind::update_status){applied=ESP_OK;stage="status";}
-    else return c::Error::unsupported_kind;
-    if(c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,stage,applied==ESP_OK?"":code),5000)!=ESP_OK)return c::Error::queue_full;
+    }else{
+        const auto release_id=string(request,"release_id");
+        bool matching=false;{std::lock_guard<std::mutex> lock(incoming_gate);matching=incoming_begin&&incoming_owner==owner&&incoming_release==release_id;}
+        // Durable staged images may be activated on a fresh authenticated stream.
+        if(envelope.kind==c::Kind::update_install&&string(request,"phase")=="activate"&&!matching){ReleaseManifest staged;std::string signature;matching=partition_release(false,staged,signature,error)==ESP_OK&&staged.release_id==release_id;}
+        if(!matching){c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,"rejected"),5000);return c::Error::transaction_conflict;}
+        if(envelope.kind==c::Kind::update_install){
+            const bool staging=string(request,"phase")=="stage";
+            applied=staging?peer_stage(release_id,error):peer_install(release_id,error,uint32_t(decimal(request,"reboot_delay_ms")));
+            if(staging&&applied!=ESP_OK)peer_abort("Firmware staging failed; current firmware retained");
+            if(applied==ESP_OK)stage=staging?"staged":"installing";
+        }else if(envelope.kind==c::Kind::update_abort){peer_abort("Main Amity cancelled the update");applied=ESP_OK;stage="aborted";}
+        else return c::Error::unsupported_kind;
+    }
+    if(c::runtime_send_update(owner,c::Kind::update_result,receiver_result(envelope,stage),5000)!=ESP_OK)return c::Error::queue_full;
     return applied==ESP_OK?c::Error::none:applied==ESP_ERR_INVALID_ARG?c::Error::invalid_message:applied==ESP_ERR_INVALID_STATE?c::Error::not_ready:c::Error::storage_failure;
 }
 void disconnected(m::OctopusId owner,m::MessageId begin){std::lock_guard<std::mutex> lock(incoming_gate);if(incoming_owner==owner&&incoming_begin==begin){incoming_begin={};peer_abort("The update connection closed; current firmware retained");}}
@@ -205,7 +206,7 @@ void distribute(){
     if(!current||!available(*current))error="Waiting for this Amity to connect.";
     else if(target.phase=="queued"){
         if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,true);
-        success=exchange(target.owner,c::Kind::update_begin,"{"+base(id,snapshot.release)+",\"canonical_manifest\":"+quote(snapshot.release.canonical)+",\"signature_hex\":"+quote(snapshot.signature)+"}",id,snapshot.release,response)&&string(response,"stage")=="ready";
+        success=exchange(target.owner,c::Kind::update_begin,"{\"request_id\":"+quote(id.str())+",\"canonical_manifest\":"+quote(snapshot.release.canonical)+",\"signature_hex\":"+quote(snapshot.signature)+"}",id,response)&&string(response,"stage")=="ready";
         if(success){target.phase="uploading";target.offset=0;target.begin=id;}else {error="This Amity has not accepted the firmware.";if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);}
     }else if(target.offset<snapshot.release.image_bytes){
         // Feed the existing bounded link FIFO, never another transfer queue.
@@ -213,7 +214,7 @@ void distribute(){
         for(unsigned turn=0;turn<16&&target.offset<snapshot.release.image_bytes;++turn){
             std::string bytes;const auto count=size_t(std::min<uint64_t>(2048,snapshot.release.image_bytes-target.offset));
             const auto read=snapshot.automatic?read_running_image(target.offset,count,bytes,error):read_staged_image(target.offset,count,bytes,error);
-            if(read!=ESP_OK){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,"{"+base(abort,snapshot.release)+",\"reason\":\"failed\"}",abort,snapshot.release,ignored,1000);fail_job(error);return;}
+            if(read!=ESP_OK){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,release_request(abort,snapshot.release),abort,ignored,1000);fail_job(error);return;}
             const auto sent=c::runtime_send_update(target.owner,c::Kind::update_chunk,
                 c::encode_update_chunk(target.begin,target.offset,bytes),5000);
             if(sent==ESP_ERR_NO_MEM){backpressured=true;break;}
@@ -222,7 +223,7 @@ void distribute(){
         }
     }else{
         staging=true;
-        success=exchange(target.owner,c::Kind::update_install,"{"+base(id,snapshot.release)+",\"phase\":\"stage\"}",id,snapshot.release,response)&&string(response,"stage")=="staged"&&decimal(response,"offset")==snapshot.release.image_bytes;
+        success=exchange(target.owner,c::Kind::update_install,release_request(id,snapshot.release,",\"phase\":\"stage\""),id,response)&&string(response,"stage")=="staged";
         rejected_image=string(response,"stage")=="rejected";
         if(success){target.phase="staged";if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);}else error="This Amity has not confirmed firmware validation.";
     }
@@ -244,7 +245,7 @@ void distribute(){
         if(target.phase!="skipped"&&now()-target.last_progress>=peer_timeout_ms){
             if(hooks.owner_maintenance)hooks.owner_maintenance(target.owner,false);
             target.phase="skipped";target.error="Firmware update timed out. It will be retried when this Amity reconnects.";retry_later(target,snapshot.release);
-            if(current&&available(*current)){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,"{"+base(abort,snapshot.release)+",\"reason\":\"timeout\"}",abort,snapshot.release,ignored,1000);}
+            if(current&&available(*current)){const auto abort=fresh();c::Json ignored;exchange(target.owner,c::Kind::update_abort,release_request(abort,snapshot.release),abort,ignored,1000);}
         }
     }
     std::lock_guard<std::mutex> lock(gate);cohort.targets[snapshot.current]=std::move(target);
@@ -262,7 +263,7 @@ void activate(){
             // instruction before selecting our own image, without serializing
             // reboot timing behind application replies. Fresh hellos verify
             // the running image after activation.
-            const bool sent=c::runtime_send_update(target.owner,c::Kind::update_install,"{"+base(id,snapshot.release)+",\"phase\":\"activate\",\"reboot_delay_ms\":\""+std::to_string(delay)+"\"}",5000)==ESP_OK;
+            const bool sent=c::runtime_send_update(target.owner,c::Kind::update_install,release_request(id,snapshot.release,",\"phase\":\"activate\",\"reboot_delay_ms\":\""+std::to_string(delay)+"\""),5000)==ESP_OK;
             target.phase=sent?"activating":"skipped";
             if(!sent)target.error="Restart could not be sent. The firmware will be checked on reconnection.";
         }

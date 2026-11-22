@@ -119,7 +119,7 @@ void bulk_class_never_authorizes_controls(){
  for(auto kind:{Kind::scoped_intent,Kind::scoped_result,Kind::device_status,Kind::settings_read,Kind::synchronization,Kind::membership_event}){
   a->tls->last_bulk=false;assert(classify_received(*a,kind));a->tls->last_bulk=true;assert(!classify_received(*a,kind));
  }
- for(auto kind:{Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_status,Kind::update_abort,Kind::update_result}){
+ for(auto kind:{Kind::update_begin,Kind::update_chunk,Kind::update_install,Kind::update_abort,Kind::update_result}){
   a->tls->last_bulk=true;assert(classify_received(*a,kind));a->tls->last_bulk=false;assert(!classify_received(*a,kind));
  }
 }
@@ -170,7 +170,7 @@ void retiring_does_not_pump_ordinary_work_during_partial_receive(){
  a->tls->poller=[&](std::string& text){if(++polls==1){auto i=std::make_shared<const model::OwnedIntent>(action(*a));assert(queue_control(a->peer,Kind::scoped_intent,1000,a->session.scope().link_id,7,i,clock_ms)==ESP_OK);a->retiring=true;}if(clock_ms<300)return FakeTls::ReceiveResult::pending;text=device_status;return FakeTls::ReceiveResult::frame;};
  assert(operational_receive(*a,budget)&&a->tls->sent.empty()&&a->queue.size()==1&&budget==0);
 }
-std::string update_base(){return "\"request_id\":\"11111111111111111111111111111111\",\"release_id\":\"release-one\",\"image_sha256\":\""+std::string(64,'a')+"\"";}
+std::string update_base(){return "\"request_id\":\"11111111111111111111111111111111\",\"release_id\":\"release-one\"";}
 std::string image_chunk(unsigned offset){return encode_update_chunk(*model::MessageId::parse("11111111111111111111111111111111"),offset,std::string(2048,'\x11'));}
 std::string stage_image(){return "{"+update_base()+",\"phase\":\"stage\"}";}
 std::string activate_image(){return "{"+update_base()+",\"phase\":\"activate\",\"reboot_delay_ms\":\"0\"}";}

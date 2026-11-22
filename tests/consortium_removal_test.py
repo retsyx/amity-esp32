@@ -162,7 +162,7 @@ std::string inflight_payload(const LinkScope& scope,Kind kind){
  if(kind==Kind::device_status)return "{\"hostname\":\"member\"}";
  if(kind==Kind::scoped_result){model::OwnedAdapterSnapshot report;report.owner=scope.peer_id;report.boot=scope.peer_boot_id;report.ready=true;const auto bytes=owned_snapshot_json(report);assert(!bytes.empty());return "{\"snapshot\":"+bytes+"}";}
  if(kind==Kind::settings_result)return "{\"request_id\":\""+ident<model::MessageId>(90).str()+"\",\"operation\":\"read\",\"stage\":\"failed\",\"error\":\"NOT_READY\",\"snapshot\":null,\"rebooting\":false}";
- assert(kind==Kind::update_result);return "{\"request_id\":\""+ident<model::MessageId>(90).str()+"\",\"release_id\":\""+ident<model::MessageId>(91).str()+"\",\"image_sha256\":\""+std::string(64,'a')+"\",\"offset\":\"0\",\"stage\":\"status\",\"error\":\"\"}";
+ assert(kind==Kind::update_result);return "{\"request_id\":\""+ident<model::MessageId>(90).str()+"\",\"stage\":\"rejected\"}";
 }
 Envelope inflight_frame(const std::shared_ptr<Active>& active,Kind kind,uint64_t revision){
  const auto& scope=active->session.scope();Envelope e;e.config_revision=revision;e.kind=kind;e.ttl_ms=1000;e.payload=parsed(inflight_payload(scope,kind));return e;

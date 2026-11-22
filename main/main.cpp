@@ -625,7 +625,7 @@ extern "C" void app_main() {
             [octopus_id](amity::system::OctopusId owner,bool maintenance){
                 if(owner==octopus_id){if(maintenance){if(hub.execution_snapshot().applied_config_revision)hub.begin_maintenance();}else hub.end_maintenance();}
                 else amity::set_owner_maintenance(owner,maintenance);
-            },[]{return hub.execution_snapshot().applied_config_revision;},[]{return hub.execution_snapshot().applied_policy_hash;}});
+            }});
         if(installed)amity::consortium::runtime_configuration_changed(installed->configuration.config_revision);
     }
     startup_memory("Matter and consortium");

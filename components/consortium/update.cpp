@@ -16,11 +16,6 @@ bool release(const Json* v) {
         std::all_of(v->string.begin(), v->string.end(), [](char c) { return (c >= '0' && c <= '9') ||
             (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '_' || c == '-'; });
 }
-bool base(const Json& v) {
-    model::MessageId request;
-    return id(v.get("request_id"), request) && release(v.get("release_id")) && hex(v.get("image_sha256"), 64);
-}
-bool offset(const Json& v) { uint64_t n = 0; return decimal(v.get("offset"), n); }
 void append_number(std::string& out,uint64_t value,size_t size) {
     for(size_t n=size;n>0;--n)out+=char(value>>((n-1)*8));
 }
@@ -70,39 +65,25 @@ Error parse_update_chunk_envelope(std::string_view bytes,Envelope& out) {
 }
 bool is_update_kind(Kind k) {
     return k == Kind::update_begin || k == Kind::update_chunk || k == Kind::update_install ||
-        k == Kind::update_status || k == Kind::update_abort || k == Kind::update_result;
+        k == Kind::update_abort || k == Kind::update_result;
 }
 bool valid_update(Kind k, const Json& v) {
-    if (!base(v)) return false;
+    model::MessageId request;
+    if (!id(v.get("request_id"), request)) return false;
     if (k == Kind::update_begin) {
         std::string manifest;
-        return closed(v, {"request_id", "release_id", "image_sha256", "canonical_manifest", "signature_hex"}) &&
+        return closed(v, {"request_id", "canonical_manifest", "signature_hex"}) &&
             json_string(v.get("canonical_manifest"), manifest, 1, 4096) && (hex(v.get("signature_hex"), 128) || hex(v.get("signature_hex"), 0));
     }
-    if (k == Kind::update_chunk) return false; // Image bytes have no JSON representation.
     if (k == Kind::update_install) {
-        if (text(v.get("phase"), {"stage"})) return closed(v, {"request_id", "release_id", "image_sha256", "phase"});
+        if (text(v.get("phase"), {"stage"})) return closed(v, {"request_id", "release_id", "phase"}) && release(v.get("release_id"));
         uint64_t delay = 0;
-        return text(v.get("phase"), {"activate"}) && closed(v, {"request_id", "release_id", "image_sha256", "phase", "reboot_delay_ms"}) &&
-            decimal(v.get("reboot_delay_ms"), delay) && delay <= 15000;
+        return text(v.get("phase"), {"activate"}) && closed(v, {"request_id", "release_id", "phase", "reboot_delay_ms"}) &&
+            release(v.get("release_id")) && decimal(v.get("reboot_delay_ms"), delay) && delay <= 15000;
     }
-    if (k == Kind::update_status)
-        return closed(v, {"request_id", "release_id", "image_sha256"});
-    if (k == Kind::update_abort)
-        return closed(v, {"request_id", "release_id", "image_sha256"}, {"reason"}) &&
-            (!v.get("reason") || text(v.get("reason"), {"cancelled", "timeout", "link_lost", "failed"}));
-    if (k != Kind::update_result || !closed(v, {"request_id", "release_id", "image_sha256", "offset", "stage", "error"},
-        {"boot_id", "image_elf_sha256", "version", "local_healthy", "config_revision", "policy_hash", "update_phase"}) || !offset(v) ||
-        !text(v.get("stage"), {"ready", "progress", "staged", "installing", "aborted", "rejected", "status"}) ||
-        !text(v.get("error"), {"", "INVALID_MESSAGE", "NOT_READY", "UNAUTHORIZED_ROLE", "CONFLICT", "INVALID_MANIFEST", "INVALID_SIGNATURE",
-            "WRONG_TARGET", "HASH_MISMATCH", "OFFSET_MISMATCH", "STORAGE_FAILURE", "TIMEOUT", "INTERNAL_ERROR"})) return false;
-    model::BootId boot; std::string version; bool healthy = false; uint64_t revision = 0;
-    return (!v.get("boot_id") || id(v.get("boot_id"), boot)) &&
-        (!v.get("image_elf_sha256") || hex(v.get("image_elf_sha256"), 64)) &&
-        (!v.get("version") || json_string(v.get("version"), version, 1, 64)) &&
-        (!v.get("local_healthy") || json_bool(v.get("local_healthy"), healthy)) &&
-        (!v.get("config_revision") || decimal(v.get("config_revision"), revision)) &&
-        (!v.get("policy_hash") || hex(v.get("policy_hash"), 64)) &&
-        (!v.get("update_phase") || text(v.get("update_phase"), {"idle", "staged", "staged_image", "installing", "boot_checking", "healthy", "failed", "aborted", "interrupted", "rolled_back", "recovery_required"}));
+    if (k == Kind::update_abort) return closed(v, {"request_id", "release_id"}) && release(v.get("release_id"));
+    if (k == Kind::update_result)
+        return closed(v, {"request_id", "stage"}) && text(v.get("stage"), {"ready", "staged", "installing", "aborted", "rejected"});
+    return false; // Image chunks have no JSON representation.
 }
 }

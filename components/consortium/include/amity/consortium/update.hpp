@@ -4,6 +4,14 @@
 namespace amity::consortium {
 // Closed peer-update messages. Firmware crypto/storage remain actuator-local;
 // no network message can replace its compiled verifier or skip manifest checks.
+// The main updates members running other firmware through these messages, so
+// they are frozen. Every request carries request_id and, besides it:
+//   update_begin    canonical_manifest, signature_hex
+//   update_chunk    the binary chunk below
+//   update_install  release_id and phase "stage", or "activate" with reboot_delay_ms
+//   update_abort    release_id
+// The member answers each JSON request with update_result {request_id, stage},
+// stage being ready, staged, installing, aborted or rejected.
 bool is_update_kind(Kind);
 bool valid_update(Kind, const Json&);
 constexpr size_t update_chunk_bytes = 2048;

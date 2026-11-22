@@ -13,7 +13,7 @@ enum class Error { none, invalid_message, unsupported_kind, unauthorized_role,
 const char *error_name(Error);
 enum class Kind { enrollment_control,
     membership_event, membership_result,
-    update_begin, update_chunk, update_install, update_status, update_abort, update_result,
+    update_begin, update_chunk, update_install, update_abort, update_result,
     device_status, settings_read, settings_write, settings_result,
     scoped_intent, scoped_result, synchronization, log_request, log_result };
 const char *kind_name(Kind);
