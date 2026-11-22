@@ -33,10 +33,9 @@ namespace amity::consortium {
 using namespace platform;
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 template<class T>T ident(unsigned value){char text[33];std::snprintf(text,sizeof(text),"%032x",value);return *T::parse(text);}
-unsigned profile_checks=0,created_tasks=0,recoveries=0,group_reads=0,identity_loads=0,erases=0,remote_shutdowns=0;
-bool crypto_ok=true,identity_ok=true,psa_ok=true,group_ok=true,remote_ok=true;
+unsigned created_tasks=0,recoveries=0,group_reads=0,identity_loads=0,erases=0,remote_shutdowns=0;
+bool identity_ok=true,psa_ok=true,group_ok=true,remote_ok=true;
 std::map<std::string,std::string> records;std::string fail_read;
-bool admission_crypto_self_test(){++profile_checks;return crypto_ok;}
 constexpr int PSA_SUCCESS=0,pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 constexpr int ESP_ERR_NVS_NOT_FOUND=0x1102;
 int psa_crypto_init(){return psa_ok?PSA_SUCCESS:-1;}
@@ -106,7 +105,7 @@ namespace amity::consortium {
 SUITE = r'''
 void reset(){
     initialized=false;status={};identity={};group={};seed={};hostnames={};singleton={};boot={};configuration=0;candidate_passive=false;
-    profile_checks=created_tasks=recoveries=group_reads=identity_loads=erases=remote_shutdowns=0;crypto_ok=identity_ok=psa_ok=group_ok=remote_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
+    created_tasks=recoveries=group_reads=identity_loads=erases=remote_shutdowns=0;identity_ok=psa_ok=group_ok=remote_ok=true;records.clear();fail_read.clear();platform::recorded_setup_timings.clear();
     clock_ms=transport_idle_at=netif_exists_at=netif_up_at=ip_ready_at=ip_query_success_at=0;early_connects=enrollment_closes=0;discovery_times.clear();on_loop_delay={};delays.clear();discoveries=connect_failures=setup_failures=launch_failures=launches=0;retain_launched=false;attempts.clear();attempt_times.clear();links.clear();candidate_deadline=candidate_generation=pending_radio_release=0;radio={};
 }
 void seed_role(Group::Role role){
@@ -131,18 +130,15 @@ void startup_tests(){
   for(auto role:{Group::unclaimed,Group::coordinator}){
    reset();seed_role(role);
    check(start_runtime()==ESP_OK,"admission-capable startup failed");
-   std::cout<<"admission_role="<<unsigned(role)<<" group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" profile_tests="<<profile_checks<<'\n';
+   std::cout<<"admission_role="<<unsigned(role)<<" group_reads="<<group_reads<<" identity_loads="<<identity_loads<<'\n';
    check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1","runtime_start repeated validation or lost exact verified identity");
-   check(profile_checks==0&&status.initialized&&status.credential_ready&&created_tasks==1,"startup ran an admission test or lost operational readiness");
+   check(status.initialized&&status.credential_ready&&created_tasks==1,"startup lost operational readiness");
    check(status.authority_ready==(role==Group::coordinator)&&status.coordinator==(role==Group::coordinator)&&!status.member,"main/unclaimed authority changed");check_phases();
-   reset();seed_role(role);crypto_ok=false;
-   check(start_runtime()==ESP_OK&&status.initialized&&status.credential_ready&&created_tasks==1&&group_reads==1&&identity_loads==1&&profile_checks==0,"unused admission crypto failure blocked startup");
-   check(status.authority_ready==(role==Group::coordinator)&&status.coordinator==(role==Group::coordinator)&&!status.member,"unused admission crypto failure changed authority");check_phases();
   }
   for(auto role:{Group::prepared,Group::member,Group::retired}){
-   reset();seed_role(role);crypto_ok=false;
-   check(start_runtime()==ESP_OK,"headless operational boot depended on unused admission test");
-   check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1"&&profile_checks==0,"headless startup repeated credential/admission work");
+   reset();seed_role(role);
+   check(start_runtime()==ESP_OK,"headless operational boot failed");
+   check(group_reads==1&&identity_loads==1&&identity.key_der=="private-key-1","headless startup repeated credential work");
    check(status.initialized&&status.credential_ready&&!status.authority_ready&&!status.coordinator&&created_tasks==1&&remote_shutdowns==1,"headless startup changed authority/passivity");
    check(status.member==(role!=Group::retired)&&candidate_passive==(role!=Group::retired),"stored headless role changed");check_phases();
   }
@@ -159,7 +155,7 @@ void startup_tests(){
    if(failure==5){if(role==Group::unclaimed)continue;records["amity_group/identity_tmp"]="different";}
    if(failure==6){if(role==Group::unclaimed)continue;records.erase("amity_group/identity");}
    if(failure==7){if(role==Group::unclaimed)continue;seed.epoch=2;}
-   check(start_runtime()!=ESP_OK&&recoveries==1&&status.initialized&&status.phase=="recovery_required"&&!status.credential_ready&&!created_tasks&&!profile_checks,"invalid PSA/group/journal/identity reached operational readiness");
+   check(start_runtime()!=ESP_OK&&recoveries==1&&status.initialized&&status.phase=="recovery_required"&&!status.credential_ready&&!created_tasks,"invalid PSA/group/journal/identity reached operational readiness");
   }
  }
  for(unsigned failure=0;failure<4;++failure){
@@ -171,7 +167,7 @@ void startup_tests(){
   check(start_runtime()!=ESP_OK&&recoveries==1&&!created_tasks&&!status.credential_ready,"headless authority/localID/capacity/remote shutdown check lost");
  }
 }
-void headless_only(){reset();seed_role(Group::member);crypto_ok=false;const auto result=start_runtime();std::cout<<"headless_group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" admission_tests="<<profile_checks<<" result="<<result<<'\n';check(result==ESP_OK&&status.initialized&&status.credential_ready&&profile_checks==0&&created_tasks==1,"unused admission self-test blocked headless operational startup");}
+void headless_only(){reset();seed_role(Group::member);const auto result=start_runtime();std::cout<<"headless_group_reads="<<group_reads<<" identity_loads="<<identity_loads<<" result="<<result<<'\n';check(result==ESP_OK&&status.initialized&&status.credential_ready&&created_tasks==1,"headless operational startup failed");}
 void fresh_public_preflight(){
  const auto local=ident<model::OctopusId>(2);RuntimeStartup startup;
  reset();identity_ok=false;const auto empty=records;
@@ -248,7 +244,7 @@ void connection_tests(){
     setup_member();group.role=Group::prepared;candidate_passive=true;transport_idle_at=300;run_network();check(attempt_times.front()==300&&discoveries==0,"IP-first bypassed prepared GATT transport-idle fence");
 }
 }
-int main(){using namespace amity::consortium;try{startup_tests();fresh_public_preflight();connection_tests();std::cout<<"PASS actual startup/connection loop: once-per-call group+identity verification; fresh read-only preflight; role and storage failure fences; no boot admission tests; unchanged pinned IP/discovery fallback\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
+int main(){using namespace amity::consortium;try{startup_tests();fresh_public_preflight();connection_tests();std::cout<<"PASS actual startup/connection loop: once-per-call group+identity verification; fresh read-only preflight; role and storage failure fences; unchanged pinned IP/discovery fallback\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''
 
 

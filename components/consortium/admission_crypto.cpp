@@ -111,15 +111,5 @@ failed:
 }
 bool AdmissionServer::encrypt(std::string_view value,std::string& out){return authenticated()&&state_->channel.seal(value,out);}
 bool AdmissionServer::decrypt(std::string_view value,std::string& out){return authenticated()&&state_->channel.open(value,out);}
-bool admission_crypto_self_test(){
-    const std::string id="00000000000000000000000000000001";
-    AdmissionServer server(id);AdmissionClient client;
-    if(!client.handshake([&](auto input,auto& output){return server.handshake(input,output);})||client.peer_id()!=id||!server.authenticated())return false;
-    std::string request,response,plain;if(!client.encrypt("client message",request)||!server.decrypt(request,plain)||plain!="client message"||!server.encrypt("server message",response)||!client.decrypt(response,plain)||plain!="server message")return false;
-    if(server.decrypt(request,plain)||server.authenticated())return false;
-    AdmissionServer tampered(id);AdmissionClient fresh;
-    if(!fresh.handshake([&](auto input,auto& output){return tampered.handshake(input,output);})||!fresh.encrypt("tamper",request))return false;
-    request.back()^=1;return !tampered.decrypt(request,plain);
-}
 } // namespace amity::consortium::platform
 #endif

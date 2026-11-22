@@ -31,5 +31,4 @@ public:
 private:
     struct State;std::unique_ptr<State> state_;
 };
-bool admission_crypto_self_test();
 } // namespace amity::consortium::platform

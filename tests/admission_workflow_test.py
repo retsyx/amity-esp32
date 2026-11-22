@@ -27,7 +27,6 @@ PREFIX = r'''
 #include <memory>
 #include <mutex>
 namespace amity::consortium {
-namespace platform { enum class BootstrapFailure : uint8_t { none=0,crypto_self_test_failed=1 }; }
 using namespace amity::consortium::platform;
 using namespace std::chrono_literals;
 constexpr int pdPASS=1,MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
@@ -45,10 +44,8 @@ struct SettingsOperation {model::OctopusId owner;std::string core,stage="admitte
 std::vector<SettingsOperation> settings_operations;
 void settings_expire(uint64_t now){for(auto& operation:settings_operations)if(operation.stage=="admitted"&&now>=operation.expires)operation.stage="unknown";}
 
-bool crypto_ok=true,candidate_crypto_failed=false;
-unsigned self_tests=0,connections=0,handshakes=0;
-std::function<void()> during_selftest;
-bool admission_crypto_self_test(){++self_tests;if(during_selftest)during_selftest();return crypto_ok;}
+unsigned connections=0,handshakes=0;
+std::function<void()> during_connect;
 uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms;}
 std::function<void()> during_wait;
@@ -68,7 +65,7 @@ int gatt_client_candidates(uint64_t generation,std::vector<RuntimeAdmissionCandi
  if(candidate_snapshots==1)early_candidate_published=admission.view.phase=="found"&&admission.view.candidates.size()==1&&admission.view.candidates[0].token=="one";
  out={{"one","Amity-123456"},{"two","Amity-654321"}};return ESP_OK;
 }
-int gatt_client_connect_candidate(const std::string& token,uint64_t generation){assert(token=="two"&&generation==77&&self_tests==1&&crypto_ok);++connections;return ESP_OK;}
+int gatt_client_connect_candidate(const std::string& token,uint64_t generation){assert(token=="two"&&generation==77);++connections;if(during_connect)during_connect();return ESP_OK;}
 std::string hex(std::string_view value){std::string out;for(uint8_t c:value){out+="0123456789abcdef"[c>>4];out+="0123456789abcdef"[c&15];}return out;}
 bool unhex(std::string_view text,std::string& value,size_t){if(text==hex("candidate-leaf")){value="candidate-leaf";return true;}return false;}
 std::string sha256(std::string_view){return std::string(64,'d');}
@@ -87,10 +84,9 @@ struct AdmissionClient {
     bool encrypt(std::string_view value,std::string& out){out="encrypted:"+std::string(value);return true;}
     bool decrypt(std::string_view value,std::string& out){if(value.substr(0,10)!="encrypted:")return false;out=value.substr(10);return true;}
 };
-bool gatt_client_exchange(bool encrypted,std::string_view input,std::string& out,BootstrapFailure* failure=nullptr){
-    if(failure)*failure=BootstrapFailure::none;
+bool gatt_client_exchange(bool encrypted,std::string_view input,std::string& out){
     if(!exchange_ok)return false;
-    if(!encrypted){assert(input=="public-handshake");++handshakes;if(candidate_crypto_failed){if(failure)*failure=BootstrapFailure::crypto_self_test_failed;return false;}out="public-response";return true;}
+    if(!encrypted){assert(input=="public-handshake");++handshakes;out="public-response";return true;}
     ++encrypted_exchanges;assert(input.substr(0,10)=="encrypted:");Json request;JsonError detail;assert(parse_json(input.substr(10),request,detail));
     const auto phase=request.get("phase")->string;
     if(phase==fail_phase)return false;
@@ -113,7 +109,7 @@ void reset(){
     admission={};invitation_running=invitation_cancelled=false;hostnames={};links.clear();settings_operations.clear();
     fail_phase.clear();clock_ms=100;during_wait={};spawn_ok=discover_ok=exchange_ok=true;networked=bad_identity=bad_certificate=false;
     discoveries=reservations=releases=disconnects=wifi_exports=encrypted_exchanges=saves=certificates=0;candidate_snapshots=0;early_candidate_published=false;
-    self_tests=connections=handshakes=0;crypto_ok=true;candidate_crypto_failed=false;during_selftest={};during_save={};
+    connections=handshakes=0;during_connect={};during_save={};
     platform::recorded_setup_timings.clear();
     radio.reserve=[](bool inviter,uint64_t& generation){assert(inviter);++reservations;generation=77;return ESP_OK;};
     network.get_hostname=[]{return "main-amity";};
@@ -173,7 +169,7 @@ void roster_capacity(){
     run();assert(!saves&&!wifi_exports&&!connections&&admission.view.phase=="cancelled");
 
     reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
-    during_wait=select;during_selftest=[](){group.peers.resize(3);};run();
+    during_wait=select;during_connect=[](){group.peers.resize(3);};run();
     assert(!saves&&!wifi_exports&&group.peers.size()==3&&admission.view.phase=="failed");
     std::cout<<"PASS three secondary Amities admitted; fourth rejected before scan, submission and prepared membership storage\n";
 }
@@ -196,13 +192,13 @@ int run_tests(){
     roster_capacity();
     {
         reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);
-        assert(runtime_admission_status().phase=="scanning"&&self_tests==0);
+        assert(runtime_admission_status().phase=="scanning");
         assert(runtime_scan_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE);
         during_wait=select;run();assert(discoveries==2&&reservations==1&&releases==1&&wifi_exports==1&&encrypted_exchanges==3&&saves==1);
-        assert(self_tests==1&&connections==1&&handshakes==1);
+        assert(connections==1&&handshakes==1);
         assert(early_candidate_published&&candidate_snapshots>=2&&clock_ms<21000); // Later candidate remained selectable without another full scan.
         assert(certificates==1); // Verify the untrusted candidate once, reuse exact validated records.
-        for(const char* stage:{"worker_selected","selected_total","admission_selftest","gatt_connect","crypto_handshake","identify_rpc","peer_validation","proposal_store","prepare_rpc","prepare_ack","wifi_rpc","finishing"}){
+        for(const char* stage:{"worker_selected","selected_total","gatt_connect","crypto_handshake","identify_rpc","peer_validation","proposal_store","prepare_rpc","prepare_ack","wifi_rpc","finishing"}){
             const auto found=std::find_if(platform::recorded_setup_timings.begin(),platform::recorded_setup_timings.end(),[&](const auto& row){return std::string(row.area)=="invite"&&std::string(row.entry.stage)==stage;});
             assert(found!=platform::recorded_setup_timings.end()&&std::string(found->entry.result)=="ok"&&found->scan==ident<model::MessageId>(1)&&found->peer==ident<model::OctopusId>(3));
         }
@@ -223,8 +219,8 @@ int run_tests(){
         std::cout<<"PASS actual discovery-before-button, exact selection/name, encrypted setup, membership and readiness\n";
     }
     reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);assert(runtime_cancel_admission(ident<model::MessageId>(2))==ESP_ERR_INVALID_STATE);assert(!invitation_cancelled);
-    assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_OK);run();assert(reservations==0&&saves==0&&wifi_exports==0&&self_tests==0&&admission.view.phase=="cancelled");
-    reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=[](){if(admission.view.phase=="found")assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_OK);};run();assert(releases==1&&saves==0&&encrypted_exchanges==0&&self_tests==0);
+    assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_OK);run();assert(reservations==0&&saves==0&&wifi_exports==0&&admission.view.phase=="cancelled");
+    reset();assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=[](){if(admission.view.phase=="found")assert(runtime_cancel_admission(ident<model::MessageId>(1))==ESP_OK);};run();assert(releases==1&&saves==0&&encrypted_exchanges==0&&connections==0);
     reset();discover_ok=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);run();assert(admission.view.phase=="failed"&&releases==1&&saves==0&&wifi_exports==0&&discoveries<=9);
     reset();bad_identity=true;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();assert(admission.view.phase=="failed"&&saves==0&&wifi_exports==0);
     reset();bad_certificate=true;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();assert(certificates==1&&admission.view.phase=="failed"&&saves==0&&wifi_exports==0);
@@ -238,23 +234,7 @@ int run_tests(){
     }
     reset();spawn_ok=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_NO_MEM);assert(!invitation_running&&admission.view.phase=="failed");
     reset();group.role=Group::member;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE&&!invitation_running);
-    {
-        reset();crypto_ok=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK&&self_tests==0);during_wait=select;run();
-        assert(self_tests==1&&!connections&&!handshakes&&!saves&&!wifi_exports&&!encrypted_exchanges&&releases==1);
-        assert(admission.view.phase=="failed"&&admission.view.error=="This Amity failed its setup security check. Restart it and try again.");
-        reset();candidate_crypto_failed=true;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;run();
-        assert(self_tests==1&&connections==1&&handshakes==1&&!certificates&&!saves&&!wifi_exports&&!encrypted_exchanges&&releases==1);
-        assert(admission.view.phase=="failed"&&admission.view.error=="The new Amity reported that its setup security check failed. Restart it and try again.");
-    }
-    for(bool cancel:{false,true})for(bool passes:{false,true}){
-        reset();crypto_ok=passes;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_OK);during_wait=select;
-        during_selftest=[&]{if(cancel)invitation_cancelled=true;else clock_ms=admission.deadline;};run();
-        assert(self_tests==1&&!connections&&!handshakes&&!saves&&!wifi_exports&&!encrypted_exchanges&&releases==1);
-        assert(admission.view.phase==(cancel?"cancelled":"failed"));
-        assert(admission.view.error==(cancel?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again."));
-    }
-    for(unsigned unavailable=0;unavailable<2;++unavailable){reset();if(unavailable)status.credential_ready=false;else status.initialized=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE&&!invitation_running&&!self_tests);}
-    std::cout<<"PASS self-test only on selected Add; primary and candidate security failures reach Add status before credentials/membership, with cancellation/expiry cleanup\n";
+    for(unsigned unavailable=0;unavailable<2;++unavailable){reset();if(unavailable)status.credential_ready=false;else status.initialized=false;assert(runtime_scan_admission(ident<model::MessageId>(1))==ESP_ERR_INVALID_STATE&&!invitation_running);}
     std::cout<<"PASS actual stale IDs/tokens, invalid inputs, pre-scan/found cancellation, timeout, identity mismatch, configured network preservation and task/role rejection; exact readiness latches transient completion across removal until a new scan\n";
     cancellation_waits_for_proposal_store();
     return 0;

@@ -35,26 +35,12 @@ int ble_gap_terminate(uint16_t,int);
 int ble_gap_adv_stop();
 uint64_t clock_ms=100;
 uint64_t now_ms(){return clock_ms;}
-enum class BootstrapFailure : uint8_t { none=0, crypto_self_test_failed=1 };
 using BootstrapHandler=std::function<esp_err_t(std::string_view,std::string&)>;
-unsigned checks=0,constructors=0,handshakes=0,decryptions=0,handlers=0,terminations=0,advert_stops=0;
-bool crypto_ok=true;
-std::function<void()>during_check;
-extern std::mutex state_mutex;
-bool admission_crypto_self_test(){
-    bool unlocked=false;
-    std::thread probe([&]{if(state_mutex.try_lock()){state_mutex.unlock();unlocked=true;}});probe.join();
-    if(!unlocked)throw std::runtime_error("self-test ran under transport lock");
-    ++checks;clock_ms+=1950;if(during_check){auto callback=std::move(during_check);callback();}
-    return crypto_ok;
-}
+unsigned constructors=0,handshakes=0,decryptions=0,handlers=0,terminations=0,advert_stops=0;
 class AdmissionServer {
     bool ready_=false;
 public:
-    explicit AdmissionServer(std::string){
-        if(!checks||!crypto_ok)throw std::runtime_error("crypto used before successful test");
-        ++constructors;
-    }
+    explicit AdmissionServer(std::string){++constructors;}
     bool authenticated()const{return ready_;}
     bool handshake(std::string_view request,std::string& response){++handshakes;ready_=request=="public";response="proof";return ready_;}
     bool decrypt(std::string_view request,std::string& plain){++decryptions;plain=request;return ready_;}
@@ -93,12 +79,12 @@ void submit(uint32_t rid,uint8_t endpoint,std::string_view bytes,size_t total=0,
     memcpy(work.bytes,bytes.data(),bytes.size());check(post_work(work),"could not post request");
 }
 void reset(){
-    close_channel();fail_queue_creation=false;work_queue=create_work_queue();tested_generation=0;self_test_passed=false;
+    close_channel();fail_queue_creation=false;work_queue=create_work_queue();
     generation=7;server_session=9;server_connection=31;server_open=true;server_sealed=false;deadline=180100;
     server_id="00000000000000000000000000000001";
     clock_ms=100;failed_proofs=0;outstanding_work=0;processing_record=false;
-    response_record=response_offset=response_endpoint=response_status=0;response_failure=BootstrapFailure::none;srv_response.clear();
-    checks=constructors=handshakes=decryptions=handlers=terminations=advert_stops=0;crypto_ok=true;during_check={};
+    response_record=response_offset=response_endpoint=response_status=0;srv_response.clear();
+    constructors=handshakes=decryptions=handlers=terminations=advert_stops=0;
     server_handler=[](std::string_view request,std::string& response){++handlers;response=request;return ESP_OK;};
 }
 void queue_storage_and_capacity(){
@@ -124,43 +110,25 @@ void queue_storage_and_capacity(){
     fail_queue_creation=true;check(create_work_queue()==nullptr,"queue creation failure was concealed");
     fail_queue_creation=false;work_queue=create_work_queue();
 }
-void lazy_success(){
-    {
-        reset();run();check(!checks&&!constructors,"idle boot executed admission crypto");
-        submit(1,0,"pub",6);run();check(!checks&&!constructors&&channel_live,"incomplete request ran crypto or lost assembly");
-        submit(1,0,"lic",6,3);run();
-        check(checks==1&&constructors==1&&handshakes==1&&response_status==1&&response_failure==BootstrapFailure::none,"complete handshake skipped selected test");
-        submit(1,0,"public");run();check(checks==1&&handshakes==1,"duplicate repeated test or handshake");
-        submit(2,1,"secret");run();check(handlers==1&&decryptions==1&&srv_response=="secret","successful check changed encrypted setup");
-        ++server_session;++server_connection;submit(3,0,"public");run();
-        check(checks==1&&constructors==2&&handshakes==2,"same physical window repeated successful test");
-        ++generation;submit(4,0,"public");run();check(checks==2&&handshakes==3,"new window reused prior successful result");
-    }
+void handshake_flow(){
+    reset();run();check(!constructors,"idle boot executed admission crypto");
+    submit(1,0,"pub",6);run();check(!constructors&&channel_live,"incomplete request ran crypto or lost assembly");
+    submit(1,0,"lic",6,3);run();check(constructors==1&&handshakes==1&&response_status==1,"complete handshake did not run");
+    submit(1,0,"public");run();check(handshakes==1,"duplicate repeated the handshake");
+    submit(2,1,"secret");run();check(handlers==1&&decryptions==1&&srv_response=="secret","encrypted setup changed");
+    ++server_session;++server_connection;submit(3,0,"public");run();check(constructors==2&&handshakes==2,"reconnect reused the previous channel");
 }
-void diagnostic_failure(){
-    {
-    reset();crypto_ok=false;submit(1,0,"public");run();
-    check(checks==1&&!constructors&&!handshakes&&!decryptions&&!handlers,"failed check reached admission crypto/credentials");
-    check(server_open&&!failed_proofs&&!advert_stops&&!terminations&&response_status==2&&response_failure==BootstrapFailure::crypto_self_test_failed&&response_record==1&&response_endpoint==0&&srv_response.empty(),"failed check did not leave bounded diagnostic available");
-    ++server_session;++server_connection;submit(2,0,"public");run();
-    check(checks==1&&response_record==2&&response_failure==BootstrapFailure::crypto_self_test_failed,"reconnect lost cached failure diagnostic");
-    submit(3,1,"secret");run();
-    check(checks==1&&!constructors&&!decryptions&&!handlers&&response_status==2&&response_failure==BootstrapFailure::none,"encrypted request obtained self-test diagnostic or credentials");
-    ++generation;crypto_ok=true;submit(4,0,"public");run();
-    check(checks==2&&constructors==1&&handshakes==1&&response_status==1&&response_failure==BootstrapFailure::none,"new physical window did not retry failed check");
+void stale_work(){
+    for(unsigned mutation=0;mutation<5;++mutation){
+        reset();submit(1,0,"public");
+        switch(mutation){case 0:++generation;break;case 1:++server_session;break;case 2:++server_connection;break;case 3:server_open=false;break;case 4:clock_ms=deadline;break;}
+        run();check(!constructors&&!handshakes&&!handlers&&!response_record,"stale request admitted a handshake");
     }
-}
-void stale_check(){
-    for(unsigned mutation=0;mutation<5;++mutation)for(bool passes:{false,true}){
-        reset();crypto_ok=passes;during_check=[=](){switch(mutation){case 0:++generation;break;case 1:++server_session;break;case 2:++server_connection;break;case 3:server_open=false;break;case 4:clock_ms=deadline;break;}};
-        submit(1,0,"public");run();
-        check(checks==1&&!constructors&&!handshakes&&!handlers&&!response_record&&response_failure==BootstrapFailure::none&&!channel_live,"stale completed check published diagnostic or admitted handshake");
-    }
-    reset();submit(1,1,"secret");run();check(!checks&&!constructors&&!handlers&&response_failure==BootstrapFailure::none,"encrypted first request started self-test");
+    reset();submit(1,1,"secret");run();check(!constructors&&!handlers,"encrypted first request reached admission crypto");
     reset();submit(1,0,"pub",6);run();clock_ms+=30000;submit(1,0,"lic",6,3);run();
-    check(!checks&&!constructors&&terminations==1,"expired assembly started crypto");
+    check(!constructors&&terminations==1,"expired assembly started crypto");
 }
-int main(){try{queue_storage_and_capacity();lazy_success();diagnostic_failure();stale_check();std::cout<<"PASS actual candidate worker: persistent copied queue records,16-slot FIFO/overflow/ring reuse; lazy self-test outside locks, success/failure per window, duplicate/reconnect reuse and exact stale-work fences\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
+int main(){try{queue_storage_and_capacity();handshake_flow();stale_work();std::cout<<"PASS actual candidate worker: persistent copied queue records,16-slot FIFO/overflow/ring reuse; handshake per connection, duplicate reuse and exact stale-work fences\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}}
 '''
 
 

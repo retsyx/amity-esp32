@@ -75,10 +75,18 @@ void mbedtls_platform_zeroize(void* p,size_t n){OPENSSL_cleanse(p,n);}
 SUITE = r'''
 using namespace amity::consortium::platform;
 int main(){
- assert(admission_crypto_self_test());
- fail_key_generation=true;
- assert(!admission_crypto_self_test());fail_key_generation=false;
  const std::string id="00000000000000000000000000000001";
+ {
+  AdmissionServer server(id);AdmissionClient client;
+  assert(client.handshake([&](auto in,auto& out){return server.handshake(in,out);})&&client.peer_id()==id&&server.authenticated());
+  std::string request,response,plain;
+  assert(client.encrypt("client message",request)&&server.decrypt(request,plain)&&plain=="client message");
+  assert(server.encrypt("server message",response)&&client.decrypt(response,plain)&&plain=="server message");
+  assert(!server.decrypt(request,plain)&&!server.authenticated()); // replay
+ }
+ fail_key_generation=true;
+ {AdmissionServer server(id);AdmissionClient client;assert(!client.handshake([&](auto in,auto& out){return server.handshake(in,out);}));}
+ fail_key_generation=false;
  {
   for(int attack=0;attack<6;++attack){
    AdmissionServer server(id);AdmissionClient client;
@@ -96,7 +104,7 @@ int main(){
   assert(!denied.handshake([&](auto in,auto& out){if(!edited.handshake(in,out))return false;if(out.size()==138&&out.substr(0,8)=="AMADMIT4")out.back()^=1;return true;}));
  }
  assert(key_store.empty());
- std::cout<<"PASS actual admission handshake/AEAD and self-test: transcript, direction, sequence, replay, cross-session, tamper, failure gates; PSA uses OpenSSL"<<std::endl;
+ std::cout<<"PASS actual admission handshake/AEAD: round trip, transcript, direction, sequence, replay, cross-session, tamper, failure gates; PSA uses OpenSSL"<<std::endl;
 }
 '''
 

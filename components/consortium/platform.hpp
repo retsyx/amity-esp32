@@ -82,7 +82,6 @@ std::string envelope_json(const Envelope &,std::string_view payload);
 #ifdef ESP_PLATFORM
 namespace amity::consortium::platform {
 using BootstrapHandler=std::function<esp_err_t(std::string_view,std::string&)>;
-enum class BootstrapFailure : uint8_t { none=0, crypto_self_test_failed=1 };
 esp_err_t gatt_register();
 esp_err_t gatt_server_open(uint64_t generation,model::OctopusId,BootstrapHandler);
 void gatt_server_close();
@@ -91,7 +90,7 @@ void gatt_server_seal();
 esp_err_t gatt_client_discover(uint64_t generation,std::vector<RuntimeAdmissionCandidate>&);
 esp_err_t gatt_client_candidates(uint64_t generation,std::vector<RuntimeAdmissionCandidate>&);
 esp_err_t gatt_client_connect_candidate(std::string_view token,uint64_t generation);
-bool gatt_client_exchange(bool encrypted,std::string_view,std::string &,BootstrapFailure* failure=nullptr);
+bool gatt_client_exchange(bool encrypted,std::string_view,std::string &);
 void gatt_client_disconnect();
 bool gatt_quiescent();
 bool gatt_candidate_transport_idle();

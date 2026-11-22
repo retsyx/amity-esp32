@@ -1366,25 +1366,14 @@ void invite_worker_work(void *arg){
     }
     if(!submitted){admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;}
     const auto selected=timing.begin("worker_selected");timing.finish(selected,true);timing.begin("selected_total");
-    // Admission diagnostics belong to this user-requested Add attempt, never
-    // boot/Matter readiness or ordinary authenticated operation.
-    const bool checked=current()&&timing.step("admission_selftest",[&]{return admission_crypto_self_test();});
     if(!current()){
         admission_failed(scan,invitation_cancelled?"Adding this Amity was cancelled.":"No Amity was added before setup expired. Open Add Amity and try again.");return;
     }
-    if(!checked){
-        admission_failed(scan,"This Amity failed its setup security check. Restart it and try again.");return;
-    }
     bool good=current()&&timing.step("gatt_connect",[&]{return gatt_client_connect_candidate(token,generation)==ESP_OK;});
     AdmissionClient client;
-    BootstrapFailure bootstrap_failure=BootstrapFailure::none;
-    good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply,&bootstrap_failure)&&current();});});
+    good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply)&&current();});});
     auto secure=[&](std::string_view plain,std::string& result){std::string encrypted,reply;return current()&&client.encrypt(plain,encrypted)&&gatt_client_exchange(true,encrypted,reply)&&current()&&client.decrypt(reply,result);};
     std::string response,failure;Json identity_json;JsonError err;Peer peer;bool networked=false;uint64_t bootstrap_profile=0;
-    // A pre-handshake diagnostic is display-only. It grants no authenticated
-    // identity, membership or access to the encrypted credential exchange.
-    if(!good&&current()&&bootstrap_failure==BootstrapFailure::crypto_self_test_failed)
-        failure="The new Amity reported that its setup security check failed. Restart it and try again.";
     good=good&&timing.step("identify_rpc",[&]{return secure("{\"phase\":\"identify\"}",response);});
     if(good){
         const auto validation=timing.begin("peer_validation");
