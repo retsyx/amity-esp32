@@ -51,17 +51,6 @@
 #include "amity_hap_input.h"
 #include "amity_hap_http.h"
 
-#ifdef ESP_MFI_DEBUG_ENABLE
-#define ESP_MFI_DEBUG_PLAIN(fmt, ...)   \
-    if (http_debug) {                   \
-        printf("\e[1;35m" fmt "\e[0m", ##__VA_ARGS__); \
-    }
-#else /* ESP_MFI_DEBUG_ENABLE */
-#define ESP_MFI_DEBUG_PLAIN(fmt, ...)
-#endif /* ESP_MFI_DEBUG_ENABLE */
-
-static bool http_debug;
-
 /* The HTTP worker reads the bounded body before taking the HAP lock. Handlers
  * consume this request-local copy, never a socket while holding that lock. */
 typedef struct {
@@ -105,7 +94,6 @@ static int hap_http_pair_setup_handler(httpd_req_t *req)
         return httpd_resp_send(req, NULL, 0);
     }
     int fd = httpd_req_to_sockfd(req);
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
 	if (!ctx) {
 		if (hap_pair_setup_context_init(fd, &ctx, buf, sizeof(buf), &outlen) == HAP_SUCCESS) {
             hap_platform_httpd_set_sess_ctx(req, ctx, hap_pair_setup_ctx_clean, true);
@@ -175,7 +163,6 @@ static int hap_http_pair_verify_handler(httpd_req_t *req)
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_send(req, NULL, 0);
     }
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
 	if (!ctx) {
 		if (hap_pair_verify_context_init(&ctx, buf, sizeof(buf), &outlen) != HAP_SUCCESS) {
             httpd_resp_set_type(req, "application/pairing+tlv8");
@@ -581,25 +568,21 @@ static int hap_prepare_json_database(char *buf, int bufsize, json_gen_flush_cb_t
 
 static void hap_http_json_flush_chunk(char *data, void *priv)
 {
-    ESP_MFI_DEBUG_PLAIN("%s", data);
 	httpd_resp_send_chunk((httpd_req_t *)priv, data, strlen(data));
 }
 
 static int hap_http_get_accessories(httpd_req_t *req)
 {
 	char buf[1000];
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
     hap_secure_session_t *session = (hap_secure_session_t *)hap_platform_httpd_get_sess_ctx(req);
     if (!hap_is_req_secure(session)) {
         return hap_http_session_not_authorized(req);
     }
 	httpd_resp_set_type(req, "application/hap+json");
-    ESP_MFI_DEBUG_PLAIN("Generating HTTP Response\n");
     /* Using chunked encoding since the response can be large, especially for bridges */
 	hap_prepare_json_database(buf, sizeof(buf), hap_http_json_flush_chunk, req);
     /* This indicates the last chunk */
     httpd_resp_send_chunk(req, NULL, 0);
-    ESP_MFI_DEBUG_PLAIN("\n");
 
     hap_report_event(HAP_EVENT_GET_ACC_COMPLETED, NULL, 0);
 	return HAP_SUCCESS;
@@ -998,7 +981,6 @@ static int hap_http_put_characteristics(httpd_req_t *req)
 {
     char outbuf[512] = {0};
 
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
     hap_secure_session_t *session = (hap_secure_session_t *)hap_platform_httpd_get_sess_ctx(req);
     if (!hap_is_req_secure(session)) {
         return hap_http_session_not_authorized(req);
@@ -1015,7 +997,6 @@ static int hap_http_put_characteristics(httpd_req_t *req)
     const char *inbuf = body->data;
     const int data_len = body->size;
     body->offset = body->size;
-    ESP_MFI_DEBUG_PLAIN("Data Received: %s\n", inbuf);
 	jparse_ctx_t jctx;
 	if (json_parse_start(&jctx, inbuf, data_len) != HAP_SUCCESS) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to parse HTTPD JSON Data");
@@ -1040,7 +1021,6 @@ static int hap_http_put_characteristics(httpd_req_t *req)
          * a new line to end the prints of the error string.
          */
         httpd_resp_send_chunk(req, NULL, 0);
-        ESP_MFI_DEBUG_PLAIN("\n");
     }
     json_parse_end(&jctx);
 
@@ -1065,7 +1045,6 @@ static int hap_http_get_characteristics(httpd_req_t *req)
     char *heap_val_buf = NULL;
     char *val = stack_val_buf;
 
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
 
     hap_secure_session_t *session = (hap_secure_session_t *)hap_platform_httpd_get_sess_ctx(req);
     if (!hap_is_req_secure(session)) {
@@ -1081,7 +1060,7 @@ static int hap_http_get_characteristics(httpd_req_t *req)
             return httpd_resp_send(req, NULL, 0);
         }
         ESP_MFI_DEBUG(ESP_MFI_DEBUG_INFO, "Allocated buffer of size %d for the large GET",
-                    strlen(uri) + 1)
+                    strlen(uri) + 1);
         val = heap_val_buf;
     }
     size_t url_query_str_len = httpd_req_get_url_query_len(req);
@@ -1151,7 +1130,6 @@ static int hap_http_get_characteristics(httpd_req_t *req)
         goto get_char_return;
     }
 
-    ESP_MFI_DEBUG_PLAIN("Generating HTTP Response\n");
 	/* Generate the JSON response */
 	bool include_status = 0;
 	httpd_resp_set_status(req, HTTPD_207);
@@ -1285,7 +1263,6 @@ get_char_end:
 
     /* This indicates the last chunk */
     httpd_resp_send_chunk(req, NULL, 0);
-    ESP_MFI_DEBUG_PLAIN("\n");
 get_char_return:
     if (heap_val_buf) {
         hap_platform_memory_free(heap_val_buf);
@@ -1314,7 +1291,6 @@ static int hap_http_pairings_handler(httpd_req_t *req)
 {
 	uint8_t buf[2048]; /* Large buffer to accommodate 16 pairings list */
 	void *ctx = hap_platform_httpd_get_sess_ctx(req);
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
 	int data_len = hap_httpd_get_data(req, (char *)buf, req->content_len);
 	int outlen;
     hap_secure_session_t *session = (hap_secure_session_t *)ctx;
@@ -1337,7 +1313,6 @@ static struct httpd_uri hap_pairings = {
 static int hap_http_post_identify(httpd_req_t *req)
 {
 	char buf[100];
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d\nHTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
 	if (is_accessory_paired()) {
 		httpd_resp_set_status(req, HTTPD_400);
 		httpd_resp_set_type(req, "application/hap+json");
@@ -1363,7 +1338,6 @@ static int hap_http_put_prepare(httpd_req_t *req)
 {
     char buf[513] = {0};
 
-    ESP_MFI_DEBUG_PLAIN("Socket fd: %d; HTTP Request %s %s\n", httpd_req_to_sockfd(req), hap_platform_httpd_get_req_method(req), hap_platform_httpd_get_req_uri(req));
     hap_secure_session_t *session = (hap_secure_session_t *)hap_platform_httpd_get_sess_ctx(req);
     if (!hap_is_req_secure(session)) {
         return hap_http_session_not_authorized(req);
@@ -1374,7 +1348,6 @@ static int hap_http_put_prepare(httpd_req_t *req)
 		httpd_resp_set_status(req, HTTPD_500);
 		return httpd_resp_send(req, NULL, 0);
 	}
-    ESP_MFI_DEBUG_PLAIN("Data Received: %s\n", buf);
 	jparse_ctx_t jctx;
 	if (json_parse_start(&jctx, buf, data_len) != HAP_SUCCESS) {
 		ESP_MFI_DEBUG(ESP_MFI_DEBUG_ERR, "Failed to parse HTTPD JSON Data");
@@ -1541,16 +1514,6 @@ static void hap_send_notification_unlocked(void *arg)
         hap_mdns_announce(false);
         hap_priv.disconnected_event_sent = true;
     }
-}
-
-void hap_http_debug_enable()
-{
-    http_debug = true;
-}
-
-void hap_http_debug_disable()
-{
-    http_debug = false;
 }
 
 static void hap_send_notification_locked(void *arg)

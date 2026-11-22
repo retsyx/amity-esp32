@@ -29,7 +29,6 @@
 #define kTLVError_Busy 7
 #define kTLVError_Unavailable 6
 #define ESP_MFI_DEBUG(...) ((void)0)
-#define ESP_MFI_DEBUG_PLAIN(...) ((void)0)
 #define HTTPD_500 "500 Internal Server Error"
 #define HTTPD_207 "207 Multi-Status"
 #define HTTPD_204 "204 No Content"

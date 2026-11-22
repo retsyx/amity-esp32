@@ -26,122 +26,40 @@
 #define ESP_MFI_DEBUG_H_
 
 #include <stdint.h>
-#include <stdio.h>
-#include <esp_idf_version.h>
 #include <inttypes.h>
+#include "esp_log.h"
 
 #ifdef __cplusplus
 extern "C"{
 #endif
 
-#define ESP_MFI_DEBUG_FL "\n"
-#define CONFIG_ESP_MFI_DEBUG_ENABLE
-#ifdef CONFIG_ESP_MFI_DEBUG_ENABLE
-#define ESP_MFI_DEBUG_ENABLE
-#endif /* CONFIG_ESP_MFI_DEBUG_ENABLE */
-
-#define CONFIG_ESP_MFI_ASSERT
-#ifdef CONFIG_ESP_MFI_ASSERT
-#define ESP_MFI_ASSERT_ENABLE
-#endif /* CONFIG_ESP_MFI_ASSERT */
-
-#define CONFIG_MFI_DEBUG_LEVEL_INIT 0
-#define CONFIG_ESP_MFI_ASSERT_BLOCK
-#ifdef CONFIG_ESP_MFI_ASSERT_BLOCK
-#define ESP_MFI_ASSERT_BLOCK()  while (1)
-#else /* CONFIG_ESP_MFI_ASSERT_BLOCK */
-#define ESP_MFI_ASSERT_BLOCK()
-#endif /* CONFIG_ESP_MFI_ASSERT_BLOCK */
-
-/* debug level with different color */
+/* Message levels. HomeKit messages use ESP-IDF logging, so they reach the log
+ * capture and follow the configured log level. */
 #define ESP_MFI_DEBUG_INFO      1
 #define ESP_MFI_DEBUG_WARN      2
 #define ESP_MFI_DEBUG_ERR       3
 #define ESP_MFI_DEBUG_ASSERT    4
 #define ESP_MFI_DEBUG_BLOCK     5
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0)
-#include <esp_rom_sys.h>
-#define esp_intr_printf esp_rom_printf
-#else
-#define esp_intr_printf ets_printf
-#endif
-
-/**
- * @bref set the MFI debugging level
- *
- * @param level debugging level
- *
- * @return the result
- *     = 0 : OK
- *     others : failed
- */
-int esp_mfi_set_debug_level(uint32_t level);
-
-/**
- * @bref get the MFI debugging level and output data color
- *
- * @param level input debug level
- * @param color data color
- *
- * @return MFI debugging level
- */
-uint32_t esp_mfi_get_debug_level(uint32_t level, uint32_t *color);
-
-/**
- * @bref format the string and data, then output it
- *
- * @param level if level > MFI_DEBUG_LEVEL then output it
- * @param fmt format string
- * @param ... parameters of format string
- *
- * @return none
- *
- * void ESP_MFI_DEBUG(unsigned int level, const char *fmt, ...);
- */
-#ifdef ESP_MFI_DEBUG_ENABLE
 #define ESP_MFI_DEBUG(l, fmt, ...)                                                          \
-    {                                                                                       \
-        uint32_t __color_LINE;                                                              \
-        if (l > esp_mfi_get_debug_level(l, &__color_LINE)) {                                \
-            printf("\e[1;%" PRId32 "m" fmt "\e[0m" ESP_MFI_DEBUG_FL,                         \
-                                __color_LINE,  ##__VA_ARGS__);                              \
+    do {                                                                                    \
+        if ((l) >= ESP_MFI_DEBUG_ERR) {                                                     \
+            ESP_LOGE("hap", fmt, ##__VA_ARGS__);                                            \
+        } else if ((l) == ESP_MFI_DEBUG_WARN) {                                             \
+            ESP_LOGW("hap", fmt, ##__VA_ARGS__);                                            \
+        } else {                                                                            \
+            ESP_LOGI("hap", fmt, ##__VA_ARGS__);                                            \
         }                                                                                   \
-    }
-#define ESP_MFI_DEBUG_INTR(l, fmt, ...)                                                          \
-    {                                                                                       \
-        uint32_t __color_LINE;                                                              \
-        if (l > esp_mfi_get_debug_level(l, &__color_LINE)) {                                \
-            esp_intr_printf("\e[1;%dm" fmt "\e[0m" ESP_MFI_DEBUG_FL,                        \
-                                __color_LINE,  ##__VA_ARGS__);                              \
-        }                                                                                   \
-    }
-#else /* ESP_MFI_DEBUG_ENABLE */
-#define ESP_MFI_DEBUG(l, fmt, ...)
-#define ESP_MFI_DEBUG_INTR(l, fmt, ...)
-#endif /* ESP_MFI_DEBUG_ENABLE */
+    } while (0)
 
-/**
- * @bref if the signal is false(0) do something depended on configuration
- *
- * @param conditions checking conditions
- *
- * @return none
- *
- * void ESP_MFI_ASSERT(int conditions);
- */
-#ifdef ESP_MFI_ASSERT_ENABLE
+/* A failed assertion is logged, then blocks the calling task. */
 #define ESP_MFI_ASSERT(cond)                                                                \
-{                                                                                           \
-    if (!(cond)) {                                                                          \
-        printf("\e[1;33m" "ESP_MFI assert file %s line %d" ESP_MFI_DEBUG_FL,        \
-                                __FILE__, __LINE__);                                        \
-        ESP_MFI_ASSERT_BLOCK();                                                             \
-    }                                                                                       \
-}
-#else
-#define ESP_MFI_ASSERT(cond)
-#endif
+    do {                                                                                    \
+        if (!(cond)) {                                                                      \
+            ESP_LOGE("hap", "Assertion failed at %s:%d", __FILE__, __LINE__);               \
+            while (1);                                                                      \
+        }                                                                                   \
+    } while (0)
 
 /**
  * @bref check if data length matches given length

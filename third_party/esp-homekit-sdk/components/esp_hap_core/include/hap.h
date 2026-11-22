@@ -265,33 +265,6 @@ typedef struct {
 	hap_identify_routine_t identify_routine;
 } hap_acc_cfg_t;
 
-/** HomeKit Debug prints level
- */
-typedef enum {
-    /** Basic information indicating what's happening in the HomeKit core */
-    HAP_DEBUG_LEVEL_INFO = 0,
-    /** Warnings for incidents that can affect behavior, but not necessarily cause a failure*/
-    HAP_DEBUG_LEVEL_WARN,
-    /** Errors which will affect the working, and may even halt the process */
-    HAP_DEBUG_LEVEL_ERR,
-    /** Asserts for failures which will definitely cause system to halt */
-    HAP_DEBUG_LEVEL_ASSERT
-} hap_debug_level_t;
-
-/**
- * @brief Set the HomeKit Debug prints level.
- *
- * This indicates the maximum level for which the debug messages
- * will be printed. Default value is \ref HAP_DEBUG_LEVEL_INFO which means
- * that all information, warnings, errors and asserts will be printed, as
- * this is the lowest level. You can change it to any suitable higher level
- * to reduce the prints. For Eg. Setting this to HAP_DEBUG_LEVEL_WARN will
- * print all warnings, errors and asserts, but not the basic information.
- *
- * @param[in] level Maximum debug print level as per \ref hap_debug_level_t
- */
-void hap_set_debug_level(hap_debug_level_t level);
-
 /**
  *
  * @brief Get the HAP SDK Version from the hap core
@@ -1561,21 +1534,6 @@ void hap_register_event_handler(hap_event_handler_t handler);
  * @return Number of paired controllers
  */
 int hap_get_paired_controller_count();
-
-/*
- * Enable Simple HTTP Debugging
- *
- * Calling this API will enable HTTP Debugging which will show some HomeKit HTTP Debug
- * info like the URL and data.
- */
-void hap_http_debug_enable();
-
-/**
- * Disable Simple HTTP Debugging
- *
- * Calling this API will disable HTTP Debugging which was enabled by hap_enable_http_debug()
- */
-void hap_http_debug_disable();
 
 /** Get Setup payload
  *

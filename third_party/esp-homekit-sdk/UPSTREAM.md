@@ -23,5 +23,7 @@ Local adaptations:
 - HAP allocations and the HTTP task stack use PSRAM. Keystore operations use
   Amity's internal flash stack; the worker and event-loop stacks stay internal.
 - Removing HomeKit pairings targets only hap_ctrl; whole-partition erase disabled.
+- HomeKit messages use ESP-IDF logging; the printf debug levels and raw HTTP
+  tracing are removed.
 
 The surrounding installed ESP-IDF and ESP-Matter trees are not modified.

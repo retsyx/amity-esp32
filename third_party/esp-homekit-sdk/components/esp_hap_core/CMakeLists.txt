@@ -29,8 +29,7 @@ set(srcs src/amity_hap.c src/amity_hap_http.c src/byte_convert.c
         src/esp_hap_wifi.c
         src/esp_hap_setup_payload.c
         src/hexbin.c
-        src/hexdump.c
-        src/esp_mfi_debug.c)
+        src/hexdump.c)
 
 set(priv_includes src/priv_includes)
 

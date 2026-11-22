@@ -94,6 +94,7 @@ static inline int mu_bn_a_add_b_mod_c(mu_bn_t *result, mu_bn_t *a, mu_bn_t *b, m
 #include <mbedtls/bignum.h>
 #endif
 #include <esp_system.h>
+#include <esp_log.h>
 #include <esp_idf_version.h>
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 #include <esp_random.h>
@@ -220,12 +221,12 @@ static inline int mu_bn_a_mul_b_mod_c(mu_bn_t *result, mu_bn_t *a, mu_bn_t *b, m
     mbedtls_mpi_init(&t);
     res = mbedtls_mpi_mul_mpi(&t, a, b);
     if (res != 0) {
-        printf("mbedtls_mpi_mul_mpi(), returned %x\n", res);
+        ESP_LOGE("mu_srp", "mbedtls_mpi_mul_mpi() failed: %x", res);
         return res;
     }
     res = mbedtls_mpi_mod_mpi(result, &t, c);
     if (res != 0) {
-        printf("mbedtls_mpi_mod_mpi() failed, returned %x\n", res);
+        ESP_LOGE("mu_srp", "mbedtls_mpi_mod_mpi() failed: %x", res);
         return res;
     }
     mbedtls_mpi_free(&t);
