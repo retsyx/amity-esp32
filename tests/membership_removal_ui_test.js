@@ -1,7 +1,7 @@
 'use strict';
 // Execute the actual removal UI with deterministic DOM, HTTP and timer seams.
 // No Bluetooth, network interface, device or credential store is touched.
-const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto');
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto'),util=require('node:util');
 class Element {
  constructor(tag,document){this.tag=tag;this.document=document;this.children=[];this.parent=null;this.listeners={};this.dataset={};this.attributes={};this._text='';this.value='';this.hidden=false;this.disabled=false;this.open=false;}
  set textContent(value){this._text=String(value);this.children=[];}
@@ -29,15 +29,17 @@ function fixture(options={}){
  const document={createElement(tag){return new Element(tag,this);}};document.body=new Element('body',document);
  const add=document.createElement('button');add.id='addAmity';const management=document.createElement('div');management.id='managedAmityList';document.body.append(add,management);
  const posts=[],errors=[],reads=[],timers=[],messages=[];let refreshed=0;
- const configuration={controller_octopus_id:main,config_revision:'7',presentation_revision:'3',
+ const configuration={consortium_id:'d'.repeat(32),controller_octopus_id:main,config_revision:'7',presentation_revision:'3',
   octopuses:[{octopus_id:main,supported_tentacles:1},{octopus_id:member,supported_tentacles:4}],
-  components:[{component_id:a,qualified_names:[{octopus_id:member}]},{component_id:b,qualified_names:[{octopus_id:main}]}],
+  components:[{component_id:a,qualified_name:{octopus_id:member}},{component_id:b,qualified_name:{octopus_id:main}}],
   activities:['display','source','audio','switch_device'].map((role,index)=>({activity_id:String(index+4).repeat(32),label:'Uses '+role,[role]:a}))};
  configuration.activities.push({activity_id:'9'.repeat(32),label:'Unrelated local activity',source:b});
  const system={octopus_id:main,hostname:'amity-main',named_devices:[{octopus_id:member,hostname:'amity-member'}],
   membership:{membership_revision:'11',peers:options.savedOnly?[]:[{octopus_id:member,enrolled:true,ready:true,boot_id:'c'.repeat(32)}]}};
  if(options.metadataOnly){configuration.octopuses=configuration.octopuses.slice(0,1);configuration.components=[];configuration.activities=configuration.activities.slice(-1);}
+ // Requests and observations name the consortium; saved names leave it to the configuration.
  const previous={consortium_id:'d'.repeat(32),octopus_id:member,tentacle_id:0,side:'front',osd_name:'Display'},soundbar={...previous,osd_name:'Soundbar'};
+ const strip=({consortium_id,...name})=>name;
  const admission={scan_id:null,phase:'scanning',error:'',candidates:[],candidate_id:null};let generation=1;
  const observed=()=>({resolved:true,title:'Display',qualified_name:{...previous,octopus_id:other,side:options.moved?'back':'front'}});
  const join=()=>{
@@ -45,8 +47,8 @@ function fixture(options={}){
   system.membership.peers.push({octopus_id:other,enrolled:true,ready:true,boot_id:'e'.repeat(32),supported_tentacles:1,configured_tentacles_mask:1});
   system.observations=options.late?[]:[observed()];
  };
- if(options.replacement||options.joinable)configuration.components[0].qualified_names=[previous];
- if(options.moved)configuration.components.push({component_id:'c'.repeat(32),qualified_names:[soundbar]});
+ if(options.replacement||options.joinable)configuration.components[0].qualified_name=strip(previous);
+ if(options.moved)configuration.components.push({component_id:'c'.repeat(32),qualified_name:strip(soundbar)});
  if(options.replacement)join();
  const request=async(path,data)=>{
   if(data===undefined)reads.push(path);else posts.push([path,structuredClone(data)]);
@@ -66,7 +68,12 @@ function fixture(options={}){
   if(path==='replacements/apply'){
    if(options.applyError)throw Object.assign(Error('Equipment or configuration changed. Review the replacement mapping.'),{status:409});
    configuration.octopuses=configuration.octopuses.filter(row=>row.octopus_id!==member);
-   for(const item of data.equipment){const component=configuration.components.find(row=>row.component_id===item.component_id);component.qualified_names=component.qualified_names.map(name=>JSON.stringify(name)===JSON.stringify(item.previous)?item.replacement:name);}
+   // Compare in this realm: the page's objects have another Object prototype.
+   for(const item of structuredClone(data.equipment)){
+    const component=configuration.components.find(row=>row.component_id===item.component_id);
+    if(!util.isDeepStrictEqual({consortium_id:configuration.consortium_id,...component.qualified_name},item.previous))throw Error('Map each saved equipment selector to its intended replacement connection');
+    component.qualified_name=strip(item.replacement);
+   }
    system.membership.peers=system.membership.peers.filter(row=>row.octopus_id!==member);system.named_devices=system.named_devices.filter(row=>row.octopus_id!==member);
    return {stage:'applied'};
   }
@@ -91,7 +98,7 @@ function fixture(options={}){
  const dialog=()=>walk(document.body).find(node=>node.tag==='dialog'&&node.open);
  const button=(title,root=dialog())=>walk(root).find(node=>node.tag==='button'&&node.textContent===title);
  const open=async()=>{context.window.amityInterface.project({version:1,device_choices:[],activities:[]});await context.window.amityInterface.refresh();await click(button('Remove',management.children[1]));return dialog();};
- return {main,member,other,a,previous,soundbar,configuration,system,posts,reads,errors,messages,dialog,button,click,open,management,context,get refreshed(){return refreshed;},tick:async()=>{for(const callback of timers.splice(0))callback();await flush();}};
+ return {main,member,other,a,previous,soundbar,strip,configuration,system,posts,reads,errors,messages,dialog,button,click,open,management,context,get refreshed(){return refreshed;},tick:async()=>{for(const callback of timers.splice(0))callback();await flush();}};
 }
 (async()=>{
  const cancelled=fixture();await cancelled.open();const wording=cancelled.dialog().textContent;
@@ -139,6 +146,7 @@ function fixture(options={}){
  assert.deepEqual([sent.previous_octopus_id,sent.replacement_octopus_id,sent.old_hardware_isolated],[chosen.member,chosen.other,true]);
  assert.deepEqual(sent.ports,[{previous:port,replacement:{...port,octopus_id:chosen.other}}]);
  assert.deepEqual(sent.equipment,[{component_id:chosen.a,previous:chosen.previous,replacement:{...chosen.previous,octopus_id:chosen.other},same_equipment_confirmed:true}]);
+ assert.deepEqual(chosen.configuration.components[0].qualified_name,chosen.strip({...chosen.previous,octopus_id:chosen.other}));
  assert.equal(chosen.dialog(),undefined);assert.equal(chosen.configuration.octopuses.length,2);assert.equal(chosen.refreshed,1);assert.deepEqual(chosen.messages.at(-1),['amity-replacement replaced amity-member.']);
  // Moved equipment says where it was; unseen equipment follows what shared its old connection, and contradicting that blocks Replace.
  const moved=await reviewing({replacement:true,moved:true});
@@ -160,7 +168,7 @@ function fixture(options={}){
  await late.tick();await scanning;assert.match(late.dialog().textContent,/DisplayAdapter 1 · DisplayFound/);assert.ok(late.button('Scan HDMI'));
  // An open review follows equipment changes from the normal device-list refresh.
  const changing=await reviewing({replacement:true});
- changing.configuration.components.push({component_id:'f'.repeat(32),label:'Speaker',qualified_names:[{...changing.previous,side:'back',osd_name:'Speaker'}]});
+ changing.configuration.components.push({component_id:'f'.repeat(32),label:'Speaker',qualified_name:changing.strip({...changing.previous,side:'back',osd_name:'Speaker'})});
  await changing.context.window.amityInterface.refresh();
  assert.match(changing.dialog().textContent,/Speaker wasn’t found\. It keeps the connection it had on amity-member\./);assert.equal(walk(changing.dialog()).find(node=>node.tag==='select').value,'0:back');
  // A rejected replacement reports its reason as an error and changes nothing.

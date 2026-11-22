@@ -42,27 +42,24 @@ class CascadeFixture(membership_fixture.Fixture):
         self.member = self.added().create()
         self.resources = []
         owner = self.candidate.identity.device_id
-        for identity, kind in (("4" * 32, "source"), ("5" * 32, "display"), ("6" * 32, "receiver")):
+        # OSD names have at most 14 bytes.
+        for identity, kind, osd_name in (("4" * 32, "source", "Remote source"), ("5" * 32, "display", "Remote display"),
+                                         ("6" * 32, "receiver", "Remote AVR")):
             self.config["components"].append({
-                "component_id": identity, "label": "Remote " + kind,
-                "generated_label": "Remote " + kind, "label_override": False, "kind": kind,
-                "qualified_names": [{"consortium_id": self.group, "octopus_id": owner,
-                                     "tentacle_id": 0, "side": "front" if kind == "display" else "back",
-                                     "osd_name": "Remote " + kind}]})
+                "component_id": identity, "label": "Remote " + kind, "kind": kind,
+                "qualified_name": {"octopus_id": owner, "tentacle_id": 0,
+                                   "side": "front" if kind == "display" else "back", "osd_name": osd_name}})
         selected = {"source": "4" * 32, "display": "5" * 32,
                     "audio": "6" * 32, "switch_device": "6" * 32}
         for number, role in enumerate(self.roles, 7):
             identity = format(number, "x") * 32
-            row = {"activity_id": identity, "zone_id": self.config["primary_zone_id"],
-                   "label": "Uses " + role, "generated_label": "Uses " + role,
-                   "label_override": False, "source": None, "display": None,
+            row = {"activity_id": identity, "label": "Uses " + role, "source": None, "display": None,
                    "audio": None, "switch_device": None, "switch_input": 0}
             row[role] = selected[role]
             if role == "switch_device":
                 row["switch_input"] = 4
             self.config["activities"].append(row)
             self.config["activity_order"].append(identity)
-            self.config["zones"][0]["activity_order"].append(identity)
             self.config["external_slots"].append({"slot": number - 6, "activity_id": identity,
                                                   "tombstone": False, "hidden": True,
                                                   "alias": "Remote shortcut " + role})
@@ -107,13 +104,10 @@ class CascadeFixture(membership_fixture.Fixture):
         self.system["applied_presentation_revision"] = self.config["presentation_revision"]
 
     def add_unrelated(self):
-        row = {"activity_id": "b" * 32, "zone_id": self.config["primary_zone_id"],
-               "label": "Unrelated later activity", "generated_label": "Unrelated later activity",
-               "label_override": False, "source": "3" * 32, "display": None,
-               "audio": None, "switch_device": None, "switch_input": 0}
+        row = {"activity_id": "b" * 32, "label": "Unrelated later activity", "source": "3" * 32,
+               "display": None, "audio": None, "switch_device": None, "switch_input": 0}
         self.config["activities"].append(row)
         self.config["activity_order"].append(row["activity_id"])
-        self.config["zones"][0]["activity_order"].append(row["activity_id"])
         self.config["external_slots"].append({"slot": 5, "activity_id": row["activity_id"],
                                               "tombstone": False, "hidden": True,
                                               "alias": "Unrelated later shortcut"})
@@ -165,7 +159,7 @@ class CascadeFixture(membership_fixture.Fixture):
         owner = self.candidate.identity.device_id
         peer = next(row for row in self.system["membership"]["peers"] if row["octopus_id"] == owner)
         equipment = {row["component_id"] for row in self.config["components"]
-                     if any(name["octopus_id"] == owner for name in row["qualified_names"])}
+                     if (row["qualified_name"] or {}).get("octopus_id") == owner}
         affected = {row["activity_id"] for row in self.config["activities"]
                     if any(row.get(role) in equipment for role in self.roles)}
         stale = (data.get("octopus_id") != owner or data.get("confirm") is not True
@@ -191,8 +185,6 @@ class CascadeFixture(membership_fixture.Fixture):
         self.config["components"] = [row for row in self.config["components"] if row["component_id"] not in equipment]
         self.config["activities"] = [row for row in self.config["activities"] if row["activity_id"] not in affected]
         self.config["activity_order"] = [identity for identity in self.config["activity_order"] if identity not in affected]
-        for zone in self.config["zones"]:
-            zone["activity_order"] = [identity for identity in zone["activity_order"] if identity not in affected]
         for slot in self.config["external_slots"]:
             if slot["activity_id"] in affected:
                 slot.update(tombstone=True, hidden=False, alias="")
@@ -219,8 +211,6 @@ class CascadeFixture(membership_fixture.Fixture):
             identity = "b" * 32
             self.config["activities"] = [row for row in self.config["activities"] if row["activity_id"] != identity]
             self.config["activity_order"] = [value for value in self.config["activity_order"] if value != identity]
-            for zone in self.config["zones"]:
-                zone["activity_order"] = [value for value in zone["activity_order"] if value != identity]
             for slot in self.config["external_slots"]:
                 if slot["activity_id"] == identity:
                     slot.update(tombstone=True, hidden=False, alias="")
@@ -334,13 +324,14 @@ class RemovalCascadeTests(unittest.TestCase):
     def test_retained_records_or_unrelated_changes_cannot_complete_removal_proof(self):
         corruptions = {
             "owner": lambda f: f.config["octopuses"].append(f.owner(f.candidate.identity.device_id)),
-            "equipment": lambda f: f.config["components"].append({"component_id": "e" * 32, "label": "Retained",
-                                                                   "qualified_names": [{"octopus_id": f.candidate.identity.device_id}]}),
+            "equipment": lambda f: f.config["components"].append({
+                "component_id": "e" * 32, "label": "Retained", "kind": "source",
+                "qualified_name": {"octopus_id": f.candidate.identity.device_id, "tentacle_id": 0,
+                                   "side": "back", "osd_name": "Retained"}}),
             "unrelated_activity": lambda f: f.config["activities"].clear(),
             "unrelated_slot": lambda f: f.config["external_slots"][0].update(alias="Damaged shortcut"),
             "affected_slot": lambda f: f.config["external_slots"][1].update(alias="Retained removed name", hidden=True),
             "order": lambda f: f.config["activity_order"].append(f.resources[0].activity_id),
-            "zone_order": lambda f: f.config["zones"][0]["activity_order"].append(f.resources[0].activity_id),
             "main_boot": lambda f: f.system.update(boot_id="9" * 32),
             "main_settings": lambda f: setattr(f, "main_settings_revision", "99"),
         }
@@ -360,7 +351,7 @@ class RemovalCascadeTests(unittest.TestCase):
                 if kind == "unowned_record":
                     record = deepcopy(f.config["components"][-1])
                     record["component_id"] = "e" * 32
-                    record["qualified_names"][0]["osd_name"] = "Unowned device"
+                    record["qualified_name"]["osd_name"] = "Unowned device"
                     f.config["components"].append(record)
                 elif kind == "changed_record":
                     f.config["components"][-1]["label"] = "Concurrent equipment edit"

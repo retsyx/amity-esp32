@@ -37,7 +37,8 @@ class ScanAssertionSnapshotTests(unittest.TestCase):
             selector = "native:" + hashlib.sha256(encoded).hexdigest()
             if saved:
                 identity = str(index) * 32
-                config["components"].append({"component_id": identity, "qualified_names": [qualified]})
+                config["components"].append({"component_id": identity, "qualified_name":
+                                             {key: value for key, value in qualified.items() if key != "consortium_id"}})
                 selector = "component:" + identity
             rows.append({"name": selector, "title": f"Saved user label {index}" if saved else component.name,
                          # Deliberately misleading display text must never be

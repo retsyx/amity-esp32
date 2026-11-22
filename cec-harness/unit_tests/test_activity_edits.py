@@ -34,11 +34,7 @@ class EditingFixture(Fixture):
 
     def sync_full(self):
         super().sync_full()
-        for row in self.full["activities"]:
-            row.update(zone_id=self.full["primary_zone_id"], generated_label=row["label"], label_override=True)
         self.full["activity_order"] = [row["activity_id"] for row in self.full["activities"]]
-        self.full["zones"] = [{"zone_id": self.full["primary_zone_id"],
-                               "activity_order": list(self.full["activity_order"])}]
         self.full["activities"].sort(key=lambda row: row["activity_id"])
 
     def state(self):
@@ -118,7 +114,6 @@ class ActivityEditsTests(unittest.TestCase):
         ActiveActivityEdits(fixture.active).edit_other(fixture.other, switch_input=3)
         self.assertEqual([row["activity_id"] for row in fixture.full["activities"]], canonical)
         self.assertEqual(fixture.full["activity_order"][0], fixture.active.activity_id)
-        self.assertEqual(fixture.full["zones"][0]["activity_order"], fixture.full["activity_order"])
         self.assertNotEqual(canonical, fixture.full["activity_order"])
         self.assertEqual(next(row for row in fixture.full["activities"]
                               if row["activity_id"] == fixture.other.activity_id)["switch_input"], 3)
@@ -155,7 +150,6 @@ class ActivityEditsTests(unittest.TestCase):
             "equipment": lambda f: f.full["components"][0].update(label="Unexpected equipment change"),
             "home slot": lambda f: f.full["external_slots"][0].update(alias="Unexpected shortcut change"),
             "activity order": lambda f: f.full["activity_order"].reverse(),
-            "zone order": lambda f: f.full["zones"][0]["activity_order"].reverse(),
         }
         for name, mutation in faults.items():
             with self.subTest(fault=name):

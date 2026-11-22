@@ -31,7 +31,7 @@ class HostnameFixture:
         self.system_changes, self.settings_changes = {}, {}
         self.health_changes = {}
         self.current_activity = -1
-        self.config = {"version": 3, "consortium_id": self.group,
+        self.config = {"version": 4, "consortium_id": self.group,
                        "controller_octopus_id": self.main.identity.device_id,
                        "config_revision": "4", "presentation_revision": "5",
                        "activities": [{"activity_id": "6" * 32, "label": "Watch"}],

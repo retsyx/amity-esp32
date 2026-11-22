@@ -6,7 +6,7 @@ import json
 import time
 from uuid import uuid4
 
-from .discovery import _identifier
+from .discovery import _identifier, _saved_owner
 from .dut import AmityHTTPError
 from .membership import MembershipConflict
 from .trace import event
@@ -32,8 +32,6 @@ def _projection(config, owner, equipment, affected):
     result["activities"] = [row for row in result["activities"] if row["activity_id"] not in affected]
     if "activity_order" in result:
         result["activity_order"] = [identity for identity in result["activity_order"] if identity not in affected]
-    for zone in result["zones"]:
-        zone["activity_order"] = [identity for identity in zone["activity_order"] if identity not in affected]
     for slot in result["external_slots"]:
         if slot["activity_id"] in affected:
             slot.update(tombstone=True, hidden=False, alias="")
@@ -87,8 +85,7 @@ class MembershipContinuity:
             raise AssertionError("The surviving Amity changed identity, boot, name or readiness")
         owners = [row for row in config["octopuses"] if row.get("octopus_id") == self.member.device_id]
         equipment = [row for row in config["components"]
-                     if any(name.get("octopus_id") == self.member.device_id
-                            for name in row.get("qualified_names", []))]
+                     if _saved_owner(config, row) == self.member.device_id]
         identities = {row["component_id"] for row in equipment}
         activities = [row for row in config["activities"]
                       if row.get("activity_id") in {activity.activity_id for activity in self.activities}]
@@ -114,8 +111,7 @@ class MembershipContinuity:
         if (any(row.get("octopus_id") in removed_ids for row in system.get("named_devices", []))
                 or any(row.get(field, {}).get("octopus_id") in removed_ids
                        for row in system.get("observations", []) for field in ("qualified_name", "runtime_address"))
-                or any(name.get("octopus_id") in removed_ids for row in config["components"]
-                       for name in row.get("qualified_names", []))):
+                or any(_saved_owner(config, row) in removed_ids for row in config["components"])):
             raise AssertionError("Removed owner names, equipment selectors or observations returned")
         proof = {"kind": "membership_continuity", "survivor": self.member.device_id,
                  "main_boot": self.member.boot, "survivor_boot": self.member.member_boot,
@@ -212,7 +208,7 @@ class RemovalReview:
         if (not isinstance(config, dict) or config.get("controller_octopus_id") != self.main.identity.device_id
                 or config.get("consortium_id") != self.member.group
                 or any(not isinstance(config.get(key), list)
-                       for key in ("octopuses", "components", "activities", "zones", "external_slots"))
+                       for key in ("octopuses", "components", "activities", "external_slots"))
                 or editor.get("expected_config_revision") != config.get("config_revision")
                 or editor.get("expected_presentation_revision") != config.get("presentation_revision")
                 or state.get("expected_config_revision") != config.get("config_revision")
@@ -276,7 +272,7 @@ class RemovalReview:
             created_equipment.update(getattr(activity, "_new_equipment", {}))
         owned = self.member._owned_components(config, {self.member.device_id})
         created = {identity: row for identity, row in created_equipment.items()
-                   if any(name.get("octopus_id") == self.member.device_id for name in row.get("qualified_names", []))}
+                   if _saved_owner(config, row) == self.member.device_id}
         if not owned or owned != set(created) or any(row != created[row["component_id"]]
                 for row in config["components"] if row.get("component_id") in owned):
             raise MembershipConflict("Removal would delete equipment not owned unchanged by these fixtures")

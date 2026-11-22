@@ -1,9 +1,8 @@
 {
-  "version": 3,
+  "version": 4,
   "consortium_id": "c0000000000000000000000000000001",
   "config_revision": "1",
   "presentation_revision": "1",
-  "primary_zone_id": "e0000000000000000000000000000001",
   "controller_octopus_id": "a0000000000000000000000000000001",
   "activity_order": [
     "b0000000000000000000000000000001",
@@ -13,9 +12,6 @@
   "octopuses": [
     {
       "octopus_id": "a0000000000000000000000000000001",
-      "label": "Amity 1",
-      "generated_label": "Amity 1",
-      "label_override": false,
       "supported_tentacles": 1
     }
   ],
@@ -23,91 +19,63 @@
     {
       "component_id": "d0000000000000000000000000000001",
       "label": "TV",
-      "generated_label": "TV",
-      "label_override": false,
       "kind": "display",
-      "qualified_names": [
-        {
-          "consortium_id": "c0000000000000000000000000000001",
-          "octopus_id": "a0000000000000000000000000000001",
-          "tentacle_id": 0,
-          "side": "front",
-          "osd_name": "TV"
-        }
-      ]
+      "qualified_name": {
+        "octopus_id": "a0000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "front",
+        "osd_name": "TV"
+      }
     },
     {
       "component_id": "d0000000000000000000000000000002",
       "label": "Apple TV",
-      "generated_label": "Apple TV",
-      "label_override": false,
       "kind": "source",
-      "qualified_names": [
-        {
-          "consortium_id": "c0000000000000000000000000000001",
-          "octopus_id": "a0000000000000000000000000000001",
-          "tentacle_id": 0,
-          "side": "back",
-          "osd_name": "Apple TV"
-        }
-      ]
+      "qualified_name": {
+        "octopus_id": "a0000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "Apple TV"
+      }
     },
     {
       "component_id": "d0000000000000000000000000000003",
       "label": "PlayStation5",
-      "generated_label": "PlayStation5",
-      "label_override": false,
       "kind": "source",
-      "qualified_names": [
-        {
-          "consortium_id": "c0000000000000000000000000000001",
-          "octopus_id": "a0000000000000000000000000000001",
-          "tentacle_id": 0,
-          "side": "back",
-          "osd_name": "PlayStation5"
-        }
-      ]
+      "qualified_name": {
+        "octopus_id": "a0000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "PlayStation5"
+      }
     },
     {
       "component_id": "d0000000000000000000000000000004",
       "label": "NintendoSwitch",
-      "generated_label": "NintendoSwitch",
-      "label_override": false,
       "kind": "source",
-      "qualified_names": [
-        {
-          "consortium_id": "c0000000000000000000000000000001",
-          "octopus_id": "a0000000000000000000000000000001",
-          "tentacle_id": 0,
-          "side": "back",
-          "osd_name": "NintendoSwitch"
-        }
-      ]
+      "qualified_name": {
+        "octopus_id": "a0000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "NintendoSwitch"
+      }
     },
     {
       "component_id": "d0000000000000000000000000000005",
       "label": "AVR",
-      "generated_label": "AVR",
-      "label_override": false,
       "kind": "receiver",
-      "qualified_names": [
-        {
-          "consortium_id": "c0000000000000000000000000000001",
-          "octopus_id": "a0000000000000000000000000000001",
-          "tentacle_id": 0,
-          "side": "back",
-          "osd_name": "AVR"
-        }
-      ]
+      "qualified_name": {
+        "octopus_id": "a0000000000000000000000000000001",
+        "tentacle_id": 0,
+        "side": "back",
+        "osd_name": "AVR"
+      }
     }
   ],
   "activities": [
     {
       "activity_id": "b0000000000000000000000000000001",
-      "zone_id": "e0000000000000000000000000000001",
       "label": "Watch Apple TV",
-      "generated_label": "Watch Apple TV",
-      "label_override": false,
       "source": "d0000000000000000000000000000002",
       "display": "d0000000000000000000000000000001",
       "audio": "d0000000000000000000000000000005",
@@ -116,10 +84,7 @@
     },
     {
       "activity_id": "b0000000000000000000000000000002",
-      "zone_id": "e0000000000000000000000000000001",
       "label": "Play PS5",
-      "generated_label": "Play PS5",
-      "label_override": false,
       "source": "d0000000000000000000000000000003",
       "display": "d0000000000000000000000000000001",
       "audio": "d0000000000000000000000000000005",
@@ -128,28 +93,12 @@
     },
     {
       "activity_id": "b0000000000000000000000000000003",
-      "zone_id": "e0000000000000000000000000000001",
       "label": "Play Switch",
-      "generated_label": "Play Switch",
-      "label_override": false,
       "source": "d0000000000000000000000000000004",
       "display": "d0000000000000000000000000000001",
       "audio": "d0000000000000000000000000000005",
       "switch_device": "d0000000000000000000000000000005",
       "switch_input": 4
-    }
-  ],
-  "zones": [
-    {
-      "zone_id": "e0000000000000000000000000000001",
-      "label": "Main screen",
-      "generated_label": "Main screen",
-      "label_override": false,
-      "activity_order": [
-        "b0000000000000000000000000000001",
-        "b0000000000000000000000000000002",
-        "b0000000000000000000000000000003"
-      ]
     }
   ],
   "external_slots": [

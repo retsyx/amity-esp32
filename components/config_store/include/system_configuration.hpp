@@ -14,22 +14,12 @@ struct RevisionPair {
 struct ConfiguredComponent {
     model::Component record;
     std::string kind; // source, display, receiver, switch, audio, placeholder
-    std::string generated_label;
-    bool label_override = false;
 };
 struct ConfiguredActivity {
     model::ActivityId activity_id;
-    model::ZoneId zone_id;
-    std::string label, generated_label;
-    bool label_override = false;
+    std::string label;
     std::optional<model::ComponentId> source, display, audio, switch_device;
     uint8_t switch_input = 0;
-};
-struct ConfiguredZone {
-    model::ZoneId zone_id;
-    std::string label, generated_label;
-    bool label_override = false;
-    std::vector<model::ActivityId> activity_order;
 };
 struct ExternalSlot {
     uint16_t slot = 0;
@@ -39,18 +29,14 @@ struct ExternalSlot {
 };
 struct ConfiguredOctopus {
     model::OctopusId octopus_id;
-    std::string label, generated_label;
-    bool label_override = false;
     uint8_t supported_tentacles = 1;
 };
 struct Configuration {
     model::ConsortiumId consortium_id;
     uint64_t config_revision = 1, presentation_revision = 1;
-    model::ZoneId primary_zone_id;
     std::vector<ConfiguredOctopus> octopuses;
     std::vector<ConfiguredComponent> components;
     std::vector<ConfiguredActivity> activities;
-    std::vector<ConfiguredZone> zones;
     std::vector<ExternalSlot> external_slots;
     // Immutable first-setup controller; required in every saved configuration.
     std::optional<model::OctopusId> controller_octopus_id;
@@ -73,9 +59,11 @@ private:
     friend class ConfigurationStore;
 };
 // The current saved format is the only readable and writable format.
-constexpr unsigned current_configuration_version = 3;
+constexpr unsigned current_configuration_version = 4;
 // This board/112KiB NVS profile admits16KiB complete configuration payloads.
 constexpr size_t configuration_payload_limit = 16384;
+// The activity editor's limit; it also bounds activity_order.
+constexpr size_t max_configured_activities = 16;
 bool validate_configuration(const Configuration&, std::string& error);
 bool parse_configuration(const std::string&, Configuration&, std::string& error);
 std::string serialize_configuration(const Configuration&, bool executable_policy_only = false);
@@ -83,8 +71,8 @@ std::string sha256_hex(std::string_view);
 std::string executable_policy_hash(const Configuration&);
 std::string presentation_hash(const Configuration&);
 const ConfiguredActivity* activity_for_slot(const Configuration&, unsigned slot);
-// A home app input: a live external slot whose activity is on the primary
-// screen. Its name is the slot alias, or the activity label without one.
+// A home app input: a live external slot. Its name is the slot alias, or the
+// activity label without one.
 struct ExternalInput {
     uint16_t slot = 0;
     model::ActivityId activity_id;
@@ -124,9 +112,8 @@ private:
 };
 
 // Create a fresh empty configuration using current records and hardware capacity.
-// This allocates IDs only; the caller owns storage and activation.
+// The caller owns storage and activation.
 bool initialize_configuration(model::ConsortiumId, model::OctopusId, uint8_t supported_tentacles,
-    const std::function<bool(uint8_t*, size_t)>& secure_random,
     Configuration&, std::string& error);
 // A compiled carrier can add stable connector capacity without approving or
 // persisting equipment availability.

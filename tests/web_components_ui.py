@@ -71,8 +71,8 @@ class Handler(SimpleHTTPRequestHandler):
                                for c in available if c['value'] in (TV, PLAYER)])
         owners = fixture['owners']
         values = {'/api/setup': dict(required=False), '/api/activity-editor': editor(), '/api/activity-editor/status': status,
-                  '/api/config': dict(version=3, controller_octopus_id=MAIN, octopuses=[dict(octopus_id=o['octopus_id'], supported_tentacles=o['supported_tentacles']) for o in owners],
-                                      components=[], activities=[], zones=[]),
+                  '/api/config': dict(version=4, controller_octopus_id=MAIN, octopuses=[dict(octopus_id=o['octopus_id'], supported_tentacles=o['supported_tentacles']) for o in owners],
+                                      components=[], activities=[]),
                   '/api/system': dict(octopus_id=MAIN, hostname='amity-main', named_devices=[dict(octopus_id=o['octopus_id'], hostname=o['name']) for o in owners],
                                       membership=dict(peers=[dict(octopus_id=o['octopus_id'], enrolled=True, ready=True) for o in owners if o['octopus_id'] != MAIN])),
                   '/api/remotes': dict(bonded=False), '/api/matter': dict(fabrics=[]), '/api/homekit': dict(available=False)}

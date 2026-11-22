@@ -14,7 +14,6 @@
 #include "amity/system_sync.hpp"
 #include "web.hpp"
 #include "json_input.hpp"
-#include "esp_random.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -288,8 +287,7 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
     config_store::Configuration candidate;
     const bool initialize=result==ESP_ERR_NVS_NOT_FOUND;
     if(initialize){
-        if(!config_store::initialize_configuration(service.consortium_id(),controller,service.supported_tentacles(),
-            [](uint8_t* bytes,size_t size){esp_fill_random(bytes,size);return true;},candidate,message))return ESP_ERR_INVALID_STATE;
+        if(!config_store::initialize_configuration(service.consortium_id(),controller,service.supported_tentacles(),candidate,message))return ESP_ERR_INVALID_STATE;
     }else if(result!=ESP_OK)return result;
     else candidate=configuration->configuration;
     if(candidate.controller_octopus_id!=controller)return ESP_ERR_INVALID_STATE;

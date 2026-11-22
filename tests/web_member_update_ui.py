@@ -34,9 +34,9 @@ BUNDLE = struct.pack('>16sIIQ', b'AMITY-UPDATE-V1\n', len(MANIFEST), len(SIGNATU
 def main():
     fixture = {}
     checks, errors = [], []
-    config = dict(version=3, controller_octopus_id=MAIN, config_revision='1', presentation_revision='1',
+    config = dict(version=4, controller_octopus_id=MAIN, config_revision='1', presentation_revision='1',
                   octopuses=[dict(octopus_id=n, supported_tentacles=1) for n in (MAIN, MEMBER, OFFLINE)],
-                  activities=[], zones=[])
+                  activities=[])
     editor = dict(version=1, expected_config_revision='1', expected_presentation_revision='1', activities=[], device_choices=[])
 
     def reset(**values):

@@ -84,7 +84,7 @@ esp_err_t save_input(unsigned slot,const char *name,int hidden){
     auto candidate=*configuration;
     const auto *activity=config_store::activity_for_slot(candidate,slot);
     const auto entry=std::find_if(candidate.external_slots.begin(),candidate.external_slots.end(),[&](const auto &value){return value.slot==slot;});
-    if(!activity||activity->zone_id!=candidate.primary_zone_id||entry==candidate.external_slots.end())return ESP_ERR_INVALID_ARG;
+    if(!activity||entry==candidate.external_slots.end())return ESP_ERR_INVALID_ARG;
     // An alias equal to the activity name is not kept, so a later activity rename still shows.
     if(name)entry->alias=activity->label==name?std::string{}:std::string(name);
     if(hidden>=0)entry->hidden=hidden!=0;

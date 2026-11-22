@@ -96,8 +96,8 @@ void prepare(bool enrolled=true){
     amity::consortium::removal_stage="admitted";amity::consortium::reset_result="pending";
     owned_control=std::make_unique<amity::SystemControl>(fixture::control());control=owned_control.get();
     control->configuration=switch_configuration(control->configuration);
-    const auto owner=id<m::OctopusId>(9);control->configuration.octopuses.push_back({owner,"Member","Member",false,1});
-    for(auto& component:control->configuration.components)if(component.record.component_id==control->configuration.activities.front().source)component.record.qualified_names[0].port.octopus_id=owner;
+    const auto owner=id<m::OctopusId>(9);control->configuration.octopuses.push_back({owner,1});
+    for(auto& component:control->configuration.components)if(component.record.component_id==control->configuration.activities.front().source)component.record.qualified_name->port.octopus_id=owner;
     Configuration committed;commit(*fixture::journal,control->configuration,{},committed);control->configuration=committed;active=committed;
     control->applied.applied_config_revision=committed.config_revision;control->applied.applied_presentation_revision=committed.presentation_revision;
     fixture::role.membership_revision=7;
@@ -122,7 +122,8 @@ Json replacement_request(){
     auto root=request();cJSON_DeleteItemFromObjectCaseSensitive(root.get(),"octopus_id");cJSON_DeleteItemFromObjectCaseSensitive(root.get(),"confirm");cJSON_DeleteItemFromObjectCaseSensitive(root.get(),"affected_activity_ids");
     cJSON_AddStringToObject(root.get(),"previous_octopus_id",id<m::OctopusId>(9).str().c_str());cJSON_AddStringToObject(root.get(),"replacement_octopus_id",id<m::OctopusId>(10).str().c_str());cJSON_AddBoolToObject(root.get(),"old_hardware_isolated",true);
     auto* ports=cJSON_AddArrayToObject(root.get(),"ports");auto* equipment=cJSON_AddArrayToObject(root.get(),"equipment");
-    for(const auto& component:active->components)for(const auto& previous:component.record.qualified_names)if(previous.port.octopus_id==id<m::OctopusId>(9)){
+    for(const auto& component:active->components)if(component.record.qualified_name&&component.record.qualified_name->port.octopus_id==id<m::OctopusId>(9)){
+        const auto& previous=*component.record.qualified_name;
         auto next=previous;next.port.octopus_id=id<m::OctopusId>(10);
         auto* mapping=cJSON_CreateObject();cJSON_AddItemToObject(mapping,"previous",port_value(previous.port));cJSON_AddItemToObject(mapping,"replacement",port_value(next.port));cJSON_AddItemToArray(ports,mapping);
         auto* selection=cJSON_CreateObject();cJSON_AddStringToObject(selection,"component_id",component.record.component_id.str().c_str());cJSON_AddItemToObject(selection,"previous",cJSON_Parse(m::name_json(previous).c_str()));cJSON_AddItemToObject(selection,"replacement",cJSON_Parse(m::name_json(next).c_str()));cJSON_AddBoolToObject(selection,"same_equipment_confirmed",true);cJSON_AddItemToArray(equipment,selection);
@@ -153,7 +154,7 @@ int run(){
     assert(amity::activate_distributed_configuration(clean,active->revisions(),id<m::MessageId>(201))==ESP_OK);active=control->configuration;
     root=request(false);cJSON_ReplaceItemInObjectCaseSensitive(root.get(),"affected_activity_ids",cJSON_CreateArray());perform(root.get());assert(finished&&captured.status=="complete"&&names.empty());
     // Replace revokes the isolated old device and preserves every mapped activity ID.
-    prepare();auto expanded=*active;expanded.octopuses.push_back({id<m::OctopusId>(10),"Replacement","Replacement",false,1});
+    prepare();auto expanded=*active;expanded.octopuses.push_back({id<m::OctopusId>(10),1});
     assert(amity::activate_distributed_configuration(expanded,active->revisions(),id<m::MessageId>(202))==ESP_OK);active=control->configuration;
     fixture::peers.push_back(fixture::remote(10,20,1,1));const auto original_order=active->activity_order;
     root=replacement_request();perform_replace(root.get());assert(finished&&captured.status=="configuring"&&revoked==1&&forgotten==1&&control->configuration.activity_order==original_order);

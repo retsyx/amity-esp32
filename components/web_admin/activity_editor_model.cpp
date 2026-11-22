@@ -90,7 +90,7 @@ bool add_component(const cs::Configuration& previous,const ComponentSubmission& 
     const std::string kind=submission.role=="display"?"display":submission.role=="source"?"source":submission.role=="audio"?"receiver":submission.role=="switch"?"switch":"";
     if(kind.empty())return fail("Choose a component type");
     auto candidate=previous;
-    for(const auto& component:candidate.components)if(contains(component.record.qualified_names,name)){
+    for(const auto& component:candidate.components)if(component.record.qualified_name==name){
         if(!contains(roles(component.kind),submission.role))return fail("This OSD name and connection are already saved as another component type");
         id=component.record.component_id;out=std::move(candidate);error.clear();return true;
     }
@@ -101,7 +101,7 @@ bool add_component(const cs::Configuration& previous,const ComponentSubmission& 
     configured->supported_tentacles=std::max(configured->supported_tentacles,owner->supported_tentacles);
     cs::ConfiguredComponent component;const auto allocated=m::ComponentId::generate(random);
     if(!allocated||std::any_of(candidate.components.begin(),candidate.components.end(),[&](const auto& item){return item.record.component_id==*allocated;}))return fail("Component identity allocation failed");
-    component.record.component_id=*allocated;component.record.qualified_names={name};component.record.label=component.generated_label=name.osd_name;component.kind=kind;candidate.components.push_back(std::move(component));
+    component.record.component_id=*allocated;component.record.qualified_name=name;component.record.label=name.osd_name;component.kind=kind;candidate.components.push_back(std::move(component));
     if(!cs::validate_configuration(candidate,error))return false;
     id=*allocated;out=std::move(candidate);error.clear();return true;
 }
@@ -132,10 +132,10 @@ std::vector<Choice> choices(const cs::Configuration& config,const std::vector<m:
     std::vector<Choice> out;
     for(const auto& c:config.components){
         Choice choice;choice.value=component_value(c.record.component_id);choice.component_id=c.record.component_id;
-        choice.title=!c.record.label.empty()?c.record.label:(!c.generated_label.empty()?c.generated_label:(!c.record.qualified_names.empty()?c.record.qualified_names[0].osd_name:"Not identified yet"));
+        choice.title=!c.record.label.empty()?c.record.label:(c.record.qualified_name?c.record.qualified_name->osd_name:"Not identified yet");
         choice.roles=roles(c.kind);
-        if(!c.record.qualified_names.empty()){
-            choice.native_name=c.record.qualified_names[0];choice.location=location(config,names,*choice.native_name,has_added_amities,capacities);
+        if(c.record.qualified_name){
+            choice.native_name=c.record.qualified_name;choice.location=location(config,names,*choice.native_name,has_added_amities,capacities);
             if(const auto* o=observed(observations,*choice.native_name))choice.observation=*o;
         }else choice.location="Connection needs assignment";
         // Existing unresolved fields remain editable without silently removing
@@ -151,7 +151,7 @@ std::vector<Choice> choices(const cs::Configuration& config,const std::vector<m:
         if(o.stale||!o.osd_name)continue;
         m::QualifiedDeviceName name{o.endpoint.port,*o.osd_name};if(!name.valid()||!observed(observations,name))continue;
         const auto key=m::name_json(name);
-        if(!seen.insert(key).second||std::any_of(config.components.begin(),config.components.end(),[&](const auto& c){return contains(c.record.qualified_names,name);}))continue;
+        if(!seen.insert(key).second||std::any_of(config.components.begin(),config.components.end(),[&](const auto& c){return c.record.qualified_name==name;}))continue;
         if(std::none_of(config.octopuses.begin(),config.octopuses.end(),[&](const auto& b){return b.octopus_id==name.port.octopus_id&&name.port.tentacle_id<b.supported_tentacles;}))continue;
         Choice choice;choice.value="native:"+cs::sha256_hex(key);choice.title=name.osd_name;choice.location=location(config,names,name,has_added_amities,capacities);choice.roles=roles(kind(o.device_type));choice.native_name=name;choice.observation=o;
         if(!choice.roles.empty())out.push_back(std::move(choice));
@@ -183,9 +183,9 @@ bool edit(const cs::Configuration& previous,const std::vector<Row>& rows,const s
         if(choice==available.end()){error="Choose identified equipment from this activity field's list";return false;}
         if(choice->component_id){id=choice->component_id;return true;}
         if(!choice->native_name)return fail("The selected equipment has no scoped OSD name");
-        for(const auto& c:candidate.components)if(contains(c.record.qualified_names,*choice->native_name)){id=c.record.component_id;return true;}
+        for(const auto& c:candidate.components)if(c.record.qualified_name==*choice->native_name){id=c.record.component_id;return true;}
         cs::ConfiguredComponent c;c.record.component_id=fresh(m::ComponentId{});if(!c.record.component_id)return fail("Equipment identity allocation failed");
-        c.record.qualified_names={*choice->native_name};c.record.label=c.generated_label=choice->title;c.kind=choice->observation?kind(choice->observation->device_type):(std::string(role)=="display"?"display":std::string(role)=="source"?"source":"receiver");id=c.record.component_id;candidate.components.push_back(std::move(c));return true;
+        c.record.qualified_name=*choice->native_name;c.record.label=choice->title;c.kind=choice->observation?kind(choice->observation->device_type):(std::string(role)=="display"?"display":std::string(role)=="source"?"source":"receiver");id=c.record.component_id;candidate.components.push_back(std::move(c));return true;
     };
     for(const auto& row:rows){
         if(row.name.empty()||row.name.size()>63||!names.insert(row.name).second)return fail("Use distinct activity names of at most 63 bytes");
@@ -194,10 +194,10 @@ bool edit(const cs::Configuration& previous,const std::vector<Row>& rows,const s
             if(!contains(projection,*row.activity_id)||!retained.insert(*row.activity_id).second)return fail("An activity identity is unknown or repeated");
             const auto found=std::find_if(previous.activities.begin(),previous.activities.end(),[&](const auto& a){return a.activity_id==*row.activity_id;});if(found==previous.activities.end())return fail("The activity no longer exists");activity=*found;
         }else{
-            activity.activity_id=fresh(m::ActivityId{});activity.zone_id=previous.primary_zone_id;
+            activity.activity_id=fresh(m::ActivityId{});
             if(!activity.activity_id||contains(projection,activity.activity_id)||!retained.insert(activity.activity_id).second)return fail("Activity identity allocation failed");
         }
-        if(!row.activity_id||activity.label!=row.name){activity.label=row.name;activity.generated_label=row.name;activity.label_override=true;}
+        activity.label=row.name;
         activity.switch_input=row.switch_input;
         if(!selected(row.display,"display",activity.display)||!selected(row.source,"source",activity.source)||!selected(row.audio,"audio",activity.audio)||!selected(row.switch_device,"switch",activity.switch_device))return false;
         candidate.activities.erase(std::remove_if(candidate.activities.begin(),candidate.activities.end(),[&](const auto& a){return a.activity_id==activity.activity_id;}),candidate.activities.end());candidate.activities.push_back(activity);order.push_back(activity.activity_id);
@@ -206,11 +206,6 @@ bool edit(const cs::Configuration& previous,const std::vector<Row>& rows,const s
     candidate.activities.erase(std::remove_if(candidate.activities.begin(),candidate.activities.end(),[&](const auto& a){return removed(a.activity_id);}),candidate.activities.end());
     candidate.activity_order=order;for(const auto& id:cs::ordered_activities(previous))if(!contains(projection,id)&&!contains(candidate.activity_order,id))candidate.activity_order.push_back(id);
     for(auto& slot:candidate.external_slots)if(removed(slot.activity_id))slot.tombstone=true;
-    for(auto& zone:candidate.zones){
-        zone.activity_order.erase(std::remove_if(zone.activity_order.begin(),zone.activity_order.end(),[&](const auto& id){return contains(projection,id)||contains(order,id);}),zone.activity_order.end());
-        std::vector<m::ActivityId> ordered;for(const auto& id:order)for(const auto& a:candidate.activities)if(a.activity_id==id&&a.zone_id==zone.zone_id)ordered.push_back(id);
-        zone.activity_order.insert(zone.activity_order.begin(),ordered.begin(),ordered.end());
-    }
     if(!cs::reconcile_external_slots(previous,candidate,error)||!cs::validate_configuration(candidate,error))return false;
     out=std::move(candidate);error.clear();return true;
 }

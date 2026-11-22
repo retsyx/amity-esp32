@@ -79,7 +79,6 @@ RuntimeStatus runtime_status(){return {};}
 }
 }
 namespace system_services {bool firmware_ready(){return fixture::healthy;}}
-void esp_fill_random(void* bytes,size_t size){static auto random=random_source();assert(random(static_cast<uint8_t*>(bytes),size));}
 enum esp_ota_img_states_t {ESP_OTA_IMG_VALID,ESP_OTA_IMG_PENDING_VERIFY};
 const int* esp_ota_get_running_partition(){static int partition=1;return &partition;}
 esp_err_t esp_ota_get_state_partition(const int*,esp_ota_img_states_t* state){*state=fixture::pending_boot?ESP_OTA_IMG_PENDING_VERIFY:ESP_OTA_IMG_VALID;return ESP_OK;}

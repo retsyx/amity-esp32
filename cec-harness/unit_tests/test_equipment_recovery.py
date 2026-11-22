@@ -52,9 +52,11 @@ class SavedEquipmentTests(unittest.TestCase):
                 fixture, activity = self.activity()
                 identity = fixture.selectors[fixture.player.name].removeprefix("component:")
                 record = next(record for record in fixture.full["components"] if record["component_id"] == identity)
-                record["qualified_names"][0][field] = value
+                # Saved names leave their consortium to the configuration.
                 if field == "consortium_id":
                     fixture.full["consortium_id"] = value
+                else:
+                    record["qualified_name"][field] = value
                 before = len(fixture.calls)
                 with self.assertRaisesRegex(AssertionError, "equipment changed"):
                     activity.start()

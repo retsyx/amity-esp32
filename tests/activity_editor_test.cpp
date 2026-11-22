@@ -15,10 +15,7 @@ void test_current_activity_retention(){
     };
     rejects([](auto& c){c.activities.erase(c.activities.begin()+1);});
     rejects([](auto& c){c.activities[1].activity_id=id<model::ActivityId>(900);});
-    rejects([](auto& c){c.activities[1].zone_id=id<model::ZoneId>(900);});
     rejects([](auto& c){c.activities[1].label="Renamed current activity";});
-    rejects([](auto& c){c.activities[1].generated_label="Different generated name";});
-    rejects([](auto& c){c.activities[1].label_override=!c.activities[1].label_override;});
     rejects([](auto& c){++c.activities[1].switch_input;});
     for(auto role:{&ConfiguredActivity::source,&ConfiguredActivity::display,
                   &ConfiguredActivity::audio,&ConfiguredActivity::switch_device}){
@@ -32,14 +29,14 @@ void test_current_activity_retention(){
         rejects([selected](auto& c){
             auto component=std::find_if(c.components.begin(),c.components.end(),
                 [&](const auto& value){return value.record.component_id==selected;});
-            component->record.qualified_names[0].osd_name="Moved source";
+            component->record.qualified_name->osd_name="Moved source";
         });
     }
     rejects([](auto& c){
         const auto source=c.activities[1].source;
         auto component=std::find_if(c.components.begin(),c.components.end(),
             [&](const auto& value){return value.record.component_id==source;});
-        component->record.qualified_names[0].port.side=model::Side::front;
+        component->record.qualified_name->port.side=model::Side::front;
     });
     rejects([](auto& c){
         const auto source=c.activities[1].source;
@@ -56,23 +53,18 @@ void test_current_activity_retention(){
     const auto unused=previous.activities[0].source;
     for(auto& component:candidate.components){
         component.record.label="Updated equipment label";
-        component.generated_label="Updated generated label";
-        component.label_override=true;
         if(component.record.component_id==unused)
-            component.record.qualified_names[0].osd_name="Other source";
+            component.record.qualified_name->osd_name="Other source";
     }
     ++candidate.config_revision;++candidate.presentation_revision;
     std::reverse(candidate.activities.begin(),candidate.activities.end());
     std::reverse(candidate.activity_order.begin(),candidate.activity_order.end());
-    std::reverse(candidate.zones[0].activity_order.begin(),candidate.zones[0].activity_order.end());
     assert(retains_activity(previous,candidate,current));
 
-    // Saving another row through the editor must preserve the current row's
-    // name metadata, including a generated name behind a personal override.
-    for(bool overridden:{false,true}){
+    // Saving another row through the editor must preserve the current row's name.
+    for(bool renamed:{false,true}){
         auto saved=switch_configuration(direct_configuration());
-        saved.activities[0].label_override=overridden;
-        if(overridden)saved.activities[0].label="Personal Watch";
+        if(renamed)saved.activities[0].label="Personal Watch";
         const auto before=saved.activities[0];
         std::vector<ae::Row> rows;for(const auto& activity:saved.activities)rows.push_back(row(activity));
         rows[1].name="Renamed other activity";
@@ -83,8 +75,7 @@ void test_current_activity_retention(){
         assert(unresolved.empty()&&retains_activity(saved,edited,before.activity_id));
         const auto retained=std::find_if(edited.activities.begin(),edited.activities.end(),
             [&](const auto& activity){return activity.activity_id==before.activity_id;});
-        assert(retained!=edited.activities.end()&&retained->label==before.label&&
-               retained->generated_label==before.generated_label&&retained->label_override==overridden);
+        assert(retained!=edited.activities.end()&&retained->label==before.label);
         assert(edited.activity_order==std::vector<model::ActivityId>({saved.activities[1].activity_id,before.activity_id}));
         assert(edited.activities[0].label=="Renamed other activity");
     }
@@ -130,7 +121,7 @@ int main(){
     assert(ae::edit(avr,{rows[1]},choices,random_source(),edited,unresolved,error)&&edited.activities.size()==1&&edited.external_slots[0].tombstone&&edited.activities[0].activity_id==second);
     auto invalid=rows[0];invalid.source="component:"+id<model::ComponentId>(999).str();assert(!ae::edit(avr,{invalid},choices,random_source(),edited,unresolved,error));assert(!ae::edit(avr,{rows[0],rows[0]},choices,random_source(),edited,unresolved,error));
     // A saved scoped name remains selected when its owner is unreachable.
-    auto remote=avr;const auto member=id<model::OctopusId>(70);remote.octopuses.push_back({member,"Old friendly label","",true,4});for(auto& x:remote.components)if(x.record.component_id==remote.activities[1].audio)for(auto& n:x.record.qualified_names){n.port.octopus_id=member;n.port.tentacle_id=3;}
+    auto remote=avr;const auto member=id<model::OctopusId>(70);remote.octopuses.push_back({member,4});for(auto& x:remote.components)if(x.record.component_id==remote.activities[1].audio){x.record.qualified_name->port.octopus_id=member;x.record.qualified_name->port.tentacle_id=3;}
     const ae::OwnerHostnames names{{*remote.controller_octopus_id,"amity-main"},{member,"amity-den"}};
     const auto offline=ae::choices(remote,{},names,true);const auto receiver=std::find_if(offline.begin(),offline.end(),[&](const auto& choice){return choice.component_id==remote.activities[1].audio;});assert(receiver!=offline.end()&&receiver->location=="amity-den · Adapter 4"&&!receiver->observation);assert(ae::edit(remote,rows,offline,random_source(),edited,unresolved,error)&&unresolved.empty());assert(serialize_configuration(edited).find("domains")==std::string::npos);
     // Removed owners stay identified on retained selections, but do not make
@@ -142,14 +133,14 @@ int main(){
     }
     // New exact selectors may be saved without requiring a current presence
     // observation. Equal names on different owners retain distinct targets.
-    auto empty=empty_configuration();empty.octopuses.push_back({member,"amity-den","amity-den",false,4});std::vector<ae::Choice> exact;
+    auto empty=empty_configuration();empty.octopuses.push_back({member,4});std::vector<ae::Choice> exact;
     for(auto owner:{*empty.controller_octopus_id,member}){model::QualifiedDeviceName name{{empty.consortium_id,owner,0,model::Side::back},"Source"};exact.push_back({"native:"+sha256_hex(model::name_json(name)),"Source","",{"source"},{},name,{}});}
     model::QualifiedDeviceName screen{{empty.consortium_id,*empty.controller_octopus_id,0,model::Side::front},"TV"};exact.push_back({"screen","TV","",{"display","audio"},{},screen,{}});
-    ae::Row fresh;fresh.name="Remote source";fresh.source=exact[1].value;fresh.display=exact[2].value;fresh.audio=exact[2].value;assert(ae::edit(empty,{fresh},exact,random_source(),edited,unresolved,error)&&unresolved.empty());const auto& selection=edited.activities[0];const auto source=std::find_if(edited.components.begin(),edited.components.end(),[&](const auto& v){return v.record.component_id==selection.source;});assert(source!=edited.components.end()&&source->record.qualified_names[0].port.octopus_id==member);
+    ae::Row fresh;fresh.name="Remote source";fresh.source=exact[1].value;fresh.display=exact[2].value;fresh.audio=exact[2].value;assert(ae::edit(empty,{fresh},exact,random_source(),edited,unresolved,error)&&unresolved.empty());const auto& selection=edited.activities[0];const auto source=std::find_if(edited.components.begin(),edited.components.end(),[&](const auto& v){return v.record.component_id==selection.source;});assert(source!=edited.components.end()&&source->record.qualified_name->port.octopus_id==member);
     // Manual components use only saved ownership, connection capacity and OSD
     // identity. No observations or scan are needed, including for offline peers.
-    auto manual=empty_configuration();manual.octopuses.push_back({member,"Old label","Old label",true,4});
-    const auto removed=id<model::OctopusId>(71);manual.octopuses.push_back({removed,"Removed","Removed",false,4});
+    auto manual=empty_configuration();manual.octopuses.push_back({member,4});
+    const auto removed=id<model::OctopusId>(71);manual.octopuses.push_back({removed,4});
     const ae::OwnerHostnames manual_names{{*manual.controller_octopus_id,"amity-main"},{member,"amity-den"}};
     const auto owners=ae::component_owners(manual,manual_names,{member});
     assert(owners.size()==2&&owners[0].name=="amity-main"&&owners[1].id==member&&owners[1].name=="amity-den"&&owners[1].supported_tentacles==4);
@@ -160,9 +151,17 @@ int main(){
     const auto parse_component=[&](const std::string& body,ae::ComponentSubmission& value){auto* json=web_admin::parse_json_input(body);const bool ok=ae::parse_component_submission(json,manual,value,error);cJSON_Delete(json);return ok;};
     ae::ComponentSubmission component;assert(parse_component(component_body,component));model::ComponentId component_id;
     assert(ae::add_component(manual,component,owners,random_source(),edited,component_id,error));
-    assert(edited.components.size()==1&&edited.components[0].kind=="receiver"&&edited.components[0].record.qualified_names[0]==component.name&&edited.activities.empty());
+    assert(edited.components.size()==1&&edited.components[0].kind=="receiver"&&edited.components[0].record.qualified_name==component.name&&edited.activities.empty());
     Configuration roundtrip;assert(parse_configuration(serialize_configuration(edited),roundtrip,error));
     const auto offline_added=ae::choices(roundtrip,{},manual_names,true);assert(offline_added.size()==1&&offline_added[0].value==ae::component_value(component_id)&&offline_added[0].location=="amity-den · Adapter 4"&&!offline_added[0].observation);
+    // The saved name omits its consortium. Parsing restores the document's, so
+    // the reloaded component still matches its submission and observation.
+    Configuration readded;model::ComponentId readded_id;
+    assert(ae::add_component(roundtrip,component,owners,random_source(),readded,readded_id,error)&&readded_id==component_id&&readded.components.size()==1);
+    model::CecObservation heard;heard.endpoint={component.name.port,5};heard.osd_name=component.name.osd_name;heard.device_type=5;
+    const auto unsaved=ae::choices(manual,{heard},manual_names,true);assert(unsaved.size()==1&&unsaved[0].value.rfind("native:",0)==0);
+    const auto observed_added=ae::choices(roundtrip,{heard},manual_names,true);
+    assert(observed_added.size()==1&&observed_added[0].value==ae::component_value(component_id)&&observed_added[0].observation);
     auto selected_component=component;selected_component.role="switch";Configuration reused;model::ComponentId same_id;
     assert(ae::add_component(edited,selected_component,owners,random_source(),reused,same_id,error)&&same_id==component_id&&reused.components.size()==1);
     selected_component.role="source";assert(!ae::add_component(edited,selected_component,owners,random_source(),reused,same_id,error));

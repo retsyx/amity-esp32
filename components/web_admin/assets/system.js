@@ -322,9 +322,9 @@ window.amityInterface=(()=>{
    const peer=current.membership?.peers?.find(value=>value.octopus_id===board.octopus_id);
    if(board.octopus_id===(snapshot.controller_octopus_id||current.octopus_id))throw Error('This Amity cannot remove itself.');
    if(!(snapshot.octopuses||[]).some(value=>value.octopus_id===board.octopus_id)&&!peer?.enrolled&&!peer?.provisional&&!(current.named_devices||[]).some(value=>value.octopus_id===board.octopus_id))throw Error('This Amity is no longer in this system. Close and refresh the device list.');
-   const equipment=new Set((snapshot.components||[]).filter(component=>(component.qualified_names||[]).some(value=>value.octopus_id===board.octopus_id)).map(component=>component.component_id));
+   const equipment=new Set((snapshot.components||[]).filter(component=>component.qualified_name?.octopus_id===board.octopus_id).map(component=>component.component_id));
    const affected=(snapshot.activities||[]).filter(activity=>['display','source','audio','switch_device'].some(role=>equipment.has(activity[role])));
-   for(const activity of affected){const item=document.createElement('li');item.textContent=activity.label||activity.generated_label||'Unnamed activity';activities.append(item);}
+   for(const activity of affected){const item=document.createElement('li');item.textContent=activity.label||'Unnamed activity';activities.append(item);}
    activities.hidden=!affected.length;
    warning.textContent=affected.length?'The following activities will be deleted if you confirm removal:':'No saved activities reference this Amity.';
    review={octopus_id:board.octopus_id,confirm:true,expected_membership_revision:current.membership?.membership_revision,
@@ -463,9 +463,11 @@ window.amityInterface=(()=>{
    const available=port=>connectors.some(c=>samePort(c,port));
    const seen=(current.observations||[]).filter(o=>o.resolved&&o.qualified_name?.octopus_id===replacementId).map(o=>o.qualified_name);
    const rows=[];
-   for(const component of snapshot.components||[])for(const previous of component.qualified_names||[])if(previous.octopus_id===board.octopus_id){
-    const matches=seen.filter(n=>n.osd_name===previous.osd_name);
-    rows.push({key:component.component_id+'|'+JSON.stringify(previous),component_id:component.component_id,name:component.label||component.generated_label||previous.osd_name,previous,found:matches.find(n=>samePort(n,previous))||matches[0]||null});
+   for(const component of snapshot.components||[]){
+    const saved=component.qualified_name;if(saved?.octopus_id!==board.octopus_id)continue;
+    // Saved names omit their consortium, which the configuration states once.
+    const previous={consortium_id:snapshot.consortium_id,...saved},matches=seen.filter(n=>n.osd_name===previous.osd_name);
+    rows.push({key:component.component_id+'|'+JSON.stringify(previous),component_id:component.component_id,name:component.label||previous.osd_name,previous,found:matches.find(n=>samePort(n,previous))||matches[0]||null});
    }
    // Unseen equipment moves with seen equipment from its old connection, or keeps that connection.
    for(const row of rows){
@@ -483,7 +485,7 @@ window.amityInterface=(()=>{
     targets.add(key);ports.push({previous:portOnly(group[0].previous),replacement:{...portOnly(group[0].previous),octopus_id:replacementId,tentacle_id:target.tentacle_id,side:target.side}});
    }
    const equipment=new Set(rows.map(row=>row.component_id));
-   const activities=(snapshot.activities||[]).filter(activity=>['display','source','audio','switch_device'].some(role=>equipment.has(activity[role]))).map(activity=>activity.label||activity.generated_label||'Unnamed activity');
+   const activities=(snapshot.activities||[]).filter(activity=>['display','source','audio','switch_device'].some(role=>equipment.has(activity[role]))).map(activity=>activity.label||'Unnamed activity');
    const ready=!!peer?.enrolled&&!!peer?.ready;
    const proposal={expected_config_revision:snapshot.config_revision,expected_presentation_revision:snapshot.presentation_revision,expected_membership_revision:current.membership?.membership_revision,
     expected_target_boot_id:(current.membership?.peers||[]).find(p=>p.octopus_id===board.octopus_id)?.boot_id||null,previous_octopus_id:board.octopus_id,replacement_octopus_id:replacementId,old_hardware_isolated:true,ports,

@@ -88,7 +88,7 @@ class ReplacementTests(unittest.TestCase):
         mutations = {
             "boot": lambda f: f.system["membership"]["peers"][-1].update(boot_id="e" * 32),
             "identity": lambda f: f.system["membership"]["peers"][-1].update(octopus_id="e" * 32),
-            "equipment_owner": lambda f: f.config["components"][-1]["qualified_names"][0].update(octopus_id="e" * 32),
+            "equipment_owner": lambda f: f.config["components"][-1]["qualified_name"].update(octopus_id="e" * 32),
             "equipment_id": lambda f: f.config["components"][-1].update(component_id="e" * 32),
             "activity_id": lambda f: f.config["activities"][-1].update(activity_id="e" * 32),
             "activity_selection": lambda f: f.config["activities"][-1].update(source="3" * 32),

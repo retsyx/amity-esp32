@@ -7,7 +7,7 @@ import time
 from .cec import Frame, TxResult
 from .components import PowerState
 from .discovery import (_ObservedEquipment, _fresh_discovery, _native_selector,
-                        _observed_matches, _identifier)
+                        _observed_matches, _identifier, _saved_name)
 from .dut import _positive_seconds
 
 
@@ -103,7 +103,7 @@ class LookupNameGate:
                 or not isinstance(configuration.get("components"), list)):
             raise AssertionError("Lookup name gate has no current saved equipment identity")
         for component in configuration["components"]:
-            if self._name in component.get("qualified_names", ()):
+            if _saved_name(configuration, component) == self._name:
                 identity = component.get("component_id")
                 if not _identifier(identity):
                     raise AssertionError("The gated source has a malformed saved selector")

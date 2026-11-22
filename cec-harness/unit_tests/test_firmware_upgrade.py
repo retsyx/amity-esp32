@@ -131,15 +131,15 @@ class UpgradeFixture:
                 _initial_system={'boot_id': MAIN_BOOT, 'membership': {'peers': [
                     {'octopus_id': old.device_id, 'boot_id': old.member_boot} for old in self.members]}})
             self.members.append(member)
-        self.config = dict(version=3, consortium_id=GROUP, controller_octopus_id=self.main.identity.device_id,
-            config_revision='7', presentation_revision='4', primary_zone_id='4'*32,
+        self.config = dict(version=4, consortium_id=GROUP, controller_octopus_id=self.main.identity.device_id,
+            config_revision='7', presentation_revision='4',
             octopuses=[{'octopus_id': owner, 'supported_tentacles': 1} for owner in self.ids],
             adapter_settings=[{'octopus_id': owner, 'tentacle_id': 0, 'default_front_physical_address': '1.0.0.0'} for owner in self.ids],
             components=[{'component_id': '5'*32, 'label': 'Saved player', 'kind': 'source',
-                'qualified_names': [{'consortium_id': GROUP, 'octopus_id': self.members[0].device_id,
-                                    'tentacle_id': 0, 'side': 'back', 'osd_name': 'Player'}]}],
-            activities=[{'activity_id': '6'*32, 'zone_id': '4'*32, 'source': '5'*32, 'label': 'Watch player'}],
-            activity_order=['6'*32], zones=[{'zone_id': '4'*32, 'activity_order': ['6'*32]}],
+                'qualified_name': {'octopus_id': self.members[0].device_id,
+                                   'tentacle_id': 0, 'side': 'back', 'osd_name': 'Player'}}],
+            activities=[{'activity_id': '6'*32, 'source': '5'*32, 'label': 'Watch player'}],
+            activity_order=['6'*32],
             external_slots=[{'slot': 0, 'activity_id': '6'*32, 'tombstone': False, 'hidden': False, 'alias': 'Watch'}])
         self.bundle = FirmwareBundle(bundle_bytes(), VERSION, len(image_bytes()), NEW_IMAGE,
                                      hashlib.sha256(image_bytes()).hexdigest())

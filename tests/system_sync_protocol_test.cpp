@@ -443,7 +443,7 @@ void earlier_save_completes_after_a_later_save(){
         main.applied.applied_config_revision=main.configuration.config_revision;main.applied.applied_presentation_revision=main.configuration.presentation_revision;
         main.applied.applied_policy_hash=executable_policy_hash(main.configuration);main.configuration_applied();amity::flush_configuration();
     };
-    auto first=active;first.activities[0].label="First";first.activities[0].label_override=true;
+    auto first=active;first.activities[0].label="First";
     assert(amity::activate_distributed_configuration(first,active.revisions(),id<s::MessageId>(140))==ESP_OK);apply();
     // Another interface saves before anyone asks about the first request.
     auto second=main.configuration;second.activities[0].label="Second";
@@ -457,7 +457,7 @@ void failed_adoption_retries_keep_save_statuses(){
     reset();auto main=control();
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;main.auto_apply=false;
     assert(amity::start_configuration_synchronization(main)==ESP_OK);
-    auto edited=active;edited.activities[0].label="Followed";edited.activities[0].label_override=true;
+    auto edited=active;edited.activities[0].label="Followed";
     const auto followed=id<s::MessageId>(150);
     assert(amity::activate_distributed_configuration(edited,active.revisions(),followed)==ESP_OK);
     // An enrolled member that the saved roster lacks keeps failing adoption.
@@ -472,10 +472,10 @@ void scans_and_saved_intent_without_peer_ack(){
     const std::vector<std::pair<s::OctopusId,uint8_t>> expected={{id<s::OctopusId>(9),0},{id<s::OctopusId>(9),2},{id<s::OctopusId>(9),3},{id<s::OctopusId>(10),1}};
     assert(main.remote_scans==expected);main.remote_scan_result=false;assert(amity::request_equipment_scan()==ESP_ERR_INVALID_STATE);
     main.local_input=false;const auto scans=main.local_scan_calls;assert(amity::request_equipment_scan()==ESP_ERR_INVALID_STATE&&main.local_scan_calls==scans);main.local_input=true;
-    peers.clear();main.configuration.octopuses.push_back({id<s::OctopusId>(9),"offline","offline",false,4});
-    const auto source=main.configuration.activities[0].source;for(auto& item:main.configuration.components)if(item.record.component_id==source)item.record.qualified_names[0].port.octopus_id=id<s::OctopusId>(9);
+    peers.clear();main.configuration.octopuses.push_back({id<s::OctopusId>(9),4});
+    const auto source=main.configuration.activities[0].source;for(auto& item:main.configuration.components)if(item.record.component_id==source)item.record.qualified_name->port.octopus_id=id<s::OctopusId>(9);
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
-    auto candidate=active;candidate.activities[0].audio=candidate.activities[0].source;candidate.activities[0].label="Renamed";candidate.activities[0].label_override=true;main.auto_apply=false;const auto began=now;const auto request=id<s::MessageId>(100);
+    auto candidate=active;candidate.activities[0].audio=candidate.activities[0].source;candidate.activities[0].label="Renamed";main.auto_apply=false;const auto began=now;const auto request=id<s::MessageId>(100);
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),request)==ESP_OK&&now==began);
     assert(main.configured_snapshot&&main.configured_snapshot==committed_snapshot);
     assert(configuration_changes.empty()); // Admission cannot invalidate old-recipe cleanup.
@@ -499,39 +499,33 @@ void scans_and_saved_intent_without_peer_ack(){
     ConfigurationStore recovered(memory);ConfigurationSnapshot after;std::string error;assert(recovered.recover(after,error)==ConfigResult::ok&&after->canonical==saved);
 }
 void saved_owner_capacity_does_not_shrink(){
-    reset();auto main=control();main.configuration.octopuses.push_back({id<s::OctopusId>(9),"saved owner","saved owner",false,4});
+    reset();auto main=control();main.configuration.octopuses.push_back({id<s::OctopusId>(9),4});
     const auto source=main.configuration.activities[0].source;
-    for(auto& component:main.configuration.components)if(component.record.component_id==source){component.record.qualified_names[0].port.octopus_id=id<s::OctopusId>(9);component.record.qualified_names[0].port.tentacle_id=3;}
+    for(auto& component:main.configuration.components)if(component.record.component_id==source){component.record.qualified_name->port.octopus_id=id<s::OctopusId>(9);component.record.qualified_name->port.tentacle_id=3;}
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
     assert(amity::start_configuration_synchronization(main)==ESP_OK);peers={remote(9,19,1,1)};
     const auto saved=serialize_configuration(main.configuration);const auto writes=memory.writes;
     amity::adopt_owners();
     assert(main.configure_calls==0&&memory.writes==writes&&configuration_changes.empty()&&serialize_configuration(main.configuration)==saved);
 }
-void added_owner_label_remains_unique_after_middle_removal(){
-    for(bool renamed:{false,true}){
-        reset();auto main=control();const auto original=main.identity,removed=id<s::OctopusId>(9),kept=id<s::OctopusId>(10),added=id<s::OctopusId>(1);
-        main.configuration.octopuses.front().label=main.configuration.octopuses.front().generated_label="Amity 1";
-        main.configuration.octopuses.push_back({removed,"Amity 2","Amity 2",false,1});
-        main.configuration.octopuses.push_back({kept,renamed?"Den":"Amity 3","Amity 3",renamed,1});
-        Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
-        assert(amity::start_configuration_synchronization(main)==ESP_OK);
-        Configuration candidate;std::vector<s::ActivityId> affected;std::string error;
-        assert(propose_octopus_removal(active,removed,candidate,affected,error)&&affected.empty());
-        assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(140))==ESP_OK);
-        peers={remote(10,20,1,1),remote(1,21,1,1)};amity::adopt_owners();
-        const auto owner=[&](s::OctopusId id)->const ConfiguredOctopus&{const auto found=std::find_if(main.configuration.octopuses.begin(),main.configuration.octopuses.end(),[&](const auto& value){return value.octopus_id==id;});assert(found!=main.configuration.octopuses.end());return *found;};
-        assert(owner(original).label=="Amity 1"&&owner(kept).label==(renamed?"Den":"Amity 3")&&owner(kept).generated_label=="Amity 3"&&owner(kept).label_override==renamed);
-        assert(owner(added).label=="Amity 2"&&owner(added).generated_label=="Amity 2"&&!owner(added).label_override);
-        const auto encoded=serialize_configuration(main.configuration);Configuration decoded;
-        assert(encoded.find(removed.str())==std::string::npos&&parse_configuration(encoded,decoded,error));
-        assert(decoded.octopuses.front().octopus_id==added&&decoded.controller_octopus_id==original&&decoded.activities.front().source==active.activities.front().source);
-    }
+void added_owner_is_adopted_after_middle_removal(){
+    reset();auto main=control();const auto original=main.identity,removed=id<s::OctopusId>(9),kept=id<s::OctopusId>(10),added=id<s::OctopusId>(1);
+    main.configuration.octopuses.push_back({removed,1});main.configuration.octopuses.push_back({kept,1});
+    Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
+    assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    Configuration candidate;std::vector<s::ActivityId> affected;std::string error;
+    assert(propose_octopus_removal(active,removed,candidate,affected,error)&&affected.empty());
+    assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(140))==ESP_OK);
+    peers={remote(10,20,1,1),remote(1,21,1,1)};amity::adopt_owners();
+    const auto encoded=serialize_configuration(main.configuration);Configuration decoded;
+    assert(encoded.find(removed.str())==std::string::npos&&parse_configuration(encoded,decoded,error));
+    assert(decoded.octopuses.size()==3&&decoded.octopuses.front().octopus_id==added&&decoded.controller_octopus_id==original&&decoded.activities.front().source==active.activities.front().source);
+    assert(std::any_of(decoded.octopuses.begin(),decoded.octopuses.end(),[&](const auto& owner){return owner.octopus_id==kept;}));
 }
 void removal_commit_boundary(){
     reset();auto main=control();const auto removed=id<s::OctopusId>(9);
-    main.configuration.octopuses.push_back({removed,"Member","Member",false,1});
-    for(auto& component:main.configuration.components)if(component.record.component_id==main.configuration.activities.front().source)component.record.qualified_names[0].port.octopus_id=removed;
+    main.configuration.octopuses.push_back({removed,1});
+    for(auto& component:main.configuration.components)if(component.record.component_id==main.configuration.activities.front().source)component.record.qualified_name->port.octopus_id=removed;
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;
     assert(amity::start_configuration_synchronization(main)==ESP_OK);
     Configuration candidate;std::vector<s::ActivityId> affected;std::string error;assert(propose_octopus_removal(active,removed,candidate,affected,error));
@@ -547,4 +541,4 @@ void removal_commit_boundary(){
     assert(amity::configuration_activation_status(id<s::MessageId>(133)).phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_application();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_report_republishes_latest();scans_and_saved_intent_without_peer_ack();earlier_save_completes_after_a_later_save();failed_adoption_retries_keep_save_statuses();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_application();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_report_republishes_latest();scans_and_saved_intent_without_peer_ack();earlier_save_completes_after_a_later_save();failed_adoption_retries_keep_save_statuses();saved_owner_capacity_does_not_shrink();added_owner_is_adopted_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, owner adoption after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

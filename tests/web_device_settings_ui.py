@@ -27,7 +27,7 @@ BOOT,REMOTE_BOOT,RENAMED_BOOT='a'*32,'b'*32,'c'*32
 fixture=dict(hostname='amity-dut',boot_id=BOOT,hostname_probes=0,hostname_ready=False,early_navigation=False,determined=None,calls=[],gets=[],fail=False,
              settings_fail=False,settings_outcome='applied',settings_http500=False,hostname_fail=False,hostname_http500=False,hostname_after_adapter=None,remote_status='ready',named=True,operations={},next_id=100)
 editor=dict(version=1,activities=[],device_choices=[],expected_config_revision='1',expected_presentation_revision='1')
-configuration=dict(version=3,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],zones=[],
+configuration=dict(version=4,controller_octopus_id=MAIN,config_revision='1',presentation_revision='1',activities=[],
                    octopuses=[dict(octopus_id=MAIN,supported_tentacles=1),dict(octopus_id=MEMBER,supported_tentacles=4)])
 def adapter(slot,configured=True,default='1.0.0.0',observed=None):
     return dict(tentacle_id=slot,name=f'HDMI adapter {slot+1}',configured=configured,

@@ -84,18 +84,16 @@ class Fixture:
                            "enrollment_open": False, "phase": "idle", "last_error": "",
                            "peers": [self.peer(self.existing_id, "existing-member", "f" * 32)]}}
         self.config = {
-            "version": 3, "controller_octopus_id": self.main.identity.device_id,
-            "consortium_id": self.group, "primary_zone_id": "1" * 32,
+            "version": 4, "controller_octopus_id": self.main.identity.device_id,
+            "consortium_id": self.group,
             "config_revision": "7", "presentation_revision": "4", "activity_order": ["2" * 32],
             "octopuses": [self.owner(self.main.identity.device_id), self.owner(self.existing_id)],
             "components": [{"component_id": "3" * 32, "label": "Saved equipment", "kind": "source",
-                            "qualified_names": [{"consortium_id": self.group,
-                                                 "octopus_id": self.main.identity.device_id,
-                                                 "tentacle_id": 0, "side": "back", "osd_name": "Saved player"}]}],
-            "activities": [{"activity_id": "2" * 32, "zone_id": "1" * 32, "label": "Saved activity",
+                            "qualified_name": {"octopus_id": self.main.identity.device_id,
+                                               "tentacle_id": 0, "side": "back", "osd_name": "Saved player"}}],
+            "activities": [{"activity_id": "2" * 32, "label": "Saved activity",
                             "source": "3" * 32, "display": None, "audio": None,
                             "switch_device": None, "switch_input": 0}],
-            "zones": [{"zone_id": "1" * 32, "activity_order": ["2" * 32]}],
             "external_slots": [{"slot": 0, "activity_id": "2" * 32, "tombstone": False,
                                 "hidden": False, "alias": "Saved shortcut"}]}
         self.original = deepcopy(self.config)
@@ -127,8 +125,7 @@ class Fixture:
         raise AssertionError(description + " must not occur")
 
     def owner(self, identity):
-        return {"octopus_id": identity, "label": "Saved board", "generated_label": "Saved board",
-                "label_override": False, "supported_tentacles": self.capacity}
+        return {"octopus_id": identity, "supported_tentacles": self.capacity}
 
     def peer(self, identity, hostname, boot):
         return {"octopus_id": identity, "hostname": hostname, "boot_id": boot,
@@ -230,7 +227,7 @@ class Fixture:
                     or data["expected_presentation_revision"] != self.config["presentation_revision"]):
                 raise AmityHTTPError(409, "Removal review changed")
             owned = {row["component_id"] for row in self.config["components"]
-                     if any(name["octopus_id"] == data["octopus_id"] for name in row["qualified_names"])}
+                     if (row["qualified_name"] or {}).get("octopus_id") == data["octopus_id"]}
             affected = [row["activity_id"] for row in self.config["activities"]
                         if any(row.get(role) in owned for role in ("source", "display", "audio", "switch_device"))]
             if data["affected_activity_ids"] != affected:
@@ -306,7 +303,7 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(removal[0]["affected_activity_ids"], [])
         self.assertFalse(any(row["octopus_id"] == f.candidate.identity.device_id for row in f.config["octopuses"]))
         self.assertEqual([p["octopus_id"] for p in f.system["membership"]["peers"]], [f.existing_id])
-        for field in ("activities", "components", "external_slots", "zones", "controller_octopus_id"):
+        for field in ("activities", "components", "external_slots", "controller_octopus_id"):
             self.assertEqual(f.config[field], f.original[field])
         member.close()
         self.assertEqual(len(f.posts("remove")), 1)
@@ -326,8 +323,8 @@ class MembershipTests(unittest.TestCase):
         f = Fixture()
         target = f.candidate.identity.device_id
         target_component = {"component_id": "5" * 32, "label": "Old candidate equipment", "kind": "source",
-                            "qualified_names": [{"consortium_id": f.group, "octopus_id": target,
-                                                 "tentacle_id": 0, "side": "back", "osd_name": "Old player"}]}
+                            "qualified_name": {"octopus_id": target,
+                                               "tentacle_id": 0, "side": "back", "osd_name": "Old player"}}
         f.config["octopuses"].append(f.owner(target))
         f.config["components"].append(target_component)
         f.config["adapter_settings"] = [{"octopus_id": f.main.identity.device_id, "tentacle_id": 0},
@@ -352,8 +349,8 @@ class MembershipTests(unittest.TestCase):
                 f = Fixture()
                 target = f.candidate.identity.device_id
                 f.config["components"].append({"component_id": "5" * 32, "label": "Saved candidate source", "kind": "source",
-                                                "qualified_names": [{"consortium_id": f.group, "octopus_id": target,
-                                                                     "tentacle_id": 0, "side": "back", "osd_name": "Saved source"}]})
+                                                "qualified_name": {"octopus_id": target,
+                                                                   "tentacle_id": 0, "side": "back", "osd_name": "Saved source"}})
                 f.config["activities"][0][role] = "5" * 32
                 before = deepcopy(f.config)
                 member = f.added()
@@ -370,8 +367,8 @@ class MembershipTests(unittest.TestCase):
         f = Fixture()
         member = f.added().create()
         f.config["components"].append({"component_id": "5" * 32, "label": "User equipment", "kind": "source",
-                                        "qualified_names": [{"consortium_id": f.group, "octopus_id": f.candidate.identity.device_id,
-                                                             "tentacle_id": 0, "side": "back", "osd_name": "User source"}]})
+                                        "qualified_name": {"octopus_id": f.candidate.identity.device_id,
+                                                           "tentacle_id": 0, "side": "back", "osd_name": "User source"}})
         f.config["activities"][0]["source"] = "5" * 32
         before = deepcopy(f.config)
         with self.assertRaises(MembershipCleanupError):
@@ -386,8 +383,8 @@ class MembershipTests(unittest.TestCase):
                 target = f.candidate.identity.device_id
                 rows = {"octopuses": f.owner(target), "adapter_settings": {"octopus_id": target, "tentacle_id": 0},
                         "components": {"component_id": "5" * 32, "label": "Old source", "kind": "source",
-                                       "qualified_names": [{"consortium_id": f.group, "octopus_id": target,
-                                                            "tentacle_id": 0, "side": "back", "osd_name": "Old source"}]}}
+                                       "qualified_name": {"octopus_id": target,
+                                                          "tentacle_id": 0, "side": "back", "osd_name": "Old source"}}}
                 f.config.setdefault(key, []).append(deepcopy(rows[key]))
                 member = f.added().create()
                 original_request = f.request

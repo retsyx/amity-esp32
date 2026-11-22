@@ -70,10 +70,10 @@ void apply(amity::Snapshot& snapshot){
 }
 int main(){
     callbacks.inputs=matter_inputs;
-    auto& config=*hub.config;config.primary_zone_id=id<amity::system::ZoneId>(1);
-    for(unsigned n=0;n<3;++n){
+    auto& config=*hub.config;
+    for(unsigned n=0;n<2;++n){
         config_store::ConfiguredActivity activity;activity.activity_id=id<amity::system::ActivityId>(10+n);
-        activity.zone_id=n==2?id<amity::system::ZoneId>(2):config.primary_zone_id;activity.label=activity.generated_label="Activity "+std::to_string(n);
+        activity.label="Activity "+std::to_string(n);
         config.activities.push_back(activity);config.external_slots.push_back({static_cast<uint16_t>(2-n),activity.activity_id,false,false,{}});
     }
     amity::Snapshot snapshot;apply(snapshot);

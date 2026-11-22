@@ -31,7 +31,7 @@ class RebootFixture:
         self.skip_reboot = False
         self.activity_current, self.activity_settling, self.activity_error = 0, False, ""
         self.config = {
-            "version": 3, "consortium_id": self.group,
+            "version": 4, "consortium_id": self.group,
             "controller_octopus_id": self.main.identity.device_id,
             "config_revision": "7", "presentation_revision": "8",
             "octopuses": [{"octopus_id": dut.identity.device_id, "supported_tentacles": 2}

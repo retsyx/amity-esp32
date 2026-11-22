@@ -19,7 +19,7 @@ struct Row {
 };
 struct Submission { m::MessageId request_id; config_store::RevisionPair expected; std::vector<Row> rows; };
 // Presentation only. Populate from the local device setting and authenticated
-// retained peer names, never from a configured friendly label or DNS discovery.
+// retained peer names, never from DNS discovery.
 using OwnerHostnames=std::map<m::OctopusId,std::string>;
 using OwnerCapacities=std::map<m::OctopusId,uint8_t>;
 struct ComponentOwner { m::OctopusId id; std::string name; uint8_t supported_tentacles = 0; };

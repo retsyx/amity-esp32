@@ -114,6 +114,20 @@ class LookupNameGateTests(unittest.TestCase):
                 self.assertIsNone(f.source.hooks.before_tx)
                 self.assertNotIn(gate._observe, f.source._wire_observers)
 
+    def test_saved_source_selector_joins_the_gate_only_for_its_owner(self):
+        f = GateFixture()
+        observed = next(row["qualified_name"] for row in f.f.source.system["observations"]
+                        if row["qualified_name"]["osd_name"] == f.source.name
+                        and row["qualified_name"]["octopus_id"] == f.source.dut.identity.device_id)
+        saved = {key: value for key, value in observed.items() if key != "consortium_id"}
+        f.f.full["components"] += [
+            {"component_id": "1" * 32, "label": "Saved source", "kind": "source", "qualified_name": saved},
+            {"component_id": "2" * 32, "label": "Other owner source", "kind": "source",
+             "qualified_name": {**saved, "octopus_id": f.f.member.identity.device_id}}]
+        with f.gate as gate:
+            self.assertIn("component:" + "1" * 32, gate._selectors)
+            self.assertNotIn("component:" + "2" * 32, gate._selectors)
+
     def test_progress_accepts_b_before_or_after_a_queries_on_either_owner(self):
         for member in (False, True):
             for first in ("a", "b"):

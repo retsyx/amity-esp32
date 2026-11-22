@@ -85,8 +85,8 @@ int edit(hap_char_t* characteristic,const char* name,int number=0){
 }
 int main(){
     for(unsigned i=0;i<inputs.size();++i){auto& in=inputs[i];in.name=&chars[i][0];in.label=&chars[i][1];in.configured=&chars[i][2];in.visible=&chars[i][3];in.target_visible=&chars[i][4];}
-    auto& config=*service.config;config.primary_zone_id=id<amity::system::ZoneId>(2);
-    config_store::ConfiguredActivity activity;activity.activity_id=id<amity::system::ActivityId>(3);activity.zone_id=config.primary_zone_id;activity.label=activity.generated_label="Watch television";
+    auto& config=*service.config;
+    config_store::ConfiguredActivity activity;activity.activity_id=id<amity::system::ActivityId>(3);activity.label="Watch television";
     config.activities.push_back(activity);config.external_slots.push_back({0,activity.activity_id,false,false,{}});
     refresh_values();assert(input_updates==32&&chars[0][0].text==activity.label&&chars[0][2].number==1&&chars[1][0].text=="Unused 2");
     // Repeated per-service accessory reads and idle worker refreshes must not
@@ -112,8 +112,8 @@ int main(){
     assert(order_updates==1&&displayed==order({}));
     ++config.config_revision;config.activities.clear();config.external_slots.clear();
     for(unsigned n=0;n<3;++n){
-        config_store::ConfiguredActivity value;value.activity_id=id<amity::system::ActivityId>(10+n);value.zone_id=config.primary_zone_id;
-        value.label=value.generated_label="Activity "+std::to_string(n);config.activities.push_back(value);
+        config_store::ConfiguredActivity value;value.activity_id=id<amity::system::ActivityId>(10+n);
+        value.label="Activity "+std::to_string(n);config.activities.push_back(value);
         config.external_slots.push_back({static_cast<uint16_t>(n),value.activity_id,false,false,{}});
     }
     const auto activity_id=[](unsigned n){return id<amity::system::ActivityId>(n);};

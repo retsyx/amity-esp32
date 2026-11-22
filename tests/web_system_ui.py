@@ -32,9 +32,9 @@ def main(argv=None):
                   current_activity=-1, front_address=4, back_address=0, tx_errors=0, rx_dropped=0,
                   expected_state_revision='0', expected_boot_id='a'*32, devices=[], device_choices=choices)
     status['devices'] = [dict(name=c['value'], title=c['title'], location=c['location'], bus='front' if i == 0 else 'back', type=0 if i == 0 else 4, address=0 if i == 0 else 4, physical_address=0 if i == 0 else 4096) for i, c in enumerate(choices)]
-    configuration = dict(version=3, controller_octopus_id=controller, config_revision='1', presentation_revision='1',
-                         octopuses=[dict(octopus_id=member, label='Bedroom Amity', supported_tentacles=4), dict(octopus_id=controller, label='Living room Amity', supported_tentacles=1)],
-                         activities=[], zones=[], external_slots=[dict(slot=5, activity_id=aid)])
+    configuration = dict(version=4, consortium_id='c'*32, controller_octopus_id=controller, config_revision='1', presentation_revision='1',
+                         octopuses=[dict(octopus_id=member, supported_tentacles=4), dict(octopus_id=controller, supported_tentacles=1)],
+                         activities=[], external_slots=[dict(slot=5, activity_id=aid)])
     system = dict(octopus_id=controller, hostname='amity-living-room',
                   named_devices=[dict(octopus_id=controller, hostname='amity-living-room'),
                                  dict(octopus_id=member, hostname='amity-bedroom')],
@@ -50,7 +50,7 @@ def main(argv=None):
     def purge_removal(data):
         removed = set(data['affected_activity_ids'])
         owned = {component['component_id'] for component in fixture['config'].get('components', [])
-                 if any(name['octopus_id'] == member for name in component.get('qualified_names', []))}
+                 if (component['qualified_name'] or {}).get('octopus_id') == member}
         fixture['config']['octopuses'] = [owner for owner in fixture['config']['octopuses'] if owner['octopus_id'] != member]
         fixture['config']['components'] = [component for component in fixture['config'].get('components', []) if component['component_id'] not in owned]
         fixture['config']['activities'] = [activity for activity in fixture['config']['activities'] if activity['activity_id'] not in removed]
@@ -353,8 +353,6 @@ def main(argv=None):
             expect(page.get_by_text('Manage added devices from this original Amity. They have no separate interface or remote.', exact=True)).to_have_count(0)
             expect(page.get_by_role('button', name='Move coordinator')).to_have_count(0)
             page.screenshot(path=str(ROOT/'test-results/controller-managed-devices-ui-0.1.73.png'), full_page=True)
-            expect(page.locator('#managedAmityList')).not_to_contain_text('Living room Amity')
-            expect(page.locator('#managedAmityList')).not_to_contain_text('Bedroom Amity')
             expect(page.get_by_role('button', name='Location', exact=True)).to_have_count(0)
             saved_peers = system['membership']['peers']
             saved_names = system['named_devices']
@@ -366,12 +364,11 @@ def main(argv=None):
                 system['named_devices'] = [n for n in saved_names if n['octopus_id'] != member]
                 page.evaluate('amityInterface.refresh()')
                 expect(rows.nth(1)).to_contain_text('Name unavailable')
-                expect(rows.nth(1)).not_to_contain_text('Bedroom Amity')
             finally:
                 system['membership']['peers'] = saved_peers
                 system['named_devices'] = saved_names
                 page.evaluate('amityInterface.refresh()')
-            passed('management uses canonical live/cached hostnames, never old labels, with this main first and no member controls')
+            passed('management uses canonical live/cached hostnames with this main first and no member controls')
             saved_boards = fixture['config']['octopuses']
             saved_peers = system['membership']['peers']
             fixture['config']['octopuses'] = [b for b in saved_boards if b['octopus_id'] == controller]
@@ -421,7 +418,7 @@ def main(argv=None):
             saved_editor = deepcopy(editor)
             saved_peers = deepcopy(system['membership']['peers'])
             saved_remove_config = deepcopy(saved_config)
-            saved_remove_config['components'] = [dict(component_id=f'{n:032x}', qualified_names=[dict(octopus_id=member)]) for n in range(31, 35)]
+            saved_remove_config['components'] = [dict(component_id=f'{n:032x}', qualified_name=dict(octopus_id=member)) for n in range(31, 35)]
             saved_remove_config['activities'] = [dict(activity_id=f'{n+40:032x}', label='Uses '+role, **{role:f'{n:032x}'})
                                                 for n, role in zip(range(31, 35), ('display', 'source', 'audio', 'switch_device'))]
             saved_remove_config['activities'].append(dict(activity_id='f'*32, label='Unrelated local activity'))
@@ -657,13 +654,14 @@ def main(argv=None):
             saved_configuration, saved_management_system = deepcopy(fixture['config']), deepcopy(system)
             try:
                 retained, replacement, component = (f'{n:032x}' for n in (91, 92, 93))
-                old_name = dict(consortium_id='c'*32, octopus_id=retained, tentacle_id=0, side='front', osd_name='Stored TV')
-                replacement_name = {**old_name, 'octopus_id': replacement}
+                # Saved names leave their consortium to the configuration; observations name it.
+                old_name = dict(octopus_id=retained, tentacle_id=0, side='front', osd_name='Stored TV')
+                replacement_name = {'consortium_id': 'c'*32, **old_name, 'octopus_id': replacement}
                 fixture['config']['octopuses'] = [dict(octopus_id=controller, supported_tentacles=1),
                                                   dict(octopus_id=retained, supported_tentacles=1),
                                                   dict(octopus_id=replacement, supported_tentacles=1)]
                 fixture['config']['components'] = [dict(component_id=component, kind='display', label='Stored TV',
-                                                       qualified_names=[old_name])]
+                                                       qualified_name=old_name)]
                 system['named_devices'] = [dict(octopus_id=controller, hostname='amity-living-room'),
                                            dict(octopus_id=retained, hostname='amity-retained'),
                                            dict(octopus_id=replacement, hostname='amity-replacement')]

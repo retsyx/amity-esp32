@@ -145,11 +145,7 @@ void adopt_owners(){
     for(const auto& remote:c::runtime_peers())if(remote.ready&&remote.enrolled){
         auto found=std::find_if(config->octopuses.begin(),config->octopuses.end(),[&](const auto& owner){return owner.octopus_id==remote.id;});
         if(found!=config->octopuses.end()&&found->supported_tentacles>=remote.supported_tentacles)continue;
-        auto next=*config;if(found==config->octopuses.end()){
-            size_t number=1;std::string label;
-            do{label="Amity "+std::to_string(number++);}while(std::any_of(next.octopuses.begin(),next.octopuses.end(),[&](const auto& owner){return owner.label==label||owner.generated_label==label;}));
-            next.octopuses.push_back({remote.id,label,label,false,remote.supported_tentacles});
-        }
+        auto next=*config;if(found==config->octopuses.end())next.octopuses.push_back({remote.id,remote.supported_tentacles});
         else for(auto& owner:next.octopuses)if(owner.octopus_id==remote.id)owner.supported_tentacles=remote.supported_tentacles;
         // Retries reuse one request, so a failing adoption replaces its own
         // status rather than pushing out the statuses of followed saves.

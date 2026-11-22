@@ -33,7 +33,7 @@ def main():
 
     # Human-facing fixture state is projected through the same current editor
     # DTO as shipping Amity; the backup endpoint serves only current saved data.
-    group, controller, zone, boot = (f'{value:032x}' for value in (1, 2, 3, 4))
+    group, controller, boot = (f'{value:032x}' for value in (1, 2, 4))
     fixture.update(config_revision=1, presentation_revision=1, state_revision=1, next_activity_id=100)
     equipment = {}
     saved_equipment = set()
@@ -96,22 +96,21 @@ def main():
         dto = editor()
         rows = []
         for row in dto['activities']:
-            value = dict(activity_id=row['activity_id'], zone_id=zone, label=row['name'], generated_label=row['name'], label_override=True,
+            value = dict(activity_id=row['activity_id'], label=row['name'],
                          **{role: row[role].removeprefix('component:') or None for role in ('display', 'source', 'audio')},
                          switch_device=row.get('switch', {}).get('device', '').removeprefix('component:') or None,
                          switch_input=row.get('switch', {}).get('input', 0))
             rows.append(value)
         order = [row['activity_id'] for row in rows]
-        return dict(version=3, consortium_id=group, controller_octopus_id=controller, primary_zone_id=zone,
+        return dict(version=4, consortium_id=group, controller_octopus_id=controller,
                     config_revision=str(fixture['config_revision']), presentation_revision=str(fixture['presentation_revision']),
-                    octopuses=[dict(octopus_id=controller, label='amity-test', generated_label='amity-test', label_override=False, supported_tentacles=1)],
-                    components=[dict(component_id=c['value'].removeprefix('component:'), label=c['title'], generated_label=c['title'], label_override=False,
+                    octopuses=[dict(octopus_id=controller, supported_tentacles=1)],
+                    components=[dict(component_id=c['value'].removeprefix('component:'), label=c['title'],
                                      kind='display' if 'display' in c['roles'] else 'receiver' if 'audio' in c['roles'] else 'switch' if 'switch' in c['roles'] else 'source',
-                                     qualified_names=[dict(consortium_id=group, octopus_id=controller, tentacle_id=0,
-                                                           side='front' if 'display' in c['roles'] else 'back', osd_name=c['title'][:14])])
+                                     qualified_name=dict(octopus_id=controller, tentacle_id=0,
+                                                         side='front' if 'display' in c['roles'] else 'back', osd_name=c['title'][:14]))
                                 for c in dto['device_choices']],
                     activities=rows, activity_order=order,
-                    zones=[dict(zone_id=zone, label='Main screen', generated_label='Main screen', label_override=False, activity_order=order)],
                     external_slots=[dict(slot=index, activity_id=value, tombstone=False, hidden=False, alias='') for index, value in enumerate(order)])
 
     def visible_name(value):

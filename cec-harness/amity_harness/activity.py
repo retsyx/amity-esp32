@@ -13,7 +13,7 @@ import logging
 import time
 from uuid import uuid4
 
-from .discovery import _ObservedEquipment, _fresh_discovery, _identifier, _observed_matches
+from .discovery import _ObservedEquipment, _fresh_discovery, _identifier, _observed_matches, _saved_name
 from .dut import AmityHTTPError, _positive_seconds
 from .trace import event
 
@@ -265,7 +265,7 @@ class Activity:
             if component in self._manual_components:
                 full = self._full_configuration(document)
                 records = [record for record in full["components"]
-                           if record.get("qualified_names") == [self._qualified_name(component)]]
+                           if _saved_name(full, record) == self._qualified_name(component)]
                 if len(records) != 1 or not _identifier(records[0].get("component_id")):
                     raise AssertionError("Added equipment has no unique saved scoped identity")
                 selector = "component:" + records[0]["component_id"]
@@ -299,7 +299,7 @@ class Activity:
         full = self._full_configuration(document)
         identity = result["component_id"]
         records = [record for record in full["components"] if record.get("component_id") == identity]
-        if len(records) != 1 or records[0].get("qualified_names") != [self._qualified_name(write["component"])]:
+        if len(records) != 1 or _saved_name(full, records[0]) != self._qualified_name(write["component"]):
             raise AssertionError("The added component differs from its requested scoped OSD name")
         if identity not in self._before_equipment:
             self._allocated_equipment.add(identity)
@@ -391,7 +391,7 @@ class Activity:
             expected = {"consortium_id": group, "octopus_id": component.dut.identity.device_id,
                         "tentacle_id": component.tentacle, "side": component.direction,
                         "osd_name": component.name}
-            if len(records) != 1 or records[0].get("qualified_names") != [expected]:
+            if len(records) != 1 or _saved_name(full, records[0]) != expected:
                 return False
         return True
 

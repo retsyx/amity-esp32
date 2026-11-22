@@ -71,7 +71,7 @@ def main():
                     if fixture['upload_abort']:
                         return route.abort('connectionreset')
                     return route.fulfill(json={'rebooting': True})
-                values = {'login': {'token': 'test'}, 'config': {'version': 3, 'activities': [], 'octopuses': []},
+                values = {'login': {'token': 'test'}, 'config': {'version': 4, 'activities': [], 'octopuses': []},
                           'activity-editor': {'version': 1, 'activities': [], 'device_choices': [], 'expected_config_revision': '1', 'expected_presentation_revision': '1'},
                           'activity-editor/status': {'version': fixture['current'], 'current_activity': -1, 'devices': [], 'device_choices': []},
                           'system': {'octopus_id': '1'*32, 'hostname': 'amity-dut', 'membership': {'peers': []}},

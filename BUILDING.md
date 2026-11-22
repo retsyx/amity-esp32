@@ -124,7 +124,7 @@ In a new Bash session, set `IDF_PATH`, `ESP_MATTER_PATH`, and `IDF_TOOLS_PATH` t
 
 ## Current saved format during development
 
-Firmware reads and writes only the current saved configuration format (numeric version 3) and current storage wrapper (numeric version 2). Earlier development formats are not decoded or migrated. Missing, malformed and unsupported format versions fail explicitly; blank storage creates an empty current-format document directly. Version checking and transaction boundaries remain available for a future deliberate format change after release.
+Firmware reads and writes only the current saved configuration format (numeric version 4) and current storage wrapper (numeric version 2). Earlier development formats are not decoded or migrated. Missing, malformed and unsupported format versions fail explicitly; blank storage creates an empty current-format document directly. Version checking and transaction boundaries remain available for a future deliberate format change after release.
 
 The source API and HTTP routes have versionless names, including `config_store::Configuration` and `/api/config`. Numeric format metadata is still validated. Existing valid current-format records keep their bytes, identities and journal markers. Normal application updates preserve factory provisioning and independent pairings/settings; never use a full fresh-install provisioned image for those updates.
 

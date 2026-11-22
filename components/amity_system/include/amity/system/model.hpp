@@ -86,7 +86,7 @@ private:
 #define AMITY_SYSTEM_ID(Name) struct Name##Tag {}; using Name = Id<Name##Tag>
 AMITY_SYSTEM_ID(OctopusId); AMITY_SYSTEM_ID(ConsortiumId); AMITY_SYSTEM_ID(BootId);
 AMITY_SYSTEM_ID(ComponentId);
-AMITY_SYSTEM_ID(ActivityId); AMITY_SYSTEM_ID(ZoneId);
+AMITY_SYSTEM_ID(ActivityId);
 AMITY_SYSTEM_ID(MessageId);
 AMITY_SYSTEM_ID(LinkId);
 AMITY_SYSTEM_ID(JoinId); AMITY_SYSTEM_ID(MutationId);
@@ -135,6 +135,7 @@ std::optional<QualifiedDeviceName> parse_name_json(std::string_view);
 struct Component {
     ComponentId component_id;
     std::string label;
-    std::vector<QualifiedDeviceName> qualified_names;
+    // One saved scoped selector; absent only for a placeholder without CEC identity.
+    std::optional<QualifiedDeviceName> qualified_name;
 };
 } // namespace amity::system

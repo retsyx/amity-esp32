@@ -83,7 +83,7 @@ class LocalInterface:
                 expected_boot_id=BOOT_ID, devices=[], device_choices=[],
                 wifi_connected=True, wifi_rssi=-40, wifi_channel=6, front_physical_address="1.0.0.0",
                 front_address=4, back_address=0, tx_errors=0, rx_dropped=0),
-            "/api/config": dict(version=3, controller_octopus_id=MAIN_ID,
+            "/api/config": dict(version=4, controller_octopus_id=MAIN_ID,
                                 config_revision="7", presentation_revision="3",
                                 octopuses=[dict(octopus_id=owner, supported_tentacles=1)
                                            for owner in self.identities], activities=[]),

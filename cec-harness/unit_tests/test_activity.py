@@ -58,8 +58,8 @@ class Fixture:
         self.dut.last_scan = source.result
         self.rows = [{"activity_id": "9" * 32, "name": "Existing activity", "display": "", "source": "", "audio": ""}]
         self.full = {**deepcopy(source.config), "activities": [], "external_slots": [{"slot": 0, "activity_id": "9" * 32}],
-                     "controller_octopus_id": self.dut.identity.device_id, "primary_zone_id": "d" * 32,
-                     "components": [{"component_id": "f" * 32, "label": "Preexisting equipment", "qualified_names": []}]}
+                     "controller_octopus_id": self.dut.identity.device_id,
+                     "components": [{"component_id": "f" * 32, "label": "Preexisting equipment", "qualified_name": None}]}
         self.selectors = {component.name: row["name"] for component, row in zip(source.components, source.rows)}
         self.choice_roles = {self.tv.name: ["display", "audio"], self.avr.name: ["audio", "switch"],
                              self.player.name: ["source"]}
@@ -183,8 +183,9 @@ class Fixture:
                    or (row.get("switch") or {}).get("device") == native for row in rows):
                 identity = f"{index + 11:032x}"
                 if not any(record["component_id"] == identity for record in self.full["components"]):
-                    self.full["components"].append({"component_id": identity, "label": component.name,
-                                                     "qualified_names": [deepcopy(self.source.system["observations"][index]["qualified_name"])]})
+                    observed = self.source.system["observations"][index]["qualified_name"]
+                    self.full["components"].append({"component_id": identity, "label": component.name, "qualified_name":
+                                                    {key: value for key, value in observed.items() if key != "consortium_id"}})
                 self.selectors[component.name] = "component:" + identity
                 for row in rows:
                     for role in ("display", "source", "audio"):
@@ -313,10 +314,9 @@ class ActivityTests(unittest.TestCase):
                 self.assertEqual(set(data), {"request_id", "expected_config_revision", "expected_presentation_revision",
                                             "octopus_id", "tentacle_id", "side", "osd_name", "role"})
                 identity = "b" * 32
-                fixture.full["components"].append({"component_id": identity, "label": missing.name,
-                                                   "kind": "source", "qualified_names": [{
-                                                       "consortium_id": fixture.source.group,
-                                                       **{key: data[key] for key in ("octopus_id", "tentacle_id", "side", "osd_name")}}]})
+                fixture.full["components"].append({"component_id": identity, "label": missing.name, "kind": "source",
+                                                   "qualified_name": {key: data[key] for key in
+                                                                      ("octopus_id", "tentacle_id", "side", "osd_name")}})
                 fixture.selectors[missing.name] = "component:" + identity
                 fixture.bump()
                 result = {"operation_id": data["request_id"], "stage": "applied", "component_id": identity}
@@ -796,7 +796,7 @@ class ActivityTests(unittest.TestCase):
             records = {record["component_id"]: record for record in f.full["components"]}
             row = f.rows[-1]
             for role, owner in (("display", f.dut), ("source", f.member), ("audio", f.member)):
-                selector = records[row[role].removeprefix("component:")]["qualified_names"][0]
+                selector = records[row[role].removeprefix("component:")]["qualified_name"]
                 self.assertEqual(selector["octopus_id"], owner.identity.device_id)
             activity.start()
             activity.assert_active()

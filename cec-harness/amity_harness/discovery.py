@@ -71,6 +71,36 @@ def _qualified(value, *, runtime=False):
     return {key: value[key] for key in (*_PORT_KEYS, extra)}
 
 
+_SAVED_NAME_KEYS = frozenset(("octopus_id", "tentacle_id", "side", "osd_name"))
+
+
+def _saved_name(configuration, component):
+    """Return a saved component's qualified name, scoped by its configuration.
+
+    Saved names omit consortium_id, which the configuration states once. Only
+    a placeholder without CEC identity saves null, which returns None. A
+    missing or malformed field fails, so it never passes as "no selector".
+    """
+    if not isinstance(component, dict) or "qualified_name" not in component:
+        raise AssertionError("Saved equipment has no qualified_name field")
+    saved = component["qualified_name"]
+    if saved is None:
+        return None
+    consortium = configuration.get("consortium_id") if isinstance(configuration, dict) else None
+    if not isinstance(saved, dict) or set(saved) != _SAVED_NAME_KEYS or not _identifier(consortium):
+        raise AssertionError("Malformed saved equipment qualified name")
+    try:
+        return _qualified({"consortium_id": consortium, **saved})
+    except AssertionError as error:
+        raise AssertionError("Malformed saved equipment qualified name") from error
+
+
+def _saved_owner(configuration, component):
+    """Return the Amity that owns a saved component, or None for a placeholder."""
+    name = _saved_name(configuration, component)
+    return None if name is None else name["octopus_id"]
+
+
 def _native_selector(qualified):
     # model.cpp::name_json uses these exact keys/order, compact formatting and
     # literal UTF-8. Valid OSD names contain no JSON control characters.
@@ -113,10 +143,10 @@ class _ObservedEquipment:
                     if isinstance(item, dict) and item.get("component_id") == identity]
         if len(selected) != 1:
             raise AssertionError("Saved equipment identity is missing or ambiguous")
-        names = selected[0].get("qualified_names")
-        if not isinstance(names, list) or len(names) != 1:
-            raise AssertionError("Saved equipment needs exactly one qualified name")
-        return _qualified(names[0])
+        name = _saved_name(config, selected[0])
+        if name is None:
+            raise AssertionError("Saved equipment has no qualified name")
+        return name
 
     def resolve(self, row):
         if not isinstance(row, dict) or not isinstance(row.get("name"), str):

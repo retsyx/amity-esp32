@@ -151,7 +151,7 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
         }else{
             const auto id=m::ActivityId::parse(text(root.get(),"activity_id"));const auto activity=std::find_if(config->activities.begin(),config->activities.end(),[&](const auto& a){return id&&a.activity_id==*id;});
             if(activity==config->activities.end()){result=reject(req,"The selected activity no longer exists");return true;}
-            admitted=control.request_activity(activity->zone_id,activity->activity_id,op.id,revision_value);op.kind="activity";
+            admitted=control.request_activity(activity->activity_id,op.id,revision_value);op.kind="activity";
         }
         if(admitted!=ESP_OK){result=reject(req,admitted==ESP_ERR_TIMEOUT?"System is settling. Try again shortly.":"The activity request could not be admitted");return true;}
         update(control,op);

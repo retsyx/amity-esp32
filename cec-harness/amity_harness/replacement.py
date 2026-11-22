@@ -6,6 +6,7 @@ import time
 from uuid import uuid4
 
 from .components import PowerState
+from .discovery import _saved_name
 from .dut import AmityHTTPError
 from .membership import MembershipConflict
 from .removal import _digest, _member_signature, _settings_signature, _without_revisions
@@ -45,12 +46,13 @@ def replacement_proposal(configuration, system, previous_id, replacement_id):
             if row.get("resolved") and (row.get("qualified_name") or {}).get("octopus_id") == replacement_id]
     rows = []
     for component in configuration.get("components") or []:
-        for previous in component.get("qualified_names") or []:
-            if previous.get("octopus_id") != previous_id:
-                continue
-            matches = [name for name in seen if name.get("osd_name") == previous.get("osd_name")]
-            found = next((name for name in matches if _same_port(name, previous)), matches[0] if matches else None)
-            rows.append({"component_id": component.get("component_id"), "previous": previous, "found": found})
+        # Requests name the consortium that saved names leave to the configuration.
+        previous = _saved_name(configuration, component)
+        if previous is None or previous["octopus_id"] != previous_id:
+            continue
+        matches = [name for name in seen if name.get("osd_name") == previous["osd_name"]]
+        found = next((name for name in matches if _same_port(name, previous)), matches[0] if matches else None)
+        rows.append({"component_id": component.get("component_id"), "previous": previous, "found": found})
     for row in rows:
         if row["found"] is not None:
             row["port"] = row["found"]
@@ -208,27 +210,28 @@ class ReplacementReview:
             created.update(activity._new_equipment)
         equipment, ports, matched = [], {}, set()
         for component in self.expected["components"]:
-            for index, name in enumerate(component["qualified_names"]):
-                if name["octopus_id"] != self.previous.device_id:
-                    continue
-                if component != created.get(component["component_id"]):
-                    raise MembershipConflict("Replacement cannot move equipment not allocated by its fixture activities")
-                pairs = [(old, new) for old, new in self.pairs if _name(old, self.previous.group) == name]
-                if len(pairs) != 1:
-                    raise MembershipConflict("Replacement must map every saved old equipment selection")
-                old, new = pairs[0]
-                self.main.last_scan.assert_on(new, new.endpoint)
-                target = _name(new, self.previous.group)
-                equipment.append({"component_id": component["component_id"], "previous": deepcopy(name),
-                                  "replacement": target, "same_equipment_confirmed": True})
-                port = {key: name[key] for key in ("consortium_id", "octopus_id", "tentacle_id", "side")}
-                mapped = {key: target[key] for key in port}
-                key = (old.tentacle, old.direction)
-                if key in ports and ports[key]["replacement"] != mapped:
-                    raise MembershipConflict("Equipment mappings disagree on a replacement connector")
-                ports[key] = {"previous": port, "replacement": mapped}
-                component["qualified_names"][index] = target
-                matched.add(old)
+            name = _saved_name(self.expected, component)
+            if name is None or name["octopus_id"] != self.previous.device_id:
+                continue
+            if component != created.get(component["component_id"]):
+                raise MembershipConflict("Replacement cannot move equipment not allocated by its fixture activities")
+            pairs = [(old, new) for old, new in self.pairs if _name(old, self.previous.group) == name]
+            if len(pairs) != 1:
+                raise MembershipConflict("Replacement must map every saved old equipment selection")
+            old, new = pairs[0]
+            self.main.last_scan.assert_on(new, new.endpoint)
+            target = _name(new, self.previous.group)
+            equipment.append({"component_id": component["component_id"], "previous": name,
+                              "replacement": target, "same_equipment_confirmed": True})
+            port = {key: name[key] for key in ("consortium_id", "octopus_id", "tentacle_id", "side")}
+            mapped = {key: target[key] for key in port}
+            key = (old.tentacle, old.direction)
+            if key in ports and ports[key]["replacement"] != mapped:
+                raise MembershipConflict("Equipment mappings disagree on a replacement connector")
+            ports[key] = {"previous": port, "replacement": mapped}
+            # The saved name keeps only the connection and OSD name.
+            component["qualified_name"] = {key: target[key] for key in ("octopus_id", "tentacle_id", "side", "osd_name")}
+            matched.add(old)
         if matched != {old for old, new in self.pairs}:
             raise MembershipConflict("Replacement mapping includes unsaved equipment")
         affected = set(self.previous._affected_activities(config, {self.previous.device_id}))

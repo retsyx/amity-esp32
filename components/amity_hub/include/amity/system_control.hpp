@@ -52,7 +52,7 @@ public:
     void on_configuration_applied(std::function<void()> f){local_.on_configuration_applied(std::move(f));}
     esp_err_t configure(config_store::ConfigurationSnapshot,std::function<esp_err_t()> commit={});
     esp_err_t configure_passive_metadata(config_store::ConfigurationSnapshot);
-    esp_err_t request_activity(system::ZoneId,system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
+    esp_err_t request_activity(system::ActivityId,system::MessageId,std::optional<uint64_t> expected={});
     system::ExecutionSnapshot execution_snapshot()const;
     struct AppliedConfiguration {
         uint64_t config_revision=0,presentation_revision=0;

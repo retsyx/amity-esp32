@@ -77,8 +77,9 @@ class ScanAssertionTests(unittest.TestCase):
         identity = "1" * 32
         self.rows[0]["name"] = "component:" + identity
         self.rows[0]["title"] = label
-        self.config["components"] = [{"component_id": identity,
-                                      "qualified_names": [deepcopy(self.system["observations"][0]["qualified_name"])]}]
+        observed = self.system["observations"][0]["qualified_name"]
+        self.config["components"] = [{"component_id": identity, "qualified_name":
+                                      {key: value for key, value in observed.items() if key != "consortium_id"}}]
 
     def test_native_exact_set_and_observed_locations_ignore_english_location(self):
         self.assertIs(self.result.assert_contains_only(*self.components), self.result)
@@ -209,16 +210,27 @@ class ScanAssertionTests(unittest.TestCase):
         self.assertEqual(set(self.requests), {"/api/config"})
         self.assertEqual(self.result.locations[0]["qualified_name"]["osd_name"], self.tv.name)
 
-    def test_unknown_persisted_id_or_multiple_qualified_names_are_rejected(self):
+    def test_unknown_persisted_id_or_malformed_qualified_name_is_rejected(self):
         self.persist_tv(label=self.tv.name)
-        saved = deepcopy(self.config["components"])
+        saved = deepcopy(self.config["components"][0])
         self.rows[0]["name"] = "component:" + "2" * 32
         with self.assertRaises(AssertionError):
             self.result.assert_contains_only(*self.components)
         self.rows[0]["name"] = "component:" + "1" * 32
-        self.config["components"][0]["qualified_names"].append(deepcopy(saved[0]["qualified_names"][0]))
-        with self.assertRaises(AssertionError):
-            self.result.assert_on(self.tv, self.tv.endpoint)
+        name = saved["qualified_name"]
+        identity = {"component_id": saved["component_id"]}
+        malformed = {"list": {**identity, "qualified_name": [deepcopy(name)]},
+                     "consortium_id": {**identity, "qualified_name": {"consortium_id": self.group, **name}},
+                     "missing osd_name": {**identity, "qualified_name":
+                                          {key: value for key, value in name.items() if key != "osd_name"}},
+                     "placeholder": {**identity, "qualified_name": None},
+                     "version 3 list": {**identity, "qualified_names": [{"consortium_id": self.group, **name}]}}
+        for case, component in malformed.items():
+            self.config["components"] = [component]
+            with self.subTest(case), self.assertRaises(AssertionError):
+                self.result.assert_on(self.tv, self.tv.endpoint)
+        self.config["components"] = [saved]
+        self.result.assert_on(self.tv, self.tv.endpoint)
 
     def test_numeric_booleans_and_malformed_typed_names_are_rejected(self):
         for key in ("address", "physical_address", "type"):

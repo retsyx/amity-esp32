@@ -137,15 +137,10 @@ class ActiveActivityEdits:
         expected = deepcopy(before["config"])
         target = next(row for row in expected["activities"] if row["activity_id"] == other.activity_id)
         target["switch_input"] = switch_input
-        by_id = {row["activity_id"]: row for row in expected["activities"]}
         # Saved activity records retain their canonical identity order. The
-        # explicit presentation arrays carry the editor's row ordering.
+        # explicit presentation array carries the editor's row ordering.
         expected["activity_order"] = order + [identity for identity in expected["activity_order"]
                                               if identity not in previous_ids]
-        for zone in expected["zones"]:
-            zone["activity_order"] = ([identity for identity in order
-                                        if by_id[identity]["zone_id"] == zone["zone_id"]]
-                                      + [identity for identity in zone["activity_order"] if identity not in previous_ids])
         payload = self.active._editor_payload(before["editor"], rows)
         trace = self.active._record("edit_other", request_id=payload["request_id"])
         self.active._write("/api/activity-editor", payload, time.monotonic() + self.active.timeout,

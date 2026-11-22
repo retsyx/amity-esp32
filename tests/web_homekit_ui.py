@@ -30,7 +30,7 @@ def main():
             self.end_headers(); self.wfile.write(data)
         def do_GET(self):
             fixtures={'/api/setup':{'required':False},
-                '/api/config':{'version':3,'activities':[],'octopuses':[]},
+                '/api/config':{'version':4,'activities':[],'octopuses':[]},
                 '/api/activity-editor':{'version':1,'activities':[],'device_choices':[],
                     'expected_config_revision':'1','expected_presentation_revision':'1'},
                 '/api/activity-editor/status':{'version':'test','ready':True,'current_activity':-1,

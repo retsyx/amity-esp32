@@ -60,14 +60,6 @@ class ReplacementFixture(CascadeFixture):
         self.config["octopuses"].append({**self.owner(self.replacement.device_id), "supported_tentacles": 4})
         self.old = self.components(self.candidate, 0, PowerState.OFF)
         self.new = self.components(self.new_dut, 1, PowerState.STANDBY)
-        for row in self.config["components"]:
-            for name in row["qualified_names"]:
-                if name["osd_name"] == "Remote receiver":
-                    name["osd_name"] = "Remote AVR"
-        for resource in self.resources:
-            resource._new_equipment = {identity: deepcopy(next(row for row in self.config["components"]
-                                                               if row["component_id"] == identity))
-                                       for identity in resource._new_equipment}
         self.pairs = tuple(zip(self.old, self.new))
         self.system["observations"] = [self.observation(component) for component in self.new]
         self.bed.components = self.bed.session.components = (*self.old, *self.new)
@@ -110,11 +102,13 @@ class ReplacementFixture(CascadeFixture):
         result = deepcopy(self.config)
         result["octopuses"] = [row for row in result["octopuses"]
                                if row["octopus_id"] != payload["previous_octopus_id"]]
+        # Requests name the consortium; saved names leave it to the configuration.
         for mapping in payload["equipment"]:
             component = next(row for row in result["components"]
                              if row["component_id"] == mapping["component_id"])
-            component["qualified_names"] = [deepcopy(mapping["replacement"]) if name == mapping["previous"] else name
-                                             for name in component["qualified_names"]]
+            if {"consortium_id": result["consortium_id"], **component["qualified_name"]} == mapping["previous"]:
+                component["qualified_name"] = {key: value for key, value in mapping["replacement"].items()
+                                               if key != "consortium_id"}
         return result
 
     def request(self, path, data=None, **kwargs):
@@ -158,7 +152,6 @@ def corruptions():
         "equipment identity": lambda config: config["components"][-1].update(component_id="e" * 32),
         "role selection": lambda config: config["activities"][1].update(source="3" * 32),
         "activity order": lambda config: config["activity_order"].reverse(),
-        "zone order": lambda config: config["zones"][0]["activity_order"].reverse(),
         "home slot": lambda config: config["external_slots"][-1].update(alias="Changed shortcut"),
     }
 
@@ -185,8 +178,18 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual({(row["previous"]["tentacle_id"], row["previous"]["side"],
                            row["replacement"]["tentacle_id"], row["replacement"]["side"])
                           for row in planned["ports"]}, {(0, "front", 1, "front"), (0, "back", 1, "back")})
-        for key in ("activities", "activity_order", "zones", "external_slots"):
+        for key in ("activities", "activity_order", "external_slots"):
             self.assertEqual(fixture.config[key], before[key])
+        posted = fixture.posts("apply")[0]
+        for mapping in posted["ports"] + posted["equipment"]:
+            self.assertEqual((mapping["previous"]["consortium_id"], mapping["replacement"]["consortium_id"]),
+                             (fixture.group, fixture.group))
+        moved = [row for row in fixture.config["components"]
+                 if row["component_id"] in {mapping["component_id"] for mapping in posted["equipment"]}]
+        self.assertEqual(len(moved), len(posted["equipment"]))
+        for row in moved:
+            self.assertEqual(set(row["qualified_name"]), {"octopus_id", "tentacle_id", "side", "osd_name"})
+            self.assertEqual(row["qualified_name"]["octopus_id"], fixture.replacement.device_id)
         self.assertTrue(fixture.member._closed)
         self.assertFalse(fixture.replacement._closed)
         self.assertIn(fixture.member.device_id, fixture.replacement._removed_owners())

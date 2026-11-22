@@ -11,7 +11,7 @@ import re
 import time
 from uuid import uuid4
 
-from .discovery import _identifier
+from .discovery import _identifier, _saved_owner
 from .dut import AmityHTTPError, _positive_seconds
 from .trace import event
 
@@ -137,7 +137,7 @@ class AddedAmity:
     @staticmethod
     def _owned_components(config, owners):
         return {component.get("component_id") for component in config.get("components", [])
-                if any(name.get("octopus_id") in owners for name in component.get("qualified_names", []))}
+                if _saved_owner(config, component) in owners}
 
     @classmethod
     def _affected_activities(cls, config, owners):

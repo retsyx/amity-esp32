@@ -24,8 +24,8 @@ esp_err_t SystemControl::configure(config_store::ConfigurationSnapshot published
     const auto& config=published->configuration;
     if(config.consortium_id!=consortium_||config.controller_octopus_id!=octopus_)return ESP_ERR_INVALID_ARG;
     std::vector<system::ScopedSelector> selectors;
-    for(const auto& c:config.components)for(const auto& name:c.record.qualified_names)
-        selectors.push_back({c.record.component_id.str(),name});
+    for(const auto& c:config.components)if(c.record.qualified_name)
+        selectors.push_back({c.record.component_id.str(),*c.record.qualified_name});
     std::vector<system::OctopusId> owners;
     for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
     const auto previous=active_configuration();
@@ -48,13 +48,13 @@ esp_err_t SystemControl::configure_passive_metadata(config_store::ConfigurationS
     if(!published||local_coordinator_.load()||published->configuration.consortium_id!=consortium_)return ESP_ERR_INVALID_ARG;
     std::atomic_store(&active_,std::move(published));return ESP_OK;
 }
-esp_err_t SystemControl::request_activity(system::ZoneId zone,system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
+esp_err_t SystemControl::request_activity(system::ActivityId activity,system::MessageId request,std::optional<uint64_t> expected){
     refresh_outcomes();
     if(!accepts_local_input()||!request)return ESP_ERR_INVALID_STATE;
     if(expected&&*expected!=local_.activity_selection())return ESP_ERR_INVALID_STATE;
     auto config=active_configuration();if(!config)return ESP_ERR_INVALID_STATE;
     auto order=config_store::ordered_activities(*config);auto found=std::find(order.begin(),order.end(),activity);
-    const auto target=std::find_if(config->activities.begin(),config->activities.end(),[&](const auto& a){return a.activity_id==activity&&a.zone_id==zone;});
+    const auto target=std::find_if(config->activities.begin(),config->activities.end(),[&](const auto& a){return a.activity_id==activity;});
     if(found==order.end()||target==config->activities.end())return ESP_ERR_INVALID_ARG;
     const int index=static_cast<int>(found-order.begin());
     std::lock_guard<std::mutex> lock(outcomes_mutex_);
@@ -110,7 +110,7 @@ std::vector<system::CecObservation> SystemControl::native_observations()const{
     return out;
 }
 std::optional<config_store::ConfiguredActivity> SystemControl::external_activity(unsigned slot)const{
-    auto config=active_configuration();if(!config)return {};auto* activity=config_store::activity_for_slot(*config,slot);return activity&&activity->zone_id==config->primary_zone_id?std::optional<config_store::ConfiguredActivity>(*activity):std::nullopt;
+    auto config=active_configuration();if(!config)return {};auto* activity=config_store::activity_for_slot(*config,slot);return activity?std::optional<config_store::ConfiguredActivity>(*activity):std::nullopt;
 }
 std::optional<unsigned> SystemControl::external_activity_index(const Snapshot& state)const{
     PlaybackState playback;playback.current_activity=state.current_activity;
@@ -124,7 +124,7 @@ std::optional<unsigned> SystemControl::external_activity_index(const PlaybackSta
     if(!state.activity_id)return {};
     for(const auto& slot:config->external_slots)if(!slot.tombstone&&slot.activity_id==state.activity_id){
         const auto* activity=config_store::activity_for_slot(*config,slot.slot);
-        if(activity&&activity->zone_id==config->primary_zone_id)return slot.slot;
+        if(activity)return slot.slot;
     }
     return {};
 }

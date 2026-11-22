@@ -38,7 +38,7 @@ bool verified(ConfigBackend& backend, const char* key, const std::string& payloa
 std::string record(const Configuration& config,std::string payload) {
     if(payload.empty())return {};
     const auto digest=sha256_hex(payload);if(digest.empty())return {};
-    const auto header="AMITY3\n" + config.consortium_id.str() + "\n" + model::format_uint64(config.config_revision) + "\n" +
+    const auto header="AMITY4\n" + config.consortium_id.str() + "\n" + model::format_uint64(config.config_revision) + "\n" +
         model::format_uint64(config.presentation_revision) + "\n" + model::format_uint64(payload.size()) + "\n" + digest + "\n";
     payload.reserve(payload.size()+header.size());payload.insert(0,header);return payload;
 }
@@ -50,7 +50,7 @@ bool decode_record(const std::string& value, Configuration& out, std::string& ca
     }
     auto consortium = model::ConsortiumId::parse(fields[1]); auto semantic = model::parse_uint64(fields[2]);
     auto presentation = model::parse_uint64(fields[3]); auto length = model::parse_uint64(fields[4]);
-    if (fields[0] != "AMITY3" || !consortium || !semantic || !presentation || !length || *length != input.size() || *length > configuration_payload_limit ||
+    if (fields[0] != "AMITY4" || !consortium || !semantic || !presentation || !length || *length != input.size() || *length > configuration_payload_limit ||
         sha256_hex(input) != fields[5] || !parse_configuration(std::string(input), out, error) || out.consortium_id != *consortium ||
         out.config_revision != *semantic || out.presentation_revision != *presentation || (canonical=serialize_configuration(out)) != input) {
         if (error.empty()) error = "Configuration record metadata, canonical payload, or digest mismatch";
@@ -63,7 +63,6 @@ void canonicalize(Configuration& c) {
     sort(c.octopuses,[](const auto& value){return value.octopus_id;});
     sort(c.components,[](const auto& value){return value.record.component_id;});
     sort(c.activities,[](const auto& value){return value.activity_id;});
-    sort(c.zones,[](const auto& value){return value.zone_id;});
     sort(c.external_slots,[](const auto& value){return value.slot;});
 }
 
@@ -94,7 +93,6 @@ ConfigResult ConfigurationStore::stage(Configuration candidate, RevisionPair exp
     if (active_) {
         const auto& current=active_->configuration;
         if (candidate.consortium_id != current.consortium_id) { error = "A configuration from another Amity system cannot be imported"; return ConfigResult::invalid; }
-        if(candidate.primary_zone_id!=current.primary_zone_id&&(!current.activities.empty()||!current.components.empty())){error="The primary home integration projection cannot change in this installation";return ConfigResult::invalid;}
         if (candidate.controller_octopus_id != current.controller_octopus_id) { error = "The main Amity cannot be replaced"; return ConfigResult::invalid; }
         if (!reconcile_external_slots(current, candidate, error)) return ConfigResult::invalid;
     }

@@ -16,7 +16,8 @@ bool propose_octopus_replacement(const Configuration& previous,const Replacement
     for(const auto& p:approval.ports)if(!p.previous.valid()||!p.replacement.valid()||p.previous.consortium_id!=previous.consortium_id||p.replacement.consortium_id!=previous.consortium_id||p.previous.octopus_id!=approval.previous||p.replacement.octopus_id!=approval.replacement||p.replacement.tentacle_id>=target->supported_tentacles||!old_ports.insert(key(p.previous)).second||!new_ports.insert(key(p.replacement)).second)return fail("Use distinct valid replacement HDMI connection mappings");
     std::set<std::string> selections;std::set<model::ComponentId> changed;
     auto out=previous;
-    for(auto& c:out.components)for(auto& selector:c.record.qualified_names)if(selector.port.octopus_id==approval.previous){
+    for(auto& c:out.components)if(c.record.qualified_name&&c.record.qualified_name->port.octopus_id==approval.previous){
+        auto& selector=*c.record.qualified_name;
         const auto selected=std::find_if(approval.equipment.begin(),approval.equipment.end(),[&](const auto& e){return e.component==c.record.component_id&&e.previous==selector;});
         if(selected==approval.equipment.end()||!selected->same_equipment_confirmed||!selected->replacement.valid()||selected->replacement.port.consortium_id!=previous.consortium_id||selected->replacement.port.octopus_id!=approval.replacement||selected->replacement.port.tentacle_id>=target->supported_tentacles)return fail("Map each saved equipment selector to its intended replacement connection");
         const auto mapped=std::find_if(approval.ports.begin(),approval.ports.end(),[&](const auto& p){return p.previous==selector.port;});
@@ -45,7 +46,7 @@ bool restore_main_configuration(const Configuration& backup,const Configuration&
     if(std::any_of(backup.octopuses.begin(),backup.octopuses.end(),[&](const auto& b){return b.octopus_id==replacement;}))return fail("The replacement identity already names a different device in this backup");
     auto candidate=backup;candidate.consortium_id=current.consortium_id;candidate.controller_octopus_id=replacement;candidate.config_revision=current.config_revision;candidate.presentation_revision=current.presentation_revision;
     for(auto& b:candidate.octopuses)if(b.octopus_id==old){b.octopus_id=replacement;b.supported_tentacles=hardware->supported_tentacles;}
-    for(auto& c:candidate.components)for(auto& selector:c.record.qualified_names){selector.port.consortium_id=current.consortium_id;if(selector.port.octopus_id==old){if(selector.port.tentacle_id>=hardware->supported_tentacles)return fail("The replacement main does not support an HDMI adapter used by this backup");selector.port.octopus_id=replacement;}}
+    for(auto& c:candidate.components)if(c.record.qualified_name){auto& selector=*c.record.qualified_name;selector.port.consortium_id=current.consortium_id;if(selector.port.octopus_id==old){if(selector.port.tentacle_id>=hardware->supported_tentacles)return fail("The replacement main does not support an HDMI adapter used by this backup");selector.port.octopus_id=replacement;}}
     // Portable choices are restored directly. Availability is determined by the
     // owner-local name lookup when used; no executable approval is imported.
     if(!validate_configuration(candidate,error))return false;
