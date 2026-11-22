@@ -42,7 +42,7 @@ function fixture(options={}){
   throw Error('Unexpected HTTP request '+path);
  };
  const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,readResponseJSON:response=>response.json(),token:'fixture-session',console,
-  $:id=>walk(document.body).find(node=>node.id===id),customerText:value=>String(value??''),message:(value,error)=>messages.push([value,!!error]),request,
+  $:id=>walk(document.body).find(node=>node.id===id),message:(value,error)=>messages.push([value,!!error]),request,
   setTimeout:(callback,delay)=>{const id=++nextTimer;timers.set(id,{callback,at:now+delay});return id;},clearTimeout:id=>timers.delete(id),
   run:action=>async event=>{try{await action(event);}catch(error){errors.push(error.message);}},
  };

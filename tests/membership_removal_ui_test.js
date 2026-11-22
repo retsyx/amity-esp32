@@ -80,7 +80,7 @@ function fixture(options={}){
   throw Error('Unexpected request '+path);
  };
  const context={window:{},document,crypto:crypto.webcrypto,structuredClone,Response,readResponseJSON:response=>response.json(),token:'fixture-session',console,
-  $:id=>walk(document.body).find(node=>node.id===id),request,customerText:value=>String(value??''),message:(...args)=>messages.push(args),dismissError(){},
+  $:id=>walk(document.body).find(node=>node.id===id),request,message:(...args)=>messages.push(args),dismissError(){},
   refreshActivityConfiguration:async()=>{refreshed++;return true;},
   setTimeout:callback=>{timers.push(callback);return timers.length;},clearTimeout(){},
   run:action=>async event=>{try{await action(event);}catch(error){errors.push(error.message);}},

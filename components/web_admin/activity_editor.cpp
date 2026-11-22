@@ -56,7 +56,7 @@ void update(amity::SystemControl& control,Operation& op){
     }
     if(op.kind!="activity")return;
     const auto config=control.active_configuration();
-    if(!config||config->revisions()!=op.revisions||current_boot()!=op.boot){op.stage="failed";op.error="The saved configuration or controller changed before the request completed";return;}
+    if(!config||config->revisions()!=op.revisions||current_boot()!=op.boot){op.stage="failed";op.error="The saved configuration changed or Amity restarted before the request completed";return;}
     for(const auto& result:control.execution_snapshot().activity_outcomes)if(result.request_id==op.id){
         op.stage=result.stage=="applied"?"complete":result.stage;op.error=result.error;return;
     }
@@ -79,8 +79,8 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
     if(req->method==HTTP_GET&&path.rfind(operation_prefix,0)==0){const auto requested=m::MessageId::parse(path.substr(operation_prefix.size()));for(const auto& op:operations)if(requested&&op.id==*requested){result=operation_json(req,op);return true;}return false;}
     if(path.rfind(prefix,0)!=0)return false;
     const auto config=control.active_configuration();
-    if(!config||!config->controller_octopus_id||*config->controller_octopus_id!=control.octopus_id()){result=reject(req,"Activity administration belongs to the original Amity controller","403 Forbidden");return true;}
-    if(req->method!=HTTP_GET&&!control.accepts_local_input()){result=reject(req,"Activity control is unavailable while this Amity is passive or updating","503 Service Unavailable");return true;}
+    if(!config||!config->controller_octopus_id||*config->controller_octopus_id!=control.octopus_id()){result=reject(req,"Activities are managed on the main Amity","403 Forbidden");return true;}
+    if(req->method!=HTTP_GET&&!control.accepts_local_input()){result=reject(req,"Activities are unavailable while Amity is starting or updating. Try again shortly","503 Service Unavailable");return true;}
     const bool editor=path==prefix,status=path==std::string(prefix)+"/status",components=path==std::string(prefix)+"/components";
     const bool restore=path==std::string(prefix)+"/restore",activity=path==std::string(prefix)+"/activity",discover=path==std::string(prefix)+"/discover";
     if(!((req->method==HTTP_GET&&(editor||status))||(req->method==HTTP_POST&&(editor||components||restore||activity||discover)))){result=reject(req,"Unknown activity editor operation","404 Not Found");return true;}

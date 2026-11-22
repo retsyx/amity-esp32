@@ -8,7 +8,7 @@ bool propose_octopus_replacement(const Configuration& previous,const Replacement
     Configuration& candidate,std::vector<model::ActivityId>& affected,std::string& error){
     const auto fail=[&](const char* reason){error=reason;return false;};affected.clear();
     if(!validate_configuration(previous,error))return false;
-    if(!previous.controller_octopus_id||approval.previous==*previous.controller_octopus_id)return fail("The original controller cannot be moved to replacement hardware");
+    if(!previous.controller_octopus_id||approval.previous==*previous.controller_octopus_id)return fail("The main Amity cannot be moved to replacement hardware");
     if(!approval.previous||!approval.replacement||approval.previous==approval.replacement||!approval.previous_isolated||!approval.replacement_enrolled)return fail("Isolate the old hardware, then add the replacement using its own credentials");
     const auto target=std::find_if(previous.octopuses.begin(),previous.octopuses.end(),[&](const auto& b){return b.octopus_id==approval.replacement;});
     if(target==previous.octopuses.end())return fail("The replacement Amity is not enrolled");

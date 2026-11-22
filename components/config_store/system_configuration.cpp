@@ -348,7 +348,7 @@ bool validate_configuration(const Configuration& c,std::string& error) {
     const auto valid_label=[](const std::string& value){return value.size()<=128&&std::none_of(value.begin(),value.end(),[](unsigned char byte){return byte<32||byte==127;});};
     std::set<model::OctopusId> owners;std::set<model::ComponentId> components;std::set<model::ActivityId> activities;std::set<model::ZoneId> zones;std::set<std::string> selectors;
     for(const auto& b:c.octopuses)if(!b.octopus_id||!owners.insert(b.octopus_id).second||!valid_label(b.label)||!valid_label(b.generated_label)||!b.supported_tentacles||b.supported_tentacles>amity::max_tentacles)return fail("Invalid Amity identity or adapter capacity");
-    if(!c.controller_octopus_id||!*c.controller_octopus_id||!owners.count(*c.controller_octopus_id))return fail("The original controller must be retained");
+    if(!c.controller_octopus_id||!*c.controller_octopus_id||!owners.count(*c.controller_octopus_id))return fail("The main Amity must be retained");
     for(const auto& v:c.components){
         if(!v.record.component_id||!components.insert(v.record.component_id).second||!valid_label(v.record.label)||!valid_label(v.generated_label)||v.record.qualified_names.size()>1)return fail("Invalid configured component");
         if(v.kind!="source"&&v.kind!="display"&&v.kind!="receiver"&&v.kind!="switch"&&v.kind!="audio"&&v.kind!="placeholder")return fail("Unknown equipment presentation kind");

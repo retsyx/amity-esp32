@@ -62,7 +62,7 @@ esp_err_t remotes(httpd_req_t *req) {
     return send(req,root.get());
 }
 esp_err_t matter(httpd_req_t *req) {
-    amity_matter_status_t s{};auto e=amity_matter_get_status(&s);if(e!=ESP_OK)return web::error(req,esp_err_to_name(e),"503 Service Unavailable");
+    amity_matter_status_t s{};auto e=amity_matter_get_status(&s);if(e!=ESP_OK)return web::error(req,"Matter is not ready. Try again shortly.","503 Service Unavailable");
     Json root(cJSON_CreateObject(),cJSON_Delete);cJSON_AddBoolToObject(root.get(),"started",s.started);cJSON_AddBoolToObject(root.get(),"commissioning",s.commissioning_window);
     if(s.commissioning_window) {
         cJSON_AddStringToObject(root.get(),"manual_code",s.manual_code);cJSON_AddStringToObject(root.get(),"qr_payload",s.qr_payload);
@@ -99,8 +99,15 @@ esp_err_t homekit(httpd_req_t *req) {
     }
     return send(req,root.get());
 }
+// The browser shows this text; the ESP-IDF error name goes to the log.
+const char* command_failure(const std::string& path,esp_err_t error) {
+    if(path=="/api/password")return error==ESP_ERR_INVALID_ARG?"Enter a password of no more than 128 bytes.":"Could not save password. Please try again.";
+    if(path.rfind("/api/matter/",0)==0)return "Matter pairing could not be changed. Try again.";
+    if(path.rfind("/api/homekit/",0)==0)return "HomeKit pairing could not be changed. Try again.";
+    return "The request could not be completed. Try again.";
+}
 esp_err_t api(httpd_req_t *req) {
-    if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
+    if (!ui_enabled.load()) return web::error(req,"Administration is available on the main Amity only.","403 Forbidden");
     if(req->method==HTTP_GET&&req->content_len)return web::error(req,"GET requests cannot have a body");
     std::string path=req->uri;
     if(path=="/api/ready"&&req->method==HTTP_GET) {
@@ -162,7 +169,7 @@ esp_err_t api(httpd_req_t *req) {
     if(!web::authenticated(req))return web::error(req,"Login required","401 Unauthorized");
     if(device_settings::reset_pending())return web::error(req,"Factory reset is pending. Restarting.","503 Service Unavailable");
     if(configuration_is_passive()&&req->method==HTTP_POST&&path!="/api/logout"&&path!="/api/password"&&path!="/api/firmware"&&path!="/api/reboot")
-        return web::error(req,"Configuration changes are unavailable while Amity is passive or updating.","403 Forbidden");
+        return web::error(req,"Changes are unavailable while Amity is starting or updating. Try again shortly.","403 Forbidden");
     esp_err_t administration_result=ESP_OK;if(activity_editor_request(*hub,req,path,administration_result))return administration_result;
     if(admin_request(req,path,administration_result))return administration_result;
     if(req->method==HTTP_GET) {
@@ -218,7 +225,10 @@ esp_err_t api(httpd_req_t *req) {
         else if(path=="/api/logout")web::logout(req);
         else if(path=="/api/reboot")system_services::reboot_later();
         else return web::error(req,"Unknown endpoint","404 Not Found");
-        return e==ESP_OK?web::json(req,"{\"ok\":true}"):web::error(req,esp_err_to_name(e),"409 Conflict");
+        if(e==ESP_OK)return web::json(req,"{\"ok\":true}");
+        if(path.rfind("/api/remotes/",0)==0)return web::error(req,esp_err_to_name(e),"409 Conflict");
+        ESP_LOGW("web","%s failed: %s",path.c_str(),esp_err_to_name(e));
+        return web::error(req,command_failure(path,e),"409 Conflict");
     }
     return web::error(req,"Unknown endpoint","404 Not Found");
 }
@@ -233,7 +243,7 @@ extern const uint8_t system_js_end[] asm("_binary_system_js_end");
 extern const uint8_t favicon_start[] asm("_binary_favicon_svg_start");
 extern const uint8_t favicon_end[] asm("_binary_favicon_svg_end");
 esp_err_t asset(httpd_req_t *req) {
-    if (!ui_enabled.load()) return web::error(req,"Administration is available on the original Amity only.","403 Forbidden");
+    if (!ui_enabled.load()) return web::error(req,"Administration is available on the main Amity only.","403 Forbidden");
     if(req->content_len)return web::error(req,"GET requests cannot have a body");
     const uint8_t *begin=html_start,*end=html_end;const char *mime="text/html; charset=utf-8";
     if(!strcmp(req->uri,"/app.js")){begin=js_start;end=js_end;mime="text/javascript";}

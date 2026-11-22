@@ -83,7 +83,7 @@ window.amityInterface=(()=>{
     continue;
    }finally{clearTimeout(timer);}
    if(!next||typeof next!=='object'||next.operation_id!==result.operation_id||('status' in next&&next.status!==next.stage))throw Error('Amity could not confirm the change. Check its status before trying again.');
-   if(['failed','rejected','cancelled'].includes(next.stage))throw Error(customerText(next.message||'The operation could not complete.'));
+   if(['failed','rejected','cancelled'].includes(next.stage))throw Error(next.message||'The operation could not complete.');
    if(['complete','applied'].includes(next.stage)){if(next.warning)message(next.warning,true);return next;}
    if(!['admitted','preparing','executing','configuring','activating','stopping'].includes(next.stage))throw Error('Amity could not confirm the change. Check its status before trying again.');
   }
@@ -218,7 +218,7 @@ window.amityInterface=(()=>{
     if(!d.isConnected)return false;
     if(result.stage!=='applied'){
      const uncertain=result.stage==='unknown'||result.stage==='admitted';
-     const error=Error(uncertain?'The save outcome is unknown. Refresh and check the saved values before trying again.':customerText(result.message||'Settings were not saved. Refresh and check the settings before trying again.'));
+     const error=Error(uncertain?'The save outcome is unknown. Refresh and check the saved values before trying again.':result.message||'Settings were not saved. Refresh and check the settings before trying again.');
      error.settingsResult=true;error.settingsUncertain=uncertain;throw error;
     }
     return true;
@@ -241,9 +241,9 @@ window.amityInterface=(()=>{
     const uncertain=error.settingsUncertain||!error.settingsResult&&(!error.status||error.status>=500);
     needsReview=completed||adaptersSaved||uncertain;status.textContent='';
     throw Error(completed?'Settings saved. Refresh to read the latest values.':
-     adaptersSaved?(uncertain?'Adapter addresses saved. The hostname save outcome is unknown. Refresh and check the saved values before trying again.':'Adapter addresses saved. Hostname was not saved. '+customerText(error.message)+' Refresh before trying again.'):
+     adaptersSaved?(uncertain?'Adapter addresses saved. The hostname save outcome is unknown. Refresh and check the saved values before trying again.':'Adapter addresses saved. Hostname was not saved. '+error.message+' Refresh before trying again.'):
      uncertain?'The save outcome is unknown. Reconnect, refresh and check the saved values before trying again.'+(renamed&&changes.length?' Hostname was not changed.':''):
-     customerText(error.message)+(renamed&&changes.length?' Hostname was not changed.':''));
+     error.message+(renamed&&changes.length?' Hostname was not changed.':''));
    }
    finally{busy=false;reload.disabled=false;hostname.input.disabled=!snapshot||hostname.input.dataset.editable!=='true';save.disabled=needsReview||hostname.input.disabled;inputs.forEach(({input,editable})=>input.disabled=!editable);}
   });

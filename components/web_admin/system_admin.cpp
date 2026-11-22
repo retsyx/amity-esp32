@@ -381,7 +381,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     }
     if(req->method!=HTTP_POST){result=error(req,"method_not_allowed","Use GET or POST.","405 Method Not Allowed");return true;}
     if(configuration_is_passive()){
-        result=error(req,"coordinator_required","This Amity is passive. Open the system coordinator for equipment and activity changes.","403 Forbidden");return true;
+        result=error(req,"coordinator_required","Changes are unavailable while Amity is starting or updating. Try again shortly.","403 Forbidden");return true;
     }
     const auto fields=request_fields(path);if(!fields){result=error(req,"not_found","Unknown operation.","404 Not Found");return true;}
     std::string data;if(!web::body(req,data)){result=ESP_FAIL;return true;}
@@ -418,7 +418,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
         if(!active||!expected_pair(root.get(),expected)||expected!=active->revisions()){result=error(req,"stale_revision","Equipment or configuration changed. Review the replacement mapping.","409 Conflict");return true;}
         config_store::ReplacementApproval approval;
         const auto previous=m::OctopusId::parse(string(root.get(),"previous_octopus_id")),replacement=m::OctopusId::parse(string(root.get(),"replacement_octopus_id"));
-        if(!previous||!replacement||*previous==control->octopus_id()){result=error(req,"coordinator_replacement","The original Amity cannot be replaced by an added device. This operation replaces added devices only.","409 Conflict");return true;}
+        if(!previous||!replacement||*previous==control->octopus_id()){result=error(req,"coordinator_replacement","The main Amity cannot be replaced by an added device. This operation replaces added devices only.","409 Conflict");return true;}
         approval.previous=*previous;approval.replacement=*replacement;
         uint64_t membership_revision=0;std::optional<m::BootId> target_boot;
         auto* reviewed_boot=cJSON_GetObjectItemCaseSensitive(root.get(),"expected_target_boot_id");

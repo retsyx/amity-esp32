@@ -93,9 +93,9 @@ ConfigResult ConfigurationStore::stage(Configuration candidate, RevisionPair exp
     if(!validate_configuration(candidate,error))return ConfigResult::invalid;
     if (active_) {
         const auto& current=active_->configuration;
-        if (candidate.consortium_id != current.consortium_id) { error = "Import cannot replace consortium authority"; return ConfigResult::invalid; }
+        if (candidate.consortium_id != current.consortium_id) { error = "A configuration from another Amity system cannot be imported"; return ConfigResult::invalid; }
         if(candidate.primary_zone_id!=current.primary_zone_id&&(!current.activities.empty()||!current.components.empty())){error="The primary home integration projection cannot change in this installation";return ConfigResult::invalid;}
-        if (candidate.controller_octopus_id != current.controller_octopus_id) { error = "The original controller cannot be replaced"; return ConfigResult::invalid; }
+        if (candidate.controller_octopus_id != current.controller_octopus_id) { error = "The main Amity cannot be replaced"; return ConfigResult::invalid; }
         if (!reconcile_external_slots(current, candidate, error)) return ConfigResult::invalid;
     }
     // These projections exclude revision counters. Prepare each once after

@@ -8,9 +8,6 @@
 
 
 'use strict';
-// Provisional customer terms; internal identifiers stay in data only.
-window.amityTerms=Object.freeze({device:'Amity device',devices:'Amity devices',adapter:'Adapter',adapters:'Adapters',system:'Amity system',systems:'Amity systems'});
-function customerText(value){return String(value??'').replace(/\boctopuses\b/gi,window.amityTerms.devices).replace(/\boctopus\b/gi,window.amityTerms.device).replace(/\btentacles\b/gi,window.amityTerms.adapters).replace(/\btentacle\b/gi,window.amityTerms.adapter).replace(/\bconsortiums\b/gi,window.amityTerms.systems).replace(/\bconsortium\b/gi,window.amityTerms.system);}
 
 const $=id=>document.getElementById(id);
 // Polling re-renders unchanged content. Rewriting text, even identical text,
@@ -33,7 +30,7 @@ const notice=$('notice'),noticeText=$('message'),noticeClose=$('dismissMessage')
 // dialog hosts it so it shows above the dialog. Other messages stay inline.
 function message(text,error=false){
  ++messageRevision;networkMessageRevision=null;
- const value=customerText(text),popup=error&&!!value;
+ const value=String(text??''),popup=error&&!!value;
  const host=popup&&[...document.querySelectorAll('dialog[open]')].filter(d=>d.matches(':modal')).at(-1)||noticeHome;
  if(notice.parentNode!==host){if(host===noticeHome)noticeHome.prepend(notice);else host.append(notice);}
  setText(noticeText,value);noticeText.classList.toggle('error',error);notice.classList.toggle('popup',popup);noticeClose.hidden=!popup;
@@ -70,7 +67,7 @@ async function request(path,data,raw=false,signal){
  if(signal)options.signal=signal;
  let response;try{response=await fetch('/api/'+path,options);}catch(error){if(error instanceof TypeError)transportErrors.add(error);throw error;}
  if(response.status===401&&path!=='login'){if(!firmwareUpdating&&!hostnameReconnect){await showWelcome();if(!hostnameReconnect)message('');}throw Object.assign(Error(),{silent:true});}
- if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(customerText(e.error||e.message||'Request failed'));error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
+ if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(e.error||e.message||'Request failed');error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
  return raw?response:readResponseJSON(response);
 }
 function run(action){return async event=>{try{await action(event);}catch(e){reportError(e);}};}
