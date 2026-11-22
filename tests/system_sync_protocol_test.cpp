@@ -248,7 +248,7 @@ void reports_and_exact_disconnect(){
     peers={remote(9,19,2,0b11)};const auto owner=peers[0].id;const auto oldboot=peers[0].boot_id;auto first=report(owner,oldboot);
     assert(deliver(owner,report_envelope(first),100,id<s::LinkId>(1))==c::Error::none&&main.updates.size()==1);
     assert(main.updates[0].discovery_generation==3);
-    auto available=amity::discovered_equipment();assert(available.size()==1&&available[0].endpoint.port.octopus_id==owner&&available[0].endpoint.logical_address==4&&available[0].owner_boot_id==oldboot);
+    auto available=amity::discovered_equipment();assert(available.size()==1&&available[0].endpoint.port.octopus_id==owner&&available[0].endpoint.logical_address==4);
     // The authenticated link names the reporting owner and its boot.
     const auto count=main.updates.size();auto value=report_envelope(first);
     assert(deliver(owner,value,100,id<s::LinkId>(1),id<s::BootId>(98))==c::Error::invalid_message&&main.updates.size()==count);
@@ -265,7 +265,7 @@ void reports_and_exact_disconnect(){
     assert(main.updates.size()==updates_before&&amity::discovered_equipment().size()==2&&main.fences.back()==std::make_pair(owner,oldlink));
     main.fence_result=true;assert(hooks.disconnected(owner,oldboot,oldlink));
     assert(main.fences.back()==std::make_pair(owner,oldlink)&&sent.size()==sent_before);
-    available=amity::discovered_equipment();assert(available.size()==1&&available[0].owner_boot_id==newboot&&available[0].endpoint.logical_address==8);
+    available=amity::discovered_equipment();assert(available.size()==1&&available[0].endpoint.logical_address==8);
     const auto& missing=main.updates.back();assert(missing.boot==oldboot&&missing.adapter==1&&!missing.ready&&!missing.discovering&&missing.devices.empty());
     assert(hooks.disconnected(owner,newboot,id<s::LinkId>(71))&&amity::discovered_equipment().empty());
     main.update_result=true;value=report_envelope(fresh);assert(deliver(owner,value,100,id<s::LinkId>(2))==c::Error::none);
@@ -334,7 +334,7 @@ void full_roster_adapter_reports_keep_exact_owner_fences(){
             assert(found!=main.snapshots.end()&&found->boot==value.boot&&c::owned_snapshot_json(*found)==c::owned_snapshot_json(value));
         }
         const auto available=amity::discovered_equipment();assert(available.size()==expected.size());
-        for(const auto& value:expected)assert(std::count_if(available.begin(),available.end(),[&](const auto& item){return item.endpoint.port.octopus_id==value.owner&&item.endpoint.port.tentacle_id==value.adapter&&item.owner_boot_id==value.boot&&item.endpoint.logical_address==value.devices[0].logical_address;})==1);
+        for(const auto& value:expected)assert(std::count_if(available.begin(),available.end(),[&](const auto& item){return item.endpoint.port.octopus_id==value.owner&&item.endpoint.port.tentacle_id==value.adapter&&item.endpoint.logical_address==value.devices[0].logical_address;})==1);
     };
     assert(count==12&&main.updates.size()==count);retained();
 
@@ -388,7 +388,7 @@ void logical_session_restart_preserves_reports(){
     assert(c::owned_snapshot_json(main.snapshots.front())==saved_first&&amity::state.maintenance.count(other));
     const auto retained=amity::discovered_equipment();assert(retained.size()==observations.size());
     for(size_t i=0;i<retained.size();++i)assert(retained[i].endpoint==observations[i].endpoint
-        &&retained[i].osd_name==observations[i].osd_name&&retained[i].owner_boot_id==observations[i].owner_boot_id
+        &&retained[i].osd_name==observations[i].osd_name
         &&retained[i].physical_address==observations[i].physical_address&&retained[i].stale==observations[i].stale);
     const auto fences=main.fences.size();
     assert(!hooks.restart_session({},boot,oldlink)&&!hooks.restart_session(owner,{},oldlink)&&!hooks.restart_session(owner,boot,{})&&main.fences.size()==fences);

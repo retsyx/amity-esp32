@@ -43,8 +43,6 @@ struct Snapshot {
     uint32_t activity_generation = 0;
     std::string activity_error;
     uint32_t discovery_generation = 0;
-    uint8_t front_address = 15, back_address = 15;
-    uint16_t front_physical_address = 0xffff; // Unknown until the startup back-bus scan completes.
     bool ready = false;
     bool discovering = false;
     bool activity_settling = false;

@@ -52,7 +52,7 @@ int main(){
     const auto first=config.activities[0].activity_id;
     auto generation=original.remote_activity_generation();const auto selection=original.activity_selection();
     assert(original.request_remote_activity(0,generation+1)==ESP_ERR_INVALID_STATE&&original.activity_selection()==selection);
-    assert(original.request_remote_activity(0,generation)==ESP_OK);drain();assert(original.snapshot().current_activity==0&&original.execution_snapshot().sessions[0].activity_id==first);
+    assert(original.request_remote_activity(0,generation)==ESP_OK);drain();assert(original.snapshot().current_activity==0&&original.execution_snapshot().current_activity==first);
     const auto playback=original.playback_state();
     assert(configuration_events==1&&playback.current_activity==0&&playback.activity_id==first&&original.external_activity_index(playback)==0);
     generation=original.remote_activity_generation();const auto selected=original.activity_selection();
@@ -82,9 +82,9 @@ int main(){
     // A stable ID request uses presentation order; integration slots stay fixed.
     auto reordered=config;auto second=config.activities[0];second.activity_id=id<ActivityId>(800);second.label="Other screen";reordered.activities.push_back(second);reordered.zones[0].activity_order.push_back(second.activity_id);reordered.activity_order={second.activity_id,first};reordered.external_slots.push_back({1,second.activity_id,false,false,{}});reordered.config_revision=2;reordered.presentation_revision=2;
     assert(original.configure(prepared(reordered))==ESP_OK);
-    assert(original.execution_snapshot().sessions[0].activity_id==first&&original.external_activity_index()==0);
+    assert(original.execution_snapshot().current_activity==first&&original.external_activity_index()==0);
     assert(original.execution_snapshot().applied_config_revision==0);
-    drain();const auto request=id<MessageId>(801);assert(original.request_activity(second.zone_id,first,request,original.execution_snapshot().state_revision)==ESP_OK);drain();assert(original.snapshot().current_activity==1&&original.execution_snapshot().sessions[0].activity_id==first);assert(original.external_activity(0)->activity_id==first&&original.external_activity_index()==0);assert(outcome(original,same)=="applied");
+    drain();const auto request=id<MessageId>(801);assert(original.request_activity(second.zone_id,first,request,original.execution_snapshot().state_revision)==ESP_OK);drain();assert(original.snapshot().current_activity==1&&original.execution_snapshot().current_activity==first);assert(original.external_activity(0)->activity_id==first&&original.external_activity_index()==0);assert(outcome(original,same)=="applied");
     // The actual facade rejects changes/removal before invoking persistence.
     unsigned protected_writes=0;
     auto active_edit=reordered;active_edit.config_revision=3;active_edit.activities[0].label="Changed current";
@@ -99,9 +99,9 @@ int main(){
     auto sparse=reordered;sparse.config_revision=3;sparse.presentation_revision=3;sparse.external_slots[0].slot=7;
     sparse.activities[1].label="Updated inactive";sparse.activities[1].source.reset();sparse.activity_order={first,second.activity_id};
     fixture_sent.clear();assert(original.configure(prepared(sparse))==ESP_OK);
-    assert(original.snapshot().current_activity==1&&original.execution_snapshot().sessions[0].activity_id==first&&original.external_activity_index()==7);
+    assert(original.snapshot().current_activity==1&&original.execution_snapshot().current_activity==first&&original.external_activity_index()==7);
     drain();
-    assert(original.snapshot().current_activity==0&&original.execution_snapshot().sessions[0].activity_id==first);
+    assert(original.snapshot().current_activity==0&&original.execution_snapshot().current_activity==first);
     assert(original.snapshot().activity_generation==retained.activity_generation&&original.activity_selection()==retained_selection&&original.remote_input_epoch()==retained_input);
     assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){const auto op=frame.frame.data[1];return op==0x36||op==0x44||op==0x04||op==0x0d||op==0x86;}));
     assert(original.press_key(3));drain();assert(presses(3)==1);

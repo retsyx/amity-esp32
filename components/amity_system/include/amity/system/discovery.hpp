@@ -7,10 +7,7 @@ namespace amity::system {
 struct CecObservation {
     FullyQualifiedCecAddress endpoint;
     std::optional<std::string> osd_name;
-    BootId owner_boot_id;
-    uint64_t local_sequence = 0;
     uint16_t physical_address = 0xffff;
-    ScanId scan_id;
     bool stale = false;
     uint8_t device_type = 0xff;
     uint32_t vendor_id = 0;

@@ -234,7 +234,7 @@ std::vector<s::CecObservation> discovered_equipment(){
     if(!state.control)return {};
     auto out=state.control->native_observations();
     const auto local=state.control->octopus_id();const auto reports=state.control->owned_snapshots();
-    std::lock_guard<std::mutex> guard(state.mutex);for(const auto& report:reports)if(report.owner!=local)for(const auto& d:report.devices)if(d.resolved){s::CecObservation o;o.endpoint={{state.control->consortium_id(),report.owner,report.adapter,d.side},d.logical_address};o.osd_name=d.osd_name;o.owner_boot_id=report.boot;o.scan_id=s::ScanId::parse(report.boot.str()).value_or(s::ScanId{});o.local_sequence=report.discovery_generation+1;o.physical_address=d.physical_address;o.device_type=d.device_type;o.vendor_id=d.vendor_id;o.stale=state.maintenance.count(report.owner);out.push_back(std::move(o));}
+    std::lock_guard<std::mutex> guard(state.mutex);for(const auto& report:reports)if(report.owner!=local)for(const auto& d:report.devices)if(d.resolved){s::CecObservation o;o.endpoint={{state.control->consortium_id(),report.owner,report.adapter,d.side},d.logical_address};o.osd_name=d.osd_name;o.physical_address=d.physical_address;o.device_type=d.device_type;o.vendor_id=d.vendor_id;o.stale=state.maintenance.count(report.owner);out.push_back(std::move(o));}
     return out;
 }
 }

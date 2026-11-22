@@ -93,7 +93,7 @@ system::ExecutionSnapshot SystemControl::execution_snapshot()const{
     }
     if(config&&state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size()){
         const auto id=state.activities[state.current_activity].activity_id;
-        for(const auto& a:config->activities)if(a.activity_id==id)out.sessions.push_back({system::SessionId::parse(boot_.str()).value_or(system::SessionId{}),a.zone_id,id,state.activity_generation});
+        for(const auto& a:config->activities)if(a.activity_id==id)out.current_activity=id;
     }
     {std::lock_guard<std::mutex> lock(outcomes_mutex_);update_outcomes_locked(state,config);for(const auto& pending:pending_)out.activity_outcomes.push_back({pending.id,pending.stage,pending.error});}
     out.native_observations=native_observations();return out;
@@ -106,7 +106,7 @@ SystemControl::AppliedConfiguration SystemControl::applied_configuration()const{
 }
 std::vector<system::CecObservation> SystemControl::native_observations()const{
     std::vector<system::CecObservation> out;
-    for(const auto& a:local_.owned_snapshots())if(a.owner==octopus_)for(const auto& d:a.devices)if(d.resolved){system::CecObservation o;o.endpoint={{consortium_,a.owner,a.adapter,d.side},d.logical_address};o.osd_name=d.osd_name;o.owner_boot_id=a.boot;o.local_sequence=a.discovery_generation+1;o.scan_id=system::ScanId::parse(a.boot.str()).value_or(system::ScanId{});o.physical_address=d.physical_address;o.device_type=d.device_type;o.vendor_id=d.vendor_id;out.push_back(std::move(o));}
+    for(const auto& a:local_.owned_snapshots())if(a.owner==octopus_)for(const auto& d:a.devices)if(d.resolved){system::CecObservation o;o.endpoint={{consortium_,a.owner,a.adapter,d.side},d.logical_address};o.osd_name=d.osd_name;o.physical_address=d.physical_address;o.device_type=d.device_type;o.vendor_id=d.vendor_id;out.push_back(std::move(o));}
     return out;
 }
 std::optional<config_store::ConfiguredActivity> SystemControl::external_activity(unsigned slot)const{
