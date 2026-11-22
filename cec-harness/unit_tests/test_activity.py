@@ -36,6 +36,7 @@ class Fixture:
         self.source = source
         self.dut, self.tv, self.avr, self.player = source.dut, source.tv, source.avr, source.player
         self.healthy, self.callbacks, self.calls, self.operations = True, [], [], {}
+        self.restores = []
         self.session = SimpleNamespace(assert_healthy=self.health, records=source.result.records)
         self.bed = SimpleNamespace(session=self.session, _entered=True, _closed=False, add_cleanup=self.callbacks.append)
         self.dut._testbed = self.bed
@@ -191,6 +192,8 @@ class Fixture:
                     raise AmityHTTPError(404, "Unknown operation")
                 return deepcopy(self.operations[identity])
             raise AssertionError(path)
+        if path == "/api/activity-editor/restore":
+            return self.restore(data)
         if data["expected_config_revision"] != self.full["config_revision"]:
             raise AmityHTTPError(409, "stale revision")
         if path == "/api/activity-editor":
@@ -233,13 +236,27 @@ class Fixture:
             result = {"operation_id": data["request_id"], "stage": "complete"}
             self.operations[data["request_id"]] = result
             return result
-        if path == "/api/config":
-            self.full = deepcopy(data["configuration"])
-            self.bump()
-            result = {"operation_id": data["request_id"], "stage": "applied"}
-            self.operations[data["request_id"]] = result
-            return result
         raise AssertionError(path)
+
+    def restore(self, data):
+        """The UI's backup restore: an exact replacement of saved configuration."""
+        if set(data) != {"request_id", "expected_config_revision", "expected_presentation_revision",
+                         "expected_boot_id", "confirm", "previous_controller_isolated", "configuration"}:
+            raise AssertionError("Restore must send exactly the UI's fields")
+        if (data["expected_config_revision"] != self.full["config_revision"]
+                or data["expected_presentation_revision"] != self.full["presentation_revision"]
+                or data["expected_boot_id"] != self.source.system["boot_id"]
+                or data["confirm"] is not True or data["previous_controller_isolated"] is not True):
+            raise AmityHTTPError(400, "Review the saved configuration before restoring")
+        if self.current is not None or self.pending_stop:
+            raise AmityHTTPError(409, "Stop playback before restoring a saved configuration")
+        self.restores.append(deepcopy(data))
+        self.full = {**deepcopy(data["configuration"]), "config_revision": self.full["config_revision"],
+                     "presentation_revision": self.full["presentation_revision"]}
+        self.bump()
+        result = {"operation_id": data["request_id"], "stage": "applied"}
+        self.operations[data["request_id"]] = result
+        return result
 
     def activity(self, name="Temporary test", **overrides):
         return self.dut.create_activity(name, **{"display": self.tv, "source": self.player,
@@ -381,9 +398,19 @@ class ActivityTests(unittest.TestCase):
             before = f.polls
             activity.standby()
             self.assertGreaterEqual(f.polls - before, 3)
+            backup = deepcopy(f.full)
         self.assertEqual(f.rows, original_rows)
         self.assertEqual([record["component_id"] for record in f.full["components"]], ["f" * 32])
         self.assertEqual(len([call for call in f.calls if call[0].endswith("/activity")]), 2)
+        # Equipment is pruned by restoring the UI backup without only those records.
+        self.assertEqual(len(f.restores), 1)
+        restored = f.restores[0]["configuration"]
+        backup["activities"] = restored["activities"]
+        backup["config_revision"] = restored["config_revision"]
+        backup["components"] = [record for record in backup["components"] if record["component_id"] == "f" * 32]
+        self.assertEqual(restored, backup)
+        self.assertEqual(f.restores[0]["expected_boot_id"], f.source.system["boot_id"])
+        self.assertFalse(any(path == "/api/config" and data is not None for path, data in f.calls))
         calls = len(f.calls)
         f.callbacks[0]()
         self.assertEqual(len(f.calls), calls)

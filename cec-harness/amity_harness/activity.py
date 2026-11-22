@@ -1,8 +1,10 @@
 """Temporary activities through the existing authenticated activity-editor UI.
 
-No firmware test API or restore operation is used. Cleanup merges against the
-latest configuration, removes only this activity, and prunes only unchanged,
-unreferenced equipment records allocated while creating its fixture selections.
+No firmware test API is used. Cleanup merges against the latest configuration,
+removes only this activity, and prunes only unchanged, unreferenced equipment
+records allocated while creating its fixture selections. The UI deletes such
+records only by restoring an edited backup, so pruning restores the current
+backup without them.
 """
 
 from copy import deepcopy
@@ -693,12 +695,17 @@ class Activity:
                 retained = [record["component_id"] for record in full["components"]
                             if record.get("component_id") in self._new_equipment and record["component_id"] not in removable]
                 if removable:
+                    # The UI deletes main-owned equipment only by restoring an
+                    # edited backup: this same backup without those records.
                     candidate = deepcopy(full)
                     candidate["components"] = [record for record in candidate["components"] if record["component_id"] not in removable]
-                    payload = {"request_id": uuid4().hex, "expected_config_revision": full["config_revision"],
-                               "expected_presentation_revision": full["presentation_revision"], "configuration": candidate}
+                    payload = {"request_id": uuid4().hex,
+                               "expected_config_revision": document["expected_config_revision"],
+                               "expected_presentation_revision": document["expected_presentation_revision"],
+                               "expected_boot_id": state["expected_boot_id"], "confirm": True,
+                               "previous_controller_isolated": True, "configuration": candidate}
                     trace = self._record("remove_equipment", removed_equipment=sorted(removable))
-                    self._write("/api/config", payload, deadline, trace, stage="applied")
+                    self._write("/api/activity-editor/restore", payload, deadline, trace, stage="applied")
                     after = self._full_configuration(self._view(check_health=False)[0])
                     if any(record.get("component_id") in removable for record in after["components"]):
                         raise AssertionError("New fixture equipment remains after cleanup")

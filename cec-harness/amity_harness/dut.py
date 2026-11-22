@@ -51,7 +51,7 @@ def _http_trace_fields(path, data):
     elif path in {"/api/login", "/api/logout", "/api/system", "/api/config",
                   "/api/activity-editor", "/api/activity-editor/status",
                   "/api/activity-editor/activity", "/api/activity-editor/discover",
-                  "/api/activity-editor/components",
+                  "/api/activity-editor/components", "/api/activity-editor/restore",
                   "/api/key",
                   "/api/membership/admission", "/api/membership/scan", "/api/membership/add",
                   "/api/membership/remove", "/api/membership/cancel"}:

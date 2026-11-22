@@ -493,7 +493,9 @@ Standby. A discovered CEC source uses its physical address instead,
 preserving Amity's original input selection behavior.
 The activity context attempts to remove its test-owned activity on exit,
 including after an assertion fails, before the component responders and HTTP
-session close. A DUT restart or conflicting user activity can prevent safe
+session close. Unreferenced equipment records it allocated are pruned the only
+way the UI can delete them: restoring the current backup without those records.
+A DUT restart or conflicting user activity can prevent safe
 cleanup; the run fails and reports retained test-owned identities. The client
 does not silently authenticate again and continue an action across a reboot.
 Shared helpers own revision checks, asynchronous operation completion and
