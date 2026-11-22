@@ -8,6 +8,7 @@
 
 #include "web.hpp"
 #include "config_store.hpp"
+#include "amity/system/model.hpp"
 #include "psa/crypto.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -20,12 +21,7 @@ struct Session { std::string token; int64_t expiry=0; };
 std::array<Session,4> sessions;
 int64_t next_login=0;
 unsigned failures=0;
-std::string hex(const uint8_t *p,size_t n) {
-    static const char digits[]="0123456789abcdef";
-    std::string s(n*2,'0');
-    for(size_t i=0;i<n;++i) {s[2*i]=digits[p[i]>>4];s[2*i+1]=digits[p[i]&15];}
-    return s;
-}
+std::string hex(const uint8_t *p,size_t n) {return amity::system::hex({reinterpret_cast<const char*>(p),n});}
 std::string random_hex(size_t n) { uint8_t b[32]; esp_fill_random(b,n); return hex(b,n); }
 bool equal(const std::string &a,const std::string &b) {
     if(a.size()!=b.size()) return false;

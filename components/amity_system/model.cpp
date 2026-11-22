@@ -32,14 +32,6 @@ bool QualifiedDeviceName::valid() const {
            std::none_of(osd_name.begin(), osd_name.end(), [](unsigned char c) { return c < 32 || c == 127; });
 }
 namespace {
-std::string quote(std::string_view value) {
-    std::string out = "\"";
-    for (char c : value) {
-        if (c == '\\' || c == '"') out += '\\';
-        out += c;
-    }
-    return out + "\"";
-}
 struct JsonValue { std::string text; bool quoted = false; };
 // Small strict decoder for the flat qualified-name object. Duplicate/unknown fields,
 // number coercions and trailing data are never accepted.
@@ -96,8 +88,8 @@ private:
     std::string_view input_;
 };
 std::string port_json_prefix(const CecPortRef& p) {
-    return "{\"consortium_id\":" + quote(p.consortium_id.str()) + ",\"octopus_id\":" + quote(p.octopus_id.str()) +
-           ",\"tentacle_id\":" + std::to_string(p.tentacle_id) + ",\"side\":" + quote(side_name(p.side));
+    return "{\"consortium_id\":" + json_quote(p.consortium_id.str()) + ",\"octopus_id\":" + json_quote(p.octopus_id.str()) +
+           ",\"tentacle_id\":" + std::to_string(p.tentacle_id) + ",\"side\":" + json_quote(side_name(p.side));
 }
 std::optional<CecPortRef> decode_port(const std::map<std::string, JsonValue>& fields) {
     for (const auto* key : {"consortium_id", "octopus_id", "side"}) {
@@ -111,7 +103,7 @@ std::optional<CecPortRef> decode_port(const std::map<std::string, JsonValue>& fi
 }
 }
 std::string name_json(const QualifiedDeviceName& n) {
-    return n.valid() ? port_json_prefix(n.port) + ",\"osd_name\":" + quote(n.osd_name) + "}" : std::string{};
+    return n.valid() ? port_json_prefix(n.port) + ",\"osd_name\":" + json_quote(n.osd_name) + "}" : std::string{};
 }
 std::string address_json(const FullyQualifiedCecAddress& a) {
     return a.valid() ? port_json_prefix(a.port) + ",\"logical_address\":" + std::to_string(a.logical_address) + "}" : std::string{};

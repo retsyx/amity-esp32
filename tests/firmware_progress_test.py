@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
 #include "release_manifest.hpp"
 #include "amity/consortium/json.hpp"
+#include "amity/system/model.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -144,6 +145,7 @@ def main():
             '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-fsanitize=address,undefined',
             '-I' + str(ROOT / 'components/system_services/include'),
             '-I' + str(ROOT / 'components/consortium/include'),
+            '-I' + str(ROOT / 'components/amity_system/include'),
             str(cpp), str(ROOT / 'components/consortium/json.cpp'), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
 

@@ -26,7 +26,7 @@ bool settings_hostname_pending(model::OctopusId owner,const std::string& name){
     for(const auto& operation:settings_operations)if(operation.owner!=owner&&operation.stage=="admitted"&&operation.hostname&&*operation.hostname==name)return true;
     return false;
 }
-std::string settings_quote(std::string_view text){Json value;value.type=Json::Type::string;value.string=text;return settings_json(value);}
+std::string settings_quote(std::string_view text){return model::json_quote(text);}
 std::string settings_result(model::MessageId id,std::string_view operation,std::string_view stage,std::string_view error,std::string_view snapshot="null"){
     return "{\"request_id\":\""+id.str()+"\",\"operation\":"+settings_quote(operation)+",\"stage\":"+settings_quote(stage)+",\"error\":"+settings_quote(error)+",\"snapshot\":"+std::string(snapshot)+",\"rebooting\":false}";
 }

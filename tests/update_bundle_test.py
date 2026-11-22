@@ -21,6 +21,7 @@ import hardware_profile as hardware
 PREFIX=r'''
 #include "update_bundle.hpp"
 #include "release_manifest.hpp"
+#include "amity/system/model.hpp"
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -201,7 +202,7 @@ class BundleTests(unittest.TestCase):
             cpp.write_text(PREFIX+function((ROOT/'components/system_services/system_services.cpp').read_text(),'esp_err_t upload_firmware(httpd_req_t *req)')+SUITE)
             include=[];link=[]
             if Path('/opt/homebrew/opt/openssl@3').exists():include=['-I/opt/homebrew/opt/openssl@3/include'];link=['-L/opt/homebrew/opt/openssl@3/lib']
-            subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-Wno-deprecated-declarations','-fsanitize=address,undefined','-I'+str(ROOT/'components/system_services/include')]+include+[str(cpp)]+link+['-lcrypto','-o',str(binary)],check=True)
+            subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-g','-Wno-deprecated-declarations','-fsanitize=address,undefined','-I'+str(ROOT/'components/system_services/include'),'-I'+str(ROOT/'components/amity_system/include')]+include+[str(cpp)]+link+['-lcrypto','-o',str(binary)],check=True)
             subprocess.run([str(binary)],check=True)
             image,value=self.image_manifest();file=Path(directory)/'python-bundle.bin';file.write_bytes(bundle.bundle(image,self.canonical(value)));subprocess.run([str(binary),str(file)],check=True)
 

@@ -245,8 +245,7 @@ std::string sha256_hex(std::string_view input) {
 #else
     if (!SHA256(reinterpret_cast<const unsigned char*>(input.data()), input.size(), digest)) return {};
 #endif
-    static constexpr char hex[] = "0123456789abcdef"; std::string result(64, '0');
-    for (size_t i = 0; i < 32; ++i) { result[i * 2] = hex[digest[i] >> 4]; result[i * 2 + 1] = hex[digest[i] & 15]; } return result;
+    return amity::system::hex({reinterpret_cast<const char*>(digest), sizeof(digest)});
 }
 std::string executable_policy_hash(const Configuration& c) {
     const auto encoded=serialize_configuration(c,true);return encoded.empty()?std::string{}:sha256_hex(encoded);

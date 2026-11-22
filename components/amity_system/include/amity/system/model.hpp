@@ -11,6 +11,27 @@
 #include <vector>
 
 namespace amity::system {
+// Lowercase hexadecimal, two digits per byte.
+inline std::string hex(std::string_view bytes) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string out(bytes.size() * 2, '0');
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        const auto byte = static_cast<unsigned char>(bytes[i]);
+        out[i * 2] = digits[byte >> 4]; out[i * 2 + 1] = digits[byte & 15];
+    }
+    return out;
+}
+// A JSON string literal with quotes, backslashes and control bytes escaped.
+inline std::string json_quote(std::string_view text) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string out = "\"";
+    for (unsigned char c : text) {
+        if (c == '"' || c == '\\') { out += '\\'; out += char(c); }
+        else if (c < 0x20) { out += "\\u00"; out += digits[c >> 4]; out += digits[c & 15]; }
+        else out += char(c);
+    }
+    return out + '"';
+}
 
 // Only edge codecs handle text. Different tags cannot be accidentally assigned.
 template <class Tag> class Id {

@@ -211,8 +211,7 @@ esp_err_t upload_firmware(httpd_req_t *req) {
     if(!updates::parse_update_bundle_header(std::string_view(prefix.data(),prefix.size()),req->content_len,bundle,error))return web::error(req,error.c_str());
     std::string manifest(bundle.manifest_bytes,'\0'),signature(bundle.signature_bytes,'\0');
     if(!read_exact(manifest.data(),manifest.size())||!read_exact(signature.data(),signature.size()))return web::error(req,"Incomplete update file metadata");
-    std::string signature_hex;signature_hex.reserve(signature.size()*2);constexpr char digits[]="0123456789abcdef";
-    for(unsigned char byte:signature){signature_hex+=digits[byte>>4];signature_hex+=digits[byte&15];}
+    const auto signature_hex=amity::system::hex(signature);
     updates::ReleaseManifest release;
     if(!updates::parse_release_manifest(manifest,release,error)||release.image_bytes!=bundle.image_bytes)return web::error(req,"Firmware image size does not match the release");
     std::array<char,2048> buf{};

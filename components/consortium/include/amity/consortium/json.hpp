@@ -8,6 +8,11 @@
 #include <vector>
 
 namespace amity::consortium {
+// The consortium parses frames from other Amities with this strict parser
+// rather than cJSON: it rejects duplicate keys, invalid UTF-8 and trailing
+// bytes, bounds size, depth and value count, and keeps integers exact, which
+// the closed message validators rely on. cJSON remains for local
+// configuration and the web interface, where input is trusted or re-checked.
 // Protocol JSON is bounded before parsing. Numbers are unsigned integers only;
 // every implemented v1 field uses this subset, never floating point counters.
 struct Json {

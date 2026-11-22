@@ -18,6 +18,7 @@ import hardware_profile
 PREFIX=r'''
 #include "firmware_update.hpp"
 #include "partition_image.hpp"
+#include "amity/system/model.hpp"
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -171,7 +172,7 @@ class PartitionStagingTest(unittest.TestCase):
             cpp=base/'test.cpp';cpp.write_text(PREFIX+'\n'.join(sources)+SUITE)
             include=[];link=[]
             if Path('/opt/homebrew/opt/openssl@3').exists():include=['-I/opt/homebrew/opt/openssl@3/include'];link=['-L/opt/homebrew/opt/openssl@3/lib']
-            command=shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-g','-fsanitize=address,undefined','-I'+str(base),'-I'+str(ROOT/'components/system_services/include')]+include+[str(cpp)]+link+['-lcrypto','-o',str(base/'test')]
+            command=shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-g','-fsanitize=address,undefined','-I'+str(base),'-I'+str(ROOT/'components/system_services/include'),'-I'+str(ROOT/'components/amity_system/include')]+include+[str(cpp)]+link+['-lcrypto','-o',str(base/'test')]
             subprocess.run(command,check=True);subprocess.run([str(base/'test')],check=True)
 
 

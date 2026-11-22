@@ -39,9 +39,6 @@ inline std::string log_request_json(model::MessageId transfer,size_t offset,bool
 }
 inline std::string log_result_json(model::MessageId transfer,size_t offset,size_t total,std::string_view bytes,std::string_view error=""){
     if(!transfer||!log_detail::valid_result(offset,total,bytes.size(),error))return {};
-    constexpr char digits[]="0123456789abcdef";
-    std::string data;data.reserve(bytes.size()*2);
-    for(unsigned char byte:bytes){data+=digits[byte>>4];data+=digits[byte&15];}
-    return "{\"transfer_id\":\""+transfer.str()+"\",\"offset\":"+std::to_string(offset)+",\"total\":"+std::to_string(total)+",\"data\":\""+data+"\",\"error\":\""+std::string(error)+"\"}";
+    return "{\"transfer_id\":\""+transfer.str()+"\",\"offset\":"+std::to_string(offset)+",\"total\":"+std::to_string(total)+",\"data\":\""+model::hex(bytes)+"\",\"error\":\""+std::string(error)+"\"}";
 }
 }

@@ -9,8 +9,6 @@ bool counter(const Json* value){uint64_t n=0;return decimal(value,n)&&n;}
 bool pa(const Json* value,bool allow_empty=false){if(allow_empty&&value&&value->type==Json::Type::string&&value->string.empty())return true;if(!value||value->type!=Json::Type::string||value->string.size()!=7)return false;unsigned number=0;bool zero=false;for(size_t i=0;i<7;++i){if(i%2){if(value->string[i]!='.')return false;continue;}char c=value->string[i];unsigned digit=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:16;if(digit==16||(zero&&digit))return false;zero=zero||!digit;number=(number<<4)|digit;}
     return number!=0xffff;}
 bool nullable_pa(const Json* value){return value&&(value->type==Json::Type::null_value||pa(value));}
-std::string quote(std::string_view value){std::string out="\"";constexpr char hex[]="0123456789abcdef";for(unsigned char c:value){if(c=='"'||c=='\\'){out+='\\';out+=c;}else if(c<0x20){out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}else out+=c;}
-    return out+'"';}
 }
 bool is_settings_kind(Kind kind){return kind==Kind::settings_read||kind==Kind::settings_write||kind==Kind::settings_result;}
 bool valid_settings_snapshot(const Json& value){
@@ -42,10 +40,10 @@ Error parse_device_settings_write(const Json& value,DeviceSettingsWrite& out){
 }
 std::string device_settings_write_json(const DeviceSettingsWrite& value){
  std::string out="{\"expected_boot_id\":\""+value.expected_boot.str()+"\"";
- if(value.hostname)out+=",\"hostname\":"+quote(*value.hostname)+",\"expected_hostname_revision\":\""+std::to_string(value.expected_hostname_revision)+"\"";
+ if(value.hostname)out+=",\"hostname\":"+model::json_quote(*value.hostname)+",\"expected_hostname_revision\":\""+std::to_string(value.expected_hostname_revision)+"\"";
  else out+=",\"expected_settings_revision\":\""+std::to_string(value.expected_revision)+"\"";
  out+=",\"changes\":[";
- for(size_t index=0;index<value.changes.size();++index){const auto& change=value.changes[index];if(index)out+=",";out+="{\"tentacle_id\":"+std::to_string(change.tentacle_id)+",\"default_front_physical_address\":"+quote(change.default_front_physical_address)+"}";}
+ for(size_t index=0;index<value.changes.size();++index){const auto& change=value.changes[index];if(index)out+=",";out+="{\"tentacle_id\":"+std::to_string(change.tentacle_id)+",\"default_front_physical_address\":"+model::json_quote(change.default_front_physical_address)+"}";}
  return out+"]}";
 }
 bool valid_settings_payload(Kind kind,const Json& value){
@@ -58,8 +56,8 @@ bool valid_settings_payload(Kind kind,const Json& value){
  return value.get("snapshot")->type==Json::Type::null_value&&!value.get("rebooting")->boolean&&(text(value.get("stage"),{"admitted"})?(text(value.get("operation"),{"write"})&&text(value.get("error"),{""})):!text(value.get("error"),{""}));
 }
 std::string settings_json(const Json& value){
- switch(value.type){case Json::Type::null_value:return "null";case Json::Type::boolean:return value.boolean?"true":"false";case Json::Type::integer:return std::to_string(value.integer);case Json::Type::string:return quote(value.string);case Json::Type::array:{std::string out="[";for(const auto& row:value.array){if(out.size()>1)out+=",";out+=settings_json(row);}
-    return out+"]";}case Json::Type::object:{std::string out="{";for(const auto& item:value.object){if(out.size()>1)out+=",";out+=quote(item.first)+":"+settings_json(item.second);}
+ switch(value.type){case Json::Type::null_value:return "null";case Json::Type::boolean:return value.boolean?"true":"false";case Json::Type::integer:return std::to_string(value.integer);case Json::Type::string:return model::json_quote(value.string);case Json::Type::array:{std::string out="[";for(const auto& row:value.array){if(out.size()>1)out+=",";out+=settings_json(row);}
+    return out+"]";}case Json::Type::object:{std::string out="{";for(const auto& item:value.object){if(out.size()>1)out+=",";out+=model::json_quote(item.first)+":"+settings_json(item.second);}
     return out+"}";}}
     return {};
 }

@@ -43,11 +43,10 @@ m::OctopusId incoming_owner;
 m::MessageId incoming_begin;
 std::string incoming_release,incoming_hash;
 uint64_t now(){return uint64_t(esp_timer_get_time()/1000);}
-std::string quote(std::string_view value){std::string out="\"";for(unsigned char b:value){if(b=='"'||b=='\\'){out+='\\';out+=char(b);}else if(b>=32&&b<127)out+=char(b);else out+='?';}return out+'"';}
+std::string quote(std::string_view value){return m::json_quote(value);}
 std::string string(const c::Json& value,const char* field){const auto* p=value.get(field);return p&&p->type==c::Json::Type::string?p->string:"";}
 uint64_t decimal(const c::Json& value,const char* field){uint64_t n=0;c::decimal(value.get(field),n);return n;}
 m::MessageId fresh(){return m::MessageId::generate([](uint8_t* bytes,size_t count){esp_fill_random(bytes,count);return true;}).value_or(m::MessageId{});}
-std::string hex(std::string_view bytes){const char alphabet[]="0123456789abcdef";std::string out(2*bytes.size(),'0');for(size_t n=0;n<bytes.size();++n){const auto b=uint8_t(bytes[n]);out[2*n]=alphabet[b>>4];out[2*n+1]=alphabet[b&15];}return out;}
 std::string base(m::MessageId id,const ReleaseManifest& release){return "\"request_id\":"+quote(id.str())+",\"release_id\":"+quote(release.release_id)+",\"image_sha256\":"+quote(release.image_sha256);}
 bool busy(){return cohort.phase=="uploading"||cohort.phase=="distributing"||cohort.phase=="activating";}
 std::string report_job(const Cohort& value);
@@ -160,7 +159,7 @@ void retry_later(const Target& target,const ReleaseManifest& source,bool failed_
 }
 void start_catchup(){
     if(!authority())return;
-    const auto* app=esp_app_get_description();const auto own=hex(std::string_view(reinterpret_cast<const char*>(app->app_elf_sha256),32));
+    const auto* app=esp_app_get_description();const auto own=m::hex(std::string_view(reinterpret_cast<const char*>(app->app_elf_sha256),32));
     for(const auto& current:c::runtime_peers()){
         if(!available(current)||current.firmware_identity.empty()||current.firmware_identity==own)continue;
         {
@@ -305,7 +304,7 @@ std::string cohort_status_json(){
     // Capture runtime state before the report lock; retry bookkeeping shares
     // this lock with the worker, without holding it across flash or transport.
     const auto current=c::runtime_peers();const auto* app=esp_app_get_description();
-    const auto own=hex(std::string_view(reinterpret_cast<const char*>(app->app_elf_sha256),32));
+    const auto own=m::hex(std::string_view(reinterpret_cast<const char*>(app->app_elf_sha256),32));
     std::lock_guard<std::mutex> lock(gate);auto out=report_job(cohort);out.pop_back();
     out+=",\"last_failed_upload\":"+last_failed_upload+",\"automatic_failures\":[";
     bool comma=false;

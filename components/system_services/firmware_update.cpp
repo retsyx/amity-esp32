@@ -38,8 +38,8 @@ std::optional<ReleaseManifest> staged;
 uint64_t deadline=0,received=0;
 std::string job,phase="idle",reason,old_boot;
 bool installing=false;
-std::string quote(std::string_view value){std::string out="\"";for(unsigned char b:value){if(b=='"'||b=='\\'){out+='\\';out+=char(b);}else if(b>=32&&b<127)out+=char(b);else out+='?';}return out+'"';}
-std::string hex(const uint8_t* bytes,size_t count){constexpr char alphabet[]="0123456789abcdef";std::string out(2*count,'0');for(size_t n=0;n<count;++n){out[2*n]=alphabet[bytes[n]>>4];out[2*n+1]=alphabet[bytes[n]&15];}return out;}
+std::string quote(std::string_view value){return amity::system::json_quote(value);}
+std::string hex(const uint8_t* bytes,size_t count){return amity::system::hex({reinterpret_cast<const char*>(bytes),count});}
 bool decode(std::string_view in,std::string& out){if(in.size()%2)return false;out.clear();for(size_t n=0;n<in.size();n+=2){auto digit=[](char b){return b>='0'&&b<='9'?b-'0':b>='a'&&b<='f'?b-'a'+10:-1;};int a=digit(in[n]),b=digit(in[n+1]);if(a<0||b<0)return false;out+=char(a*16+b);}return true;}
 uint64_t now(){return uint64_t(esp_timer_get_time()/1000);}
 bool production(){return CONFIG_AMITY_PRODUCTION_UPDATES;}

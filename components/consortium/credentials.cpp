@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cstring>
 namespace amity::consortium::platform {
-std::string hex(std::string_view bytes){static const char digits[]="0123456789abcdef";std::string out(bytes.size()*2,'0');for(size_t i=0;i<bytes.size();++i){auto b=static_cast<uint8_t>(bytes[i]);out[2*i]=digits[b>>4];out[2*i+1]=digits[b&15];}return out;}
+std::string hex(std::string_view bytes){return model::hex(bytes);}
 bool unhex(std::string_view value,std::string &out,size_t cap){if(value.size()%2||value.size()/2>cap)return false;out.clear();out.reserve(value.size()/2);auto nibble=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};for(size_t i=0;i<value.size();i+=2){int a=nibble(value[i]),b=nibble(value[i+1]);if(a<0||b<0){out.clear();return false;}out.push_back(char((a<<4)|b));}return true;}
 std::string sha256(std::string_view bytes){uint8_t hash[32];size_t size=0;if(psa_hash_compute(PSA_ALG_SHA_256,reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size(),hash,sizeof(hash),&size)!=PSA_SUCCESS||size!=32)return {};return hex(std::string_view(reinterpret_cast<char*>(hash),32));}
 std::string random_hex(size_t count){if(!count||count>32)return {};uint8_t bytes[32];esp_fill_random(bytes,count);return hex(std::string_view(reinterpret_cast<char*>(bytes),count));}

@@ -10,7 +10,6 @@
 namespace system_services::updates {
 namespace {
 esp_err_t partition_flash(const std::function<esp_err_t()>& call){esp_err_t result=ESP_FAIL;return config_store::with_internal_flash_stack([&]{result=call();})?result:ESP_FAIL;}
-std::string hex(std::string_view input){constexpr char digits[]="0123456789abcdef";std::string out;out.reserve(input.size()*2);for(unsigned char b:input){out+=digits[b>>4];out+=digits[b&15];}return out;}
 bool unhex(std::string_view input,std::string& out){if(input.size()%2)return false;out.clear();for(size_t i=0;i<input.size();i+=2){const auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};const int a=digit(input[i]),b=digit(input[i+1]);if(a<0||b<0)return false;out+=char((a<<4)|b);}return true;}
 uint64_t number(const char* data,size_t count){uint64_t out=0;for(size_t i=0;i<count;++i)out=(out<<8)|static_cast<unsigned char>(data[i]);return out;}
 void number(char* data,uint64_t value,size_t count){for(size_t i=count;i>0;--i){data[i-1]=char(value);value>>=8;}}
@@ -53,14 +52,14 @@ esp_err_t read_partition_release_direct(const esp_partition_t* partition,Release
     std::string payload(info.manifest+info.signature,'\0');
     result=partition_flash([&]{return esp_partition_read(partition,partition->size-partition_release_bytes+partition_release_header_bytes,payload.data(),payload.size());});
     if(result!=ESP_OK){error="Firmware release information could not be read";return result;}
-    if(config_store::sha256_hex(payload)!=hex(std::string_view(info.bytes.data()+32,32))){error="Firmware release information is incomplete";return ESP_ERR_INVALID_CRC;}
-    signature_hex=hex(std::string_view(payload).substr(info.manifest));
+    if(config_store::sha256_hex(payload)!=amity::system::hex(std::string_view(info.bytes.data()+32,32))){error="Firmware release information is incomplete";return ESP_ERR_INVALID_CRC;}
+    signature_hex=amity::system::hex(std::string_view(payload).substr(info.manifest));
     result=validate_release(std::string_view(payload).substr(0,info.manifest),signature_hex,release,error);if(result!=ESP_OK)return result;
     if(release.image_bytes!=info.image){error="Firmware image length differs from its release";return ESP_ERR_INVALID_CRC;}
     esp_app_desc_t app{};result=partition_flash([&]{return esp_ota_get_partition_description(partition,&app);});
     if(result!=ESP_OK||!memchr(app.version,0,sizeof(app.version))||release.firmware_version!=app.version||
        memcmp(app.project_name,esp_app_get_description()->project_name,sizeof(app.project_name))||
-       release.image_elf_sha256!=hex(std::string_view(reinterpret_cast<const char*>(app.app_elf_sha256),32))){error="Firmware image identity differs from its release";return ESP_ERR_INVALID_CRC;}
+       release.image_elf_sha256!=amity::system::hex(std::string_view(reinterpret_cast<const char*>(app.app_elf_sha256),32))){error="Firmware image identity differs from its release";return ESP_ERR_INVALID_CRC;}
     // The trailer is committed only after the receiving stream and native OTA
     // image pass validation. Reading its release must not hash the image again.
     return ESP_OK;

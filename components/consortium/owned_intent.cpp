@@ -15,19 +15,9 @@ const char* action(K k) {
     }
     return "";
 }
-std::string quote(std::string_view s) {
-    std::string out="\"";
-    constexpr char hex[]="0123456789abcdef";
-    for(unsigned char c:s) {
-        if(c=='"'||c=='\\') {out+='\\';out+=char(c);}
-        else if(c<32) {out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}
-        else out+=char(c);
-    }
-    return out+'"';
-}
 std::string target_json(const model::QualifiedDeviceName& n) {
     if(!n.port.valid())return {};
-    return "{\"consortium_id\":\""+n.port.consortium_id.str()+"\",\"octopus_id\":\""+n.port.octopus_id.str()+"\",\"tentacle_id\":"+std::to_string(n.port.tentacle_id)+",\"side\":\""+model::side_name(n.port.side)+"\",\"osd_name\":"+quote(n.osd_name)+"}";
+    return "{\"consortium_id\":\""+n.port.consortium_id.str()+"\",\"octopus_id\":\""+n.port.octopus_id.str()+"\",\"tentacle_id\":"+std::to_string(n.port.tentacle_id)+",\"side\":\""+model::side_name(n.port.side)+"\",\"osd_name\":"+model::json_quote(n.osd_name)+"}";
 }
 bool target(const Json& v, model::QualifiedDeviceName& n, bool allow_empty) {
     if(!closed(v,{"consortium_id","octopus_id","tentacle_id","side","osd_name"}))return false;
@@ -109,7 +99,7 @@ std::string owned_intent_json(const model::OwnedIntent& x) {
 }
 std::string owned_snapshot_json(const model::OwnedAdapterSnapshot& s) {
     std::string out="{\"owner\":\""+s.owner.str()+"\",\"boot\":\""+s.boot.str()+"\",\"adapter\":"+std::to_string(s.adapter)+",\"front_address\":"+std::to_string(s.front_address)+",\"back_address\":"+std::to_string(s.back_address)+",\"front_physical_address\":"+std::to_string(s.front_physical_address)+",\"ready\":"+(s.ready?"true":"false")+",\"discovering\":"+(s.discovering?"true":"false")+",\"discovery_generation\":"+std::to_string(s.discovery_generation)+",\"audio_status_known\":"+(s.audio_status_known?"true":"false")+",\"muted\":"+(s.muted?"true":"false")+",\"volume\":"+std::to_string(s.volume)+",\"devices\":[";
-    for(const auto& d:s.devices){if(out.back()!='[')out+=',';out+="{\"side\":\""+std::string(model::side_name(d.side))+"\",\"osd_name\":"+quote(d.osd_name)+",\"logical_address\":"+std::to_string(d.logical_address)+",\"physical_address\":"+std::to_string(d.physical_address)+",\"device_type\":"+std::to_string(d.device_type)+",\"vendor_id\":"+std::to_string(d.vendor_id)+",\"resolved\":"+(d.resolved?"true":"false")+"}";}
+    for(const auto& d:s.devices){if(out.back()!='[')out+=',';out+="{\"side\":\""+std::string(model::side_name(d.side))+"\",\"osd_name\":"+model::json_quote(d.osd_name)+",\"logical_address\":"+std::to_string(d.logical_address)+",\"physical_address\":"+std::to_string(d.physical_address)+",\"device_type\":"+std::to_string(d.device_type)+",\"vendor_id\":"+std::to_string(d.vendor_id)+",\"resolved\":"+(d.resolved?"true":"false")+"}";}
     return out+"]}";
 }
 bool parse_owned_snapshot(const Json& v,model::OwnedAdapterSnapshot& out) {
