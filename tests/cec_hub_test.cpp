@@ -264,6 +264,14 @@ static void finishing_a_scan_starts_no_other_scan() {
     // the source up, which would enumerate the back wire.
     h.begin_discovery(1); device(h, F, 0, 0, 0, "Screen"); h.finish_discovery();
     assert(t.scans.empty());
+    // The source re-announces at a new address on the wire a front sweep keeps.
+    // The route follows it when the sweep ends, still without another scan.
+    device(h, B, 4, 0x1000, 4, "Source"); t.sent.clear(); t.scans.clear();
+    h.begin_discovery(1);
+    h.receive(B, frame({0x8f, 0x84, 0x20, 0, 4})); h.receive(B, frame({0x80, 0x47, 'S', 'o', 'u', 'r', 'c', 'e'}));
+    assert(!t.contains(B, 15, {0x86, 0x20, 0}));
+    device(h, F, 0, 0, 0, "Screen"); h.finish_discovery();
+    assert(t.contains(B, 15, {0x86, 0x20, 0}) && t.scans.empty());
 }
 static void playback_tests() {
     const auto B = amity::BusSide::Back;

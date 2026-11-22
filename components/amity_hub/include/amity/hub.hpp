@@ -132,6 +132,7 @@ private:
     std::vector<Device> discovery_;
     bool discovering_ = false;
     uint8_t discovery_sides_ = 0;
+    std::string restore_after_discovery_;
     uint8_t pending_resolution_ = 0;
     ReceiveStep receive_step_ = ReceiveStep::Frame;
     int selected_ = -1;

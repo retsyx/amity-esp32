@@ -260,7 +260,7 @@ void Hub::begin_discovery(uint8_t sides) {
     for (const auto& device : devices_)
         if (!(sides & (device.bus == BusSide::Front ? 1 : 2))) discovery_.push_back(device);
     discovered_physical_ = 0xffff;
-    discovering_ = true;discovery_sides_ = sides;
+    discovering_ = true;discovery_sides_ = sides;restore_after_discovery_.clear();
 }
 
 void Hub::determine_front_physical_address(uint16_t fallback) {
@@ -282,18 +282,21 @@ bool Hub::apply_default_front_physical_address(uint16_t fallback) {
 
 void Hub::finish_discovery() {
     if (!discovering_) return;
-    // Only a rescanned side can move the current source. That side's lookup
-    // cooldown has just restarted, so these lookups never start another scan.
+    // A rescanned side's lookup cooldown has just restarted, so these lookups
+    // never start another scan. On a kept side only the source's own report
+    // during the sweep can move it; resolve_device() remembered that.
     const auto source = current().source;
     const bool rescanned = !source.empty() && (discovery_sides_ & (lookup_side(source) == BusSide::Front ? 1 : 2));
+    const bool reported = !source.empty() && restore_after_discovery_ == source;
+    restore_after_discovery_.clear();
     const auto *before = rescanned ? find_device(source) : nullptr;
     const bool had_source = before != nullptr;
     const Device previous = before ? *before : Device{};
     devices_ = std::move(discovery_);
     discovering_ = false;
-    if (!rescanned) return;
+    if (!rescanned && !reported) return;
     const auto *after = find_device(source);
-    if (after && after->physical_address != 0xffff && (!had_source || previous.bus != after->bus ||
+    if (after && after->physical_address != 0xffff && (reported || !had_source || previous.bus != after->bus ||
         previous.address != after->address || previous.physical_address != after->physical_address))
         send(after->bus, 15, {0x86, static_cast<uint8_t>(after->physical_address >> 8), static_cast<uint8_t>(after->physical_address)});
 }
@@ -317,9 +320,9 @@ void Hub::resolve_device(BusSide side, uint8_t address, bool restore_route) {
         return (!device.name.empty() && other.name == device.name && other.bus == side) ||
                (device.physical_address != 0xffff && other.bus == side && other.physical_address == device.physical_address);
     }), devices.end());
-    if (!discovering_ && restore_route && device.name == current().source &&
-        !device.name.empty() && device.physical_address != 0xffff) {
-        receive_step_=ReceiveStep::Input;pending_resolution_=resume_received();
+    if (restore_route && device.name == current().source && !device.name.empty() && device.physical_address != 0xffff) {
+        if (!discovering_) { receive_step_=ReceiveStep::Input;pending_resolution_=resume_received(); }
+        else if (!(discovery_sides_ & (side == BusSide::Front ? 1 : 2))) restore_after_discovery_ = device.name;
     }
 }
 
