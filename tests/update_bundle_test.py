@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import shlex
 import struct
-import textwrap
 import zipfile
 import subprocess
 import sys
@@ -165,11 +164,8 @@ class BundleTests(unittest.TestCase):
             subprocess.run(command,check=True,capture_output=True);produced=output.read_bytes();offset=bundle.parse_header(produced[:32],len(produced))[3];self.assertEqual(produced[offset:],image);self.assertEqual(native.read_bytes(),image)
             value['image_sha256']='0'*64;manifest.write_bytes(self.canonical(value));failure=subprocess.run(command,capture_output=True);self.assertNotEqual(failure.returncode,0);self.assertEqual(output.read_bytes(),produced);self.assertEqual(native.read_bytes(),image)
     def test_actual_release_packaging_and_publish_arguments(self):
-        workflow=(ROOT/'.github/workflows/build-firmware.yml').read_text()
-        block=workflow.split('- name: Prepare downloadable release assets',1)[1].split("python3 - <<'PY'",1)[1].split('\n          PY',1)[0]
-        package_script=textwrap.dedent(block).lstrip()
-        publish=(ROOT/'.github/workflows/release-firmware.yml').read_text().split('        run: |',1)[1]
-        publish_script=textwrap.dedent(publish)
+        package=[sys.executable,str(ROOT/'tools/release_assets.py')]
+        publish=['bash',str(ROOT/'tools/publish_release.sh')]
         for signed in (False,True):
             with tempfile.TemporaryDirectory(prefix='amity-release-assets-') as directory:
                 base=Path(directory);build=base/'build';build.mkdir();(build/'amity-provision').mkdir()
@@ -180,7 +176,7 @@ class BundleTests(unittest.TestCase):
                     for arch in ('amd64','arm64'):(build/'amity-provision'/f'amity-provision-{system}-{arch}.zip').write_bytes(b'fake provisioner')
                 (base/'README.md').write_text('Use the release update file. https://github.com/retsyx/amity-esp32/blob/main/README.md')
                 env=dict(os.environ,RELEASE_TAG='v0.1.61')
-                subprocess.run([sys.executable,'-c',package_script],cwd=base,env=env,check=True)
+                subprocess.run(package,cwd=base,env=env,check=True)
                 assets=build/'release';checksums=(assets/'SHA256SUMS').read_text()
                 for name in ('amity-update.bin','amity.release.json')+ (('amity.release.sig',) if signed else ()):
                     self.assertEqual((assets/name).read_bytes(),(build/name).read_bytes());self.assertIn(hashlib.sha256((assets/name).read_bytes()).hexdigest()+'  '+name,checksums)
@@ -188,11 +184,11 @@ class BundleTests(unittest.TestCase):
                 commands=base/'commands';commands.mkdir();gh=commands/'gh'
                 gh.write_text('#!'+sys.executable+'\nimport json,os,sys\nopen(os.environ["ARGS_FILE"],"w").write(json.dumps(sys.argv[1:]))\n');gh.chmod(0o700)
                 env.update(PATH=str(commands)+os.pathsep+os.environ['PATH'],ARGS_FILE=str(base/'args.json'),GH_REPO='test/amity')
-                subprocess.run(['bash','-euc',publish_script],cwd=base,env=env,check=True)
+                subprocess.run(publish,cwd=base,env=env,check=True)
                 arguments=json.loads((base/'args.json').read_text());self.assertEqual(arguments[:3],['release','create','v0.1.61'])
                 self.assertIn('dist/amity-update.bin',arguments);self.assertIn('dist/amity.release.json',arguments);self.assertEqual('dist/amity.release.sig' in arguments,signed)
                 (build/'amity.release.json').unlink()
-                failure=subprocess.run([sys.executable,'-c',package_script],cwd=base,env=env,capture_output=True)
+                failure=subprocess.run(package,cwd=base,env=env,capture_output=True)
                 self.assertNotEqual(failure.returncode,0) # Missing metadata cannot silently publish image-only assets.
     def test_actual_target_parser_and_upload(self):
         with tempfile.TemporaryDirectory(prefix='amity-bundle-test-') as directory:

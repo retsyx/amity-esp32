@@ -337,7 +337,8 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
         LIBS amity_model amity_consortium OpenSSL::Crypto
         ARGS "${CMAKE_BINARY_DIR}/release-manifest.json"
         FIXTURES release_manifest)
-    amity_python_tests(release_hardware_test.py update_bundle_test.py production_profile_test.py)
+    amity_python_tests(release_hardware_test.py update_bundle_test.py production_profile_test.py
+        release_scripts_test.py)
 
     # Setup tool
     amity_command_test(provisioning_go_test "${GO}" test ./...)

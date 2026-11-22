@@ -99,42 +99,11 @@ jobs:
 
       - name: Validate release version
         if: inputs.release_tag != ''
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          tag = os.environ['RELEASE_TAG']
-          version = re.search(r'^set\(PROJECT_VER "([^"]+)"',
-                              Path('CMakeLists.txt').read_text(), re.MULTILINE)
-          if version is None or tag != 'v' + version[1]:
-              raise SystemExit('Release tag must be v followed by PROJECT_VER from CMakeLists.txt')
-          print(f'Releasing Amity {version[1]} from {tag}')
-          PY
+        run: python3 tools/release_version.py "$RELEASE_TAG"
 
       - name: Read pinned SDK commits
         id: sdk
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          versions = Path('SDK_VERSIONS.txt').read_text()
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              for name, label in (
-                  ('idf', 'ESP-IDF'),
-                  ('matter', 'ESP-Matter'),
-                  ('chip', 'ConnectedHomeIP'),
-              ):
-                  match = re.search(
-                      rf'^{label}(?: [^:]+)?: ([0-9a-f]{{40}})$', versions, re.MULTILINE
-                  )
-                  if match is None:
-                      raise SystemExit(f'Missing pinned {label} commit in SDK_VERSIONS.txt')
-                  print(f'{name}={match[1]}', file=output)
-          PY
+        run: python3 tools/sdk_versions.py >> "$GITHUB_OUTPUT"
 
       - name: Install Linux build dependencies
         run: |
@@ -197,45 +166,7 @@ jobs:
         run: python3 amity-provision/build_release.py
 
       - name: Prepare downloadable release assets
-        run: |
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          import shutil
-          import zipfile
-
-          build = Path('build')
-          with zipfile.ZipFile(build / 'amity-firmware.zip') as package:
-              version = json.loads(package.read('manifest.json'))['firmware_version']
-          tag = os.environ['RELEASE_TAG']
-          if tag and tag != 'v' + version:
-              raise SystemExit('Built firmware version does not match release tag')
-          sources = [build / name for name in
-                     ('amity.bin', 'amity-update.bin', 'amity.release.json', 'amity.elf', 'amity.map', 'amity-firmware.zip')]
-          if (build / 'amity.release.sig').exists():
-              sources.append(build / 'amity.release.sig')
-          sources.append(Path('README.md'))
-          sources.extend(build / 'amity-provision' / f'amity-provision-{system}-{arch}.zip'
-                         for system in ('darwin', 'windows', 'linux')
-                         for arch in ('amd64', 'arm64'))
-          destination = build / 'release'
-          destination.mkdir(exist_ok=True)
-          checksums = []
-          for source in sorted(sources, key=lambda path: path.name):
-              target = destination / source.name
-              shutil.copyfile(source, target)
-              if tag and source == Path('README.md'):
-                  guide = target.read_bytes()
-                  for kind in ('blob', 'tree'):
-                      guide = guide.replace(
-                          f'https://github.com/retsyx/amity-esp32/{kind}/main/'.encode(),
-                          f'https://github.com/retsyx/amity-esp32/{kind}/{tag}/'.encode())
-                  target.write_bytes(guide)
-              checksums.append(f'{hashlib.sha256(target.read_bytes()).hexdigest()}  {target.name}')
-          (destination / 'SHA256SUMS').write_text('\n'.join(checksums) + '\n')
-          PY
+        run: python3 tools/release_assets.py
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
