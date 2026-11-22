@@ -220,7 +220,7 @@ bool send(Active &link,Kind kind,std::string_view payload,uint32_t ttl=1000){
 #include "removal_runtime.inc"
 std::string control_json(model::JoinId join,std::string_view digest,std::string_view phase,std::string_view extra){return "{\"phase\":\""+std::string(phase)+"\",\"join_id\":\""+join.str()+"\",\"join_digest\":\""+std::string(digest)+"\""+std::string(extra)+"}";}
 bool enroll_lan(Active &active,bool server){
-    BoundedSetupTimings<5> timing("enrollment",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("total");
+    BoundedSetupTimings<4> timing("enrollment",now_ms);timing.peer=active.peer;timing.link=active.session.scope().link_id;timing.begin("total");
     std::lock_guard<std::mutex> transaction(enrollment_lock);
     Group current;{std::lock_guard<std::mutex> guard(lock);current=group;}
     if(!current.join_id||(server&&current.joining_id!=active.peer))return timing.done(current.role!=Group::prepared);
@@ -230,24 +230,20 @@ bool enroll_lan(Active &active,bool server){
         return parse_envelope(incoming,envelope)==Error::none&&active.tls->received_bulk()==is_update_kind(envelope.kind)&&active.session.admit(envelope,received,received)==Error::none&&envelope.kind==Kind::enrollment_control&&envelope.payload.get("join_id")->string==current.join_id.str()&&envelope.payload.get("join_digest")->string==digest;
     };
     if(server){
-        const auto proof=timing.begin("challenge_prove");
-        auto nonce=random_id<model::MessageId>();if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"challenge",",\"challenge_nonce\":\""+nonce.str()+"\""))||!receive()||envelope.payload.get("phase")->string!="prove"||envelope.payload.get("challenge_nonce")->string!=nonce.str())return false;
-        timing.finish(proof,true);const auto store=timing.begin("membership_store");
+        const auto store=timing.begin("membership_store");
         {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;bool found=false;for(auto &peer:next.peers)if(peer.id==active.peer){peer.active=true;found=true;}if(!found)return false;next.revision=std::max(next.revision,next.join_revision);if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);status.membership_revision=group.revision;}
         timing.finish(store,true);
         const auto acknowledgement=timing.begin("commit_ack");
-        if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"commit",",\"membership_revision\":\""+std::to_string(current.join_revision)+"\",\"ready\":false"))||!receive()||envelope.payload.get("phase")->string!="ack")return false;
+        if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"commit",",\"membership_revision\":\""+std::to_string(current.join_revision)+"\""))||!receive()||envelope.payload.get("phase")->string!="ack")return false;
         uint64_t acknowledged=0;if(!decimal(envelope.payload.get("membership_revision"),acknowledged)||acknowledged!=current.join_revision)return false;
         timing.finish(acknowledgement,true);const auto finalize=timing.begin("finalize_store");
         {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.join_id={};next.joining_id={};next.join_digest.clear();next.join_hostname.clear();next.join_revision=0;if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);}
         timing.finish(finalize,true);
     }else{
-        if(!receive()||envelope.payload.get("phase")->string!="challenge")return false;
-        const auto nonce=envelope.payload.get("challenge_nonce")->string;
-        if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"prove",",\"challenge_nonce\":\""+nonce+"\""))||!receive()||envelope.payload.get("phase")->string!="commit")return false;
+        if(!receive()||envelope.payload.get("phase")->string!="commit")return false;
         uint64_t revision=0;if(!decimal(envelope.payload.get("membership_revision"),revision)||revision!=current.join_revision)return false;
         {std::lock_guard<std::mutex> persistence(persistence_lock);std::unique_lock<std::mutex> guard(lock);if(group.join_id!=current.join_id||group.join_digest!=digest)return false;auto next=group;next.role=Group::member;next.revision=std::max(next.revision,revision);for(auto &p:next.peers)p.active=true;if(without_runtime_lock(guard,[&]{return save_group(next);})!=ESP_OK)return false;group=std::move(next);status.member=true;status.membership_revision=group.revision;}
-        if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"ack",",\"membership_revision\":\""+std::to_string(revision)+"\",\"state\":\"active\"")))return false;
+        if(!send(active,Kind::enrollment_control,control_json(current.join_id,digest,"ack",",\"membership_revision\":\""+std::to_string(revision)+"\"")))return false;
         if(current.role==Group::prepared){
             // The old singleton SystemControl identity remains fenced. Let the
             // durable LAN acknowledgement leave TCP, then rebuild from the new

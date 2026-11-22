@@ -77,14 +77,14 @@ void configure(Active& active,Group::Role role=Group::prepared,uint64_t commit_r
     const auto incoming=[&](const std::string& payload){
         Envelope e;e.kind=Kind::enrollment_control;e.consortium_id=scope.consortium_id;e.origin_octopus_id=scope.peer_id;e.destination_octopus_id=scope.local_id;e.origin_boot_id=scope.peer_boot_id;e.destination_boot_id=scope.local_boot_id;e.coordinator_epoch=1;e.config_revision=7;e.ttl_ms=2000;return envelope_json(e,payload);
     };
-    active.transport.frames={incoming(control_json(group.join_id,group.join_digest,"challenge",",\"challenge_nonce\":\""+ident<model::MessageId>(11).str()+"\"")),incoming(control_json(group.join_id,group.join_digest,"commit",",\"membership_revision\":\""+std::to_string(commit_revision)+"\",\"ready\":false"))};
+    active.transport.frames={incoming(control_json(group.join_id,group.join_digest,"commit",",\"membership_revision\":\""+std::to_string(commit_revision)+"\""))};
 }
 bool run(Active& active,bool& rebooted){try{return enroll_lan(active,false);}catch(const Restart&){rebooted=true;return false;}}
 void restart_tests(){
     {Active active;configure(active);bool rebooted=false;
      check(!run(active,rebooted)&&rebooted&&restarts==1&&handoffs==1,"prepared member did not restart through the internal handoff");
      check(group.role==Group::member&&status.member&&group.peers.front().active,"restart preceded durable member commitment");
-     check(events==std::vector<std::string>({"prove","group_commit","ack","close_enrollment","delay_500","internal_handoff","restart"}),"commit/ACK/restart ordering changed");
+     check(events==std::vector<std::string>({"group_commit","ack","close_enrollment","delay_500","internal_handoff","restart"}),"commit/ACK/restart ordering changed");
      check(clock_ms==600&&!internal_stack,"post-ACK delay or broker lifetime changed");}
     {Active active;configure(active);ack_fails=true;bool rebooted=false;
      check(!run(active,rebooted)&&!rebooted&&!handoffs&&!restarts,"failed ACK authorized a restart");

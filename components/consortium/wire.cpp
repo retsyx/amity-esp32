@@ -14,15 +14,11 @@ bool text_is(const Json *v, std::initializer_list<std::string_view> allowed) {re
 bool hex(const Json *v,size_t length) {return v&&v->type==Json::Type::string&&v->string.size()==length&&std::all_of(v->string.begin(),v->string.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');});}
 bool generic_id(const Json *v) { model::MessageId ignored;return id(v,ignored); }
 bool uint_field(const Json &v,std::string_view key,uint64_t low,uint64_t high) {uint64_t n;return json_uint(v.get(key),n,low,high);}
-bool bool_field(const Json &v,std::string_view key) {bool b;return json_bool(v.get(key),b);}
 bool decimal_field(const Json &v,std::string_view key) {uint64_t n;return decimal(v.get(key),n);}
 bool ids(const Json &v,std::initializer_list<std::string_view> keys) {for(auto key:keys)if(!generic_id(v.get(key)))return false;return true;}
 bool enrollment(const Json &v) {
     if(!ids(v,{"join_id"})||!hex(v.get("join_digest"),64))return false;
-    const auto *phase=v.get("phase");
-    if(text_is(phase,{"challenge","prove"}))return closed(v,{"phase","join_id","join_digest","challenge_nonce"})&&generic_id(v.get("challenge_nonce"));
-    if(text_is(phase,{"commit"}))return closed(v,{"phase","join_id","join_digest","membership_revision","ready"})&&decimal_field(v,"membership_revision")&&bool_field(v,"ready")&&!v.get("ready")->boolean;
-    return text_is(phase,{"ack"})&&closed(v,{"phase","join_id","join_digest","membership_revision","state"})&&decimal_field(v,"membership_revision")&&text_is(v.get("state"),{"active"});
+    return text_is(v.get("phase"),{"commit","ack"})&&closed(v,{"phase","join_id","join_digest","membership_revision"})&&decimal_field(v,"membership_revision");
 }
 bool membership(const Json &v) {
     return closed(v,{"mutation_id","proposal_digest","phase","membership_revision","expected_boot_id"},{"result"})&&generic_id(v.get("expected_boot_id"))&&generic_id(v.get("mutation_id"))&&hex(v.get("proposal_digest"),64)&&decimal_field(v,"membership_revision")&&text_is(v.get("phase"),{"factory_reset"})&&(!v.get("result")||text_is(v.get("result"),{"reset_scheduled","rejected","unknown"}));
