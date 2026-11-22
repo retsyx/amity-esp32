@@ -56,7 +56,6 @@ public:
     system::ExecutionSnapshot execution_snapshot()const;
     struct AppliedConfiguration {
         uint64_t config_revision=0,presentation_revision=0;
-        std::string policy_hash;
     };
     AppliedConfiguration applied_configuration()const;
     std::vector<system::CecObservation> native_observations()const;

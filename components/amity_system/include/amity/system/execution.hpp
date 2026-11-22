@@ -12,7 +12,6 @@ struct AdmissionResult {
 struct ActivityOutcome { MessageId request_id; std::string stage, error; };
 struct ExecutionSnapshot {
     uint64_t applied_config_revision = 0, applied_presentation_revision = 0;
-    std::string applied_policy_hash;
     uint64_t state_revision = 0;
     bool activity_settling = false;
     // The running activity, when the applied configuration still has it.

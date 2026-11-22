@@ -56,8 +56,8 @@ public:
     void set_owned_observer(std::function<void(const system::OwnedAdapterSnapshot&)> fn) { observer=std::move(fn); }
     void set_owned_authorizer(std::function<bool(const system::OwnedAuthorization&)> fn) { authorizer=std::move(fn); }
     system::ExecutionSnapshot execution_snapshot() const { ++execution_reads;return applied; }
-    struct AppliedConfiguration {uint64_t config_revision,presentation_revision;std::string policy_hash;};
-    AppliedConfiguration applied_configuration()const{++configuration_reads;return {applied.applied_config_revision,applied.applied_presentation_revision,applied.applied_policy_hash};}
+    struct AppliedConfiguration {uint64_t config_revision,presentation_revision;};
+    AppliedConfiguration applied_configuration()const{++configuration_reads;return {applied.applied_config_revision,applied.applied_presentation_revision};}
     void on_configuration_applied(std::function<void()> callback){configuration_applied=std::move(callback);}
     uint64_t executing_configuration_revision()const{return applied.applied_config_revision;}
     system::AdmissionResult submit_owned(const system::OwnedIntent& intent,const system::OwnedAuthorization& auth) {
@@ -102,7 +102,7 @@ public:
         const auto result=commit?commit():ESP_OK;
         if(result==ESP_OK){
             configured_snapshot=std::move(next);configuration=configured_snapshot->configuration;
-            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;applied.applied_policy_hash=configured_snapshot->policy_hash;if(configuration_applied)configuration_applied();}
+            if(auto_apply){applied.applied_config_revision=configuration.config_revision;applied.applied_presentation_revision=configuration.presentation_revision;if(configuration_applied)configuration_applied();}
         }
         return result;
     }

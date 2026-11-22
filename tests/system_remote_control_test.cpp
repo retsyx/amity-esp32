@@ -27,7 +27,6 @@ int main(){
         ++configuration_events;
         const auto applied=original.applied_configuration();const auto saved=original.active_configuration();
         assert(saved&&applied.config_revision==saved->config_revision&&applied.presentation_revision==saved->presentation_revision);
-        assert(applied.policy_hash==executable_policy_hash(*saved));
     });
     const auto initial_snapshot=prepared(config);
     fail_policy_hash=true; // Publication consumes the prepared snapshot without hashing again.
@@ -48,7 +47,7 @@ int main(){
     unsigned failed_hash_commits=0;
     assert(original.configure(nullptr,[&]{++failed_hash_commits;return ESP_OK;})==ESP_ERR_INVALID_ARG);
     assert(failed_hash_commits==0&&original.active_configuration().get()==initial_configuration.get());
-    drain(4);assert(configuration_events==1&&original.execution_snapshot().applied_policy_hash==executable_policy_hash(config));
+    drain(4);assert(configuration_events==1&&original.execution_snapshot().applied_config_revision==config.config_revision);
     const auto first=config.activities[0].activity_id;
     auto generation=original.remote_activity_generation();const auto selection=original.activity_selection();
     assert(original.request_remote_activity(0,generation+1)==ESP_ERR_INVALID_STATE&&original.activity_selection()==selection);
@@ -131,7 +130,6 @@ int main(){
     // Readers retain a coherent immutable version across later publications.
     assert(initial_configuration.get()!=original.active_configuration().get()&&initial_snapshot!=original.configuration_snapshot());
     assert(serialize_configuration(*initial_configuration)==serialize_configuration(config));
-    assert(original.execution_snapshot().applied_policy_hash==executable_policy_hash(labels));
     // A foreign owner's lookup and loss never stall the main's local recipe.
     auto interrupted_config=direct_configuration();interrupted_config.octopuses.push_back({remote,1});for(auto& component:interrupted_config.components)if(component.record.component_id==interrupted_config.activities[0].source)component.record.qualified_name->port.octopus_id=remote;
     amity::SystemControl interrupted;interrupted.set_identity(interrupted_config.consortium_id,*interrupted_config.controller_octopus_id);interrupted.set_boot_identity(id<BootId>(92));bool available=true;unsigned jobs=0;

@@ -89,7 +89,7 @@ system::ExecutionSnapshot SystemControl::execution_snapshot()const{
     out.state_revision=local_.activity_selection();out.activity_settling=state.activity_settling;out.error=state.activity_error;
     const bool installed=config&&state.applied_config_revision==config->config_revision&&state.applied_presentation_revision==config->presentation_revision;
     if(installed){
-        out.applied_config_revision=config->config_revision;out.applied_presentation_revision=config->presentation_revision;out.applied_policy_hash=published->policy_hash;
+        out.applied_config_revision=config->config_revision;out.applied_presentation_revision=config->presentation_revision;
     }
     if(config&&state.current_activity>=0&&static_cast<size_t>(state.current_activity)<state.activities.size()){
         const auto id=state.activities[state.current_activity].activity_id;
@@ -102,7 +102,7 @@ SystemControl::AppliedConfiguration SystemControl::applied_configuration()const{
     const auto published=std::atomic_load(&active_);if(!published)return {};
     const auto state=local_.playback_state();const auto& config=published->configuration;
     if(state.applied_config_revision!=config.config_revision||state.applied_presentation_revision!=config.presentation_revision)return {};
-    return {config.config_revision,config.presentation_revision,published->policy_hash};
+    return {config.config_revision,config.presentation_revision};
 }
 std::vector<system::CecObservation> SystemControl::native_observations()const{
     std::vector<system::CecObservation> out;

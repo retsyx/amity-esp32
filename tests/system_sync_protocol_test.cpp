@@ -129,7 +129,6 @@ void configuration_publication_is_driven_by_application(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     main.applied.applied_config_revision=main.configuration.config_revision;
     main.applied.applied_presentation_revision=main.configuration.presentation_revision;
-    main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
     amity::flush_configuration();assert(configuration_changes.size()==1&&main.execution_reads==0);
     const auto reads=main.configuration_reads;
     for(unsigned i=0;i<5000;++i){amity::flush_configuration();amity::configuration_activation_status(id<s::MessageId>(1));}
@@ -446,7 +445,7 @@ void earlier_save_completes_after_a_later_save(){
     Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;main.auto_apply=false;
     const auto apply=[&]{
         main.applied.applied_config_revision=main.configuration.config_revision;main.applied.applied_presentation_revision=main.configuration.presentation_revision;
-        main.applied.applied_policy_hash=executable_policy_hash(main.configuration);main.configuration_applied();amity::flush_configuration();
+        main.configuration_applied();amity::flush_configuration();
     };
     auto first=active;first.activities[0].label="First";
     assert(amity::activate_distributed_configuration(first,active.revisions(),id<s::MessageId>(140))==ESP_OK);apply();
@@ -489,7 +488,6 @@ void scans_and_saved_intent_without_peer_ack(){
     assert(amity::configuration_activation_status(request).phase=="configuring");
     assert(configuration_changes.empty());
     main.applied.applied_presentation_revision=status.presentation_revision;
-    main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
     main.configuration_applied();amity::flush_configuration();
     assert(amity::configuration_activation_status(request).phase=="applied");
     assert(configuration_changes.size()==1&&configuration_changes[0]==status.config_revision);
