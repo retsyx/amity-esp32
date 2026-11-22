@@ -321,6 +321,14 @@ void owned_snapshot_name_tests(){
         for(bool resolved:{true,false}){const auto device=decode(name,resolved);assert(!device.resolved&&device.osd_name.empty());}
     for(const auto& name:{std::string("Apple TV"),std::string("T\xc3\xa9l\xc3\xa9"),std::string("a\"b\\c")}){const auto device=decode(name,true);assert(device.resolved&&device.osd_name==name);}
 }
+void saved_name_transport_tests(){
+    // Activity and context intents carry saved names to every member. Each name
+    // the main admits must pass the member's decoder, and no other name may.
+    for(const auto& name:{std::string("Apple TV"),std::string("T\xc3\xa9l\xc3\xa9"),std::string("T\xe9l\xe9"),std::string("Wohnzimmer \xc3"),std::string("AVR\xff\xff")}){
+        auto intent=action(scope());intent.source=m::QualifiedDeviceName{{scope().consortium_id,scope().peer_id,0,m::Side::back},name};
+        Envelope out;assert(intent.source->valid()==(parse_envelope(packet(scope(),Kind::scoped_intent,owned_intent_json(intent)),out)==Error::none));
+    }
+}
 void update_tests() {
     const std::string request="\"request_id\":\""+ident<m::MessageId>(40).str()+"\"",base=request+",\"release_id\":\"0.1.56-dev\"";
     const auto chunk="{"+base+",\"offset\":\"0\",\"data_hex\":\"0001\",\"chunk_sha256\":\""+std::string(64,'b')+"\"}";
@@ -445,4 +453,4 @@ void bootstrap_tests(){
     records.disconnect();records.connect(6);assert(records.fragment(5,3,8,0,"abcdefgh")==R::stale);
 }
 
-int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();owned_snapshot_name_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}
+int main(int argc,char** argv){assert(argc==2);(void)argv;const auto power=packet(scope(),Kind::scoped_intent,owned_intent_json(action(scope())));json_tests();frame_tests(power);envelope_tests(power);hello_profile_tests();adapter_index_tests();owned_snapshot_name_tests();saved_name_transport_tests();session_tests();owner_activity_selection_tests();raw_key_edge_tests();synchronization_tests();logical_session_restart_tests();live_configuration_tests();update_tests();binary_update_tests();original_controller_tests();radio_and_gesture_tests();bootstrap_tests();std::cout<<"PASS consortium scoped-intent protocol, same-stream synchronization barriers and exact authority/boots/config/message-expiry fences, candidate join/abort state, update authorization, bootstrap/radio/gestures and all retired graph kinds\n";}

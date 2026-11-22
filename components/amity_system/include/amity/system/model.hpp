@@ -32,6 +32,29 @@ inline std::string json_quote(std::string_view text) {
     }
     return out + '"';
 }
+// UTF-8 without NUL: the byte rule of every consortium frame.
+inline bool valid_utf8(std::string_view s) {
+    for (size_t i = 0; i < s.size();) {
+        const auto lead = static_cast<unsigned char>(s[i++]);
+        if (!lead) return false;
+        if (lead < 0x80) continue;
+        unsigned count = 0; uint32_t cp = 0, minimum = 0;
+        if (lead >= 0xc2 && lead <= 0xdf) { count=1; cp=lead&31; minimum=0x80; }
+        else if (lead >= 0xe0 && lead <= 0xef) { count=2; cp=lead&15; minimum=0x800; }
+        else if (lead >= 0xf0 && lead <= 0xf4) { count=3; cp=lead&7; minimum=0x10000; }
+        else return false;
+        if (s.size()-i < count) return false;
+        while (count--) { const auto c=static_cast<unsigned char>(s[i++]); if ((c&0xc0)!=0x80) return false; cp=(cp<<6)|(c&63); }
+        if (cp<minimum || cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return false;
+    }
+    return true;
+}
+// An OSD name that saved configuration and consortium frames can carry: 1 to
+// 14 printable UTF-8 bytes. A CEC device can report any other bytes.
+inline bool valid_osd_name(std::string_view name) {
+    return !name.empty() && name.size() <= 14 && valid_utf8(name) &&
+           std::none_of(name.begin(), name.end(), [](unsigned char c) { return c < 32 || c == 127; });
+}
 
 // Only edge codecs handle text. Different tags cannot be accidentally assigned.
 template <class Tag> class Id {

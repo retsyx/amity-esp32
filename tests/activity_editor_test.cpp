@@ -100,8 +100,23 @@ void test_restore_rejection_text(){
         assert(rejected(invalid)=="This backup is from an unsupported Amity version or is damaged.");
     assert(rejected("[]")=="Choose a complete saved configuration");
 }
+// The main sends saved names to every member in activity intents, and a member
+// rejects a frame that is not UTF-8. A device on the main's own adapter follows
+// the same rule as a member's device: 1 to 14 printable UTF-8 bytes. The editor
+// does not offer one whose name breaks it, and saved configuration cannot hold it.
+void test_untransportable_main_local_name(){
+    auto config=empty_configuration();config.octopuses.push_back({id<model::OctopusId>(70),1});
+    const auto offered=[&](const std::string& name){
+        model::CecObservation o;o.endpoint={{config.consortium_id,*config.controller_octopus_id,0,model::Side::back},4};o.osd_name=name;o.device_type=4;
+        const auto available=ae::choices(config,{o},{},true);
+        return std::any_of(available.begin(),available.end(),[&](const auto& c){return c.native_name&&c.native_name->osd_name==name;});
+    };
+    const auto saves=[&](const std::string& name){auto saved=config;fixture_equipment(saved,name,"source",model::Side::back);std::string error;return validate_configuration(saved,error);};
+    for(const auto& name:{std::string("T\xe9l\xe9"),std::string("Wohnzimmer \xc3"),std::string("AVR\xff\xff")})assert(!offered(name)&&!saves(name));
+    for(const auto& name:{std::string("T\xc3\xa9l\xc3\xa9"),std::string("Apple TV")})assert(offered(name)&&saves(name));
+}
 int main(){
-    test_current_activity_retention();test_restore_rejection_text();
+    test_current_activity_retention();test_restore_rejection_text();test_untransportable_main_local_name();
     auto c=direct_configuration();auto avr=switch_configuration(c,"Play Wii");std::vector<std::string> unresolved;std::string error;
     // No equipment observations or path approval are required to retain or save
     // local and remote selections, including AVR volume and switching.

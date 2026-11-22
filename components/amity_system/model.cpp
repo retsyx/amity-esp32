@@ -27,10 +27,7 @@ bool CecPortRef::valid() const {
     return consortium_id.valid() && octopus_id.valid() && tentacle_id <= amity::last_tentacle_id &&
            (side == Side::front || side == Side::back);
 }
-bool QualifiedDeviceName::valid() const {
-    return port.valid() && !osd_name.empty() && osd_name.size() <= 14 &&
-           std::none_of(osd_name.begin(), osd_name.end(), [](unsigned char c) { return c < 32 || c == 127; });
-}
+bool QualifiedDeviceName::valid() const { return port.valid() && valid_osd_name(osd_name); }
 namespace {
 struct JsonValue { std::string text; bool quoted = false; };
 // Small strict decoder for the flat qualified-name object. Duplicate/unknown fields,

@@ -1,5 +1,6 @@
 // Copyright 2026. SPDX-License-Identifier: GPL-3.0-or-later
 #include "amity/consortium/json.hpp"
+#include "amity/system/model.hpp"
 #include <algorithm>
 #include <limits>
 
@@ -14,28 +15,12 @@ Json *Json::get(std::string_view key) {
     for (auto &entry : object) if (entry.first == key) return &entry.second;
     return nullptr;
 }
-bool valid_utf8(std::string_view s) {
-    for (size_t i = 0; i < s.size();) {
-        const auto lead = static_cast<unsigned char>(s[i++]);
-        if (!lead) return false;
-        if (lead < 0x80) continue;
-        unsigned count = 0; uint32_t cp = 0, minimum = 0;
-        if (lead >= 0xc2 && lead <= 0xdf) { count=1; cp=lead&31; minimum=0x80; }
-        else if (lead >= 0xe0 && lead <= 0xef) { count=2; cp=lead&15; minimum=0x800; }
-        else if (lead >= 0xf0 && lead <= 0xf4) { count=3; cp=lead&7; minimum=0x10000; }
-        else return false;
-        if (s.size()-i < count) return false;
-        while (count--) { const auto c=static_cast<unsigned char>(s[i++]); if ((c&0xc0)!=0x80) return false; cp=(cp<<6)|(c&63); }
-        if (cp<minimum || cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return false;
-    }
-    return true;
-}
 namespace {
 class Parser {
 public:
     Parser(std::string_view s, JsonError &e,size_t maximum,size_t values) : s_(s), error_(e),maximum_(maximum),maximum_values_(values) {}
     bool parse(Json &out) {
-        if (s_.empty() || s_.size()>maximum_ || !valid_utf8(s_)) return fail("invalid_size_or_utf8");
+        if (s_.empty() || s_.size()>maximum_ || !amity::system::valid_utf8(s_)) return fail("invalid_size_or_utf8");
         if (!value(out, 0)) return false;
         ws(); return pos_==s_.size() || fail("trailing_content");
     }

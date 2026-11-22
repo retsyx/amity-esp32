@@ -32,8 +32,6 @@ constexpr uint32_t bulk_frame_flag = uint32_t{1} << 31;
 // Rejects duplicate decoded keys, NUL, invalid UTF-8, invalid surrogate pairs,
 // trailing content, >12 levels, >256 values, and integer overflow.
 bool parse_json(std::string_view bytes, Json &out, JsonError &error, size_t maximum_bytes = max_frame_bytes, size_t maximum_values = 256);
-// The byte rule parse_json applies to a whole frame: UTF-8 without NUL.
-bool valid_utf8(std::string_view bytes);
 bool closed(const Json &value, std::initializer_list<std::string_view> required,
             std::initializer_list<std::string_view> optional = {});
 bool json_string(const Json *value, std::string &out, size_t min, size_t max);
