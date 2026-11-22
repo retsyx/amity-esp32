@@ -198,12 +198,6 @@ def configure_access(account):
     run(["udevadm", "settle"])
 
 
-def retire_split_host_sources():
-    """Remove obsolete managed sources left by an older overlay deployment."""
-    for relative in ("amity_harness/remote.py", "unit_tests/test_remote.py"):
-        (HARNESS / relative).unlink(missing_ok=True)
-
-
 def install(account, wiring):
     # Render/validate all wiring and the existing boot file before any mutation.
     source = overlay_source(wiring)
@@ -218,7 +212,6 @@ def install(account, wiring):
         print("Kernel headers require a reboot; rerun setup afterward.", flush=True)
         return REBOOT_REQUIRED
     retire_followers()
-    retire_split_host_sources()
     configure_access(account)
     with tempfile.TemporaryDirectory(prefix="amity-overlay-") as directory:
         dts, dtbo = Path(directory) / "harness.dts", Path(directory) / "harness.dtbo"
@@ -379,22 +372,46 @@ def ssh_command(host, port=None, *, bootstrap=False):
             "-o", "ServerAliveCountMax=3", *(["-p", str(port)] if port else []), host]
 
 
+# browser_tests serves the shipping UI from these repository assets.
+UI_ASSETS = Path("components/web_admin/assets")
+# Every deployment replaces these Pi repository paths as a whole.
+DEPLOYED = (Path("cec-harness"), UI_ASSETS)
+
+
 def source_archive():
-    """Deploy harness sources only; never ship the checkout's credentials or captures."""
+    """Deploy harness sources and UI assets only; never ship the checkout's credentials or captures."""
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w:gz") as output:
         top_level = {"setup.py", "setup_matter.py", "matter-requirements.txt", "setup_runtime.py",
                      "runtime-requirements.txt", "runtime-constraints.txt", "run", "run.py",
-                     "fw-reset", "flash-duts", "README.md", "TEST-HARNESS.md", "DIAGNOSTICS.md"}
-        packages = {"amity_harness", "functional_tests", "unit_tests"}
+                     "fw-reset", "flash-duts", "README.md", "TEST-HARNESS.md", "TEST-HARNESS2.md",
+                     "DIAGNOSTICS.md"}
+        packages = {"amity_harness", "functional_tests", "unit_tests", "browser_tests"}
         for path in sorted(HARNESS.rglob("*")):
             relative = path.relative_to(HARNESS)
             source = ((len(relative.parts) == 1 and path.name in top_level)
                       or (len(relative.parts) == 2 and relative.parts[0] in packages
                           and path.suffix == ".py"))
             if source and path.is_file() and not path.is_symlink():
-                output.add(path, arcname=str(Path("cec-harness") / path.relative_to(HARNESS)))
+                output.add(path, arcname=str(Path("cec-harness") / relative))
+        assets = HARNESS.parent / UI_ASSETS
+        for path in sorted(assets.iterdir()) if assets.is_dir() else ():
+            if path.is_file() and not path.is_symlink():
+                output.add(path, arcname=str(UI_ASSETS / path.name))
     return archive.getvalue()
+
+
+def deploy_command(root):
+    """Unpack the whole archive before replacing anything, so files removed from
+    the checkout do not linger and a failed transfer keeps the previous sources."""
+    replace = "".join(
+        f"rm -rf {shlex.quote(str(path))}; if [ -e \"$staging\"/{shlex.quote(str(path))} ]; then "
+        f"mkdir -p {shlex.quote(str(path.parent))}; "
+        f"mv \"$staging\"/{shlex.quote(str(path))} {shlex.quote(str(path))}; fi; "
+        for path in DEPLOYED)
+    return (f"set -e; mkdir -p {shlex.quote(root)}; cd {shlex.quote(root)}; "
+            "staging=$(mktemp -d .deploy.XXXXXX); trap 'rm -rf \"$staging\"' EXIT; "
+            "tar -xzf - --no-same-owner -C \"$staging\"; " + replace)
 
 
 def remote(args):
@@ -414,8 +431,7 @@ def remote(args):
     # Establish admin authority before copying any sources.
     run([*ssh, "sudo -n true"])
     print(f"Deploying harness sources to {args.host}:{root}", flush=True)
-    extract = "mkdir -p " + shlex.quote(root) + " && tar -xzf - --no-same-owner -C " + shlex.quote(root)
-    subprocess.run([*ssh, extract], input=source_archive(), check=True)
+    subprocess.run([*ssh, deploy_command(root)], input=source_archive(), check=True)
     # An old image can need one reboot for matching kernel headers and another
     # for the generated CEC overlay. Resume the entire idempotent installation.
     for stage in range(3):

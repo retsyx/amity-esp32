@@ -30,20 +30,6 @@ class PiSetupTests(unittest.TestCase):
         self.wiring = Wiring.from_markdown()
         self.account = SimpleNamespace(pw_name="bench", pw_dir="/home/bench", pw_uid=1001, pw_gid=1001)
 
-    def test_install_retires_only_obsolete_split_host_sources(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            obsolete = {"amity_harness/remote.py", "unit_tests/test_remote.py"}
-            retained = {"amity_harness/cec.py", "unit_tests/test_cec.py", "credentials/private.json"}
-            for relative in obsolete | retained:
-                path = root / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("retain contents")
-            with patch.object(setup, "HARNESS", root):
-                setup.retire_split_host_sources()
-                setup.retire_split_host_sources()
-            self.assertEqual({str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}, retained)
-
     def test_platform_failure_precedes_wiring_account_and_provisioning(self):
         with patch.object(setup, "validate_platform", side_effect=ValueError("Unsupported Pi")), \
                 patch.object(setup.Wiring, "from_markdown") as wiring, \
@@ -168,30 +154,108 @@ class PiSetupTests(unittest.TestCase):
             root = Path(directory) / "harness"
             expected = {"setup.py", "setup_matter.py", "setup_runtime.py", "run", "run.py", "fw-reset",
                         "flash-duts", "README.md",
-                        "TEST-HARNESS.md", "matter-requirements.txt", "runtime-requirements.txt",
-                        "runtime-constraints.txt", "amity_harness/__init__.py",
-                        "functional_tests/example.py", "unit_tests/test_example.py"}
+                        "TEST-HARNESS.md", "TEST-HARNESS2.md", "matter-requirements.txt",
+                        "runtime-requirements.txt", "runtime-constraints.txt", "amity_harness/__init__.py",
+                        "functional_tests/example.py", "unit_tests/test_example.py",
+                        "browser_tests/soak_browser.py"}
             excluded = {"credentials/enrollment.txt", "captures/trace.md", ".cache/dependency.py",
-                        "amity_harness/__pycache__/cached.py", "private.txt", "private.json"}
+                        "amity_harness/__pycache__/cached.py", "browser_tests/fixture.json",
+                        "private.txt", "private.json"}
             for name in expected | excluded:
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("private" if name in excluded else "source")
+            # browser_tests serves the shipping UI from the repository's assets.
+            assets = Path(directory) / "components/web_admin/assets"
+            expected_assets = {"app.js", "index.html"}
+            for name in expected_assets | {"nested/unused.js", "../web_admin.cpp"}:
+                target = assets / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("source" if name in expected_assets else "private")
             (root / "run").chmod(0o755)
             (root / "flash-duts").chmod(0o755)
             external = Path(directory) / "private.py"
             external.write_text("never deploy")
             (root / "amity_harness/linked.py").symlink_to(external)
+            (assets / "linked.js").symlink_to(external)
             (root / "linked-directory").symlink_to(external.parent, target_is_directory=True)
             with patch.object(setup, "HARNESS", root):
                 archive = setup.source_archive()
             with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as contents:
                 members = contents.getmembers()
                 self.assertTrue(all(item.isfile() for item in members))
-                self.assertEqual({item.name for item in members}, {"cec-harness/" + name for name in expected})
+                self.assertEqual({item.name for item in members},
+                                 {"cec-harness/" + name for name in expected}
+                                 | {"components/web_admin/assets/" + name for name in expected_assets})
                 self.assertTrue(all(contents.extractfile(item).read() == b"source" for item in members))
                 self.assertEqual(contents.getmember("cec-harness/run").mode & 0o777, 0o755)
                 self.assertEqual(contents.getmember("cec-harness/flash-duts").mode & 0o777, 0o755)
+
+    @staticmethod
+    def _archive(files):
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as output:
+            for name, text in files.items():
+                body = text.encode()
+                item = tarfile.TarInfo(name)
+                item.size, item.mode = len(body), 0o644
+                output.addfile(item, io.BytesIO(body))
+        return data.getvalue()
+
+    @staticmethod
+    def _deploy(root, archive):
+        return subprocess.run(["sh", "-c", setup.deploy_command(str(root))], input=archive,
+                              capture_output=True, check=False)
+
+    @staticmethod
+    def _files(root):
+        return {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
+
+    def test_deploy_replaces_deployed_paths_and_keeps_everything_else(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "amity checkout" / "esp32"
+            removed = {"cec-harness/unit_tests/test_removed.py", "cec-harness/hand-copied.md",
+                       "cec-harness/amity_harness/__pycache__/cached.pyc", "components/web_admin/assets/removed.js"}
+            kept = {"components/web_admin/notes.txt", "test-results/credentials/amity-dut.json",
+                    ".harness-python/bin/python", "firmware/amity-partition.bin"}
+            for name in removed | kept:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("previous")
+            shipped = {"cec-harness/run.py": "run", "cec-harness/unit_tests/test_kept.py": "test",
+                       "components/web_admin/assets/app.js": "ui"}
+            result = self._deploy(root, self._archive(shipped))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self._files(root), set(shipped) | kept)
+            self.assertTrue(all((root / name).read_text() == text for name, text in shipped.items()))
+            self.assertTrue(all((root / name).read_text() == "previous" for name in kept))
+            self.assertFalse(any(path.name.startswith(".deploy.") for path in root.iterdir()))
+
+    def test_deploy_creates_a_missing_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "amity" / "esp32"
+            result = self._deploy(root, self._archive({"cec-harness/run.py": "run"}))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self._files(root), {"cec-harness/run.py"})
+
+    def test_failed_transfer_keeps_the_previous_deployment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            previous = {"cec-harness/run.py", "cec-harness/unit_tests/test_old.py",
+                        "components/web_admin/assets/app.js"}
+            for name in previous:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("previous")
+            # Hash text barely compresses, so half the archive cuts its data.
+            noise = "".join(hashlib.sha256(str(index).encode()).hexdigest() for index in range(512))
+            archive = self._archive({"cec-harness/run.py": noise,
+                                     "components/web_admin/assets/app.js": "new"})
+            result = self._deploy(root, archive[:len(archive) // 2])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(self._files(root), previous)
+            self.assertTrue(all((root / name).read_text() == "previous" for name in previous))
+            self.assertFalse(any(path.name.startswith(".deploy.") for path in root.iterdir()))
 
     def test_access_grants_native_usb_serial_permissions_without_opening_ports(self):
         open_file = setup.os.open

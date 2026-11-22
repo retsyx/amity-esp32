@@ -165,6 +165,8 @@ python3 cec-harness/setup.py --host pi@new-harness.local
 ```
 
 Initial setup records a previously unseen SSH host key; changed keys are rejected.
+Each deployment replaces the Pi's `cec-harness/` and `components/web_admin/assets/`
+with this checkout's copies, so files removed from the checkout do not linger.
 
 This deploys the harness, installs system Chromium and the pinned USB and
 Playwright dependencies in `.harness-python/` at the repository root, prepares
@@ -1365,9 +1367,8 @@ while waiting for physical command evidence. Evidence includes elapsed time,
 sweep/activity/key counts and browser checks. Failures retain DUT configuration
 for inspection while releasing browser, HTTP and CEC resources.
 
-For a short browser-only check, run the actual helper against a local HTTP
-fixture serving the shipping UI from a full checkout on the Pi (including
-`components/web_admin/assets`):
+For a short browser-only check, run the actual helper on the Pi against a local
+HTTP fixture serving the shipping UI assets that setup deploys:
 
 ```sh
 PYTHONPATH=cec-harness .harness-python/bin/python cec-harness/browser_tests/soak_browser.py
