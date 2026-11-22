@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from consortium_gatt_callback_test import function
+from slice_support import function
 ROOT=Path(__file__).resolve().parents[1]
 # The tools run without site-packages whenever this test does.
 PYTHON=[sys.executable]+(['-S'] if sys.flags.no_site else [])

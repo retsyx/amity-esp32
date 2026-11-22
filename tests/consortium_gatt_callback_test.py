@@ -11,6 +11,8 @@ import shlex
 import subprocess
 import tempfile
 
+from slice_support import function
+
 
 PREFIX = r'''
 #include <algorithm>
@@ -297,17 +299,6 @@ void discovery_cancel_and_end(){
 }
 int main(){struct Test{const char* name;void(*run)();};int failed=0;for(auto test:{Test{"collect multiple real-service candidates",collection},Test{"service filtering, address dedup, bounded list",service_and_bounds},Test{"exact callback cookie independent of radio generation",stale},Test{"cancel wakes failure and fences callbacks",cancellation},Test{"only exact connection disconnect completes",exact_disconnect},Test{"negotiate full/default MTU before discovery",mtu_negotiation},Test{"already-sent MTU awaits exact ATT completion",mtu_already_sent},Test{"MTU initiation/error/timeout/stale/cancel failure fences",mtu_failures},Test{"MTU callback session/connection/status fences",mtu_callback_fences},Test{"automatic MTU event session/connection/channel fences",mtu_event_fences},Test{"prepared seal keeps active channel, blocks reconnect",seal_prepared},Test{"bounded controlled stage timing outside callback locks",timing_stages},Test{"early candidate and continued multiple-board selection",progressive_discovery},Test{"discovery cancellation, natural end and empty window fences",discovery_cancel_and_end}}){reset();try{test.run();std::cout<<"PASS "<<test.name<<'\n';}catch(const std::exception& error){++failed;std::cerr<<"FAIL "<<test.name<<": "<<error.what()<<'\n';}}return failed?1:0;}
 '''
-
-def function(source: str, declaration: str) -> str:
-    start = source.index(declaration)
-    brace = source.index('{', start)
-    depth = 1
-    end = brace + 1
-    while depth:
-        depth += (source[end] == '{') - (source[end] == '}')
-        end += 1
-    return source[start:end] + '\n'
-
 
 def main():
     source = (Path(__file__).resolve().parents[1] / 'components/consortium/gatt_transport.cpp').read_text()

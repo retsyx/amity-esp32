@@ -8,7 +8,7 @@ import shlex
 import subprocess
 import tempfile
 
-from consortium_tls_credentials_test import native_library
+from host_mbedtls import native_library
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / 'third_party/esp-homekit-sdk/components/hkdf-sha'

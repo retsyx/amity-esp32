@@ -11,7 +11,7 @@ import shlex
 import subprocess
 import tempfile
 
-from consortium_gatt_callback_test import function
+from slice_support import function
 
 
 PREFIX = r'''

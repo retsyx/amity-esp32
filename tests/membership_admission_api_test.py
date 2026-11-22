@@ -3,23 +3,9 @@
 from pathlib import Path
 import subprocess
 import tempfile
-from consortium_gatt_callback_test import function
+from slice_support import block, function
 
 ROOT = Path(__file__).resolve().parents[1]
-
-def block(source, marker):
-    start = source.index(marker)
-    opening = source.index('{', start)
-    depth = 0
-    for index in range(opening, len(source)):
-        if source[index] == '{':
-            depth += 1
-        elif source[index] == '}':
-            depth -= 1
-            if depth == 0:
-                return source[start:index + 1]
-    raise AssertionError(marker)
-
 
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()

@@ -5,21 +5,7 @@ import re
 import subprocess
 import tempfile
 
-
-def function(source: str, name: str) -> str:
-    start = re.search(r"^[^\n;{}]*\b" + re.escape(name) + r"\([^;{}]*?\)\s*\{", source, re.M)
-    if not start:
-        raise AssertionError(f"Production function not found: {name}")
-    tokens = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/|[{}]', re.S)
-    depth = 0
-    for token in tokens.finditer(source, start.end() - 1):
-        if token.group() == "{":
-            depth += 1
-        elif token.group() == "}":
-            depth -= 1
-            if depth == 0:
-                return source[start.start():token.end()]
-    raise AssertionError(f"Unclosed production function: {name}")
+from slice_support import named_function as function
 
 
 def main() -> None:

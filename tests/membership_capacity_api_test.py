@@ -5,10 +5,9 @@ import os
 import shlex
 import subprocess
 import tempfile
-import admission_workflow_test as workflow
-from consortium_gatt_callback_test import function
-from membership_admission_api_test import block
+from legacy_fixtures.admission_workflow import PREFIX, RESET
 from setup_timing_support import timing_support
+from slice_support import block, function
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = r'''
@@ -75,7 +74,6 @@ def main():
     names = ['std::string proposal_json(', 'void admission_failed(', 'void invite_worker_work(', 'RuntimeAdmissionStatus runtime_admission_status(',
              'esp_err_t runtime_scan_admission(', 'esp_err_t runtime_cancel_admission(', 'esp_err_t runtime_add_octopus(']
     actual = function((ROOT / 'components/consortium/settings_runtime.inc').read_text(), 'bool settings_hostname_pending(') + ''.join(function(runtime, name) for name in names)
-    reset = workflow.SUITE[workflow.SUITE.index('void reset(){'):workflow.SUITE.index('void run(){')]
     helpers = function(admin, 'std::string string(') + function(admin, 'std::string json(cJSON* root)') + function(admin, 'esp_err_t error(httpd_req_t* req,')
     handler = block(admin[admin.index('    Tracked operation;'):], '    if(path=="/api/membership/scan")')
     json_dir = ROOT / 'managed_components/espressif__cjson/cJSON'
@@ -83,7 +81,7 @@ def main():
         json_dir = json_dir.parent
     with tempfile.TemporaryDirectory(prefix='amity-membership-capacity-') as directory:
         temp = Path(directory)
-        (temp / 'test.cpp').write_text(timing_support() + workflow.PREFIX + actual + reset + SUITE + helpers + CHECKS + handler.replace('return true;', 'return;') + TAIL)
+        (temp / 'test.cpp').write_text(timing_support() + PREFIX + actual + RESET + SUITE + helpers + CHECKS + handler.replace('return true;', 'return;') + TAIL)
         include = ['tests/reset_fakes', 'components/consortium', 'components/consortium/include',
                    'components/amity_system/include', 'components/device_settings/include']
         sources = sorted((ROOT / 'components/consortium').glob('*.cpp')) + [ROOT / 'components/amity_system/model.cpp']

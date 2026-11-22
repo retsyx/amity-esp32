@@ -6,9 +6,9 @@ import shlex
 import subprocess
 import tempfile
 
-from consortium_gatt_callback_test import function
-from consortium_live_configuration_test import PREFIX, SUPPORT
+from legacy_fixtures.live_configuration import PREFIX, SUPPORT
 from setup_timing_support import timing_support
+from slice_support import function
 
 ROOT = Path(__file__).resolve().parents[1]
 

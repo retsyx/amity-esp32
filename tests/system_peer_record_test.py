@@ -7,9 +7,8 @@ import shlex
 import subprocess
 import tempfile
 
-from consortium_gatt_callback_test import function
-from consortium_removal_test import PREFIX
-from membership_admission_api_test import block
+from legacy_fixtures.removal import PREFIX
+from slice_support import block, function
 
 ROOT = Path(__file__).resolve().parents[1]
 

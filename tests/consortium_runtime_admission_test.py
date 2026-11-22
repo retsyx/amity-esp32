@@ -5,7 +5,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
-from consortium_gatt_callback_test import function
+from slice_support import function
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''

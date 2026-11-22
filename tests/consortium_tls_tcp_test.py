@@ -6,9 +6,10 @@ import shlex
 import subprocess
 import tempfile
 
-import consortium_tls_credentials_test as credentials_test
-from consortium_gatt_callback_test import function
+from host_mbedtls import native_library
+from legacy_fixtures.tls_credentials import HELPERS, PREFIX
 from setup_timing_support import timing_support
+from slice_support import function
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = r'''
@@ -58,11 +59,11 @@ int main(){using namespace amity::consortium::platform;try{
 
 
 def main():
-    source, build = credentials_test.native_library()
+    source, build = native_library()
     credentials = (ROOT / "components/consortium/credentials.cpp").read_text()
     tls = (ROOT / "components/consortium/tls_link.cpp").read_text()
-    prefix = credentials_test.PREFIX.replace("#include <sys/socket.h>",
-                                            "#include <sys/socket.h>\n#include <chrono>\n#include <thread>")
+    prefix = PREFIX.replace("#include <sys/socket.h>",
+                            "#include <sys/socket.h>\n#include <chrono>\n#include <thread>")
     prefix = prefix.replace("uint64_t now_ms(){return clock_ms;}",
                             "uint64_t now_ms(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}")
     # Real sockets and time: the actual readiness wait replaces the scripted one.
@@ -81,10 +82,9 @@ def main():
         "TlsLink::TlsLink(", "TlsLink::~TlsLink()", "int TlsLink::verify(", "bool TlsLink::setup(",
         "bool TlsLink::handshake(", "bool TlsLink::send(", "TlsLink::ReceiveResult TlsLink::receive_failed(",
         "TlsLink::ReceiveResult TlsLink::receive_expired(", "TlsLink::ReceiveResult TlsLink::poll_receive("))
-    helpers = credentials_test.SUITE[:credentials_test.SUITE.index("bool connect(")]
     with tempfile.TemporaryDirectory(prefix="amity-tls-tcp-") as directory:
         cpp, binary = Path(directory) / "test.cpp", Path(directory) / "test"
-        cpp.write_text(timing_support() + prefix + actual + helpers + SUITE)
+        cpp.write_text(timing_support() + prefix + actual + HELPERS + SUITE)
         include = [ROOT / "components/consortium", ROOT / "components/consortium/include",
                    ROOT / "components/amity_system/include", ROOT / "tests/reset_fakes", source / "include",
                    source / "tf-psa-crypto/include", source / "tf-psa-crypto/drivers/builtin/include",

@@ -2,7 +2,7 @@
 """Block actual runtime persistence while exercising admission and competing mutations."""
 from pathlib import Path
 import os, shlex, subprocess, tempfile
-from consortium_gatt_callback_test import function
+from slice_support import function
 
 ROOT = Path(__file__).resolve().parents[1]
 

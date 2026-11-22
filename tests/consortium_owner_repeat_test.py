@@ -2,7 +2,7 @@
 """Execute actual qualified state-change codec, FIFO handoff and link fencing."""
 from pathlib import Path
 import os, shlex, subprocess, tempfile
-from consortium_gatt_callback_test import function
+from slice_support import function
 ROOT=Path(__file__).resolve().parents[1]
 PREFIX=r'''
 #include "amity/consortium/runtime.hpp"

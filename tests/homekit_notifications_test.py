@@ -5,7 +5,7 @@ import re
 import subprocess
 import tempfile
 
-from homekit_http_test import function
+from slice_support import named_function as function
 
 
 def main() -> None:

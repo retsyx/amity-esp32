@@ -11,8 +11,8 @@ import shlex
 import subprocess
 import tempfile
 
-from consortium_gatt_callback_test import function
-from consortium_tls_credentials_test import native_library
+from host_mbedtls import native_library
+from slice_support import function
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = r'''
