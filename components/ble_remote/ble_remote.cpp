@@ -958,7 +958,14 @@ void finish_peer(int err, ble::SiriGeneration advertised) {
     {
         Guard lock;
         state.waiting = false;
-        if (!controller_enabled.load() || setup_cancelled.load() || pairing_stopped.load() || forgetting || (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE)) {
+        if (!controller_enabled.load() || setup_cancelled.load() || pairing_stopped.load() || forgetting) {
+            state.connecting = false;
+            return;
+        }
+        if (!err && connection_handle == BLE_HS_CONN_HANDLE_NONE) {
+            // The link dropped after the connect callback, before security.
+            // A saved peer can reconnect; an initial pairing needs an outcome.
+            if (!have_saved && !state.last_error) state.last_error = BLE_HS_ENOTCONN;
             state.connecting = false;
             return;
         }

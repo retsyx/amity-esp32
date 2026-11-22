@@ -35,7 +35,7 @@ int64_t now;
 unsigned steps, blocking_waits, cancellations, scans, security_calls, discovery_calls,
     persisted, removed_bonds;
 bool synced = true, storage_peer = true, connecting, scanning, immediate_connect,
-    disconnect_during_discovery, stop_during_connect, stop_during_security;
+    disconnect_after_connect, disconnect_during_discovery, stop_during_connect, stop_during_security;
 int connect_error, cancel_error, discovery_error, bond_delete_error, peer_erase_error;
 int privacy_remove_error;
 bool host_bond, controller_irk;
@@ -274,7 +274,10 @@ int ble_gap_connect(uint8_t own, const ble_addr_t *peer, int32_t duration,
         assert(ble_remote_stop_pairing() == ESP_ERR_TIMEOUT); // The link is still closing.
         assert(ble_remote_pause_background(false) == ESP_OK); // Radio control resumes once idle.
     }
-    if (fake::immediate_connect) fake::complete_connect();
+    if (fake::immediate_connect) {
+        fake::complete_connect();
+        if (fake::disconnect_after_connect) fake::disconnect(BLE_HS_HCI_ERR(BLE_ERR_CONN_SPVN_TMO));
+    }
     return 0;
 }
 int ble_gap_conn_active() { return fake::connecting; }
@@ -410,6 +413,7 @@ int main(int argc, char **argv) {
     const std::string scenario = argv[1];
     if (scenario == "pairing" || scenario == "pairing-cleanup-privacy" ||
         scenario == "pairing-cleanup-privacy-error" || scenario == "pairing-disconnected-privacy" ||
+        scenario == "pairing-disconnected-before-security" ||
         scenario == "pairing-resolved-identity-error" ||
         scenario == "pairing-resolved-random-error" ||
         scenario.rfind("stop-pairing", 0) == 0) fake::storage_peer = false;
@@ -419,7 +423,14 @@ int main(int argc, char **argv) {
     if(scenario=="actuator-startup")assert(ble_remote_set_controller_enabled(false)==ESP_OK);
     assert(ble_remote_start(nullptr, nullptr) == ESP_OK);
 
-    if(scenario=="pairing-disconnected-privacy") {
+    if(scenario=="pairing-disconnected-before-security") {
+        fake::immediate_connect=true;fake::disconnect_after_connect=true;
+        open_peer(fake::peer);
+        const auto status=fake::status();
+        assert(!status.connected && !status.connecting && !status.bonded);
+        assert(status.last_error==BLE_HS_ENOTCONN);
+        assert(!fake::security_calls && !fake::discovery_calls && !fake::storage_peer);
+    }else if(scenario=="pairing-disconnected-privacy") {
         fake::immediate_connect=true;fake::disconnect_during_discovery=true;
         open_peer(fake::peer);
         assert(fake::security_calls==1 && fake::discovery_calls==1);

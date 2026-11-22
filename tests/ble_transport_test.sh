@@ -16,7 +16,8 @@ mkdir -p "$out"
   "$root/components/ble_remote/gatt_layout.cpp" -o "$out/ble_transport_test"
 for scenario in actuator-startup actuator-input actuator-reconnect actuator-connected actuator-queued-unpair actuator-pending-unpair \
   unpair-privacy unpair-privacy-cancel unpair-privacy-error unpair-privacy-connected \
-  pairing-cleanup-privacy pairing-cleanup-privacy-error pairing-disconnected-privacy pairing-resolved-identity-error pairing-resolved-random-error \
+  pairing-cleanup-privacy pairing-cleanup-privacy-error pairing-disconnected-privacy pairing-disconnected-before-security \
+  pairing-resolved-identity-error pairing-resolved-random-error \
   absence success unpair unpair-delete-error unpair-storage-error unpair-before-completion scan scan-unpair unpair-scan \
   cancel-error unpair-cancel-error connect-error async-error discovery-error \
   disconnect-before-setup unreported-link-lost reconnect-backoff host-reset pairing stop-pairing-search stop-pairing-connect stop-pairing-security \
