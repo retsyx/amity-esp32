@@ -16,7 +16,6 @@
 #include "esp_random.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
-#include "cec/bus.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <algorithm>
@@ -85,12 +84,6 @@ std::vector<m::CecObservation> equipment_observations(){
         m::CecObservation item;item.endpoint={control->port(device.bus),device.address};item.osd_name=device.name;item.device_type=device.type;item.physical_address=device.physical_address;item.vendor_id=device.vendor_id;observations.push_back(std::move(item));
     }
     return observations;
-}
-uint64_t equipment_revision(){
-    std::vector<std::string> evidence;
-    for(const auto& item:equipment_observations())if(item.osd_name)evidence.push_back(m::name_json({item.endpoint.port,*item.osd_name})+":"+item.scan_id.str()+":"+std::to_string(item.endpoint.logical_address)+":"+(item.stale?"stale":"fresh"));
-    std::sort(evidence.begin(),evidence.end());std::string bytes=std::to_string(control->snapshot().discovery_generation);for(const auto& item:evidence)bytes+='\n'+item;
-    const auto hash=config_store::sha256_hex(bytes);uint64_t revision=0;for(size_t n=0;n<16&&n<hash.size();++n)revision=revision*16+(hash[n]<='9'?hash[n]-'0':hash[n]-'a'+10);return revision;
 }
 bool object_fields(cJSON* value,std::initializer_list<const char*> required,std::initializer_list<const char*> optional={}){
     if(!cJSON_IsObject(value))return false;
@@ -221,7 +214,6 @@ esp_err_t snapshot(httpd_req_t* req){
     Json result(cJSON_CreateObject(),cJSON_Delete);
     const auto state=control->snapshot();const auto execution=control->execution_snapshot();
     const auto group=amity::consortium::runtime_status();
-    cJSON_AddNumberToObject(result.get(),"api_version",2);
     cJSON_AddStringToObject(result.get(),"mode",configuration_is_passive()?"passive":active?"coordinator":"configuration_pending");
     cJSON_AddStringToObject(result.get(),"consortium_id",control->consortium_id().str().c_str());
     cJSON_AddStringToObject(result.get(),"octopus_id",control->octopus_id().str().c_str());
@@ -238,29 +230,11 @@ esp_err_t snapshot(httpd_req_t* req){
     cJSON_AddBoolToObject(result.get(),"configuration_pending",active&&(execution.applied_config_revision!=active->config_revision||execution.applied_presentation_revision!=active->presentation_revision));
     cJSON_AddBoolToObject(result.get(),"discovering",state.discovering);
     cJSON_AddBoolToObject(result.get(),"ready",state.ready);
-    cJSON_AddStringToObject(result.get(),"discovery_revision",m::format_uint64(equipment_revision()).c_str());
     cJSON_AddStringToObject(result.get(),"activity_error",state.activity_error.c_str());
     auto* capabilities=cJSON_AddObjectToObject(result.get(),"capabilities");
-    cJSON_AddNumberToObject(capabilities,"configuration_schema",config_store::current_configuration_version);
-    cJSON_AddNumberToObject(capabilities,"supported_tentacles",control->supported_tentacles());
-    cJSON_AddNumberToObject(capabilities,"configured_tentacles_mask",control->configured_tentacles_mask());
-    auto* connectors=cJSON_AddArrayToObject(capabilities,"connectors");
-    for(uint8_t id=0;id<control->supported_tentacles();++id){auto* connector=cJSON_CreateObject();cJSON_AddNumberToObject(connector,"tentacle_id",id);cJSON_AddBoolToObject(connector,"configured",control->connector_enabled(id));cJSON_AddItemToArray(connectors,connector);}
     cJSON_AddNumberToObject(capabilities,"supported_octopuses",amity::consortium::maximum_roster_peers+1);
-    cJSON_AddNumberToObject(capabilities,"configuration_payload_limit",config_store::configuration_payload_limit);
-    config_store::StorageBudget budget;const auto storage_result=config_store::storage_budget(budget);auto* storage=cJSON_AddObjectToObject(result.get(),"storage");
-    cJSON_AddBoolToObject(storage,"available",storage_result==ESP_OK);
-    cJSON_AddNumberToObject(storage,"configuration_payload_limit",config_store::configuration_payload_limit);
-    if(storage_result==ESP_OK){cJSON_AddNumberToObject(storage,"used_entries",budget.used_entries);cJSON_AddNumberToObject(storage,"available_entries",budget.available_entries);cJSON_AddNumberToObject(storage,"total_entries",budget.total_entries);}
-    cJSON_AddBoolToObject(capabilities,"managed_updates",true);
-    cJSON_AddBoolToObject(capabilities,"consortium_enrollment",group.initialized&&group.credential_ready);
-    const auto timing=cec::Bus::runtime_statistics();auto* runtime=cJSON_AddObjectToObject(result.get(),"cec_runtime");
-    cJSON_AddNumberToObject(runtime,"active_ports",timing.active_ports);cJSON_AddNumberToObject(runtime,"timer_instances",timing.timer_instances);
-    cJSON_AddNumberToObject(runtime,"ticks",timing.ticks);cJSON_AddNumberToObject(runtime,"late_ticks",timing.late_ticks);
-    cJSON_AddNumberToObject(runtime,"max_tick_gap_us",timing.max_tick_gap_us);cJSON_AddNumberToObject(runtime,"max_isr_us",timing.max_isr_us);
     auto* membership=cJSON_AddObjectToObject(result.get(),"membership");
     cJSON_AddStringToObject(membership,"membership_revision",m::format_uint64(group.membership_revision).c_str());
-    cJSON_AddBoolToObject(membership,"enrollment_open",group.enrollment_open);
     cJSON_AddBoolToObject(membership,"coordinator",group.coordinator);
     cJSON_AddBoolToObject(membership,"authority_ready",group.authority_ready);
     cJSON_AddBoolToObject(membership,"member",group.member);
@@ -277,14 +251,6 @@ esp_err_t snapshot(httpd_req_t* req){
         cJSON_AddStringToObject(record,"firmware_identity",peer.firmware_identity.c_str());
         cJSON_AddStringToObject(record,"hostname",peer.hostname.c_str());
         if(peer.wifi_known){cJSON_AddNumberToObject(record,"wifi_rssi",peer.wifi_rssi);cJSON_AddNumberToObject(record,"wifi_channel",peer.wifi_channel);}
-    }
-    auto* sessions=cJSON_AddArrayToObject(result.get(),"sessions");
-    for(const auto& session:execution.sessions){
-        auto* item=cJSON_CreateObject();cJSON_AddItemToArray(sessions,item);
-        cJSON_AddStringToObject(item,"session_id",session.session_id.str().c_str());
-        cJSON_AddStringToObject(item,"zone_id",session.zone_id.str().c_str());
-        cJSON_AddStringToObject(item,"activity_id",session.activity_id.str().c_str());
-        cJSON_AddStringToObject(item,"generation",m::format_uint64(session.generation).c_str());
     }
     auto* observations=cJSON_AddArrayToObject(result.get(),"observations");
     for(const auto& device:equipment_observations()){
