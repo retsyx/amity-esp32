@@ -1468,6 +1468,3 @@ extern "C" esp_err_t ble_remote_stop_pairing(void) {
     if(owned&&radio_done)radio_done(radio_context);
     return waiting?ESP_ERR_TIMEOUT:ESP_OK;
 }
-
-// Revocation is monotonic for this boot. Reclaim/restart must re-evaluate durable
-// membership before enabling a controller; radio release cannot restore input.
