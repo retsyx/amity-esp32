@@ -26,7 +26,6 @@ std::string canonical(c::Json value){
     }
     return {};
 }
-bool bounds(const c::Json* value,uint64_t& low,uint64_t& high,uint64_t& write){return value&&c::closed(*value,{"read_min","read_max","write"})&&c::decimal(value->get("read_min"),low)&&low&&c::decimal(value->get("read_max"),high)&&high>=low&&c::decimal(value->get("write"),write)&&write>=low&&write<=high;}
 }
 std::string compiled_hardware_profile(){
     const std::string_view descriptor(hardware_descriptor_anchor);const auto first=descriptor.find("profile=");
@@ -43,38 +42,22 @@ std::string compiled_hardware_mapping_sha256(){
 }
 bool parse_release_manifest(std::string_view text,ReleaseManifest& out,std::string& error){
     const auto fail=[&](const char* message){error=message;return false;};c::Json value;c::JsonError detail;ReleaseManifest m;uint64_t format=0;
-    if(!c::parse_json(text,value,detail,8192)||!c::closed(value,{"format","release_id","firmware_version","image_bytes","image_sha256","image_elf_sha256","chip","hardware_profiles","partition_layout","slot_bytes","configuration","storage","origin","factory","bootloader","security_profile","rollback_readable_max","source_commit","source_tree_sha256","source_dirty","dependencies","signing_key_id"},{"hardware_mapping_sha256"}))return fail("Invalid or unsupported release manifest fields");
-    std::string chip,layout,bootloader;
+    constexpr const char* invalid="This is not a valid Amity update file.";constexpr const char* hardware="This firmware is for different Amity hardware.";
+    if(!c::parse_json(text,value,detail,8192)||!c::closed(value,{"format","release_id","firmware_version","image_bytes","image_sha256","image_elf_sha256","hardware_profiles","signing_key_id"},{"hardware_mapping_sha256"}))return fail(invalid);
     if(!c::json_uint(value.get("format"),format,1,1)||!token(value.get("release_id"),m.release_id,1,96)||!token(value.get("firmware_version"),m.firmware_version,1,31)||
        !token(value.get("image_sha256"),m.image_sha256,64,64)||!hex(m.image_sha256,64)||!token(value.get("image_elf_sha256"),m.image_elf_sha256,64,64)||!hex(m.image_elf_sha256,64)||
-       !c::decimal(value.get("image_bytes"),m.image_bytes)||!m.image_bytes||!c::decimal(value.get("slot_bytes"),m.slot_bytes)||!m.slot_bytes||
-       !token(value.get("chip"),chip,1,16)||chip!="esp32s3"||!token(value.get("partition_layout"),layout,1,64)||layout!="amity-8m-ota3d0000-v1"||
-       !token(value.get("bootloader"),bootloader,1,64)||bootloader!="esp-idf6.1-rollback-v1"||!token(value.get("security_profile"),m.security_profile,1,16)||
-       (m.security_profile!="development"&&m.security_profile!="production")||!token(value.get("signing_key_id"),m.signing_key_id,0,64)||(!m.signing_key_id.empty()&&!hex(m.signing_key_id,64))||
-       !token(value.get("source_commit"),m.source_commit,40,40)||!hex(m.source_commit,40)||!token(value.get("source_tree_sha256"),m.source_tree_sha256,64,64)||!hex(m.source_tree_sha256,64)||
-       !value.get("source_dirty")||value.get("source_dirty")->type!=c::Json::Type::boolean||!c::decimal(value.get("rollback_readable_max"),m.rollback_readable_max)||!m.rollback_readable_max)return fail("Invalid release image, target or build identity");
-    if(!std::all_of(m.release_id.begin(),m.release_id.end(),[](unsigned char b){return (b>='a'&&b<='z')||(b>='A'&&b<='Z')||(b>='0'&&b<='9')||b=='.'||b=='_'||b=='-';}))return fail("Invalid release identifier");
-    const auto* profiles=value.get("hardware_profiles");if(!profiles||profiles->type!=c::Json::Type::array||profiles->array.size()!=1||!token(&profiles->array.front(),m.hardware_profile,1,64)||m.hardware_profile!=compiled_hardware_profile())return fail("Firmware does not support this board profile");
+       !c::decimal(value.get("image_bytes"),m.image_bytes)||!m.image_bytes||
+       !token(value.get("signing_key_id"),m.signing_key_id,0,64)||(!m.signing_key_id.empty()&&!hex(m.signing_key_id,64)))return fail(invalid);
+    if(!std::all_of(m.release_id.begin(),m.release_id.end(),[](unsigned char b){return (b>='a'&&b<='z')||(b>='A'&&b<='Z')||(b>='0'&&b<='9')||b=='.'||b=='_'||b=='-';}))return fail(invalid);
+    const auto* profiles=value.get("hardware_profiles");if(!profiles||profiles->type!=c::Json::Type::array||profiles->array.size()!=1||!token(&profiles->array.front(),m.hardware_profile,1,64)||m.hardware_profile!=compiled_hardware_profile())return fail(hardware);
     const auto* mapping=value.get("hardware_mapping_sha256");
 #if CONFIG_AMITY_BOARD_DEVELOPMENT_4T
-        if(!token(mapping,m.hardware_mapping_sha256,64,64)||!hex(m.hardware_mapping_sha256,64)||m.hardware_mapping_sha256!=compiled_hardware_mapping_sha256())return fail("Firmware GPIO mapping differs from this board profile");
+        if(!token(mapping,m.hardware_mapping_sha256,64,64)||!hex(m.hardware_mapping_sha256,64)||m.hardware_mapping_sha256!=compiled_hardware_mapping_sha256())return fail(hardware);
 #else
-    if(mapping)return fail("Unexpected GPIO mapping identity for the legacy board profile");
+    if(mapping)return fail(hardware);
 #endif
-    uint64_t origin_min,origin_max,origin_write,factory_min,factory_max,factory_write;
-    if(!bounds(value.get("configuration"),m.config_read_min,m.config_read_max,m.config_write)||!bounds(value.get("storage"),m.storage_read_min,m.storage_read_max,m.storage_write)||
-       !bounds(value.get("origin"),origin_min,origin_max,origin_write)||origin_min>1||origin_max<1||origin_write!=1||!bounds(value.get("factory"),factory_min,factory_max,factory_write)||factory_min>1||factory_max<4||factory_write!=4)return fail("Unsupported configuration, origin or factory format");
-    const auto* dependencies=value.get("dependencies");if(!dependencies||!c::closed(*dependencies,{"esp_idf","esp_matter","connectedhomeip","homekit"}))return fail("Missing dependency identities");
-    for(const auto& dependency:dependencies->object){std::string commit;if(!token(&dependency.second,commit,40,40)||!hex(commit,40))return fail("Invalid dependency commit");}
     m.canonical=canonical(value);
-    if(text!=m.canonical)return fail("Manifest must use canonical RFC8785 JSON bytes");
+    if(text!=m.canonical)return fail(invalid);
     out=std::move(m);return true;
-}
-bool compatible_release(const ReleaseManifest& m,uint64_t slot,uint64_t installed,uint64_t rollback,bool production,std::string& error){
-    if(m.image_bytes>slot||m.slot_bytes>slot||m.image_bytes>m.slot_bytes){error="Image exceeds the installed OTA partition";return false;}
-    if(m.config_read_min>3||m.config_read_max<3||m.config_write!=3||installed<m.storage_read_min||installed>m.storage_read_max||m.storage_write>rollback||m.storage_write>m.rollback_readable_max){error="Release is incompatible with installed configuration or rollback storage";return false;}
-    if(production!=(m.security_profile=="production")){error="A remote update cannot change the provisioned security profile";return false;}
-    if(production&&m.signing_key_id.empty()){error="Production release requires a trusted publisher signature";return false;}
-    return true;
 }
 } // namespace system_services::updates

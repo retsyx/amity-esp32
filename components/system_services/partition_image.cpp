@@ -54,7 +54,7 @@ esp_err_t read_partition_release_direct(const esp_partition_t* partition,Release
     if(result!=ESP_OK){error="Firmware release information could not be read";return result;}
     if(config_store::sha256_hex(payload)!=amity::system::hex(std::string_view(info.bytes.data()+32,32))){error="Firmware release information is incomplete";return ESP_ERR_INVALID_CRC;}
     signature_hex=amity::system::hex(std::string_view(payload).substr(info.manifest));
-    result=validate_release(std::string_view(payload).substr(0,info.manifest),signature_hex,release,error);if(result!=ESP_OK)return result;
+    if(!parse_release_manifest(std::string_view(payload).substr(0,info.manifest),release,error))return ESP_ERR_INVALID_CRC;
     if(release.image_bytes!=info.image){error="Firmware image length differs from its release";return ESP_ERR_INVALID_CRC;}
     esp_app_desc_t app{};result=partition_flash([&]{return esp_ota_get_partition_description(partition,&app);});
     if(result!=ESP_OK||!memchr(app.version,0,sizeof(app.version))||release.firmware_version!=app.version||

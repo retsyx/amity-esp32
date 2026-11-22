@@ -186,7 +186,7 @@ esp_err_t confirm_firmware() {
     esp_err_t result=ESP_OK;
     if (running && esp_ota_get_state_partition(running,&state)==ESP_OK && state==ESP_OTA_IMG_PENDING_VERIFY)
         result=esp_ota_mark_app_valid_cancel_rollback();
-    if(result==ESP_OK){ready.store(true);updates::local_boot_healthy();}
+    if(result==ESP_OK)ready.store(true);
     return result;
 }
 esp_err_t upload_firmware(httpd_req_t *req) {
@@ -213,7 +213,8 @@ esp_err_t upload_firmware(httpd_req_t *req) {
     if(!read_exact(manifest.data(),manifest.size())||!read_exact(signature.data(),signature.size()))return web::error(req,"Incomplete update file metadata");
     const auto signature_hex=amity::system::hex(signature);
     updates::ReleaseManifest release;
-    if(!updates::parse_release_manifest(manifest,release,error)||release.image_bytes!=bundle.image_bytes)return web::error(req,"Firmware image size does not match the release");
+    if(updates::validate_release(manifest,signature_hex,release,error)!=ESP_OK)return web::error(req,error.c_str());
+    if(release.image_bytes!=bundle.image_bytes)return web::error(req,"This is not a valid Amity update file.");
     std::array<char,2048> buf{};
     const auto first=std::min<uint64_t>(buf.size(),bundle.image_bytes);
     if(first<header_size||!read_exact(buf.data(),first))return web::error(req,"Incomplete firmware header");
@@ -232,7 +233,7 @@ esp_err_t upload_firmware(httpd_req_t *req) {
     auto fail=[&](const std::string& message){updates::peer_abort(message);updates::fail_system_upload(message);return web::error(req,message.c_str());};
     // The same receiver validates and stages local browser uploads and member
     // transfers. Neither path selects a boot partition during staging.
-    if(updates::peer_begin(manifest,signature_hex,error)!=ESP_OK)return fail(error);
+    if(updates::peer_begin(release,signature_hex,error)!=ESP_OK)return fail(error);
     if(updates::peer_chunk(release.release_id,0,std::string_view(buf.data(),first),error)!=ESP_OK)return fail(error);
     uint64_t read=first;updates::system_upload_progress(read);
     while(read<bundle.image_bytes){

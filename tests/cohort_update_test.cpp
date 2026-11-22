@@ -49,16 +49,15 @@ const char* boot_id(){static std::string text;text=nodes[destination].boot.str()
 bool firmware_ready(){return nodes[destination].healthy;}
 }
 namespace system_services::updates {
-std::string status_json(){const auto& n=nodes[destination];return "{\"phase\":\""+n.phase+"\",\"received_bytes\":\""+std::to_string(n.bytes.size())+"\"}";}
 esp_err_t partition_release(bool running,ReleaseManifest& release,std::string& signature,std::string& error){
     signature.clear();if(running){assert(destination==local);if(missing_running_release){error="Running firmware release could not be verified";return ESP_FAIL;}release=running_release;return ESP_OK;}
     if(!nodes[destination].staged){error="No durable staged image";return ESP_ERR_INVALID_STATE;}release=*nodes[destination].staged;return ESP_OK;
 }
 esp_err_t read_running_image(uint64_t offset,size_t count,std::string& bytes,std::string&){assert(destination==local&&offset+count<=running_bytes.size());++running_reads;bytes=running_bytes.substr(offset,count);return ESP_OK;}
 esp_err_t read_staged_image(uint64_t offset,size_t count,std::string& bytes,std::string&){assert(destination==local&&nodes[local].staged&&offset+count<=staged_bytes.size());++staged_reads;bytes=staged_bytes.substr(offset,count);return ESP_OK;}
-esp_err_t peer_begin(std::string_view body,std::string_view,std::string& error){
-    event("begin");ReleaseManifest release;if(!parse_release_manifest(body,release,error))return ESP_ERR_INVALID_ARG;
-    auto& n=nodes[destination];n.received=release;n.bytes.clear();n.phase="installing";n.maintenance=true;return ESP_OK;
+esp_err_t validate_release(std::string_view body,std::string_view,ReleaseManifest& release,std::string& error){return parse_release_manifest(body,release,error)?ESP_OK:ESP_ERR_INVALID_ARG;}
+esp_err_t peer_begin(const ReleaseManifest& release,std::string_view,std::string&){
+    event("begin");auto& n=nodes[destination];n.received=release;n.bytes.clear();n.phase="installing";n.maintenance=true;return ESP_OK;
 }
 esp_err_t peer_chunk(std::string_view release,uint64_t offset,std::string_view bytes,std::string&){
     auto& n=nodes[destination];if(!n.received||n.received->release_id!=release||offset!=n.bytes.size())return ESP_ERR_INVALID_ARG;

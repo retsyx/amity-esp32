@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -88,8 +87,7 @@ class HardwareReleaseTests(unittest.TestCase):
         return path
 
     def manifest(self, image, sdkconfig=None):
-        with patch.object(release, 'git', side_effect=lambda *args: 'a' * 40 if args[0] == 'rev-parse' else ''), patch.object(release, 'tree_identity', return_value='b' * 64):
-            return release.manifest(image, sdkconfig=sdkconfig)
+        return release.manifest(image, sdkconfig=sdkconfig)
 
     def accepts(self, binary, value):
         path = self.base / 'candidate.json'; path.write_bytes(release.canonical(value))

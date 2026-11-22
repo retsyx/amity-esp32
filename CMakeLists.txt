@@ -72,13 +72,13 @@ add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/firmware-layouts.json
 add_custom_target(check-firmware-layouts ALL DEPENDS ${CMAKE_BINARY_DIR}/firmware-layouts.json)
 
 set(AMITY_RELEASE_SIGNING_KEY "" CACHE FILEPATH "Separate P-256 release-manifest signing key")
-set(AMITY_RELEASE_ARGUMENTS --profile development)
+set(AMITY_RELEASE_ARGUMENTS)
 set(AMITY_BUNDLE_ARGUMENTS)
 if(CONFIG_AMITY_PRODUCTION_UPDATES)
     if(NOT EXISTS "${AMITY_RELEASE_SIGNING_KEY}")
         message(FATAL_ERROR "Production releases require AMITY_RELEASE_SIGNING_KEY; native boot signing uses its separate SDK key")
     endif()
-    set(AMITY_RELEASE_ARGUMENTS --profile production --signing-key "${AMITY_RELEASE_SIGNING_KEY}")
+    set(AMITY_RELEASE_ARGUMENTS --signing-key "${AMITY_RELEASE_SIGNING_KEY}")
     set(AMITY_BUNDLE_ARGUMENTS --signature "${CMAKE_BINARY_DIR}/${PROJECT_NAME}.release.sig")
 endif()
 add_custom_target(ota-release-manifest ALL

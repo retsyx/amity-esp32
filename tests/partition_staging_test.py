@@ -32,6 +32,7 @@ PREFIX=r'''
 #include <vector>
 #include <openssl/sha.h>
 using esp_ota_handle_t=int;
+#define ESP_LOGW(tag,format,...) ((void)(tag),(void)std::snprintf(nullptr,0,format,__VA_ARGS__))
 constexpr unsigned CONFIG_IDF_FIRMWARE_CHIP_ID=9,ESP_IMAGE_HEADER_MAGIC=0xe9;
 constexpr uint32_t ESP_APP_DESC_MAGIC_WORD=0xabcd5432;
 struct esp_image_header_t{uint8_t magic=ESP_IMAGE_HEADER_MAGIC,bytes[11]{};uint16_t chip_id=9;uint8_t end[10]{};};
@@ -42,7 +43,7 @@ esp_partition_t current{0x3d0000,0},candidate{0x3d0000,1};
 std::array<std::string,2> memory{std::string(0x3d0000,'\xff'),std::string(0x3d0000,'\xff')};
 const esp_partition_t* selected=&current;
 esp_app_desc_t app;
-int64_t clock_us=0;int reboots=0,maintenance=0,failures=0,ends=0,activations=0,report_staged=0;
+int64_t clock_us=0;int reboots=0,maintenance=0,ends=0,activations=0;
 unsigned flash_stack_depth=0,flash_dispatches=0;
 size_t image_bytes_read=0,hashed_image_bytes=0;
 unsigned image_hashes=0;
@@ -74,16 +75,11 @@ namespace config_store{std::string sha256_hex(std::string_view bytes){return sha
 namespace system_services::updates{
 ReleaseManifest expected;
 std::string proof(128,'a');
-std::optional<ReleaseManifest> admission;
-int validate_release(std::string_view manifest,std::string_view signature,ReleaseManifest&out,std::string&error){if(manifest!=expected.canonical||signature!=proof){error="Invalid publisher release";return ESP_ERR_INVALID_ARG;}out=expected;return ESP_OK;}
-bool parse_release_manifest(std::string_view manifest,ReleaseManifest&out,std::string&error){return validate_release(manifest,proof,out,error)==ESP_OK;}
-int stage_release(std::string_view manifest,std::string_view signature,std::string&error){ReleaseManifest value;const int result=validate_release(manifest,signature,value,error);if(result==ESP_OK)admission=value;return result;}
-std::optional<ReleaseManifest> staged_release(){return admission;}
-int begin_install(std::string&){++maintenance;return ESP_OK;}
-void install_progress(uint64_t){}
-void install_failed(const std::string&){++failures;if(maintenance)--maintenance;}
-int install_staged(){++report_staged;--maintenance;return ESP_OK;}
-int install_selected(){return ESP_OK;}
+unsigned manifest_reads=0;
+// Trailers are read back without verifying the publisher signature again.
+bool parse_release_manifest(std::string_view manifest,ReleaseManifest&out,std::string&error){++manifest_reads;if(manifest!=expected.canonical){error="Invalid release";return false;}out=expected;return true;}
+int enter_maintenance(std::string&){++maintenance;return ESP_OK;}
+void leave_maintenance(){assert(maintenance>0);--maintenance;}
 }
 '''
 
@@ -95,7 +91,7 @@ int main(){using namespace system_services::updates;
  expected.canonical="canonical-publisher-release";expected.release_id="release-one";expected.image_bytes=native.size();expected.image_sha256=sha(native);expected.firmware_version=app.version;
  char identity[65]{};for(unsigned i=0;i<32;++i)snprintf(identity+2*i,3,"%02x",app.app_elf_sha256[i]);expected.image_elf_sha256=identity;
  std::string error,signature,bytes;ReleaseManifest stored;
- auto upload=[&](bool corrupt=false){assert(peer_begin(expected.canonical,proof,error)==ESP_OK);for(size_t off=0;off<native.size();off+=2048){auto block=native.substr(off,std::min<size_t>(2048,native.size()-off));if(corrupt&&off>0)block[0]^=1;
+ auto upload=[&](bool corrupt=false){assert(peer_begin(expected,proof,error)==ESP_OK);for(size_t off=0;off<native.size();off+=2048){auto block=native.substr(off,std::min<size_t>(2048,native.size()-off));if(corrupt&&off>0)block[0]^=1;
   const auto hashed_before=hashed_image_bytes;
   assert(peer_chunk(expected.release_id,off+1,block,error)==ESP_ERR_INVALID_ARG&&hashed_image_bytes==hashed_before);
   assert(peer_chunk(expected.release_id,off,std::string_view(block).substr(1),error)==ESP_ERR_INVALID_ARG&&hashed_image_bytes==hashed_before);
@@ -104,14 +100,14 @@ int main(){using namespace system_services::updates;
  }};
  assert(partition_release(false,stored,signature,error)!=ESP_OK);
  upload();assert(maintenance==1&&selected==&current&&!reboots);
- assert(peer_stage(expected.release_id,error)==ESP_OK&&ends==1&&maintenance==0&&report_staged==1&&selected==&current&&!reboots);
+ assert(peer_stage(expected.release_id,error)==ESP_OK&&ends==1&&maintenance==0&&selected==&current&&!reboots);
  assert(image_hashes==1&&hashed_image_bytes==native.size());
  const auto verification_dispatches=flash_dispatches;
  const auto release_reads=image_bytes_read;
  assert(partition_release(false,stored,signature,error)==ESP_OK&&stored.canonical==expected.canonical&&signature==proof);
  assert(flash_dispatches==verification_dispatches+1&&image_bytes_read==release_reads+sizeof(esp_app_desc_t)); // Only metadata and the descriptor are read.
  // A lost TLS connection and idle timeout cannot abort a completed image.
- peer_abort("connection closed");clock_us+=3600000000;poll_peer_timeout();admission.reset();
+ peer_abort("connection closed");clock_us+=3600000000;poll_peer_timeout();
  assert(partition_release(false,stored,signature,error)==ESP_OK&&selected==&current&&!reboots);
  assert(peer_stage(expected.release_id,error)==ESP_OK);
  assert(peer_install("wrong-release",error)!=ESP_OK&&!reboots&&selected==&current);
@@ -119,7 +115,7 @@ int main(){using namespace system_services::updates;
  assert(read_staged_image(2048,2048,bytes,error)==ESP_OK&&bytes==native.substr(2048,2048));
  assert(flash_dispatches==chunk_dispatches+1); // Header and image bytes share the same internal-stack dispatch.
  assert(read_staged_image(native.size(),1,bytes,error)!=ESP_OK);
- assert(peer_install(expected.release_id,error,4000)==ESP_OK&&selected==&candidate&&reboots==1&&reboot_delay==4000);
+ assert(peer_install(expected.release_id,error,4000)==ESP_OK&&selected==&candidate&&reboots==1&&reboot_delay==4000&&maintenance==1); // Control stays paused until restart.
  assert(image_hashes==1&&hashed_image_bytes==native.size()&&ends==1&&activations==1); // Metadata/replayed stage/activation never reverify the image.
  // The same self-contained bytes are a source after becoming the running slot.
  memory[0]=memory[1];assert(partition_release(true,stored,signature,error)==ESP_OK);
@@ -146,10 +142,9 @@ class PartitionStagingTest(unittest.TestCase):
     def test_provisioned_partition_contains_exact_release(self):
         image=bytearray(288);image[0]=0xe9;image[32:36]=bytes.fromhex('3254cdab');image[176:208]=bytes(range(32))
         image+=hardware_profile.descriptor({'AMITY_BOARD_LEGACY_1T':'y','AMITY_BOARD_DEVELOPMENT_4T':'n'})
-        release={'image_bytes':str(len(image)),'image_sha256':hashlib.sha256(image).hexdigest(),'image_elf_sha256':image[176:208].hex(),'security_profile':'development','signing_key_id':'','hardware_profiles':['esp32s3-legacy-1t-v1']}
+        release={'image_bytes':str(len(image)),'image_sha256':hashlib.sha256(image).hexdigest(),'image_elf_sha256':image[176:208].hex(),'signing_key_id':'','hardware_profiles':['esp32s3-legacy-1t-v1']}
         for signed in (False,True):
             signature=b'x'*64 if signed else b''
-            release['security_profile']='production' if signed else 'development'
             release['signing_key_id']='a'*64 if signed else ''
             manifest=json.dumps(release,sort_keys=True,separators=(',',':')).encode()
             storage=partition_tool.partition_image(bytes(image),manifest,signature)

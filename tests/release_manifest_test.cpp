@@ -8,13 +8,16 @@ int main(int argc,char** argv){
     assert(argc==2);std::ifstream file(argv[1]);std::string text((std::istreambuf_iterator<char>(file)),{}),error;
     system_services::updates::ReleaseManifest release;
     assert(system_services::updates::parse_release_manifest(text,release,error));
-    assert(system_services::updates::compatible_release(release,0x3d0000,2,2,false,error));
-    for(const std::string& candidate:{text+"\n",std::string(" ")+text,text.substr(0,text.size()-1)+",\"format\":1}",text.substr(0,text.size()-1)+",\"arbitrary\":true}"})
+    assert(release.release_id=="test-release"&&release.image_bytes==4096&&release.signing_key_id.empty()&&release.canonical==text);
+    const auto field=[&](const std::string& extra){return text.substr(0,text.size()-1)+","+extra+"}";};
+    // Closed and canonical: duplicate, unknown or retired fields and other bytes are rejected.
+    for(const std::string& candidate:{text+"\n",std::string(" ")+text,field("\"format\":1"),field("\"arbitrary\":true"),
+            field("\"security_profile\":\"development\""),field("\"source_commit\":\""+std::string(40,'c')+"\"")})
         assert(!system_services::updates::parse_release_manifest(candidate,release,error));
+    for(const auto* required:{"\"image_sha256\"","\"hardware_profiles\"","\"signing_key_id\""}){
+        auto missing=text;const auto at=missing.find(required);assert(at!=std::string::npos);missing.replace(at,1,"\"x");
+        assert(!system_services::updates::parse_release_manifest(missing,release,error));
+    }
     assert(system_services::updates::parse_release_manifest(text,release,error));
-    auto incompatible=release;incompatible.image_bytes=0x3d0001;assert(!system_services::updates::compatible_release(incompatible,0x3d0000,2,2,false,error));
-    incompatible=release;incompatible.storage_write=3;assert(!system_services::updates::compatible_release(incompatible,0x3d0000,2,2,false,error));
-    incompatible=release;incompatible.config_read_min=4;assert(!system_services::updates::compatible_release(incompatible,0x3d0000,2,2,false,error));
-    assert(!system_services::updates::compatible_release(release,0x3d0000,2,2,true,error));
-    std::cout<<"PASS canonical release manifest rejects duplicate/unknown fields, wrong image capacity, unreadable rollback and profile changes\n";
+    std::cout<<"PASS canonical release manifest: closed fields, no retired compatibility or provenance fields, exact bytes\n";
 }

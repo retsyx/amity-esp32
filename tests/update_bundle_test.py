@@ -83,14 +83,12 @@ namespace system_services {
 std::optional<int> compare_firmware_versions(std::string_view,std::string_view){return 0;}
 namespace updates{
 std::optional<ReleaseManifest> staged;
-std::optional<ReleaseManifest> staged_release(){return staged;}
-int stage_release(std::string_view manifest,std::string_view signature,std::string&error){++stages;assert(!erases);if(manifest!=expected_manifest||signature!=expected_signature){error="Publisher/profile admission rejected";return ESP_FAIL;}ReleaseManifest value;value.image_bytes=native.size();value.image_sha256=digest_hex(native);value.firmware_version=running.version;for(auto b:running.app_elf_sha256){constexpr char hex[]="0123456789abcdef";value.image_elf_sha256+=hex[b>>4];value.image_elf_sha256+=hex[b&15];}staged=value;admitted=true;return ESP_OK;}
-bool parse_release_manifest(std::string_view manifest,ReleaseManifest&out,std::string&error){if(manifest!=expected_manifest){error="Invalid release";return false;}out.release_id="test-release";out.image_bytes=native.size();return true;}
+int validate_release(std::string_view manifest,std::string_view signature,ReleaseManifest&out,std::string&error){++stages;assert(!erases);if(manifest!=expected_manifest||signature!=expected_signature){error="Publisher admission rejected";return ESP_FAIL;}ReleaseManifest value;value.release_id="test-release";value.image_bytes=native.size();value.image_sha256=digest_hex(native);value.firmware_version=running.version;for(auto b:running.app_elf_sha256){constexpr char hex[]="0123456789abcdef";value.image_elf_sha256+=hex[b>>4];value.image_elf_sha256+=hex[b&15];}out=value;return ESP_OK;}
 int begin_system_upload(const ReleaseManifest&release,std::string&){assert(release.release_id=="test-release"&&release.image_bytes==native.size());++cohort_starts;return ESP_OK;}
 void system_upload_progress(uint64_t count){assert(count==written.size());}
 int finish_system_upload(std::string&){assert(written==native);++cohort_finishes;return ESP_OK;}
 void fail_system_upload(const std::string&){++failures;}
-int peer_begin(std::string_view manifest,std::string_view signature,std::string&error){return stage_release(manifest,signature,error);}
+int peer_begin(const ReleaseManifest& release,std::string_view,std::string&){assert(release.release_id=="test-release");staged=release;admitted=true;return ESP_OK;}
 int peer_chunk(std::string_view release,uint64_t offset,std::string_view bytes,std::string&error){
  assert(admitted&&release=="test-release"&&offset==written.size()&&bytes.size()<=2048);
  if(!offset){esp_image_header_t image;esp_app_desc_t app;memcpy(&image,bytes.data(),sizeof(image));memcpy(&app,bytes.data()+32,sizeof(app));
@@ -117,7 +115,7 @@ int main(int argc,char**argv){
   reset();auto file=header(expected_manifest.size(),0,native.size())+expected_manifest+native;auto req=request(file,fragment);assert(upload_firmware(&req)==ESP_OK&&stages==1&&erases==1&&written==native&&!selections&&!reboots&&cohort_starts==1&&cohort_finishes==1&&req.cursor==file.size());
  }
  reset();auto req=request(native,13);assert(upload_error(&req)&&!erases&&!stages);
- reset();std::string error;assert(updates::stage_release(expected_manifest,"",error)==ESP_OK);req=request(native,13);assert(upload_error(&req)&&written.empty()&&!erases&&!cohort_starts); // Metadata admission never bypasses the required bundle format.
+ std::string error;
  for(unsigned kind=0;kind<11;++kind){
   reset();auto manifest=expected_manifest;auto image=native;std::string signature;uint32_t ml=manifest.size(),sl=0;uint64_t il=image.size();
   switch(kind){case 0:ml=0;break;case 1:ml=8193;break;case 2:sl=63;break;case 3:il=UINT64_MAX;break;case 4:manifest[0]='!';break;case 5:sl=64;signature=std::string(64,'z');break;case 6:image[0]=0;break;case 7:image[48]='9';break;case 8:image[176]='!';break;case 9:il=0;break;case 10:il=0x3d0001;break;}
@@ -144,12 +142,12 @@ int main(int argc,char**argv){
 class BundleTests(unittest.TestCase):
     def image_manifest(self):
         image=bytearray(288);image[0]=0xe9;image[32:36]=bytes.fromhex('3254cdab');image[176:208]=bytes(range(32));image+=hardware.descriptor({'AMITY_BOARD_LEGACY_1T':'y','AMITY_BOARD_DEVELOPMENT_4T':'n'})
-        value={'image_bytes':str(len(image)),'image_sha256':hashlib.sha256(image).hexdigest(),'image_elf_sha256':image[176:208].hex(),'security_profile':'development','signing_key_id':'','hardware_profiles':['esp32s3-legacy-1t-v1']}
+        value={'image_bytes':str(len(image)),'image_sha256':hashlib.sha256(image).hexdigest(),'image_elf_sha256':image[176:208].hex(),'signing_key_id':'','hardware_profiles':['esp32s3-legacy-1t-v1']}
         return bytes(image),value
     def canonical(self,value):return json.dumps(value,sort_keys=True,separators=(',',':')).encode()
     def test_tool_exact_native_and_signed_contract(self):
         image,value=self.image_manifest();manifest=self.canonical(value);file=bundle.bundle(image,manifest);ml,sl,il,offset=bundle.parse_header(file[:32],len(file));self.assertEqual((ml,sl,il),(len(manifest),0,len(image)));self.assertEqual(file[offset:],image)
-        value['security_profile']='production';value['signing_key_id']='a'*64
+        value['signing_key_id']='a'*64
         with self.assertRaises(ValueError):bundle.bundle(image,self.canonical(value))
         signed=bundle.bundle(image,self.canonical(value),b'z'*64);self.assertEqual(bundle.parse_header(signed[:32],len(signed))[1],64)
     def test_tool_rejects_wrong_or_noncanonical_artifacts(self):

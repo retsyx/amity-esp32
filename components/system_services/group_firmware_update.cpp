@@ -125,8 +125,8 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
     }
     std::string error;esp_err_t applied=ESP_ERR_INVALID_ARG;const char* stage="rejected";
     const auto& request=envelope.payload;
-    if(envelope.kind==c::Kind::update_begin){ReleaseManifest manifest;
-        if(parse_release_manifest(string(request,"canonical_manifest"),manifest,error)){
+    if(envelope.kind==c::Kind::update_begin){ReleaseManifest manifest;const auto signature=string(request,"signature_hex");
+        if(validate_release(string(request,"canonical_manifest"),signature,manifest,error)==ESP_OK){
             const auto begin=*m::MessageId::parse(string(request,"request_id"));
             {
                 std::lock_guard<std::mutex> lock(incoming_gate);
@@ -134,7 +134,7 @@ c::Error receive(m::OctopusId owner,const c::Envelope& envelope){
                     peer_abort("A new firmware transfer replaced the incomplete upload");incoming_begin={};
                 }
             }
-            applied=peer_begin(manifest.canonical,string(request,"signature_hex"),error);
+            applied=peer_begin(manifest,signature,error);
             if(applied==ESP_OK){stage="ready";std::lock_guard<std::mutex> lock(incoming_gate);incoming_owner=owner;incoming_begin=begin;incoming_release=manifest.release_id;}
         }
     }else{
