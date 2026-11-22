@@ -329,16 +329,20 @@ void Hub::resolve_device(BusSide side, uint8_t address, bool restore_route) {
 void Hub::discovered(BusSide side, uint8_t address, uint8_t reported) {
     if (address > 14) return;
     auto &asked = name_requested_[side == BusSide::Front ? 0 : 1][address];
+    auto &typed = type_requested_[side == BusSide::Front ? 0 : 1][address];
     if (const auto *known = discovery_device(side, address)) {
-        // A request still inside CEC's 1 s reply time stands.
+        // A request still inside CEC's 1 s reply time stands. Active Source
+        // carries no device type; Report Physical Address does.
         if (known->name.empty() && (reported == 0x82 || reported == 0x84) && now_us_ - asked >= 1000000 &&
             send(side, address, {0x46})) asked = now_us_;
+        if (known->type == 0xff && reported == 0x82 && now_us_ - typed >= 1000000 &&
+            send(side, address, {0x83})) typed = now_us_;
         return;
     }
     Device d; d.bus = side; d.address = address;
     if (address == 0) { d.name = "TV"; d.resolved = true; d.physical_address = 0; d.type = 0; }
     (discovering_ ? discovery_ : devices_).push_back(d);
-    if (reported != 0x84) send(side, address, {0x83});
+    if (reported != 0x84 && send(side, address, {0x83})) typed = now_us_;
     if (reported != 0x47 && send(side, address, {0x46})) asked = now_us_;
     if (reported != 0x87) send(side, address, {0x8c});
 }

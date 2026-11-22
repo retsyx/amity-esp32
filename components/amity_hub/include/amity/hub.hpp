@@ -96,7 +96,8 @@ public:
     // Learn a new peer and ask for the identity its introducing report
     // (0x82, 0x84, 0x47 or 0x87; 0 for none) did not carry. A known peer's
     // later announcement (0x82 or 0x84) asks again for an OSD name it never
-    // supplied, the identity a lookup matches.
+    // supplied, the identity a lookup matches. Its Active Source also asks
+    // again for a device type it never reported, which equipment choices need.
     void discovered(BusSide side, uint8_t address, uint8_t reported = 0);
     void begin_discovery(uint8_t sides = 3);
     void determine_front_physical_address(uint16_t fallback);
@@ -145,8 +146,8 @@ private:
     bool playing_ = false, owner_audio_held_ = false;
     bool audio_query_pending_ = false;
     uint64_t now_us_ = 0, audio_query_due_ = 0;
-    // When each wire address was last asked for its OSD name.
-    uint64_t name_requested_[2][15] = {};
+    // When each wire address was last asked for its OSD name and device type.
+    uint64_t name_requested_[2][15] = {}, type_requested_[2][15] = {};
     bool audio_status_known_ = false, muted_ = false;
     uint8_t volume_ = 127;
 };

@@ -189,9 +189,32 @@ static void refused_name_request_is_asked_again(){
     fixture_admission={};
     only_targeted_identity_and_standby();no_enumeration(hub,generation);
 }
+static void known_peer_is_asked_again_for_a_missing_type(){
+    reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
+    // The peer introduces itself by name and never answers Give Physical Address.
+    receive({{static_cast<uint8_t>(0x80|back_address(hub)),0x47,'P','l','a','y','e','r'},8});
+    assert(peer(hub)&&peer(hub)->name=="Player"&&peer(hub)->type==0xff&&sent(0x83)==1);
+    // Active Source carries no device type, so a later one asks again for it;
+    // a repeat inside CEC's 1 s reply time does not.
+    fixture_time+=300000000;fixture_sent.clear();
+    receive({{0x8f,0x82,0x20,0},4});receive({{0x8f,0x82,0x20,0},4});
+    assert(sent(0x83)==1&&sent(0x46)==0&&sent(0x8c)==0&&peer(hub)->type==0xff);
+    only_targeted_identity_and_standby();no_enumeration(hub,generation);
+    // A request the full FIFO refused does not count; the next one asks.
+    fixture_time+=300000000;fixture_sent.clear();
+    fixture_admission=[](int gpio,const cec::Frame& f){return !(gpio==2&&f.size==2&&f.data[1]==0x83);};
+    receive({{0x8f,0x82,0x20,0},4});fixture_admission={};receive({{0x8f,0x82,0x20,0},4});
+    assert(sent(0x83)==2&&peer(hub)->type==0xff);
+    // Report Physical Address carries the type itself, and a known type is not
+    // asked for.
+    fixture_time+=300000000;fixture_sent.clear();receive({{0x8f,0x84,0x20,0,4},5});
+    assert(sent(0x83)==0&&peer(hub)->type==4);
+    fixture_time+=300000000;fixture_sent.clear();receive({{0x8f,0x82,0x20,0},4});
+    assert(sent(0x83)==0&&peer(hub)->name=="Player");no_enumeration(hub,generation);
+}
 int main(){
     active_announcement_without_configuration();metadata_can_introduce_a_device();
     unselected_player_retains_its_observation();foreign_activity_still_caches_local_player();malformed_announcements_are_not_cached();
-    known_peer_is_asked_again_for_a_missing_name();refused_name_request_is_asked_again();
+    known_peer_is_asked_again_for_a_missing_name();refused_name_request_is_asked_again();known_peer_is_asked_again_for_a_missing_type();
     std::puts("Actual worker caches valid player announcements independently of activities/Standby, accepts targeted metadata, preserves observations for later starts, rejects malformed sources and avoids enumeration");
 }
