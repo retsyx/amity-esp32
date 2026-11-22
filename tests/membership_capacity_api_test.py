@@ -39,8 +39,17 @@ TAIL = r'''
 }
 int main(){
     using namespace amity::consortium;
-    auto added=[](unsigned count,bool active){for(unsigned n=0;n<count;++n)group.peers.push_back({ident<model::OctopusId>(10+n),"existing-leaf",std::string(64,char('e'+n)),active});};
+    // Each added Amity gets its own ID and pin, numbered by its roster position.
+    auto added=[](unsigned count,bool active){while(count--){const auto n=static_cast<unsigned>(group.peers.size());group.peers.push_back({ident<model::OctopusId>(10+n),"existing-leaf",std::string(64,char('e'+n)),active});}};
+    // A stored roster has distinct peer IDs and pins, and a pending join names one of its peers.
+    auto stored_roster=[]{
+        for(size_t i=0;i<group.peers.size();++i)for(size_t j=i+1;j<group.peers.size();++j)
+            if(group.peers[i].id==group.peers[j].id||group.peers[i].pin==group.peers[j].pin)return false;
+        if(!group.join_id)return !group.joining_id;
+        return std::any_of(group.peers.begin(),group.peers.end(),[](const auto& p){return p.id==group.joining_id;});
+    };
     reset();added(3,true); // The main and three added Amities: the most supported.
+    assert(stored_roster());
     for(unsigned attempt=1;attempt<=3;++attempt){
         const auto refused=scan(attempt);
         assert(!refused.started&&!invitation_running&&reservations==0&&refused.status=="409 Conflict");
@@ -49,9 +58,10 @@ int main(){
     }
     reset();invitation_running=true; // Another search is running: still a temporary refusal.
     {const auto busy=scan(10);assert(!busy.started&&busy.code=="scan_unavailable"&&busy.retryable);}
-    reset();added(2,true);added(1,false);group.join_id=ident<model::JoinId>(5);group.joining_id=ident<model::OctopusId>(10); // Setup is still finishing.
+    reset();added(2,true);added(1,false);group.join_id=ident<model::JoinId>(5);group.joining_id=group.peers.back().id; // Setup is still finishing.
+    assert(stored_roster());
     {const auto finishing=scan(11);assert(!finishing.started&&finishing.code=="scan_unavailable"&&finishing.retryable);}
-    reset();added(2,true);
+    reset();added(2,true);assert(stored_roster());
     {const auto started=scan(12);assert(started.started&&invitation_running);}
     std::cout<<"PASS actual Add search on a full system explains the four-device limit without asking for a retry; temporary refusals still ask for one\n";
     return 0;
