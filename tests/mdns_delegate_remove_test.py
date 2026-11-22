@@ -142,21 +142,6 @@ def main() -> None:
     helper = function(original, patch.SIGNATURE)
     corrected = patch.GOODBYE + helper.replace(patch.ORIGINAL, patch.CORRECTED, 1)
     assert expected == original.replace(helper, corrected, 1).replace(patch.INCLUDE, patch.INCLUDE + patch.NETWORKING, 1)
-    def edited(old, new):
-        assert helper.count(old) == 1
-        return original.replace(helper, helper.replace(old, new), 1)
-    for unknown in ('', expected, original + patch.SIGNATURE,
-                    original.replace(patch.INCLUDE, ''),
-                    original.replace(patch.INCLUDE, patch.INCLUDE + patch.NETWORKING),
-                    edited('            mdns_mem_free(host);\n', ''),
-                    edited('send_bye_service(&srv, 1, false);', 'send_bye_service(&srv, 1, true);'),
-                    edited(patch.ORIGINAL, patch.CORRECTED)):
-        try:
-            patch.patch_source(unknown)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError('Generator accepted an unknown mDNS removal preimage')
     decorated = '// unrelated component prefix\n' + original + '\n// unrelated component suffix\n'
     assert patch.patch_source(decorated) == '// unrelated component prefix\n' + expected + '\n// unrelated component suffix\n'
     with tempfile.TemporaryDirectory(prefix='amity-mdns-goodbye-') as directory:

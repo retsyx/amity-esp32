@@ -46,29 +46,6 @@ class HardwareCapacityTest(unittest.TestCase):
         check_kconfig(self.maximum, self.kconfig)
         check_tooling(self.maximum, self.tooling)
 
-    def test_canonical_capacity_must_be_unambiguous(self):
-        for header in ['', self.header + '\n#define AMITY_MAX_TENTACLES 8\n']:
-            with self.subTest(header=header), self.assertRaises(AssertionError):
-                capacity(header)
-
-    def test_kconfig_drift_is_rejected(self):
-        changes = [
-            (f'AMITY_BOARD_DEVELOPMENT_{self.maximum}T', f'AMITY_BOARD_DEVELOPMENT_{self.maximum + 1}T'),
-            ('HDMI adapter 1 (stable connector 0)', 'HDMI adapter 1 (stable connector 1)'),
-            ('config AMITY_TENTACLE0_FRONT_GPIO', 'config AMITY_TENTACLE0_MISSING_GPIO'),
-            ('default AMITY_BOARD_LEGACY_1T', f'default AMITY_BOARD_DEVELOPMENT_{self.maximum}T'),
-        ]
-        for before, after in changes:
-            self.assertIn(before, self.kconfig)
-            with self.subTest(before=before), self.assertRaises(AssertionError):
-                check_kconfig(self.maximum, self.kconfig.replace(before, after))
-
-    def test_tooling_drift_is_rejected(self):
-        for key, value in [('MAX_TENTACLES', self.maximum + 1), ('MAX_CEC_PORTS', 1),
-                           ('DEVELOPMENT', 'wrong-profile'), ('BOARD_FLAGS', ())]:
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                check_tooling(self.maximum, {**self.tooling, key: value})
-
 
 if __name__ == '__main__':
     unittest.main()

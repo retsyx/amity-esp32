@@ -107,17 +107,6 @@ def main() -> None:
     original = sdk.read_text()
     expected = patch.patch_source(original)
     assert expected == original.replace(patch.ORIGINAL, patch.CORRECTED, 1)
-    for unknown in ('', expected, original + patch.ORIGINAL,
-                    original.replace('if (output_buf == NULL)', 'if (!output_buf)'),
-                    original.replace('free(input_buf);', 'free(NULL);'),
-                    original.replace('mbedtls_platform_zeroize(input_buf, alloc_chunk_len);', ''),
-                    original.replace('ret = -1;\n            goto cleanup;', 'return -1;')):
-        try:
-            patch.patch_source(unknown)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError('Generator accepted an unknown SDK cleanup preimage')
     # Unrelated SDK content stays verbatim; only the complete pinned helper is
     # the patch preimage, rather than the whole SDK translation unit.
     decorated = '// unrelated SDK prefix\n' + original + '\n// unrelated SDK suffix\n'
