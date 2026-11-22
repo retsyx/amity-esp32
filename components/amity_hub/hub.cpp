@@ -609,7 +609,7 @@ bool ActivityHub::select_activity(int index, ActionReady ready) {
         if(execution.repair)execution.before_names.clear();
         activity_execution_=std::move(execution);
         if(ready)ready();
-        if(!activity_execution_->repair){release_key();++owned_generation_;}
+        if(!activity_execution_->repair)++owned_generation_;
         if(next_owned_generation_){owned_generation_=*next_owned_generation_;next_owned_generation_.reset();}
         if(transport_.activity_step_pending()){activity_execution_->waiting_tx=true;return false;}
     }
@@ -733,10 +733,5 @@ bool ActivityHub::release_key(uint8_t raw){
     else if(scoped_default_port_)intent.target.port=*scoped_default_port_;
     intent.edges[0]={raw,false};intent.edge_count=1;
     return bool(owned_sender_(intent));
-}
-bool ActivityHub::release_key(){
-    bool admitted=true;
-    for(unsigned raw=0;raw<256;++raw)if(!release_key(static_cast<uint8_t>(raw)))admitted=false;
-    return admitted;
 }
 }

@@ -489,10 +489,14 @@ struct HubService::Impl : Adapter {
         auto& root=*this;
         for(size_t raw=0;raw<root.keys.size();++raw)root.stop_key(static_cast<uint8_t>(raw));
     }
+    // The main remembers each held button's owner until its release.
+    void release_held_keys(){
+        for(size_t raw=0;raw<pressed_owner.size();++raw)if(pressed_owner[raw]!=0xff)activity_hub.release_key(static_cast<uint8_t>(raw));
+    }
     void apply_emergency_release(){
         const auto generation=key_generation.load();
         if(generation!=applied_key_generation){
-            if(local_coordinator.load())activity_hub.release_key();
+            release_held_keys();
             stop_holds();applied_key_generation=generation;
         }
         for(size_t raw=0;raw<keys.size();++raw){const auto released=(*release_generations)[raw].load();
@@ -627,7 +631,7 @@ struct HubService::Impl : Adapter {
     bool apply_activity(int index,bool gate_input=true) {
         if(index < -1||index>=static_cast<int>(activity_hub.activity_count())){fail_activity(index,"Activity configuration changed; choose the activity again.");return true;}
         const auto ready=[&]{
-            activity_hub.release_key();
+            release_held_keys();
             last_activity_error.clear();setup_gates_input=gate_input;setup_running.store(gate_input);setting_activity=true;
         };
         setting_activity=activity_hub.activity_pending();
@@ -781,7 +785,7 @@ struct HubService::Impl : Adapter {
         }
         if(command.kind==Kind::MaintenanceBegin){
             if(!command.activity_started){
-                if(local_coordinator.load())activity_hub.release_key();
+                release_held_keys();
                 stop_holds();command.activity_started=true;
             }
             if(key_cleanup_roles||key_cleanup_pending())return false;
@@ -830,8 +834,6 @@ struct HubService::Impl : Adapter {
             break;
         }
         case Kind::Release:
-            // A completed timed web request belongs to its original activity
-            // selection. It must not release a key newly pressed after setup.
             activity_hub.release_key(static_cast<uint8_t>(command.value));
             // A short tap whose recipient is still being discovered is
             // finite: lookup may finish later, but cannot resurrect a hold.
@@ -1336,7 +1338,7 @@ struct HubService::Impl : Adapter {
         case K::AuthorityTransition:
             cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};
             if(!command.repeat)unadmitted_selection_owners.clear();
-            activity_hub.release_key();for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();
+            release_held_keys();for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();
             if(command.repeat)pressed_owner.assign(256,0xff);else pressed_owner.clear();
             key_owners.clear();
             local_coordinator.store(command.repeat);authority_transition.store(false);
@@ -1344,7 +1346,7 @@ struct HubService::Impl : Adapter {
         case K::Retire:
             cancel_owner_activity();accepted_selection.reset();accepted_controller_boot={};
             unadmitted_selection_owners.clear();
-            activity_hub.release_key();execution_enabled=false;for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();passive_ports();
+            release_held_keys();execution_enabled=false;for(uint8_t id=0;id<amity::max_tentacles;++id)if(auto* engine=adapter(id))engine->stop_holds();passive_ports();
             finish(command.reply,{system::AdmissionCode::accepted,{}});return true;
         case K::MaintenanceBegin:
             cancel_owner_activity();accepted_selection.reset();

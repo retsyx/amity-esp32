@@ -172,7 +172,6 @@ public:
     bool press_key(uint8_t key, bool repeat = false);
     std::optional<system::QualifiedDeviceName> key_target(uint8_t key) const;
     bool release_key(uint8_t key);
-    bool release_key();
     bool standby(ActionReady ready = {});
     bool activity_pending() const { return activity_execution_.has_value(); }
     void cancel_activity(){activity_execution_.reset();next_owned_generation_.reset();}
