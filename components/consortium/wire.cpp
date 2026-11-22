@@ -70,7 +70,7 @@ std::string synchronization_json(model::MessageId round,std::string_view phase,u
 const char *error_name(Error v) {
     switch(v) {
 #define E(a,b) case Error::a:return b
-    E(none,"OK");E(invalid_message,"INVALID_MESSAGE");E(unsupported_kind,"UNSUPPORTED_KIND");E(unauthorized_role,"UNAUTHORIZED_ROLE");E(wrong_consortium,"WRONG_CONSORTIUM");E(stale_boot,"STALE_BOOT");E(stale_config,"STALE_CONFIG");E(expired,"EXPIRED");E(target_not_local,"TARGET_NOT_LOCAL");E(not_ready,"NOT_READY");E(queue_full,"QUEUE_FULL");E(duplicate,"DUPLICATE");E(identity_conflict,"IDENTITY_CONFLICT");E(storage_failure,"STORAGE_FAILURE");E(transaction_conflict,"TRANSACTION_CONFLICT");
+    E(none,"OK");E(invalid_message,"INVALID_MESSAGE");E(unsupported_kind,"UNSUPPORTED_KIND");E(unauthorized_role,"UNAUTHORIZED_ROLE");E(wrong_consortium,"WRONG_CONSORTIUM");E(stale_boot,"STALE_BOOT");E(stale_config,"STALE_CONFIG");E(expired,"EXPIRED");E(target_not_local,"TARGET_NOT_LOCAL");E(not_ready,"NOT_READY");E(queue_full,"QUEUE_FULL");E(identity_conflict,"IDENTITY_CONFLICT");E(storage_failure,"STORAGE_FAILURE");E(transaction_conflict,"TRANSACTION_CONFLICT");
 #undef E
     }return "INVALID_MESSAGE";
 }

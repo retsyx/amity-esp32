@@ -8,7 +8,7 @@
 namespace amity::consortium {
 namespace model = amity::system;
 enum class Error { none, invalid_message, unsupported_kind, unauthorized_role,
-    wrong_consortium, stale_boot, stale_config, expired, target_not_local, not_ready, queue_full, duplicate,
+    wrong_consortium, stale_boot, stale_config, expired, target_not_local, not_ready, queue_full,
     identity_conflict, storage_failure, transaction_conflict };
 const char *error_name(Error);
 enum class Kind { enrollment_control,

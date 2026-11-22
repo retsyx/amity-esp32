@@ -83,7 +83,6 @@ Error Session::typed(const Envelope& e)const{
         uint64_t target=0;decimal(e.payload.get("config_revision"),target);
         if((begin&&target<scope_.config_revision)||(advance&&target<=scope_.config_revision))return Error::stale_config;
     }
-    if((e.kind==Kind::membership_event||e.kind==Kind::membership_result)&&e.ttl_ms>2000)return Error::unsupported_kind;
     // Payloads were validated when parsed; only scope-dependent rules remain.
     if(e.kind==Kind::scoped_intent){
         if(!e.intent)return Error::invalid_message;
