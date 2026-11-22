@@ -34,6 +34,9 @@ typedef struct {
     esp_err_t (*key)(uint8_t cec_key, void *context);
     esp_err_t (*mute)(bool muted, void *context);
     esp_err_t (*volume_step)(int16_t steps, void *context);
+    /* Fills at most capacity visible inputs of the saved configuration and
+     * returns their count. It is the only source of input names. */
+    size_t (*inputs)(amity_matter_input_t *inputs, size_t capacity, void *context);
     void *context;
 } amity_matter_callbacks_t;
 
@@ -44,6 +47,8 @@ typedef struct {
     bool muted;
     bool volume_known;
     uint8_t volume; /* Matter 0..254; set volume_known only for observed audio status. */
+    /* Applied saved configuration; a change republishes the input list. */
+    uint64_t config_revision, presentation_revision;
 } amity_matter_state_t;
 
 typedef struct {
@@ -72,7 +77,6 @@ esp_err_t amity_matter_start(const amity_matter_callbacks_t *callbacks);
 // CHIP task with fail-safe disarmed and a checked Wi-Fi credential commit.
 // This is evidence for the caller's durable role CAS, never authority by itself.
 bool amity_matter_controller_enrollment_complete(void);
-esp_err_t amity_matter_set_inputs(const amity_matter_input_t *inputs, size_t count);
 /* Retain the latest state without waiting for CHIP; publication runs on its task. */
 esp_err_t amity_matter_update_state(const amity_matter_state_t *state);
 // Retry retained state after temporary CHIP queue saturation. Called by the

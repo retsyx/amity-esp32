@@ -237,6 +237,27 @@ esp_err_t power(bool on,void *) {
 esp_err_t activity(uint8_t index,void *) {return hub.request_activity(index);}
 esp_err_t key(uint8_t value,void *) {if(hub.snapshot().current_activity<0)return ESP_ERR_INVALID_STATE;return hub.press_key(value)?ESP_OK:ESP_ERR_NO_MEM;}
 esp_err_t mute(bool muted,void *) {return key(muted?0x65:0x66,nullptr);}
+// Matter reads input names and visibility from the saved configuration.
+size_t matter_inputs(amity_matter_input_t *inputs,size_t capacity,void *) {
+    const auto config=hub.active_configuration();size_t count=0;
+    if(config)for(const auto &input:config_store::external_inputs(*config)){
+        if(input.hidden)continue;
+        if(count==capacity)break;
+        inputs[count].index=static_cast<uint8_t>(input.slot);
+        snprintf(inputs[count].name,sizeof(inputs[count].name),"%s",input.name.c_str());
+        ++count;
+    }
+    return count;
+}
+// Each applied save changes the applied revisions, which republishes the input list.
+void publish_matter_state(const amity::Snapshot &s) {
+    if(!original_interfaces_enabled.load())return;
+    amity_matter_state_t state{};state.power=s.current_activity>=0;const auto input=hub.external_activity_index(s);state.current_input=input.value_or(0);
+    state.mute_known=s.audio_status_known;state.muted=s.muted;
+    state.volume_known=s.audio_status_known&&s.volume<=100;state.volume=state.volume_known?(s.volume*254+50)/100:0;
+    state.config_revision=s.applied_config_revision;state.presentation_revision=s.applied_presentation_revision;
+    amity_matter_update_state(&state);
+}
 // A Matter relative volume command for the activity that accepted it.
 struct VolumeAdjustment {
     int16_t steps;
@@ -448,7 +469,7 @@ void start_admin_mdns() {
 }
 void start_original_interfaces() {
     if(!original_interfaces_enabled.load())return;
-    const amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,nullptr};
+    const amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,matter_inputs,nullptr};
     start_admin_mdns();
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT,ESP_EVENT_ANY_ID,[](void *,esp_event_base_t,int32_t id,void *data){
         if(id==IP_EVENT_STA_GOT_IP) {
@@ -594,7 +615,7 @@ extern "C" void app_main() {
     startup_memory("configuration");
     ESP_ERROR_CHECK(amity::radio::start());
     ESP_ERROR_CHECK(amity::consortium::runtime_register_gatt());
-    amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,nullptr};
+    amity_matter_callbacks_t callbacks{power,activity,key,mute,volume,matter_inputs,nullptr};
     ESP_ERROR_CHECK(amity_matter_start(&callbacks));
     ESP_ERROR_CHECK(configure_wifi_latency_policy());
     amity::network_diagnostics::start();
@@ -620,13 +641,7 @@ extern "C" void app_main() {
             ESP_LOGI("amity","Wi-Fi associated: channel=%u",event->channel);
         }
     },nullptr));
-    hub.on_change([](const amity::Snapshot &s) {
-        if(!original_interfaces_enabled.load())return;
-        amity_matter_state_t state{};state.power=s.current_activity>=0;const auto input=hub.external_activity_index(s);state.current_input=input.value_or(0);
-        state.mute_known=s.audio_status_known;state.muted=s.muted;
-        state.volume_known=s.audio_status_known&&s.volume<=100;state.volume=state.volume_known?(s.volume*254+50)/100:0;
-        amity_matter_update_state(&state);
-    });
+    hub.on_change(publish_matter_state);
     if(group_start==ESP_OK&&membership_read==ESP_OK&&membership.role==amity::consortium::RuntimeStartup::coordinator&&amity::consortium::runtime_status().authority_ready){
         original_interfaces_enabled.store(true);
         start_original_interfaces();

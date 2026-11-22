@@ -97,8 +97,9 @@ int amity_matter_get_status(amity_matter_status_t*s){s->fabric_count=matter_fabr
 int amity_matter_open_commissioning(unsigned seconds){assert(seconds==300);++setup_windows;return 0;}
 bool amity_matter_controller_enrollment_complete(){++getter_calls;return enrolled;}
 int amity_matter_set_controller_enabled(bool enabled){assert(!enabled&&!original_interfaces_enabled);events.push_back("matter-stop");++matter_stops;responder_live=false;return matter_result;}
-int power(bool,void*){return 0;}int activity(uint8_t,void*){return 0;}int key(uint8_t,void*){return 0;}int mute(bool,void*){return 0;}int volume(int16_t,void*){return 0;}
-struct amity_matter_callbacks_t{int(*power)(bool,void*);int(*activity)(uint8_t,void*);int(*key)(uint8_t,void*);int(*mute)(bool,void*);int(*volume)(int16_t,void*);void*context;};
+struct amity_matter_input_t{};
+int power(bool,void*){return 0;}int activity(uint8_t,void*){return 0;}int key(uint8_t,void*){return 0;}int mute(bool,void*){return 0;}int volume(int16_t,void*){return 0;}size_t matter_inputs(amity_matter_input_t*,size_t,void*){return 0;}
+struct amity_matter_callbacks_t{int(*power)(bool,void*);int(*activity)(uint8_t,void*);int(*key)(uint8_t,void*);int(*mute)(bool,void*);int(*volume)(int16_t,void*);size_t(*inputs)(amity_matter_input_t*,size_t,void*);void*context;};
 struct IPv4{unsigned addr=0;};struct esp_ip6_addr_t{};
 struct mdns_ip_addr_t{struct{int type=0;struct{IPv4 ip4;esp_ip6_addr_t ip6;}u_addr;}addr;mdns_ip_addr_t*next=nullptr;};
 constexpr int CONFIG_LWIP_IPV6_NUM_ADDRESSES=2,ESP_IPADDR_TYPE_V4=1,ESP_IPADDR_TYPE_V6=2;

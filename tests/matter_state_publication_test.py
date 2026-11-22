@@ -43,7 +43,7 @@ public:
 };
 }
 namespace OnOff {constexpr uint32_t Id=6;namespace Attributes {namespace OnOff {constexpr uint32_t Id=0;}}}
-namespace MediaInput {constexpr uint32_t Id=0x506;namespace Attributes {namespace CurrentInput {constexpr uint32_t Id=1;}}}
+namespace MediaInput {constexpr uint32_t Id=0x506;namespace Attributes {namespace InputList {constexpr uint32_t Id=0;}namespace CurrentInput {constexpr uint32_t Id=1;}}}
 namespace LevelControl {constexpr uint32_t Id=8;namespace Attributes {namespace CurrentLevel {constexpr uint32_t Id=0;}}}
 std::vector<std::tuple<uint16_t,uint32_t,uint32_t>> reports;
 std::function<void()> during_report;
@@ -85,13 +85,13 @@ void run_one(){
 
 SUITE = r'''
 int main(){
-    amity_matter_state_t initial{false,1,false,false,false,0};
+    amity_matter_state_t initial{false,1,false,false,false,0,1,1};
     assert(amity_matter_update_state(&initial)==ESP_OK&&state.current_input==1&&queued()==0&&reports.empty());
     auto invalid=initial;invalid.volume_known=true;invalid.volume=255;
     assert(amity_matter_update_state(nullptr)==ESP_ERR_INVALID_ARG);
     assert(amity_matter_update_state(&invalid)==ESP_ERR_INVALID_ARG&&queued()==0);
     started.store(true);
-    amity_matter_state_t next{true,2,true,true,true,10};
+    amity_matter_state_t next{true,2,true,true,true,10,1,1};
 
     // The real update must return while unrelated CHIP work owns its lock.
     // Release before asserting so the original blocking implementation exits
@@ -155,7 +155,7 @@ def main():
     source = args.source.read_text()
     actual = ''
     if 'std::mutex state_publication_mutex;' in source:
-        actual += source[source.index('std::mutex state_publication_mutex;'):source.index('amity_matter_input_t inputs[')]
+        actual += source[source.index('std::mutex state_publication_mutex;'):source.index('std::atomic<bool> started')]
         actual += function(source, 'void publish_state(intptr_t)')
         actual += function(source, 'extern "C" esp_err_t amity_matter_flush_state(')
     else:

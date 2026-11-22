@@ -83,6 +83,16 @@ std::string sha256_hex(std::string_view);
 std::string executable_policy_hash(const Configuration&);
 std::string presentation_hash(const Configuration&);
 const ConfiguredActivity* activity_for_slot(const Configuration&, unsigned slot);
+// A home app input: a live external slot whose activity is on the primary
+// screen. Its name is the slot alias, or the activity label without one.
+struct ExternalInput {
+    uint16_t slot = 0;
+    model::ActivityId activity_id;
+    std::string name;
+    bool hidden = false;
+};
+// The only source of home app input names and visibility, in slot order.
+std::vector<ExternalInput> external_inputs(const Configuration&);
 std::vector<model::ActivityId> ordered_activities(const Configuration&);
 // A running activity keeps its saved recipe and selected equipment targets.
 // Presentation order and changes to other activities do not change that intent.

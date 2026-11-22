@@ -12,7 +12,7 @@ def main():
     web_source = (ROOT / 'components/web_admin/web_admin.cpp').read_text()
     assert 'path=="/api/front-physical-address"' not in web_source
     start = source.index('std::optional<std::string> device_settings_target(')
-    router = source[start:source.index('void publish_inputs()', start)]
+    router = source[start:source.index('void update_operation(', start)]
     capacity = next(line for line in source.splitlines()
                     if 'cJSON_AddNumberToObject(capabilities,"supported_octopuses",' in line)
     # Unknown routes are rejected before reading a request body or admitting work.

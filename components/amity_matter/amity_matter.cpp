@@ -53,8 +53,8 @@ amity_matter_state_t state{};
 std::mutex state_publication_mutex;
 amity_matter_state_t latest_state{};
 bool state_dirty=false,state_publication_pending=false;
-amity_matter_input_t inputs[AMITY_MATTER_MAX_INPUTS]{};
-size_t input_count = 0;
+// Filled from the saved configuration for each use on the CHIP task.
+amity_matter_input_t listed_inputs[AMITY_MATTER_MAX_INPUTS]{};
 std::atomic<bool> started{false}, stack_started{false}, controller_enabled{true};
 std::atomic<bool> controller_revoked{false};
 std::atomic<bool> controller_enrollment_complete{false}, enrollment_check_pending{false};
@@ -93,6 +93,8 @@ void publish_state(intptr_t)
         report(player_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
     if (old.current_input != state.current_input)
         report(player_endpoint, MediaInput::Id, MediaInput::Attributes::CurrentInput::Id);
+    if (old.config_revision != state.config_revision || old.presentation_revision != state.presentation_revision)
+        report(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);
     if (old.mute_known != state.mute_known || old.muted != state.muted)
         report(speaker_endpoint, OnOff::Id, OnOff::Attributes::OnOff::Id);
     if (old.volume_known != state.volume_known || old.volume != state.volume)
@@ -104,16 +106,25 @@ esp_err_t dispatch_key(uint8_t key)
     return controller_enabled.load() && callbacks.key ? callbacks.key(key, callbacks.context) : ESP_ERR_INVALID_STATE;
 }
 
+// Inputs are read from the saved configuration when used, never retained.
+size_t current_inputs()
+{
+    const size_t count = callbacks.inputs ? callbacks.inputs(listed_inputs, AMITY_MATTER_MAX_INPUTS, callbacks.context) : 0;
+    return count <= AMITY_MATTER_MAX_INPUTS ? count : 0;
+}
+
 class Inputs final : public MediaInput::Delegate {
 public:
     CHIP_ERROR HandleGetInputList(chip::app::AttributeValueEncoder &encoder) override
     {
-        return encoder.EncodeList([](const auto &list) -> CHIP_ERROR {
-            for (size_t i = 0; i < input_count; ++i) {
+        const size_t count = current_inputs();
+        return encoder.EncodeList([count](const auto &list) -> CHIP_ERROR {
+            for (size_t i = 0; i < count; ++i) {
+                const auto &input = listed_inputs[i];
                 MediaInput::Structs::InputInfoStruct::Type entry;
-                entry.index = inputs[i].index;
+                entry.index = input.index;
                 entry.inputType = MediaInput::InputTypeEnum::kHdmi;
-                entry.name = chip::CharSpan::fromCharString(inputs[i].name);
+                entry.name = chip::CharSpan(input.name, strnlen(input.name, sizeof(input.name)));
                 entry.description = chip::CharSpan::fromCharString("Amity activity");
                 ReturnErrorOnFailure(list.Encode(entry));
             }
@@ -124,8 +135,9 @@ public:
     bool HandleSelectInput(uint8_t index) override
     {
         if (!controller_enabled.load()) return false;
-        for (size_t i = 0; i < input_count; ++i) {
-            if (inputs[i].index == index)
+        const size_t count = current_inputs();
+        for (size_t i = 0; i < count; ++i) {
+            if (listed_inputs[i].index == index)
                 return callbacks.activity && callbacks.activity(index, callbacks.context) == ESP_OK;
         }
         return false;
@@ -483,31 +495,6 @@ extern "C" esp_err_t amity_matter_start(const amity_matter_callbacks_t *app_call
     err=install_consortium_network_hooks();
     if(err!=ESP_OK)return err;
     ESP_LOGI(tag, "Matter ready: video player endpoint 1, speaker endpoint 2, remote battery endpoint 3");
-    return ESP_OK;
-}
-
-extern "C" esp_err_t amity_matter_set_inputs(const amity_matter_input_t *new_inputs, size_t count)
-{
-    if (count > AMITY_MATTER_MAX_INPUTS || (count && !new_inputs)) return ESP_ERR_INVALID_ARG;
-    for (size_t i = 0; i < count; ++i) {
-        if (!memchr(new_inputs[i].name, '\0', sizeof(new_inputs[i].name)) || !new_inputs[i].name[0])
-            return ESP_ERR_INVALID_ARG;
-        for (size_t j = 0; j < i; ++j)
-            if (new_inputs[i].index == new_inputs[j].index) return ESP_ERR_INVALID_ARG;
-    }
-    // Before start, there is no CHIP task or CHIP lock yet.
-    auto copy = [&] {
-        if (count) memcpy(inputs, new_inputs, count * sizeof(*inputs));
-        input_count = count;
-    };
-    if (started) {
-        esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-        if (!controller_enabled.load() || !started.load()) return ESP_OK;
-        copy();
-        report(player_endpoint, MediaInput::Id, MediaInput::Attributes::InputList::Id);
-    } else {
-        copy();
-    }
     return ESP_OK;
 }
 

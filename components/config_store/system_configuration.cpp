@@ -258,6 +258,17 @@ const ConfiguredActivity* activity_for_slot(const Configuration& c, unsigned slo
     for (const auto& s : c.external_slots) if (s.slot == slot && !s.tombstone) for (const auto& a : c.activities) if (a.activity_id == s.activity_id) return &a;
     return nullptr;
 }
+std::vector<ExternalInput> external_inputs(const Configuration& c) {
+    std::vector<ExternalInput> result;
+    for (const auto& s : c.external_slots) {
+        if (s.tombstone) continue;
+        const auto a = std::find_if(c.activities.begin(), c.activities.end(), [&](const auto& v) { return v.activity_id == s.activity_id; });
+        if (a == c.activities.end() || a->zone_id != c.primary_zone_id) continue;
+        result.push_back({s.slot, a->activity_id, s.alias.empty() ? a->label : s.alias, s.hidden});
+    }
+    std::sort(result.begin(), result.end(), [](const auto& x, const auto& y) { return x.slot < y.slot; });
+    return result;
+}
 bool retains_activity(const Configuration& previous,const Configuration& candidate,model::ActivityId id) {
     const auto find=[&](const Configuration& config)->const ConfiguredActivity* {
         const auto found=std::find_if(config.activities.begin(),config.activities.end(),[&](const auto& a){return a.activity_id==id;});

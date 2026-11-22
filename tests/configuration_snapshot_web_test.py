@@ -21,10 +21,10 @@ namespace fixture {
 Memory memory;
 std::unique_ptr<ConfigurationStore> journal;
 ConfigurationSnapshot saved,staged,loaded;
-unsigned loads=0,stages=0,commits=0,serializations=0,input_publications=0;
+unsigned loads=0,stages=0,commits=0,serializations=0;
 esp_err_t read_error=ESP_OK,stage_error=ESP_OK,commit_error=ESP_OK;
 bool healthy=true,pending_boot=false;
-std::vector<std::string> events,input_names;
+std::vector<std::string> events;
 }
 namespace config_store {
 std::string actual_serialize_configuration(const Configuration&,bool);
@@ -83,16 +83,11 @@ void esp_fill_random(void* bytes,size_t size){static auto random=random_source()
 enum esp_ota_img_states_t {ESP_OTA_IMG_VALID,ESP_OTA_IMG_PENDING_VERIFY};
 const int* esp_ota_get_running_partition(){static int partition=1;return &partition;}
 esp_err_t esp_ota_get_state_partition(const int*,esp_ota_img_states_t* state){*state=fixture::pending_boot?ESP_OTA_IMG_PENDING_VERIFY:ESP_OTA_IMG_VALID;return ESP_OK;}
-struct amity_matter_input_t {unsigned index=0;char name[129]{};};
-void amity_matter_set_inputs(const amity_matter_input_t* inputs,size_t count){
- ++fixture::input_publications;fixture::input_names.clear();for(size_t n=0;n<count;++n)fixture::input_names.emplace_back(inputs[n].name);
-}
 struct httpd_req_t {std::string response,disposition;std::function<void()> during_send;};
 esp_err_t httpd_resp_set_hdr(httpd_req_t* req,const char* name,const char* value){assert(std::string(name)=="Content-Disposition");req->disposition=value;return ESP_OK;}
 namespace web {esp_err_t json(httpd_req_t* req,const std::string& bytes){if(req->during_send)req->during_send();req->response=bytes;return ESP_OK;}}
 namespace web_admin {
 amity::SystemControl* control=nullptr;
-config_store::RevisionPair published_input_revisions;
 bool configuration_passive=false;
 config_store::ConfigurationSnapshot deferred_configuration;
 esp_err_t error(httpd_req_t* req,const char*,const std::string& message,const char*){req->response=message;return ESP_FAIL;}
@@ -102,13 +97,13 @@ SUITE = r'''
 }
 using namespace web_admin;
 void reset(bool existing=true){
- control=nullptr;deferred_configuration.reset();configuration_passive=false;published_input_revisions={};
+ control=nullptr;deferred_configuration.reset();configuration_passive=false;
  fixture::saved.reset();fixture::staged.reset();fixture::loaded.reset();fixture::journal.reset();fixture::memory=Memory{};
  fixture::journal=std::make_unique<ConfigurationStore>(fixture::memory);
  if(existing){std::string error;assert(fixture::journal->stage(direct_configuration(),{},error)==ConfigResult::ok);assert(fixture::journal->commit(fixture::saved,error)==ConfigResult::ok);}
- fixture::loads=fixture::stages=fixture::commits=fixture::serializations=fixture::input_publications=0;
+ fixture::loads=fixture::stages=fixture::commits=fixture::serializations=0;
  fixture::read_error=fixture::stage_error=fixture::commit_error=ESP_OK;
- fixture::healthy=true;fixture::pending_boot=false;fixture::events.clear();fixture::input_names.clear();
+ fixture::healthy=true;fixture::pending_boot=false;fixture::events.clear();
 }
 void retained_configuration_is_shared(){
  for(bool pending:{false,true}){
@@ -116,7 +111,6 @@ void retained_configuration_is_shared(){
   assert(load_configuration(service,false)==ESP_OK&&fixture::loads==1&&!fixture::stages&&!fixture::commits);
   assert(service.published==current&&fixture::loaded==current&&!deferred_configuration&&!configuration_passive);
   assert(service.active_configuration().get()==&current->configuration&&fixture::serializations==0);
-  assert(fixture::input_publications==1&&fixture::input_names==std::vector<std::string>{"Watch"});
  }
 }
 void changed_hardware_commits_before_publication(){
@@ -125,36 +119,36 @@ void changed_hardware_commits_before_publication(){
  assert((fixture::events==std::vector<std::string>{"reserve","commit","publish"}));
  assert(service.published==fixture::staged&&service.published==fixture::saved&&service.published!=old);
  assert(old->configuration.octopuses.front().supported_tentacles==1&&service.published->configuration.octopuses.front().supported_tentacles==4);
- assert(fixture::input_publications==1&&!deferred_configuration);
+ assert(!deferred_configuration);
 }
 void initial_configuration_uses_the_staged_snapshot(){
  reset(false);amity::SystemControl service;
  assert(load_configuration(service,false)==ESP_OK&&fixture::stages==1&&fixture::commits==1);
  assert(service.published&&service.published==fixture::saved&&service.published==fixture::staged);
- assert(service.published->configuration.controller_octopus_id==service.octopus_id()&&fixture::input_publications==1&&fixture::input_names.empty());
+ assert(service.published->configuration.controller_octopus_id==service.octopus_id());
 }
 void ota_health_defers_the_same_candidate(){
  reset();amity::SystemControl service;service.capacity=4;const auto old=fixture::saved;
  fixture::pending_boot=true;fixture::healthy=false;
- assert(load_configuration(service,false)==ESP_OK&&fixture::stages==1&&!fixture::commits&&!fixture::input_publications);
+ assert(load_configuration(service,false)==ESP_OK&&fixture::stages==1&&!fixture::commits);
  const auto candidate=fixture::staged;
  assert(configuration_passive&&!service.authority&&deferred_configuration==candidate&&service.published==candidate&&fixture::saved==old);
  assert(finish_configuration_activation()==ESP_ERR_INVALID_STATE&&!fixture::commits&&fixture::saved==old);
  fixture::healthy=true;fixture::commit_error=ESP_FAIL;
  assert(finish_configuration_activation()==ESP_FAIL&&fixture::commits==1&&fixture::saved==old);
- assert(configuration_passive&&!service.authority&&deferred_configuration==candidate&&service.published==candidate&&!fixture::input_publications);
+ assert(configuration_passive&&!service.authority&&deferred_configuration==candidate&&service.published==candidate);
  fixture::commit_error=ESP_OK;
  assert(finish_configuration_activation()==ESP_OK&&fixture::commits==2&&fixture::saved==candidate&&service.published==candidate);
- assert(!configuration_passive&&service.authority&&!deferred_configuration&&fixture::input_publications==1);
+ assert(!configuration_passive&&service.authority&&!deferred_configuration);
  assert(old->configuration.octopuses.front().supported_tentacles==1);
- assert(finish_configuration_activation()==ESP_OK&&fixture::commits==2&&fixture::input_publications==1);
+ assert(finish_configuration_activation()==ESP_OK&&fixture::commits==2);
 }
 void failures_preserve_the_previous_snapshot(){
  for(bool fail_reservation:{false,true}){
   reset();amity::SystemControl service;const auto old=fixture::saved;service.published=old;service.capacity=4;
   if(fail_reservation)service.configure_error=ESP_FAIL;else fixture::commit_error=ESP_FAIL;
   assert(load_configuration(service,false)==ESP_FAIL&&service.published==old&&fixture::saved==old);
-  assert(fixture::commits==(fail_reservation?0u:1u)&&!fixture::input_publications);
+  assert(fixture::commits==(fail_reservation?0u:1u));
  }
  reset();amity::SystemControl service;fixture::read_error=ESP_FAIL;
  assert(load_configuration(service,false)==ESP_FAIL&&!service.published&&!fixture::stages&&!fixture::commits);
@@ -170,19 +164,17 @@ void reads_pin_one_revision_and_reuse_canonical_bytes(){
  req.during_send=[&]{service.published=next;fixture::saved.reset();fixture::loaded.reset();fixture::journal.reset();previous.reset();assert(!retained.expired());};
  assert(read_configuration(&req,"/api/config",result)&&result==ESP_OK&&req.response==bytes&&fixture::serializations==0&&retained.expired());
  req={};assert(read_configuration(&req,"/api/backup",result)&&result==ESP_OK&&req.response==next->canonical&&fixture::serializations==0);
- assert(req.disposition=="attachment; filename=amity-config.json"&&fixture::input_names==std::vector<std::string>{"Renamed"});
- const auto publications=fixture::input_publications;
- assert(read_configuration(&req,"/api/config",result)&&fixture::input_publications==publications);
+ assert(req.disposition=="attachment; filename=amity-config.json");
  service.published.reset();req={};assert(read_configuration(&req,"/api/config",result)&&result==ESP_FAIL);
 }
-int main(){retained_configuration_is_shared();changed_hardware_commits_before_publication();initial_configuration_uses_the_staged_snapshot();ota_health_defers_the_same_candidate();failures_preserve_the_previous_snapshot();reads_pin_one_revision_and_reuse_canonical_bytes();std::cout<<"PASS web configuration snapshots: shared startup/staging, OTA health deferral and retry, commit-before-publication, unchanged old readers, pinned canonical API/backup reads and revision-only input publication\n";}
+int main(){retained_configuration_is_shared();changed_hardware_commits_before_publication();initial_configuration_uses_the_staged_snapshot();ota_health_defers_the_same_candidate();failures_preserve_the_previous_snapshot();reads_pin_one_revision_and_reuse_canonical_bytes();std::cout<<"PASS web configuration snapshots: shared startup/staging, OTA health deferral and retry, commit-before-publication, unchanged old readers, and pinned canonical API/backup reads\n";}
 '''
 
 
 def main():
     source = (ROOT / 'components/web_admin/system_admin.cpp').read_text()
     actual = ''.join(function(source, signature) for signature in (
-        'void publish_inputs()', 'bool configuration_is_passive()',
+        'bool configuration_is_passive()',
         'esp_err_t load_configuration(', 'esp_err_t finish_configuration_activation()'))
     router = source[source.index('bool admin_request('):]
     # Exercise the real snapshot capture and read branches without unrelated UI routes.

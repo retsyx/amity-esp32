@@ -8,7 +8,6 @@
 #include "group_firmware_update.hpp"
 #include "device_settings.hpp"
 #include "adapter_settings.hpp"
-#include "amity_matter.h"
 #include "amity/consortium/runtime.hpp"
 #include "amity/consortium/limits.hpp"
 #include "amity/system_sync.hpp"
@@ -30,7 +29,6 @@ namespace {
 namespace m=amity::system;
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 amity::SystemControl* control=nullptr;
-config_store::RevisionPair published_input_revisions;
 bool configuration_passive=false;
 config_store::ConfigurationSnapshot deferred_configuration;
 struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;
@@ -156,19 +154,6 @@ bool administrative_path(const std::string& path){
     for(const auto* exact:{"/api/system","/api/config","/api/config/validate","/api/backup"})if(path==exact)return true;
     for(const auto* prefix:{"/api/devices/","/api/membership/","/api/operations/","/api/updates","/api/replacements/"})if(path.rfind(prefix,0)==0)return true;
     return false;
-}
-void publish_inputs(){
-    const auto active=control->active_configuration();
-    if(!active)return;
-    amity_matter_input_t inputs[16]{};size_t count=0;
-    for(const auto& slot:active->external_slots){
-        if(slot.slot>=16||slot.tombstone||slot.hidden)continue;
-        const auto* activity=config_store::activity_for_slot(*active,slot.slot);if(!activity||activity->zone_id!=active->primary_zone_id)continue;
-        auto& in=inputs[count++];in.index=slot.slot;
-        snprintf(in.name,sizeof(in.name),"%s",(slot.alias.empty()?activity->label:slot.alias).c_str());
-    }
-    amity_matter_set_inputs(inputs,count);
-    published_input_revisions=active->revisions();
 }
 void update_operation(Tracked& operation){
     const bool removing=operation.path=="/api/membership/remove"||(operation.path=="/api/replacements/apply"&&operation.candidate);
@@ -365,8 +350,7 @@ esp_err_t load_configuration(amity::SystemControl& service,bool defer_configurat
         deferred_configuration=configuration;configuration_passive=true;return ESP_OK;
     }
     result=service.configure(configuration,staged_configuration?std::function<esp_err_t()>([&]{return config_store::activate_system_configuration(configuration,message);}):std::function<esp_err_t()>{});
-    if(result!=ESP_OK)return result;
-    publish_inputs();return ESP_OK;
+    return result;
 }
 
 esp_err_t finish_configuration_activation(){
@@ -375,7 +359,7 @@ esp_err_t finish_configuration_activation(){
     auto candidate=deferred_configuration;const auto enabled=control->transition_coordinator_authority(true);if(enabled!=ESP_OK)return enabled;
     const auto activated=control->configure(candidate,[candidate]() mutable {std::string message;return config_store::activate_system_configuration(candidate,message);});
     if(activated!=ESP_OK){control->transition_coordinator_authority(false);return activated;}
-    deferred_configuration.reset();configuration_passive=false;publish_inputs();return ESP_OK;
+    deferred_configuration.reset();configuration_passive=false;return ESP_OK;
 }
 
 bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
@@ -384,7 +368,6 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     if(!control){result=error(req,"not_ready","System configuration is not ready.","503 Service Unavailable",true);return true;}
     const auto published=control->configuration_snapshot();
     const auto* active=published?&published->configuration:nullptr;
-    if(!configuration_passive&&active&&active->revisions()!=published_input_revisions)publish_inputs();
     if(req->method==HTTP_GET){
         if(const auto target=device_settings_target(path)){
             const auto owner=*m::OctopusId::parse(*target);
