@@ -240,8 +240,8 @@ void activity_selection_delivery_is_independent(){
     activity.selected=false;activity.repair=false;member.admission=s::AdmissionCode::accepted;
     assert(deliver(original,envelope(member,original,activity),123456,link)==c::Error::none&&!member.submitted.back().selected);
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
-    c::Envelope retired;retired.kind=c::Kind::scoped_result;retired.payload=json("{\"action_result\":{}}");
-    assert(!c::valid_owned_result(retired.payload)&&deliver(id<s::OctopusId>(9),retired,123456,link)==c::Error::invalid_message);
+    c::Envelope unknown;unknown.kind=c::Kind::scoped_result;unknown.payload=json("{\"unknown\":{}}");
+    assert(!c::valid_owned_result(unknown.payload)&&deliver(id<s::OctopusId>(9),unknown,123456,link)==c::Error::invalid_message);
 }
 void reports_and_exact_disconnect(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);

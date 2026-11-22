@@ -114,7 +114,7 @@ void owner_activity_selection_tests(){
     for(auto kind:{m::OwnedIntentKind::power,m::OwnedIntentKind::source_input,m::OwnedIntentKind::switch_input,m::OwnedIntentKind::announce_active_source,m::OwnedIntentKind::query_audio,m::OwnedIntentKind::standby_wire}){
         request.kind=kind;assert(owned_intent_json(request).empty());
     }
-    Json retired;assert(parse_json("{\"action_result\":{}}",retired,detail)&&!valid_owned_result(retired));
+    Json unknown;assert(parse_json("{\"unknown\":{}}",unknown,detail)&&!valid_owned_result(unknown));
 }
 void raw_key_edge_tests(){
     auto key=action(scope());key.kind=m::OwnedIntentKind::key_edges;key.edge_count=2;key.edges={{{0,true},{0,false}}};
@@ -291,6 +291,7 @@ void hello_profile_tests(){
     value.supported_tentacles=4;value.configured_tentacles_mask=0;
     const auto all_unassigned=hello_json(value);assert(parse_hello(all_unassigned,parsed)==Error::none&&parsed.configured_tentacles_mask==0);
     for(const auto &body:{replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":0"),replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":5"),replace(all_unassigned,"\"supported_tentacles\":4", "\"supported_tentacles\":\"4\""),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":16"),replace(all_unassigned,"\"configured_tentacles_mask\":0", "\"configured_tentacles_mask\":true"),replace(all_unassigned,",\"supported_tentacles\":4", ""),replace(all_unassigned,",\"configured_tentacles_mask\":0", "")})assert(parse_hello(body,parsed)==Error::invalid_message);
+    auto unknown=all_unassigned;unknown.pop_back();unknown+=",\"unknown\":true}";assert(parse_hello(unknown,parsed)==Error::invalid_message);
     Session session;auto sc=scope();assert(session.authenticate(sc,sc.peer_id,PeerRole::coordinator,true)==Error::none);
     value.supported_tentacles=1;value.configured_tentacles_mask=2;assert(session.hello(value)==Error::invalid_message);
     value.supported_tentacles=5;value.configured_tentacles_mask=0;assert(hello_json(value).empty()&&session.hello(value)==Error::invalid_message);
