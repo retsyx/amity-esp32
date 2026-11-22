@@ -837,7 +837,11 @@ struct HubService::Impl : Adapter {
             if(!command.activity_started){++activity_instance;if(command.action().owned.generation)activity_hub.selection_generation(command.action().owned.generation);}
             command.activity_started=true;if(!apply_activity(-1,command.receipt()!=0))return false;
             break;
-        case Kind::Discover: requested_scan_sides = 3; request_owned_discovery(); break;
+        case Kind::Discover:
+            // An explicit scan covers every local adapter, whatever the saved
+            // activities reference. The main asks each member separately.
+            for(uint8_t id=0;id<amity::max_tentacles;++id)if(connector_configured(id))if(auto* engine=adapter(id))engine->requested_scan_sides=3;
+            break;
         case Kind::Received: {
             auto* engine=adapter(command.received().received_adapter);
             if(!current_received(command))break;
@@ -1168,14 +1172,6 @@ struct HubService::Impl : Adapter {
         return dispatched(admitted);
     }
     bool activity_settling(uint64_t){return activity_hub.activity_pending()||step_pending||owner_activity_pending()||key_cleanup_roles;}
-    void request_owned_discovery(){
-        std::vector<system::CecPortRef> ports;
-        for(const auto& selector:active_selectors){auto port=selector.target.port;port.side=system::Side::front;
-            if(std::find(ports.begin(),ports.end(),port)!=ports.end())continue;
-            ports.push_back(port);system::OwnedIntent intent;intent.kind=system::OwnedIntentKind::discover;
-            intent.target.port=port;intent.generation=activity_hub.scoped_generation();dispatch_owned(intent);
-        }
-    }
     void save_report(system::OwnedAdapterSnapshot report){
         auto old=std::find_if(owned_reports.begin(),owned_reports.end(),[&](const auto& r){return r.owner==report.owner&&r.adapter==report.adapter;});
         if(old==owned_reports.end())owned_reports.push_back(std::move(report));else *old=std::move(report);

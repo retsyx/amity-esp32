@@ -529,7 +529,7 @@ static std::vector<std::vector<SentFrame>> receiver_transcript(bool remote){
     }assert(false&&"Two-owner activity did not finish actual TX steps");};
     drain(0);std::vector<std::vector<SentFrame>> transcript;
     for(int phase=0;phase<3;++phase){
-        if(phase){player=phase==1?8:11;const auto previous=primary.snapshot().discovery_generation;latest_task=primary_task;assert(primary.discover());run_one_command();drain(previous);}
+        if(phase){player=phase==1?8:11;const auto previous=primary.snapshot().discovery_generation;latest_task=primary_task;assert(primary.discover());run_one_command();if(remote){assert(primary.discover_owned(member,0));run_one_command();}drain(previous);}
         // The coordinator's remote report can be missing while the emitting
         // owner still knows its devices. This never vetoes power/key intents.
         if(remote)for(auto report:primary.owned_snapshots())if(report.owner==member){report.devices.clear();report.ready=false;primary.update_owned_snapshot(report);latest_task=primary_task;run_idle(1);}

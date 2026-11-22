@@ -65,6 +65,14 @@ static void adapter_settings_owner_tests() {
         for(unsigned pass=0;pass<2000&&!owner.adapter_runtime_snapshot()[3].effective_front_physical;++pass)run_idle(1);
         const auto applied=owner.adapter_runtime_snapshot()[3];
         assert(applied.effective_front_physical==0x5200&&!applied.observed_front_physical);
+        // An explicit scan reaches every configured local adapter, including
+        // one that no saved activity references.
+        const auto report=[&]{for(const auto& r:owner.owned_snapshots())if(r.adapter==3)return r;assert(false&&"Adapter report missing");return OwnedAdapterSnapshot{};};
+        for(unsigned pass=0;pass<2000&&report().discovering;++pass)run_idle(1);
+        const auto scanned=report().discovery_generation;assert(!report().discovering);
+        assert(owner.discover());run_one_command();
+        for(unsigned pass=0;pass<2000&&report().discovery_generation==scanned;++pass)run_idle(1);
+        assert(report().discovery_generation>scanned);
     }
     fixture_tick=100000;fixture_present=true;
 }
