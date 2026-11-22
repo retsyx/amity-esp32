@@ -318,14 +318,14 @@ void Hub::resolve_device(BusSide side, uint8_t address, bool restore_route) {
     }
 }
 
-void Hub::discovered(BusSide side, uint8_t address) {
+void Hub::discovered(BusSide side, uint8_t address, uint8_t reported) {
     if (address > 14 || discovery_device(side, address)) return;
     Device d; d.bus = side; d.address = address;
     if (address == 0) { d.name = "TV"; d.resolved = true; d.physical_address = 0; d.type = 0; }
     (discovering_ ? discovery_ : devices_).push_back(d);
-    send(side, address, {0x83});
-    send(side, address, {0x46});
-    send(side, address, {0x8c});
+    if (reported != 0x84) send(side, address, {0x83});
+    if (reported != 0x47) send(side, address, {0x46});
+    if (reported != 0x87) send(side, address, {0x8c});
 }
 
 void Hub::source_thief(const cec::Frame &frame) {
@@ -438,7 +438,7 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
         discovery_device(side,frame.source())->physical_address=static_cast<uint16_t>((frame.data[2]<<8)|frame.data[3]);
         resolve_device(side,frame.source(),false);
     } else if (op == 0x84 && frame.size >= 5 && frame.destination() == 15 && frame.source() < 15) {
-        discovered(side, frame.source());
+        discovered(side, frame.source(), op);
         auto *d = discovery_device(side, frame.source());
         const auto physical = static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]);
         d->physical_address = physical;
@@ -453,7 +453,7 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
         resolve_device(side, frame.source(), true);
     } else if (op == 0x47 && frame.size >= 3 && frame.destination() != 15 && frame.source() < 15) {
         const bool existing=discovery_device(side,frame.source())!=nullptr;
-        discovered(side,frame.source());
+        discovered(side,frame.source(),op);
         if (auto *d = discovery_device(side, frame.source())) {
             const auto old_name = existing?d->name:std::string{};
             d->name.clear();
@@ -463,7 +463,7 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
             resolve_device(side, frame.source(), old_name != reported);
         }
     } else if (op == 0x87 && frame.size >= 5 && frame.destination() == 15 && frame.source() < 15) {
-        discovered(side,frame.source());
+        discovered(side,frame.source(),op);
         if (auto *d = discovery_device(side, frame.source())) d->vendor_id = (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
     } else if (op == 0x7a && frame.size >= 3 && frame.destination() != 15) {
         auto* d = find_device(key_name(0x41),owner_audio_side_);

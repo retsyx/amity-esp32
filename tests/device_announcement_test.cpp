@@ -90,7 +90,9 @@ static void metadata_can_introduce_a_device(){
         if(opcode==0x47)assert(d->name=="Player"&&d->resolved);
         if(opcode==0x84)assert(d->physical_address==0x2000&&d->type==4);
         if(opcode==0x87)assert(d->vendor_id==0x123456);
-        assert(first(0x83,8)<fixture_sent.size()&&first(0x46,8)<fixture_sent.size()&&first(0x8c,8)<fixture_sent.size());
+        // The peer is asked only for identity its introducing report lacked.
+        assert((first(0x83,8)<fixture_sent.size())==(opcode!=0x84)&&(first(0x46,8)<fixture_sent.size())==(opcode!=0x47)&&
+            (first(0x8c,8)<fixture_sent.size())==(opcode!=0x87));
         only_targeted_identity_and_standby();metadata(hub);no_enumeration(hub,generation);
     }
 }

@@ -95,7 +95,9 @@ public:
     enum class ReceiveStep : uint8_t { Frame, Input, Switch, Announce, ForceBack, Done };
     uint8_t receive(BusSide side, const cec::Frame &frame, ReceiveStep step = ReceiveStep::Frame);
     ReceiveStep receive_step() const { return receive_step_; }
-    void discovered(BusSide side, uint8_t address);
+    // Learn a new peer and ask for the identity its introducing report
+    // (0x84, 0x47 or 0x87; 0 for none) did not carry.
+    void discovered(BusSide side, uint8_t address, uint8_t reported = 0);
     void begin_discovery(uint8_t sides = 3);
     void determine_front_physical_address(uint16_t fallback);
     bool apply_default_front_physical_address(uint16_t fallback);
