@@ -1057,7 +1057,6 @@ void active_loop_work(void *arg){
             if(hooks.control){
                 const auto result=hooks.control(active->session.scope(),envelope,deadline);
                 if(active->restart_requested){trace.fail("application_restart_requested",Error::none,LinkTrace::Recovery::recoverable);break;}
-                if(!server&&result==Error::none&&selection){active->context_ready=true;active->refreshing=false;}
                 if(result!=Error::none&&(envelope.kind==Kind::scoped_result||key_cleanup||selection)){trace.fail("control_dispatch",result,LinkTrace::Recovery::recoverable);break;}
             }else if(envelope.kind==Kind::scoped_result||envelope.kind==Kind::scoped_intent){
                 trace.fail("control_dispatch",Error::not_ready,LinkTrace::Recovery::recoverable);break;
