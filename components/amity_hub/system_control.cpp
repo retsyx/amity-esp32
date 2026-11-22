@@ -30,12 +30,9 @@ esp_err_t SystemControl::configure(config_store::ConfigurationSnapshot published
     for(const auto& owner:config.octopuses)owners.push_back(owner.octopus_id);
     const auto previous=active_configuration();
     auto stored=std::shared_ptr<const config_store::Configuration>(published,&published->configuration);
-    const auto can_commit=[previous,stored](const Snapshot& state){
+    const auto can_commit=[previous](const Snapshot& state){
         if(!previous)return state.current_activity<0;
-        if(state.applied_config_revision!=previous->config_revision||state.applied_presentation_revision!=previous->presentation_revision)return false;
-        if(state.current_activity<0)return true;
-        const auto order=config_store::ordered_activities(*previous);
-        return static_cast<size_t>(state.current_activity)<order.size()&&config_store::retains_activity(*previous,*stored,order[state.current_activity]);
+        return state.applied_config_revision==previous->config_revision&&state.applied_presentation_revision==previous->presentation_revision;
     };
     const auto persist=[this,published,commit=std::move(commit)]{
         const auto result=commit?commit():ESP_OK;

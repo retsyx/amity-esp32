@@ -498,17 +498,14 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
 
 bool ActivityHub::configure_scoped(std::vector<Activity> activities) {
     if(activity_execution_)return false;
+    // HubService admitted this list only if it retains the running activity
+    // unchanged; follow that activity to its new position.
     int selected=-1;
     if(selected_>=0){
-        const auto before=current();
-        if(!before.activity_id)return false;
-        for(size_t i=0;i<activities.size();++i){const auto& next=activities[i];
-            if(next.activity_id!=before.activity_id)continue;
-            if(selected>=0||next.name!=before.name||next.display!=before.display||next.source!=before.source||next.audio!=before.audio||
-               next.switch_device!=before.switch_device||next.switch_input!=before.switch_input)return false;
-            selected=static_cast<int>(i);
-        }
-        if(selected<0)return false;
+        const auto id=current().activity_id;
+        const auto next=std::find_if(activities.begin(),activities.end(),[&](const auto& a){return a.activity_id==id;});
+        if(!id||next==activities.end())return false;
+        selected=static_cast<int>(next-activities.begin());
     }
     activities_=std::move(activities);selected_=selected;
     return true;

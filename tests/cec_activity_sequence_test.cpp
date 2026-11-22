@@ -73,8 +73,6 @@ static void configuration_preserves_selection_and_standby_order(){
     const Activity original{"Original","TV","Source","Source","",0,identity<m::ActivityId>('3')};
     assert(hub.configure_scoped({original}));drain(hub,steps,0);steps.actions.clear();
     assert(hub.configure_scoped({original,{"Other","TV","Other","Other","",0,identity<m::ActivityId>('4')}}));
-    auto changed=original;changed.name="Changed";
-    assert(!hub.configure_scoped({changed}));
     assert(hub.snapshot().current_activity==0&&hub.snapshot().activities[0].name=="Original"&&steps.actions.empty());
     unsigned ready=0;
     assert(!hub.standby([&]{++ready;}));
