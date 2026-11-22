@@ -46,7 +46,7 @@ def _exercise_split_theater(*, source_on_main):
         assert tv.address.physical == 0
         assert avr.address == avr_input.address == CecAddress(5, "1.0.0.0")
         assert player.address.physical == 0x1200
-        with main.add_amity(secondary) as member:
+        with main.pair_ble_keyboard() as keyboard, main.add_amity(secondary) as member:
             member.assert_connected()
             initial = main.scan_hdmi()
             initial.assert_contains_only(*components)
@@ -103,8 +103,8 @@ def _exercise_split_theater(*, source_on_main):
                         activity.assert_active()
                         # Use the returned source's fresh scan for later actions.
                         activity.refresh_scan(missing)
-                        main.press_key(Key.SELECT).assert_received_by(player)
-                        main.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                        keyboard.press(Key.SELECT).assert_received_by(player)
+                        keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
                         activity.assert_active()
 
                         stopped = activity.standby()

@@ -482,13 +482,13 @@ class TestBedLifetimeTests(unittest.TestCase):
         report["activities"][0]["operation"]["stage"] = "tampered"
         self.assertEqual(bed.report["activities"][0]["operation"]["stage"], "complete")
 
-    def test_key_report_retains_http_and_cec_boundaries_without_private_fields(self):
+    def test_key_report_retains_input_and_cec_boundaries_without_private_fields(self):
         dut = UnitDUT("first-board", self.log)
         dut.key_operations = []
         bed = TestBed(dut, session_factory=self.factory())
-        timing = {"started_monotonic_ns": 100, "response_completed_monotonic_ns": 200,
-                  "deadline_monotonic_ns": 300, "http_elapsed_ms": .0001, "cec_budget_ms": .0001,
-                  "press_after_response_ms": -.00005, "release_after_response_ms": .00008}
+        timing = {"interface": "ble", "started_monotonic_ns": 100, "input_completed_monotonic_ns": 200,
+                  "deadline_monotonic_ns": 300, "cec_budget_ms": .0001,
+                  "press_after_input_ms": -.00005, "release_after_input_ms": .00008}
         with bed:
             dut.key_operations.append({"key": 4, **timing, "private_token": "PRIVATE_TOKEN"})
         self.assertEqual(bed.report["keys"], [{"dut": dut.name, "key": 4, **timing}])

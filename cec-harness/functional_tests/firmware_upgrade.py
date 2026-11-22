@@ -31,26 +31,28 @@ def _scan(main, components):
 def _exercise(main, activities, systems, *, phase):
     """State alone is insufficient: every assertion needs new wire commands."""
     components = tuple(component for system in systems for component in system)
-    for activity, active in zip(activities, systems):
-        for component in components:
-            component.assert_power(PowerState.STANDBY)
-        started = activity.start()
-        for component in active:
-            component.wait_for_power(PowerState.ON, since=started)
-        active[1].wait_for_input(active[2], since=started)
-        activity.assert_active()
-        main.press_key(Key.VOLUME_UP).assert_received_by(active[1])
-        main.press_key(Key.RIGHT).assert_received_by(active[2])
-        for component in components:
-            if component not in active:
+    # The remote is paired per pass: the upgrade reboots the main between them.
+    with main.pair_ble_keyboard() as keyboard:
+        for activity, active in zip(activities, systems):
+            for component in components:
                 component.assert_power(PowerState.STANDBY)
-        stopped = activity.standby()
-        for component in active:
-            component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
-        for component in components:
-            component.assert_power(PowerState.STANDBY)
-        event("firmware.activity_verified", dut=main.name, owner=active[0].dut.identity.device_id,
-              activity_id=activity.activity_id, phase=phase)
+            started = activity.start()
+            for component in active:
+                component.wait_for_power(PowerState.ON, since=started)
+            active[1].wait_for_input(active[2], since=started)
+            activity.assert_active()
+            keyboard.press(Key.VOLUME_UP).assert_received_by(active[1])
+            keyboard.press(Key.RIGHT).assert_received_by(active[2])
+            for component in components:
+                if component not in active:
+                    component.assert_power(PowerState.STANDBY)
+            stopped = activity.standby()
+            for component in active:
+                component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
+            for component in components:
+                component.assert_power(PowerState.STANDBY)
+            event("firmware.activity_verified", dut=main.name, owner=active[0].dut.identity.device_id,
+                  activity_id=activity.activity_id, phase=phase)
 
 
 class _CleanBench:

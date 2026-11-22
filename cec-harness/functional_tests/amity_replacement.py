@@ -17,7 +17,7 @@ def _equipment(dut, adapter, name):
     return tv, avr, player
 
 
-def _exercise(main, activity, equipment, inactive, *, source=True):
+def _exercise(main, keyboard, activity, equipment, inactive, *, source=True):
     scan = main.last_scan
     activity.refresh_scan(scan)
     tv, avr, player = equipment
@@ -33,13 +33,13 @@ def _exercise(main, activity, equipment, inactive, *, source=True):
             avr.wait_for_input(player, since=started)
             if activity.switch_input:
                 assert_switch_commands(avr, activity.switch_input, since=started, count=0)
-            main.press_key(Key.RIGHT).assert_received_by(player)
-            main.press_key(Key.SELECT).assert_received_by(player)
+            keyboard.press(Key.RIGHT).assert_received_by(player)
+            keyboard.press(Key.SELECT).assert_received_by(player)
         else:
             avr.wait_for_switch_input(activity.switch_input, since=started)
             assert_switch_commands(avr, activity.switch_input, since=started, count=1)
             player.assert_power(PowerState.STANDBY)
-        main.press_key(Key.VOLUME_UP).assert_received_by(avr)
+        keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
         activity.assert_active()
         for component in inactive:
             component.assert_power(PowerState.STANDBY)
@@ -64,6 +64,7 @@ def test_amity_replacement():
         with ExitStack() as resources:
             for component in new:
                 component.power_off()
+            keyboard = resources.enter_context(main.pair_ble_keyboard())
             removed = resources.enter_context(main.add_amity(previous))
             removed.assert_connected()
             added = resources.enter_context(main.add_amity(replacement))
@@ -82,9 +83,9 @@ def test_amity_replacement():
                 "Replacement numeric input", display=old[0], audio=old[1], source=None,
                 switch_device=old[1], switch_input=3))
 
-            _exercise(main, keeper, local, old)
-            _exercise(main, playback, old, local)
-            _exercise(main, numeric, old, local, source=False)
+            _exercise(main, keyboard, keeper, local, old)
+            _exercise(main, keyboard, playback, old, local)
+            _exercise(main, keyboard, numeric, old, local, source=False)
 
             # The paired responders represent the equipment moved between the
             # boards. Only its new HDMI connections can answer after this move.
@@ -100,7 +101,7 @@ def test_amity_replacement():
                                        tuple(zip(old, new, strict=True)))
             review.apply()
 
-            _exercise(main, keeper, local, new)
-            _exercise(main, playback, new, local)
-            _exercise(main, numeric, new, local, source=False)
+            _exercise(main, keyboard, keeper, local, new)
+            _exercise(main, keyboard, playback, new, local)
+            _exercise(main, keyboard, numeric, new, local, source=False)
             review.assert_retained()

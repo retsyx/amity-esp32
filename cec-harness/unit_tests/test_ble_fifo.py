@@ -44,7 +44,7 @@ class SaturatingKeyboard(input_fixture.Keyboard):
             if self.fault == "dropped press":
                 self.emit(self.f.avr, 0x44, Key.VOLUME_DOWN)
             self.phase = "ten"
-        elif keyboard == _HELD_USAGES and consumer == 0:
+        elif keyboard == _HELD_USAGES and consumer == 0 and self.phase == "ten":
             # The old Down/Up frames were admitted before those physical ups.
             # Their completion remains legitimate; the other source holds run.
             self.emit(self.f.player, 0x44, Key.DOWN)
@@ -53,6 +53,21 @@ class SaturatingKeyboard(input_fixture.Keyboard):
             if self.fault == "capacity release":
                 self.emit(self.f.player, 0x45)
             self.phase = "capacity"
+        elif keyboard == (*_HELD_USAGES, 0x51) and consumer == 0:
+            if self.phase != "capacity" or self.commands[-2] != (_HELD_USAGES, 0):
+                raise AssertionError("The rejected volume keys and six admitted holds must remain down through the barrier")
+            if self.fault != "missing barrier":
+                self.emit(self.f.player, 0x44, Key.DOWN)
+            if self.fault == "capacity held replay":
+                self.emit(self.f.player, 0x44, Key.UP)
+            self.emit(self.f.avr, 0x44, Key.MUTE)
+            if self.fault == "held replay":
+                self.emit(self.f.avr, 0x44, Key.VOLUME_UP)
+            self.phase = "barrier_down"
+        elif keyboard == _HELD_USAGES and consumer == 0 and self.phase == "barrier_down":
+            # A Down repeat admitted before this up may still finish.
+            self.emit(self.f.player, 0x44, Key.DOWN)
+            self.phase = "barrier"
         elif keyboard == (0x28,) and consumer == 0:
             self.emit(self.f.player, 0x44, Key.SELECT)
             if self.fault == "select old consumer":
@@ -65,6 +80,8 @@ class SaturatingKeyboard(input_fixture.Keyboard):
             self.phase = "fresh_mute"
         elif not keyboard and not consumer:
             if self.phase == "barrier":
+                if self.fault == "late barrier repeat":
+                    self.emit(self.f.player, 0x44, Key.DOWN)
                 # Already admitted frames legitimately finish after all-up,
                 # before the final operand-free release in that same FIFO.
                 self.emit(self.f.player, 0x44, Key.RIGHT)
@@ -81,22 +98,6 @@ class SaturatingKeyboard(input_fixture.Keyboard):
             self.phase = "up"
         return action
 
-    def api_barrier(self, key, *, duration_ms=0):
-        if key != Key.PLAY or duration_ms:
-            raise AssertionError("The FIFO barrier must use a fresh shipping-API Play tap")
-        if self.phase != "capacity" or self.commands[-1] != (_HELD_USAGES, 0):
-            raise AssertionError("The rejected volume keys and six admitted holds must remain down through the barrier")
-        action = self.action("key")
-        if self.fault != "missing barrier":
-            self.emit(self.f.player, 0x44, Key.PLAY)
-        if self.fault == "capacity held replay":
-            self.emit(self.f.player, 0x44, Key.DOWN)
-        self.emit(self.f.avr, 0x44, Key.MUTE)
-        if self.fault == "held replay":
-            self.emit(self.f.avr, 0x44, Key.VOLUME_UP)
-        self.phase = "barrier"
-        return action
-
 
 class FIFOTests(unittest.TestCase):
     def setUp(self):
@@ -107,7 +108,6 @@ class FIFOTests(unittest.TestCase):
         base = input_fixture.BLEInputEvidenceTests()
         with base.fixture() as fixture:
             fixture.keyboard = SaturatingKeyboard(fixture, fault=fault)
-            fixture.main.press_key = fixture.keyboard.api_barrier
             gpio = fixture.avr.dut.wiring.dut_cec_gpio(fixture.avr.dut.name,
                                                      fixture.avr.tentacle, fixture.avr.direction)
             initiator = fixture.scan.initiators[fixture.avr.gpio]
@@ -177,9 +177,10 @@ class FIFOTests(unittest.TestCase):
                 self.assertEqual(len(check["dropped_key_frames"]), 2)
                 self.assertEqual(len(check["non_key_drops"]), int(status_drop))
                 self.assertEqual(check["saturation_report_count"], 1)
-                self.assertEqual(check["source_barrier_key"], Key.PLAY)
+                self.assertEqual(check["source_barrier_key"], Key.DOWN)
                 self.assertEqual(check["held_keyboard_usages"], list(_HELD_USAGES))
-                self.assertEqual(fixture.keyboard.commands[1], (_HELD_USAGES, 0))
+                self.assertEqual(fixture.keyboard.commands[1:4], [(_HELD_USAGES, 0), ((*_HELD_USAGES, 0x51), 0),
+                                                                  (_HELD_USAGES, 0)])
                 self.assertTrue(all(usage in _HELD_USAGES for usage in (0x7F, 0x80, 0x81)))
                 self.assertGreaterEqual(sum(row["frame"].endswith(":44:43")
                     and row["wire_timestamp_ns"] < check["initial_volume_release_wire_timestamp_ns"]
@@ -191,7 +192,8 @@ class FIFOTests(unittest.TestCase):
                 self.assertIsNone(fixture.avr.pressed_key)
 
     def test_wrong_prefix_or_recipient_and_dropped_held_or_released_replay_fail(self):
-        for fault in ("prefix", "non-key prefix", "recipient", "dropped press", "held replay", "up replay", "failed up", "missing barrier", "capacity release", "capacity held replay"):
+        for fault in ("prefix", "non-key prefix", "recipient", "dropped press", "held replay", "up replay", "failed up",
+                      "missing barrier", "capacity release", "capacity held replay", "late barrier repeat"):
             with self.subTest(fault=fault), self.fixture(fault=fault) as fixture:
                 with self.assertRaises((AssertionError, TimeoutError)):
                     with BLEFIFOEvidence(fixture.main, fixture.scan) as evidence:

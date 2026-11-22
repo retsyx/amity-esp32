@@ -13,6 +13,7 @@ from amity_harness import Component, DUT, PlaybackComponent, PowerState, TvCompo
 from amity_harness.activity import PendingActivity
 from functional_tests import split_theater
 from unit_tests.test_consortium_scenarios import Scenario
+from unit_tests.remote_fixture import pairing
 
 
 class SplitScenario(Scenario):
@@ -122,7 +123,8 @@ class SplitScenario(Scenario):
                 (DUT, "scan_hdmi", self.scan),
                 (DUT, "create_activity", self.activity),
                 (DUT, "front_physical_address", self.address),
-                (DUT, "press_key", lambda *args: SimpleNamespace(assert_received_by=lambda recipient: None)),
+                (DUT, "pair_ble_keyboard",
+                 pairing(lambda *args: SimpleNamespace(assert_received_by=lambda recipient: None))),
                 (Component, "wait_for_power", self.wait_power),
                 (Component, "assert_power", self.assert_power),
                 (TvComponent, "wait_for_amity_input", lambda *args, **kw: None),

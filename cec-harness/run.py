@@ -10,9 +10,7 @@ from functional_tests.activity import (test_activity, test_activity_without_stat
                                        test_activity_manual_component_secondary,
                                        test_activity_same_osd_locations,
                                        test_activity_unselected_equipment_announcement,
-                                       test_activity_keys, test_activity_keys_secondary,
-                                       test_activity_keys_disconnected,
-                                       test_activity_keys_disconnected_secondary)
+                                       test_activity_keys, test_activity_keys_secondary)
 from functional_tests.qualified_names import test_qualified_names
 from functional_tests.missing_equipment import test_missing_equipment
 from functional_tests.removal_cascade import test_removal_cascade, test_removal_replacement
@@ -55,8 +53,7 @@ if __name__ == "__main__":
                                         test_activity_manual_component_secondary,
                                         test_activity_same_osd_locations,
                                         test_activity_unselected_equipment_announcement,
-                                        test_activity_keys, test_activity_keys_secondary,
-                                        test_activity_keys_disconnected, test_activity_keys_disconnected_secondary),
+                                        test_activity_keys, test_activity_keys_secondary),
                            "source_theft": test_source_theft, "add_amity": test_add_amity,
                            "consortium": test_consortium,
                            "consortium_three_duts": test_consortium_three_duts,

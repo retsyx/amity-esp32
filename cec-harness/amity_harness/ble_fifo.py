@@ -96,15 +96,19 @@ class BLEFIFOEvidence(BLEInputEvidence):
                     lambda: reports.report(keyboard=_HELD_USAGES, consumer=0), record, "source_capacity_up")
                 capacity_through = capacity_up + self._budget()
                 self._drain(capacity_through)
-                # A unique shipping-API Play tap proves fresh admission after
+                # Pressing released Down again proves fresh admission after
                 # the prefix drains, while both rejected HID keys remain down.
                 # Its recipient still has held source keys, so its own up does
                 # not require a separate CEC release.
                 barrier_after, barrier_deadline = self._change(
-                    lambda: self.dut.press_key(Key.PLAY), record, "source_barrier", kind="key")
-                barrier = self._press(source, Key.PLAY, after=barrier_after,
+                    lambda: reports.report(keyboard=(*_HELD_USAGES, 0x51), consumer=0), record, "source_barrier_down")
+                barrier = self._press(source, Key.DOWN, after=barrier_after,
                                       deadline_ns=barrier_deadline, require_pressed=False)
-                held_through = barrier.timestamp_ns + self._budget()
+                barrier_up, _ = self._change(
+                    lambda: reports.report(keyboard=_HELD_USAGES, consumer=0), record, "source_barrier_up")
+                # A Down repeat admitted before that up can still finish.
+                barrier_through = barrier_up + self._budget()
+                held_through = max(barrier.timestamp_ns + self._budget(), barrier_through)
                 self._drain(held_through)
                 up, up_deadline = self._change(reports.all_up, record, "saturated_all_up")
                 released = self._release(source, after=up, deadline_ns=up_deadline)
@@ -119,8 +123,9 @@ class BLEFIFOEvidence(BLEInputEvidence):
                         if frame.opcode == 0x44 and frame.operands in (b"\x41", b"\x42"):
                             raise AssertionError("A FIFO-dropped BLE press was transmitted or replayed")
                         if (gpio == source.gpio and frame.destination == source.address.logical
-                                and frame.opcode == 0x44 and frame.operands in (b"\x01", b"\x02")
-                                and frame.timestamp_ns > barrier.timestamp_ns):
+                                and frame.opcode == 0x44 and frame.timestamp_ns > barrier.timestamp_ns
+                                and (frame.operands == b"\x01" or frame.operands == b"\x02"
+                                     and frame.timestamp_ns > barrier_through)):
                             raise AssertionError("A released navigation hold replayed after the fresh FIFO barrier")
                         if (gpio == volume.gpio and frame.destination == volume.address.logical
                                 and frame.timestamp_ns > initial_volume_release.timestamp_ns
@@ -188,7 +193,8 @@ class BLEFIFOEvidence(BLEInputEvidence):
                           non_key_drops=[raw.hex(":") for gpio, raw in drops if (gpio, raw) not in key_drops],
                           saturated_burst_end_monotonic_ns=started,
                           saturation_report_count=1, saturated_keyboard_usages=list(_USAGES),
-                          source_barrier_key=int(Key.PLAY),
+                          source_barrier_key=int(Key.DOWN),
+                          source_barrier_up_monotonic_ns=barrier_up,
                           source_capacity_up_monotonic_ns=capacity_up,
                           source_capacity_drained_through_monotonic_ns=capacity_through,
                           held_keyboard_usages=list(_HELD_USAGES),
@@ -200,7 +206,7 @@ class BLEFIFOEvidence(BLEInputEvidence):
                           fresh_press_wire_timestamp_ns=fresh_press.timestamp_ns,
                           fresh_mute_wire_timestamp_ns=mute_press.timestamp_ns,
                           drop_log_same_boot=True)
-            routes = {key: source for key in (*_KEYS, Key.PLAY)}
+            routes = {key: source for key in _KEYS}
             routes.update({key: volume for key in (Key.VOLUME_UP, Key.VOLUME_DOWN, Key.MUTE)})
             return self._finish(record, routes=routes, released=((source, source_release), (volume, volume_release)),
                                 validate_frames=final_policy)

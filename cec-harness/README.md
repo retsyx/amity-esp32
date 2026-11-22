@@ -15,7 +15,8 @@ bypasses, or test control surfaces for this framework.** The DUT helpers wrap
 the existing membership scan/add/remove controls, and operation-status routes.
 Additional configuration and observation helpers must wrap existing UI operations
 as well. Accessory scenarios send real commands through the shipping Matter or HomeKit
-interface and verify their physical CEC effects. The runner
+interface and verify their physical CEC effects. The web UI has no key control:
+remote keys come from a Pi-emulated BLE remote paired through the Remote UI. The runner
 first provisions the factory-reset main through its shipping Matter BLE setup.
 Firmware CEC, activity, input, commissioning and membership behavior is unchanged.
 
@@ -79,7 +80,7 @@ explicitly; see [Run functional tests](#run-functional-tests) and
   source's Active Source announcement causes no Standby, and that an announcement
   during global standby receives broadcast Standby without changing selection.
   Its separate cases cover passive discovery of never-selected equipment during
-  standby, switch input, local/member key routing, and client disconnect during a hold.
+  standby, switch input and local/member key routing.
   Starts and repairs also require a fresh front-wire Active Source from Amity
   and the selected display's resulting input; downstream AVR routing is checked
   separately against the player's physical address.
@@ -1085,8 +1086,8 @@ sending input. The local case first saturates the CEC FIFO with one ten-key HID
 report: seven navigation keys, Mute and both volume keys. It requires eight
 physical frames in admission order and fresh main-owner logs for the two dropped
 volume presses. Releasing two admitted navigation holds leaves capacity for
-fresh Play and the final recipient releases, while the rejected volume keys
-stay held. Neither capacity becoming free nor matching button-up may replay
+pressing Down again and the final recipient releases, while the rejected volume
+keys stay held. Neither capacity becoming free nor matching button-up may replay
 dropped work. Already admitted presses may
 finish before the final release. Fresh Select and Mute must then work.
 Both cases check a fresh Select press/release, independent volume and
@@ -1107,9 +1108,8 @@ ordinary CEC deadline; the one-second input-gate proof is unchanged.
 Activity-transition assertions use UI state and physical CEC traffic.
 The fixture stops that activity and restarts the original TV/AVR/source activity
 with fresh power and routing evidence. Disconnecting BLE during a held Volume
-Up must then end the remaining AVR stream. No `/api/key` request supplies these inputs. Generic
-HID exercises the keyboard input path; Siri touch gestures and Power macros
-remain separate.
+Up must then end the remaining AVR stream. Generic HID exercises the keyboard
+input path; Siri touch gestures and Power macros remain separate.
 
 The early link-loss case pairs the keyboard, starts a source-only activity, then
 ends the link and each of the main's next three reconnections as soon as the
@@ -1202,10 +1202,10 @@ secondary Wi-Fi credentials prevent observing reset completion through HTTP.
 
 `activity.py` exercises remote key routing twice: once with the TV/AVR/player
 on `amity-dut`, and once on the headless `amity-dut-2`, enrolled and controlled
-through `amity-dut`. Volume Up, Volume Down and Mute must reach the AVR;
-the four navigation directions, Select, Play, Pause and Stop must reach the
-player. The combined Play/Pause button must emit Play then Pause after Stop.
-Each assertion requires fresh physical directed User Control Pressed and a
+through `amity-dut`. Volume Up, Volume Down and Mute must reach the AVR; the
+four navigation directions and Select must reach the player. The remote has no
+playback buttons; the Matter and HomeKit cases cover Play, Pause, Stop and the
+Play/Pause toggle. Each assertion requires fresh physical directed User Control Pressed and a
 later operand-free User Control Released from the scan-proven owner initiator.
 It rejects virtual/stale/modified evidence and the same key sent to another
 fixture recipient, and rechecks the main's activity/boot and exact member boot.
@@ -1213,18 +1213,18 @@ The Power button must select system Standby and produce fresh physical Standby
 commands at all three selected devices. These key cases close their fixture
 activities and equipment before member removal/reset.
 
-`DUT.press_key(Key.SELECT)` wraps the shipping authenticated `POST /api/key`.
-Its `duration_ms` defaults to zero for a complete tap and accepts at most 5000
-milliseconds; firmware owns the final release even if the client disconnects.
-The routing cases include zero-duration taps and a 100 ms Volume Up hold.
-A tap must produce exactly one physical press before its release. Holds of
-400 ms or longer, through the key API or BLE, must show repeated presses.
-Key reports retain the requested duration, actual press/release wire timestamps,
-recipient and owner boots. No separate release request is needed.
-Wire freshness starts before the POST; the CEC completion budget starts when
-its authenticated response returns, after any requested hold. Reports keep
-both boundaries and HTTP duration. This bounds response-to-wire completion;
-the API does not expose an exact firmware decision timestamp.
+The web UI has no key control, so key cases press the Pi-emulated BLE remote:
+`keyboard = main.pair_ble_keyboard()` pairs it through the Remote UI, and
+`keyboard.press(Key.SELECT)` sends the button's HID down and then its up,
+without waiting for a CEC frame. `duration_ms`, at most 5000, holds it between
+them. Scenarios that reboot the main pair the remote again for each pass. The
+routing cases include taps and a 100 ms Volume Up hold. A remote tap needs at
+least one physical press before its single final release; a tap that Matter or
+HomeKit sends as one command must produce exactly one press. Holds of 400 ms or
+longer must show repeated presses. Key reports retain the requested duration,
+actual press/release wire timestamps, recipient and owner boots. Wire freshness
+starts at the HID down; the CEC completion budget starts at the HID up, after
+any requested hold.
 
 The activity cases also cover a source connected directly through Amity to TV
 input 3, with no saved audio receiver: navigation reaches the source while
@@ -1236,16 +1236,6 @@ Both cases select the adapter address through its ordinary settings UI and
 verify fresh power, display input, key effects, repair and Standby commands.
 Teardown disconnects the back-side responders and explicitly scans before
 restoring the previous adapter setting, so the next fixture can use input 1.
-
-Two additional `activity` cases run a bounded Volume Up hold locally and on the
-member, prove its first physical press, and close that authenticated HTTP
-connection while the hold is still pending. They require repetition after the
-disconnect, a final operand-free release by the original hold/CEC deadline,
-and no later presses throughout an additional CEC observation window. The
-release must not complete before the requested duration measured from request
-start.
-A fresh Select press must work afterward. The shared helper owns the cancellable
-request and receive-drain evidence; the scenario contains no socket handling.
 
 Run functional tests on the Pi with `./cec-harness/run`. The launcher uses the
 managed Python 3.13 runtime installed by [Pi software setup](#pi-software-setup),
@@ -1288,8 +1278,7 @@ continuity through a member reboot, or `--test activity` for the activity
 power-cycle/repair, receiver-free TV audio, nondefault HDMI inputs, passive standby
 discovery, explicit switch-input, two manual-component,
 same-name devices across owners and adapters,
-two remote-key and two disconnected
-hold sub-tests,
+two remote-key sub-tests,
 `--test source_theft` for unselected-source recovery,
 `--test add_amity` for adding and removing the second board, `--test consortium`
 for the two-owner equipment scenario, `--test consortium_three_duts` for the
@@ -1349,8 +1338,8 @@ HomeKit identifiers use slot plus one. The phase keeps one HomeKit controller
 paired until cleanup, which removes only that controller.
 The main pairs the Pi-emulated BLE remote
 through the normal Remote UI operations before the workload timer starts.
-Navigation and volume rotate among BLE reports, the key web API, Matter and
-HomeKit across every owner and source; BLE and HTTP also exercise holds.
+Navigation and volume rotate among BLE reports, Matter and HomeKit across
+every owner and source; BLE also exercises holds.
 Every activity repeats rotating Matter and HomeKit playback/mute commands,
 including HomeKit Play/Pause against the source's observed playback state.
 Once per sweep for each accessory, unsupported keys and an invalid input must

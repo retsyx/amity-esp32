@@ -245,32 +245,6 @@ class TransportTests(unittest.TestCase):
                     self.assertEqual(factory.sockets[0].closed, closed)
                     opener.close()
 
-    def test_idle_connection_is_reused_before_explicit_client_disconnect(self):
-        factory = Factory(self.clock, body({}), body({"unused": "hold response"}), body({"later": True}))
-        opener = factory.opener()
-        opener.open(request()).close()
-        connection = factory.connections[0]
-        self.clock.advance(60)
-
-        def admitted():
-            self.assertEqual(len(factory.connections), 1)
-            self.assertEqual(len(connection.requests), 2)
-            self.assertEqual(connection.requests[1][:3], ("POST", "/api/key", b'{"key":65,"duration_ms":3000}'))
-            self.assertFalse(factory.sockets[0].closed)
-            return "physical press"
-
-        with patch.object(connection, "getresponse", side_effect=AssertionError("The disconnected hold must not read its response")):
-            self.assertEqual(opener.disconnect_after(request(b'{"key":65,"duration_ms":3000}', "/api/key"), admitted),
-                             "physical press")
-        self.assertEqual(factory.sockets[0].shutdowns, [socket.SHUT_RDWR])
-        self.assertTrue(factory.sockets[0].closed)
-        self.assertIsNone(opener._connection)
-        self.assertFalse(opener._lock.locked())
-        opener.open(request()).close()
-        self.assertEqual(len(factory.connections), 2)
-        self.assertEqual(len(factory.connections[1].requests), 1)
-        opener.close()
-
     def test_redirects_and_foreign_origin_never_receive_bearer_or_mutation(self):
         factory = Factory(self.clock, b'HTTP/1.1 307 Redirect\r\nLocation: https://other.local/api/steal\r\nContent-Length: 0\r\n\r\n')
         opener = factory.opener()

@@ -1,4 +1,8 @@
-"""Remote button state through the shipping authenticated key API."""
+"""Physical CEC evidence for remote keys from shipping input surfaces.
+
+Keys come from the paired BLE remote, Matter or HomeKit. The web UI has no
+key control, so no HTTP request supplies a key.
+"""
 
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -40,11 +44,18 @@ def _key(value):
 
 @dataclass
 class KeyAction(ActivityAction):
-    """One bounded button press and its original physical wire evidence."""
+    """One bounded button press and its original physical wire evidence.
+
+    ``complete_tap`` marks an input surface that delivers a tap as one
+    command, so a tap must emit exactly one press. A remote's HID down and
+    up are separate reports; held repetition between them depends on their
+    delivery timing.
+    """
 
     key: int = 0
     duration_ms: int = 0
-    response_completed_ns: int | None = None
+    input_completed_ns: int | None = None
+    complete_tap: bool = True
     trace: dict = field(default_factory=dict, repr=False)
 
     def _validate(self, *, standby=False, _system=None):
@@ -64,33 +75,31 @@ class KeyAction(ActivityAction):
             raise AssertionError("The selected activity changed during the key action")
         return current
 
-    def assert_received_by(self, component, *, emitted_key=None, timeout=None):
+    def assert_received_by(self, component, *, timeout=None):
         """Require a fresh directed press and final release on the correct wire.
 
-        A tap emits exactly one press: every key press uses one wire attempt.
-        A hold of at least ``HOLD_REPEAT_MIN_MS`` must show held repetition.
-        Original kernel frames must contain this key and an operand-free
-        release after its final press; virtual, stale, rewritten or dropped RX
-        cannot qualify. Any matching press to another fixture recipient fails,
-        including on another Amity's wire.
+        A complete tap command emits exactly one press: every key press uses
+        one wire attempt. A hold of at least ``HOLD_REPEAT_MIN_MS`` must show
+        held repetition. Original kernel frames must contain this key and an
+        operand-free release after its final press; virtual, stale, rewritten
+        or dropped RX cannot qualify. Any matching press to another fixture
+        recipient fails, including on another Amity's wire.
         """
         timeout = self.dut._runtime.cec_timeout if timeout is None else timeout
         _positive_seconds(timeout, "Key assertion timeout")
-        emitted_key = self.key if emitted_key is None else _key(emitted_key)
         system = self.dut.get_system()
         self._validate(_system=system)
         session, started, source, _ = component._wire_context(self, _system=system)
         if component not in self.scan.expected:
             raise AssertionError("The key recipient is outside the scanned fixture")
-        # The HTTP handler admits the key before acknowledging it, and a
-        # nonzero-duration request returns only after its bounded hold. Keep
-        # the original request boundary for freshness, with one CEC budget
-        # after the response; adding the hold again would double-count it.
-        deadline_ns = (self.response_completed_ns + int(timeout * 1_000_000_000)
-                       if self.response_completed_ns is not None else
+        # Freshness starts before the first input change. The CEC budget
+        # starts when the final input change (a remote's key up) is sent,
+        # after any requested hold; adding the hold again would double-count it.
+        deadline_ns = (self.input_completed_ns + int(timeout * 1_000_000_000)
+                       if self.input_completed_ns is not None else
                        self.started_ns + int((self.duration_ms / 1000 + timeout) * 1_000_000_000))
         self.trace["deadline_monotonic_ns"] = deadline_ns
-        if self.response_completed_ns is not None:
+        if self.input_completed_ns is not None:
             self.trace["cec_budget_ms"] = timeout * 1000
 
         def inspect():
@@ -103,7 +112,7 @@ class KeyAction(ActivityAction):
                     continue
                 raw = record.get("frame", "")
                 operands = raw.split(":")[2:]
-                if record.get("opcode") == 0x44 and operands == [f"{emitted_key:02x}"]:
+                if record.get("opcode") == 0x44 and operands == [f"{self.key:02x}"]:
                     if gpio != component.gpio or record.get("destination") != component.address.logical:
                         raise AssertionError("The key was sent to the wrong physical recipient")
                     if (record.get("component") == component.name and not record.get("dropped")
@@ -133,19 +142,18 @@ class KeyAction(ActivityAction):
                 if proof is not None:
                     press, release, count = proof
                     self.trace["presses"] = count
-                    if not self.duration_ms and count != 1:
+                    if self.complete_tap and not self.duration_ms and count != 1:
                         raise AssertionError("A key tap emitted more than one physical press")
                     if self.duration_ms >= HOLD_REPEAT_MIN_MS and count < 2:
                         raise AssertionError("A held key produced no repeated physical presses")
                     self.trace.update(component=component.name, owner_id=component.dut.identity.device_id,
-                                      emitted_key=emitted_key,
                                       gpio=component.gpio, press_frame=press["frame"], release_frame=release["frame"],
                                       deadline_monotonic_ns=deadline_ns,
                                       press_wire_timestamp_ns=press["wire_timestamp_ns"],
                                       release_wire_timestamp_ns=release["wire_timestamp_ns"], presses=count, released=True)
-                    if self.response_completed_ns is not None:
-                        self.trace.update(press_after_response_ms=round((press["wire_timestamp_ns"] - self.response_completed_ns) / 1e6, 3),
-                                          release_after_response_ms=round((release["wire_timestamp_ns"] - self.response_completed_ns) / 1e6, 3))
+                    if self.input_completed_ns is not None:
+                        self.trace.update(press_after_input_ms=round((press["wire_timestamp_ns"] - self.input_completed_ns) / 1e6, 3),
+                                          release_after_input_ms=round((release["wire_timestamp_ns"] - self.input_completed_ns) / 1e6, 3))
                     event("key.assert_passed", dut=self.dut.name, **self.trace)
                     return self
             remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
@@ -155,7 +163,7 @@ class KeyAction(ActivityAction):
                 component._power_condition.wait(min(remaining, 0.02))
 
     def wait_for_standby(self):
-        """Require the Power button to select and settle system Standby."""
+        """Require the remote's Power button to select and settle system Standby."""
         if self.key != Key.POWER:
             raise ValueError("Standby evidence requires a Power button")
         self.dut.wait_for(lambda state: state.get("current_activity") == -1
@@ -184,141 +192,4 @@ def _prepare_key(dut, key, duration_ms):
     action.trace = {"key": key, "started_monotonic_ns": action.started_ns, "boot": action.boot,
                     "owner_boots": dict(action.owner_boots), "duration_ms": duration_ms}
     dut.key_operations.append(action.trace)
-    return action
-
-
-def press_key(dut, key, *, duration_ms=0):
-    action = _prepare_key(dut, key, duration_ms)
-    result = dut.request("/api/key", {"key": key, "duration_ms": duration_ms})
-    completed = time.monotonic_ns()
-    if result.get("ok") is not True:
-        raise AssertionError("Amity did not accept the key press")
-    action.response_completed_ns = completed
-    action.trace.update(response_completed_monotonic_ns=completed,
-                        http_elapsed_ms=round((completed - action.started_ns) / 1e6, 3))
-    event("key.pressed", dut=dut.name, key=key, duration_ms=duration_ms)
-    return action
-
-
-def _physical_key_frames(action, component):
-    """Inspect original wire evidence without HTTP while the key handler waits."""
-    presses, releases = [], []
-    for record in action.session.records:
-        stamp, gpio = record.get("wire_timestamp_ns", 0), record.get("gpio")
-        if (record.get("direction") != "rx" or record.get("transport") != "wire"
-                or stamp < action.started_ns or record.get("source") != action.initiators.get(gpio)):
-            continue
-        raw = record.get("frame", "")
-        operands = raw.split(":")[2:]
-        if record.get("opcode") == 0x44 and operands == [f"{action.key:02x}"]:
-            if gpio != component.gpio or record.get("destination") != component.address.logical:
-                raise AssertionError("The key was sent to the wrong physical recipient")
-            if (record.get("component") == component.name and not record.get("dropped")
-                    and record.get("handled_frame", raw) == raw):
-                presses.append(record)
-        elif (record.get("opcode") == 0x45 and not operands and gpio == component.gpio
-                and record.get("destination") == component.address.logical
-                and record.get("component") == component.name and not record.get("dropped")
-                and record.get("handled_frame", raw) == raw):
-            releases.append(record)
-    return sorted(presses, key=lambda row: row["wire_timestamp_ns"]), sorted(
-        releases, key=lambda row: row["wire_timestamp_ns"])
-
-
-def press_key_disconnected(dut, key, component, *, duration_ms=3000):
-    """Lose the HTTP caller during a physically admitted, bounded key hold.
-
-    Admission is proven by the first original directed press, never by an HTTP
-    acknowledgment. After disconnecting, require the final release by the
-    original hold/CEC deadline and observe an additional CEC window for stray
-    presses. Every owner/boot fence remains in force.
-    """
-    if type(duration_ms) is not int or not 1000 <= duration_ms <= 5000:
-        raise ValueError("A disconnected hold needs a duration from 1000 to 5000 milliseconds")
-    if _key(key) in (Key.POWER, Key.PLAY_PAUSE):
-        raise ValueError("A disconnected hold needs an untranslated source or audio key")
-    action = _prepare_key(dut, key, duration_ms)
-    action._validate()
-    if component not in action.scan.expected:
-        raise AssertionError("The key recipient is outside the scanned fixture")
-    component._wire_context(action)  # Resolve owner proof before occupying HTTP.
-    backend = getattr(action.session, "_backends", {}).get(component.gpio)
-    if backend is None:
-        raise AssertionError("The disconnected hold has no physical wire clock")
-    # Identity reads above can be slow. The physical interval begins immediately
-    # before sending the key, after all of those reads have finished.
-    action.started_ns = time.monotonic_ns()
-    action.trace.update(started_monotonic_ns=action.started_ns, disconnected=True)
-    hold_deadline = action.started_ns + duration_ms * 1_000_000
-    action.trace.update(hold_deadline_monotonic_ns=hold_deadline)
-
-    def first_press():
-        while True:
-            action.session.assert_healthy()
-            if component._session is not action.session or action.session._stop.is_set():
-                raise AssertionError("The CEC session ended before client disconnection")
-            presses, releases = _physical_key_frames(action, component)
-            if releases:
-                raise AssertionError("The key stream ended before the client disconnected")
-            if time.monotonic_ns() >= hold_deadline:
-                raise TimeoutError("No physical press arrived while the HTTP hold was still pending")
-            if presses and component.pressed_key == action.key:
-                action.trace["first_press_wire_timestamp_ns"] = presses[0]["wire_timestamp_ns"]
-                return
-            with component._power_condition:
-                component._power_condition.wait(min((hold_deadline - time.monotonic_ns()) / 1e9, .02))
-
-    dut._disconnect_key_request({"key": action.key, "duration_ms": duration_ms}, first_press,
-                                timeout=duration_ms / 1000)
-    disconnected_ns = time.monotonic_ns()
-    if disconnected_ns >= hold_deadline:
-        raise AssertionError("The HTTP connection did not close before the bounded hold ended")
-    action.trace["disconnected_monotonic_ns"] = disconnected_ns
-    action.assert_received_by(component)
-    presses, releases = _physical_key_frames(action, component)
-    repeats = [row for row in presses if row["wire_timestamp_ns"] > disconnected_ns]
-    if not repeats:
-        raise AssertionError("The bounded hold did not repeat after the client disconnected")
-    action.trace["repeat_after_disconnect_wire_timestamp_ns"] = repeats[0]["wire_timestamp_ns"]
-    # The first release terminates this stream. A later press/release pair
-    # cannot hide a restart by becoming assert_received_by's final pair.
-    release_ns = releases[0]["wire_timestamp_ns"]
-    # The API starts its bounded wait after admitting the request, not after
-    # the first press completes. Request start is therefore the conservative
-    # duration boundary. Check release completion only: Linux RX timestamps
-    # cannot establish when that frame's first edge began.
-    if release_ns < hold_deadline:
-        raise AssertionError("The disconnected hold released before its requested duration")
-    if any(row["wire_timestamp_ns"] <= disconnected_ns for row in releases):
-        raise AssertionError("The key stream ended before the client disconnected")
-    if any(row["wire_timestamp_ns"] > release_ns for row in presses):
-        raise AssertionError("A key press followed the disconnected hold's final release")
-    observed_until = release_ns + int(dut._runtime.cec_timeout * 1e9)
-    drain_deadline = observed_until + int(dut._runtime.cec_timeout * 1e9)
-    while True:
-        action.session.assert_healthy()
-        if component._session is not action.session or action.session._stop.is_set():
-            raise AssertionError("The CEC session ended during disconnected-key observation")
-        presses, _ = _physical_key_frames(action, component)
-        if any(row["wire_timestamp_ns"] > release_ns for row in presses):
-            raise AssertionError("A key press followed the disconnected hold's final release")
-        now = time.monotonic_ns()
-        if now >= observed_until:
-            idle = getattr(action.session, "_wire_idle_since_ns", {})
-            wires = {item.gpio for item in action.scan.expected}
-            if all(idle.get(gpio, 0) >= observed_until for gpio in wires):
-                action.trace.update(observed_wires=sorted(wires),
-                                    idle_receive_since_ns={str(gpio): idle[gpio] for gpio in sorted(wires)})
-                break
-            if now >= drain_deadline:
-                raise TimeoutError("CEC receive coverage did not drain after the disconnected hold")
-        with component._power_condition:
-            component._power_condition.wait(.02)
-    action._validate()
-    # HTTP owner proof may take time; inspect all captured traffic once more.
-    presses, _ = _physical_key_frames(action, component)
-    if any(row["wire_timestamp_ns"] > release_ns for row in presses):
-        raise AssertionError("A key press followed the disconnected hold's final release")
-    action.trace.update(observation_end_monotonic_ns=observed_until, cleanup_verified=True)
-    event("key.disconnected_cleanup.assert_passed", dut=dut.name, **action.trace)
     return action

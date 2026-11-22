@@ -18,6 +18,7 @@ from functional_tests import qualified_names
 from functional_tests import activity as activity_scenarios
 from unit_tests.test_consortium_scenarios import Scenario
 from unit_tests.virtual_time import use_virtual_time
+from unit_tests.remote_fixture import pairing
 
 
 class QualifiedNamesScenario(Scenario):
@@ -98,7 +99,8 @@ class QualifiedNamesScenario(Scenario):
             patches.enter_context(patch.object(DUT, "add_amity", lambda main, candidate: self.add(main, candidate)))
             patches.enter_context(patch.object(DUT, "scan_hdmi", lambda main: self.scan(main)))
             patches.enter_context(patch.object(DUT, "create_activity", lambda main, name, **kw: self.activity(main, name, **kw)))
-            patches.enter_context(patch.object(DUT, "press_key", lambda main, key: self.key(main, key)))
+            patches.enter_context(patch.object(DUT, "pair_ble_keyboard",
+                                               pairing(lambda main, key, duration_ms: self.key(main, key))))
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
             patches.enter_context(patch.object(Component, "wait_for_input", lambda avr, player, **kw: self.route(avr, player, **kw)))

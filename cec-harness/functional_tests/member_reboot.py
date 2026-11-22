@@ -12,7 +12,8 @@ def test_activity_member_reboot():
     player = PlaybackComponent(avr, "Reboot Player", port=1)
     components = (tv, avr, player)
 
-    with TestBed(main, secondary, *components, members=(secondary,), preserve_dut_on_failure=True):
+    with (TestBed(main, secondary, *components, members=(secondary,), preserve_dut_on_failure=True),
+          main.pair_ble_keyboard() as keyboard):
         member = main.add_amity(secondary)
         member.assert_connected()
         scan = main.scan_hdmi()
@@ -28,13 +29,13 @@ def test_activity_member_reboot():
         avr.wait_for_input(player, since=started)
         tv.wait_for_amity_input(since=started)
         activity.assert_active()
-        main.press_key(Key.VOLUME_UP).assert_received_by(avr)
-        main.press_key(Key.RIGHT).assert_received_by(player)
+        keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
+        keyboard.press(Key.RIGHT).assert_received_by(player)
 
         with ActiveMemberReboot(activity, member) as reboot:
             reboot.reboot()
-            main.press_key(Key.VOLUME_UP).assert_received_by(avr)
-            main.press_key(Key.RIGHT).assert_received_by(player)
+            keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
+            keyboard.press(Key.RIGHT).assert_received_by(player)
             reboot.assert_continued()
 
         stopped = activity.standby()

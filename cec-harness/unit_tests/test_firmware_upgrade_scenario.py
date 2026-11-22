@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import Component, DUT, Key, PowerState, TestBed, Wiring, assign_addresses
 from amity_harness.testbed import TestBedCleanupError
 from functional_tests import firmware_upgrade as scenario
+from unit_tests.remote_fixture import pairing
 
 
 class ScenarioFixture:
@@ -229,7 +230,8 @@ class ScenarioFixture:
             patches.enter_context(patch.object(DUT, 'add_amity', lambda main, candidate, **kwargs: self.add(main, candidate, **kwargs)))
             patches.enter_context(patch.object(DUT, 'scan_hdmi', lambda dut: self.scan(dut)))
             patches.enter_context(patch.object(DUT, 'create_activity', lambda main, name, **kwargs: self.activity(main, name, **kwargs)))
-            patches.enter_context(patch.object(DUT, 'press_key', lambda dut, key: self.key(dut, key)))
+            patches.enter_context(patch.object(DUT, 'pair_ble_keyboard',
+                                               pairing(lambda dut, key, duration_ms: self.key(dut, key))))
             patches.enter_context(patch.object(Component, 'assert_power', lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, 'wait_for_power', lambda component, power, **kwargs: self.wait_power(component, power, **kwargs)))
             patches.enter_context(patch.object(Component, 'wait_for_input', lambda component, player, **kwargs: self.route(component, player, **kwargs)))

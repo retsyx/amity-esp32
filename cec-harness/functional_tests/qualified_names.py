@@ -15,7 +15,7 @@ def same_name_equipment(dut, tentacle=0):
     return tv, avr, player
 
 
-def exercise_qualified_activities(main, systems, names):
+def exercise_qualified_activities(main, keyboard, systems, names):
     components = tuple(component for system in systems for component in system)
     scan = main.scan_hdmi()
     scan.assert_contains(*components)
@@ -38,8 +38,8 @@ def exercise_qualified_activities(main, systems, names):
                     component.wait_for_power(PowerState.ON, since=started)
                 active[0].wait_for_amity_input(since=started)
                 active[1].wait_for_input(active[2], since=started)
-                main.press_key(Key.VOLUME_UP).assert_received_by(active[1])
-                main.press_key(Key.RIGHT).assert_received_by(active[2])
+                keyboard.press(Key.VOLUME_UP).assert_received_by(active[1])
+                keyboard.press(Key.RIGHT).assert_received_by(active[2])
                 activity.assert_active()
                 for component in inactive:
                     component.assert_power(PowerState.STANDBY)
@@ -57,8 +57,8 @@ def test_qualified_names():
     first, second = same_name_equipment(main), same_name_equipment(secondary)
     components = (*first, *second)
     with TestBed(main, secondary, *components, members=(secondary,)):
-        with main.add_amity(secondary) as member:
+        with main.pair_ble_keyboard() as keyboard, main.add_amity(secondary) as member:
             member.assert_connected()
-            exercise_qualified_activities(main, (first, second),
+            exercise_qualified_activities(main, keyboard, (first, second),
                                           ("Qualified main", "Qualified member"))
             member.assert_connected()

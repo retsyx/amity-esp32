@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import AvrComponent, Component, DUT, Key, PlaybackComponent, PowerState, TvComponent
 from functional_tests import activity as scenarios
 from unit_tests.test_consortium_scenarios import Scenario
+from unit_tests.remote_fixture import pairing
 
 
 class NoDisplayScenario(Scenario):
@@ -241,7 +242,7 @@ class NoDisplayScenario(Scenario):
                 (scenarios, "observe_no_standby", self.preserve),
                 (scenarios, "observe_no_control", self.observe_unused),
                 (DUT, "create_activity", lambda dut, name, **kw: self.activity(dut, name, **kw)),
-                (DUT, "press_key", self.key),
+                (DUT, "pair_ble_keyboard", pairing(lambda dut, key, duration_ms: self.key(dut, key))),
                 (Component, "assert_power", self.assert_power),
                 (Component, "wait_for_power", self.wait_power),
                 (Component, "wait_for_input", self.route),

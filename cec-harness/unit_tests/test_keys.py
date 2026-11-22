@@ -1,7 +1,8 @@
-"""Bounded UI key actions require original directed physical press/release."""
+"""Remote key actions require original directed physical press/release."""
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import threading
 import time
@@ -10,9 +11,43 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import DUT, Frame, Hooks, Key, PowerState
-from amity_harness.keys import HOLD_REPEAT_MIN_MS
+from amity_harness.ble_keyboard import PairedKeyboard
+from amity_harness.keys import HOLD_REPEAT_MIN_MS, _prepare_key
 from test_activity import Fixture
 from unit_tests.virtual_time import use_virtual_time
+
+
+class Remote:
+    """The paired remote's HID report boundary; pairing is tested separately."""
+
+    press = PairedKeyboard.press
+
+    def __init__(self, dut):
+        self.dut, self._disconnected = dut, False
+        self.sent, self.on_report, self.confirmed = [], None, 0
+
+    def reports(self):
+        remote = self
+
+        class Reports:
+            def __enter__(self):
+                return self
+
+            def report(self, *, keyboard=(), consumer=0):
+                started = time.monotonic_ns()
+                remote.sent.append((tuple(keyboard), consumer, started))
+                if remote.on_report is not None:
+                    remote.on_report(tuple(keyboard))
+                return SimpleNamespace(started_ns=started)
+
+            def all_up(self):
+                return self.report()
+
+            def __exit__(self, *args):
+                remote.confirmed += 1
+                return False
+
+        return Reports()
 
 
 class KeyTests(unittest.TestCase):
@@ -45,9 +80,10 @@ class KeyTests(unittest.TestCase):
 
         def request(path, data=None, **kwargs):
             f.calls.append((path, data))
-            return {"ok": True}
+            raise AssertionError("Keys use no HTTP request: " + path)
 
         f.dut.request = request
+        f.remote = Remote(f.dut)
         return f
 
     def receive(self, f, component, key, *, transport="wire", timestamp=None, source=None,
@@ -61,18 +97,33 @@ class KeyTests(unittest.TestCase):
             component.receive(Frame(initiator, component.address.logical, 0x45,
                                     timestamp_ns=stamp + presses), transport=transport)
 
-    def test_zero_duration_tap_and_bounded_hold_use_the_shipping_api(self):
+    def test_remote_tap_and_bounded_hold_send_hid_down_then_up(self):
         for duration in (0, 100, 5000):
             with self.subTest(duration=duration):
                 f = self.fixture()
-                action = f.dut.press_key(Key.VOLUME_UP, duration_ms=duration)
-                self.assertEqual(f.calls, [("/api/key", {"key": 0x41, "duration_ms": duration})])
+                action = f.remote.press(Key.VOLUME_UP, duration_ms=duration)
+                (down, down_consumer, pressed), (up, up_consumer, released) = f.remote.sent
+                self.assertEqual((down, down_consumer, up, up_consumer), ((0x80,), 0, (), 0))
+                self.assertGreaterEqual(released - pressed, duration * 1_000_000)
+                self.assertEqual((action.started_ns, action.input_completed_ns), (pressed, released))
+                self.assertEqual(f.remote.confirmed, 1)
                 self.receive(f, f.avr, Key.VOLUME_UP, presses=2 if duration >= HOLD_REPEAT_MIN_MS else 1)
                 self.assertIs(action.assert_received_by(f.avr, timeout=.01), action)
                 self.assertTrue(f.dut.key_operations[0]["released"])
+                self.assertEqual(f.dut.key_operations[0]["interface"], "ble")
                 self.assertEqual(action.trace["press_frame"], "05:44:41")
                 self.assertEqual(action.trace["release_frame"], "05:45")
-                self.assertFalse(f.callbacks)  # Firmware owns the bounded release.
+                self.assertEqual(action.kind, "ble_key")
+                self.assertEqual(f.calls, [])
+
+    def test_remote_buttons_use_the_shipping_keyboard_translation(self):
+        expected = {Key.SELECT: 0x28, Key.UP: 0x52, Key.DOWN: 0x51, Key.LEFT: 0x50, Key.RIGHT: 0x4F,
+                    Key.POWER: 0x66, Key.VOLUME_UP: 0x80, Key.VOLUME_DOWN: 0x81, Key.MUTE: 0x7F}
+        for key, usage in expected.items():
+            with self.subTest(key=key):
+                f = self.fixture()
+                f.remote.press(key)
+                self.assertEqual([row[:2] for row in f.remote.sent], [((usage,), 0), ((), 0)])
 
     def test_tv_front_wire_volume_and_mute_proof_works_for_main_and_member(self):
         for remote in (False, True):
@@ -81,7 +132,7 @@ class KeyTests(unittest.TestCase):
                 tv = f.member_tv if remote else f.tv
                 initial_volume = tv.volume
                 for key in (Key.VOLUME_UP, Key.MUTE):
-                    action = f.dut.press_key(key)
+                    action = f.remote.press(key)
                     self.receive(f, tv, key)
                     self.assertIs(action.assert_received_by(tv, timeout=.01), action)
                     self.assertEqual(action.trace["press_frame"], f"40:44:{key:02x}")
@@ -93,7 +144,7 @@ class KeyTests(unittest.TestCase):
 
     def test_tv_volume_model_changed_by_virtual_key_is_not_physical_key_proof(self):
         f = self.fixture()
-        action = f.dut.press_key(Key.VOLUME_UP)
+        action = f.remote.press(Key.VOLUME_UP)
         self.receive(f, f.tv, Key.VOLUME_UP, transport="virtual")
         self.assertEqual(f.tv.volume, 26)
         with self.assertRaises(TimeoutError):
@@ -101,7 +152,7 @@ class KeyTests(unittest.TestCase):
 
     def test_held_repetition_needs_a_release_after_the_final_press(self):
         f = self.fixture()
-        action = f.dut.press_key(Key.RIGHT, duration_ms=HOLD_REPEAT_MIN_MS)
+        action = f.remote.press(Key.RIGHT, duration_ms=HOLD_REPEAT_MIN_MS)
         self.receive(f, f.player, Key.RIGHT)
         self.receive(f, f.player, Key.RIGHT, release=False)
         with self.assertRaises(TimeoutError):
@@ -110,13 +161,18 @@ class KeyTests(unittest.TestCase):
         action.assert_received_by(f.player, timeout=.01)
         self.assertEqual(action.trace["presses"], 2)
 
-    def test_tap_requires_exactly_one_press_and_hold_requires_repetition(self):
-        for duration, presses, accepted in ((0, 1, True), (0, 2, False),
-                                            (HOLD_REPEAT_MIN_MS - 1, 1, True),
-                                            (HOLD_REPEAT_MIN_MS, 1, False), (HOLD_REPEAT_MIN_MS, 2, True)):
-            with self.subTest(duration=duration, presses=presses):
+    def test_hold_requires_repetition_and_only_a_complete_tap_command_requires_one_press(self):
+        # A remote tap's down and up are separate reports; repetition between
+        # them depends on delivery timing. Matter and HomeKit send one command.
+        for complete, duration, presses, accepted in (
+                (False, 0, 1, True), (False, 0, 2, True), (False, HOLD_REPEAT_MIN_MS - 1, 1, True),
+                (False, HOLD_REPEAT_MIN_MS, 1, False), (False, HOLD_REPEAT_MIN_MS, 2, True),
+                (True, 0, 1, True), (True, 0, 2, False)):
+            with self.subTest(complete=complete, duration=duration, presses=presses):
                 f = self.fixture()
-                action = f.dut.press_key(Key.RIGHT, duration_ms=duration)
+                action = (_prepare_key(f.dut, Key.RIGHT, duration) if complete
+                          else f.remote.press(Key.RIGHT, duration_ms=duration))
+                self.assertIs(action.complete_tap, complete)
                 self.receive(f, f.player, Key.RIGHT, presses=presses)
                 if accepted:
                     self.assertIs(action.assert_received_by(f.player, timeout=.01), action)
@@ -131,7 +187,7 @@ class KeyTests(unittest.TestCase):
         for wrong in ("virtual", "stale", "source", "release", "dropped", "rewritten"):
             with self.subTest(wrong=wrong):
                 f = self.fixture()
-                action = f.dut.press_key(Key.SELECT)
+                action = f.remote.press(Key.SELECT)
                 if wrong == "dropped":
                     f.player.hooks = Hooks(before_rx=lambda component, frame: None)
                 elif wrong == "rewritten":
@@ -150,7 +206,7 @@ class KeyTests(unittest.TestCase):
             with self.subTest(remote=remote):
                 f = self.fixture(remote=remote)
                 target = f.member_avr if remote else f.avr
-                action = f.dut.press_key(Key.VOLUME_UP)
+                action = f.remote.press(Key.VOLUME_UP)
                 self.receive(f, target, Key.VOLUME_UP)
                 self.receive(f, f.player, Key.VOLUME_UP)
                 with self.assertRaisesRegex(AssertionError, "wrong physical recipient"):
@@ -158,8 +214,8 @@ class KeyTests(unittest.TestCase):
 
     def test_member_key_evidence_uses_main_ui_exact_owner_boot_and_scan(self):
         f = self.fixture(remote=True)
-        action = f.dut.press_key(Key.PLAY)
-        self.receive(f, f.member_player, Key.PLAY)
+        action = f.remote.press(Key.SELECT)
+        self.receive(f, f.member_player, Key.SELECT)
         action.assert_received_by(f.member_player, timeout=.01)
         self.assertEqual(action.trace["owner_id"], f.member.identity.device_id)
         self.assertEqual(action.owner_boots[f.member.identity.device_id], f.member_boot)
@@ -172,7 +228,7 @@ class KeyTests(unittest.TestCase):
         for mutation in ("boot", "session", "configuration", "activity"):
             with self.subTest(mutation=mutation):
                 f = self.fixture()
-                action = f.dut.press_key(Key.SELECT)
+                action = f.remote.press(Key.SELECT)
                 self.receive(f, f.player, Key.SELECT)
                 if mutation == "boot":
                     f.source.system["boot_id"] = "e" * 32
@@ -188,62 +244,59 @@ class KeyTests(unittest.TestCase):
     def test_power_requires_ui_standby_and_preserves_its_wire_boundary(self):
         f = self.fixture(remote=True)
         f.current = f.rows[0]["activity_id"]
-        action = f.dut.press_key(Key.POWER)
+        action = f.remote.press(Key.POWER)
+        self.assertEqual(f.remote.sent[0][:2], ((0x66,), 0))
         with self.assertRaises(TimeoutError):
             action.wait_for_standby()
         f.current = None
         self.assertIs(action.wait_for_standby(), action)
         self.assertTrue(action.trace["standby"])
-        self.assertEqual(action.kind, "key")
+        self.assertEqual(action.kind, "ble_key")
         self.assertIs(action.session, f.session)
 
-    def test_invalid_key_and_duration_are_rejected_before_network_io(self):
-        for key in (-1, 256, True, "1", 1.0):
+    def test_keys_the_remote_cannot_send_and_invalid_durations_send_no_report(self):
+        for key in (-1, 256, True, "1", 1.0, Key.PLAY, Key.PAUSE, Key.STOP, Key.PLAY_PAUSE):
             with self.subTest(key=key):
                 f = self.fixture()
                 with self.assertRaises(ValueError):
-                    f.dut.press_key(key)
-                self.assertFalse(f.calls)
+                    f.remote.press(key)
+                self.assertEqual((f.remote.sent, f.dut.key_operations), ([], []))
         for duration in (-1, 5001, True, "100", 100.0, None):
             with self.subTest(duration=duration):
                 f = self.fixture()
                 with self.assertRaises(ValueError):
-                    f.dut.press_key(Key.SELECT, duration_ms=duration)
-                self.assertFalse(f.calls)
+                    f.remote.press(Key.SELECT, duration_ms=duration)
+                self.assertEqual(f.remote.sent, [])
+        f = self.fixture()
+        f.remote._disconnected = True
+        with self.assertRaisesRegex(RuntimeError, "disconnected"):
+            f.remote.press(Key.SELECT)
         with self.assertRaises(RuntimeError):
-            DUT("amity-dut").press_key(Key.SELECT)
+            Remote(DUT("amity-dut")).press(Key.SELECT)
+        self.assertEqual(f.remote.sent, [])
 
-    def test_slow_http_uses_response_for_cec_budget_and_original_request_for_freshness(self):
-        for physical in ("during_request", "after_response", "stale", "late"):
+    def test_freshness_starts_at_the_hid_down_and_cec_budget_at_its_up(self):
+        for physical in ("during_hold", "after_up", "stale", "late"):
             for duration_ms in (0, 750):
                 with self.subTest(physical=physical, duration_ms=duration_ms):
                     f = self.fixture()
-                    request_window = []
 
-                    def request(path, data=None, **kwargs):
-                        f.calls.append((path, data))
-                        self.assertEqual(path, "/api/key")
-                        self.assertEqual(kwargs, {})  # Keep the shipping HTTP helper's own deadline.
-                        request_window.append(self.clock.now_ns)
-                        if physical == "during_request":
-                            started = f.dut.key_operations[-1]["started_monotonic_ns"]
-                            self.receive(f, f.player, Key.RIGHT, timestamp=started + 50_000_000,
+                    def report(keyboard):
+                        if keyboard and physical == "during_hold":
+                            self.receive(f, f.player, Key.RIGHT, timestamp=time.monotonic_ns() + 50_000_000,
                                          presses=2 if duration_ms else 1)
-                        # The response arrives after the bounded hold and two more seconds.
-                        self.clock.advance(duration_ms / 1000 + 2)
-                        request_window.append(self.clock.now_ns)
-                        return {"ok": True}
+                        # Each notification's worker round trip takes two seconds.
+                        self.clock.advance(2)
 
-                    f.dut.request = request
+                    f.remote.on_report = report
                     before = self.clock.now_ns
-                    action = f.dut.press_key(Key.RIGHT, duration_ms=duration_ms)
-                    after = self.clock.now_ns
-                    started, completed = action.started_ns, action.response_completed_ns
-                    # Freshness starts before the request; the CEC budget starts after its response.
-                    self.assertTrue(before < started <= request_window[0])
-                    self.assertTrue(request_window[1] < completed <= after)
-                    if physical != "during_request":
-                        stamp = {"after_response": completed + 100_000_000,
+                    action = f.remote.press(Key.RIGHT, duration_ms=duration_ms)
+                    started, completed = action.started_ns, action.input_completed_ns
+                    self.assertEqual((started, completed), (f.remote.sent[0][2], f.remote.sent[1][2]))
+                    self.assertTrue(before <= started < completed)
+                    self.assertGreaterEqual(completed - started, max(2_000_000_000, duration_ms * 1_000_000))
+                    if physical != "during_hold":
+                        stamp = {"after_up": completed + 100_000_000,
                                  "stale": started - 2,
                                  "late": completed + 1_000_000_001}[physical]
                         self.receive(f, f.player, Key.RIGHT, timestamp=stamp,
@@ -256,32 +309,28 @@ class KeyTests(unittest.TestCase):
                         action.assert_received_by(f.player, timeout=1)
                         self.assertEqual(action.trace["deadline_monotonic_ns"], completed + 1_000_000_000)
                     self.assertEqual(action.trace["started_monotonic_ns"], started)
-                    self.assertEqual(action.trace["response_completed_monotonic_ns"], completed)
-                    self.assertEqual(len(f.calls), 1)
+                    self.assertEqual(action.trace["input_completed_monotonic_ns"], completed)
+                    self.assertEqual(len(f.remote.sent), 2)
 
-    def test_http_failure_or_invalid_admission_never_replays_a_key(self):
-        for response in ({"ok": False}, {}, TimeoutError("HTTP request deadline expired")):
-            with self.subTest(response=response):
-                f = self.fixture()
+    def test_failed_report_never_replays_a_key(self):
+        f = self.fixture()
 
-                def request(path, data=None, **kwargs):
-                    f.calls.append((path, data))
-                    if isinstance(response, Exception):
-                        raise response
-                    return response
+        def report(keyboard):
+            raise TimeoutError("BLE keyboard worker deadline expired")
 
-                f.dut.request = request
-                with self.assertRaises(TimeoutError if isinstance(response, Exception) else AssertionError):
-                    f.dut.press_key(Key.RIGHT)
-                self.assertEqual(len(f.calls), 1)
+        f.remote.on_report = report
+        with self.assertRaises(TimeoutError):
+            f.remote.press(Key.RIGHT)
+        self.assertEqual([row[:2] for row in f.remote.sent], [((0x4F,), 0)])
+        self.assertEqual(f.remote.confirmed, 1)  # The report context still releases HID state.
 
     def test_owner_validation_cannot_extend_the_original_physical_key_window(self):
         for late_wire in (False, True):
             with self.subTest(late_wire=late_wire):
                 f = self.fixture()
-                action = f.dut.press_key(Key.SELECT)
+                action = f.remote.press(Key.SELECT)
                 action.started_ns -= 1_000_000_000  # Identity proof finishes after the window.
-                action.response_completed_ns -= 1_000_000_000
+                action.input_completed_ns -= 1_000_000_000
                 timestamp = action.started_ns + (10_000_000 if late_wire else 100)
                 self.receive(f, f.player, Key.SELECT, timestamp=timestamp)
                 if late_wire:

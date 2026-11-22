@@ -375,7 +375,6 @@ class RunnerTests(unittest.TestCase):
                     "test_activity_same_osd_locations",
                     "test_activity_unselected_equipment_announcement",
                     "test_activity_keys", "test_activity_keys_secondary",
-                    "test_activity_keys_disconnected", "test_activity_keys_disconnected_secondary",
                     "test_source_theft", "test_add_amity",
                     "test_consortium", "test_consortium_three_duts", "test_consortium_four_duts",
                     "test_hostname_local", "test_hostname_consortium",

@@ -91,14 +91,11 @@ def _keys(main, activity, selected, components, browser, keyboard, scan, matter,
         for index, (key, target, duration, usage, consumer) in enumerate((
                 (Key.RIGHT, player, 0, 0x4F, None), (Key.VOLUME_UP, avr, 750, None, 0xE9),
                 (Key.LEFT, player, 650, 0x50, None), (Key.VOLUME_DOWN, avr, 0, None, 0xEA))):
-            route = ("ble", "api", "matter", "homekit")[(proof["sweeps"] + activity_index + index) % 4]
+            route = ("ble", "matter", "homekit")[(proof["sweeps"] + activity_index + index) % 3]
             if route == "ble":
                 evidence.assert_key(keyboard, target, key=key, keyboard_usage=usage,
                                     consumer_usage=consumer, duration_ms=duration)
                 proof["ble_key_presses"] += 1
-            elif route == "api":
-                main.press_key(key, duration_ms=duration).assert_received_by(target)
-                proof["api_key_presses"] += 1
             elif route == "matter":
                 if key in (Key.VOLUME_UP, Key.VOLUME_DOWN):
                     command = lambda: matter.step_volume(1 if key == Key.VOLUME_UP else -1)
@@ -176,7 +173,7 @@ def _soak(main_name):
                  "sweeps": 0, "activity_changes": 0, "ui_activity_changes": 0,
                  "api_activity_changes": 0, "matter_activity_changes": 0,
                  "homekit_activity_changes": 0,
-                 "key_presses": 0, "api_key_presses": 0, "ble_key_presses": 0,
+                 "key_presses": 0, "ble_key_presses": 0,
                  "matter_key_presses": 0, "matter_rejection_checks": 0, "matter_standbys": 0,
                  "homekit_key_presses": 0, "homekit_rejection_checks": 0, "homekit_standbys": 0,
                  "completed": False}

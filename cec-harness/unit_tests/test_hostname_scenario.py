@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amity_harness import Component, DUT, Key, PowerState, TestBed, assign_addresses
 from functional_tests import hostname as scenario
+from unit_tests.remote_fixture import pairing
 
 
 class HostnameScenario:
@@ -21,6 +22,7 @@ class HostnameScenario:
         self.fail_rename, self.fail_verify = fail_rename, fail_verify
         self.restore_failures = int(fail_restore)
         self.events, self.activities, self.created, self.members = [], [], [], []
+        self.remotes = []
         self.components, self.duts = (), ()
         self.hostnames = {}
         self.current, self.names = None, None
@@ -261,7 +263,9 @@ class HostnameScenario:
             patches.enter_context(patch.object(DUT, "add_amity", lambda main, candidate: self.add(main, candidate)))
             patches.enter_context(patch.object(DUT, "scan_hdmi", lambda main: self.scan(main)))
             patches.enter_context(patch.object(DUT, "create_activity", lambda main, name, **kw: self.activity(main, name, **kw)))
-            patches.enter_context(patch.object(DUT, "press_key", lambda main, key: self.key(main, key)))
+            patches.enter_context(patch.object(DUT, "pair_ble_keyboard",
+                                               pairing(lambda main, key, duration_ms: self.key(main, key),
+                                                       self.remotes)))
             patches.enter_context(patch.object(DUT, "request", side_effect=AssertionError("Unexpected direct DUT request/reset")))
             patches.enter_context(patch.object(DUT, "press_fw_reset", side_effect=AssertionError("Unexpected GPIO reset")))
             patches.enter_context(patch.object(Component, "assert_power", lambda c, power: self.assert_power(c, power)))
@@ -321,6 +325,10 @@ class HostnameScenarioTests(unittest.TestCase):
         self.assertEqual(len([row for row in fixture.events if row[0] == "scan"]), 7)
         self.assert_fresh_commands(fixture, 6, 2)
         self.assert_cleanup(fixture)
+        # Reboots end a boot-bound pairing: each pass pairs and releases its own remote.
+        self.assertEqual(len(fixture.remotes), 18)
+        self.assertTrue(all(dut.name == "amity-dut" and remote.closed and len(remote.presses) == 4
+                            for dut, remote in fixture.remotes))
 
     def test_missing_fresh_commands_fail_even_with_correct_resulting_component_state(self):
         for test in (scenario.test_hostname_local, scenario.test_hostname_consortium):

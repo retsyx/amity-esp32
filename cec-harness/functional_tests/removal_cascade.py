@@ -59,7 +59,7 @@ def test_removal_cascade():
                     component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
 
 
-def _exercise_owner(main, activity, equipment, scan, *inactive):
+def _exercise_owner(main, keyboard, activity, equipment, scan, *inactive):
     activity.refresh_scan(scan)
     for component in (*equipment, *inactive):
         component.assert_power(PowerState.STANDBY)
@@ -68,8 +68,8 @@ def _exercise_owner(main, activity, equipment, scan, *inactive):
         for component in equipment:
             component.wait_for_power(PowerState.ON, since=started)
         equipment[1].wait_for_input(equipment[2], since=started)
-        main.press_key(Key.VOLUME_UP).assert_received_by(equipment[1])
-        main.press_key(Key.RIGHT).assert_received_by(equipment[2])
+        keyboard.press(Key.VOLUME_UP).assert_received_by(equipment[1])
+        keyboard.press(Key.RIGHT).assert_received_by(equipment[2])
         activity.assert_active()
         for component in inactive:
             component.assert_power(PowerState.STANDBY)
@@ -89,6 +89,7 @@ def test_removal_replacement():
     components = (*local, *old, *kept, *new)
     with TestBed(main, second, third, fourth, *components, members=(second, third, fourth)):
         with ExitStack() as resources:
+            keyboard = resources.enter_context(main.pair_ble_keyboard())
             removed = resources.enter_context(main.add_amity(second))
             removed.assert_connected()
             survivor = resources.enter_context(main.add_amity(third))
@@ -111,7 +112,7 @@ def test_removal_replacement():
             for component in (*local, *kept):
                 scan.assert_on(component, component.endpoint)
             continuity.assert_preserved(survivor, removed=(removed,))
-            _exercise_owner(main, keeper, kept, scan, *local)
+            _exercise_owner(main, keyboard, keeper, kept, scan, *local)
 
             added = resources.enter_context(main.add_amity(fourth))
             added.assert_connected()
@@ -124,8 +125,8 @@ def test_removal_replacement():
             newcomer = resources.enter_context(main.create_activity(
                 "Replacement owner", display=new[0], audio=new[1], source=new[2],
                 switch_device=new[1], switch_input=1))
-            _exercise_owner(main, keeper, kept, scan, *local, *new)
-            _exercise_owner(main, newcomer, new, scan, *local, *kept)
+            _exercise_owner(main, keyboard, keeper, kept, scan, *local, *new)
+            _exercise_owner(main, keyboard, newcomer, new, scan, *local, *kept)
 
             # Keep the survivor's saved activity throughout the replacement's
             # own removal; ordinary fixture cleanup runs after these checks.

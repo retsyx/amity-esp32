@@ -52,7 +52,6 @@ def _http_trace_fields(path, data):
                   "/api/activity-editor", "/api/activity-editor/status",
                   "/api/activity-editor/activity", "/api/activity-editor/discover",
                   "/api/activity-editor/components", "/api/activity-editor/restore",
-                  "/api/key",
                   "/api/membership/admission", "/api/membership/scan", "/api/membership/add",
                   "/api/membership/remove", "/api/membership/cancel"}:
         route = path
@@ -308,37 +307,6 @@ class DUT:
                         switch_device=switch_device, switch_input=switch_input,
                         add_components=add_components, timeout=timeout).create()
 
-    def press_key(self, key, *, duration_ms=0):
-        """Send a bounded remote press through the authenticated shipping API."""
-        from .keys import press_key
-        return press_key(self, key, duration_ms=duration_ms)
-
-    def press_key_disconnected(self, key, component, *, duration_ms=3000):
-        """Disconnect after physical key admission and verify bounded cleanup."""
-        from .keys import press_key_disconnected
-        return press_key_disconnected(self, key, component, duration_ms=duration_ms)
-
-    def _disconnect_key_request(self, data, after_send, *, timeout):
-        """Use the shipping key route without waiting for its HTTP response."""
-        _positive_seconds(timeout, "HTTP timeout")
-        if not self._token:
-            raise RuntimeError("Log in before making authenticated DUT requests")
-        disconnect = getattr(self._opener, "disconnect_after", None)
-        if not callable(disconnect):
-            raise RuntimeError("The HTTP transport cannot disconnect an in-flight request")
-        request = Request(self.url + "/api/key", data=json.dumps(data, separators=(",", ":")).encode("utf-8"),
-                          headers={"Accept": "application/json", "Content-Type": "application/json",
-                                   "Authorization": "Bearer " + self._token})
-        trace = {"dut": self.name, "method": "POST", "route": "/api/key"}
-        event("http.request.start", level=logging.DEBUG, **trace)
-        try:
-            result = disconnect(request, after_send, timeout=timeout)
-            event("http.request.disconnected", level=logging.DEBUG, **trace)
-            return result
-        except BaseException as error:
-            event("http.request.failed", level=logging.DEBUG, **trace, error_type=type(error).__name__)
-            raise
-
     def add_amity(self, candidate, *, name=None, timeout=None, setup_code=None):
         """Temporarily add a control-only DUT using the existing Add Amity UI.
 
@@ -401,7 +369,10 @@ class DUT:
         return FrontPhysicalAddress.local(self, tentacle, address, timeout=timeout).apply()
 
     def pair_ble_keyboard(self, *, timeout=None, keyboard_slots=6):
-        """Pair a test-owned BLE keyboard only when no remote is already bonded."""
+        """Pair a test-owned BLE keyboard only when no remote is already bonded.
+
+        Its ``press()`` is the bench remote: the web UI has no key control.
+        """
         from .ble_keyboard import PairedKeyboard
         return PairedKeyboard(self, timeout=timeout, keyboard_slots=keyboard_slots).create()
 

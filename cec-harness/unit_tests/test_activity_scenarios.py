@@ -1,4 +1,4 @@
-"""Activity announcements, repair and disconnected holds require wire evidence."""
+"""Activity announcements and repair require wire evidence."""
 
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amity_harness import (AvrComponent, Component, DUT, Key, PlaybackComponent,
+from amity_harness import (AvrComponent, Component, DUT, PlaybackComponent,
                            PowerState, TvComponent)
 from functional_tests import activity as scenarios
 from unit_tests.test_consortium_scenarios import Scenario
@@ -19,7 +19,7 @@ from unit_tests.virtual_time import use_virtual_time
 
 class ActivityScenario(Scenario):
     def __init__(self, *, missing_repair_power=None, missing_repair_route=False,
-                 repair_standby=False, disconnect_failure=False, missing_followup=False,
+                 repair_standby=False,
                  selected_standby=False, changed_active_selection=False,
                  directed_standby=False, changed_standby_selection=False,
                  standby_settling=False, standby_states=(), missing_display_input=False,
@@ -29,8 +29,6 @@ class ActivityScenario(Scenario):
         self.missing_repair_power = missing_repair_power
         self.missing_repair_route = missing_repair_route
         self.repair_standby = repair_standby
-        self.disconnect_failure = disconnect_failure
-        self.missing_followup = missing_followup
         self.selected_standby = selected_standby
         self.changed_active_selection = changed_active_selection
         self.directed_standby = directed_standby
@@ -238,27 +236,6 @@ class ActivityScenario(Scenario):
 
         return Observation()
 
-    def disconnected(self, main, key, recipient):
-        if fixture_owner(self.current, self.actions) != recipient.dut.name or key != Key.VOLUME_UP:
-            raise AssertionError("Disconnect cleanup must target the active owner's AVR")
-        self.events.append(("key.disconnected", main, key, recipient))
-        if self.disconnect_failure:
-            raise TimeoutError("Disconnected hold did not release")
-
-    def key(self, main, key, **kwargs):
-        fixture = self
-
-        class Action:
-            def assert_received_by(self, recipient):
-                if (fixture.missing_followup or key != Key.SELECT
-                        or recipient is not fixture.actions[-1].source):
-                    raise AssertionError("Missing fresh follow-up key evidence")
-                fixture.events.append(("key.followup", main, key, recipient))
-                return self
-
-        fixture.events.append(("key.request", main, key))
-        return Action()
-
     def run(self, test=scenarios.test_activity):
         with ExitStack() as patches:
             patches.enter_context(patch.object(scenarios, "scanned_devices", self.scanned))
@@ -267,8 +244,6 @@ class ActivityScenario(Scenario):
             patches.enter_context(patch.object(DUT, "add_amity", lambda main, candidate: self.add(main, candidate)))
             patches.enter_context(patch.object(DUT, "scan_hdmi", lambda main: self.scan(main)))
             patches.enter_context(patch.object(DUT, "create_activity", lambda main, name, **kw: self.activity(main, name, **kw)))
-            patches.enter_context(patch.object(DUT, "press_key_disconnected", lambda main, key, recipient: self.disconnected(main, key, recipient)))
-            patches.enter_context(patch.object(DUT, "press_key", lambda main, key, **kw: self.key(main, key, **kw)))
             patches.enter_context(patch.object(DUT, "get_state", lambda main: self.state(main)))
             patches.enter_context(patch.object(Component, "assert_power", lambda component, power: self.assert_power(component, power)))
             patches.enter_context(patch.object(Component, "wait_for_power", lambda component, power, **kw: self.wait_power(component, power, **kw)))
@@ -277,10 +252,6 @@ class ActivityScenario(Scenario):
             patches.enter_context(patch.object(Component, "standby", lambda component: self.disturb(component)))
             patches.enter_context(patch.object(PlaybackComponent, "activate", lambda component: self.activate(component)))
             test()
-
-
-def fixture_owner(current, actions):
-    return next(action.owner for action in reversed(actions) if action.activity is current)
 
 
 class ActivityScenarioTests(unittest.TestCase):
@@ -419,40 +390,6 @@ class ActivityScenarioTests(unittest.TestCase):
             fixture.run()
         self.assertTrue(all(c.power == PowerState.ON for c in fixture.components))
         self.assert_cleanup(fixture)
-
-    def test_local_and_member_disconnected_holds_require_cleanup_and_followup_key(self):
-        for test, owner in ((scenarios.test_activity_keys_disconnected, "amity-dut"),
-                            (scenarios.test_activity_keys_disconnected_secondary, "amity-dut-2")):
-            with self.subTest(owner=owner):
-                fixture = ActivityScenario()
-                fixture.run(test)
-                disconnected, = (row for row in fixture.events if row[0] == "key.disconnected")
-                followup, = (row for row in fixture.events if row[0] == "key.followup")
-                self.assertEqual(disconnected[1].name, "amity-dut")
-                self.assertEqual((disconnected[2], disconnected[3].dut.name), (Key.VOLUME_UP, owner))
-                self.assertIsInstance(disconnected[3], AvrComponent)
-                self.assertEqual((followup[2], followup[3].dut.name), (Key.SELECT, owner))
-                self.assertIsInstance(followup[3], PlaybackComponent)
-                self.assertLess(fixture.events.index(disconnected), fixture.events.index(followup))
-                self.assertEqual(len([row for row in fixture.events if row[:2] == ("power.wait", "standby")]), 3)
-                display_proofs = [row for row in fixture.events if row[0] == "display.wait"]
-                self.assertEqual(len(display_proofs), 1)
-                self.assertEqual(display_proofs[0][2].dut.name, owner)
-                if owner != "amity-dut":
-                    self.assertEqual([row for row in fixture.events if row[0] == "member.connected"],
-                                     [("member.connected", owner)] * 2)
-                    self.assertEqual(len([row for row in fixture.events if row[0] == "scan.on"]), 3)
-                self.assert_cleanup(fixture)
-
-    def test_disconnected_cleanup_or_followup_failure_propagates_and_closes_resources(self):
-        for test in (scenarios.test_activity_keys_disconnected, scenarios.test_activity_keys_disconnected_secondary):
-            for kwargs, error, message in (({"disconnect_failure": True}, TimeoutError, "did not release"),
-                                           ({"missing_followup": True}, AssertionError, "follow-up key")):
-                with self.subTest(test=test.__name__, **kwargs):
-                    fixture = ActivityScenario(**kwargs)
-                    with self.assertRaisesRegex(error, message):
-                        fixture.run(test)
-                    self.assert_cleanup(fixture)
 
 
 class SetupStepGapTests(unittest.TestCase):

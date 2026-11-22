@@ -6,7 +6,7 @@ from functional_tests.hdmi_scan import scanned_devices
 
 
 def test_missing_equipment():
-    with scanned_devices() as (dut, tv, avr, player):
+    with scanned_devices() as (dut, tv, avr, player), dut.pair_ble_keyboard() as keyboard:
         with dut.create_activity("Functional missing source", display=tv, source=player, audio=avr,
                                  switch_device=avr, switch_input=4) as activity:
             player.power_off()
@@ -47,7 +47,7 @@ def test_missing_equipment():
                     component.wait_for_power(PowerState.ON, since=restored)
                 avr.wait_for_input(player, since=restored)
                 activity.assert_active()
-                dut.press_key(Key.SELECT).assert_received_by(player)
+                keyboard.press(Key.SELECT).assert_received_by(player)
                 announcements.assert_no_scan()
                 assert_switch_commands(avr, 4, since=restored, count=0)
 

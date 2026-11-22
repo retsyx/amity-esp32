@@ -23,6 +23,7 @@ from uuid import uuid4
 from .activity import ActivityAction
 from .ble_keyboard_worker import LINK_DROP_TIMEOUT, MAX_LINK_DROPS
 from .dut import AmityHTTPError, _positive_seconds
+from .keys import Key, _prepare_key
 from .trace import event
 
 
@@ -31,6 +32,13 @@ from .trace import event
 # sent within this bound of the connection provably lands before that report;
 # later drops may too, but prove nothing.
 MAX_LINK_DROP_REACTION_NS = 20_000_000
+
+# Keyboard usages the shipping remote translation maps to CEC keys
+# (components/ble_remote/atomic_remote.c). Power selects Standby instead of
+# sending a key; the remote has no Play, Pause, Stop or Play/Pause button.
+REMOTE_USAGES = {Key.SELECT: 0x28, Key.UP: 0x52, Key.DOWN: 0x51, Key.LEFT: 0x50, Key.RIGHT: 0x4F,
+                 0x09: 0x4A, 0x0D: 0x29, Key.POWER: 0x66, Key.VOLUME_UP: 0x80,
+                 Key.VOLUME_DOWN: 0x81, Key.MUTE: 0x7F}
 
 
 class KeyboardConflict(RuntimeError):
@@ -466,6 +474,33 @@ class PairedKeyboard:
     def reports(self):
         """Fence a group of real HID reports with one UI preflight and review."""
         return _KeyboardReports(self)
+
+    def press(self, key, *, duration_ms=0):
+        """Tap or hold one remote button; return its physical key evidence.
+
+        The button's up report follows its down report after ``duration_ms``,
+        without waiting for a CEC frame. Power selects Standby through the
+        remote's own policy: check it with ``wait_for_standby()``.
+        """
+        if isinstance(key, bool) or not isinstance(key, int) or int(key) not in REMOTE_USAGES:
+            raise ValueError("The BLE remote has no button for this key")
+        if self._disconnected:
+            raise RuntimeError("The disconnected keyboard cannot send input")
+        usage = REMOTE_USAGES[int(key)]
+        action = _prepare_key(self.dut, key, duration_ms)
+        action.kind, action.complete_tap = "ble_key", False
+        action.trace["interface"] = "ble"
+        with self.reports() as reports:
+            down = reports.report(keyboard=(usage,))
+            # Wire freshness starts at the physical down, after HTTP preflight.
+            action.started_ns = action.trace["started_monotonic_ns"] = down.started_ns
+            hold_until = down.started_ns + duration_ms * 1_000_000
+            while (remaining := (hold_until - time.monotonic_ns()) / 1e9) > 0:
+                time.sleep(remaining)
+            up = reports.all_up()
+        action.input_completed_ns = action.trace["input_completed_monotonic_ns"] = up.started_ns
+        event("key.pressed", dut=self.dut.name, key=int(key), duration_ms=duration_ms, interface="ble")
+        return action
 
     def disconnect(self):
         if self._disconnected:

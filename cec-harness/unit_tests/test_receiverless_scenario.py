@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import AvrComponent, CecAddress, Component, DUT, Key, PlaybackComponent, PowerState, TvComponent
 from functional_tests import activity as scenarios
 from unit_tests.test_consortium_scenarios import Scenario
+from unit_tests.remote_fixture import pairing
 
 
 class NondefaultScenario(Scenario):
@@ -223,7 +224,7 @@ class NondefaultScenario(Scenario):
                 (DUT, "front_physical_address", self.local_address),
                 (DUT, "create_activity", self.activity),
                 (DUT, "get_configuration", self.configuration),
-                (DUT, "press_key", self.key),
+                (DUT, "pair_ble_keyboard", pairing(lambda dut, key, duration_ms: self.key(dut, key))),
                 (Component, "wait_for_power", self.wait_power),
                 (TvComponent, "wait_for_amity_input", self.display_input),
                 (Component, "wait_for_input", self.receiver_input),

@@ -153,7 +153,7 @@ def test_activity():
 
 
 def test_activity_no_display():
-    with scanned_devices() as (dut, tv, avr, player):
+    with scanned_devices() as (dut, tv, avr, player), dut.pair_ble_keyboard() as keyboard:
         with dut.create_activity("Functional TV playback", display=tv, source=player, audio=avr) as watch:
             with dut.create_activity("Functional audio playback", display=None, source=player, audio=avr) as listen:
                 started = watch.start()
@@ -178,8 +178,8 @@ def test_activity_no_display():
                     # allowing the handoff's Standby and requiring no TV use.
                     with observe_no_control(dut.last_scan, tv) as unused:
                         handoff.assert_standby_only(since=started)
-                        dut.press_key(Key.SELECT).assert_received_by(player)
-                        dut.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                        keyboard.press(Key.SELECT).assert_received_by(player)
+                        keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
                         with observe_no_standby(avr, player) as preserved:
                             announcement = player.activate()
                             assert announcement.ok
@@ -195,8 +195,8 @@ def test_activity_no_display():
                             avr.wait_for_input(player, since=repaired)
                             listen.assert_active()
                             preserved.assert_preserved(since=repaired)
-                        dut.press_key(Key.SELECT).assert_received_by(player)
-                        dut.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                        keyboard.press(Key.SELECT).assert_received_by(player)
+                        keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
                         listen.assert_active()
                         unused.assert_clear()
                     tv.assert_power(PowerState.STANDBY)
@@ -246,7 +246,7 @@ def _exercise_nondefault_activity(*, receiver, remote=False):
         assert player.address.physical == (0x3200 if receiver else 0x3000)
         if receiver:
             assert avr.address.physical == 0x3000
-        with (dut.add_amity(owner) if remote else nullcontext(dut)) as control:
+        with dut.pair_ble_keyboard() as keyboard, (dut.add_amity(owner) if remote else nullcontext(dut)) as control:
             if remote:
                 control.assert_connected()
             scan = dut.scan_hdmi()
@@ -280,19 +280,19 @@ def _exercise_nondefault_activity(*, receiver, remote=False):
                         assert player.active
                         activity.assert_active()
                         for key in (Key.RIGHT, Key.SELECT):
-                            dut.press_key(key).assert_received_by(player)
+                            keyboard.press(key).assert_received_by(player)
 
                         target = avr if receiver else tv
                         tv_audio = (tv.volume, tv.muted)
                         for key in (Key.VOLUME_UP, Key.VOLUME_DOWN):
                             volume = target.volume
-                            dut.press_key(key).assert_received_by(target)
+                            keyboard.press(key).assert_received_by(target)
                             if key == Key.VOLUME_UP:
                                 assert target.volume > volume
                             else:
                                 assert target.volume < volume
                         muted = target.muted
-                        dut.press_key(Key.MUTE).assert_received_by(target)
+                        keyboard.press(Key.MUTE).assert_received_by(target)
                         assert target.muted != muted
                         if receiver:
                             assert (tv.volume, tv.muted) == tv_audio
@@ -356,7 +356,7 @@ def test_activity_switch_input():
     local, remote = systems
     components = (*local, *remote)
     with TestBed(dut, secondary, *components, members=(secondary,)):
-        with dut.add_amity(secondary) as member:
+        with dut.pair_ble_keyboard() as keyboard, dut.add_amity(secondary) as member:
             member.assert_connected()
             scan = dut.scan_hdmi()
             scan.assert_contains_only(*components)
@@ -377,8 +377,8 @@ def test_activity_switch_input():
                     remote[0].wait_for_amity_input(since=started)
                     remote[1].wait_for_input(remote[2], since=started)
                     activity.assert_active()
-                    dut.press_key(Key.RIGHT).assert_received_by(remote[2])
-                    dut.press_key(Key.VOLUME_UP).assert_received_by(remote[1])
+                    keyboard.press(Key.RIGHT).assert_received_by(remote[2])
+                    keyboard.press(Key.VOLUME_UP).assert_received_by(remote[1])
 
                     with LookupScans(scan, local[0], local[1], remote[0], remote[1]) as discovery:
                         with ActivityEditObservation(*components, keys=(Key.SELECT, Key.VOLUME_DOWN)) as preserved:
@@ -388,8 +388,8 @@ def test_activity_switch_input():
                             edits.edit_other(other, switch_input=3)
                             # Exercise the member immediately after saving;
                             # receive-coverage observation completes afterward.
-                            dut.press_key(Key.SELECT).assert_received_by(remote[2])
-                            dut.press_key(Key.VOLUME_DOWN).assert_received_by(remote[1])
+                            keyboard.press(Key.SELECT).assert_received_by(remote[2])
+                            keyboard.press(Key.VOLUME_DOWN).assert_received_by(remote[1])
                             preserved.assert_preserved()
                         for component in remote:
                             component.assert_power(PowerState.ON)
@@ -414,7 +414,7 @@ def test_activity_switch_input():
                     for component in remote:
                         component.assert_power(PowerState.STANDBY)
                     other.assert_active()
-                    dut.press_key(Key.VOLUME_UP).assert_received_by(local[1])
+                    keyboard.press(Key.VOLUME_UP).assert_received_by(local[1])
                     stopped = other.standby()
                     for component in local[:2]:
                         component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
@@ -432,6 +432,7 @@ def _exercise_manual_component(owner_name):
     duts = (main,) if owner is main else (main, owner)
 
     with TestBed(*duts, tv, avr, player, members=members), ExitStack() as stack:
+        keyboard = stack.enter_context(main.pair_ble_keyboard())
         member = stack.enter_context(main.add_amity(owner)) if members else None
         if member is not None:
             member.assert_connected()
@@ -472,8 +473,8 @@ def _exercise_manual_component(owner_name):
                 tv.wait_for_amity_input(since=started)
                 avr.wait_for_input(player, since=started)
                 activity.assert_active()
-                main.press_key(Key.SELECT).assert_received_by(player)
-                main.press_key(Key.VOLUME_UP).assert_received_by(avr)
+                keyboard.press(Key.SELECT).assert_received_by(player)
+                keyboard.press(Key.VOLUME_UP).assert_received_by(avr)
                 discovery.assert_no_scan_on_witnesses()
 
                 stopped = activity.standby()
@@ -498,15 +499,15 @@ def test_activity_same_osd_locations():
                same_name_equipment(secondary, 1))
     components = tuple(component for system in systems for component in system)
     with TestBed(main, secondary, *components, members=(secondary,)):
-        with main.add_amity(secondary) as member:
+        with main.pair_ble_keyboard() as keyboard, main.add_amity(secondary) as member:
             member.assert_connected()
-            exercise_qualified_activities(main, systems,
+            exercise_qualified_activities(main, keyboard, systems,
                                           ("Qualified main", "Qualified member adapter 1",
                                            "Qualified member adapter 2"))
             member.assert_connected()
 
 
-def _exercise_keys(dut, tv, avr, player):
+def _exercise_keys(dut, keyboard, tv, avr, player):
     with dut.create_activity("Functional remote keys", display=tv, source=player, audio=avr) as activity:
         for component in (tv, avr, player):
             component.assert_power(PowerState.STANDBY)
@@ -517,48 +518,23 @@ def _exercise_keys(dut, tv, avr, player):
         avr.wait_for_input(player, since=started)
         activity.assert_active()
 
+        # The remote has no playback buttons; the Matter and HomeKit cases
+        # cover Play, Pause, Stop and the Play/Pause toggle.
         for target, keys in ((avr, (Key.VOLUME_UP, Key.VOLUME_DOWN, Key.MUTE)),
-                             (player, (Key.UP, Key.DOWN, Key.LEFT, Key.RIGHT, Key.SELECT,
-                                       Key.PLAY, Key.PAUSE, Key.STOP))):
+                             (player, (Key.UP, Key.DOWN, Key.LEFT, Key.RIGHT, Key.SELECT))):
             for key in keys:
-                dut.press_key(key, duration_ms=100 if key == Key.VOLUME_UP else 0).assert_received_by(target)
-        # The paired remote's combined button alternates Play/Pause after Stop.
-        for emitted in (Key.PLAY, Key.PAUSE):
-            dut.press_key(Key.PLAY_PAUSE).assert_received_by(player, emitted_key=emitted)
+                keyboard.press(key, duration_ms=100 if key == Key.VOLUME_UP else 0).assert_received_by(target)
         activity.assert_active()
 
-        stopped = dut.press_key(Key.POWER)
+        stopped = keyboard.press(Key.POWER)
         stopped.wait_for_standby()
         for component in (tv, avr, player):
             component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
 
 
 def test_activity_keys():
-    with scanned_devices() as (dut, tv, avr, player):
-        _exercise_keys(dut, tv, avr, player)
-
-
-def _exercise_disconnected_key(dut, tv, avr, player):
-    with dut.create_activity("Functional disconnected hold", display=tv, source=player, audio=avr) as activity:
-        started = activity.start()
-        for component in (tv, avr, player):
-            component.wait_for_power(PowerState.ON, since=started)
-        tv.wait_for_amity_input(since=started)
-        avr.wait_for_input(player, since=started)
-        activity.assert_active()
-
-        dut.press_key_disconnected(Key.VOLUME_UP, avr)
-        dut.press_key(Key.SELECT).assert_received_by(player)
-        activity.assert_active()
-
-        stopped = activity.standby()
-        for component in (tv, avr, player):
-            component.wait_for_power(PowerState.STANDBY, since=stopped, command="standby")
-
-
-def test_activity_keys_disconnected():
-    with scanned_devices() as (dut, tv, avr, player):
-        _exercise_disconnected_key(dut, tv, avr, player)
+    with scanned_devices() as (dut, tv, avr, player), dut.pair_ble_keyboard() as keyboard:
+        _exercise_keys(dut, keyboard, tv, avr, player)
 
 
 def _secondary_keys(exercise):
@@ -569,7 +545,7 @@ def _secondary_keys(exercise):
     player = PlaybackComponent(avr, "Key Player", port=1)
     components = (tv, avr, player)
     with TestBed(main, secondary, *components, members=(secondary,)):
-        with main.add_amity(secondary) as member:
+        with main.pair_ble_keyboard() as keyboard, main.add_amity(secondary) as member:
             member.assert_connected()
             scan = main.scan_hdmi()
             scan.assert_contains(*components)
@@ -577,13 +553,9 @@ def _secondary_keys(exercise):
             scan.assert_on(tv, tentacle.front)
             scan.assert_on(avr, tentacle.back)
             scan.assert_on(player, tentacle.back)
-            exercise(main, tv, avr, player)
+            exercise(main, keyboard, tv, avr, player)
             member.assert_connected()
 
 
 def test_activity_keys_secondary():
     _secondary_keys(_exercise_keys)
-
-
-def test_activity_keys_disconnected_secondary():
-    _secondary_keys(_exercise_disconnected_key)

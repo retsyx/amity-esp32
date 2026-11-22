@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from amity_harness import AvrComponent, DUT, Frame, Key, PlaybackComponent, TvComponent, assign_addresses
 from amity_harness.ble_input import BLEInputEvidence
 from amity_harness.discovery import ScanResult
+from test_keys import Remote
 from unit_tests.virtual_time import use_virtual_time
 
 
@@ -72,9 +73,7 @@ class FourOwners:
             return deepcopy(self.state)
 
         def request(path, data=None, **kwargs):
-            assert path == "/api/key" and data is not None
-            self.calls.append("POST /api/key")
-            return {"ok": True}
+            raise AssertionError("Remote keys use no HTTP request: " + path)
 
         def record(component, direction, frame, *, transport="wire", **extra):
             self.session.records.append({"component": component.name, "gpio": component.gpio,
@@ -85,6 +84,7 @@ class FourOwners:
 
         self.main.get_system, self.main.get_state, self.main.request = system, state, request
         self.session._record = record
+        self.remote = Remote(self.main)
 
 
 class ValidationRequestTests(unittest.TestCase):
@@ -142,21 +142,20 @@ class ValidationRequestTests(unittest.TestCase):
 
     def test_member_key_action_uses_fresh_pre_and_post_wire_snapshots_without_duplicates(self):
         fixture = FourOwners()
-        action = fixture.main.press_key(Key.RIGHT)
+        action = fixture.remote.press(Key.RIGHT)
         component = fixture.components[-1]
         stamp = time.monotonic_ns()
         component.receive(Frame(0, component.address.logical, 0x44, bytes([Key.RIGHT]), stamp), transport="wire")
         component.receive(Frame(0, component.address.logical, 0x45, timestamp_ns=stamp + 1), transport="wire")
         action.assert_received_by(component)
         self.assertEqual(Counter(fixture.calls), Counter({"GET /api/system": 3,
-                                                          "GET /api/activity-editor/status": 3,
-                                                          "POST /api/key": 1}))
+                                                          "GET /api/activity-editor/status": 3}))
 
     def test_key_post_wire_pass_rejects_each_owner_reboot_after_preflight(self):
         for index in range(4):
             with self.subTest(owner=index):
                 fixture = FourOwners()
-                action = fixture.main.press_key(Key.RIGHT)
+                action = fixture.remote.press(Key.RIGHT)
                 component = fixture.components[-1]
                 stamp = time.monotonic_ns()
                 component.receive(Frame(0, component.address.logical, 0x44, bytes([Key.RIGHT]), stamp), transport="wire")
