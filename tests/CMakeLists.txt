@@ -359,9 +359,15 @@ if(AMITY_HOST_TESTS MATCHES "^(all|standalone)$")
     # Setup tool
     amity_command_test(provisioning_go_test "${GO}" test ./...)
     amity_command_test(provisioning_go_vet "${GO}" vet ./...)
-    set_tests_properties(provisioning_go_test provisioning_go_vet PROPERTIES
+    amity_command_test(provisioning_tool_build "${GO}" build -o "${CMAKE_BINARY_DIR}/bin/amity-provision-test" .)
+    set_tests_properties(provisioning_go_test provisioning_go_vet provisioning_tool_build PROPERTIES
         WORKING_DIRECTORY "${ROOT}/amity-provision"
         ENVIRONMENT "GOCACHE=${ROOT}/.cache/go-build;GOMODCACHE=${ROOT}/.cache/go-mod")
+    set_tests_properties(provisioning_tool_build PROPERTIES FIXTURES_SETUP provisioning_tool)
+    # The terminal prompt needs a pseudo-terminal, which the Go tests cannot open.
+    amity_command_test(provisioning_prompt.py "${PYTHON3}" -S "${T}/provisioning_prompt.py"
+        "${CMAKE_BINARY_DIR}/bin/amity-provision-test")
+    set_tests_properties(provisioning_prompt.py PROPERTIES FIXTURES_REQUIRED provisioning_tool)
 endif()
 
 # Tests that read ESP-IDF sources, managed components or firmware build output,
