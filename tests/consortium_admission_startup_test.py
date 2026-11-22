@@ -250,10 +250,10 @@ def main():
     actual = ('#define socket amity::consortium::fake_socket\n#define close amity::consortium::fake_close\n#define getaddrinfo amity::consortium::fake_getaddrinfo\n#define freeaddrinfo amity::consortium::fake_freeaddrinfo\n'
               + function(source, 'bool connection_available(')
               + function(source, 'void ensure_connection(')
-              + (function(source, 'bool local_ipv4_ready(') if 'bool local_ipv4_ready(' in source else '')
+              + function(source, 'bool local_ipv4_ready(')
               + function(source, 'void network_loop(')
               + '\n#undef socket\n#undef close\n#undef getaddrinfo\n#undef freeaddrinfo\n'
-              + (function(source, 'esp_err_t validate_startup(') if 'esp_err_t validate_startup(' in source else '')
+              + function(source, 'esp_err_t validate_startup(')
               + function(source, 'esp_err_t runtime_read_startup(')
               + function(source, 'esp_err_t runtime_start('))
     suite = SUITE

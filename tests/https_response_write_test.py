@@ -217,7 +217,7 @@ def main():
     actual_http = actual_http.replace('esp_err_t httpd_resp_send_chunk(', 'esp_err_t sdk_httpd_resp_send_chunk(')
     actual_web = ('namespace web::stall {struct Response {Response(httpd_req_t*,size_t){}};} // web_stall_test.py covers it\n'
                   + 'namespace web {\n'
-                  + (function(web, 'esp_err_t response(httpd_req_t *req,') if 'esp_err_t response(' in web else '')
+                  + function(web, 'esp_err_t response(httpd_req_t *req,')
                   + function(web, 'esp_err_t json(httpd_req_t *req,') + '}\n')
     source = (PREFIX + '\n#define free dma_free\n' + actual_aes + '\n#undef free\n'
               + MIDDLE + actual_tls + actual_dispatch + actual_wrapper
