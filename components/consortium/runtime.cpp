@@ -1711,6 +1711,11 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std
             else if(expired)dropped.intents.push_back(queued);
             return expired;
         }),active->queue.end());
+        // A release travels in the scope the link sends now: ahead of a
+        // pending advance marker, or after one applied since its admission.
+        if(owned&&pure_key_release(*owned)&&owned->config_revision!=active->session.scope().config_revision){
+            auto current=std::make_shared<model::OwnedIntent>(*owned);current->config_revision=revision=active->session.scope().config_revision;owned=std::move(current);
+        }
         const bool cleanup=queued_cleanup({kind,{},ttl,now,revision,owned});
         if(active->queue.size()>=(cleanup?16u:15u)){
             if(cleanup){LinkTrace trace;trace.phase="queue_admission";trace.kind=kind;trace.has_kind=true;trace.fail("cleanup_queue_full",Error::none,LinkTrace::Recovery::recoverable);trace.retained=true;diagnostics.capture(*active,trace,now);request_session_restart(*active);}
@@ -1751,7 +1756,9 @@ esp_err_t runtime_send_owned(const model::OwnedIntent& intent){
             std::lock_guard<std::mutex> qguard(active->mutex);peer=active->status;link=active->session.scope().link_id;
             if(intent.config_revision<peer.config_revision)return ESP_ERR_INVALID_STATE;
             pending=intent.config_revision>peer.config_revision;
-            if(pending&&intent.kind!=model::OwnedIntentKind::context)return ESP_ERR_INVALID_STATE;
+            // A release ends a hold this link already carried; queue_control
+            // sends it in the link's scope, so a pending advance cannot lose it.
+            if(pending&&intent.kind!=model::OwnedIntentKind::context&&!pure_key_release(intent))return ESP_ERR_INVALID_STATE;
             if(intent.kind==model::OwnedIntentKind::context&&(pending||(active->refreshing&&!active->context_requested))){
                 if(!intent.generation||!intent.target.port.valid())return ESP_ERR_INVALID_ARG;
                 // Configuration application already schedules the in-band

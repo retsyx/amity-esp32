@@ -258,8 +258,51 @@ void expired_presses_are_dropped_without_restart(){
  assert(a->queue.size()==1&&a->queue.front().owned==second);
  clock_ms+=5000;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==2&&a->tls->sent[1].ttl_ms==1000&&diagnostic_logs.empty()); // Late, never dropped.
 }
+void release_crosses_pending_revision(){
+ const auto released=[](const Envelope& sent){model::OwnedIntent delivered;
+  return sent.kind==Kind::scoped_intent&&parse_owned_intent(sent.payload,delivered)==Error::none&&delivered.edge_count==1&&delivered.edges[0].key==0x41&&!delivered.edges[0].down;};
+ // The owner applied revision 8 while the link still runs scope 7, before or
+ // after the revision reaches the link. Button-up for a hold this link carried
+ // leaves in scope 7, ahead of the advance marker; a new press is refused.
+ for(const bool published:{false,true}){
+  auto a=start(true);on_send={};const auto scope=a->session.scope();
+  model::OwnedIntent down;down.kind=model::OwnedIntentKind::key_edges;down.target.port={scope.consortium_id,scope.peer_id,0,model::Side::front};
+  down.config_revision=7;down.generation=1;down.edges[0]={0x41,true};down.edge_count=1;
+  assert(runtime_send_owned(down)==ESP_OK&&pump(*a)&&a->tls->sent.size()==1);
+  controls.configuration_revision=[]{return uint64_t(8);};
+  if(published)runtime_configuration_changed(8);
+  auto press=down;press.config_revision=8;press.edges[0].key=4;
+  assert(runtime_send_owned(press)==ESP_ERR_INVALID_STATE);
+  auto release=down;release.config_revision=8;release.edges[0].down=false;
+  assert(runtime_send_owned(release)==ESP_OK&&a->queue.size()==1);
+  if(!published)runtime_configuration_changed(8);
+  assert(refresh_turn(*a)&&a->session.scope().config_revision==7&&a->tls->sent.size()==1);
+  assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==2&&a->tls->sent[1].config_revision==7&&released(a->tls->sent[1]));
+  assert(refresh_turn(*a)&&a->session.scope().config_revision==8&&a->tls->sent.size()==3&&a->tls->sent[2].kind==Kind::synchronization);
+  assert(!a->cancelled&&!a->restart_requested);
+ }
+ // A second revision applied before the link advances does not discard it.
+ {
+  auto a=start(true);on_send={};const auto scope=a->session.scope();
+  model::OwnedIntent release;release.kind=model::OwnedIntentKind::key_edges;release.target.port={scope.consortium_id,scope.peer_id,0,model::Side::front};
+  release.config_revision=8;release.generation=1;release.edges[0]={0x41,false};release.edge_count=1;
+  controls.configuration_revision=[]{return uint64_t(8);};assert(runtime_send_owned(release)==ESP_OK);
+  controls.configuration_revision=[]{return uint64_t(9);};runtime_configuration_changed(9);
+  for(unsigned turn=0;turn<3;++turn)assert(refresh_turn(*a)&&pump(*a));
+  assert(a->session.scope().config_revision==9&&a->queue.empty()&&a->tls->sent.size()==2&&released(a->tls->sent[0])&&a->tls->sent[0].config_revision==7);
+ }
+ // A link that advanced between admission and queueing carries it in its new scope.
+ {
+  auto a=start(true);on_send={};const auto scope=a->session.scope();
+  runtime_configuration_changed(8);assert(refresh_turn(*a)&&a->session.scope().config_revision==8);a->tls->sent.clear();
+  auto release=std::make_shared<model::OwnedIntent>();release->kind=model::OwnedIntentKind::key_edges;release->target.port={scope.consortium_id,scope.peer_id,0,model::Side::front};
+  release->config_revision=7;release->generation=1;release->edges[0]={0x41,false};release->edge_count=1;
+  assert(queue_control(a->peer,Kind::scoped_intent,2000,scope.link_id,7,release,clock_ms)==ESP_OK);
+  assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==1&&a->tls->sent[0].config_revision==8&&released(a->tls->sent[0]));
+ }
 }
-int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_refresh();rejected_bind_keeps_scope();immutable_queue();expired_presses_are_dropped_without_restart();std::cout<<"PASS actual in-place configuration advance: both roles retain TLS/link/boots/readiness/cache; one forward-only marker; old-scope messages discarded; fresh context and original queued revision/deadline; late presses dropped without restart, releases and selections delivered late\n";}
+}
+int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_refresh();rejected_bind_keeps_scope();immutable_queue();expired_presses_are_dropped_without_restart();release_crosses_pending_revision();std::cout<<"PASS actual in-place configuration advance: both roles retain TLS/link/boots/readiness/cache; one forward-only marker; old-scope messages discarded; fresh context and original queued revision/deadline; late presses dropped without restart, releases and selections delivered late, releases cross a pending revision\n";}
 '''
 
 
