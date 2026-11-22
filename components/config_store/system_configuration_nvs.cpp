@@ -111,12 +111,6 @@ esp_err_t result(ConfigResult value) {
 }
 }
 bool with_internal_flash_stack(std::function<void()> function) { return on_flash_stack(std::move(function)); }
-esp_err_t storage_budget(StorageBudget& out) {
-    nvs_stats_t stats{}; esp_err_t status = ESP_FAIL;
-    if (!on_flash_stack([&] { status = nvs_get_stats("amity_cfg", &stats); })) return ESP_FAIL;
-    if (status != ESP_OK) return status;
-    out = {stats.used_entries, stats.available_entries, stats.total_entries, configuration_payload_limit}; return ESP_OK;
-}
 esp_err_t load_system_configuration(ConfigurationSnapshot& out, std::string& error) {
     std::lock_guard<std::mutex> lock(gate); auto status = store.recover(out, error);
     if (status == ConfigResult::ok || status == ConfigResult::missing) recovered = true;
