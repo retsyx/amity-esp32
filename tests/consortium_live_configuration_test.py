@@ -300,6 +300,22 @@ void release_crosses_pending_revision(){
   assert(queue_control(a->peer,Kind::scoped_intent,2000,scope.link_id,7,release,clock_ms)==ESP_OK);
   assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==1&&a->tls->sent[0].config_revision==8&&released(a->tls->sent[0]));
  }
+ // Button-up admitted while the link writes the advance marker, before it
+ // applies the new scope, follows the marker in that scope.
+ {
+  auto a=start(true);on_send={};const auto scope=a->session.scope();
+  model::OwnedIntent down;down.kind=model::OwnedIntentKind::key_edges;down.target.port={scope.consortium_id,scope.peer_id,0,model::Side::front};
+  down.config_revision=7;down.generation=1;down.edges[0]={0x41,true};down.edge_count=1;
+  assert(runtime_send_owned(down)==ESP_OK&&pump(*a)&&a->tls->sent.size()==1);
+  controls.configuration_revision=[]{return uint64_t(8);};runtime_configuration_changed(8);
+  auto release=down;release.config_revision=8;release.edges[0].down=false;
+  int admitted=-1;
+  on_send=[&](Active&,const Envelope& sent){if(sent.kind==Kind::synchronization&&admitted<0)admitted=runtime_send_owned(release);};
+  assert(refresh_turn(*a)&&admitted==ESP_OK&&a->session.scope().config_revision==8);on_send={};
+  for(unsigned turn=0;turn<3;++turn)assert(refresh_turn(*a)&&pump(*a));
+  assert(a->queue.empty()&&a->tls->sent.size()==3&&a->tls->sent[1].kind==Kind::synchronization&&released(a->tls->sent[2])&&a->tls->sent[2].config_revision==8);
+  assert(!a->cancelled&&!a->restart_requested);
+ }
 }
 }
 int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_refresh();rejected_bind_keeps_scope();immutable_queue();expired_presses_are_dropped_without_restart();release_crosses_pending_revision();std::cout<<"PASS actual in-place configuration advance: both roles retain TLS/link/boots/readiness/cache; one forward-only marker; old-scope messages discarded; fresh context and original queued revision/deadline; late presses dropped without restart, releases and selections delivered late, releases cross a pending revision\n";}

@@ -303,7 +303,13 @@ bool bind_configuration(Active& active,uint64_t revision,LinkTrace& trace){
 bool apply_configuration_advance(Active& active,bool server,uint64_t target,LinkTrace& trace){
     trace.phase="configuration_advance";
     std::lock_guard<std::mutex> guard(lock);std::lock_guard<std::mutex> queue(active.mutex);
+    const auto previous=active.session.scope().config_revision;
     const auto advanced=active.session.advance_configuration(target);if(advanced!=Error::none)return trace.fail("synchronization_advance",advanced);
+    // A release admitted while the advance marker was written follows it on
+    // the wire. Carry it in the new scope instead of discarding it as stale.
+    for(auto& queued:active.queue)if(queued.revision==previous&&queued.owned&&pure_key_release(*queued.owned)){
+        auto current=std::make_shared<model::OwnedIntent>(*queued.owned);current->config_revision=queued.revision=target;queued.owned=std::move(current);
+    }
     active.status.config_revision=target;active.context_ready=false;active.context_requested=false;active.refreshing=true;
     // A hostname update can cross the change and be discarded as stale.
     // Publish it again in the new scope.
@@ -1718,6 +1724,8 @@ static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std
         }),active->queue.end());
         // A release travels in the scope the link sends now: ahead of a
         // pending advance marker, or after one applied since its admission.
+        // One queued while the marker is written moves to the new scope with
+        // it in apply_configuration_advance().
         if(owned&&pure_key_release(*owned)&&owned->config_revision!=active->session.scope().config_revision){
             auto current=std::make_shared<model::OwnedIntent>(*owned);current->config_revision=revision=active->session.scope().config_revision;owned=std::move(current);
         }
