@@ -214,37 +214,47 @@ void immutable_queue(){
  Json parsed;JsonError error;model::OwnedIntent decoded;assert(parse_json(payload,parsed,error)&&parse_owned_intent(parsed,decoded)==Error::none&&!parsed.get("execution_lease_id"));
  assert(queued.owned==owned&&queued.revision==8&&queued.created==100&&queued.ttl==500&&owned->config_revision==8);
  auto stale=queued;stale.revision=7;assert(prepare_queued(*a,stale,payload)==QueuedState::stale);
- // The actual worker block expires the admitted IPC item at its original
- // deadline, even if current context was unavailable during refresh.
- clock_ms=600;a->context_ready=false;assert(!pump(*a)&&a->tls->sent.empty()&&a->queue.empty());
- assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_intent age_ms=500 ttl_ms=500")!=std::string::npos);
+ // The actual worker block drops an expired press at its original deadline,
+ // even if current context was unavailable during refresh. Its hold never starts.
+ clock_ms=600;a->context_ready=false;assert(pump(*a)&&a->tls->sent.empty()&&a->queue.empty()&&!a->restart_requested);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("Key dropped stage=expired")!=std::string::npos&&diagnostic_logs.front().find("phase=down age_ms=500 ttl_ms=500")!=std::string::npos);
  auto settings=Queued{Kind::settings_read,"{\"request_id\":\""+ident<model::MessageId>(91).str()+"\"}",1000,600,7,{}};
  a->queue.push_back(settings);clock_ms=601;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()); // no old management-payload restamp
  a->context_ready=true;clock_ms=650;queued.created=650;a->queue.push_back(queued);assert(pump(*a)&&a->tls->sent.size()==1&&a->tls->sent.back().config_revision==8);
 }
-void observation_expiry_is_not_lost_causal_work(){
+void expired_presses_are_dropped_without_restart(){
  auto a=start(false);on_send={};const auto scope=a->session.scope();
  std::vector<RuntimeSnapshotRetry> retries;controls.snapshot_retry=[&](const auto& request){retries.push_back(request);};
  model::OwnedAdapterSnapshot report;report.owner=scope.local_id;report.boot=scope.local_boot_id;report.adapter=0;report.ready=true;
- const auto snapshot="{\"snapshot\":"+owned_snapshot_json(report)+"}";
  auto key=std::make_shared<model::OwnedIntent>();key->kind=model::OwnedIntentKind::key_edges;key->generation=1;key->config_revision=scope.config_revision;key->edges[0]={4,true};key->edge_count=1;
  key->target={{scope.consortium_id,scope.peer_id,0,model::Side::back},"Player"};
  const auto observation=Queued{Kind::scoped_result,{},1000,100,scope.config_revision,{},std::make_shared<const model::OwnedAdapterSnapshot>(report)};
  const auto input=Queued{Kind::scoped_intent,{},1000,100,scope.config_revision,key};
- assert(!queued_causal(observation)&&queued_causal(input));
  a->queue.push_back(observation);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->cancelled&&diagnostic_logs.empty());
  assert(retries.size()==1&&retries.back().controller==scope.peer_id&&retries.back().owner_boot==scope.local_boot_id&&retries.back().controller_boot==scope.peer_boot_id&&retries.back().link==scope.link_id&&retries.back().config_revision==scope.config_revision&&retries.back().adapter==0);
  a->queue.push_back(observation);assert(queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,key)==ESP_OK&&!a->cancelled&&shutdowns==0&&a->queue.size()==1);
  assert(retries.size()==2&&diagnostic_logs.empty()&&a->queue.front().owned==key);
+ // A late press is dropped at admission without ending the session.
  a->queue.clear();a->queue.push_back(input);
- assert(queue_control(a->peer,Kind::scoped_result,1000,{},scope.config_revision)==ESP_ERR_INVALID_STATE);
- assert(a->restart_requested&&a->execution_fenced&&!a->ready&&!a->context_ready&&!a->cancelled&&a->tls->usable()&&shutdowns==0&&a->queue.empty());
- assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs.front().find("kind=scoped_intent age_ms=1100 ttl_ms=1000")!=std::string::npos);
- a=start(false);a->queue.push_back(input);clock_ms=1200;assert(!pump(*a)&&a->queue.empty()&&a->tls->sent.empty());
- assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("reason=causal_expired phase=operational")!=std::string::npos);
+ assert(queue_control(a->peer,Kind::scoped_result,1000,{},scope.config_revision)==ESP_OK);
+ assert(!a->restart_requested&&!a->execution_fenced&&a->ready&&!a->cancelled&&shutdowns==0&&a->queue.size()==1&&!a->queue.front().owned);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("Key dropped stage=expired")!=std::string::npos&&diagnostic_logs.front().find("age_ms=1100 ttl_ms=1000")!=std::string::npos);
+ // The worker drops it the same way.
+ a=start(false);a->queue.push_back(input);clock_ms=1200;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.empty()&&!a->restart_requested);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs.front().find("Key dropped stage=expired")!=std::string::npos);
+ // A release is never lost to delay, and keeps its full lifetime on the wire.
+ a=start(false);auto release=std::make_shared<model::OwnedIntent>(*key);release->edges[0].down=false;
+ a->queue.push_back(Queued{Kind::scoped_intent,{},2000,100,scope.config_revision,release});clock_ms=5000;
+ assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==1&&a->tls->sent[0].ttl_ms==2000&&diagnostic_logs.empty());
+ // A newer activity selection replaces an older one still queued for the owner.
+ auto first=std::make_shared<model::OwnedIntent>();first->kind=model::OwnedIntentKind::activity;first->generation=1;first->config_revision=scope.config_revision;first->selected=true;
+ first->target={{scope.consortium_id,scope.peer_id,0,model::Side::front},""};auto second=std::make_shared<model::OwnedIntent>(*first);second->generation=2;
+ assert(queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,first)==ESP_OK&&queue_control(a->peer,Kind::scoped_intent,1000,{},scope.config_revision,second)==ESP_OK);
+ assert(a->queue.size()==1&&a->queue.front().owned==second);
+ clock_ms+=5000;assert(pump(*a)&&a->queue.empty()&&a->tls->sent.size()==2&&a->tls->sent[1].ttl_ms==1000&&diagnostic_logs.empty()); // Late, never dropped.
 }
 }
-int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_refresh();rejected_bind_keeps_scope();immutable_queue();observation_expiry_is_not_lost_causal_work();std::cout<<"PASS actual in-place configuration advance: both roles retain TLS/link/boots/readiness/cache; one forward-only marker; old-scope messages discarded; fresh context and original queued revision/deadline; snapshot expiry independent of causal input state\n";}
+int main(){using namespace amity::consortium;terminal_receive_trace();coordinator_refresh();member_refresh();future_context_recaptures_after_refresh();rejected_bind_keeps_scope();immutable_queue();expired_presses_are_dropped_without_restart();std::cout<<"PASS actual in-place configuration advance: both roles retain TLS/link/boots/readiness/cache; one forward-only marker; old-scope messages discarded; fresh context and original queued revision/deadline; late presses dropped without restart, releases and selections delivered late\n";}
 '''
 
 
@@ -260,8 +270,8 @@ def main():
     actual = ''.join(function(source, name) for name in (
         'Envelope outgoing(', 'bool bind_configuration(', 'bool apply_configuration_advance(', 'bool advance_configuration(', 'bool finish_synchronization(', 'bool exchange_hostname(Active& active,const std::string& expected,LinkTrace* diagnostic=nullptr) {',
         'bool synchronization_current(', 'bool synchronization_recoverable(', 'bool synchronization_barrier(', 'bool fence_synchronization_scope(', 'bool restart_synchronization_scope(', 'bool synchronize_connection(', 'bool refresh_local_hostname(',
-        'void runtime_configuration_changed(', 'static bool queued_firmware_stream(', 'static bool queued_expired(', 'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal('))
-    actual = function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
+        'void runtime_configuration_changed('))
+    actual = source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')] + function(source, 'void request_session_restart(') + source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')] + actual
     actual += source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual += function(source, 'static esp_err_t queue_control(')
     actual += ''.join(function(source, name) for name in ('bool initialize_context(', 'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned('))

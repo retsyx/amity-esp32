@@ -10,14 +10,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,default=ROOT/'components/consortium/runtime.cpp')
     source = parser.parse_args().source.read_text()
-    names = ['static bool queued_firmware_stream(', 'static bool queued_expired(',
-             'static bool pure_key_release(', 'static bool queued_cleanup(', 'static bool queued_causal(',
-             'void request_session_restart(', 'Error remember_hostname(', 'void remember_live_hostname(',
+    names = ['void request_session_restart(', 'Error remember_hostname(', 'void remember_live_hostname(',
              'esp_err_t runtime_remove_octopus(',
              'esp_err_t runtime_forget_removed_octopus(', 'RuntimeStatus runtime_status(',
              'static esp_err_t queue_update(', 'esp_err_t runtime_send_update(', 'static esp_err_t queue_control(',
              'void runtime_fence_owned_link(', 'esp_err_t runtime_send_owned(']
     actual = (ROOT/'components/consortium/removal_runtime.inc').read_text()
+    actual += source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')]
     actual += ''.join(function(source, name) for name in names)
     fixture = (ROOT/'tests/consortium_persistence_fixture.cpp').read_text().replace('// ACTUAL_RUNTIME', actual)
     with tempfile.TemporaryDirectory(prefix='amity-persistence-') as directory:

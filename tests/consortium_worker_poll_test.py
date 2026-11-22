@@ -124,21 +124,28 @@ void bulk_class_never_authorizes_controls(){
  }
 }
 void application_failures_restart_scope_without_replaying_work(){
- for(bool asynchronous:{false,true}){
+ {
   auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto* tls=a->tls.get();const auto original=a->session.scope();
-  auto expired=std::make_shared<const model::OwnedIntent>(action(*a)),following=std::make_shared<const model::OwnedIntent>(action(*a));
-  std::weak_ptr<const model::OwnedIntent> ended=expired,discarded=following;
-  a->queue.push_back({Kind::scoped_intent,{},1000,100,7,expired});a->queue.push_back({Kind::scoped_intent,{},1000,1200,7,following});
-  expired.reset();following.reset();clock_ms=1200;
-  if(asynchronous){std::lock_guard<std::mutex> global(lock);std::lock_guard<std::mutex> queue(a->mutex);request_session_restart(*a);}
+  auto earlier=std::make_shared<const model::OwnedIntent>(action(*a)),following=std::make_shared<const model::OwnedIntent>(action(*a));
+  std::weak_ptr<const model::OwnedIntent> ended=earlier,discarded=following;
+  a->queue.push_back({Kind::scoped_intent,{},1000,100,7,earlier});a->queue.push_back({Kind::scoped_intent,{},1000,1200,7,following});
+  earlier.reset();following.reset();clock_ms=1200;
+  {std::lock_guard<std::mutex> global(lock);std::lock_guard<std::mutex> queue(a->mutex);request_session_restart(*a);}
   a->tls->poller=[&](std::string& text){assert(recoveries==1);text=device_status;return FakeTls::ReceiveResult::frame;};
   during_recovery=[&](auto& current,bool server){assert(server&&current.tls.get()==tls&&current.session.scope()==original&&ended.expired());
-   assert(current.queue.size()==(asynchronous?0u:1u)&&discarded.expired()==asynchronous);
+   assert(current.queue.empty()&&discarded.expired());
   };
   assert(operational_receive(*a,budget)&&recoveries==1&&budget==0);
-  assert(recovery_reasons==std::vector<std::string>{asynchronous?"application_restart_requested":"causal_expired"});
+  assert(recovery_reasons==std::vector<std::string>{"application_restart_requested"});
   assert(a->tls.get()==tls&&a->tls->usable()&&!a->cancelled&&!a->restart_requested&&!a->execution_fenced&&shutdowns==0);
   assert(a->session.scope().link_id!=original.link_id&&a->queue.empty()&&a->tls->sent.empty()&&discarded.expired()&&restart_fences.size()==1);
+ }
+ {
+  // A late activity selection is delivered, not a reason to restart the session.
+  auto a=start(true);a->tls->socket=3;reset_worker();uint64_t budget=0;const auto original=a->session.scope();
+  a->queue.push_back({Kind::scoped_intent,{},1000,100,7,std::make_shared<const model::OwnedIntent>(action(*a))});clock_ms=1200;
+  a->tls->poller=[&](std::string& text){text=device_status;return FakeTls::ReceiveResult::frame;};
+  assert(operational_receive(*a,budget)&&recoveries==0&&a->queue.empty()&&a->tls->sent.size()==1&&a->tls->sent[0].kind==Kind::scoped_intent&&a->session.scope()==original);
  }
 }
 void invalid_local_ipc_restarts_scope_without_sending_or_replaying(){
@@ -251,7 +258,7 @@ def main():
     worker='\nbool operational_receive(Active& storage,uint64_t& receive_until,bool server=true,bool dispatch_update=false){uint64_t receive_started=0;auto* active=&storage;LinkTrace trace;trace.phase="operational";while(!active->cancelled){while(!active->cancelled){'+source[restart_start:restart_end]+source[queue_start:receive_start]+source[receive_start:receive_end]+'if(dispatch_update){'+source[receive_end:parse_end]+source[class_start:class_end]+update_dispatch+'}return true;}'+source[recovery_start:recovery_end]+'}trace_link_closed(storage,trace,now_ms());return false;}\n'
     worker+='\nbool classify_received(Active& storage,Kind kind){auto* active=&storage;Envelope envelope;envelope.kind=kind;LinkTrace trace;while(true){'+source[class_start:class_end]+'return true;}return false;}\n'
     helpers=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
-    actual=function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(','static bool queued_firmware_stream(','static bool queued_expired(','static bool pure_key_release(', 'static bool queued_cleanup(','static bool queued_causal('))
+    actual=source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')]+function(source,'void request_session_restart(')+helpers+''.join(function(source,n) for n in ('Envelope outgoing(',))
     actual+=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
     actual+=''.join(function(source,n) for n in ('static esp_err_t queue_update(', 'esp_err_t runtime_send_update(', 'esp_err_t runtime_stage_update(', 'static esp_err_t queue_control('))
     actual+=function(source,'enum class QueuedState').rstrip()+';\n'+function(source,'QueuedState prepare_queued(')

@@ -252,7 +252,7 @@ void application_restart_waits_for_exact_cleanup_before_fresh_scope(){
 }
 void logical_recovery_keeps_security_and_transport_fences(){
  auto active=start(true);credentials_current=true;LinkTrace trace;
- for(const auto* reason:{"causal_expired","cleanup_queue_full","causal_result_fence","context_recapture_failed","queued_send"}){
+ for(const auto* reason:{"cleanup_queue_full","causal_result_fence","context_recapture_failed","queued_send"}){
   trace=LinkTrace{};trace.fail(reason);assert(application_failure_recoverable(*active,trace));
  }
  trace=LinkTrace{};trace.fail("control_dispatch",Error::not_ready);assert(application_failure_recoverable(*active,trace));
@@ -263,7 +263,7 @@ void logical_recovery_keeps_security_and_transport_fences(){
  for(const auto* reason:{"control_admit","envelope_parse","membership_revoked","retirement"}){
   trace=LinkTrace{};trace.fail(reason);assert(!application_failure_recoverable(*active,trace));
  }
- trace=LinkTrace{};trace.fail("causal_expired");active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));
+ trace=LinkTrace{};trace.fail("cleanup_queue_full");active->tls->healthy=false;assert(!application_failure_recoverable(*active,trace));
  active->tls->healthy=true;credentials_current=false;assert(!application_failure_recoverable(*active,trace));credentials_current=true;
  active->retiring=true;assert(!application_failure_recoverable(*active,trace));active->retiring=false;
  active->lifecycle_only=true;assert(!application_failure_recoverable(*active,trace));active->lifecycle_only=false;

@@ -203,8 +203,8 @@ void queues(){
  assert(send_snapshot(a->peer)==ESP_OK);assert(runtime_send_owned(i)==ESP_OK);i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);
  assert(a->queue.size()==3&&a->queue[0].kind==Kind::scoped_result&&a->queue[0].snapshot&&a->queue[1].kind==Kind::scoped_intent&&queued_cleanup(a->queue[2])); // strict causal FIFO, no cleanup priority reordering
  reset();a=connection();links={a};for(unsigned n=0;n<15;++n)assert(send_snapshot(a->peer)==ESP_OK);assert(send_snapshot(a->peer)==ESP_ERR_NO_MEM);i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK&&a->queue.size()==16);assert(runtime_send_owned(i)==ESP_ERR_NO_MEM);logical_restart_pending(*a);assert(a->queue.empty());
- reset();a=connection();links={a};i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(send_snapshot(a->peer)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired phase=queue_admission")!=std::string::npos&&diagnostic_logs[0].find("kind=scoped_intent age_ms=2000 ttl_ms=2000")!=std::string::npos);
- reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
+ reset();a=connection();links={a};i=down();i.edges[0].down=false;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=2000;assert(send_snapshot(a->peer)==ESP_OK&&a->queue.size()==2&&queued_cleanup(a->queue[0])&&!a->restart_requested&&diagnostic_logs.empty()); // A late release is still delivered.
+ reset();a=connection();links={a};i=down();i.kind=model::OwnedIntentKind::activity;assert(runtime_send_owned(i)==ESP_OK);clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_OK&&a->queue.size()==2&&!a->restart_requested); // So is a late selection.
  reset();a=connection();links={a};model::OwnedAdapterSnapshot report;report.owner=a->session.scope().local_id;report.boot=a->session.scope().local_boot_id;
  const auto& result=report;
  assert(runtime_send_owned_result(a->peer,ident<model::LinkId>(99),result)==ESP_ERR_INVALID_STATE&&a->queue.empty());
@@ -261,9 +261,9 @@ void future_context_is_recaptured(){
  current.generation=9;current.selected=true;assert(runtime_send_owned(current)==ESP_OK&&a->context_ready&&!a->refreshing&&a->queue.size()==1);
  assert(a->queue[0].owned->generation==9&&a->queue[0].created==clock_ms&&a->queue[0].revision==2);
  action.generation=9;assert(runtime_send_owned(action)==ESP_OK&&a->queue.size()==2&&a->queue[1].owned->generation==9);
- // Once ordinary work is admitted, its original TTL and fence remain intact.
- a->queue.pop_front();clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_ERR_INVALID_STATE);logical_restart_pending(*a);
- assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("reason=causal_expired")!=std::string::npos);
+ // An admitted press keeps its original deadline: late, it is dropped without a restart.
+ a->queue.pop_front();clock_ms+=1000;assert(send_snapshot(a->peer)==ESP_OK&&!a->restart_requested&&a->queue.size()==1&&a->queue[0].snapshot);
+ assert(diagnostic_logs.size()==1&&diagnostic_logs[0].find("Key dropped stage=expired")!=std::string::npos);
 }
 void asynchronous_context_failure_is_scoped(){
  reset();auto a=connection();links={a};group.consortium=a->session.scope().consortium_id;a->context_ready=false;
@@ -332,7 +332,7 @@ void release_sender_timing(){
   assert(runtime_send_owned(up)==ESP_OK&&a->queue.size()==1&&a->queue.front().created==225&&a->queue.front().ttl==2000);
   assert(key_transfer_logs.size()==1&&key_transfer_logs[0].find("Key release stage=admit owner="+a->peer.str()+" key=65 generation=2 phase=up edge_count=1 elapsed_ms=125 result=0")!=std::string::npos);
   clock_ms+=300;before_send=[]{clock_ms+=450;};write_result=success;
-  assert(pump(*a)==success&&a->queue.empty()&&writes==1&&written_ttl==1700);
+  assert(pump(*a)==success&&a->queue.empty()&&writes==1&&written_ttl==2000); // A release is never shortened by queue delay.
   Json payload;JsonError error;model::OwnedIntent delivered;
   assert(parse_json(written_payload,payload,error)&&parse_owned_intent(payload,delivered)==Error::none&&delivered.edge_count==1&&!delivered.edges[0].down&&delivered.edges[0].key==65&&delivered.generation==2);
   assert(key_transfer_logs.size()==2&&key_transfer_logs[1].find("Key release stage=write owner="+a->peer.str()+" key=65 generation=2 phase=up edge_count=1 age_ms=300 elapsed_ms=450 sent="+(success?"1":"0"))!=std::string::npos);
@@ -358,7 +358,8 @@ void all_key_sender_timing(){
   assert(key_transfer_logs.size()==1&&key_transfer_logs[0].find(prefix+" stage=admit")==0);
   assert(key_transfer_logs[0].find("phase="+phase+" edge_count="+std::to_string(intent.edge_count))!=std::string::npos);
   clock_ms+=30;before_send=[]{clock_ms+=50;};write_result=success;
-  assert(pump(*a)==success&&writes==1&&written_ttl==ttl-30&&a->queue.empty());
+  // Presses keep their original deadline; a release carries its full lifetime.
+  assert(pump(*a)==success&&writes==1&&written_ttl==(shape==1?ttl:ttl-30)&&a->queue.empty());
   Json payload;JsonError error;model::OwnedIntent delivered;
   assert(parse_json(written_payload,payload,error)&&parse_owned_intent(payload,delivered)==Error::none&&delivered.edge_count==intent.edge_count&&delivered.generation==intent.generation);
   for(uint8_t edge=0;edge<intent.edge_count;++edge)assert(delivered.edges[edge].key==intent.edges[edge].key&&delivered.edges[edge].down==intent.edges[edge].down);
@@ -445,8 +446,8 @@ int main(){using namespace amity::consortium;closure();duplicate_connections();u
 '''
 def main():
  source=(ROOT/'components/consortium/runtime.cpp').read_text()
- names=['bool connection_available(','bool current_peer_credential(const Active &link,const Group &current){','bool initialize_context(','bool notify_link_closed(','bool fence_replaced_links(','void reap_closed_links(','static bool queued_cleanup(const Queued& queued)','static bool queued_causal(','static esp_err_t queue_control(','esp_err_t runtime_send_owned_result(','void runtime_fence_owned_link(','esp_err_t runtime_send_owned(','bool runtime_owned_authorized(']
- trace=source[source.index('struct LinkTrace {'):source.index('static bool queued_cleanup(')]
+ names=['bool connection_available(','bool current_peer_credential(const Active &link,const Group &current){','bool initialize_context(','bool notify_link_closed(','bool fence_replaced_links(','void reap_closed_links(','static esp_err_t queue_control(','esp_err_t runtime_send_owned_result(','void runtime_fence_owned_link(','esp_err_t runtime_send_owned(','bool runtime_owned_authorized(']
+ trace=source[source.index('struct LinkTrace {'):source.index('static bool pure_key_release(')]+source[source.index('static bool pure_key_release('):source.index('struct SynchronizationRound {')]
  retries=source[source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry('):source.index('enum class QueuedState')]
  diagnostics=source[source.index('struct LinkTraceSnapshot {'):source.index('std::optional<RuntimeSnapshotRetry> snapshot_retry(')]
  launch_start=source.index('void launch(');launch_body=source.index('){',launch_start)+1

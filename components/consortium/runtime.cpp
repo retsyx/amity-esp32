@@ -70,25 +70,33 @@ struct LinkTrace {
     bool fail(const char* why,Error result=Error::none){reason=why;error=result;unexpected=true;return false;}
     void queued(const Queued& value){kind=value.kind;has_kind=has_queue=true;created=value.created;ttl=value.ttl;queued_revision=value.revision;action_code=value.owned?static_cast<int>(value.owned->kind):-1;}
 };
-// Admitted image bytes and their nonactivating validation barrier stay in
-// ordered TCP output under backpressure. Ordinary controls still age out.
-static bool queued_firmware_stream(const Queued& queued){
-    return queued.firmware_stream;
-}
-static bool queued_expired(const Queued& queued,uint64_t now){
-    return now<queued.created||(!queued_firmware_stream(queued)&&now-queued.created>=queued.ttl);
-}
 static bool pure_key_release(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::key_edges&&intent.edge_count==1&&!intent.edges[0].down;}
+static bool selection_intent(const model::OwnedIntent& intent){return intent.kind==model::OwnedIntentKind::activity||intent.kind==model::OwnedIntentKind::context;}
 static bool queued_cleanup(const Queued& queued){
     return queued.owned&&pure_key_release(*queued.owned);
 }
-// Losing an accepted input state or activity selection breaks causal scope.
-// Fence this link instead of replaying ordinary work.
-static bool queued_causal(const Queued& queued){
-    // Owner snapshots are replaceable observations; accepted inputs and
-    // activity selections carry causal state. Admission retains these types.
-    return queued.kind==Kind::scoped_intent;
+// A late press is dropped, so its hold never starts. Releases, activity
+// selections and admitted image bytes are delivered late rather than lost;
+// a newer selection replaces an older queued one instead.
+static bool queued_expires(const Queued& queued){
+    return !queued.firmware_stream&&!(queued.owned&&(pure_key_release(*queued.owned)||selection_intent(*queued.owned)));
 }
+static bool queued_expired(const Queued& queued,uint64_t now){
+    return now<queued.created||(queued_expires(queued)&&now-queued.created>=queued.ttl);
+}
+static void log_dropped_intent(const Queued& queued,uint64_t now){
+    if(!queued.owned)return;
+    const auto& intent=*queued.owned;const auto age=now>=queued.created?now-queued.created:0;
+    if(intent.kind==model::OwnedIntentKind::key_edges)
+        ESP_LOGW("consortium","Key dropped stage=expired owner=%s key=%u generation=%llu phase=%s age_ms=%llu ttl_ms=%u",intent.target.port.octopus_id.str().c_str(),static_cast<unsigned>(intent.edges[0].key),
+            static_cast<unsigned long long>(intent.generation),intent.edge_count==2?"tap":"down",static_cast<unsigned long long>(age),queued.ttl);
+    else ESP_LOGW("consortium","Owner request dropped stage=expired owner=%s action=%d age_ms=%llu ttl_ms=%u",intent.target.port.octopus_id.str().c_str(),static_cast<int>(intent.kind),static_cast<unsigned long long>(age),queued.ttl);
+}
+struct DroppedIntents {
+    std::vector<Queued> intents;uint64_t now=0;
+    // Declared before queue/global guards, so logging runs after unlock.
+    ~DroppedIntents(){for(const auto& queued:intents)log_dropped_intent(queued,now);}
+};
 struct SynchronizationRound {model::MessageId id;uint64_t revision=0;};
 struct Active {
     std::shared_ptr<TlsLink> tls;
@@ -464,7 +472,7 @@ bool application_failure_recoverable(const Active& active,const LinkTrace& trace
         "update_admit","update_authority","control_admit","settings_admit","settings_boot","settings_authority"})
         if(!strcmp(trace.reason,terminal))return false;
     if(active.restart_requested)return true;
-    for(const auto* recoverable:{"application_restart_requested","causal_expired","cleanup_queue_full","causal_result_fence","context_recapture_failed",
+    for(const auto* recoverable:{"application_restart_requested","cleanup_queue_full","causal_result_fence","context_recapture_failed",
         "initial_context","control_dispatch","frame_receive_expired","queued_send","queued_invalid","settings_dispatch","update_not_ready","update_stream"})
         if(!strcmp(trace.reason,recoverable))return true;
     return false;
@@ -902,11 +910,14 @@ void active_loop_work(void *arg){
         // Expire and budget the observed item against the current clock.
         const auto now=now_ms();
         if(invalid){trace.fail("queued_invalid");break;}
-        if(have&&queued_causal(queued)&&queued_expired(queued,now)){trace.queued(queued);trace.fail("causal_expired");break;}
-        if(have&&!queued_causal(queued)&&queued_expired(queued,now))
+        if(have&&queued_expired(queued,now)){
             if(auto retry=snapshot_retry(*active,queued))notify_snapshot_retry(*retry);
+            else log_dropped_intent(queued,now);
+        }
         if(have&&!queued_expired(queued,now)){
-            const auto ttl=queued_firmware_stream(queued)?queued.ttl:queued.ttl-static_cast<uint32_t>(now-queued.created);
+            // A press keeps its original deadline. Work that must not be lost
+            // carries its full lifetime, which the receiver times from receipt.
+            const auto ttl=queued_expires(queued)?queued.ttl-static_cast<uint32_t>(now-queued.created):queued.ttl;
             const bool key=queued.owned&&queued.owned->kind==model::OwnedIntentKind::key_edges&&queued.owned->edge_count>=1&&queued.owned->edge_count<=2;
             const auto write_started=key?now_ms():0;
             const auto network_before=key?network_diagnostics::snapshot():network_diagnostics::Snapshot{};
@@ -1649,19 +1660,17 @@ esp_err_t runtime_stage_update(model::OctopusId owner,std::string payload,uint32
     return queue_update(owner,Kind::update_install,std::move(payload),ttl,true);
 }
 static esp_err_t queue_control(model::OctopusId owner,Kind kind,uint32_t ttl,std::optional<model::LinkId> expected_link,uint64_t revision=0,std::shared_ptr<const model::OwnedIntent> owned=nullptr,uint64_t created=0,std::shared_ptr<const model::OwnedAdapterSnapshot> snapshot=nullptr){
-    SnapshotRetryBatch retries;DeferredLinkTrace diagnostics;
+    SnapshotRetryBatch retries;DeferredLinkTrace diagnostics;DroppedIntents dropped;
     std::lock_guard<std::mutex> guard(lock);if(!status.authority_ready&&group.role==Group::coordinator)return ESP_ERR_INVALID_STATE;
     for(auto &active:links)if(active->peer==owner&&!active->cancelled&&!active->retiring&&!active->restart_requested&&!active->execution_fenced&&active->ready){
         if(expected_link&&active->session.scope().link_id!=*expected_link)continue;
-        std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();
-        const auto expired_cleanup=std::find_if(active->queue.begin(),active->queue.end(),[now](const auto& queued){return queued_causal(queued)&&queued_expired(queued,now);});
-        if(expired_cleanup!=active->queue.end()){
-            LinkTrace trace;trace.phase="queue_admission";trace.queued(*expired_cleanup);trace.fail("causal_expired");trace.retained=true;diagnostics.capture(*active,trace,now);
-            request_session_restart(*active);return ESP_ERR_INVALID_STATE;
-        }
+        std::lock_guard<std::mutex> qguard(active->mutex);const auto now=now_ms();dropped.now=now;
+        const bool selection=owned&&selection_intent(*owned);
         active->queue.erase(std::remove_if(active->queue.begin(),active->queue.end(),[&](const auto& queued){
+            if(selection&&queued.owned&&selection_intent(*queued.owned))return true;
             const bool expired=queued_expired(queued,now);
-            if(expired)retries.dropped(*active,queued);
+            if(expired&&queued.snapshot)retries.dropped(*active,queued);
+            else if(expired)dropped.intents.push_back(queued);
             return expired;
         }),active->queue.end());
         const bool cleanup=queued_cleanup({kind,{},ttl,now,revision,owned});

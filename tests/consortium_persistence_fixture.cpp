@@ -40,6 +40,7 @@ struct DeferredLinkTrace {void capture(const Active&,const LinkTrace&,uint64_t){
 struct SnapshotRetryBatch {void dropped(const Active&,const Queued&){}};
 template<class... T>void quiet_log(T&&...){}
 #define ESP_LOGI(...) quiet_log(__VA_ARGS__)
+#define ESP_LOGW(...) quiet_log(__VA_ARGS__)
 std::string sha256(std::string_view){return std::string(64,'a');}
 bool current_peer_credential(const Active& active,const Group& value){for(const auto& peer:value.peers)if(peer.id==active.peer&&peer.id==active.tls->authenticated)for(const auto& allowed:active.tls->allowed)if(peer.id==allowed.id&&peer.der==allowed.der&&peer.pin==allowed.pin)return true;return false;}
 
