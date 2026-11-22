@@ -124,7 +124,7 @@ function deviceField(text,value,onChange,list){
  root.addEventListener('devicechoiceschange',()=>{if(!options.hidden)render();});
  l.append(i);root.append(l,options);return root;
 }
-function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===id;b.classList.toggle('selected',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(id==='homekit')refreshHomekit().catch(reportError);if(id==='amityDevices')window.amityInterface?.refresh().catch(reportError);if(id==='advanced')refreshPeerSignals().then(()=>{if(state.version)renderDiagnostics();});}
+function selectTab(id){document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===id;b.classList.toggle('selected',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});if(id==='remotes'||id==='advanced')request('remotes').then(renderRemotes).catch(reportError);if(id==='matter')request('matter').then(renderMatter).catch(reportError);if(id==='homekit')refreshHomekit().catch(reportError);if(id==='amityDevices')window.amityInterface?.refresh().catch(reportError);if(id==='advanced')refreshPeerSignals().then(()=>{if(state.version)renderDiagnostics();});}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>selectTab(b.dataset.tab)));
 function activityFields(a,changed=markDirty){
  const field=(text,value,set,list)=>label(text,value,v=>{set(v);changed();},list);
@@ -509,8 +509,9 @@ async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect
   if(complete)for(const d of [...state.devices].sort((a,b)=>(a.name||'').localeCompare(b.name||''))){const row=document.createElement('div');row.className='device';const name=document.createElement('span');name.textContent=d.title||d.name||'Unknown';row.append(deviceIcon(d),name);if(d.location){const location=document.createElement('span');location.className='device-location';location.textContent=d.location;row.append(location);}rows.push(row);}
   replaceChanged($('deviceList'),...rows);
  }
- renderRemotes(await request('remotes'));
- renderMatter(await request('matter'));
+ // Pairing state is read only for the tab showing it; Diagnostics shows the remote.
+ if(!$('remotes').hidden||!$('advanced').hidden)renderRemotes(await request('remotes'));
+ if(!$('matter').hidden)renderMatter(await request('matter'));
  if(!$('homekit').hidden)await refreshHomekit();
  if(!$('amityDevices').hidden)await window.amityInterface?.refresh();
  return true;

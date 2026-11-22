@@ -72,6 +72,12 @@ function fixture({adapter=false}={}){
  await recovered.tick();assert.deepEqual(recovered.message(),{text:'',error:false});
  assert.deepEqual(recovered.calls.slice(1),['activity-editor/status','remotes','matter'].map(route=>({route,method:'GET'})));
 
+ // Remote and Matter state is read only while a tab shows it.
+ const quiet=fixture();await quiet.initialize();for(const id of ['remotes','matter','advanced'])quiet.get(id).hidden=true;
+ await quiet.tick();assert.deepEqual(quiet.calls.map(call=>call.route),['activity-editor/status']);
+ quiet.get('advanced').hidden=false;await quiet.tick();assert.deepEqual(quiet.calls.slice(1).map(call=>call.route),['activity-editor/status','remotes']);
+ quiet.get('advanced').hidden=true;quiet.get('matter').hidden=false;await quiet.tick();assert.deepEqual(quiet.calls.slice(3).map(call=>call.route),['activity-editor/status','matter']);
+
  // Reading status alone does not prove that the complete refresh recovered.
  const partial=fixture();await partial.initialize();partial.fail('activity-editor/status');await partial.tick();
  partial.fail('remotes');await partial.tick();assert.equal(partial.message().error,true);
