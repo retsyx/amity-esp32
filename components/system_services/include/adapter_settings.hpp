@@ -9,7 +9,8 @@ void install(amity::SystemControl&);
 std::string snapshot();
 // The deadline is receiver-local and preserves the original HTTP/transport
 // authority. Hostname and adapter edits use independent durable revisions.
+// On success, snapshot receives the saved settings.
 amity::consortium::Error apply(amity::system::MessageId,
-    const amity::consortium::Json&, uint64_t receiver_deadline_ms,
-    std::string& response);
+    const amity::consortium::DeviceSettingsWrite&, uint64_t receiver_deadline_ms,
+    std::string& snapshot);
 }

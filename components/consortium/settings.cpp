@@ -38,6 +38,10 @@ Error parse_device_settings_write(const Json& value,DeviceSettingsWrite& out){
   seen|=1u<<slot;change.tentacle_id=slot;change.default_front_physical_address=row.get("default_front_physical_address")->string;next.changes.push_back(std::move(change));
  }out=std::move(next);return Error::none;
 }
+Error parse_settings_write(const Json& value,DeviceSettingsWrite& out){
+ model::MessageId request;
+ return closed(value,{"request_id","settings"})&&id(value.get("request_id"),request)?parse_device_settings_write(*value.get("settings"),out):Error::invalid_message;
+}
 std::string device_settings_write_json(const DeviceSettingsWrite& value){
  std::string out="{\"expected_boot_id\":\""+value.expected_boot.str()+"\"";
  if(value.hostname)out+=",\"hostname\":"+model::json_quote(*value.hostname)+",\"expected_hostname_revision\":\""+std::to_string(value.expected_hostname_revision)+"\"";
@@ -49,7 +53,7 @@ std::string device_settings_write_json(const DeviceSettingsWrite& value){
 bool valid_settings_payload(Kind kind,const Json& value){
  model::MessageId request;if(!id(value.get("request_id"),request))return false;
  if(kind==Kind::settings_read)return closed(value,{"request_id"});
- if(kind==Kind::settings_write){DeviceSettingsWrite write;return closed(value,{"request_id","settings"})&&parse_device_settings_write(*value.get("settings"),write)==Error::none;}
+ if(kind==Kind::settings_write){DeviceSettingsWrite write;return parse_settings_write(value,write)==Error::none;}
  if(kind!=Kind::settings_result||!closed(value,{"request_id","operation","stage","error","snapshot","rebooting"})||!text(value.get("operation"),{"read","write"})||!text(value.get("stage"),{"admitted","applied","failed"})||!text(value.get("error"),{"","INVALID_MESSAGE","STALE_BOOT","CONFLICT","NOT_READY","EXPIRED","STORAGE_FAILURE","QUEUE_FULL"})||value.get("rebooting")->type!=Json::Type::boolean)return false;
  const bool applied=text(value.get("stage"),{"applied"});
  if(applied)return text(value.get("error"),{""})&&valid_settings_snapshot(*value.get("snapshot"))&&!value.get("rebooting")->boolean;

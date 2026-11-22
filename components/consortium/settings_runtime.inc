@@ -4,13 +4,12 @@ struct SettingsCache {
     model::OctopusId owner;model::BootId boot;model::MessageId read_id;model::LinkId read_link;
     std::string snapshot,error;uint64_t received=0,attempted=0,read_until=0;
 };
+// A write on the main until its outcome is known; HTTP polls it by request ID.
+// Writes are never resent, so neither end keeps a replay record.
 struct SettingsOperation {
     model::OctopusId owner;model::MessageId id;model::BootId target_boot;model::LinkId link;
-    std::string core,stage="admitted",error;uint64_t expires=0;
+    std::string stage="admitted",error;uint64_t expires=0;
     std::optional<std::string> hostname{};
-};
-struct SettingsReceived {
-    model::MessageId id;model::BootId issuer_boot;std::string core,response;bool pending=true;
 };
 struct SettingsAuthorization {
     model::MessageId id;bool local=false;uint64_t expires=0,config=0;
@@ -18,7 +17,6 @@ struct SettingsAuthorization {
 };
 std::vector<SettingsCache> settings_caches;
 std::vector<SettingsOperation> settings_operations;
-std::vector<SettingsReceived> settings_received;
 SettingsAuthorization settings_authorization;
 // Caller holds the runtime lock. An admitted rename reserves its name until
 // its outcome is known, including against a concurrent Add operation.
@@ -49,7 +47,6 @@ SettingsCache* settings_cache(model::OctopusId owner,bool create){
 void settings_expire(uint64_t now){
     for(auto& item:settings_operations)if(item.stage=="admitted"&&now>=item.expires){item.stage="unknown";item.error="The result was not confirmed. The request will not be repeated.";}
     while(std::count_if(settings_operations.begin(),settings_operations.end(),[](const auto& item){return item.stage!="admitted";})>8){auto old=std::find_if(settings_operations.begin(),settings_operations.end(),[](const auto& item){return item.stage!="admitted";});settings_operations.erase(old);}
-    while(std::count_if(settings_received.begin(),settings_received.end(),[](const auto& item){return !item.pending;})>8){auto old=std::find_if(settings_received.begin(),settings_received.end(),[](const auto& item){return !item.pending;});settings_received.erase(old);}
 }
 bool settings_authorized_locked(model::MessageId id){
     const auto& permit=settings_authorization;const auto now=now_ms();
@@ -63,24 +60,17 @@ bool settings_authorized_locked(model::MessageId id){
 }
 // Returns a validated wire result. The owner service must recheck the exact
 // permit through runtime_device_settings_authorized immediately before NVS I/O.
-std::string settings_apply(const std::shared_ptr<Active>& active,model::MessageId id,const Json& core,uint64_t deadline){
-    const auto encoded=settings_json(core);const auto issuer=active?active->session.scope().peer_boot_id:boot;RuntimeSettingsHooks hooks;
-    {std::lock_guard<std::mutex> guard(lock);settings_expire(now_ms());
-        for(const auto& old:settings_received)if(old.id==id&&old.issuer_boot==issuer){if(old.core!=encoded)return settings_result(id,"write","failed","INVALID_MESSAGE");return old.response;}
-        if(settings_authorization.id||settings_received.size()>=9)return settings_result(id,"write","failed","QUEUE_FULL");
-        settings_received.push_back({id,issuer,encoded,settings_result(id,"write","admitted","")});
+std::string settings_apply(const std::shared_ptr<Active>& active,model::MessageId id,const DeviceSettingsWrite& write,uint64_t deadline){
+    RuntimeSettingsHooks hooks;
+    {std::lock_guard<std::mutex> guard(lock);
+        if(settings_authorization.id)return settings_result(id,"write","failed","QUEUE_FULL");
         settings_authorization={id,!active,deadline,configuration,active?active->session.scope().link_id:model::LinkId{},active};hooks=settings_hooks;
-        if(!settings_authorized_locked(id)){settings_authorization={};settings_received.back().pending=false;settings_received.back().response=settings_result(id,"write","failed","EXPIRED");return settings_received.back().response;}
+        if(!settings_authorized_locked(id)){settings_authorization={};return settings_result(id,"write","failed","EXPIRED");}
     }
-    std::string response;auto result=hooks.apply?hooks.apply(id,core,deadline,response):Error::not_ready;
-    Json returned;JsonError detail;bool applied=false;std::string wire;
-    if(parse_json(response,returned,detail,4096)&&closed(returned,{"request_id","stage","error","snapshot"})&&returned.get("request_id")->type==Json::Type::string&&returned.get("request_id")->string==id.str()&&returned.get("stage")->type==Json::Type::string&&returned.get("error")->type==Json::Type::string){
-        const auto stage=returned.get("stage")->string;applied=result==Error::none&&stage=="applied";
-        wire=settings_result(id,"write",applied?"applied":"failed",applied?"":settings_error(result),applied?settings_json(*returned.get("snapshot")):"null");
-    }
-    if(wire.empty())wire=settings_result(id,"write","failed",settings_error(result==Error::none?Error::invalid_message:result));
-    {std::lock_guard<std::mutex> guard(lock);settings_authorization={};for(auto& saved:settings_received)if(saved.id==id&&saved.issuer_boot==issuer){saved.pending=false;saved.response=wire;}settings_expire(now_ms());}
-    return wire;
+    std::string snapshot;const auto result=hooks.apply?hooks.apply(id,write,deadline,snapshot):Error::not_ready;
+    {std::lock_guard<std::mutex> guard(lock);settings_authorization={};}
+    if(result==Error::none&&!snapshot.empty())return settings_result(id,"write","applied","",snapshot);
+    return settings_result(id,"write","failed",settings_error(result==Error::none?Error::not_ready:result));
 }
 bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& envelope,uint64_t received){
     if(!is_settings_kind(envelope.kind))return false;
@@ -110,9 +100,8 @@ bool settings_dispatch(const std::shared_ptr<Active>& active,const Envelope& env
     }
     RuntimeSettingsHooks hooks;{std::lock_guard<std::mutex> guard(lock);if(group.role!=Group::member||group.authority!=active->peer||!current_peer_credential(*active,group)||(!active->ready&&!active->management_ready))return false;hooks=settings_hooks;}
     if(envelope.kind==Kind::settings_read){const auto snapshot=hooks.snapshot?hooks.snapshot():"";return send(*active,Kind::settings_result,settings_result(id,"read",snapshot.empty()?"failed":"applied",snapshot.empty()?"NOT_READY":"",snapshot.empty()?"null":snapshot),2000);}
-    DeviceSettingsWrite write;
-    if(!id.valid()||parse_device_settings_write(*envelope.payload.get("settings"),write)!=Error::none||write.expected_boot!=boot)return false;
+    if(!id.valid()||!envelope.settings_write||envelope.settings_write->expected_boot!=boot)return false;
     if(received>UINT64_MAX-envelope.ttl_ms)return false;
-    const auto response=settings_apply(active,id,*envelope.payload.get("settings"),received+envelope.ttl_ms);
+    const auto response=settings_apply(active,id,*envelope.settings_write,received+envelope.ttl_ms);
     return send(*active,Kind::settings_result,response,2000);
 }

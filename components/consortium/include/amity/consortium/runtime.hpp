@@ -108,7 +108,8 @@ void runtime_lifecycle_hooks(RuntimeLifecycleHooks);
 
 struct RuntimeSettingsHooks {
     std::function<std::string()> snapshot;
-    std::function<Error(model::MessageId,const Json&,uint64_t receiver_deadline_ms,std::string& response)> apply;
+    // Saves one validated write; on success, snapshot receives the saved settings.
+    std::function<Error(model::MessageId,const DeviceSettingsWrite&,uint64_t receiver_deadline_ms,std::string& snapshot)> apply;
 };
 void runtime_settings_hooks(RuntimeSettingsHooks);
 struct RuntimeLogHooks {
@@ -120,7 +121,7 @@ void runtime_log_hooks(RuntimeLogHooks);
 // Previously consumed bytes remain useful on timeout or loss of the member.
 esp_err_t runtime_pull_logs(model::OctopusId,const std::function<bool(std::string_view)>& consume);
 std::string runtime_device_settings(model::OctopusId owner);
-esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId,const Json& core,uint64_t admitted_until_ms=0);
+esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId,const DeviceSettingsWrite&,uint64_t admitted_until_ms=0);
 std::string runtime_device_settings_operation(model::OctopusId owner,model::MessageId);
 // Owner service rechecks this immediately before persisting; never renews TTL.
 bool runtime_device_settings_authorized(model::MessageId);

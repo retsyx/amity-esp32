@@ -16,42 +16,10 @@ namespace c=amity::consortium;
 namespace m=amity::system;
 amity::SystemControl* owner=nullptr;
 std::mutex mutation;
-struct Receipt {m::MessageId id;std::string fingerprint,response;c::Error outcome;};
-std::vector<Receipt> receipts;
 uint64_t now(){return static_cast<uint64_t>(esp_timer_get_time()/1000);}
-const char* code(c::Error value){
-    switch(value){
-        case c::Error::none:return "";
-        case c::Error::stale_boot:return "STALE_BOOT";
-        case c::Error::transaction_conflict:case c::Error::stale_config:return "CONFLICT";
-        case c::Error::expired:return "EXPIRED";
-        case c::Error::storage_failure:return "STORAGE_FAILURE";
-        case c::Error::queue_full:return "QUEUE_FULL";
-        case c::Error::invalid_message:return "INVALID_MESSAGE";
-        default:return "NOT_READY";
-    }
-}
 std::string address(std::optional<uint16_t> value){return value&&*value!=0xffff?'"'+device_settings::format_physical_address(*value)+'"':"null";}
-std::string result(m::MessageId id,c::Error error){return "{\"request_id\":\""+id.str()+"\",\"stage\":\""+(error==c::Error::none?"applied":"failed")+"\",\"error\":\""+code(error)+"\",\"snapshot\":"+(error==c::Error::none?snapshot():"null")+"}";}
-struct Change {device_settings::AdapterDefaultChange preference;};
-struct Request {m::BootId boot;uint64_t revision=0,hostname_revision=0;std::vector<Change> changes;std::optional<std::string> hostname;std::string fingerprint;};
-bool parse(const c::Json& json,Request& request){
-    c::DeviceSettingsWrite write;
-    if(c::parse_device_settings_write(json,write)!=c::Error::none)return false;
-    request.boot=write.expected_boot;request.revision=write.expected_revision;request.hostname_revision=write.expected_hostname_revision;request.hostname=std::move(write.hostname);
-    for(const auto& item:write.changes){
-        uint16_t parsed=0;
-        if(!device_settings::parse_front_physical_address(item.default_front_physical_address,parsed))return false;
-        request.changes.push_back({{item.tentacle_id,parsed}});
-    }
-    std::sort(request.changes.begin(),request.changes.end(),[](const Change& a,const Change& b){return a.preference.tentacle_id<b.preference.tentacle_id;});
-    request.fingerprint=request.boot.str()+":"+std::to_string(request.revision);
-    if(request.hostname)request.fingerprint+=":hostname="+*request.hostname+":"+std::to_string(request.hostname_revision);
-    for(const auto& change:request.changes)request.fingerprint+=":"+std::to_string(change.preference.tentacle_id)+":"+std::to_string(change.preference.front_physical);
-    return true;
 }
-}
-void install(amity::SystemControl& value){std::lock_guard<std::mutex> lock(mutation);owner=&value;receipts.clear();}
+void install(amity::SystemControl& value){std::lock_guard<std::mutex> lock(mutation);owner=&value;}
 std::string snapshot(){
     if(!owner)return "{}";
     const auto defaults=device_settings::adapter_defaults();
@@ -67,26 +35,25 @@ std::string snapshot(){
     }
     return out+"]}";
 }
-c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string& response){
-    std::lock_guard<std::mutex> lock(mutation);
-    Request request;
-    if(!id||!parse(body,request)){response=result(id,c::Error::invalid_message);return c::Error::invalid_message;}
-    for(const auto& receipt:receipts)if(receipt.id==id){
-        if(receipt.fingerprint!=request.fingerprint){response=result(id,c::Error::transaction_conflict);return c::Error::transaction_conflict;}
-        response=receipt.response;return receipt.outcome;
+c::Error apply(m::MessageId id,const c::DeviceSettingsWrite& write,uint64_t deadline,std::string& saved){
+    std::lock_guard<std::mutex> lock(mutation);saved.clear();
+    if(!id)return c::Error::invalid_message;
+    std::vector<device_settings::AdapterDefaultChange> preferences;
+    std::vector<amity::AdapterAddressChange> adapters;
+    for(const auto& change:write.changes){
+        uint16_t address=0;
+        if(!device_settings::parse_front_physical_address(change.default_front_physical_address,address))return c::Error::invalid_message;
+        preferences.push_back({change.tentacle_id,address});adapters.push_back({change.tentacle_id,address});
     }
     c::Error error=c::Error::none;
     if(!owner)error=c::Error::not_ready;
-    else if(request.boot!=owner->boot_identity())error=c::Error::stale_boot;
-    else if(request.hostname?request.hostname_revision!=device_settings::hostname_settings().revision:request.revision!=device_settings::adapter_defaults().revision)error=c::Error::transaction_conflict;
+    else if(write.expected_boot!=owner->boot_identity())error=c::Error::stale_boot;
+    else if(write.hostname?write.expected_hostname_revision!=device_settings::hostname_settings().revision:write.expected_revision!=device_settings::adapter_defaults().revision)error=c::Error::transaction_conflict;
     else if(!deadline||now()>=deadline)error=c::Error::expired;
     else if(!c::runtime_device_settings_authorized(id))error=c::Error::not_ready;
     else {
-        std::vector<device_settings::AdapterDefaultChange> preferences;
-        std::vector<amity::AdapterAddressChange> adapters;
-        for(const auto& change:request.changes){preferences.push_back(change.preference);adapters.push_back({change.preference.tentacle_id,change.preference.front_physical});}
         auto failure=std::make_shared<std::atomic<c::Error>>(c::Error::none);
-        auto persist=[id,deadline,revision=request.revision,hostname_revision=request.hostname_revision,preferences=std::move(preferences),hostname=request.hostname,failure]{
+        auto persist=[id,deadline,revision=write.expected_revision,hostname_revision=write.expected_hostname_revision,preferences=std::move(preferences),hostname=write.hostname,failure]{
                 if(now()>=deadline){failure->store(c::Error::expired);return ESP_ERR_INVALID_STATE;}
                 if(!c::runtime_device_settings_authorized(id)){failure->store(c::Error::not_ready);return ESP_ERR_INVALID_STATE;}
                 if(hostname?device_settings::hostname_settings().revision!=hostname_revision:device_settings::adapter_defaults().revision!=revision){failure->store(c::Error::transaction_conflict);return ESP_ERR_INVALID_STATE;}
@@ -97,13 +64,11 @@ c::Error apply(m::MessageId id,const c::Json& body,uint64_t deadline,std::string
             };
         // Each field has its own record and revision. A rename changes only
         // service metadata; adapter changes retain the HDMI owner's gate.
-        const auto applied=request.hostname?persist():owner->commit_adapter_settings(request.boot,std::move(adapters),deadline,std::move(persist));
+        const auto applied=write.hostname?persist():owner->commit_adapter_settings(write.expected_boot,std::move(adapters),deadline,std::move(persist));
         error=failure->load();
         if(error==c::Error::none&&applied!=ESP_OK)error=now()>=deadline?c::Error::expired:applied==ESP_ERR_NO_MEM?c::Error::queue_full:c::Error::not_ready;
     }
-    response=result(id,error);
-    if(receipts.size()==8)receipts.erase(receipts.begin());
-    receipts.push_back({id,std::move(request.fingerprint),response,error});
+    if(error==c::Error::none)saved=snapshot();
     return error;
 }
 }

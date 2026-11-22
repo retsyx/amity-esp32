@@ -89,6 +89,7 @@ Error parse_envelope(std::string_view body,Envelope &out,JsonError *detail) {
     if(!recognized)return Error::unsupported_kind;
     if((x.kind==Kind::membership_event||x.kind==Kind::membership_result)&&ttl>2000)return Error::invalid_message;
     if(x.kind==Kind::scoped_intent){model::OwnedIntent intent;if(parse_owned_intent(*v.get("payload"),intent)!=Error::none)return Error::invalid_message;x.intent=std::move(intent);}
+    else if(x.kind==Kind::settings_write){DeviceSettingsWrite write;if(parse_settings_write(*v.get("payload"),write)!=Error::none)return Error::invalid_message;x.settings_write=std::move(write);}
     else if(!payload(x.kind,*v.get("payload")))return Error::invalid_message;
     x.ttl_ms=ttl;x.payload=std::move(*v.get("payload"));
     out=std::move(x);return Error::none;

@@ -15,6 +15,7 @@ std::map<std::string,std::string> records;std::vector<std::string> written_keys;
 bool authorized=true;esp_err_t write_result=ESP_OK;
 template<class T>T id(unsigned n){char bytes[33];snprintf(bytes,sizeof(bytes),"%032x",n);return *T::parse(bytes);}
 c::Json json(const std::string& bytes){c::Json out;c::JsonError detail;assert(c::parse_json(bytes,out,detail));return out;}
+c::DeviceSettingsWrite typed(const std::string& bytes){c::DeviceSettingsWrite write;assert(c::parse_device_settings_write(json(bytes),write)==c::Error::none);return write;}
 std::string request(m::BootId boot,uint64_t revision=1,std::string changes="{\"tentacle_id\":3,\"default_front_physical_address\":\"5.2.0.0\"}"){
     return "{\"expected_boot_id\":\""+boot.str()+"\",\"expected_settings_revision\":\""+std::to_string(revision)+"\",\"changes\":["+changes+"]}";
 }
@@ -44,7 +45,11 @@ int main(){
     assert(rows->array[2].get("configured")->boolean&&rows->array[3].get("name")->string=="HDMI adapter 4");
     std::string response;assert(!restarts);
     unsigned serial=10;
-    const auto submit=[&](std::string body,uint64_t deadline=1000){return a::apply(id<m::MessageId>(serial++),json(body),deadline,response);};
+    // The service receives writes already validated by the transport parser.
+    const auto submit=[&](std::string body,uint64_t deadline=1000){
+        c::DeviceSettingsWrite write;if(c::parse_device_settings_write(json(body),write)!=c::Error::none)return c::Error::invalid_message;
+        return a::apply(id<m::MessageId>(serial++),write,deadline,response);
+    };
     auto bad=request(owner.boot);bad.insert(bad.size()-1,",\"confirm_restart\":true");assert(submit(bad)==c::Error::invalid_message);
     bad=request(owner.boot);bad.insert(bad.size()-1,",\"extra\":true");assert(submit(bad)==c::Error::invalid_message);
     const std::string duplicate="{\"tentacle_id\":3,\"default_front_physical_address\":\"1.0.0.0\"}";
@@ -65,17 +70,18 @@ int main(){
     assert(submit(request(owner.boot))==c::Error::not_ready&&writes==0);
     owner.gate=[&](auto,auto,uint64_t,std::function<esp_err_t()> persist){++calls;return persist();};
     write_result=ESP_FAIL;assert(submit(request(owner.boot))==c::Error::storage_failure&&writes==1&&device_settings::adapter_defaults().revision==1);write_result=ESP_OK;
-    const auto successful=id<m::MessageId>(serial++);const auto body=json(request(owner.boot));
+    const auto successful=id<m::MessageId>(serial++);const auto body=typed(request(owner.boot));
     assert(a::apply(successful,body,1000,response)==c::Error::none&&writes==2&&device_settings::adapter_defaults().revision==2);
     assert(device_settings::adapter_defaults().front_physical[3]==0x5200&&device_settings::adapter_defaults().front_physical[0]==0x3000);
-    const auto applied=response;const auto finished_calls=calls;clock_ms=1100;
-    assert(a::apply(successful,body,1000,response)==c::Error::none&&response==applied&&calls==finished_calls&&writes==2);
-    assert(a::apply(successful,json(request(owner.boot,2)),2000,response)==c::Error::transaction_conflict);
+    assert(c::valid_settings_snapshot(json(response))&&json(response).get("settings_revision")->string=="2");
+    // Nothing resends a write; a repeated one is stale and never saves twice.
+    const auto finished_calls=calls;clock_ms=1100;
+    assert(a::apply(successful,body,1000,response)==c::Error::transaction_conflict&&response.empty()&&calls==finished_calls&&writes==2);
     assert(!restarts);
     // A fresh save is available immediately on the same owner boot.
     assert(submit(request(owner.boot,2),2000)==c::Error::none&&writes==3&&device_settings::adapter_defaults().revision==3);
-    // Old same-boot revisions and old-boot approvals remain invalid after the
-    // bounded receipt cache is gone. Replaying 100 approvals cannot resave.
+    // Old same-boot revisions and old-boot approvals remain invalid; replaying
+    // 100 approvals cannot resave.
     a::install(owner);for(unsigned n=0;n<100;++n)assert(submit(request(owner.boot),2000)==c::Error::transaction_conflict);
     owner.boot=id<m::BootId>(3);a::install(owner);
     for(unsigned n=0;n<100;++n)assert(submit(request(id<m::BootId>(1),3),2000)==c::Error::stale_boot);
@@ -108,12 +114,11 @@ int main(){
     assert(submit(request(owner.boot,4,"{\"tentacle_id\":3,\"default_front_physical_address\":\"2.0.0.0\"}"),2000)==c::Error::none&&writes==7&&written_keys.back()=="front_defaults");
     assert(records.at("hostname")==hostname_record&&device_settings::hostname_settings().revision==2);
     const auto updated_adapter_record=records.at("front_defaults");
-    const auto rename_id=id<m::MessageId>(serial++);const auto rename_body=json(rename("den",2));
+    const auto rename_id=id<m::MessageId>(serial++);const auto rename_body=typed(rename("den",2));
     assert(a::apply(rename_id,rename_body,2000,response)==c::Error::none&&writes==8&&written_keys.back()=="hostname");
-    const auto renamed_result=response;
-    assert(a::apply(rename_id,rename_body,2000,response)==c::Error::none&&writes==8&&response==renamed_result);
+    assert(a::apply(rename_id,rename_body,2000,response)==c::Error::transaction_conflict&&writes==8);
     assert(device_settings::adapter_defaults().revision==5&&records.at("front_defaults")==updated_adapter_record&&device_settings::hostname_settings().revision==3&&json(a::snapshot()).get("hostname")->string=="den"&&!restarts);
     assert(device_settings::adapter_defaults().front_physical[3]==0x2000);
-    std::cout<<"PASS independent live hostname settings: same boot, no HDMI gate, separate records/revisions, normalized names, stale revisions, failed persistence, mixed writes rejected and idempotence\n";
-    std::cout<<"PASS actual adapter settings service: stable snapshot/provenance, strict parser, original deadline and authority recheck, owner gate, atomic save, idempotence, stale-cache/boot replay, same-boot consecutive saves without restart\n";
+    std::cout<<"PASS independent live hostname settings: same boot, no HDMI gate, separate records/revisions, normalized names, stale revisions, failed persistence, mixed writes rejected and no repeated save\n";
+    std::cout<<"PASS actual adapter settings service: stable snapshot/provenance, validated writes, original deadline and authority recheck, owner gate, atomic save, stale revision/boot replay, same-boot consecutive saves without restart\n";
 }

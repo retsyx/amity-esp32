@@ -40,19 +40,20 @@ std::string snapshot(model::BootId target={}){if(!target)target=boot;return "{\"
 Json parsed(std::string_view text){Json out;JsonError detail;assert(parse_json(text,out,detail));return out;}
 Json core(model::BootId target={},uint64_t expected=2){if(!target)target=boot;return parsed("{\"expected_boot_id\":\""+target.str()+"\",\"expected_settings_revision\":\""+std::to_string(expected)+"\",\"changes\":[{\"tentacle_id\":3,\"default_front_physical_address\":\"A.0.0.0\"}]}");}
 Json rename_core(std::string_view name="Living-Room",model::BootId target={},uint64_t expected=10){if(!target)target=boot;return parsed("{\"expected_boot_id\":\""+target.str()+"\",\"expected_hostname_revision\":\""+std::to_string(expected)+"\",\"hostname\":\""+std::string(name)+"\",\"changes\":[]}");}
-Error apply(model::MessageId id,const Json& body,uint64_t deadline,std::string& response){
- DeviceSettingsWrite write;Error error=parse_device_settings_write(body,write);
+DeviceSettingsWrite typed(const Json& body){DeviceSettingsWrite write;assert(parse_device_settings_write(body,write)==Error::none);return write;}
+Error apply(model::MessageId id,const DeviceSettingsWrite& write,uint64_t deadline,std::string& saved){
+ Error error=Error::none;
  if(effect_fault==1)clock_ms=deadline;
  if(effect_fault==2&&current_link)current_link->cancelled=true;
  if(effect_fault==3)++configuration;
- if(error==Error::none&&!runtime_device_settings_authorized(id))error=now_ms()>=deadline?Error::expired:Error::not_ready;
+ if(!runtime_device_settings_authorized(id))error=now_ms()>=deadline?Error::expired:Error::not_ready;
  if(error==Error::none&&write.expected_boot!=boot)error=Error::stale_boot;
  if(error==Error::none&&(write.hostname?write.expected_hostname_revision!=hostname_revision:write.expected_revision!=revision))error=Error::transaction_conflict;
  if(error==Error::none){++saves;if(write.hostname){local_hostname=*write.hostname;++hostname_revision;}else ++revision;}
- response="{\"request_id\":\""+id.str()+"\",\"stage\":\""+(error==Error::none?"applied":"failed")+"\",\"error\":\""+(error==Error::none?"":settings_error(error))+"\",\"snapshot\":"+(error==Error::none?snapshot():"null")+"}";return error;
+ saved=error==Error::none?snapshot():"";return error;
 }
 void reset(bool main){
- clock_ms=100;revision=2;hostname_revision=10;local_hostname="main-name";registry_failure=false;hostnames={};network={};admission={};network.get_hostname=[]{return local_hostname;};configuration=1;saves=restarts=0;send_success=true;applied_sent=http_sent=false;effect_fault=0;sent.clear();links.clear();current_link.reset();group={};identity={};status={};settings_caches.clear();settings_operations.clear();settings_received.clear();settings_authorization={};identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.authority=main?identity.id:ident<model::OctopusId>(3);group.consortium=ident<model::ConsortiumId>(2);group.revision=1;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});status.authority_ready=main;status.coordinator=main;status.member=!main;
+ clock_ms=100;revision=2;hostname_revision=10;local_hostname="main-name";registry_failure=false;hostnames={};network={};admission={};network.get_hostname=[]{return local_hostname;};configuration=1;saves=restarts=0;send_success=true;applied_sent=http_sent=false;effect_fault=0;sent.clear();links.clear();current_link.reset();group={};identity={};status={};settings_caches.clear();settings_operations.clear();settings_authorization={};identity.id=ident<model::OctopusId>(4);group.role=main?Group::coordinator:Group::member;group.authority=main?identity.id:ident<model::OctopusId>(3);group.consortium=ident<model::ConsortiumId>(2);group.revision=1;group.peers.push_back({ident<model::OctopusId>(3),"leaf","pin",true});status.authority_ready=main;status.coordinator=main;status.member=!main;
  settings_hooks={[]{return snapshot();},apply};
 }
 std::shared_ptr<Active> connection(bool receiver){
@@ -65,7 +66,10 @@ std::shared_ptr<Active> connection(bool receiver){
  links.push_back(active);current_link=active;return active;
 }
 Envelope message(const std::shared_ptr<Active>&,Kind kind,const Json& payload){Envelope e;e.config_revision=1;e.kind=kind;e.ttl_ms=1000;e.payload=payload;return e;}
-Envelope write_message(const std::shared_ptr<Active>& active,unsigned request=20,const Json* body=nullptr){auto content=body?*body:core();return message(active,Kind::settings_write,parsed("{\"request_id\":\""+ident<model::MessageId>(request).str()+"\",\"settings\":"+settings_json(content)+"}"));}
+Envelope write_message(const std::shared_ptr<Active>& active,unsigned request=20,const Json* body=nullptr){
+ auto content=body?*body:core();auto e=message(active,Kind::settings_write,parsed("{\"request_id\":\""+ident<model::MessageId>(request).str()+"\",\"settings\":"+settings_json(content)+"}"));
+ DeviceSettingsWrite write;assert(parse_settings_write(e.payload,write)==Error::none);e.settings_write=write;return e;
+}
 void codec_tests(){
  reset(true);auto snap=parsed(snapshot());assert(valid_settings_snapshot(snap));snap.get("adapters")->array[0].get("configured")->boolean=false;assert(valid_settings_snapshot(snap));
  for(const auto* valid:{"","0.0.0.0","A.0.0.0","a.1.0.0","1.2.3.4"}){auto value=core();value.get("changes")->array[0].get("default_front_physical_address")->string=valid;DeviceSettingsWrite write;assert(parse_device_settings_write(value,write)==Error::none);}
@@ -148,20 +152,20 @@ void live_hostname_tests(){
 }
 void receiver_tests(){
  reset(false);auto active=connection(true);auto request=write_message(active);assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0);assert(parsed(sent.back()).get("stage")->string=="applied");
- assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0);
+ assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0&&parsed(sent.back()).get("stage")->string=="failed"); // A repeated write is stale, never saved twice.
  const auto original_scope=active->session.scope();const auto original_tls=active->tls;
  const auto next=core({},3);assert(settings_dispatch(active,write_message(active,21,&next),clock_ms)&&saves==2&&revision==4);
  assert(active->session.scope()==original_scope&&active->tls==original_tls&&active->ready&&!active->cancelled&&!restarts);
  for(unsigned failure=0;failure<5;++failure){reset(false);active=connection(true);request=write_message(active);if(failure==0)request.config_revision=2;if(failure>=1&&failure<=3)effect_fault=failure;if(failure==4){active->session.disconnect();}assert(!settings_dispatch(active,request,clock_ms)||parsed(sent.back()).get("stage")->string=="failed");assert(!saves&&!restarts);}
  reset(false);active=connection(true);send_success=false;request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0);send_success=true;assert(settings_dispatch(active,request,clock_ms)&&saves==1&&restarts==0); // Lost results do not resave or restart the live owner.
  reset(true);active=connection(false);request=write_message(active);assert(!settings_dispatch(active,request,clock_ms)&&!saves&&!restarts);
- std::cout<<"PASS actual target dispatch: originalmain scope/deadline/config/revocation guards, no memberforwarding, exact duplicate outcome, same-stream consecutive saves and lost-result safety\n";
+ std::cout<<"PASS actual target dispatch: originalmain scope/deadline/config/revocation guards, no memberforwarding, no replay record, same-stream consecutive saves and lost-result safety\n";
 }
 void logical_session_authorization_tests(){
  reset(false);auto active=connection(true);const auto original=active->session.scope();const auto tls=active->tls;
  const auto fresh_link=ident<model::LinkId>(91);
  bool checked=false;
- settings_hooks.apply=[&](model::MessageId id,const Json&,uint64_t deadline,std::string& response){
+ settings_hooks.apply=[&](model::MessageId id,const DeviceSettingsWrite&,uint64_t deadline,std::string&){
   assert(runtime_device_settings_authorized(id)&&deadline>now_ms());
   active->execution_fenced=true;assert(!runtime_device_settings_authorized(id));active->execution_fenced=false;
   active->restart_requested=true;assert(!runtime_device_settings_authorized(id));active->restart_requested=false;
@@ -176,7 +180,7 @@ void logical_session_authorization_tests(){
   // settings write admitted to the ended logical execution session.
   assert(!runtime_device_settings_authorized(id));
   auto expected=original;expected.link_id=fresh_link;assert(active->session.scope()==expected&&active->tls==tls);
-  checked=true;response="{\"request_id\":\""+id.str()+"\",\"stage\":\"failed\",\"error\":\"NOT_READY\",\"snapshot\":null}";return Error::not_ready;
+  checked=true;return Error::not_ready;
  };
  auto request=write_message(active);assert(settings_dispatch(active,request,clock_ms)&&checked&&!saves&&!restarts);
  assert(parsed(sent.back()).get("stage")->string=="failed");
@@ -187,18 +191,18 @@ void logical_session_authorization_tests(){
 }
 void local_tests(){
  reset(true);const auto id=ident<model::MessageId>(30);const auto original_boot=boot;
- assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==1&&!restarts);
+ assert(runtime_write_device_settings(identity.id,id,typed(core()),clock_ms+5000)==ESP_OK&&saves==1&&!restarts);
  auto result=parsed(runtime_device_settings_operation(identity.id,id));assert(result.get("stage")->string=="applied"&&!result.get("rebooting")->boolean&&boot==original_boot);
- assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==1&&!restarts);
- assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(31),core({},3),clock_ms+5000)==ESP_OK&&saves==2&&revision==4&&boot==original_boot);
+ assert(runtime_write_device_settings(identity.id,id,typed(core()),clock_ms+5000)==ESP_ERR_INVALID_ARG&&saves==1&&!restarts); // A request ID names one write.
+ assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(31),typed(core({},3)),clock_ms+5000)==ESP_OK&&saves==2&&revision==4&&boot==original_boot);
  // Every terminal outcome has the same bounded lifetime. Eviction never
  // authorizes a stale revision to repeat an already committed write.
- for(unsigned n=0;n<12;++n)assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(100+n),core({},1),clock_ms+5000)==ESP_OK);
- assert(settings_operations.size()<=8&&settings_received.size()<=8);
+ for(unsigned n=0;n<12;++n)assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(100+n),typed(core({},1)),clock_ms+5000)==ESP_OK);
+ assert(settings_operations.size()<=8);
  assert(parsed(runtime_device_settings_operation(identity.id,id)).get("stage")->string=="unknown");
- assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_OK&&saves==2&&!restarts);
+ assert(runtime_write_device_settings(identity.id,id,typed(core()),clock_ms+5000)==ESP_OK&&saves==2&&!restarts);
  assert(parsed(runtime_device_settings_operation(identity.id,id)).get("stage")->string=="failed");
- reset(false);assert(runtime_write_device_settings(identity.id,id,core(),clock_ms+5000)==ESP_ERR_INVALID_STATE&&!saves);
+ reset(false);assert(runtime_write_device_settings(identity.id,id,typed(core()),clock_ms+5000)==ESP_ERR_INVALID_STATE&&!saves);
  std::cout<<"PASS actual local HTTP boundary: original main only, live durable outcome, same-boot consecutive saves, pure polling, bounded eight terminal outcomes and stale-eviction fences\n";
 }
 void rename_sender_tests(){
@@ -207,18 +211,18 @@ void rename_sender_tests(){
  auto rename=rename_core("member-new",active->status.boot_id);
  const auto request=ident<model::MessageId>(90);
  admission.submitted=true;admission.view.phase="connecting";admission.hostname="member-new";
- assert(runtime_write_device_settings(active->peer,request,rename,clock_ms+5000)==ESP_ERR_INVALID_ARG);
+ assert(runtime_write_device_settings(active->peer,request,typed(rename),clock_ms+5000)==ESP_ERR_INVALID_ARG);
  admission={};
- assert(runtime_write_device_settings(active->peer,request,rename,clock_ms+5000)==ESP_OK);
+ assert(runtime_write_device_settings(active->peer,request,typed(rename),clock_ms+5000)==ESP_OK);
  assert(settings_hostname_pending({},"member-new")&&!settings_hostname_pending(active->peer,"member-new"));
  auto concurrent=rename_core("member-new");
- assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(91),concurrent,clock_ms+5000)==ESP_ERR_INVALID_ARG);
+ assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(91),typed(concurrent),clock_ms+5000)==ESP_ERR_INVALID_ARG);
  auto renamed=parsed(snapshot(active->status.boot_id));renamed.get("hostname")->string="member-new";
  auto result=message(active,Kind::settings_result,parsed(settings_result(request,"write","applied","",settings_json(renamed))));
  assert(settings_dispatch(active,result,clock_ms)&&hostnames.lookup(active->peer)=="member-new"&&active->status.hostname=="member-new");
  assert(parsed(runtime_device_settings_operation(active->peer,request)).get("stage")->string=="applied");
- assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(92),concurrent,clock_ms+5000)==ESP_ERR_INVALID_ARG);
- rename.get("hostname")->string=local_hostname;assert(runtime_write_device_settings(active->peer,ident<model::MessageId>(93),rename,clock_ms+5000)==ESP_ERR_INVALID_ARG);
+ assert(runtime_write_device_settings(identity.id,ident<model::MessageId>(92),typed(concurrent),clock_ms+5000)==ESP_ERR_INVALID_ARG);
+ rename.get("hostname")->string=local_hostname;assert(runtime_write_device_settings(active->peer,ident<model::MessageId>(93),typed(rename),clock_ms+5000)==ESP_ERR_INVALID_ARG);
  assert(active->session.scope()==original&&active->tls==tls&&active->ready&&!active->cancelled&&!restarts);
  std::cout<<"PASS rename sender: pending duplicate-name reservation, main/member name collision rejection and immediate authenticated member metadata on the existing connection\n";
 }
@@ -226,15 +230,15 @@ void sender_tests(){
  reset(true);auto blocked=connection(false);const auto transport=blocked->tls;
  blocked->ready=blocked->status.ready=false;blocked->management_ready=blocked->status.management_ready=true;blocked->session.restrict_management();
  assert(parsed(runtime_device_settings(blocked->peer)).get("status")->string=="unsupported"&&blocked->queue.empty());
- assert(runtime_write_device_settings(blocked->peer,ident<model::MessageId>(79),core(blocked->status.boot_id),clock_ms+500)==ESP_ERR_INVALID_STATE&&blocked->queue.empty());
+ assert(runtime_write_device_settings(blocked->peer,ident<model::MessageId>(79),typed(core(blocked->status.boot_id)),clock_ms+500)==ESP_ERR_INVALID_STATE&&blocked->queue.empty());
  assert(blocked->tls==transport&&!blocked->cancelled&&blocked->management_ready);
  reset(true);auto active=connection(false);auto wrapper=parsed(runtime_device_settings(active->peer));assert(wrapper.get("status")->string=="reading"&&active->queue.size()==1);runtime_device_settings(active->peer);assert(active->queue.size()==1);
  active->execution_fenced=true;assert(!settings_link(active->peer).active);active->execution_fenced=false;
  active->restart_requested=true;assert(!settings_link(active->peer).active);active->restart_requested=false;
  assert(settings_link(active->peer).active==active&&active->queue.size()==1);
  const auto read=parsed(active->queue.front().payload);const auto id=*model::MessageId::parse(read.get("request_id")->string);auto reply=message(active,Kind::settings_result,parsed(settings_result(id,"read","applied","",snapshot(active->status.boot_id))));assert(settings_dispatch(active,reply,clock_ms));assert(parsed(runtime_device_settings(active->peer)).get("status")->string=="ready");
- const auto command=ident<model::MessageId>(80);assert(runtime_write_device_settings(active->peer,command,core(active->status.boot_id),clock_ms+500)==ESP_OK);assert(active->queue.back().ttl<=500);assert(parsed(runtime_device_settings_operation(active->peer,command)).get("stage")->string=="admitted");
- active->cancelled=true;assert(parsed(runtime_device_settings(active->peer)).get("status")->string=="offline");assert(parsed(runtime_device_settings_operation(active->peer,command)).get("stage")->string=="unknown");const auto queued=active->queue.size();assert(runtime_write_device_settings(active->peer,command,core(active->status.boot_id),clock_ms+5000)==ESP_OK&&active->queue.size()==queued&&!restarts);
+ const auto command=ident<model::MessageId>(80);assert(runtime_write_device_settings(active->peer,command,typed(core(active->status.boot_id)),clock_ms+500)==ESP_OK);assert(active->queue.back().ttl<=500);assert(parsed(runtime_device_settings_operation(active->peer,command)).get("stage")->string=="admitted");
+ active->cancelled=true;assert(parsed(runtime_device_settings(active->peer)).get("status")->string=="offline");assert(parsed(runtime_device_settings_operation(active->peer,command)).get("stage")->string=="unknown");const auto queued=active->queue.size();assert(runtime_write_device_settings(active->peer,command,typed(core(active->status.boot_id)),clock_ms+5000)==ESP_ERR_INVALID_ARG&&active->queue.size()==queued&&!restarts);
  std::cout<<"PASS actual main client: coalescedreadonlyGET, authenticatedfreshcache, offline/unsupporteduneditable, preservedoriginalTTL, disconnectunknown and noautomaticresend\n";
 }
 }

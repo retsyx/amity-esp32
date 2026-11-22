@@ -1008,9 +1008,7 @@ void active_loop_work(void *arg){
             const auto admitted=active->session.admit(envelope,received,received);
             if(admitted!=Error::none){trace.fail("settings_admit",admitted,LinkTrace::Recovery::terminal);break;}
             if(envelope.kind==Kind::settings_write){
-                DeviceSettingsWrite write;
-                if(parse_device_settings_write(*envelope.payload.get("settings"),write)!=Error::none){trace.fail("settings_admit",Error::invalid_message,LinkTrace::Recovery::terminal);break;}
-                if(write.expected_boot!=boot){trace.fail("settings_boot",Error::stale_boot,LinkTrace::Recovery::terminal);break;}
+                if(envelope.settings_write->expected_boot!=boot){trace.fail("settings_boot",Error::stale_boot,LinkTrace::Recovery::terminal);break;}
             }else if(envelope.kind==Kind::settings_result&&envelope.payload.get("stage")->string=="applied"&&envelope.payload.get("snapshot")->get("boot_id")->string!=active->session.scope().peer_boot_id.str()){
                 trace.fail("settings_boot",Error::stale_boot,LinkTrace::Recovery::terminal);break;
             }
@@ -1610,13 +1608,14 @@ std::string runtime_device_settings(model::OctopusId owner){
     cache->read_id=random_id<model::MessageId>();cache->read_link=link.active->session.scope().link_id;cache->read_until=now+5000;cache->attempted=now;
     link.active->queue.push_back({Kind::settings_read,"{\"request_id\":\""+cache->read_id.str()+"\"}",2000,now,link.status.config_revision,{}});wake(*link.active);return wrapper("reading","");
 }
-esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId id,const Json& core,uint64_t admitted_until){
-    DeviceSettingsWrite write;if(!id||parse_device_settings_write(core,write)!=Error::none)return ESP_ERR_INVALID_ARG;
-    const auto encoded=device_settings_write_json(write);const auto now=now_ms();if(!admitted_until)admitted_until=now+5000;admitted_until=std::min<uint64_t>(admitted_until,now+5000);if(admitted_until<=now)return ESP_ERR_TIMEOUT;
+esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId id,const DeviceSettingsWrite& write,uint64_t admitted_until){
+    if(!id)return ESP_ERR_INVALID_ARG;
+    const auto now=now_ms();if(!admitted_until)admitted_until=now+5000;admitted_until=std::min<uint64_t>(admitted_until,now+5000);if(admitted_until<=now)return ESP_ERR_TIMEOUT;
     bool local=false;
     {std::lock_guard<std::mutex> guard(lock);settings_expire(now);
         if(!original_controller(group,identity.id)||!status.authority_ready)return ESP_ERR_INVALID_STATE;
-        for(const auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id)return operation.core==encoded?ESP_OK:ESP_ERR_INVALID_ARG;
+        // A request ID names one write; reusing it is a caller error, never a resend.
+        for(const auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id)return ESP_ERR_INVALID_ARG;
         for(const auto& operation:settings_operations)if(operation.owner==owner&&operation.stage=="admitted")return ESP_ERR_INVALID_STATE;
         if(settings_operations.size()>=11)return ESP_ERR_NO_MEM;
         if(write.hostname){
@@ -1630,18 +1629,18 @@ esp_err_t runtime_write_device_settings(model::OctopusId owner,model::MessageId 
             if(settings_hostname_pending(owner,*write.hostname))return ESP_ERR_INVALID_ARG;
         }
         local=owner==identity.id;
-        if(local){if(write.expected_boot!=boot)return ESP_ERR_INVALID_STATE;settings_operations.push_back({owner,id,boot,{},encoded,"admitted","",admitted_until,write.hostname});}
+        if(local){if(write.expected_boot!=boot)return ESP_ERR_INVALID_STATE;settings_operations.push_back({owner,id,boot,{},"admitted","",admitted_until,write.hostname});}
         else {
             if(!settings_enrolled(owner))return ESP_ERR_INVALID_STATE;
             const auto link=settings_link(owner);
             if(!link.active||!link.active->ready||write.expected_boot!=link.status.boot_id)return ESP_ERR_INVALID_STATE;
             const auto until=std::min<uint64_t>(admitted_until,now+5000);if(until<=now)return ESP_ERR_TIMEOUT;
             std::lock_guard<std::mutex> queue(link.active->mutex);if(link.active->queue.size()>=16)return ESP_ERR_NO_MEM;
-            const auto payload="{\"request_id\":\""+id.str()+"\",\"settings\":"+encoded+"}";
-            link.active->queue.push_back({Kind::settings_write,payload,static_cast<uint32_t>(until-now),now,link.status.config_revision,{}});wake(*link.active);settings_operations.push_back({owner,id,link.status.boot_id,link.active->session.scope().link_id,encoded,"admitted","",until,write.hostname});
+            const auto payload="{\"request_id\":\""+id.str()+"\",\"settings\":"+device_settings_write_json(write)+"}";
+            link.active->queue.push_back({Kind::settings_write,payload,static_cast<uint32_t>(until-now),now,link.status.config_revision,{}});wake(*link.active);settings_operations.push_back({owner,id,link.status.boot_id,link.active->session.scope().link_id,"admitted","",until,write.hostname});
         }
     }
-    if(local){const auto response=settings_apply({},id,core,admitted_until);Json result;JsonError detail;if(!parse_json(response,result,detail))return ESP_FAIL;
+    if(local){const auto response=settings_apply({},id,write,admitted_until);Json result;JsonError detail;if(!parse_json(response,result,detail))return ESP_FAIL;
         {std::lock_guard<std::mutex> guard(lock);for(auto& operation:settings_operations)if(operation.owner==owner&&operation.id==id){operation.stage=result.get("stage")->string;operation.error=operation.stage=="applied"?"":settings_message(result.get("error")->string);break;}settings_expire(now_ms());}
     }
     return ESP_OK;

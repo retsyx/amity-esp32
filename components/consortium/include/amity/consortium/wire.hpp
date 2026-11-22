@@ -22,6 +22,8 @@ struct UpdateChunk {
     uint64_t offset = 0;
     std::string bytes;
 };
+struct AdapterSettingChange {uint8_t tentacle_id=0;std::string default_front_physical_address;};
+struct DeviceSettingsWrite {model::BootId expected_boot;uint64_t expected_revision=0,expected_hostname_revision=0;std::vector<AdapterSettingChange> changes;std::optional<std::string> hostname;};
 // The authenticated connection identifies both Amities and boots; a frame
 // carries only its configuration fence, kind, lifetime and payload.
 struct Envelope {
@@ -29,8 +31,9 @@ struct Envelope {
     Kind kind = Kind::device_status;
     uint32_t ttl_ms = 0;
     Json payload;
-    // A scoped_intent payload, decoded once when the frame is parsed.
+    // scoped_intent and settings_write payloads, decoded once when the frame is parsed.
     std::optional<model::OwnedIntent> intent;
+    std::optional<DeviceSettingsWrite> settings_write;
     std::optional<UpdateChunk> update_chunk;
 };
 // Supported kinds all have closed payload validators.

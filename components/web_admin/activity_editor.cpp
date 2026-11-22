@@ -41,7 +41,7 @@ esp_err_t reject(httpd_req_t* req,const std::string& reason,const char* code="40
 esp_err_t reject_active(httpd_req_t* req){return web::json(req,"{\"code\":\"active_activity\",\"error\":\"Stop this activity before editing or deleting it.\"}","409 Conflict");}
 bool pending(const std::string& phase){return phase=="admitted"||phase=="configuring"||phase=="activating";}
 struct Operation {
-    m::MessageId id;std::string digest,kind,stage="admitted",error;
+    m::MessageId id;std::string kind,stage="admitted",error;
     cs::RevisionPair revisions;m::BootId boot;
     std::vector<std::string> unresolved;
     std::optional<m::ComponentId> component_id;
@@ -116,10 +116,11 @@ bool activity_editor_request(amity::SystemControl& control,httpd_req_t* req,cons
     }
     std::string body;if(!web::body(req,body)){result=ESP_FAIL;return true;}Json root(parse_json_input(body),cJSON_Delete);
     if(!root||body.find('\0')!=std::string::npos){result=reject(req,"Invalid activity editor JSON","400 Bad Request");return true;}
-    const auto request=m::MessageId::parse(text(root.get(),"request_id"));const auto digest=cs::sha256_hex(path+body);if(!request){result=reject(req,"An activity request identity is required","400 Bad Request");return true;}
-    for(const auto& op:operations)if(op.id==*request){result=op.digest==digest?operation_json(req,op):reject(req,"The request identity already describes a different action");return true;}
+    const auto request=m::MessageId::parse(text(root.get(),"request_id"));if(!request){result=reject(req,"An activity request identity is required","400 Bad Request");return true;}
+    // Clients never resend a request: an ID already in use is a conflict, not a replay.
+    for(const auto& op:operations)if(op.id==*request){result=reject(req,"This request was already submitted");return true;}
     if(operations.size()>=32){const auto done=std::find_if(operations.begin(),operations.end(),[](const auto& op){return !pending(op.stage);});if(done==operations.end()){result=reject(req,"Activity administration is busy","503 Service Unavailable");return true;}operations.erase(done);}
-    Operation op;op.id=*request;op.digest=digest;op.revisions=config->revisions();op.boot=current_boot();
+    Operation op;op.id=*request;op.revisions=config->revisions();op.boot=current_boot();
     if(path==std::string(prefix)+"/restore"){
         cs::Configuration backup,candidate;std::string error;
         if(!state.sessions.empty()||state.activity_settling){result=reject(req,"Stop playback before restoring a saved configuration");return true;}

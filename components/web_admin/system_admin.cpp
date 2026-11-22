@@ -9,6 +9,7 @@
 #include "device_settings.hpp"
 #include "adapter_settings.hpp"
 #include "amity/consortium/runtime.hpp"
+#include "amity/consortium/settings.hpp"
 #include "amity/consortium/limits.hpp"
 #include "amity/system_sync.hpp"
 #include "web.hpp"
@@ -30,7 +31,7 @@ using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 amity::SystemControl* control=nullptr;
 bool configuration_passive=false;
 config_store::ConfigurationSnapshot deferred_configuration;
-struct Tracked {std::string id,path,digest,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;
+struct Tracked {std::string id,path,status,error; m::OctopusId candidate{};m::MessageId scan_id{};std::string name;bool rebooting=false;std::string reset;
     config_store::RevisionPair removal_revisions{};bool removal_enrolled=false;};
 bool operation_pending(const Tracked& operation){return operation.status=="admitted"||operation.status=="configuring"||operation.status=="preparing"||operation.status=="activating";}
 std::vector<Tracked> operations;
@@ -355,15 +356,12 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     for(auto* field=root->child;field;field=field->next)if(std::find(fields->begin(),fields->end(),field->string)==fields->end()){result=error(req,"invalid_json","Expected supported fields only.");return true;}
     const auto id=string(root.get(),"request_id");
     if(!m::MutationId::parse(id)){result=error(req,"invalid_request_id","A canonical request ID is required.");return true;}
-    const auto digest=config_store::sha256_hex(data);
     for(auto& old:operations)update_operation(old);
-    auto prior=std::find_if(operations.begin(),operations.end(),[&](const auto& o){return o.id==id;});
-    if(prior!=operations.end()){
-        result=prior->path==path&&prior->digest==digest?operation_response(req,*prior):error(req,"request_conflict","This request ID was already used for different input.","409 Conflict");return true;
-    }
+    // Clients never resend a request: an ID already in use is a conflict, not a replay.
+    if(std::any_of(operations.begin(),operations.end(),[&](const auto& o){return o.id==id;})){result=error(req,"request_conflict","This request ID was already used.","409 Conflict");return true;}
     if(operations.size()==32){for(auto& old:operations)update_operation(old);auto terminal=std::find_if(operations.begin(),operations.end(),[](const auto& o){return !operation_pending(o);});if(terminal!=operations.end())operations.erase(terminal);}
     if(operations.size()>=32){result=error(req,"capacity","Too many operations are in progress.","503 Service Unavailable",true);return true;}
-    Tracked operation;operation.id=id;operation.path=path;operation.digest=digest;operation.status="complete";
+    Tracked operation;operation.id=id;operation.path=path;operation.status="complete";
     auto finish=[&]{
         if(operations.size()==32){auto terminal=std::find_if(operations.begin(),operations.end(),[](const auto& o){return !operation_pending(o);});if(terminal!=operations.end())operations.erase(terminal);}
         if(operations.size()>=32){result=error(req,"capacity","Too many operations are in progress.","503 Service Unavailable",true);return;}
@@ -372,9 +370,9 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
     if(const auto target=device_settings_target(path)){
         const auto owner=*m::OctopusId::parse(*target);operation.candidate=owner;
         Json core(cJSON_Duplicate(root.get(),true),cJSON_Delete);cJSON_DeleteItemFromObjectCaseSensitive(core.get(),"request_id");
-        amity::consortium::Json value;amity::consortium::JsonError parse_error;
-        if(!amity::consortium::parse_json(json(core.get()),value,parse_error)){result=error(req,"invalid_settings","Choose valid device settings.");return true;}
-        if(amity::consortium::runtime_write_device_settings(owner,*m::MessageId::parse(id),value,admitted_until_ms)!=ESP_OK){result=error(req,"settings_unavailable","Settings were not sent. Check that the hostname is unique and the Amity is connected. For adapter changes, stop activities before saving, then refresh the dialog.","409 Conflict");return true;}
+        amity::consortium::Json value;amity::consortium::JsonError parse_error;amity::consortium::DeviceSettingsWrite write;
+        if(!amity::consortium::parse_json(json(core.get()),value,parse_error)||amity::consortium::parse_device_settings_write(value,write)!=amity::consortium::Error::none){result=error(req,"invalid_settings","Choose valid device settings.");return true;}
+        if(amity::consortium::runtime_write_device_settings(owner,*m::MessageId::parse(id),write,admitted_until_ms)!=ESP_OK){result=error(req,"settings_unavailable","Settings were not sent. Check that the hostname is unique and the Amity is connected. For adapter changes, stop activities before saving, then refresh the dialog.","409 Conflict");return true;}
         operation.status="admitted";
         finish();return true;
     }
