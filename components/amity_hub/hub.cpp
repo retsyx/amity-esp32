@@ -342,9 +342,11 @@ void Hub::discovered(BusSide side, uint8_t address, uint8_t reported) {
     Device d; d.bus = side; d.address = address;
     if (address == 0) { d.name = "TV"; d.resolved = true; d.physical_address = 0; d.type = 0; }
     (discovering_ ? discovery_ : devices_).push_back(d);
-    if (reported != 0x84 && send(side, address, {0x83})) typed = now_us_;
-    if (reported != 0x47 && send(side, address, {0x46})) asked = now_us_;
-    if (reported != 0x87) send(side, address, {0x8c});
+    // Ask for every identity field, including one the introducing report
+    // carried: during a scan that report may answer a request sent before it.
+    if (send(side, address, {0x83})) typed = now_us_;
+    if (send(side, address, {0x46})) asked = now_us_;
+    send(side, address, {0x8c});
 }
 
 void Hub::source_thief(const cec::Frame &frame) {

@@ -90,9 +90,8 @@ static void metadata_can_introduce_a_device(){
         if(opcode==0x47)assert(d->name=="Player"&&d->resolved);
         if(opcode==0x84)assert(d->physical_address==0x2000&&d->type==4);
         if(opcode==0x87)assert(d->vendor_id==0x123456);
-        // The peer is asked only for identity its introducing report lacked.
-        assert((first(0x83,8)<fixture_sent.size())==(opcode!=0x84)&&(first(0x46,8)<fixture_sent.size())==(opcode!=0x47)&&
-            (first(0x8c,8)<fixture_sent.size())==(opcode!=0x87));
+        // The peer is asked for its full identity, whatever its introducing report carried.
+        assert(first(0x83,8)<fixture_sent.size()&&first(0x46,8)<fixture_sent.size()&&first(0x8c,8)<fixture_sent.size());
         only_targeted_identity_and_standby();metadata(hub);no_enumeration(hub,generation);
     }
 }
@@ -212,7 +211,20 @@ static void known_peer_is_asked_again_for_a_missing_type(){
     fixture_time+=300000000;fixture_sent.clear();receive({{0x8f,0x82,0x20,0},4});
     assert(sent(0x83)==0&&peer(hub)->name=="Player");no_enumeration(hub,generation);
 }
+static void scan_asks_a_peer_learned_from_a_late_reply_for_its_identity(){
+    reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
+    // An explicit scan starts while a Set OSD Name reply to a request sent
+    // before it is still on its way. The reply returns the peer to the scan's
+    // list, and the scan still asks that peer for its full identity itself.
+    assert(hub.discover());run_one_command();assert(hub.snapshot().discovering);
+    fixture_sent.clear();
+    receive({{static_cast<uint8_t>(0x80|back_address(hub)),0x47,'P','l','a','y','e','r'},8});
+    assert(first(0x83,8)<fixture_sent.size()&&first(0x46,8)<fixture_sent.size()&&first(0x8c,8)<fixture_sent.size());
+    fixture_finish_discovery(hub,generation);
+    assert(peer(hub)&&peer(hub)->name=="Player");
+}
 int main(){
+    scan_asks_a_peer_learned_from_a_late_reply_for_its_identity();
     active_announcement_without_configuration();metadata_can_introduce_a_device();
     unselected_player_retains_its_observation();foreign_activity_still_caches_local_player();malformed_announcements_are_not_cached();
     known_peer_is_asked_again_for_a_missing_name();refused_name_request_is_asked_again();known_peer_is_asked_again_for_a_missing_type();

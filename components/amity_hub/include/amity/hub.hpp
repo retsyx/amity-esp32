@@ -93,10 +93,10 @@ public:
     enum class ReceiveStep : uint8_t { Frame, Input, Switch, Announce, ForceBack, Done };
     uint8_t receive(BusSide side, const cec::Frame &frame, ReceiveStep step = ReceiveStep::Frame);
     ReceiveStep receive_step() const { return receive_step_; }
-    // Learn a new peer and ask for the identity its introducing report
-    // (0x82, 0x84, 0x47 or 0x87; 0 for none) did not carry. A known peer's
-    // later announcement (0x82 or 0x84) asks again for an OSD name it never
-    // supplied, the identity a lookup matches. Its Active Source also asks
+    // Learn a new peer and ask for its full identity. `reported` is the
+    // introducing report (0x82, 0x84, 0x47 or 0x87; 0 for none). A known
+    // peer's later announcement (0x82 or 0x84) asks again for an OSD name it
+    // never supplied, the identity a lookup matches. Its Active Source also asks
     // again for a device type it never reported, which equipment choices need.
     void discovered(BusSide side, uint8_t address, uint8_t reported = 0);
     void begin_discovery(uint8_t sides = 3);
