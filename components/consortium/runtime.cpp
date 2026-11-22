@@ -1324,7 +1324,7 @@ void invite_worker_work(void *arg){
     AdmissionClient client;
     good=good&&timing.step("crypto_handshake",[&]{return client.handshake([&](std::string_view bytes,std::string& reply){return current()&&gatt_client_exchange(false,bytes,reply)&&current();});});
     auto secure=[&](std::string_view plain,std::string& result){std::string encrypted,reply;return current()&&client.encrypt(plain,encrypted)&&gatt_client_exchange(true,encrypted,reply)&&current()&&client.decrypt(reply,result);};
-    std::string response,failure;Json identity_json;JsonError err;Peer peer;bool networked=false;
+    std::string response;Json identity_json;JsonError err;Peer peer;bool networked=false;
     good=good&&timing.step("identify_rpc",[&]{return secure("{\"phase\":\"identify\"}",response);});
     if(good){
         const auto validation=timing.begin("peer_validation");
@@ -1361,7 +1361,7 @@ void invite_worker_work(void *arg){
         if(good)good=secure("{\"phase\":\"wifi\",\"join_id\":\""+current_group.join_id.str()+"\",\"digest\":\""+digest+"\",\"ssid\":\""+hex(ssid)+"\",\"password\":\""+hex(password)+"\"}",response);
         mbedtls_platform_zeroize(password.data(),password.size());timing.finish(wifi,good);
     }
-    if(!good){admission_failed(scan,failure.empty()?"Adding this Amity was interrupted. Check its setup window, firmware and connection, then try again.":failure);return;}
+    if(!good){admission_failed(scan,"Adding this Amity was interrupted. Check its setup window, firmware and connection, then try again.");return;}
     {std::lock_guard<std::mutex> guard(lock);if(admission.view.scan_id==scan){admission.view.phase="finishing";admission.deadline=0;}status.phase="finishing_enrollment";}
     const auto finishing=timing.begin("finishing");timing.finish(finishing,true);timing.done(true);
 }
