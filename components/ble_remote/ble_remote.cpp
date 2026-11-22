@@ -107,6 +107,8 @@ bool have_selected, have_saved, descriptors_ready, encrypted, forgetting;
 bool unpair_cleanup_pending;
 bool unpair_cleanup_started, unpair_delete_bond;
 ble_addr_t unpair_target{};
+// A failed pairing or Unpair could not remove the remote's bond or saved peer.
+// The next Pair retries it first; `selected` names the identity when set.
 bool bond_cleanup_failed;
 // Filled by full discovery and saved once the remote is ready.
 ble::GattLayout discovered_layout;
@@ -887,6 +889,17 @@ int on_scan_event(ble_gap_event *event, void *) {
     return 0;
 }
 
+// Caller holds the remote mutex, on the worker with no search or connection
+// running. Searching first could replace `selected` and orphan that bond, and a
+// kept bond would make the same remote's new pairing a refused repeat pairing.
+int retry_bond_cleanup() {
+    int err = have_selected ? remove_peer(selected) : 0;
+    if (!err) err = persist_peer(nullptr);
+    if (err) ESP_LOGW(kTag, "Removing remote bond: %d", err);
+    else bond_cleanup_failed = have_selected = false;
+    return err;
+}
+
 void cancel_reconnect() {
     Guard lock;
     if (!reconnect_pending) return;
@@ -1163,6 +1176,10 @@ void worker(void *) {
             case CommandType::AutoPair: {
                 Guard lock;
                 if (radio_paused.load()||setup_cancelled.load()||forgetting) { state.pairing = false; break; }
+                if (bond_cleanup_failed) {
+                    const int cleanup = retry_bond_cleanup();
+                    if (cleanup) { state.pairing = state.scanning = false; state.last_error = cleanup; break; }
+                }
                 pairing_deadline = esp_timer_get_time() + command.seconds * 1000000LL;
                 start_scan(command.seconds);
                 break;
@@ -1207,7 +1224,8 @@ void worker(void *) {
             Guard lock;
             if (state.pairing && !state.connecting) {
                 const int64_t remaining = pairing_deadline - esp_timer_get_time();
-                if (state.bonded || forgetting || remaining <= 0) {
+                // A bond left behind ends the search; the next Pair removes it.
+                if (state.bonded || forgetting || bond_cleanup_failed || remaining <= 0) {
                     state.pairing = false;
                     pending_scan_seconds = 0;
                     stop_search = state.scanning;
@@ -1326,7 +1344,7 @@ extern "C" esp_err_t ble_remote_start_pairing(uint32_t seconds) {
     RadioAdmission admission(seconds);if(!admission.accepted)return ESP_ERR_INVALID_STATE;
     Guard lock;
     if (!state.ready || state.connected || state.connecting || state.scanning ||
-        state.pairing || state.unpairing || bond_cleanup_failed || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
+        state.pairing || state.unpairing || have_saved || connection_handle != BLE_HS_CONN_HANDLE_NONE)
         return ESP_ERR_INVALID_STATE;
     Command command{CommandType::AutoPair, seconds};
     if (xQueueSend(commands, &command, 0) != pdTRUE) return ESP_ERR_TIMEOUT;
