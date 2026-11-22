@@ -150,7 +150,8 @@ buttons retain their separate policy and Power+direction never forms a macro.
 
 Validation:
 
-- `sh tests/ble_test.sh` checks Python's `wait_for_release` gate at startup and
+- The remote input tests (`ble_controller_test.cpp`, `siri_remote_test.cpp`,
+  `remote_input_test.cpp`) check Python's `wait_for_release` gate at startup and
   activity selection: fresh overlapping keys, all physical aliases released,
   final-release/report ordering, one-second fallback without replay, swallowed
   swipes, standby/Power release handling, same-target selection, rejected
@@ -158,7 +159,7 @@ Validation:
   Hub tests also check that successful same-target selections notify input
   while repairs and rejected requests do not.
 
-- `sh tests/cec_hub_test.sh` checks wire ACK/arbitration/timing failures,
+- `tests/cec_hub_test.cpp` and `tests/cec_front_physical_test.cpp` check wire ACK/arbitration/timing failures,
   startup message order, activity transitions, identity payloads, ignored
   unsupported/badly addressed messages, and audio feedback under
   ASan and UBSan. Front physical-address tests cover multiple response orders,
@@ -169,10 +170,11 @@ Validation:
   continues. It also covers per-key failures, consumed final-release cleanup,
   one-shot admission, configuration and activity generation. Activity-settling
   tests verify asynchronous setup completions without blocking command handling.
-- `sh tests/cec_bus_test.sh` covers zero-wait admission during an outstanding
+- `tests/cec_runtime_driver_test.cpp` covers zero-wait admission during an outstanding
   ACK, per-operation terminal results and attempt budgets, FIFO bounds and
   capacity reuse, and independent wire completions under ASan/UBSan.
-- `sh tests/ble_test.sh` covers both input profiles, the Volume Up/Right
+- The BLE remote tests (`ble_keyboard_test.cpp`, `siri_remote_test.cpp`,
+  `remote_input_test.cpp`) cover both input profiles, the Volume Up/Right
   overlap sequence, logical aliases, keyed releases, stale reports,
   activity quarantine, disconnect/input-loss cancellation, and all five fixed
   Siri macros. Macro coverage includes both press/release orders, selector-based

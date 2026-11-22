@@ -158,7 +158,7 @@ accepts only version-3 packages and validates the target, image bounds, checksum
 and exact partition layout.
 Checksums detect corruption; obtain both downloads from a trusted release source.
 
-Run `sh tests/provisioning_test.sh` from the repository root for Go tests and the sanitized
+`sh tests/run_host_tests.sh` from the repository root runs the Go tests and the sanitized
 C++ firmware parser tests. Both implementations share an independently encoded Python fixture at
 `testdata/factory-v3.hex`.
 The reset suite simulates interrupted writes throughout the reset procedure.

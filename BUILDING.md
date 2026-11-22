@@ -130,12 +130,13 @@ The source API and HTTP routes have versionless names, including `config_store::
 
 ## Development and release checks
 
-Run the local checks after SDK setup:
+Run the local checks after SDK setup and a firmware build:
 
 ```sh
 sh tests/run_host_tests.sh
-sh tests/provisioning_test.sh
 ```
+
+It builds and runs every host test in parallel with CTest and reports each failure. `sh tests/run_host_tests.sh standalone` runs only the tests that need no ESP-IDF checkout, managed components or firmware build output.
 
 `python3 amity-provision/build_release.py` builds setup-tool archives for macOS, Windows, and Linux, in both Intel/AMD and ARM64 versions. The GitHub **Build firmware** workflow uses the same SDK pins. A newly pushed `v*` tag triggers **Release firmware**, which verifies that the tag’s version matches `PROJECT_VER` and publishes the firmware, setup-tool archives, installation README, and checksums as GitHub Release assets.
 
