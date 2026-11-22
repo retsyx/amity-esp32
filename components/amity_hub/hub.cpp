@@ -327,12 +327,19 @@ void Hub::resolve_device(BusSide side, uint8_t address, bool restore_route) {
 }
 
 void Hub::discovered(BusSide side, uint8_t address, uint8_t reported) {
-    if (address > 14 || discovery_device(side, address)) return;
+    if (address > 14) return;
+    auto &asked = name_requested_[side == BusSide::Front ? 0 : 1][address];
+    if (const auto *known = discovery_device(side, address)) {
+        // A request still inside CEC's 1 s reply time stands.
+        if (known->name.empty() && (reported == 0x82 || reported == 0x84) && now_us_ - asked >= 1000000 &&
+            send(side, address, {0x46})) asked = now_us_;
+        return;
+    }
     Device d; d.bus = side; d.address = address;
     if (address == 0) { d.name = "TV"; d.resolved = true; d.physical_address = 0; d.type = 0; }
     (discovering_ ? discovery_ : devices_).push_back(d);
     if (reported != 0x84) send(side, address, {0x83});
-    if (reported != 0x47) send(side, address, {0x46});
+    if (reported != 0x47 && send(side, address, {0x46})) asked = now_us_;
     if (reported != 0x87) send(side, address, {0x8c});
 }
 
@@ -442,7 +449,7 @@ uint8_t Hub::receive(BusSide side, const cec::Frame &frame, ReceiveStep step) {
     if (active) {
         // Announcements populate the wire's cache before any activity policy.
         // Resolve this peer's remaining identity without an address sweep.
-        discovered(side,frame.source());
+        discovered(side,frame.source(),op);
         discovery_device(side,frame.source())->physical_address=static_cast<uint16_t>((frame.data[2]<<8)|frame.data[3]);
         resolve_device(side,frame.source(),false);
     } else if (op == 0x84 && frame.size >= 5 && frame.destination() == 15 && frame.source() < 15) {

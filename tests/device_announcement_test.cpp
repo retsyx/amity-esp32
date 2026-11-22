@@ -146,8 +146,30 @@ static void malformed_announcements_are_not_cached(){
     for(const auto& frame:invalid){receive(frame);assert(!peer(hub));}
     assert(fixture_sent.empty());no_enumeration(hub,generation);
 }
+static size_t sent(uint8_t op,uint8_t destination=8){
+    return static_cast<size_t>(std::count_if(fixture_sent.begin(),fixture_sent.end(),[&](const auto& f){
+        return f.gpio==2&&f.frame.size>=2&&f.frame.data[1]==op&&f.frame.destination()==destination;}));
+}
+static void known_peer_is_asked_again_for_a_missing_name(){
+    reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
+    receive({{0x8f,0x82,0x20,0},4});
+    assert(peer(hub)&&peer(hub)->name.empty()&&sent(0x46)==1);
+    // The peer did not answer. Each later announcement asks again for only the
+    // missing name; a power-on burst asks once.
+    for(const auto& burst:std::vector<std::vector<cec::Frame>>{{{{0x8f,0x84,0x20,0,4},5}},{{{0x8f,0x82,0x20,0},4}},
+            {{{0x8f,0x84,0x20,0,4},5},{{0x8f,0x87,0x12,0x34,0x56},5},{{0x8f,0x82,0x20,0},4}}}){
+        fixture_time+=300000000;fixture_sent.clear();
+        for(const auto& frame:burst)receive(frame);
+        assert(sent(0x46)==1&&sent(0x83)==0&&sent(0x8c)==0&&peer(hub)->name.empty());
+        only_targeted_identity_and_standby();no_enumeration(hub,generation);
+    }
+    metadata(hub);
+    fixture_time+=300000000;fixture_sent.clear();receive({{0x8f,0x84,0x20,0,4},5});
+    assert(sent(0x46)==0&&peer(hub)->name=="Player");no_enumeration(hub,generation);
+}
 int main(){
     active_announcement_without_configuration();metadata_can_introduce_a_device();
     unselected_player_retains_its_observation();foreign_activity_still_caches_local_player();malformed_announcements_are_not_cached();
+    known_peer_is_asked_again_for_a_missing_name();
     std::puts("Actual worker caches valid player announcements independently of activities/Standby, accepts targeted metadata, preserves observations for later starts, rejects malformed sources and avoids enumeration");
 }
