@@ -21,7 +21,7 @@ def main():
         'remote_unpair_gate': None, 'remote_unpair_async': False,
         'config': {'activities': [{'name': 'TV', 'display': 'TV', 'source': 'Player'},
                                                {'name': 'Music', 'display': '', 'source': 'Player', 'audio': 'Receiver'}]},
-        'config_calls': 0, 'remotes': {'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'configured': True, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'defer_standby': False, 'fail_standby': False, 'expired': False, 'logins': 0,
+        'config_calls': 0, 'remotes': {'bonded': False}, 'matter_remove_calls': [], 'fail_matter_remove': False, 'activity_calls': [], 'remote_calls': [], 'remote_pair_gate': None, 'fail_unpair': False, 'setup_error': False, 'matter': {'fabrics': [], 'commissioning': False}, 'discover_gate': None, 'fail_discover': False, 'fail_save': False, 'save_gate': None, 'defer_standby': False, 'fail_standby': False, 'expired': False, 'logins': 0,
         'status': {'version': 'test', 'hardware': 'Amity Board / Fin', 'free_heap': 200000,
                    'wifi_connected': True, 'wifi_ssid': 'Home', 'wifi_rssi': -45, 'wifi_channel': 6,
                    'ready': True, 'discovering': False, 'discovery_generation': 1,
@@ -963,7 +963,6 @@ def main():
                 expect(page.locator('#fabricList button')).to_have_count(0)
                 passed('idle Remote and Matter tabs show Not paired before and after pairing operations')
                 fixture['config'] = {'activities': []}
-                fixture['configured'] = False
                 page.reload()
                 expect(page.locator('#admin')).to_be_visible()
                 page.locator('#discover').click()
@@ -977,7 +976,6 @@ def main():
                 expect(page.locator('#recommendations')).to_be_visible()
                 passed('current empty configuration offers scanned recommendations without overwriting saved activities')
                 page.evaluate('() => { dirty=false; }')
-                fixture['configured'] = True
                 page.reload()
                 expect(page.locator('#admin')).to_be_visible()
                 page.locator('#discover').click()
@@ -1085,41 +1083,33 @@ def main():
                 passed('changing activity equipment keeps both old and new saved components available after reload; discarded drafts do not change suggestions')
                 route_calls = []
 
-                def current_missing(route):
+                def missing(route):
                     route_calls.append((route.request.method, route.request.url.split('/api/', 1)[-1]))
                     route.fulfill(status=404, content_type='application/json',
                                   headers={'Retry-After': '7'},
-                                  body=json.dumps({'error': 'Current ' + route.request.method + ' endpoint is unavailable'}))
+                                  body=json.dumps({'error': route.request.method + ' endpoint is unavailable'}))
 
-                def unexpected_old_route(route):
-                    route_calls.append((route.request.method, route.request.url.split('/api/', 1)[-1]))
-                    route.fulfill(status=200, content_type='application/json', body='{"ok":true}')
-
-                for current_path, old_path in (
-                        ('activity-editor/status', 'status'),
-                        ('activity-editor/discover', 'discover')):
-                    page.route('**/api/' + current_path, current_missing)
-                    page.route('**/api/' + old_path, unexpected_old_route)
+                for path in ('activity-editor/status', 'activity-editor/discover'):
+                    page.route('**/api/' + path, missing)
                     try:
-                        result = page.evaluate("""async operation => {
+                        result = page.evaluate("""async path => {
                             const priorToken = token, priorStoredToken = sessionStorage.getItem('amityToken');
-                            try { await (operation === 'status' ? request('status') : request('discover', {})); return {resolved: true}; }
+                            try { await (path.endsWith('status') ? readStatus() : request(path, {request_id: requestId()})); return {resolved: true}; }
                             catch (error) { return {status: error.status, message: error.message,
                                 retryAfter: error.retryAfter, tokenRetained: token === priorToken,
                                 storedTokenRetained: sessionStorage.getItem('amityToken') === priorStoredToken}; }
-                        }""", old_path)
-                        method = 'GET' if old_path == 'status' else 'POST'
-                        assert result == {'status': 404, 'message': 'Current ' + method + ' endpoint is unavailable',
+                        }""", path)
+                        method = 'GET' if path.endswith('status') else 'POST'
+                        assert result == {'status': 404, 'message': method + ' endpoint is unavailable',
                                           'retryAfter': 7, 'tokenRetained': True, 'storedTokenRetained': True}, result
-                        assert (method, current_path) in route_calls
-                        assert not any(path == old_path for _, path in route_calls), route_calls
+                        assert route_calls.count((method, path)) == 1, route_calls
                     finally:
-                        page.unroute('**/api/' + current_path, current_missing)
-                        page.unroute('**/api/' + old_path, unexpected_old_route)
+                        page.unroute('**/api/' + path, missing)
+                    route_calls.clear()
                 page.wait_for_function('() => !polling')
                 page.evaluate("() => message('')")
                 expect(page.locator('#admin')).to_be_visible()
-                passed('mapped current GET and POST 404 preserve the first error and session without retrying old routes')
+                passed('activity editor GET and POST 404 report the first error once and preserve the session')
                 page.locator('#addActivity').click();expect(page.locator('#activityEditor')).to_be_visible()
                 fixture['expired'] = True
                 page.wait_for_function('() => !polling && !activityActionPending')

@@ -1,6 +1,6 @@
 'use strict';
-// Preserve the original interface. This adapter carries scoped identities and
-// revisions privately; only friendly attachment locations enter the controls.
+// Activity editor documents carry scoped equipment identities and revisions
+// privately; only friendly attachment locations enter the controls.
 window.amityInterface=(()=>{
  let enabled=false,choices=[],componentOwners=[],componentDialogUpdate=null,replaceUpdate=null,componentPending=false,configuration=null,system=null,openDialog=null,originalSelections=new Map();
  const roles=['display','source','audio','switch'];
@@ -41,7 +41,8 @@ window.amityInterface=(()=>{
   throw Error('Choose '+role+' from the device list, including its location.');
  }
  function project(document){
-  updateChoices(document);
+  if(document.version!==1||!Array.isArray(document.device_choices))throw Error('Amity returned an invalid activity document. Reload before continuing.');
+  enabled=true;updateChoices(document);
   const next=selections(document);
   for(const [id,current] of next){const previous=originalSelections.get(id);if(previous&&roles.some(role=>previous[role].visible===current[role].visible&&previous[role].value!==current[role].value))throw Error('Activities changed in another session. Reload the page before continuing.');}
   originalSelections=next;
@@ -53,11 +54,17 @@ window.amityInterface=(()=>{
   return {version:1,request_id:identifier(),expected_config_revision:document.expected_config_revision,expected_presentation_revision:document.expected_presentation_revision,
    activities:(document.activities||[]).map(a=>{const previous=originalSelections.get(a.activity_id);const row={name:a.name,display:reference('display',a.display,previous?.display),source:reference('source',a.source,previous?.source),audio:reference('audio',a.audio,previous?.audio)};if(a.activity_id)row.activity_id=a.activity_id;if(a.switch)row.switch={device:reference('switch',a.switch.device,previous?.switch),input:a.switch.input};return row;})};
  }
- function response(value,original){return new Response(JSON.stringify(value),{status:original.status,headers:original.headers});}
- async function wait(original){
-  const result=await readResponseJSON(original);
+ function projectStatus(value){
+  updateChoices(value);
+  value.state_revision=value.expected_state_revision;value.boot_id=value.expected_boot_id;
+  value.devices=(value.devices||[]).map(d=>{const c=choices.find(c=>c.value===d.name),title=d.title||c?.title||d.name,location=d.location||c?.location||'';return {...d,title,location,name:c?attachment(c):[title,location].filter(Boolean).join(' · ')};});
+  return value;
+ }
+ // A completed save makes its submitted selectors the reference for later edits.
+ function accept(result,activities=[]){if(result.stage==='applied'||result.saved===true)originalSelections=selections({activities});}
+ async function wait(result){
   if(result.warning)message(result.warning,true);
-  if(!result.operation_id||!['admitted','preparing','executing','configuring','activating','stopping'].includes(result.stage))return response(result,original);
+  if(!result.operation_id||!['admitted','preparing','executing','configuring','activating','stopping'].includes(result.stage))return result;
   const deadline=performance.now()+40000;
   for(let n=0;n<160;n++){
    await new Promise(resolve=>setTimeout(resolve,Math.min(250,Math.max(0,deadline-performance.now()))));
@@ -77,35 +84,10 @@ window.amityInterface=(()=>{
    }finally{clearTimeout(timer);}
    if(!next||typeof next!=='object'||next.operation_id!==result.operation_id||('status' in next&&next.status!==next.stage))throw Error('Amity could not confirm the change. Check its status before trying again.');
    if(['failed','rejected','cancelled'].includes(next.stage))throw Error(customerText(next.message||'The operation could not complete.'));
-   if(['complete','applied'].includes(next.stage)){if(next.warning)message(next.warning,true);return response(next,original);}
+   if(['complete','applied'].includes(next.stage)){if(next.warning)message(next.warning,true);return next;}
    if(!['admitted','preparing','executing','configuring','activating','stopping'].includes(next.stage))throw Error('Amity could not confirm the change. Check its status before trying again.');
   }
   throw Error('Amity is still applying the change. Check its status before trying again.');
- }
- async function saved(original,submitted){const completed=await wait(original),result=await completed.clone().json();if(result.stage==='applied'||result.saved===true)originalSelections=selections(submitted);return completed;}
- function route(path,data){
-  if(path==='config'&&data===undefined)return {path:'activity-editor',decode:async original=>{
-   const document=await readResponseJSON(original);
-   if(document.version!==1||!Array.isArray(document.device_choices))throw Error('Amity returned an invalid activity document. Reload before continuing.');
-   enabled=true;return response(project(document),original);
-  }};
-  if(!enabled)return {path,data};
-  if(path==='config'){const submitted=submit(typeof data==='string'?JSON.parse(data):data);return {path:'activity-editor',data:submitted,decode:original=>saved(original,submitted)};}
-  if(path==='status')return {path:'activity-editor/status',decode:async original=>{
-   const value=await readResponseJSON(original);
-   updateChoices(value);
-   value.state_revision=value.expected_state_revision;value.boot_id=value.expected_boot_id;
-   value.devices=(value.devices||[]).map(d=>{const c=choices.find(c=>c.value===d.name),title=d.title||c?.title||d.name,location=d.location||c?.location||'';return {...d,title,location,name:c?attachment(c):[title,location].filter(Boolean).join(' · ')};});
-   return response(value,original);
-  }};
-  if(path==='discover')return {path:'activity-editor/discover',data:{request_id:identifier()},decode:wait};
-  if(path==='activity')return {path:'activity-editor/activity',data:{request_id:identifier(),activity_id:data.index<0?null:savedActivities[data.index]?.activity_id,expected_config_revision:config.expected_config_revision,expected_state_revision:String(state.state_revision||'0'),expected_boot_id:state.boot_id},decode:wait};
-  if(path==='backup')return {path:'config'};
-  if(path==='restore'){
-   const document=typeof data==='string'?JSON.parse(data):data,imported=document.configuration||document;
-   const submitted={request_id:identifier(),expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision,expected_boot_id:document.expected_boot_id,confirm:true,previous_controller_isolated:true,configuration:imported};return {path:'activity-editor/restore',data:submitted,decode:original=>saved(original,submitted)};
-  }
-  return {path,data};
  }
  function close(){enabled=false;configuration=null;system=null;choices=[];componentOwners=[];originalSelections.clear();openDialog?.close();openDialog?.remove();openDialog=null;componentDialogUpdate=null;replaceUpdate=null;componentPending=false;}
  function dialog(title){
@@ -149,7 +131,7 @@ window.amityInterface=(()=>{
    try{
     const latest=await currentSavedConfiguration();
     const result=await completed('activity-editor/components',{expected_config_revision:latest.expected_config_revision,expected_presentation_revision:latest.expected_presentation_revision,...chosen});
-    const document=await request('config');
+    const document=await readActivities();
     config.expected_config_revision=document.expected_config_revision;config.expected_presentation_revision=document.expected_presentation_revision;
     const choice=choices.find(c=>c.value==='component:'+result.component_id)||choices.find(c=>(c.roles||[]).includes(role)&&c.qualified_name&&c.qualified_name.octopus_id===chosen.octopus_id&&c.qualified_name.tentacle_id===chosen.tentacle_id&&c.qualified_name.side===chosen.side&&c.qualified_name.osd_name===chosen.osd_name);
     if(!choice)throw Error('The component was saved. Reload the equipment list before selecting it.');
@@ -160,11 +142,7 @@ window.amityInterface=(()=>{
   update();name.input.focus();
  }
  async function mutation(path,data){return request(''+path,{request_id:identifier(),...data});}
- async function completed(path,data){
-  const result=await mutation(path,data);
-  if(!result.operation_id)return result;
-  const fake=new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}});return (await wait(fake)).json();
- }
+ async function completed(path,data){return wait(await mutation(path,data));}
  function boardName(board,snapshot=system){
   if(!board)return 'Name unavailable';
   if(board.octopus_id===snapshot?.octopus_id)return snapshot.hostname||'Name unavailable';
@@ -179,7 +157,7 @@ window.amityInterface=(()=>{
  }
  async function refresh(){
   if(!enabled||!token)return;
-  [configuration,system]=await Promise.all([request('backup'),request('system')]);
+  [configuration,system]=await Promise.all([request('config'),request('system')]);
   const update=(system.membership?.peers||[]).some(peer=>peer.management_ready)?await request('updates/cohort').catch(()=>null):null;
   const rows=[];
   const original=configuration.controller_octopus_id||system.octopus_id;
@@ -338,7 +316,7 @@ window.amityInterface=(()=>{
   });remove.disabled=true;remove.className='primary danger';close.className='primary';
   const actions=document.createElement('div');actions.className='actions';actions.append(remove,close);d.className='remove-amity';d.append(actions);
   try{
-   const [snapshot,current]=await Promise.all([request('backup'),request('system')]);
+   const [snapshot,current]=await Promise.all([request('config'),request('system')]);
    if(!d.isConnected||openDialog!==d)return;
    name=boardName(board,current);
    const peer=current.membership?.peers?.find(value=>value.octopus_id===board.octopus_id);
@@ -468,8 +446,8 @@ window.amityInterface=(()=>{
   const scan=button('Scan HDMI',async()=>{
    if(scanning)return;scanning=true;scan.textContent='Scanning…';controls();dismissError(d);
    try{
-    const before=await request('status');await request('discover',{});
-    for(let n=0;n<120&&d.isConnected;n++){await new Promise(resolve=>setTimeout(resolve,500));const now=await request('status');if(now.discovery_generation!==before.discovery_generation&&!now.discovering)break;}
+    const before=await request('activity-editor/status');await completed('activity-editor/discover',{});
+    for(let n=0;n<120&&d.isConnected;n++){await new Promise(resolve=>setTimeout(resolve,500));const now=await request('activity-editor/status');if(now.discovery_generation!==before.discovery_generation&&!now.discovering)break;}
     await refresh();
    }catch(error){if(d.isConnected)message(error.message,true);}
    finally{scanning=false;scan.textContent='Scan HDMI';controls();}
@@ -564,5 +542,5 @@ window.amityInterface=(()=>{
   update();
  }
  $('addAmity').addEventListener('click',run(()=>add()));
- return {get enabled(){return enabled;},get componentPending(){return componentPending;},route,close,refresh,open:refresh,addComponent,deviceNames:role=>choices.filter(c=>(c.roles||[]).includes(role)).map(c=>attachment(c)),isDeviceChoice:value=>choices.some(c=>attachment(c)===value)};
+ return {get enabled(){return enabled;},get componentPending(){return componentPending;},project,projectStatus,submission:submit,accept,wait,close,refresh,open:refresh,addComponent,deviceNames:role=>choices.filter(c=>(c.roles||[]).includes(role)).map(c=>attachment(c)),isDeviceChoice:value=>choices.some(c=>attachment(c)===value)};
 })();

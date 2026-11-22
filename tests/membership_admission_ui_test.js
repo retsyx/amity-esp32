@@ -32,7 +32,7 @@ function fixture(options={}){
  const main='1'.repeat(32),member='2'.repeat(32),management=document.createElement('div');management.id='managedAmityList';document.body.append(management);
  const request=async(path,data)=>{
   if(data!==undefined)posts.push([path,structuredClone(data)]);
-  if(path==='backup')return {controller_octopus_id:main,octopuses:[{octopus_id:main,supported_tentacles:1}]};
+  if(path==='config')return {controller_octopus_id:main,octopuses:[{octopus_id:main,supported_tentacles:1}]};
   if(path==='system')return {octopus_id:main,hostname:'amity-main',membership:{peers:[{octopus_id:member,hostname:'amity-office',enrolled:true,ready:true,supported_tentacles:1}]}};
   if(path==='membership/scan'){const activate=()=>{state.scan_id=data.request_id;state.phase=options.scanning?'scanning':'found';return {operation_id:data.request_id,stage:'complete'};};if(options.holdScanStart)return new Promise(resolve=>heldScans.push(()=>resolve(activate())));return activate();}
   if(path==='membership/admission'){admissionReads++;const copy=structuredClone(state);if(holdStatus)return new Promise(resolve=>held.push(()=>resolve(copy)));return copy;}
@@ -82,7 +82,7 @@ function fixture(options={}){
   assert.deepEqual(security.messages.at(-1),[error,true]);assert.ok(!security.dialog().textContent.includes(error));assert.equal(security.button('Add').disabled,true);
   assert.equal(security.posts.filter(([path])=>path==='membership/add').length,1);assert.deepEqual(security.errors,[]);
  }
- const listed=fixture();await listed.context.window.amityInterface.route('config').decode(new Response(JSON.stringify({version:1,device_choices:[],activities:[]})));await listed.context.window.amityInterface.refresh();assert.equal(listed.document.body.children.find(node=>node.id==='managedAmityList').children.length,2);assert.match(listed.document.body.textContent,/amity-office/);
+ const listed=fixture();listed.context.window.amityInterface.project({version:1,device_choices:[],activities:[]});await listed.context.window.amityInterface.refresh();assert.equal(listed.document.body.children.find(node=>node.id==='managedAmityList').children.length,2);assert.match(listed.document.body.textContent,/amity-office/);
  const collecting=fixture({scanning:true});await collecting.open();assert.equal(collecting.button('Add').disabled,true);collecting.state.phase='found';await collecting.tick();assert.equal(collecting.label('Name').hidden,false);
  const liveChoices=fixture({scanning:true,candidates:[]});await liveChoices.open();assert.equal(liveChoices.button('Add').disabled,true);
  liveChoices.state.phase='found';liveChoices.state.candidates=[{token:'early-board',label:'Amity A1B2'}];await liveChoices.tick();await liveChoices.fill(liveChoices.input('Name'),'office');assert.equal(liveChoices.button('Add').disabled,false);assert.ok(liveChoices.clock()<20000);

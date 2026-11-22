@@ -50,7 +50,7 @@ function fixture(options={}){
  if(options.replacement)join();
  const request=async(path,data)=>{
   if(data===undefined)reads.push(path);else posts.push([path,structuredClone(data)]);
-  if(path==='backup')return structuredClone(configuration);
+  if(path==='config')return structuredClone(configuration);
   if(path==='system')return structuredClone(system);
   if(path==='membership/remove'){
    if(data.expected_config_revision!==configuration.config_revision||data.expected_presentation_revision!==configuration.presentation_revision||JSON.stringify(data.affected_activity_ids)!==JSON.stringify(configuration.activities.filter(row=>['display','source','audio','switch_device'].some(role=>row[role]===a)).map(row=>row.activity_id)))throw Object.assign(Error('Activities changed. Reopen Remove and review the activities.'),{status:409});
@@ -74,8 +74,8 @@ function fixture(options={}){
   if(path==='membership/admission')return structuredClone(admission);
   if(path==='membership/cancel'){admission.phase='cancelled';return {stage:'complete'};}
   if(path==='membership/add'){Object.assign(admission,{phase:'connecting',candidate_id:other});join();return {operation_id:'add-'+data.request_id,stage:'admitted'};}
-  if(path==='status')return {discovery_generation:generation,discovering:false};
-  if(path==='discover'){generation++;system.observations=[observed()];return {stage:'complete'};}
+  if(path==='activity-editor/status')return {discovery_generation:generation,discovering:false};
+  if(path==='activity-editor/discover'){generation++;system.observations=[observed()];return {stage:'complete'};}
   if(path.startsWith('operations/'))return {operation_id:path.slice('operations/'.length),stage:'complete',message:'',reset:'scheduled'};
   throw Error('Unexpected request '+path);
  };
@@ -90,7 +90,7 @@ function fixture(options={}){
  const click=async node=>{assert.ok(node);if(!node.disabled&&!node.hidden)await node.dispatch('click');await flush();};
  const dialog=()=>walk(document.body).find(node=>node.tag==='dialog'&&node.open);
  const button=(title,root=dialog())=>walk(root).find(node=>node.tag==='button'&&node.textContent===title);
- const open=async()=>{await context.window.amityInterface.route('config').decode(new Response(JSON.stringify({version:1,device_choices:[],activities:[]})));await context.window.amityInterface.refresh();await click(button('Remove',management.children[1]));return dialog();};
+ const open=async()=>{context.window.amityInterface.project({version:1,device_choices:[],activities:[]});await context.window.amityInterface.refresh();await click(button('Remove',management.children[1]));return dialog();};
  return {main,member,other,a,previous,soundbar,configuration,system,posts,reads,errors,messages,dialog,button,click,open,management,context,get refreshed(){return refreshed;},tick:async()=>{for(const callback of timers.splice(0))callback();await flush();}};
 }
 (async()=>{
@@ -99,7 +99,7 @@ function fixture(options={}){
  for(const role of ['display','source','audio','switch_device'])assert.match(wording,new RegExp('Uses '+role));
  assert.doesNotMatch(wording,/Unrelated local activity|stay saved|retained/);
  assert.equal(walk(cancelled.dialog()).filter(node=>node.tag==='li').length,4);
- assert.ok(cancelled.reads.includes('backup')&&cancelled.reads.includes('system'));
+ assert.ok(cancelled.reads.includes('config')&&cancelled.reads.includes('system'));
  await cancelled.click(cancelled.button('Cancel'));assert.equal(cancelled.posts.length,0);
  const normal=fixture();await normal.open();await normal.click(normal.button('Remove Amity'));
  assert.equal(normal.posts.length,1);assert.deepEqual(normal.posts[0][1].affected_activity_ids,['4','5','6','7'].map(value=>value.repeat(32)));
@@ -156,7 +156,7 @@ function fixture(options={}){
  const late=await reviewing({replacement:true,late:true});
  assert.match(late.dialog().textContent,/Display wasn’t found\. It keeps the connection it had on amity-member\./);
  // The scan waits on a timer, so start it, then advance time.
- const scanning=late.button('Scan HDMI').dispatch('click');await flush();assert.equal(late.button('Scanning…').disabled,true);assert.ok(late.posts.some(([path])=>path==='discover'));
+ const scanning=late.button('Scan HDMI').dispatch('click');await flush();assert.equal(late.button('Scanning…').disabled,true);assert.ok(late.posts.some(([path])=>path==='activity-editor/discover'));
  await late.tick();await scanning;assert.match(late.dialog().textContent,/DisplayAdapter 1 · DisplayFound/);assert.ok(late.button('Scan HDMI'));
  // An open review follows equipment changes from the normal device-list refresh.
  const changing=await reviewing({replacement:true});

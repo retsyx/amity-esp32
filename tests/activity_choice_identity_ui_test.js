@@ -1,6 +1,6 @@
 'use strict';
-// Exercise the shipped UI adapter's projection/submission boundary without a
-// browser or firmware. Equal presentation labels must not replace scoped IDs.
+// Exercise the shipped activity editor projection/submission boundary without
+// a browser or firmware. Equal presentation labels must not replace scoped IDs.
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),crypto=require('node:crypto');
 const A='component:'+'a'.repeat(32),B='component:'+'b'.repeat(32),C='component:'+'c'.repeat(32);
 const FIRST='1'.repeat(32),SECOND='2'.repeat(32),THIRD='3'.repeat(32);
@@ -23,9 +23,9 @@ function fixture(){
  vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/system.js'),'utf8'),context);
  const adapter=context.window.amityInterface;
  return {adapter,
-  load:async document=>{const route=adapter.route('config');return (await route.decode(new Response(JSON.stringify(document)))).json();},
-  save:document=>copy(adapter.route('config',document).data),
-  refreshChoices:async values=>adapter.route('status').decode(new Response(JSON.stringify({device_choices:values,devices:[]}))),
+  load:async document=>adapter.project(copy(document)),
+  save:document=>copy(adapter.submission(document)),
+  refreshChoices:async values=>adapter.projectStatus({device_choices:values,devices:[]}),
  };
 }
 function assertOriginalReferences(document){
@@ -40,7 +40,7 @@ function assertOriginalReferences(document){
  assert.equal(projected.activities[0].source,label);assert.equal(projected.activities[1].source,label);
  assertOriginalReferences(unchanged.save(projected));
  const edited=copy(projected);edited.activities.reverse();edited.activities[1].name='Renamed only';edited.activities[1].switch.input=4;
- const submitted=unchanged.save(JSON.stringify(edited));assertOriginalReferences(submitted);assert.equal(submitted.activities[1].switch.input,4);
+ const submitted=unchanged.save(edited);assertOriginalReferences(submitted);assert.equal(submitted.activities[1].switch.input,4);
 
  // Polling can change a label while a draft still carries the original text.
  // Even if that old text now matches only the opposite-side choice, keep the
@@ -78,24 +78,25 @@ function assertOriginalReferences(document){
  // from another session is still rejected.
  const deliberate=fixture(),deliberateDraft=await deliberate.load(original);
  deliberateDraft.activities[0].source=A;
- const pending=deliberate.adapter.route('config',deliberateDraft);
- await pending.decode(new Response(JSON.stringify({stage:'applied',saved:true})));
+ deliberate.adapter.accept({stage:'applied',saved:true},deliberate.adapter.submission(deliberateDraft).activities);
  const applied=copy(original);applied.activities[0].source=A;applied.expected_config_revision='8';
  const appliedProjected=await deliberate.load(applied);
  assert.equal(deliberate.save(appliedProjected).activities[0].source,A);
  await assert.rejects(()=>deliberate.load({...original,expected_config_revision:'9'}),/Activities changed in another session/);
 
  const failed=fixture(),failedDraft=await failed.load(original);failedDraft.activities[0].source=A;
- await failed.adapter.route('config',failedDraft).decode(new Response(JSON.stringify({stage:'failed',saved:false})));
+ failed.adapter.accept({stage:'failed',saved:false},failed.adapter.submission(failedDraft).activities);
  await assert.rejects(()=>failed.load(applied),/Activities changed in another session/);
 
- const restore=fixture(),imported=await restore.load(original);
- const restored=restore.adapter.route('restore',{configuration:{version:3,activities:[]},expected_boot_id:'c'.repeat(32)});
- assert.equal(restored.path,'activity-editor/restore');
- assert.equal(restored.data.configuration.version,3);
- assert.equal(restored.data.expected_boot_id,'c'.repeat(32));
- restore.adapter.close();
- await restore.load({...original,activities:[]});
- assert.throws(()=>restore.save(imported),/Choose display/);
+ // A confirmed restore drops the old selectors, so the restored document
+ // loads even where equal labels now name other equipment; so does a new session.
+ const restore=fixture();await restore.load(original);
+ restore.adapter.accept({stage:'applied'});
+ assert.equal((await restore.load(applied)).activities[0].source,label);
+ const closed=fixture(),retained=await closed.load(original);
+ closed.adapter.close();
+ assert.equal((await closed.load(applied)).activities[0].source,label);
+ await closed.load({...original,activities:[]});
+ assert.throws(()=>closed.save(retained),/Choose display/);
  console.log('PASS activity choices: unchanged scoped selectors survive equal labels, row reorder and unrelated edits; new ambiguity and stale references reject');
 })().catch(error=>{console.error(error);process.exitCode=1;});

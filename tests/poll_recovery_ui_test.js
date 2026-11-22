@@ -28,7 +28,7 @@ function fixture({adapter=false}={}){
  const document={getElementById:get,querySelectorAll:()=>[],querySelector:()=>null,createElement:tag=>new Element(tag),createElementNS:(_ns,tag)=>new Element(tag),addEventListener(){},activeElement:null};
  const response=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
  const status={hostname:'amity',boot_id:'a'.repeat(32),state_revision:'1',current_activity:-1,devices:[],activity_error:'',wifi_connected:true};
- const values={setup:{required:false,hostname:'amity'},status,remotes:{},matter:{fabrics:[]},homekit:{available:true},activity:{ok:true}};
+ const values={setup:{required:false,hostname:'amity'},'activity-editor/status':status,remotes:{},matter:{fabrics:[]},homekit:{available:true},'activity-editor/activity':{ok:true}};
  if(adapter){
   values['activity-editor']={version:1,expected_config_revision:'1',expected_presentation_revision:'1',device_choices:[],activities:[{activity_id:'1'.repeat(32),name:'Watch',display:'',source:'',audio:''}]};
   values['activity-editor/status']={...status,expected_boot_id:status.boot_id,expected_state_revision:'1',expected_config_revision:'1'};
@@ -39,7 +39,8 @@ function fixture({adapter=false}={}){
   assert.ok(Object.hasOwn(values,route),'Unexpected HTTP route '+route);return response(values[route]);
  };
  const location={origin:'https://amity.local',href:'https://amity.local/',replace(){},reload(){}};
- const window={location,addEventListener(){},amityInterface:{route:(path,data)=>({path,data}),close(){},async refresh(){}}};
+ // Without the shipping system.js, status passes through unprojected.
+ const window={location,addEventListener(){},amityInterface:{projectStatus:value=>value,wait:async result=>result,close(){},async refresh(){}}};
  const context={window,document,location,console,Response,URL,Headers,TypeError,Error,SyntaxError,TextEncoder,TextDecoder,Uint8Array,DataView,AbortController,DOMException,structuredClone,fetch,confirm:()=>true,crypto:crypto.webcrypto,performance:{now:()=>now},
   sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value)),removeItem:key=>storage.delete(key)},
   setInterval:(callback,delay)=>{intervals.push({callback,delay});return intervals.length;},clearInterval(){},
@@ -47,7 +48,7 @@ function fixture({adapter=false}={}){
  vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/app.js'),'utf8'),context);
  if(adapter)vm.runInContext(fs.readFileSync(require.resolve('../components/web_admin/assets/system.js'),'utf8'),context);
  const evaluate=source=>vm.runInContext(source,context);
- const initialize=async()=>{await flush();assert.equal(get('message').textContent,'');get('homekit').hidden=true;get('amityDevices').hidden=true;evaluate("token='session';");if(adapter)await evaluate("(async()=>{config=await request('config');rememberSaved();state=await request('status');})()");calls.length=0;requestOptions.length=0;};
+ const initialize=async()=>{await flush();assert.equal(get('message').textContent,'');get('homekit').hidden=true;get('amityDevices').hidden=true;evaluate("token='session';");if(adapter)await evaluate("(async()=>{config=await readActivities();rememberSaved();state=await readStatus();})()");calls.length=0;requestOptions.length=0;};
  const tick=async()=>{const timer=intervals.find(timer=>timer.delay===4000);assert.ok(timer);timer.callback();await flush();};
  const fail=(route,kind='transport')=>faults.set(route,()=>{
   if(kind==='transport')throw new TypeError('Failed to fetch');
@@ -65,14 +66,14 @@ function fixture({adapter=false}={}){
  return {get,calls,window,status,values,faults,evaluate,initialize,tick,fail,message,response,advance,requestOptions,clock:()=>now,timers};
 }
 (async()=>{
- const recovered=fixture();await recovered.initialize();recovered.fail('status');await recovered.tick();
+ const recovered=fixture();await recovered.initialize();recovered.fail('activity-editor/status');await recovered.tick();
  assert.equal(recovered.message().error,true);assert.match(recovered.message().text,/Connection interrupted/);
- assert.deepEqual(recovered.calls,[{route:'status',method:'GET'}],'A failed poll must not retry immediately or replay an action');
+ assert.deepEqual(recovered.calls,[{route:'activity-editor/status',method:'GET'}],'A failed poll must not retry immediately or replay an action');
  await recovered.tick();assert.deepEqual(recovered.message(),{text:'',error:false});
- assert.deepEqual(recovered.calls.slice(1),['status','remotes','matter'].map(route=>({route,method:'GET'})));
+ assert.deepEqual(recovered.calls.slice(1),['activity-editor/status','remotes','matter'].map(route=>({route,method:'GET'})));
 
  // Reading status alone does not prove that the complete refresh recovered.
- const partial=fixture();await partial.initialize();partial.fail('status');await partial.tick();
+ const partial=fixture();await partial.initialize();partial.fail('activity-editor/status');await partial.tick();
  partial.fail('remotes');await partial.tick();assert.equal(partial.message().error,true);
  partial.fail('matter');await partial.tick();assert.equal(partial.message().error,true);
  partial.get('homekit').hidden=false;partial.fail('homekit');await partial.tick();assert.equal(partial.message().error,true);
@@ -81,24 +82,24 @@ function fixture({adapter=false}={}){
  partial.window.amityInterface.refresh=async()=>{};await partial.tick();assert.equal(partial.message().text,'Device status invalid','A nontransport refresh error must stay visible');
 
  for(const kind of ['http','json','json-type']){
-  const invalid=fixture();await invalid.initialize();invalid.fail('status',kind);await invalid.tick();
+  const invalid=fixture();await invalid.initialize();invalid.fail('activity-editor/status',kind);await invalid.tick();
   const original=invalid.message();assert.equal(original.error,true);assert.doesNotMatch(original.text,/Connection interrupted/);
   await invalid.tick();assert.deepEqual(invalid.message(),original,'A successful poll must preserve HTTP and decode failures');
  }
- const decode=fixture();await decode.initialize();decode.window.amityInterface.route=(path,data)=>({path,data,decode:async()=>{throw new TypeError('Invalid activity status');}});
+ const decode=fixture();await decode.initialize();decode.window.amityInterface.projectStatus=()=>{throw new TypeError('Invalid activity status');};
  await decode.tick();assert.equal(decode.message().text,'Invalid activity status');
- decode.window.amityInterface.route=(path,data)=>({path,data});await decode.tick();assert.equal(decode.message().text,'Invalid activity status');
+ decode.window.amityInterface.projectStatus=value=>value;await decode.tick();assert.equal(decode.message().text,'Invalid activity status');
 
  // Action errors retain their ownership, including the same fetch TypeError
  // which is recoverable only when it originated in background polling.
  for(const kind of ['http','transport']){
-  const action=fixture();await action.initialize();action.fail('status');await action.tick();action.fail('activity',kind);
-  await action.evaluate("run(async()=>{await request('activity',{index:0});})({})");
+  const action=fixture();await action.initialize();action.fail('activity-editor/status');await action.tick();action.fail('activity-editor/activity',kind);
+  await action.evaluate("run(async()=>{await request('activity-editor/activity',{request_id:requestId()});})({})");
   const original=action.message();assert.equal(original.error,true);await action.tick();assert.deepEqual(action.message(),original);
   assert.equal(action.calls.filter(call=>call.method==='POST').length,1,'Polling recovery must never replay an action');
-  action.fail('status');await action.tick();assert.deepEqual(action.message(),original,'A later network interruption must not replace an action error');
+  action.fail('activity-editor/status');await action.tick();assert.deepEqual(action.message(),original,'A later network interruption must not replace an action error');
  }
- const activity=fixture();await activity.initialize();activity.fail('status');await activity.tick();activity.status.activity_error='Activity could not start';
+ const activity=fixture();await activity.initialize();activity.fail('activity-editor/status');await activity.tick();activity.status.activity_error='Activity could not start';
  await activity.tick();assert.deepEqual(activity.message(),{text:'Activity could not start',error:true});
  activity.status.activity_error='';await activity.tick();assert.equal(activity.message().text,'Activity could not start');
 
@@ -108,22 +109,22 @@ function fixture({adapter=false}={}){
  close(activity);await activity.tick();assert.deepEqual(activity.message(),{text:'',error:false},'A closed activity error stays closed');
  const closed=fixture();await closed.initialize();
  for(const kind of ['transport','http']){
-  closed.fail('status',kind);await closed.tick();const reported=closed.message();assert.equal(reported.error,true);
-  close(closed);closed.fail('status',kind);await closed.tick();assert.deepEqual(closed.message(),{text:'',error:false},'A closed polling error stays closed');
-  await closed.tick();closed.fail('status',kind);await closed.tick();assert.deepEqual(closed.message(),reported,'A failure after recovery is reported again');
+  closed.fail('activity-editor/status',kind);await closed.tick();const reported=closed.message();assert.equal(reported.error,true);
+  close(closed);closed.fail('activity-editor/status',kind);await closed.tick();assert.deepEqual(closed.message(),{text:'',error:false},'A closed polling error stays closed');
+  await closed.tick();closed.fail('activity-editor/status',kind);await closed.tick();assert.deepEqual(closed.message(),reported,'A failure after recovery is reported again');
   close(closed);await closed.tick();
  }
 
  for(const replacement of ["message('Saved.');","reportError(Error('New action failed'));","message('Reconnecting to the new address…');hostnameReconnect={};","message('Waiting for firmware…');firmwareUpdating=true;","message('Signed out.');token='';"]){
-  const newer=fixture();await newer.initialize();newer.fail('status');await newer.tick();
-  let finish;newer.faults.set('status',()=>new Promise(resolve=>{finish=resolve;}));await newer.tick();assert.ok(finish);
+  const newer=fixture();await newer.initialize();newer.fail('activity-editor/status');await newer.tick();
+  let finish;newer.faults.set('activity-editor/status',()=>new Promise(resolve=>{finish=resolve;}));await newer.tick();assert.ok(finish);
   newer.evaluate(replacement);const original=newer.message();finish(newer.response(newer.status));await flush();assert.deepEqual(newer.message(),original,'Late successful polls must preserve newer messages');
  }
  const lateFailure=fixture();await lateFailure.initialize();let reject;
- lateFailure.faults.set('status',()=>new Promise((_resolve,fail)=>{reject=fail;}));await lateFailure.tick();
+ lateFailure.faults.set('activity-editor/status',()=>new Promise((_resolve,fail)=>{reject=fail;}));await lateFailure.tick();
  lateFailure.evaluate("message('Saved.');");reject(new TypeError('Failed to fetch'));await flush();assert.deepEqual(lateFailure.message(),{text:'Saved.',error:false},'Late failed polls must preserve newer messages too');
 
- const skipped=fixture();await skipped.initialize();skipped.fail('status');await skipped.tick();
+ const skipped=fixture();await skipped.initialize();skipped.fail('activity-editor/status');await skipped.tick();
  skipped.evaluate('polling=true;');const original=skipped.message();await skipped.tick();assert.deepEqual(skipped.message(),original,'A skipped poll is not successful recovery');
  assert.equal(skipped.calls.length,1);
 
@@ -167,7 +168,7 @@ function fixture({adapter=false}={}){
  await statusStream.tick();assert.equal(statusStream.message().error,true);assert.match(statusStream.message().text,/Connection interrupted/);
  await statusStream.tick();assert.deepEqual(statusStream.message(),{text:'',error:false});
  const configStream=await operationFixture();configStream.faults.set('activity-editor',interruptedBody);
- assert.equal(await configStream.evaluate("request('config').catch(error=>transportErrors.has(error))"),true);
+ assert.equal(await configStream.evaluate("readActivities().catch(error=>transportErrors.has(error))"),true);
  const transformation=await operationFixture();const validStatus=transformation.values['activity-editor/status'];transformation.values['activity-editor/status']=null;
  await transformation.tick();const transformationError=transformation.message();
  assert.equal(transformationError.error,true);assert.doesNotMatch(transformationError.text,/Connection interrupted/);
@@ -215,15 +216,11 @@ function fixture({adapter=false}={}){
   const original=invalid.message();assert.equal(original.error,true);assert.doesNotMatch(original.text,/still applying|Connection interrupted/);
   await invalid.tick();assert.deepEqual(invalid.message(),original);
  }
- for(const kind of ['malformed','used','locked','decoder']){
+ for(const kind of ['malformed','used','locked']){
   const invalid=await operationFixture();
   if(kind==='malformed')invalid.faults.set(operationRoute,()=>new Response('{"operation_id":',{status:200}));
   else if(kind==='used')invalid.faults.set(operationRoute,async()=>{const reply=invalid.response(invalid.values[operationRoute]);await reply.text();return reply;});
-  else if(kind==='locked')invalid.faults.set(operationRoute,()=>{const reply=invalid.response(invalid.values[operationRoute]);reply.body.getReader();return reply;});
-  else{
-   const route=invalid.window.amityInterface.route;
-   invalid.window.amityInterface.route=(path,data)=>path===operationRoute?{path,data,decode:async()=>{throw new TypeError('Invalid decoded receipt');}}:route(path,data);
-  }
+  else invalid.faults.set(operationRoute,()=>{const reply=invalid.response(invalid.values[operationRoute]);reply.body.getReader();return reply;});
   const action=select(invalid);await invalid.advance(250);await action;
   assert.equal(receiptCalls(invalid).length,1);onePost(invalid);assert.equal(invalid.message().error,true);
   assert.doesNotMatch(invalid.message().text,/still applying|Connection interrupted/);

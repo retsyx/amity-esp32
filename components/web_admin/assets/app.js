@@ -18,7 +18,7 @@ const $=id=>document.getElementById(id);
 // Rebuilt nodes carry the identity their handlers act on, so equal nodes act alike.
 function setText(element,text){if(element.textContent!==text)element.textContent=text;}
 function replaceChanged(container,...nodes){if(nodes.length!==container.childNodes.length||nodes.some((node,index)=>!node.isEqualNode(container.childNodes[index])))container.replaceChildren(...nodes);}
-let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],autoRecommend=false,pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false,standbyFrom=null;
+let token=sessionStorage.getItem('amityToken')||'',config={version:1,activities:[]},state={},polling=false,dirty=false,saving=false,persistedActivities='[]',savedActivities=[],scanPending=false,scanAfter=null,scanGeneration=null,recommendations=[],pairingPending=false,matterRemovalPending=false,remotePending=false,remoteState={},savedActivityEntries=new Map(),editingActivity=null,activityActionPending=false,standbyFrom=null;
 let firmwareUpdating=false,firmwareWaitRunning=false,firmwareUpdateRecord=null;
 let hostnameReconnect=null;
 let homekitPending=false,homekitPolling=false,homekitState={};
@@ -54,7 +54,7 @@ function updateActivityButtons(){
  $('saveActivities').title=currentActivityUnchanged(config.activities)?'':activeActivityMessage;
  if(locked)endActivityDrag(true);updateActivityState();
 }
-function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;if(dirty)autoRecommend=false;renderRecommendations();}
+function markDirty(){dirty=activitySnapshot(config.activities)!==persistedActivities;$('saveActivities').hidden=!dirty;$('discardActivities').hidden=!dirty;renderRecommendations();}
 function reportError(error){if(!firmwareUpdating&&!hostnameReconnect&&!error.silent)message(error.message,true);}
 function showLogin(){if(firmwareUpdating)return;window.amityInterface?.close();homekitPending=false;renderHomekit({});if($('activityEditor').open)$('activityEditor').close();editingActivity=null;token='';state={};sessionStorage.removeItem('amityToken');$('onboarding').hidden=true;$('login').hidden=false;$('admin').hidden=true;$('logout').hidden=true;}
 async function readResponseJSON(response){
@@ -66,17 +66,23 @@ async function readResponseJSON(response){
 }
 async function request(path,data,raw=false,signal){
  const headers={Authorization:`Bearer ${token}`};if(data!==undefined)headers['Content-Type']='application/json';
- const mapped=window.amityInterface?.route(path,data)||{path,data};
- const options={method:mapped.data===undefined?'GET':'POST',headers,body:mapped.data===undefined?undefined:typeof mapped.data==='string'?mapped.data:JSON.stringify(mapped.data)};
+ const options={method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:JSON.stringify(data)};
  if(signal)options.signal=signal;
- let response;try{response=await fetch('/api/'+mapped.path,options);}catch(error){if(error instanceof TypeError)transportErrors.add(error);throw error;}
- if(response.ok&&mapped.decode)response=await mapped.decode(response);
-
+ let response;try{response=await fetch('/api/'+path,options);}catch(error){if(error instanceof TypeError)transportErrors.add(error);throw error;}
  if(response.status===401&&path!=='login'){if(!firmwareUpdating&&!hostnameReconnect){await showWelcome();if(!hostnameReconnect)message('');}throw Object.assign(Error(),{silent:true});}
  if(!response.ok){let e=await response.json().catch(()=>({error:'Request failed'}));const error=Error(customerText(e.error||e.message||'Request failed'));error.status=response.status;error.retryAfter=Math.max(0,Math.min(60,Number(response.headers.get('Retry-After'))||0));throw error;}
  return raw?response:readResponseJSON(response);
 }
 function run(action){return async event=>{try{await action(event);}catch(e){reportError(e);}};}
+function requestId(){return crypto.randomUUID().replaceAll('-','');}
+// The activity editor's saved activities and live status, with equipment
+// shown by its attachment instead of its saved selector.
+async function readActivities(){return window.amityInterface.project(await request('activity-editor'));}
+async function readStatus(){return window.amityInterface.projectStatus(await request('activity-editor/status'));}
+// Starts a saved activity, or standby for null, against the status it was chosen from.
+async function selectActivity(activityId){
+ return window.amityInterface.wait(await request('activity-editor/activity',{request_id:requestId(),activity_id:activityId,expected_config_revision:config.expected_config_revision,expected_state_revision:String(state.state_revision||'0'),expected_boot_id:state.boot_id}));
+}
 function button(text,handler){const b=document.createElement('button');b.textContent=text;b.addEventListener('click',run(handler));return b;}
 function cancelOnBackdrop(dialog,cancel){
  let pressedOutside=false;
@@ -243,12 +249,12 @@ function applyActivityDraft(){
  renderActivities();return editingActivity.target;
 }
 async function currentSavedConfiguration(){
- const latest=await request('config');
+ const latest=await readActivities();
  if(activitySnapshot(latest.activities)!==persistedActivities)throw Error('Activities changed in another session. Reload the page before continuing.');
  return latest;
 }
 async function refreshActivityConfiguration(){
- const latest=await request('config');
+ const latest=await readActivities();
  if(dirty){message('Activities changed. Reload the page before saving your edits.',true);return false;}
  config=latest;rememberSaved();renderActivities();await refresh();return true;
 }
@@ -261,11 +267,12 @@ async function persistActivities(editor=null){
  }
  saving=true;updateActivityButtons();
  try{
-  const latest=await currentSavedConfiguration(),current=await request('status'),activities=references.map(a=>editor&&a===target?editor.activity:a);
+  const latest=await currentSavedConfiguration(),current=await readStatus(),activities=references.map(a=>editor&&a===target?editor.activity:a);
   state=current;
   if(!currentActivityUnchanged(activities,current))throw Error(activeActivityMessage);
-  const submitted=JSON.stringify({...latest,activities});
-  const result=await request('config',submitted);const applied=window.amityInterface?.enabled?await request('config'):JSON.parse(submitted),saved=applied.activities;
+  const submitted=window.amityInterface.submission({...latest,activities});
+  const result=await window.amityInterface.wait(await request('activity-editor',submitted));window.amityInterface.accept(result,submitted.activities);
+  const applied=await readActivities(),saved=applied.activities;
   config.expected_config_revision=applied.expected_config_revision;config.expected_presentation_revision=applied.expected_presentation_revision;
   if(editor){
    if(editor.target){Object.keys(target).forEach(key=>delete target[key]);Object.assign(target,structuredClone(editor.activity));}
@@ -280,7 +287,7 @@ async function persistActivities(editor=null){
 async function startActivity(activity,draft=activity){
  if(activityLocked()||!matchesSaved(draft,activity))return;
  const index=savedEntry(activity).index;activityActionPending=true;standbyFrom=null;updateActivityButtons();
- try{await currentSavedConfiguration();await request('activity',{index});message('');await refresh();}finally{activityActionPending=false;updateActivityButtons();}
+ try{await currentSavedConfiguration();await selectActivity(savedActivities[index]?.activity_id);message('');await refresh();}finally{activityActionPending=false;updateActivityButtons();}
 }
 function modalAction(action){return async event=>{
  event.preventDefault();if(activityLocked())return;
@@ -373,7 +380,6 @@ function renderRecommendations(){
 function recommendActivities(devices){
  const display=devices.find(d=>d.bus==='front'&&d.address===0),audio=devices.find(d=>d.address===5)||display;
  recommendations=devices.filter(d=>[1,2,3,4,6,7,8,9,10,11].includes(d.address)).map(d=>({name:((/playstation|nintendo/i.test(d.title||d.name)?'Play ':'Watch ')+(d.title||d.name||'Unknown')).slice(0,63),display:display?.name||'',source:d.name||'',audio:audio?.name||''}));
- if(autoRecommend&&recommendations.length){autoRecommend=false;for(const a of recommendations.slice(0,16))addRecommendation(a);}
  renderRecommendations();
 }
 function deviceIcon(device){
@@ -491,7 +497,7 @@ async function refreshHomekit(){
  homekitPolling=true;try{const state=await request('homekit');if(token&&!firmwareUpdating)renderHomekit(state);}finally{homekitPolling=false;}
 }
 async function refresh(){if(!token||polling||firmwareUpdating||hostnameReconnect)return;polling=true;try{
- const latest=await request('status');if(firmwareUpdating||hostnameReconnect)return;
+ const latest=await readStatus();if(firmwareUpdating||hostnameReconnect)return;
  state=latest;if(state.activity_error!==reportedActivityError){reportedActivityError=state.activity_error;if(state.activity_error)message(state.activity_error,true);}renderHostname(state.hostname);if(state.current_activity!==standbyFrom)standbyFrom=null;updateActivityButtons();$('standby').hidden=!(state.current_activity>=0);
  await refreshPeerSignals();if(firmwareUpdating||hostnameReconnect)return;
  renderDiagnostics();
@@ -521,7 +527,7 @@ async function poll(){
   pollFailure=transportFailure;message('Connection interrupted. Reconnecting…',true);networkMessageRevision=messageRevision;
  }
 }
-async function enter(){state={};standbyFrom=null;const response=await request('config',undefined,true);config=await response.json();autoRecommend=response.headers.get('X-Amity-Configured')==='false';rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
+async function enter(){state={};standbyFrom=null;config=await readActivities();rememberSaved();markDirty();scanPending=false;scanAfter=null;scanGeneration=null;recommendations=[];renderRecommendations();$('devices').hidden=true;$('onboarding').hidden=true;$('login').hidden=true;$('admin').hidden=false;$('logout').hidden=false;selectTab('activities');renderActivities();await refresh();await window.amityInterface?.open();}
 async function showWelcome(){
  if(firmwareUpdating||hostnameReconnect)return;
  const setup=await request('setup');if(hostnameReconnect)return;renderHostname(setup.hostname);showLogin();
@@ -556,12 +562,12 @@ $('discardActivities').addEventListener('click',()=>{if(activityLocked())return;
 // until the request fails or a start from this page supersedes it.
 $('standby').addEventListener('click',run(async()=>{
  standbyFrom=state.current_activity;updateActivityButtons();
- try{await request('activity',{index:-1});}catch(e){standbyFrom=null;updateActivityButtons();throw e;}
+ try{await selectActivity(null);}catch(e){standbyFrom=null;updateActivityButtons();throw e;}
  message('');await refresh();
 }));
 $('discover').addEventListener('click',run(async()=>{
  if(scanPending||state.discovering)return;scanPending=true;updateActivityButtons();
- try{const before=await request('status');await request('discover',{});scanAfter=before.discovery_generation;$('deviceList').replaceChildren();recommendations=[];renderRecommendations();$('deviceHeading').hidden=true;$('discoveryStatus').textContent='Scanning HDMI…';$('devices').hidden=false;await refresh();}
+ try{const before=await readStatus();await window.amityInterface.wait(await request('activity-editor/discover',{request_id:requestId()}));scanAfter=before.discovery_generation;$('deviceList').replaceChildren();recommendations=[];renderRecommendations();$('deviceHeading').hidden=true;$('discoveryStatus').textContent='Scanning HDMI…';$('devices').hidden=false;await refresh();}
  finally{scanPending=false;updateActivityButtons();}
 }));
 $('toggleMatter').addEventListener('click',run(async()=>{
@@ -594,15 +600,17 @@ $('toggleRemote').addEventListener('click',run(async()=>{
  }finally{remotePending=false;renderRemotes(remoteState);}
 }));
 async function download(path,name){const r=await request(path,undefined,true),url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=/filename=([^;]+)/.exec(r.headers.get('Content-Disposition')||'')?.[1]||name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-$('backup').addEventListener('click',run(()=>download('backup','amity-config.json')));$('logs').addEventListener('click',run(()=>download('logs','amity.log')));
+$('backup').addEventListener('click',run(()=>download('config','amity-config.json')));$('logs').addEventListener('click',run(()=>download('logs','amity.log')));
 $('restore').addEventListener('change',run(async e=>{
  const file=e.target.files[0];if(!file)return;
  try{
   if(file.size>16384)throw Error('Backup must be no more than 16 KiB.');
   const contents=await file.text();
   if(!confirm('Replace saved configuration with this backup? If replacing a failed main Amity, confirm that the old main is powered off and disconnected.'))return;
-  const data={configuration:JSON.parse(contents),expected_boot_id:(await request('status')).boot_id};
-  const result=await request('restore',data),warning=result.warning||(result.unresolved||[]).join(' ');await enter();message(warning||'Configuration restored.',!!warning);
+  const configuration=JSON.parse(contents),boot=(await readStatus()).boot_id;
+  const result=await window.amityInterface.wait(await request('activity-editor/restore',{request_id:requestId(),expected_config_revision:config.expected_config_revision,expected_presentation_revision:config.expected_presentation_revision,expected_boot_id:boot,confirm:true,previous_controller_isolated:true,configuration}));
+  window.amityInterface.accept(result);
+  const warning=result.warning||(result.unresolved||[]).join(' ');await enter();message(warning||'Configuration restored.',!!warning);
  }finally{e.target.value='';}
 }));
 // Match firmware_version.hpp: semantic precedence, ignoring build metadata.
@@ -756,7 +764,7 @@ $('firmware').addEventListener('change',run(async e=>{
  const input=e.target,file=input.files[0];if(!file)return;
  const progress=$('uploadProgress');input.disabled=true;progress.hidden=true;progress.value=0;
  try{
-  const image=await firmwareImage(file),version=image.version,current=(await request('status')).version,comparison=compareFirmwareVersions(version,current);
+  const image=await firmwareImage(file),version=image.version,current=(await readStatus()).version,comparison=compareFirmwareVersions(version,current);
   const warning=comparison===null?
    `The selected firmware version (${version||'unknown'}) cannot be compared with the running version (${current}). It may be a downgrade. Downgrading is not supported. Continue at your own risk?`:
    comparison<0?`You are installing version ${version} over version ${current}. Downgrading is not supported. Continue at your own risk?`:
