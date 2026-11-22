@@ -160,8 +160,8 @@ void update_operation(Tracked& operation){
             operation.reset=string(status.get(),"reset");
         }else operation.reset="not_needed";
         if(operation.status=="failed"||operation.status=="complete"||operation.status=="applied")return;
-        const auto activation=amity::configuration_activation_status();
-        if(activation.request_id.str()==operation.id&&activation.phase=="failed"){
+        const auto activation=amity::configuration_activation_status(m::MessageId::parse(operation.id).value_or(m::MessageId{}));
+        if(activation.phase=="failed"){
             operation.status="failed";operation.error="The device membership was removed, but its saved configuration cleanup could not be committed. Review the device list and remove its saved record again.";return;
         }
         const auto applied=control->execution_snapshot();
@@ -421,7 +421,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
             if(revoked){operation.status="failed";operation.error="The previous device membership was removed, but its replacement configuration could not be committed. Replacement is incomplete.";finish();return true;}
             result=error(req,"activation_pending","The replacement configuration could not be saved. Reload before retrying.","409 Conflict",true);return true;
         }
-        const auto activation=amity::configuration_activation_status();
+        const auto activation=amity::configuration_activation_status(*m::MessageId::parse(id));
         operation.removal_revisions={activation.config_revision,activation.presentation_revision};operation.status="configuring";
         if(amity::consortium::runtime_forget_removed_octopus(*previous)!=ESP_OK){operation.status="failed";operation.error="The replacement configuration was saved, but the previous device's name or settings could not be erased. Replacement is incomplete.";}
         finish();return true;
@@ -486,7 +486,7 @@ bool admin_request(httpd_req_t* req,const std::string& path,esp_err_t& result){
                 e==ESP_ERR_NOT_SUPPORTED?"Update this Amity's firmware before removing it so it can be factory reset.":
                 "Removal could not be saved. Refresh the device list and review the activities before trying again.","409 Conflict");return true;
         }
-        const auto activation=amity::configuration_activation_status();
+        const auto activation=amity::configuration_activation_status(*m::MessageId::parse(id));
         operation.status="configuring";
         operation.removal_revisions={activation.config_revision,activation.presentation_revision};
         if(amity::consortium::runtime_forget_removed_octopus(*owner)!=ESP_OK){operation.status="failed";operation.error="The saved device configuration was removed, but its saved name or settings could not be erased. Removal is incomplete.";}

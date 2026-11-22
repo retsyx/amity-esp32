@@ -14,7 +14,8 @@ esp_err_t start_configuration_synchronization(SystemControl&);
 // A later storage failure is reported; it cannot roll back a roster revocation.
 esp_err_t activate_distributed_configuration(config_store::Configuration,config_store::RevisionPair,system::MessageId,
     std::function<esp_err_t()> before_commit = {});
-ConfigurationActivationStatus configuration_activation_status();
+// The status of one recent save; idle for an unknown request.
+ConfigurationActivationStatus configuration_activation_status(system::MessageId);
 std::vector<system::CecObservation> discovered_equipment();
 esp_err_t request_equipment_scan();
 void set_owner_maintenance(system::OctopusId,bool);

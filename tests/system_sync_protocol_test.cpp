@@ -39,7 +39,7 @@ std::unique_ptr<ConfigurationStore> journal;
 ConfigurationSnapshot committed_snapshot;
 void reset(){
     {std::lock_guard<std::mutex> guard(amity::state.mutex);
-        amity::state.control=nullptr;amity::state.activating=false;amity::state.activation={};
+        amity::state.control=nullptr;amity::state.activating=false;amity::state.activations.clear();
         amity::state.configuration_pending=false;
         amity::state.controller={};amity::state.dirty_reports=0;amity::state.maintenance.clear();amity::state.published_revision=0;}
     role={};role.coordinator=true;role.authority_ready=true;role.initialized=true;
@@ -132,7 +132,7 @@ void configuration_publication_is_driven_by_application(){
     main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
     amity::flush_configuration();assert(configuration_changes.size()==1&&main.execution_reads==0);
     const auto reads=main.configuration_reads;
-    for(unsigned i=0;i<5000;++i){amity::flush_configuration();amity::configuration_activation_status();}
+    for(unsigned i=0;i<5000;++i){amity::flush_configuration();amity::configuration_activation_status(id<s::MessageId>(1));}
     assert(main.configuration_reads==reads&&main.execution_reads==0&&configuration_changes.size()==1);
     // Saving is not application. Only the owner's later applied notification
     // publishes a revision, without an HTTP status read driving it.
@@ -436,6 +436,23 @@ void dropped_report_republishes_latest(){
     assert(decoded(packets.back().payload).discovery_generation==5&&!amity::state.dirty_reports);
     hooks.report_dropped(amity::max_tentacles);assert(!amity::state.dirty_reports&&sent.empty());
 }
+void earlier_save_completes_after_a_later_save(){
+    reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
+    Configuration active;commit(*journal,main.configuration,{},active);main.configuration=active;main.auto_apply=false;
+    const auto apply=[&]{
+        main.applied.applied_config_revision=main.configuration.config_revision;main.applied.applied_presentation_revision=main.configuration.presentation_revision;
+        main.applied.applied_policy_hash=executable_policy_hash(main.configuration);main.configuration_applied();amity::flush_configuration();
+    };
+    auto first=active;first.activities[0].label="First";first.activities[0].label_override=true;
+    assert(amity::activate_distributed_configuration(first,active.revisions(),id<s::MessageId>(140))==ESP_OK);apply();
+    // Another interface saves before anyone asks about the first request.
+    auto second=main.configuration;second.activities[0].label="Second";
+    assert(amity::activate_distributed_configuration(second,main.configuration.revisions(),id<s::MessageId>(141))==ESP_OK);
+    assert(amity::configuration_activation_status(id<s::MessageId>(140)).phase=="applied");
+    assert(amity::configuration_activation_status(id<s::MessageId>(141)).phase=="configuring");
+    apply();assert(amity::configuration_activation_status(id<s::MessageId>(141)).phase=="applied");
+    assert(amity::configuration_activation_status(id<s::MessageId>(142)).phase=="idle"&&amity::configuration_activation_status({}).phase=="idle");
+}
 void scans_and_saved_intent_without_peer_ack(){
     reset();auto main=control();assert(amity::start_configuration_synchronization(main)==ESP_OK);
     peers={remote(),remote(10,20,3,0b010),remote(11,21,1,1),remote(12,22,1,1)};peers[2].ready=false;peers[3].enrolled=false;
@@ -450,14 +467,14 @@ void scans_and_saved_intent_without_peer_ack(){
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),request)==ESP_OK&&now==began);
     assert(main.configured_snapshot&&main.configured_snapshot==committed_snapshot);
     assert(configuration_changes.empty()); // Admission cannot invalidate old-recipe cleanup.
-    const auto status=amity::configuration_activation_status();assert(status.request_id==request&&status.phase=="configuring"&&status.config_revision==2&&status.presentation_revision==2);
+    const auto status=amity::configuration_activation_status(request);assert(status.request_id==request&&status.phase=="configuring"&&status.config_revision==2&&status.presentation_revision==2);
     main.applied.applied_config_revision=status.config_revision;
-    assert(amity::configuration_activation_status().phase=="configuring");
+    assert(amity::configuration_activation_status(request).phase=="configuring");
     assert(configuration_changes.empty());
     main.applied.applied_presentation_revision=status.presentation_revision;
     main.applied.applied_policy_hash=executable_policy_hash(main.configuration);
     main.configuration_applied();amity::flush_configuration();
-    assert(amity::configuration_activation_status().phase=="applied");
+    assert(amity::configuration_activation_status(request).phase=="applied");
     assert(configuration_changes.size()==1&&configuration_changes[0]==status.config_revision);
     assert(main.configuration.activities[0].audio==candidate.activities[0].source&&packets.empty()&&sent.empty()&&configuration_changes.size()==1);
     assert(serialize_configuration(main.configuration).find("\"enabled\"")==std::string::npos);
@@ -465,7 +482,7 @@ void scans_and_saved_intent_without_peer_ack(){
     const auto previous_snapshot=main.configured_snapshot;
     memory.fail_marker=true;assert(amity::activate_distributed_configuration(candidate,main.configuration.revisions(),id<s::MessageId>(101))!=ESP_OK);memory.fail_marker=false;
     assert(main.configured_snapshot==previous_snapshot&&committed_snapshot==previous_snapshot);
-    assert(serialize_configuration(main.configuration)==saved&&configuration_changes.size()==1&&amity::configuration_activation_status().phase=="failed");
+    assert(serialize_configuration(main.configuration)==saved&&configuration_changes.size()==1&&amity::configuration_activation_status(id<s::MessageId>(101)).phase=="failed");
     for(const auto& item:committed)if(item.first=="cm0"||item.first=="cm1")assert(memory.values[item.first]==item.second);
     ConfigurationStore recovered(memory);ConfigurationSnapshot after;std::string error;assert(recovered.recover(after,error)==ConfigResult::ok&&after->canonical==saved);
 }
@@ -512,10 +529,10 @@ void removal_commit_boundary(){
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(131),revoke)!=ESP_OK&&revoked==0);
     main.configure_result=ESP_OK;memory.fail_marker=true;
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(132),revoke)!=ESP_OK&&revoked==1);
-    assert(amity::configuration_activation_status().phase=="failed"&&serialize_configuration(main.configuration)==serialize_configuration(active));
+    assert(amity::configuration_activation_status(id<s::MessageId>(132)).phase=="failed"&&serialize_configuration(main.configuration)==serialize_configuration(active));
     memory.fail_marker=false;
     assert(amity::activate_distributed_configuration(candidate,active.revisions(),id<s::MessageId>(133),revoke)==ESP_OK&&revoked==2);
-    assert(amity::configuration_activation_status().phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
+    assert(amity::configuration_activation_status(id<s::MessageId>(133)).phase=="applied"&&serialize_configuration(main.configuration).find(removed.str())==std::string::npos&&main.configuration.activities.empty());
 }
 }
-int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_application();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_report_republishes_latest();scans_and_saved_intent_without_peer_ack();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}
+int main(){configuration_publication_is_driven_by_application();configuration_revision_waits_for_application();startup_and_minimal_handshake();intent_delivery_preserves_authorization();key_rejection_diagnostics_preserve_results();activity_selection_delivery_is_independent();reports_and_exact_disconnect();removal_serializes_report_and_disconnect_publication();full_roster_adapter_reports_keep_exact_owner_fences();logical_session_restart_preserves_reports();report_coalescing_and_no_intent_backlog();dropped_report_republishes_latest();scans_and_saved_intent_without_peer_ack();earlier_save_completes_after_a_later_save();saved_owner_capacity_does_not_shrink();added_owner_label_remains_unique_after_middle_removal();removal_commit_boundary();std::cout<<"PASS actual owner synchronization: minimal handshake, compact key edges/link/generation/deadline without duplicate authorization, unchanged non-key authority, bounded key rejection diagnostics, independent activity-selection delivery, latest snapshot recapture without failed-send regression, twelve adapter reports with exact owner/boot updates and disconnect fences, serialized removal/report cleanup, unique labels after middle removal, sparse scans/capacity retention and real journal save/applied revisions independent of offline peers, removal only after stage and owner reservation\n";}

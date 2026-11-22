@@ -52,7 +52,7 @@ std::vector<m::CecObservation> observations(amity::SystemControl& control){auto 
 void update(amity::SystemControl& control,Operation& op){
     if(!pending(op.stage))return;
     if(op.kind=="config"){
-        const auto status=amity::configuration_activation_status();if(status.request_id==op.id){op.stage=status.phase;op.error=status.error;}return;
+        const auto status=amity::configuration_activation_status(op.id);if(status.request_id==op.id){op.stage=status.phase;op.error=status.error;}return;
     }
     if(op.kind!="activity")return;
     const auto config=control.active_configuration();

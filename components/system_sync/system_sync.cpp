@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <deque>
 #include <mutex>
 #include <set>
 #include <atomic>
@@ -20,7 +21,9 @@ namespace {
 struct State {
     std::mutex mutex;
     SystemControl* control=nullptr;
-    ConfigurationActivationStatus activation;
+    // Recent saves, oldest first. Each caller follows its own request, so a
+    // later save cannot leave an earlier one looking unfinished.
+    std::deque<ConfigurationActivationStatus> activations;
     bool activating=false;
     std::atomic<bool> configuration_pending{false};
     uint64_t published_revision=0;
@@ -30,6 +33,12 @@ struct State {
     uint8_t dirty_reports=0;
     std::set<s::OctopusId> maintenance;
 } state;
+void record_activation(ConfigurationActivationStatus status){
+    auto found=std::find_if(state.activations.begin(),state.activations.end(),[&](const auto& a){return a.request_id==status.request_id;});
+    if(found!=state.activations.end()){*found=std::move(status);return;}
+    state.activations.push_back(std::move(status));
+    if(state.activations.size()>8)state.activations.pop_front();
+}
 template<class T>T fresh(){return T::generate([](uint8_t* data,size_t size){esp_fill_random(data,size);return true;}).value_or(T{});}
 std::optional<c::RuntimePeerStatus> peer(s::OctopusId id){for(const auto& p:c::runtime_peers())if(p.id==id)return p;return {};}
 void mark_report(uint8_t adapter){
@@ -174,7 +183,7 @@ esp_err_t start_configuration_synchronization(SystemControl& control){
 esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::RevisionPair expected,s::MessageId request,
     std::function<esp_err_t()> before_commit){
     SystemControl* control=nullptr;
-    {std::lock_guard<std::mutex> guard(state.mutex);if(!state.control||state.activating)return ESP_ERR_INVALID_STATE;state.activating=true;control=state.control;state.activation={request,0,0,"admitted",{}};}
+    {std::lock_guard<std::mutex> guard(state.mutex);if(!state.control||state.activating)return ESP_ERR_INVALID_STATE;state.activating=true;control=state.control;record_activation({request,0,0,"admitted",{}});}
     struct Clear{~Clear(){std::lock_guard<std::mutex> guard(state.mutex);state.activating=false;}} clear;
     std::string error;esp_err_t result=ESP_ERR_INVALID_ARG;
     auto revisions=candidate.revisions();cs::ConfigurationSnapshot prepared;
@@ -188,16 +197,21 @@ esp_err_t activate_distributed_configuration(cs::Configuration candidate,cs::Rev
         });
     }
     if(result!=ESP_OK)cs::cancel_staged_configuration();
-    {std::lock_guard<std::mutex> guard(state.mutex);state.activation={request,revisions.config_revision,revisions.presentation_revision,result==ESP_OK?"configuring":"failed",result==ESP_OK?std::string{}:error.empty()?"Configuration could not be saved":error};}
+    {std::lock_guard<std::mutex> guard(state.mutex);record_activation({request,revisions.config_revision,revisions.presentation_revision,result==ESP_OK?"configuring":"failed",result==ESP_OK?std::string{}:error.empty()?"Configuration could not be saved":error});}
     return result;
 }
-ConfigurationActivationStatus configuration_activation_status(){
+ConfigurationActivationStatus configuration_activation_status(s::MessageId request){
+    if(!request)return {};
     std::lock_guard<std::mutex> guard(state.mutex);
-    if(state.control&&state.activation.phase=="configuring"){
-        const auto applied=state.control->applied_configuration();
-        if(applied.config_revision==state.activation.config_revision&&applied.presentation_revision==state.activation.presentation_revision)state.activation.phase="applied";
+    for(auto& activation:state.activations)if(activation.request_id==request){
+        if(state.control&&activation.phase=="configuring"){
+            // Saves apply in order, so a later applied save includes this one.
+            const auto applied=state.control->applied_configuration();
+            if(applied.config_revision>=activation.config_revision&&applied.presentation_revision>=activation.presentation_revision)activation.phase="applied";
+        }
+        return activation;
     }
-    return state.activation;
+    return {};
 }
 void forget_owner(s::OctopusId owner){
     if(state.control)disconnected(owner,{},{});
