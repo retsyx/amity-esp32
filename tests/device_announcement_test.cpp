@@ -154,6 +154,8 @@ static void known_peer_is_asked_again_for_a_missing_name(){
     reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
     receive({{0x8f,0x82,0x20,0},4});
     assert(peer(hub)&&peer(hub)->name.empty()&&sent(0x46)==1);
+    // The reply to Amity's own 0x83 does not repeat the outstanding request.
+    fixture_time+=100000;fixture_sent.clear();receive({{0x8f,0x84,0x20,0,4},5});assert(sent(0x46)==0);
     // The peer did not answer. Each later announcement asks again for only the
     // missing name; a power-on burst asks once.
     for(const auto& burst:std::vector<std::vector<cec::Frame>>{{{{0x8f,0x84,0x20,0,4},5}},{{{0x8f,0x82,0x20,0},4}},
@@ -167,9 +169,29 @@ static void known_peer_is_asked_again_for_a_missing_name(){
     fixture_time+=300000000;fixture_sent.clear();receive({{0x8f,0x84,0x20,0,4},5});
     assert(sent(0x46)==0&&peer(hub)->name=="Player");no_enumeration(hub,generation);
 }
+static void refused_name_request_is_asked_again(){
+    reset_fixture();LocalHubService hub;start(hub);const auto generation=hub.snapshot().discovery_generation;
+    // A full CEC FIFO refuses the first two name requests. A refused request is
+    // not outstanding, so the next announcement asks again even within 1 s.
+    unsigned asked=0;
+    fixture_admission=[&](int gpio,const cec::Frame& f){
+        return !(gpio==2&&f.size==2&&f.data[1]==0x46&&f.destination()==8&&++asked<=2);};
+    receive({{0x8f,0x82,0x20,0},4});
+    assert(peer(hub)&&peer(hub)->name.empty()&&sent(0x46)==1&&asked==1);
+    // The reply to Amity's own 0x83 arrives well inside 1 s.
+    fixture_time+=100000;fixture_sent.clear();receive({{0x8f,0x84,0x20,0,4},5});
+    assert(sent(0x46)==1&&asked==2);
+    fixture_time+=100000;fixture_sent.clear();receive({{0x8f,0x82,0x20,0},4});
+    assert(sent(0x46)==1&&asked==3);
+    // The admitted request stands for CEC's 1 s reply time.
+    fixture_time+=100000;fixture_sent.clear();receive({{0x8f,0x84,0x20,0,4},5});
+    assert(sent(0x46)==0&&asked==3&&peer(hub)->name.empty());
+    fixture_admission={};
+    only_targeted_identity_and_standby();no_enumeration(hub,generation);
+}
 int main(){
     active_announcement_without_configuration();metadata_can_introduce_a_device();
     unselected_player_retains_its_observation();foreign_activity_still_caches_local_player();malformed_announcements_are_not_cached();
-    known_peer_is_asked_again_for_a_missing_name();
+    known_peer_is_asked_again_for_a_missing_name();refused_name_request_is_asked_again();
     std::puts("Actual worker caches valid player announcements independently of activities/Standby, accepts targeted metadata, preserves observations for later starts, rejects malformed sources and avoids enumeration");
 }
