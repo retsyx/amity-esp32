@@ -17,4 +17,4 @@ cc -g -Wno-deprecated-declarations -fsanitize=address,undefined -I"$json" -c "$j
     "$root/components/amity_system/model.cpp" "$root/components/config_store/system_configuration.cpp" \
     "$root/components/config_store/configuration_journal.cpp" "$root/components/config_store/configuration_replacement.cpp" \
     "$root/tests/system_configuration_test.cpp" "$out/cjson.o" $openssl_lib -lcrypto -o "$out/test"
-"$out/test"
+"$out/test" "$root/example-config.json"

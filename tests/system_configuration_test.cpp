@@ -1,5 +1,7 @@
 #include "intent_configuration_fixture.hpp"
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 
 std::string json_text(cJSON* value){char* text=cJSON_PrintUnformatted(value);assert(text);std::string result(text);cJSON_free(text);return result;}
@@ -187,4 +189,10 @@ void explicit_owner_removal(){
     assert(active->canonical.find(removed.str())==std::string::npos&&active->configuration.activities.size()==1);
     for(size_t index=1;index<active->configuration.external_slots.size();++index)assert(active->configuration.external_slots[index].tombstone&&active->configuration.external_slots[index].alias.empty());
 }
-int main(){canonical_bytes_and_projections();saved_text_and_staged_record_integrity();codecs();current_format_only();initialization();journal();ownership_and_slots();explicit_owner_removal();std::cout<<"PASS intent-only configuration: canonical bytes/hash projections, saved-text invariants, staged-record tampering, scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions\n";}
+// The repository example is a saved configuration in the current format.
+void example_configuration(const char* path){
+    std::ifstream input(path);assert(input);const std::string text((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
+    Configuration c;std::string error;assert(parse_configuration(text,c,error));
+    auto* example=cJSON_Parse(text.c_str());assert(example);assert(serialize_configuration(c)==json_text(example));cJSON_Delete(example);
+}
+int main(int argc,char** argv){assert(argc==2);example_configuration(argv[1]);canonical_bytes_and_projections();saved_text_and_staged_record_integrity();codecs();current_format_only();initialization();journal();ownership_and_slots();explicit_owner_removal();std::cout<<"PASS intent-only configuration: canonical bytes/hash projections, saved-text invariants, staged-record tampering, scoped selectors, current-format rejection, AVR/switch selections without discovery, explicit all-role owner deletion, preserved slots/authority, 80 storage interruptions, current-format example\n";}
