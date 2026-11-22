@@ -1432,8 +1432,6 @@ esp_err_t validate_startup(model::OctopusId local,const Group& stored,RuntimeSta
     if(stored.role==Group::unclaimed)return ESP_OK;
     if(stored.peers.size()>maximum_roster_peers){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_SIZE;}
     if((stored.role==Group::member||stored.role==Group::prepared)&&stored.joining_id!=local){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
-    std::string committed,pending;
-    if(read_record("amity_group","identity",committed,8192)!=ESP_OK||read_record("amity_group","identity_tmp",pending,8192)!=ESP_OK||committed!=pending){out.role=RuntimeStartup::recovery_required;return ESP_ERR_INVALID_STATE;}
     Identity verified;const auto identity_stage=timing?timing->begin("identity_load"):0;
     const auto loaded=platform::load_identity(local,verified);
     if(timing)timing->finish(identity_stage,loaded==ESP_OK,1);
@@ -1464,7 +1462,7 @@ esp_err_t runtime_start(model::ConsortiumId consortium,model::OctopusId octopus,
     const auto validated=validate_startup(octopus,group,startup,&identity,&timing);timing.finish(validation_stage,validated==ESP_OK,1);
     if(validated!=ESP_OK)return recovery_required(octopus,ESP_ERR_INVALID_STATE,"Saved membership is invalid; factory reset required");
     if(group.role==Group::unclaimed){
-        const auto identity_stage=timing.begin("identity_load");result=platform::load_identity(octopus,identity);timing.finish(identity_stage,result==ESP_OK,1);
+        const auto identity_stage=timing.begin("identity_load");result=platform::load_identity(octopus,identity,true);timing.finish(identity_stage,result==ESP_OK,1);
         if(result!=ESP_OK)return recovery_required(octopus,result,"Saved credentials are unreadable; factory reset required");
     }
     singleton=consortium;boot=current_boot;configuration=config;

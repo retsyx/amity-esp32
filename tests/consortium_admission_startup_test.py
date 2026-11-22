@@ -50,7 +50,7 @@ RuntimeRadioHooks radio;uint64_t pending_radio_release=0,candidate_deadline=0,ca
 struct ConnectionHealth{bool available=true;bool usable()const{return available;}};
 struct Active{bool cancelled=false;model::OctopusId peer,connection_peer;std::shared_ptr<ConnectionHealth> tls=std::make_shared<ConnectionHealth>();};std::vector<std::shared_ptr<Active>> links;
 esp_err_t load_group(Group& value){++group_reads;if(!group_ok)return ESP_FAIL;value=seed;return ESP_OK;}
-namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& value){++identity_loads;if(!identity_ok)return ESP_FAIL;value={owner,"validated-leaf","private-key-"+std::to_string(identity_loads),std::string(64,'a')};return ESP_OK;}}
+namespace platform{esp_err_t load_identity(model::OctopusId owner,Identity& value,bool=false){++identity_loads;if(!identity_ok)return ESP_FAIL;value={owner,"validated-leaf","private-key-"+std::to_string(identity_loads),std::string(64,'a')};return ESP_OK;}}
 esp_err_t read_record(const char* space,const char* key,std::string& value,size_t cap){const auto name=std::string(space)+"/"+key;if(name==fail_read)return ESP_FAIL;const auto found=records.find(name);if(found==records.end())return ESP_ERR_NVS_NOT_FOUND;if(found->second.size()>cap)return ESP_ERR_INVALID_SIZE;value=found->second;return ESP_OK;}
 // The public recovery status matches firmware.
 esp_err_t recovery_required(model::OctopusId,esp_err_t result,const char*){++recoveries;status.initialized=true;status.credential_ready=false;status.authority_ready=false;status.coordinator=false;status.member=true;status.phase="recovery_required";return result;}
@@ -111,7 +111,7 @@ void seed_role(Group::Role role){
  seed.role=role;if(role==Group::unclaimed)return;
  seed.consortium=ident<model::ConsortiumId>(1);seed.epoch=seed.revision=1;seed.authority=ident<model::OctopusId>(role==Group::coordinator?2:9);
  seed.joining_id=ident<model::OctopusId>(2);if(role==Group::member||role==Group::prepared)seed.peers={{seed.authority,"validated-authority","validated-pin",role==Group::member}};
- records["amity_group/identity"]=records["amity_group/identity_tmp"]="same-exact-record";
+ records["amity_group/identity"]="same-exact-record";
 }
 esp_err_t start_runtime(){return runtime_start(ident<model::ConsortiumId>(1),ident<model::OctopusId>(2),ident<model::BootId>(3),1);}
 void check_phases(){
@@ -144,14 +144,12 @@ void startup_tests(){
  }
  // Failure before operational readiness remains fail closed for every role.
  for(auto role:{Group::unclaimed,Group::coordinator,Group::prepared,Group::member,Group::retired}){
-  for(unsigned failure=0;failure<6;++failure){
+  for(unsigned failure=0;failure<4;++failure){
    reset();seed_role(role);
    if(failure==0)psa_ok=false;
    if(failure==1)group_ok=false;
    if(failure==2)identity_ok=false;
-   if(failure==3){if(role==Group::unclaimed)continue;records["amity_group/identity_tmp"]="different";}
-   if(failure==4){if(role==Group::unclaimed)continue;records.erase("amity_group/identity");}
-   if(failure==5){if(role==Group::unclaimed)continue;seed.epoch=2;}
+   if(failure==3){if(role==Group::unclaimed)continue;seed.epoch=2;}
    check(start_runtime()!=ESP_OK&&recoveries==1&&status.initialized&&status.phase=="recovery_required"&&!status.credential_ready&&!created_tasks,"invalid PSA/group/journal/identity reached operational readiness");
   }
  }
@@ -173,8 +171,8 @@ void fresh_public_preflight(){
  check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::member&&group_reads==1&&identity_loads==1&&records==stored&&!erases,"public member preflight failed exact validation");
  seed.role=Group::prepared;
  check(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::prepared&&group_reads==2&&identity_loads==2,"public preflight reused an old boot/call cache");
- records["amity_group/identity_tmp"]="changed";
- check(runtime_read_startup(local,startup)!=ESP_OK&&startup.passive()&&startup.role==RuntimeStartup::recovery_required&&group_reads==3&&identity_loads==2,"changed public journal skipped fresh validation");
+ identity_ok=false;
+ check(runtime_read_startup(local,startup)!=ESP_OK&&startup.passive()&&startup.role==RuntimeStartup::recovery_required&&group_reads==3&&identity_loads==3,"invalid identity skipped fresh validation");
  reset();seed_role(Group::member);check(runtime_read_startup(local,startup)==ESP_OK,"pre-start preflight failed");
  check(group_reads==1&&identity_loads==1&&start_runtime()==ESP_OK&&group_reads==2&&identity_loads==2&&identity.key_der=="private-key-2","runtime_start reused a prior public preflight instead of validating its own records");
 }

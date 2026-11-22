@@ -19,7 +19,8 @@ std::string random_hex(size_t);
 uint64_t now_ms();
 esp_err_t read_record(const char *space,const char *key,std::string &,size_t cap);
 esp_err_t write_record(const char *space,const char *key,std::string_view);
-esp_err_t load_identity(model::OctopusId,Identity &);
+// Missing identities are generated only when create is set (unclaimed boards).
+esp_err_t load_identity(model::OctopusId,Identity &,bool create=false);
 bool certificate(std::string_view der,model::OctopusId,std::string &pin);
 // Structural identity/pin binding only; untrusted leaves still use certificate().
 bool certificate_binding(const mbedtls_x509_crt &,model::OctopusId,std::string &pin);

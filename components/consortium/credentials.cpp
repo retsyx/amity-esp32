@@ -49,11 +49,11 @@ bool parse_certificate(std::string_view der,model::OctopusId id,mbedtls_x509_crt
 bool decode_identity(std::string_view record,model::OctopusId id,Identity &out){Json json;JsonError err;if(!parse_json(record,json,err)||!closed(json,{"version","octopus_id","leaf","key"}))return false;uint64_t version=0;model::OctopusId stored;if(!json_uint(json.get("version"),version,1,1)||!consortium::id(json.get("octopus_id"),stored)||stored!=id)return false;std::string leaf,key;if(!json.get("leaf")||json.get("leaf")->type!=Json::Type::string||!json.get("key")||json.get("key")->type!=Json::Type::string||!unhex(json.get("leaf")->string,leaf,1024)||!unhex(json.get("key")->string,key,512))return false;std::string pin;if(!certificate(leaf,id,pin))return false;mbedtls_pk_context parsed;mbedtls_pk_init(&parsed);mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);bool valid=mbedtls_pk_parse_key(&parsed,reinterpret_cast<const uint8_t*>(key.data()),key.size(),nullptr,0)==0&&mbedtls_x509_crt_parse_der(&crt,reinterpret_cast<const uint8_t*>(leaf.data()),leaf.size())==0&&mbedtls_pk_check_pair(&crt.pk,&parsed)==0;mbedtls_x509_crt_free(&crt);mbedtls_pk_free(&parsed);if(!valid)return false;out={id,std::move(leaf),std::move(key),std::move(pin)};return true;}
 }
 bool certificate(std::string_view der,model::OctopusId id,std::string &pin){mbedtls_x509_crt crt;mbedtls_x509_crt_init(&crt);bool valid=parse_certificate(der,id,crt,pin);mbedtls_x509_crt_free(&crt);return valid;}
-esp_err_t load_identity(model::OctopusId id,Identity &out){
-    std::string committed,candidate;auto marker=read_record("amity_group","identity",committed,2048);auto pending=read_record("amity_group","identity_tmp",candidate,2048);
-    if(marker==ESP_OK){if(pending!=ESP_OK||candidate!=committed||!decode_identity(committed,id,out))return ESP_ERR_INVALID_STATE;return ESP_OK;}
-    if(marker!=ESP_ERR_NVS_NOT_FOUND)return marker;
-    if(pending==ESP_ERR_NVS_NOT_FOUND){
+esp_err_t load_identity(model::OctopusId id,Identity &out,bool create){
+    std::string candidate;const auto found=read_record("amity_group","identity",candidate,2048);
+    if(found==ESP_OK)return decode_identity(candidate,id,out)?ESP_OK:ESP_ERR_INVALID_STATE;
+    if(found!=ESP_ERR_NVS_NOT_FOUND||!create)return found;
+    {
         psa_key_attributes_t attr=PSA_KEY_ATTRIBUTES_INIT;psa_set_key_type(&attr,PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));psa_set_key_bits(&attr,256);psa_set_key_algorithm(&attr,PSA_ALG_ECDSA(PSA_ALG_SHA_256));psa_set_key_usage_flags(&attr,PSA_KEY_USAGE_SIGN_HASH|PSA_KEY_USAGE_EXPORT|PSA_KEY_USAGE_COPY);mbedtls_svc_key_id_t key_id=0;if(psa_generate_key(&attr,&key_id)!=PSA_SUCCESS)return ESP_FAIL;
         mbedtls_pk_context key;mbedtls_pk_init(&key);int r=mbedtls_pk_copy_from_psa(key_id,&key);psa_destroy_key(key_id);mbedtls_x509write_cert cert;mbedtls_x509write_crt_init(&cert);
         uint8_t serial[16];esp_fill_random(serial,sizeof(serial));serial[0]=(serial[0]&0x7f)|1;
@@ -71,18 +71,19 @@ esp_err_t load_identity(model::OctopusId id,Identity &out){
         if(!r)r=mbedtls_x509write_crt_set_ext_key_usage(&cert,&client);
         uint8_t der[1024],priv[512];int length=r?r:mbedtls_x509write_crt_der(&cert,der,sizeof(der)),key_length=length>0?mbedtls_pk_write_key_der(&key,priv,sizeof(priv)):-1;
         if(length>0&&key_length>0)candidate="{\"version\":1,\"octopus_id\":\""+id.str()+"\",\"leaf\":\""+hex(std::string_view(reinterpret_cast<char*>(der+sizeof(der)-length),length))+"\",\"key\":\""+hex(std::string_view(reinterpret_cast<char*>(priv+sizeof(priv)-key_length),key_length))+"\"}";
-        std::fill(std::begin(priv),std::end(priv),0);mbedtls_x509write_crt_free(&cert);mbedtls_pk_free(&key);if(candidate.empty()||candidate.size()>2048||!decode_identity(candidate,id,out))return ESP_FAIL;auto e=write_record("amity_group","identity_tmp",candidate);if(e!=ESP_OK)return e;
-    }else if(pending!=ESP_OK)return pending;
-    if(!decode_identity(candidate,id,out))return ESP_ERR_INVALID_STATE;
-    auto e=write_record("amity_group","identity",candidate);if(e!=ESP_OK)return e;std::string verify;if(read_record("amity_group","identity",verify,8192)!=ESP_OK||verify!=candidate)return ESP_ERR_INVALID_STATE;return ESP_OK;
+        std::fill(std::begin(priv),std::end(priv),0);mbedtls_x509write_crt_free(&cert);mbedtls_pk_free(&key);if(candidate.empty()||candidate.size()>2048||!decode_identity(candidate,id,out))return ESP_FAIL;
+    }
+    // One NVS blob write and commit is atomic; no separate staging record.
+    return write_record("amity_group","identity",candidate);
 }
 esp_err_t load_group(Group &out){
-    std::string text;auto e=read_record("amity_group","state",text,32768);if(e==ESP_ERR_NVS_NOT_FOUND){out={};return ESP_OK;}if(e!=ESP_OK)return e;Json j;JsonError error;if(!parse_json(text,j,error,32768)||!closed(j,{"version","role","consortium","authority","epoch","revision","host","join_id","joining_id","join_digest","join_revision","peers"},{"mutation_id","mutation_digest"}))return ESP_ERR_INVALID_STATE;uint64_t version=0,role=0;Group g;if(!json_uint(j.get("version"),version,1,1)||!json_uint(j.get("role"),role,1,4)||!id(j.get("consortium"),g.consortium)||!id(j.get("authority"),g.authority)||!decimal(j.get("epoch"),g.epoch)||!g.epoch||!decimal(j.get("revision"),g.revision)||!g.revision||!json_string(j.get("host"),g.authority_host,0,64))return ESP_ERR_INVALID_STATE;if(!std::all_of(g.authority_host.begin(),g.authority_host.end(),[](unsigned char c){return (c>='0'&&c<='9')||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||c=='.'||c=='-';}))return ESP_ERR_INVALID_STATE;
+    std::string text;auto e=read_record("amity_group","state",text,32768);if(e==ESP_ERR_NVS_NOT_FOUND){out={};return ESP_OK;}if(e!=ESP_OK)return e;Json j;JsonError error;if(!parse_json(text,j,error,32768)||!closed(j,{"version","role","consortium","authority","epoch","revision","host","join_id","joining_id","join_digest","join_revision","peers"},{"mutation_id","mutation_digest","join_hostname"}))return ESP_ERR_INVALID_STATE;uint64_t version=0,role=0;Group g;if(!json_uint(j.get("version"),version,1,1)||!json_uint(j.get("role"),role,1,4)||!id(j.get("consortium"),g.consortium)||!id(j.get("authority"),g.authority)||!decimal(j.get("epoch"),g.epoch)||!g.epoch||!decimal(j.get("revision"),g.revision)||!g.revision||!json_string(j.get("host"),g.authority_host,0,64))return ESP_ERR_INVALID_STATE;if(!std::all_of(g.authority_host.begin(),g.authority_host.end(),[](unsigned char c){return (c>='0'&&c<='9')||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||c=='.'||c=='-';}))return ESP_ERR_INVALID_STATE;
     g.role=static_cast<Group::Role>(role);
     if(j.get("mutation_id")||j.get("mutation_digest")){if(!id(j.get("mutation_id"),g.mutation_id)||!json_string(j.get("mutation_digest"),g.mutation_digest,64,64)||!std::all_of(g.mutation_digest.begin(),g.mutation_digest.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');}))return ESP_ERR_INVALID_STATE;}
     if(g.role==Group::retired&&!g.mutation_id)return ESP_ERR_INVALID_STATE;
     if(g.epoch!=1)return ESP_ERR_INVALID_STATE;
     std::string jid,joining;
+    if(j.get("join_hostname")&&(!json_string(j.get("join_hostname"),g.join_hostname,1,32)||!valid_hostname(g.join_hostname)))return ESP_ERR_INVALID_STATE;
     if(!json_string(j.get("join_id"),jid,0,32)||!json_string(j.get("joining_id"),joining,0,32)||!json_string(j.get("join_digest"),g.join_digest,0,64)||!decimal(j.get("join_revision"),g.join_revision))return ESP_ERR_INVALID_STATE;
     if(!jid.empty()){auto parsed=model::JoinId::parse(jid);auto member=model::OctopusId::parse(joining);if(!parsed||!member||g.join_digest.size()!=64||!std::all_of(g.join_digest.begin(),g.join_digest.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');})||!g.join_revision)return ESP_ERR_INVALID_STATE;g.join_id=*parsed;g.joining_id=*member;}else if(!joining.empty()||!g.join_digest.empty()||!g.join_hostname.empty()||g.join_revision)return ESP_ERR_INVALID_STATE;
     auto peers=j.get("peers");if(peers->type!=Json::Type::array||peers->array.size()>maximum_roster_peers)return ESP_ERR_INVALID_STATE;
@@ -93,16 +94,9 @@ esp_err_t load_group(Group &out){
     }else if(g.role==Group::member||g.role==Group::prepared){
         if(g.peers.size()!=1||g.peers[0].id!=g.authority||g.authority_host.empty()||!g.join_id||g.join_revision>g.revision||(g.role==Group::member&&!g.peers[0].active)||(g.role==Group::prepared&&g.peers[0].active))return ESP_ERR_INVALID_STATE;
     }
-    // Optional public transaction metadata is separate so old firmware can
-    // still read the unchanged membership state after rollback. Stale/corrupt
-    // names never alter role or trust; only an exact join/digest can use one.
-    if(g.join_id){std::string named;Json metadata;JsonError detail;model::JoinId join;std::string digest,name;
-        if(read_record("amity_group","join_name",named,512)==ESP_OK&&parse_json(named,metadata,detail,512)&&closed(metadata,{"join_id","join_digest","hostname"})&&id(metadata.get("join_id"),join)&&json_string(metadata.get("join_digest"),digest,64,64)&&json_string(metadata.get("hostname"),name,1,32)&&valid_hostname(name)&&join==g.join_id&&digest==g.join_digest)g.join_hostname=std::move(name);
-    }
     out=std::move(g);return ESP_OK;
 }
-esp_err_t save_group(const Group &g){if(g.role==Group::unclaimed||g.peers.size()>maximum_roster_peers||!g.consortium||!g.authority||g.epoch!=1||(!g.join_hostname.empty()&&(!g.join_id||!valid_hostname(g.join_hostname))))return ESP_ERR_INVALID_ARG;std::string json="{\"version\":1,\"role\":"+std::to_string(g.role)+",\"consortium\":\""+g.consortium.str()+"\",\"authority\":\""+g.authority.str()+"\",\"epoch\":\""+std::to_string(g.epoch)+"\",\"revision\":\""+std::to_string(g.revision)+"\",\"host\":\""+g.authority_host+"\",\"join_id\":\""+(g.join_id?g.join_id.str():"")+"\",\"joining_id\":\""+(g.joining_id?g.joining_id.str():"")+"\",\"join_digest\":\""+g.join_digest+"\",\"join_revision\":\""+std::to_string(g.join_revision)+"\",\"peers\":[";for(size_t i=0;i<g.peers.size();++i){const auto &p=g.peers[i];if(i)json+=",";json+="{\"id\":\""+p.id.str()+"\",\"leaf\":\""+hex(p.der)+"\",\"pin\":\""+p.pin+"\",\"active\":"+(p.active?"true":"false")+"}";}json+="]";if(g.mutation_id)json+=",\"mutation_id\":\""+g.mutation_id.str()+"\",\"mutation_digest\":\""+g.mutation_digest+"\"";json+="}";if(json.size()>8192)return ESP_ERR_INVALID_SIZE;
-    if(!g.join_hostname.empty()){const auto named="{\"join_id\":\""+g.join_id.str()+"\",\"join_digest\":\""+g.join_digest+"\",\"hostname\":\""+g.join_hostname+"\"}";const auto saved=write_record("amity_group","join_name",named);if(saved!=ESP_OK)return saved;}
+esp_err_t save_group(const Group &g){if(g.role==Group::unclaimed||g.peers.size()>maximum_roster_peers||!g.consortium||!g.authority||g.epoch!=1||(!g.join_hostname.empty()&&(!g.join_id||!valid_hostname(g.join_hostname))))return ESP_ERR_INVALID_ARG;std::string json="{\"version\":1,\"role\":"+std::to_string(g.role)+",\"consortium\":\""+g.consortium.str()+"\",\"authority\":\""+g.authority.str()+"\",\"epoch\":\""+std::to_string(g.epoch)+"\",\"revision\":\""+std::to_string(g.revision)+"\",\"host\":\""+g.authority_host+"\",\"join_id\":\""+(g.join_id?g.join_id.str():"")+"\",\"joining_id\":\""+(g.joining_id?g.joining_id.str():"")+"\",\"join_digest\":\""+g.join_digest+"\",\"join_revision\":\""+std::to_string(g.join_revision)+"\",\"peers\":[";for(size_t i=0;i<g.peers.size();++i){const auto &p=g.peers[i];if(i)json+=",";json+="{\"id\":\""+p.id.str()+"\",\"leaf\":\""+hex(p.der)+"\",\"pin\":\""+p.pin+"\",\"active\":"+(p.active?"true":"false")+"}";}json+="]";if(g.mutation_id)json+=",\"mutation_id\":\""+g.mutation_id.str()+"\",\"mutation_digest\":\""+g.mutation_digest+"\"";if(!g.join_hostname.empty())json+=",\"join_hostname\":\""+g.join_hostname+"\"";json+="}";if(json.size()>8192)return ESP_ERR_INVALID_SIZE;
     return write_record("amity_group","state",json);}
 } // namespace
 #endif

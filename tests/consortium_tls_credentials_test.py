@@ -59,7 +59,7 @@ SUITE=r'''
 template<class T>T ident(unsigned n){char text[33];snprintf(text,sizeof(text),"%032x",n);return *T::parse(text);}
 void check(bool good,const char* why){if(!good)throw std::runtime_error(why);}
 Peer peer(const Identity& identity){return {identity.id,identity.der,identity.spki,true};}
-Identity make_identity(unsigned n){records.clear();Identity identity;check(load_identity(ident<model::OctopusId>(n),identity)==ESP_OK,"real credential generation/validation failed");return identity;}
+Identity make_identity(unsigned n){records.clear();Identity identity;check(load_identity(ident<model::OctopusId>(n),identity,false)!=ESP_OK&&records.empty(),"missing identity was generated without create");check(load_identity(ident<model::OctopusId>(n),identity,true)==ESP_OK,"real credential generation/validation failed");return identity;}
 std::string replace(std::string value,std::string_view before,std::string_view after){const auto at=value.find(before);check(at!=std::string::npos,"missing fixture field");value.replace(at,before.size(),after);return value;}
 std::string group_record(const Identity& authority,const Identity& member){
  Group group;group.role=Group::coordinator;group.consortium=ident<model::ConsortiumId>(10);group.authority=authority.id;group.epoch=group.revision=1;group.peers.push_back(peer(member));records.clear();check(save_group(group)==ESP_OK,"save_group fixture failed");return records.at("amity_group/state");

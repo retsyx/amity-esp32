@@ -32,7 +32,7 @@ int read_record(const char* space,const char* key,std::string& out,size_t cap){a
 int write_record(const char* space,const char* key,std::string_view value){writes.emplace_back(key);if(fail_write==key)return ESP_ERR_INVALID_STATE;records[std::string(space)+"/"+key]=value;return ESP_OK;}
 // Certificate/secret generation is outside this storage/parser regression.
 bool certificate(std::string_view leaf,model::OctopusId id,std::string& pin){pin=std::string(64,leaf.size()==1024?leaf.front():'a');return id&&!leaf.empty();}
-int load_identity(model::OctopusId id,Identity& out){out.id=id;return ESP_OK;}
+int load_identity(model::OctopusId id,Identity& out,bool=false){out.id=id;return ESP_OK;}
 '''
 MIDDLE = r'''
 }
@@ -61,13 +61,11 @@ int main(){
  records.clear();assert(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::unclaimed);
  Group group;group.role=Group::member;group.consortium=hello.consortium_id;group.authority=coordinator;group.epoch=1;group.revision=1;group.authority_host="192.0.2.1";group.join_id=ident<model::JoinId>(10);group.joining_id=local;group.join_digest=std::string(64,'e');group.join_revision=1;group.peers.push_back({coordinator,"leaf",std::string(64,'a'),true});
  records.clear();assert(save_group(group)==ESP_OK);const auto clean=records["amity_group/state"];Group loaded;
- records["amity_group/identity"]=records["amity_group/identity_tmp"]="same";
+ records["amity_group/identity"]="same";
  assert(runtime_read_startup(local,startup)==ESP_OK&&startup.role==RuntimeStartup::member&&startup.authority_id==coordinator);
  records["amity_group/state"]=replace(clean,"\"epoch\":\"1\"","\"epoch\":\"2\"");assert(runtime_read_startup(local,startup)!=ESP_OK&&startup.role==RuntimeStartup::recovery_required);
- group.join_hostname="living-room";records.clear();writes.clear();assert(save_group(group)==ESP_OK&&writes==std::vector<std::string>({"join_name","state"}));assert(records["amity_group/state"].find("hostname")==std::string::npos);assert(load_group(loaded)==ESP_OK&&loaded.join_hostname=="living-room");
- records["amity_group/join_name"]=replace(records["amity_group/join_name"],group.join_digest,std::string(64,'f'));assert(load_group(loaded)==ESP_OK&&loaded.join_hostname.empty()); // Stale metadata cannot rename another join.
- records.clear();fail_write="state";assert(save_group(group)!=ESP_OK&&records.count("amity_group/join_name")&&!records.count("amity_group/state"));assert(load_group(loaded)==ESP_OK&&loaded.role==Group::unclaimed); // Cut after name metadata never grants membership.
- records.clear();fail_write="join_name";assert(save_group(group)!=ESP_OK&&records.empty());fail_write.clear();
+ group.join_hostname="living-room";records.clear();writes.clear();assert(save_group(group)==ESP_OK&&writes==std::vector<std::string>({"state"}));assert(records["amity_group/state"].find("\"join_hostname\":\"living-room\"")!=std::string::npos);assert(load_group(loaded)==ESP_OK&&loaded.join_hostname=="living-room");
+ records["amity_group/state"]=replace(records["amity_group/state"],"living-room","Living Room");assert(load_group(loaded)==ESP_ERR_INVALID_STATE);
  group.epoch=2;assert(save_group(group)==ESP_ERR_INVALID_ARG);
  group={};group.role=Group::coordinator;group.consortium=hello.consortium_id;group.authority=coordinator;group.epoch=group.revision=1;
  for(unsigned n=0;n<3;++n)group.peers.push_back({ident<model::OctopusId>(20+n),std::string(1024,'b'+n),std::string(64,'b'+n),true});
