@@ -76,7 +76,7 @@ int main(){
     assert(original.repair_remote_activity(repair_generation)==ESP_OK);drain();
     assert(original.remote_activity_generation()==repair_generation&&original.activity_selection()==repair_selection&&original.remote_input_epoch()!=captured_epoch);
     // Maintenance withdraws local input and returns it without a settling activity.
-    assert(original.press_remote_key(0x41,true));drain(8);
+    assert(original.press_key(0x41,true));drain(8);
     assert(original.begin_maintenance()==ESP_OK&&!original.accepts_local_input());
     original.end_maintenance();drain();assert(original.accepts_local_input()&&!original.snapshot().activity_settling);
     // A stable ID request uses presentation order; integration slots stay fixed.
@@ -104,7 +104,7 @@ int main(){
     assert(original.snapshot().current_activity==0&&original.execution_snapshot().sessions[0].activity_id==first);
     assert(original.snapshot().activity_generation==retained.activity_generation&&original.activity_selection()==retained_selection&&original.remote_input_epoch()==retained_input);
     assert(std::none_of(fixture_sent.begin(),fixture_sent.end(),[](const auto& frame){const auto op=frame.frame.data[1];return op==0x36||op==0x44||op==0x04||op==0x0d||op==0x86;}));
-    assert(original.press_remote_key(3));drain();assert(presses(3)==1);
+    assert(original.press_key(3));drain();assert(presses(3)==1);
     assert(original.request_activity(7)==ESP_OK);drain();assert(original.snapshot().current_activity==0&&original.external_activity_index()==7);assert(original.request_activity(0)==ESP_ERR_INVALID_ARG);
     assert(original.request_activity(second.zone_id,first,id<MessageId>(802),original.execution_snapshot().state_revision+1)==ESP_ERR_INVALID_STATE);
     // The original algorithm decides what a missing AVR/source means. Saved
@@ -141,7 +141,7 @@ int main(){
     assert(jobs==1&&interrupted.snapshot().current_activity==0&&!interrupted.snapshot().activity_settling&&outcome(interrupted,broken)=="applied");
     available=false;interrupted.fence_owned(remote,id<LinkId>(93));drain();assert(interrupted.snapshot().current_activity==0&&outcome(interrupted,broken)=="applied");
     // A headless member cannot originate activity, remote or integration work.
-    amity::SystemControl member;member.set_identity(config.consortium_id,remote);member.set_boot_identity(id<BootId>(91));member.set_coordinator_authority(false);assert(fixture_start(member,1,2)==ESP_OK);assert(!member.accepts_local_input()&&member.remote_activity_generation()==0);assert(member.request_remote_activity(0)==ESP_ERR_INVALID_STATE&&!member.press_remote_key(1)&&!member.release_remote_key(1));assert(member.request_activity(config.primary_zone_id,first,id<MessageId>(804))==ESP_ERR_INVALID_STATE);
+    amity::SystemControl member;member.set_identity(config.consortium_id,remote);member.set_boot_identity(id<BootId>(91));member.set_coordinator_authority(false);assert(fixture_start(member,1,2)==ESP_OK);assert(!member.accepts_local_input()&&member.remote_activity_generation()==0);assert(member.request_remote_activity(0)==ESP_ERR_INVALID_STATE&&!member.press_key(1)&&!member.release_remote_key(1));assert(member.request_activity(config.primary_zone_id,first,id<MessageId>(804))==ESP_ERR_INVALID_STATE);
     fail_policy_hash=true;assert(member.configure_passive_metadata(initial_snapshot)==ESP_OK);fail_policy_hash=false;
     const auto previous_metadata=member.active_configuration();assert(member.configuration_snapshot()==initial_snapshot);
     assert(member.configure_passive_metadata(nullptr)==ESP_ERR_INVALID_ARG);

@@ -65,9 +65,8 @@ class Transport {
 public:
     virtual ~Transport() = default;
     virtual bool send(BusSide side, uint8_t destination, const uint8_t *data, size_t size) = 0;
-    virtual void request_scan() = 0;
     // A failed recipient lookup must not enumerate the other isolated wire.
-    virtual bool request_scan(BusSide) { request_scan(); return false; }
+    virtual bool request_scan(BusSide) { return false; }
     virtual bool activity_step_pending() const { return false; }
     // Fence queued wire work before an endpoint can identify another appliance.
     virtual void invalidate_binding(BusSide, uint8_t) {}

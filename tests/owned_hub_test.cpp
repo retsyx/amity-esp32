@@ -101,7 +101,6 @@ static void first_matching_osd(){
     struct Recorder:amity::Transport{
         struct Item{BusSide side;uint8_t address;std::vector<uint8_t> bytes;};std::vector<Item> sent;
         bool send(BusSide side,uint8_t address,const uint8_t* bytes,size_t size)override{sent.push_back({side,address,{bytes,bytes+size}});return true;}
-        void request_scan()override{}
     } owner_wire;
     Hub owner(owner_wire);owner.set_addresses(4,0);
     owner.discovered(BusSide::Back,4);
@@ -388,7 +387,7 @@ static void audio_keys_use_audio_or_display(bool remote_owner){
 static void scoped_audio_fallback_chooses_display_owner(){
     struct NoWire:Transport{
         bool send(BusSide,uint8_t,const uint8_t*,size_t)override{assert(false&&"Scoped keys must dispatch to their owner");return false;}
-        void request_scan()override{assert(false&&"Owner dispatch must not preflight discovery");}
+        bool request_scan(BusSide)override{assert(false&&"Owner dispatch must not preflight discovery");return false;}
     } wire;
     ActivityHub hub(wire);
     const auto display=named(member,m::Side::front,"TV"),source=named(controller,m::Side::back,"Source"),

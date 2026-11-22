@@ -27,17 +27,14 @@ public:
     esp_err_t commit_adapter_settings(system::BootId boot,std::vector<AdapterAddressChange> changes,uint64_t deadline,std::function<esp_err_t()> persist){return local_.commit_adapter_settings(boot,std::move(changes),deadline,std::move(persist));}
     bool accepts_local_input()const;
     esp_err_t request_activity(int index);
-    bool select_activity(int index){return request_activity(index)==ESP_OK;}
     int activity_target()const{return local_.activity_target();}
     uint32_t activity_generation()const{return local_.activity_generation();}
     uint32_t activity_selection()const{return local_.activity_selection();}
     bool activity_setup_in_progress()const{return local_.activity_setup_in_progress();}
     bool press_key(uint8_t key,bool repeat=false);
     bool press_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return accepts_local_input()&&local_.press_key_for_activity(key,generation,repeat);}
-    bool standby(){return request_activity(-1)==ESP_OK;}
     esp_err_t request_remote_activity(unsigned index);
     esp_err_t request_remote_activity(unsigned index,uint32_t generation);
-    bool press_remote_key(uint8_t key,bool repeat=false){return press_key(key,repeat);}
     bool press_remote_key_for_activity(uint8_t key,uint32_t generation,bool repeat=false){return press_key_for_activity(key,generation,repeat);}
     bool release_remote_key(uint8_t key){return local_coordinator_.load()&&local_.release_key(key);}
     uint32_t remote_input_epoch()const{return local_.input_epoch();}

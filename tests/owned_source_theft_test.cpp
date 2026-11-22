@@ -16,7 +16,6 @@ struct Wire:Transport {
     struct Item{BusSide side;uint8_t destination;std::vector<uint8_t> data;};
     std::vector<Item> sent;
     bool send(BusSide side,uint8_t destination,const uint8_t* data,size_t size)override{sent.push_back({side,destination,{data,data+size}});return true;}
-    void request_scan()override{}
 };
 static void device(Hub& hub,BusSide side,uint8_t address,const char* osd){
     hub.discovered(side,address);

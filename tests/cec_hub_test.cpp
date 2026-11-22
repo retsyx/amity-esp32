@@ -120,13 +120,11 @@ static void wire_tests() {
 struct Transport : amity::Transport {
     struct Sent { amity::BusSide side; uint8_t destination; std::vector<uint8_t> bytes; };
     std::vector<Sent> sent;
-    unsigned scans = 0;
     int reject_opcode = -1;
     bool send(amity::BusSide side, uint8_t dest, const uint8_t *data, size_t size) override {
         if (size && data[0] == reject_opcode) return false;
         sent.push_back({side, dest, {data, data + size}}); return true;
     }
-    void request_scan() override { ++scans; }
     bool contains(amity::BusSide side, uint8_t dest, std::initializer_list<uint8_t> bytes) const {
         for (const auto &s : sent) if (s.side == side && s.destination == dest && s.bytes == std::vector<uint8_t>(bytes)) return true;
         return false;

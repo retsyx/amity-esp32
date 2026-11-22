@@ -16,7 +16,7 @@ struct Steps final:Transport {
     std::vector<m::OwnedIntent> actions,edges,contexts;
     bool pending=false;
     bool send(BusSide,uint8_t,const uint8_t*,size_t)override{assert(false&&"Activity sequencing dispatches to an owner");return false;}
-    void request_scan()override{assert(false&&"Only the owner resolver requests discovery");}
+    bool request_scan(BusSide)override{assert(false&&"Only the owner resolver requests discovery");return false;}
     bool activity_step_pending()const override{return pending;}
     m::OwnedDispatchResult dispatch(m::OwnedIntent& intent){
         if(intent.kind==m::OwnedIntentKind::context){contexts.push_back(intent);return {true};}
@@ -129,7 +129,6 @@ struct Wire final:Transport {
     std::vector<Sent> sent;std::vector<BusSide> lookups;
     bool tx_pending=false,scan_allowed=false;
     bool send(BusSide side,uint8_t address,const uint8_t* data,size_t size)override{sent.push_back({side,address,{data,data+size}});tx_pending=true;return true;}
-    void request_scan()override{assert(false);}
     bool request_scan(BusSide side)override{lookups.push_back(side);return scan_allowed;}
     bool activity_step_pending()const override{return tx_pending;}
     void complete(){tx_pending=false;}

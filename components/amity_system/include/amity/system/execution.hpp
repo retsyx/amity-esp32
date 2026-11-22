@@ -2,7 +2,7 @@
 #pragma once
 #include "amity/system/discovery.hpp"
 namespace amity::system {
-enum class AdmissionCode { accepted, pending, invalid, stale, expired, unauthorized, unsupported, overloaded, unresolved };
+enum class AdmissionCode { accepted, pending, invalid, stale, expired, unauthorized, overloaded, unresolved };
 struct AdmissionResult {
     AdmissionCode code = AdmissionCode::invalid;
     std::string reason;

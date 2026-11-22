@@ -25,10 +25,8 @@
 #include <atomic>
 #include <cstdlib>
 #include <utility>
-#include <array>
 #include <limits>
 #ifdef ESP_PLATFORM
-#include "esp_heap_caps.h"
 #include "driver/gpio.h"
 #endif
 
@@ -86,7 +84,6 @@ struct HubService::Adapter : Transport {
     uint8_t pending_scan_sides() const;
     bool request_lookup_scan(BusSide side);
     bool request_scan(BusSide side) override;
-    void request_scan() override;
     bool receive();
     bool discovery_pending() const;
     void begin_claim(BusSide side);
@@ -448,7 +445,7 @@ struct HubService::Impl : Adapter {
         for (const auto& change : settings_adapters) if (!connector_configured(change.tentacle_id)) {
             fail(ESP_ERR_INVALID_STATE, "HDMI adapter is not configured; reopen Settings"); return;
         }
-        if (!wires_idle() || false) return;
+        if (!wires_idle()) return;
         uint8_t waiting = 0;
         if (!pending_settings->settings_effect.compare_exchange_strong(waiting, 1)) { fail(ESP_ERR_TIMEOUT, "Settings request was canceled"); return; }
         const auto result = settings_persist ? settings_persist() : ESP_ERR_INVALID_ARG;
@@ -620,16 +617,10 @@ struct HubService::Impl : Adapter {
         xSemaphoreGive(lock); return changed;
     }
 
-    void fail_activity(int index, const char *reason) {
-        last_activity_error = reason;
-        xSemaphoreTake(lock, portMAX_DELAY);
-        (void)index;
-        xSemaphoreGive(lock);
-    }
 
 
     bool apply_activity(int index,bool gate_input=true) {
-        if(index < -1||index>=static_cast<int>(activity_hub.activity_count())){fail_activity(index,"Activity configuration changed; choose the activity again.");return true;}
+        if(index < -1||index>=static_cast<int>(activity_hub.activity_count())){last_activity_error="Activity configuration changed; choose the activity again.";return true;}
         const auto ready=[&]{
             release_held_keys();
             last_activity_error.clear();setup_gates_input=gate_input;setup_running.store(gate_input);setting_activity=true;
@@ -638,7 +629,7 @@ struct HubService::Impl : Adapter {
         const bool applied=index<0?activity_hub.standby(ready):activity_hub.select_activity(index,ready);
         setting_activity=false;
         if(activity_hub.activity_pending()||step_pending)return false;
-        if(!applied){fail_activity(index,"Required equipment could not be resolved.");return true;}
+        if(!applied){last_activity_error="Required equipment could not be resolved.";return true;}
         return true;
     }
 
@@ -1133,7 +1124,7 @@ struct HubService::Impl : Adapter {
         pending_step=result;step_pending=false;
         using C=system::AdmissionCode;
         switch(result.result.code){
-        case C::invalid:case C::stale:case C::expired:case C::unauthorized:case C::unsupported:
+        case C::invalid:case C::stale:case C::expired:case C::unauthorized:
             last_activity_error=result.result.reason.empty()?"An Amity could not complete the activity command":result.result.reason;
             break;
         default:break;
@@ -1530,11 +1521,6 @@ bool HubService::Adapter::request_lookup_scan(BusSide side) {
         return true;
     }
 bool HubService::Adapter::request_scan(BusSide side) { return request_lookup_scan(side); }
-void HubService::Adapter::request_scan() {
-        // The owner-local qualified path always supplies a side. Retain the
-        // unqualified transport entry for the original direct Hub callers.
-        request_lookup_scan(BusSide::Front); request_lookup_scan(BusSide::Back);
-    }
 bool HubService::Adapter::receive() {
         bool received = false;
         cec::Frame frame;

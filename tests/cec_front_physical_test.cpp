@@ -37,7 +37,6 @@ struct Capture : amity::Transport {
         std::copy(data, data + size, frame.data + 1);
         sent.push_back({side, frame}); return true;
     }
-    void request_scan() override {}
 };
 
 static void core_selection() {
