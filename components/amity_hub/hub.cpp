@@ -260,7 +260,7 @@ void Hub::begin_discovery(uint8_t sides) {
     for (const auto& device : devices_)
         if (!(sides & (device.bus == BusSide::Front ? 1 : 2))) discovery_.push_back(device);
     discovered_physical_ = 0xffff;
-    discovering_ = true;
+    discovering_ = true;discovery_sides_ = sides;
 }
 
 void Hub::determine_front_physical_address(uint16_t fallback) {
@@ -282,12 +282,17 @@ bool Hub::apply_default_front_physical_address(uint16_t fallback) {
 
 void Hub::finish_discovery() {
     if (!discovering_) return;
-    const auto *before = find_device(current().source);
+    // Only a rescanned side can move the current source. That side's lookup
+    // cooldown has just restarted, so these lookups never start another scan.
+    const auto source = current().source;
+    const bool rescanned = !source.empty() && (discovery_sides_ & (lookup_side(source) == BusSide::Front ? 1 : 2));
+    const auto *before = rescanned ? find_device(source) : nullptr;
     const bool had_source = before != nullptr;
     const Device previous = before ? *before : Device{};
     devices_ = std::move(discovery_);
     discovering_ = false;
-    const auto *after = find_device(current().source);
+    if (!rescanned) return;
+    const auto *after = find_device(source);
     if (after && after->physical_address != 0xffff && (!had_source || previous.bus != after->bus ||
         previous.address != after->address || previous.physical_address != after->physical_address))
         send(after->bus, 15, {0x86, static_cast<uint8_t>(after->physical_address >> 8), static_cast<uint8_t>(after->physical_address)});

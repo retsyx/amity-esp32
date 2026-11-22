@@ -249,6 +249,22 @@ static void discovery_tests() {
     assert(t.contains(B, 15, {0x86, 0x40, 0}));
     assert(observe(h).devices.size() == 2);
 }
+static void finishing_a_scan_starts_no_other_scan() {
+    const auto F = amity::BusSide::Front, B = amity::BusSide::Back;
+    struct Counting : Transport {
+        std::vector<amity::BusSide> scans;
+        bool request_scan(amity::BusSide side) override { scans.push_back(side); return true; }
+    } t;
+    amity::Hub h(t); h.set_addresses(4, 0);
+    device(h, F, 0, 0, 0, "Screen"); device(h, B, 4, 0x1000, 4, "Source");
+    context(h, "Source", "", "Screen");
+    h.begin_discovery(2); h.finish_discovery(); // The selected source went quiet.
+    t.scans.clear();
+    // A front sweep cannot move the back source; finishing it must not look
+    // the source up, which would enumerate the back wire.
+    h.begin_discovery(1); device(h, F, 0, 0, 0, "Screen"); h.finish_discovery();
+    assert(t.scans.empty());
+}
 static void playback_tests() {
     const auto B = amity::BusSide::Back;
     Transport t; amity::Hub h(t); h.set_addresses(4, 0);
@@ -319,6 +335,6 @@ static void display_audio_fallback_tests(){
     context(hub,"Player");wire.sent.clear();assert(!press(hub,0x41,"Absent")&&wire.sent.empty());assert(press(hub,0,"Player"));
 }
 int main() {
-    wire_tests(); hub_tests(); discovery_tests(); playback_tests(); backpressure_tests(); display_audio_fallback_tests();
+    wire_tests(); hub_tests(); discovery_tests(); finishing_a_scan_starts_no_other_scan(); playback_tests(); backpressure_tests(); display_audio_fallback_tests();
     std::puts("CEC wire simulation and hub behavior tests passed");
 }
