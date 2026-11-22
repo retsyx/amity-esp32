@@ -15,6 +15,7 @@ PREFIX = r'''
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -26,7 +27,9 @@ constexpr int ESP_OK=0,ESP_FAIL=-1,HTTP_GET=0,HTTP_POST=1,HTTP_OPTIONS=2;
 unsigned timing_reads=0;
 int64_t esp_timer_get_time(){++timing_reads;return 0;}
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
-struct httpd_req_t {int method=HTTP_GET;size_t content_len=0;const char* uri="/api/ready";std::string response,status,type;std::map<std::string,std::string> headers;bool authenticated=false;};
+struct httpd_req_t {int method=HTTP_GET;size_t content_len=0;const char* uri="/api/ready";std::string response,status,type;std::map<std::string,std::string> headers,request_headers;bool authenticated=false;};
+struct AppDescription {uint8_t app_elf_sha256[32]{0x01,0x23,0x45,0x67,0x89,0xab,0xcd,0xef,0xff};} description;
+const AppDescription* esp_app_get_description(){return &description;}
 std::atomic_bool ui_enabled{true};
 unsigned auth_checks=0,downstream=0;
 bool firmware_ready=false;
@@ -43,7 +46,11 @@ const char* hostname(){return "current-name";}
 int httpd_resp_set_status(httpd_req_t* req,const char* value){req->status=value;return ESP_OK;}
 int httpd_resp_set_type(httpd_req_t* req,const char* value){req->type=value;return ESP_OK;}
 int httpd_resp_set_hdr(httpd_req_t* req,const char* name,const char* value){req->headers[name]=value;return ESP_OK;}
-int httpd_resp_send(httpd_req_t* req,const char* data,size_t size){req->response.assign(data,size);return ESP_OK;}
+int httpd_resp_send(httpd_req_t* req,const char* data,size_t size){req->response=data?std::string(data,size):std::string();return ESP_OK;}
+int httpd_req_get_hdr_value_str(httpd_req_t* req,const char* name,char* out,size_t size){
+ const auto found=req->request_headers.find(name);if(found==req->request_headers.end())return -1;
+ if(found->second.size()>=size)return -2;std::strcpy(out,found->second.c_str());return ESP_OK;
+}
 int httpd_resp_send_chunk(httpd_req_t* req,const char* data,size_t size){if(size)req->response.append(data,size);return ESP_OK;}
 namespace web {
 int response(httpd_req_t*,const char*,size_t);
@@ -77,6 +84,16 @@ int main(){
   assert(csp.find("connect-src 'self' https://*.local;")!=std::string::npos&&csp.find("script-src 'self';")!=std::string::npos&&csp.find("frame-ancestors 'none'")!=std::string::npos);no_cors(req);
  }
  std::cout<<"PASS actual asset CSP allows HTTPS local probes while retaining script/frame restrictions\n";
+ const std::string tag="\"0123456789abcdef\"";
+ {httpd_req_t req;req.uri="/app.js";assert(asset(&req)==ESP_OK&&req.status.empty()&&req.response=="x");
+  assert(req.headers.at("Content-Encoding")=="gzip"&&req.headers.at("ETag")==tag&&req.headers.at("Cache-Control")=="no-cache"&&req.type=="text/javascript");}
+ for(const char* cached:{"\"0123456789abcdef\"","W/\"0123456789abcdef\"","\"older\", \"0123456789abcdef\"","*"}){
+  httpd_req_t req;req.uri="/app.js";req.request_headers["If-None-Match"]=cached;
+  assert(asset(&req)==ESP_OK&&req.status=="304 Not Modified"&&req.response.empty()&&req.headers.at("ETag")==tag&&!req.headers.count("Content-Encoding"));
+ }
+ {httpd_req_t req;req.uri="/style.css";req.request_headers["If-None-Match"]="\"fedcba9876543210\"";
+  assert(asset(&req)==ESP_OK&&req.status.empty()&&req.response=="x"&&req.headers.at("Content-Encoding")=="gzip");}
+ std::cout<<"PASS actual assets are served gzip-encoded with a firmware ETag, and an unchanged firmware answers 304 without a body\n";
 }
 '''
 
@@ -92,7 +109,7 @@ def main():
     request = (ROOT / 'components/web/request.cpp').read_text()
     actual = ('namespace web::stall {struct Response {Response(httpd_req_t*,size_t){}};} // web_stall_test.py covers it\n' + 'namespace web {\n' + function(request, 'esp_err_t response(httpd_req_t *req,') + function(request, 'esp_err_t json(httpd_req_t *req,') + '\n}\n'
               + function(source, 'esp_err_t send(httpd_req_t *req,cJSON *root)')
-              + public + function(source, 'esp_err_t asset(httpd_req_t *req)'))
+              + public + function(source, 'const char* asset_tag()') + function(source, 'esp_err_t asset(httpd_req_t *req)'))
     cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
     if not (cjson / 'cJSON.c').exists():
         cjson = cjson.parent

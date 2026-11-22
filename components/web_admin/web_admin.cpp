@@ -232,16 +232,25 @@ esp_err_t api(httpd_req_t *req) {
     }
     return web::error(req,"Unknown endpoint","404 Not Found");
 }
-extern const uint8_t html_start[] asm("_binary_index_html_start");
-extern const uint8_t html_end[] asm("_binary_index_html_end");
-extern const uint8_t js_start[] asm("_binary_app_js_start");
-extern const uint8_t js_end[] asm("_binary_app_js_end");
-extern const uint8_t css_start[] asm("_binary_style_css_start");
-extern const uint8_t css_end[] asm("_binary_style_css_end");
-extern const uint8_t system_js_start[] asm("_binary_system_js_start");
-extern const uint8_t system_js_end[] asm("_binary_system_js_end");
-extern const uint8_t favicon_start[] asm("_binary_favicon_svg_start");
-extern const uint8_t favicon_end[] asm("_binary_favicon_svg_end");
+extern const uint8_t html_start[] asm("_binary_index_html_gz_start");
+extern const uint8_t html_end[] asm("_binary_index_html_gz_end");
+extern const uint8_t js_start[] asm("_binary_app_js_gz_start");
+extern const uint8_t js_end[] asm("_binary_app_js_gz_end");
+extern const uint8_t css_start[] asm("_binary_style_css_gz_start");
+extern const uint8_t css_end[] asm("_binary_style_css_gz_end");
+extern const uint8_t system_js_start[] asm("_binary_system_js_gz_start");
+extern const uint8_t system_js_end[] asm("_binary_system_js_gz_end");
+extern const uint8_t favicon_start[] asm("_binary_favicon_svg_gz_start");
+extern const uint8_t favicon_end[] asm("_binary_favicon_svg_gz_end");
+// Assets change only with the firmware, whose ELF digest therefore versions them.
+const char* asset_tag() {
+    static const std::string tag=[]{
+        const auto* description=esp_app_get_description();char digits[17]{};
+        for(size_t i=0;i<8;++i)snprintf(digits+2*i,3,"%02x",description->app_elf_sha256[i]);
+        return '"'+std::string(digits)+'"';
+    }();
+    return tag.c_str();
+}
 esp_err_t asset(httpd_req_t *req) {
     if (!ui_enabled.load()) return web::error(req,"Administration is available on the main Amity only.","403 Forbidden");
     if(req->content_len)return web::error(req,"GET requests cannot have a body");
@@ -251,8 +260,15 @@ esp_err_t asset(httpd_req_t *req) {
     if(!strcmp(req->uri,"/system.js")){begin=system_js_start;end=system_js_end;mime="text/javascript";}
     if(!strcmp(req->uri,"/favicon.svg")){begin=favicon_start;end=favicon_end;mime="image/svg+xml";}
     httpd_resp_set_type(req,mime);httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
-    httpd_resp_set_hdr(req,"Cache-Control","no-cache");
+    httpd_resp_set_hdr(req,"Cache-Control","no-cache");httpd_resp_set_hdr(req,"ETag",asset_tag());
     httpd_resp_set_hdr(req,"Content-Security-Policy","default-src 'self'; connect-src 'self' https://*.local; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    // A browser revalidates its cached copy on every load; an unchanged
+    // firmware answers without resending the asset.
+    char cached[64]{};
+    if(httpd_req_get_hdr_value_str(req,"If-None-Match",cached,sizeof(cached))==ESP_OK&&(strstr(cached,asset_tag())||!strcmp(cached,"*"))){
+        httpd_resp_set_status(req,"304 Not Modified");return web::response(req,nullptr,0);
+    }
+    httpd_resp_set_hdr(req,"Content-Encoding","gzip");
     return web::response(req,reinterpret_cast<const char *>(begin),end-begin);
 }
 }
