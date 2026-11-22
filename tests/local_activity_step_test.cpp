@@ -101,6 +101,30 @@ static void step_holds_no_ipc_slot(){
     std::puts("Recipe steps take and return no IPC command slot");
 }
 
+// The CEC FIFO is full when the source power step submits its frame. The
+// step completes once, as overloaded: the drop is counted, nothing retries
+// it, and the recipe goes on to its next steps.
+static void dropped_step_frame_is_not_retried(){
+    fixture_present=true;fixture_tick=100000;fixture_async_autocomplete=true;
+    LocalHubService hub;assert(fixture_start(hub,1,2)==ESP_OK);
+    assert(fixture_configure(hub,{{"Watch","TV","Source","Source","",0}}));run_one_command();fixture_finish_discovery(hub);
+    fixture_tick=0;fixture_sent.clear();
+    const auto errors=hub.snapshot().tx_errors;unsigned refused=0;
+    fixture_admission=[&](int gpio,const cec::Frame& frame){
+        if(gpio==2&&frame_is(frame,{0x44,0x6d})){++refused;return false;}
+        return true;
+    };
+    assert(hub.request_activity(0)==ESP_OK);run_one_command();finish_recipe(hub,0);
+    fixture_admission={};
+    const auto state=hub.snapshot();
+    std::printf("current=%d settling=%d power_attempts=%zu refused=%u release=%zu announce=%zu route=%zu tx_errors=%u\n",state.current_activity,
+        state.activity_settling,count(2,{0x44,0x6d}),refused,count(2,{0x45}),count(1,{0x82,0x10,0}),count(2,{0x86,0x10,0}),state.tx_errors-errors);
+    assert(state.current_activity==0&&!state.activity_settling&&!hub.activity_setup_in_progress());
+    assert(refused==1&&count(2,{0x44,0x6d})==1&&count(2,{0x45})==0&&state.tx_errors-errors==1);
+    assert(count(1,{0x82,0x10,0})==1&&count(2,{0x86,0x10,0})==1);
+    std::puts("A recipe step whose frame the full CEC FIFO drops completes once and the recipe goes on");
+}
+
 // A main recipe with its display on adapter 1: the next step, on adapter 0,
 // waits for adapter 1's TX, which the planner's own predicate cannot see.
 static void display_tx_on_other_adapter_holds_next_step(){
@@ -322,6 +346,7 @@ int main(int argc,char** argv){
     if(scenario=="settings-commit")step_during_settings_commit();
     else if(scenario=="ipc-full")steps_with_full_ipc();
     else if(scenario=="ipc-slots")step_holds_no_ipc_slot();
+    else if(scenario=="fifo-full-drop")dropped_step_frame_is_not_retried();
     else if(scenario=="display-other-adapter")display_tx_on_other_adapter_holds_next_step();
     else if(scenario=="source-other-adapter")source_frames_on_other_adapter_hold_next_step();
     else if(scenario=="reaction-frame")reaction_frame_holds_first_step();
