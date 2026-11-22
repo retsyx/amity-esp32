@@ -1542,6 +1542,6 @@ they test:
 - `test_runtime_setup`, `test_flashing`, `test_pi_cec_driver` and `test_pi_boot`
 
 Asyncio code runs on the event loop's own clock, which virtual time does not
-replace. `test_soak_browser` uses the browser's performance timestamps.
+replace.
 The firmware host tests under `tests/` are C++ and JavaScript and simulate time
 with their own fakes.
