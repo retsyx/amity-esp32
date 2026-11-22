@@ -438,7 +438,7 @@ if(AMITY_HOST_TESTS MATCHES "^(all|sdk)$")
         membership_removal_api_test.py controller_api_surface_test.py system_peer_record_test.py
         network_diagnostics_test.py lwip_tcp_timer_test.py configuration_snapshot_web_test.py json_memory_test.py
         consortium_tls_tcp_test.py consortium_tls_credentials_test.py web_tls_identity_test.py
-        homekit_crypto_test.py production_profile_test.py)
+        homekit_crypto_test.py production_profile_test.py system_nvs_budget_test.py)
     # These configure and build one shared host Mbed TLS tree.
     set_tests_properties(consortium_tls_tcp_test.py consortium_tls_credentials_test.py web_tls_identity_test.py
         homekit_crypto_test.py PROPERTIES RESOURCE_LOCK host_mbedtls)

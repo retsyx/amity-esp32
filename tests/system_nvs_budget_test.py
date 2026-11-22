@@ -15,6 +15,22 @@ python = next((str(path) for path in candidates if path.is_file()), None)
 if not python:
     raise SystemExit('Pinned IDF6.1 Python environment is required for native NVS occupancy verification')
 
+# Every amity_cfg record at the largest size its writer stores.
+records = [('amity_config', [('c0', 16384 + 256), ('c1', 16384 + 256), ('cm0', 128), ('cm1', 128)]),
+           ('amity_group', [('state', 8192), ('identity', 2048), ('hostnames', 8192)]),
+           ('amity_origin', [('candidate', 48), ('committed', 48)]),
+           ('amity_system', [('candidate', 48), ('committed', 48)]),
+           ('amity_reset', [('pending', 1)]),
+           ('amity', [('tls_cert', 1600), ('tls_key', 1600), ('admin_auth', 97), ('front_defaults', 256),
+                      ('hostname', 128), ('hap_name', 64), ('hap_setup', 404)])]
+
+# A modeled record the firmware no longer names is a stale model.
+sources = ''.join(path.read_text(errors='replace') for path in (ROOT / 'components').rglob('*')
+                  if path.suffix in ('.c', '.cpp', '.h', '.hpp'))
+stale = [name for space, values in records for name in [space] + [key for key, _ in values]
+         if '"' + name + '"' not in sources]
+assert not stale, ('NVS model names records the firmware no longer uses', stale)
+
 
 def generate(directory, name, records, fits):
     folder = directory / name
@@ -38,19 +54,8 @@ def generate(directory, name, records, fits):
 (ROOT / 'test-results').mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='nvs-budget-', dir=ROOT / 'test-results') as temporary:
     directory = Path(temporary)
-    shared = [('amity_group', [('state', 6144), ('identity', 2048), ('identity_tmp', 2048)]),
-              ('amity_origin', [('bootstrap', 833)]),
-              ('amity', [('device_metadata', 8192), ('tls_material', 4096), ('ota_job', 2048), ('ota_cohort', 9216)])]
-    # Normal commits retain active + candidate until the exact marker/readback
-    # decision. No obsolete setup draft or handover proposal is reserved.
-    ordinary = [('amity_config', [('c0', 16384 + 256), ('c1', 16384 + 256), ('metadata', 2048)])] + shared
-    generate(directory, 'ordinary-atomic16k', ordinary, True)
-    enrollment = [(space, list(values)) for space, values in ordinary]
-    # Candidate enrollment records both old and staged WiFi settings, including
-    # both atomic copies, until exact authenticated enrollment commits/aborts.
-    enrollment[0][1].extend([('network_old', 3072), ('network_new', 3072)])
-    generate(directory, 'candidate-network-decision', enrollment, True)
-    pressure = [(space, list(values)) for space, values in enrollment]
-    pressure[0][1].append(('extra', 32768))
+    generate(directory, 'all-records', records, True)
+    pressure = [(space, list(values)) for space, values in records]
+    pressure[0][1].append(('extra', 65536))
     generate(directory, 'over-capacity-rejected', pressure, False)
-print('NVS native allocator: atomic16KiB configuration and candidate-network rollback fit112KiB; excess pressure rejects without deleting originals')
+print('NVS native allocator: every amity_cfg record at its largest size fits 112KiB; excess pressure rejects')
